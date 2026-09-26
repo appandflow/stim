@@ -11,8 +11,12 @@ actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
 - Needs attention: preview `stim gc --json`, then run `stim gc --delete` after a
-  confirmation; `stim stop` or `stim android` for a status warning. Each row can
-  also copy its command.
+  confirmation. Status issues are grouped by workspace, live workspaces first,
+  then those with an error; past three workspaces the rest collapse behind a
+  button. Each issue runs its remedy from the workspace, such as
+  `stim android --slot fold`, and can copy it; a `stim guide` remedy is copy
+  only. With a `stim` that reports only warning text, `stim android` still
+  answers an undetected emulator.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch. Each running device,
   in the device tile and the inspector's device list, has its own **Stop**

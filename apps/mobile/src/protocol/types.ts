@@ -132,6 +132,16 @@ export interface WorktreeFacts {
   git?: WorktreeGit | null;
 }
 
+/** One thing in a workspace that needs the user; `remedy` is a command to run from `workspace`. */
+export interface StatusIssue {
+  code: string;
+  severity: 'error' | 'warning';
+  message: string;
+  remedy: string;
+  workspace: string;
+  slot?: string;
+}
+
 export interface EnvironmentState {
   path: string;
   labelOnly?: boolean;
@@ -139,6 +149,8 @@ export interface EnvironmentState {
   live: boolean;
   memoryMb: number;
   warnings: string[];
+  /** Absent from a `stim` that reports only `warnings`. */
+  issues?: StatusIssue[];
   ios?: SimState | null;
   android?: AndroidState | null;
   metro?: { port: number; running: boolean; pid: number | null } | null;

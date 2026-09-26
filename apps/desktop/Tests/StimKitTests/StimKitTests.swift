@@ -286,6 +286,46 @@ import Testing
     #expect(remedyCommand(forWarning: "something else", workspace: "/w") == nil)
   }
 
+  private func workspace(_ json: String) throws -> Workspace {
+    try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+  }
+
+  @Test func groupsIssuesByWorkspaceLiveFirstThenErrors() throws {
+    func env(_ path: String, live: Bool = false, severity: String = "warning", remedy: String = "stim android", slot: String? = nil)
+      throws -> Workspace
+    {
+      let slotField = slot.map { #","slot":"\#($0)""# } ?? ""
+      return try workspace(
+        #"{"path":"\#(path)","live":\#(live),"warnings":["m"],"issues":[{"code":"c","severity":"\#(severity)","message":"m","remedy":"\#(remedy)","workspace":"\#(path)"\#(slotField)}]}"#
+      )
+    }
+    let groups = attentionGroups([
+      try workspace(#"{"path":"/clean","live":false,"warnings":[],"issues":[]}"#),
+      try env("/idle"),
+      try env("/err", severity: "error", remedy: "stim guide errors teardown"),
+      try env("/live", live: true, remedy: "stim android --slot fold", slot: "fold"),
+    ])
+    #expect(groups.map(\.workspace.path) == ["/live", "/err", "/idle"])
+    #expect(
+      groups[0].items == [
+        AttentionItem(
+          text: "fold: m", isError: false, command: StimCommand(["android", "--slot", "fold"], cwd: "/live"),
+          runnable: true)
+      ])
+    #expect(groups[1].items.map(\.isError) == [true])
+    #expect(groups[1].items.map(\.runnable) == [false])
+  }
+
+  @Test func fallsBackToWarningTextWithoutIssues() throws {
+    let groups = attentionGroups([
+      try workspace(
+        #"{"path":"/w","live":false,"warnings":["owned AVD stim-x is not detected by adb; rerun your `stim android` command","other"]}"#
+      )
+    ])
+    #expect(groups.map(\.items.count) == [2])
+    #expect(groups[0].items.map(\.command) == [StimCommand(["android"], cwd: "/w"), nil])
+  }
+
   @Test func quotesPathsForTheShell() {
     #expect(
       environmentCommands(worktree: "/Users/dev/it's here").map(\.shellLine) == [

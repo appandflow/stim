@@ -27,6 +27,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var live: Bool
   public var memoryMb: Int?
   public var warnings: [String]
+  /// Absent from a `stim` that reports only `warnings`.
+  public var issues: [StatusIssue]?
   public var ios: IosDevice?
   public var android: AndroidDevice?
   public var metro: Metro?
@@ -75,6 +77,16 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   }
 
   public var names: PathNames { PathNames(path: path) }
+}
+
+/// One thing in a workspace that needs the user; `remedy` is a command to run from `workspace`.
+public struct StatusIssue: Decodable, Hashable, Sendable {
+  public var code: String
+  public var severity: String
+  public var message: String
+  public var remedy: String
+  public var workspace: String
+  public var slot: String?
 }
 
 /// The git worktree that holds a workspace.

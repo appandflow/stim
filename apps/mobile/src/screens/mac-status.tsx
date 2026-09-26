@@ -1,5 +1,6 @@
+import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
@@ -9,7 +10,7 @@ import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
 import { useMacById } from '@/hooks/mac-connection';
 import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
-import { devicesOf, workspaceNames } from '@/lib/workspaces';
+import { attentionGroups, devicesOf, workspaceNames, type AttentionGroup } from '@/lib/workspaces';
 import { mono, useColors } from '@/theme';
 
 export function MacStatus({ id }: { id: string }) {
@@ -48,9 +49,7 @@ export function MacStatus({ id }: { id: string }) {
       .filter((d) => d.running)
       .map((d) => ({ env, device: d })),
   );
-  const warnings = (status?.environments ?? []).flatMap((env) =>
-    env.warnings.map((warning) => ({ title: workspaceNames(env.path).title, warning })),
-  );
+  const attention = attentionGroups(status?.environments ?? []);
 
   return (
     <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: colors.background }}>
@@ -167,19 +166,65 @@ export function MacStatus({ id }: { id: string }) {
         </Section>
       ) : null}
 
-      {warnings.length > 0 ? (
-        <Section title="Warnings">
-          {warnings.map(({ title, warning }) => (
-            <Text
-              key={`${title}\n${warning}`}
-              style={[styles.warning, { color: colors.warn, backgroundColor: `${colors.warn}1A` }]}
-            >
-              {`${title}: ${tildeHome(warning, home)}`}
-            </Text>
-          ))}
-        </Section>
-      ) : null}
+      {attention.length > 0 ? <NeedsAttention groups={attention} home={home} /> : null}
     </ScrollView>
+  );
+}
+
+const COLLAPSED_GROUPS = 3;
+
+function NeedsAttention({ groups, home }: { groups: AttentionGroup[]; home: string | null | undefined }) {
+  const colors = useColors();
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? groups : groups.slice(0, COLLAPSED_GROUPS);
+  const hidden = groups.length - shown.length;
+  return (
+    <Section title={`Needs attention \u00B7 ${groups.length}`}>
+      {shown.map((group) => (
+        <View key={group.path} style={styles.group}>
+          <View style={styles.groupHeader}>
+            <Text style={[styles.groupTitle, { color: colors.text }]} numberOfLines={1}>
+              {workspaceNames(group.path).title}
+            </Text>
+            <Text style={{ color: group.live ? colors.live : colors.tertiary, fontSize: 12 }}>
+              {group.live ? 'live' : 'idle'}
+            </Text>
+          </View>
+          {group.items.map((item) => (
+            <View
+              key={item.message}
+              style={[styles.issue, { backgroundColor: `${item.severity === 'error' ? colors.error : colors.warn}1A` }]}
+            >
+              <Text style={[styles.issueText, { color: item.severity === 'error' ? colors.error : colors.warn }]}>
+                {tildeHome(item.message, home)}
+              </Text>
+              {item.remedy && item.command ? (
+                <View style={styles.remedy}>
+                  <Text style={[styles.command, { color: colors.text }]} selectable numberOfLines={2}>
+                    {item.remedy}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Copy command"
+                    onPress={() => void Clipboard.setStringAsync(item.command ?? '')}
+                    hitSlop={8}
+                  >
+                    <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>Copy</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ))}
+      {groups.length > COLLAPSED_GROUPS ? (
+        <Pressable accessibilityRole="button" onPress={() => setExpanded(!expanded)} hitSlop={8}>
+          <Text style={{ color: colors.primary, fontSize: 14 }}>
+            {expanded ? 'Show fewer' : `Show ${hidden} more ${hidden === 1 ? 'workspace' : 'workspaces'}`}
+          </Text>
+        </Pressable>
+      ) : null}
+    </Section>
   );
 }
 
@@ -234,5 +279,11 @@ const styles = StyleSheet.create({
   track: { height: 5, borderRadius: 3, overflow: 'hidden' },
   fill: { height: 5, borderRadius: 3 },
   note: { fontSize: 13 },
-  warning: { fontSize: 13, lineHeight: 18, padding: 10, borderRadius: 8, overflow: 'hidden' },
+  group: { gap: 6 },
+  groupHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
+  groupTitle: { fontSize: 15, fontWeight: '600', flexShrink: 1 },
+  issue: { padding: 10, borderRadius: 8, gap: 6 },
+  issueText: { fontSize: 13, lineHeight: 18 },
+  remedy: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  command: { flex: 1, fontSize: 12, fontFamily: mono },
 });

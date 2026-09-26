@@ -38,7 +38,12 @@ reload and stop a workspace:
   share of memory (what live workspaces commit), charts of CPU, memory used and
   startup-volume free space over the last hour, load average, memory used and
   pressure, free disk per volume, Stim budgets, running devices and
-  device leases, warnings, and its server and `stim` versions.
+  device leases, **Needs attention**, and its server and `stim` versions.
+  Needs attention groups status issues by workspace, live workspaces first,
+  then those with an error, shows three workspaces until you expand it, and
+  shows each issue's remedy with **Copy**, which copies it as
+  `cd '<workspace>' && <remedy>`. No remedy maps to Reload or Stop, so none
+  offers an action button.
 - **Menu**: the menu button, or a swipe from the left edge of home, slides
   home right and shows the menu behind it: **Workspaces** and **Devices**
   (the same switch as home's toggle), **Machines** (rename and forget),

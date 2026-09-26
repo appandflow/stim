@@ -17,7 +17,8 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/react-native/private/helloworld",
@@ -31,7 +32,8 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
@@ -45,7 +47,8 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/tlon-apps",
@@ -59,7 +62,8 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
@@ -73,15 +77,14 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/react-native-reserved-regions/example",
         "live": false,
         "memoryMb": 0,
-        "warnings": [
-          "owned AVD stim-react-native-reserved-regions-example-f44c281f is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
-        ],
+        "warnings": [],
         "ios": {
           "name": "stim-react-native-reserved-regions-example (iPhone Duo 27.1)",
           "udid": "5D1CA82B-C157-4C68-90D1-E9F821B3B2EA",
@@ -148,7 +151,8 @@
               "rekeyedBy": []
             }
           }
-        }
+        },
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges/example",
@@ -168,8 +172,7 @@
         "live": false,
         "memoryMb": 0,
         "warnings": [
-          "owned AVD stim-react-native-hinges-example is not detected by adb; rerun your `stim android` command in this workspace to reconnect",
-          "fold3-camera: owned AVD stim-react-native-hinges-example-fold3-camera is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
+          "fold3-camera: recorded AVD stim-react-native-hinges-example-fold3-camera no longer exists; run `stim android --slot fold3-camera`"
         ],
         "ios": {
           "name": "stim-react-native-hinges-example (iPhone Duo 27.1)",
@@ -193,7 +196,17 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": [
+          {
+            "code": "avd-missing",
+            "severity": "warning",
+            "message": "recorded AVD stim-react-native-hinges-example-fold3-camera no longer exists",
+            "remedy": "stim android --slot fold3-camera",
+            "slot": "fold3-camera",
+            "workspace": "/Users/dev/Developer/react-native-hinges/example"
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges",
@@ -212,9 +225,7 @@
         ],
         "live": false,
         "memoryMb": 0,
-        "warnings": [
-          "fold3-camera: owned AVD stim-react-native-hinges-fold3-camera is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
-        ],
+        "warnings": [],
         "ios": null,
         "android": null,
         "metro": null,
@@ -222,15 +233,15 @@
         "logs": null,
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
         "live": false,
         "memoryMb": 0,
         "warnings": [
-          "owned AVD stim-ios27-uiscene-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect",
-          "stale supervisor record for /Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile"
+          "supervisor pid 48213 could not be verified: workspace state and registry process identities disagree; run `stim guide errors teardown`"
         ],
         "ios": {
           "name": "stim-ios27-uiscene-tlon-mobile (iPhone 18 Pro 27.0)",
@@ -271,7 +282,16 @@
           }
         },
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": [
+          {
+            "code": "supervisor-unverified",
+            "severity": "error",
+            "message": "supervisor pid 48213 could not be verified: workspace state and registry process identities disagree",
+            "remedy": "stim guide errors teardown",
+            "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile"
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile",
@@ -288,7 +308,8 @@
         },
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
@@ -321,9 +342,7 @@
         ],
         "live": true,
         "memoryMb": 2200,
-        "warnings": [
-          "owned AVD stim-wide-insets-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
-        ],
+        "warnings": ["owned AVD stim-wide-insets-tlon-mobile is not detected by adb; run `stim android`"],
         "ios": null,
         "android": {
           "name": "stim-wide-insets-tlon-mobile",
@@ -385,7 +404,16 @@
             "finishedAt": "2026-09-25T03:31:35.000Z",
             "errorCode": "STIM_BUILD_FAILED"
           }
-        }
+        },
+        "issues": [
+          {
+            "code": "avd-not-detected",
+            "severity": "warning",
+            "message": "owned AVD stim-wide-insets-tlon-mobile is not detected by adb",
+            "remedy": "stim android",
+            "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile"
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
@@ -403,9 +431,7 @@
         ],
         "live": false,
         "memoryMb": 0,
-        "warnings": [
-          "owned AVD stim-ipad-support-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
-        ],
+        "warnings": [],
         "ios": {
           "name": "stim-ipad-support-tlon-mobile (iPhone 18 Pro 27.0)",
           "udid": "75D112AC-A6A1-486E-B22F-16EC31E35990",
@@ -431,7 +457,8 @@
         },
         "worktree": null,
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
@@ -479,9 +506,7 @@
         ],
         "live": true,
         "memoryMb": 2200,
-        "warnings": [
-          "owned AVD stim-wide-split-layout-tlon-mobile is not detected by adb; rerun your `stim android` command in this workspace to reconnect"
-        ],
+        "warnings": ["owned AVD stim-wide-split-layout-tlon-mobile is not detected by adb; run `stim android`"],
         "ios": {
           "name": "stim-wide-split-layout-tlon-mobile (iPhone 18 Pro 27.0)",
           "udid": "AC99FE46-446F-4D14-B1F9-FF271CE1A2A8",
@@ -524,7 +549,16 @@
           }
         },
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": [
+          {
+            "code": "avd-not-detected",
+            "severity": "warning",
+            "message": "owned AVD stim-wide-split-layout-tlon-mobile is not detected by adb",
+            "remedy": "stim android",
+            "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile"
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
@@ -595,7 +629,8 @@
           }
         },
         "remoteDevices": [],
-        "build": null
+        "build": null,
+        "issues": []
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
@@ -675,7 +710,8 @@
           "expectedMs": null,
           "expectedPhaseMs": null,
           "basis": 0
-        }
+        },
+        "issues": []
       }
     ],
     "capacity": {
@@ -732,6 +768,7 @@
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
     "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
     "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard",
-    "environments[path*=wide-insets|wide-split-layout|chat-perf-demo|ios27-uiscene|1123-mobile-app].worktree: added by hand with a WorktreeGit git field; the capture predates nested worktree matching and the field"
+    "environments[path*=wide-insets|wide-split-layout|chat-perf-demo|ios27-uiscene|1123-mobile-app].worktree: added by hand with a WorktreeGit git field; the capture predates nested worktree matching and the field",
+    "environments[].warnings and environments[].issues: rewritten by hand in the StatusIssue shape; the capture predates issues and listed not-detected emulators on idle workspaces, which status no longer reports. wide-insets and wide-split-layout keep avd-not-detected as if they had launched on Android, ios27-uiscene has an unverified supervisor, and react-native-hinges/example a missing fold3-camera AVD"
   ]
 }

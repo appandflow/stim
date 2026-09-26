@@ -1,6 +1,7 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
 import {
+  attentionGroups,
   deviceWarnings,
   devicesOf,
   livePlatforms,
@@ -10,7 +11,7 @@ import {
   repositoryRoots,
   runningBuild,
 } from '@/lib/workspaces';
-import type { EnvironmentState, StatusPayload } from '@/protocol/types';
+import type { EnvironmentState, StatusIssue, StatusPayload } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
 const env = (path: string, extra: Partial<EnvironmentState> = {}): EnvironmentState => ({
@@ -148,5 +149,47 @@ describe('orderDevices and deviceWarnings', () => {
       ['stim-w-app', ['owned AVD stim-w-app is not detected']],
     ]);
     expect(general).toEqual(['Metro is slow']);
+  });
+});
+
+describe('attentionGroups', () => {
+  const issue = (workspace: string, over: Partial<StatusIssue> = {}): StatusIssue => ({
+    code: 'avd-not-detected',
+    severity: 'warning',
+    message: 'owned AVD stim-app is not detected by adb',
+    remedy: 'stim android',
+    workspace,
+    ...over,
+  });
+
+  it('puts live workspaces first, then errors, and turns each remedy into a command run from the workspace', () => {
+    const groups = attentionGroups([
+      env('/u/clean'),
+      env('/u/idle', { issues: [issue('/u/idle')] }),
+      env("/u/idle's error", {
+        issues: [issue("/u/idle's error", { severity: 'error', remedy: 'stim guide errors teardown' })],
+      }),
+      env('/u/live', { live: true, issues: [issue('/u/live', { slot: 'fold', remedy: 'stim android --slot fold' })] }),
+    ]);
+    expect(groups.map((g) => g.path)).toEqual(['/u/live', "/u/idle's error", '/u/idle']);
+    expect(groups[0].items).toEqual([
+      {
+        message: 'fold: owned AVD stim-app is not detected by adb',
+        severity: 'warning',
+        remedy: 'stim android --slot fold',
+        command: "cd '/u/live' && stim android --slot fold",
+      },
+    ]);
+    expect(groups[1].items[0].command).toBe("cd '/u/idle'\\''s error' && stim guide errors teardown");
+  });
+
+  it('falls back to the warning text, with no command, when stim reports no issues', () => {
+    expect(attentionGroups([env('/u/old', { warnings: ['stale supervisor record for /u/old'] })])).toEqual([
+      {
+        path: '/u/old',
+        live: false,
+        items: [{ message: 'stale supervisor record for /u/old', severity: 'warning', remedy: null, command: null }],
+      },
+    ]);
   });
 });
