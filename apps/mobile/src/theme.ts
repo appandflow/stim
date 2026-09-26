@@ -1,4 +1,3 @@
-import { createContext, useContext } from 'react';
 import { Platform, useColorScheme } from 'react-native';
 
 /** Stim's brand tokens from website/src/css/custom.css, shared with apps/desktop Theme.swift. */
@@ -44,13 +43,13 @@ export type Colors = typeof light;
 
 export type Appearance = 'system' | 'light' | 'dark';
 
-/** Overrides the system color scheme when the Settings screen's Appearance choice is not "System". */
-export const AppearanceOverride = createContext<Appearance>('system');
-
+/**
+ * The Settings screen's Appearance choice applies with `Appearance.setColorScheme`, which overrides
+ * `useColorScheme()` (and the OS-native chrome: nav bars, `@expo/ui`'s SwiftUI controls) app-wide, so reading the
+ * system scheme here already reflects it.
+ */
 export function useEffectiveScheme(): 'light' | 'dark' {
-  const override = useContext(AppearanceOverride);
-  const system = useColorScheme();
-  return (override === 'system' ? system : override) === 'dark' ? 'dark' : 'light';
+  return useColorScheme() === 'dark' ? 'dark' : 'light';
 }
 
 export function useColors(): Colors {

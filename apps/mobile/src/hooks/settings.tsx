@@ -1,7 +1,11 @@
 import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Appearance as SystemAppearance } from 'react-native';
 
-import { AppearanceOverride, type Appearance } from '@/theme';
+import type { Appearance } from '@/theme';
+
+const applyAppearance = (value: Appearance) =>
+  SystemAppearance.setColorScheme(value === 'system' ? 'unspecified' : value);
 
 const APPEARANCE_KEY = 'stim.appearance';
 const VIDEO_QUALITY_KEY = 'stim.videoQuality';
@@ -32,7 +36,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     SecureStore.getItemAsync(APPEARANCE_KEY).then(
-      (raw) => setAppearanceState(parseAppearance(raw)),
+      (raw) => {
+        const next = parseAppearance(raw);
+        setAppearanceState(next);
+        applyAppearance(next);
+      },
       () => {},
     );
     SecureStore.getItemAsync(VIDEO_QUALITY_KEY).then(
@@ -43,6 +51,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const setAppearance = useCallback((next: Appearance) => {
     setAppearanceState(next);
+    applyAppearance(next);
     SecureStore.setItemAsync(APPEARANCE_KEY, next).catch(() => {});
   }, []);
   const setVideoQuality = useCallback((next: VideoQuality) => {
@@ -54,11 +63,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     () => ({ appearance, setAppearance, videoQuality, setVideoQuality }),
     [appearance, setAppearance, videoQuality, setVideoQuality],
   );
-  return (
-    <Context.Provider value={value}>
-      <AppearanceOverride.Provider value={appearance}>{children}</AppearanceOverride.Provider>
-    </Context.Provider>
-  );
+  return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
 export function useSettings(): SettingsContextValue {
