@@ -255,7 +255,7 @@ struct WorkspaceRow: View {
         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Theme.warn)
       }
       if let metro = env.metro {
-        Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary)
+        Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
       }
     }
     .sidebarTag(.environment(env.path), selection: selection)
