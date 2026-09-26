@@ -139,7 +139,11 @@ is the workspace's name, with the device's model and slot under it. The close
 button at the top left, Android's back button, or dragging the screen down
 while Control is off shrinks it back into the thumbnail; a short drag springs
 back. The route is a transparent modal, so the list stays underneath, and the
-thumbnail hides while the viewer covers it. The viewer lays the screen out itself, animating its position and
+thumbnail hides while the viewer covers it. With Control off, pinching zooms into the
+picture up to 5 times, one finger pans it while zoomed, and a double-tap zooms
+in to 2.5 times where you tap, or back to fit. Dragging down closes the viewer
+only at fit. Turning Control on puts the picture back at fit and turns these
+gestures off, so touches go to the device. The viewer lays the screen out itself, animating its position and
 size rather than a transform, so Android's `SurfaceView` follows it and the
 stream stays live through both animations. With reduced motion on, the viewer
 opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to
@@ -165,17 +169,19 @@ viewer, so the column can scroll.
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
-finger: a tap, a drag or swipe, or a long press. The toolbar has **Keyboard**,
+finger: a tap, a drag or swipe, or a long press. The toolbar under the screen
+is one row that scrolls sideways in portrait. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. While the keyboard is open, a bar above it shows what you typed
 since the last Return, with **Done** to close it, and the screen keeps its
 size and moves up until its bottom meets that bar, stopping below the title.
-A second row has **Rotate left** and **Rotate right**, and, when the
-device has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
-whichever its latest frame or video shows it is not,
-and **Fold**, **Half open** and **Unfold** on a foldable emulator. The session ends when you turn Control off, leave the view, lose the
-connection, or after 5 minutes without input; the banner says why.
+It continues with **Rotate left** and **Rotate right**, and, when the device
+has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
+whichever its latest frame or video shows it is not, and **Fold**, **Half
+open** and **Unfold** on a foldable emulator. The session ends when you turn
+Control off, leave the view, lose the connection, or after 5 minutes without
+input; the banner says why.
 
 After a rotate, a note over the screen says "Rotated to landscape" (or
 portrait) once the picture turns. When it has not turned after 2.5 seconds,

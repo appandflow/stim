@@ -38,3 +38,32 @@ export function liftAbove(top: number, height: number, visibleBottom: number, mi
   'worklet';
   return Math.max(0, Math.min(top + height - visibleBottom, top - minTop));
 }
+
+/**
+ * The offset, as a fraction of the view, that keeps a picture zoomed to `scale` covering its view: at most half
+ * of what overflows on either side.
+ */
+export function clampOffset(offset: number, scale: number): number {
+  'worklet';
+  const limit = Math.max(scale - 1, 0) / 2;
+  return Math.min(Math.max(offset, -limit), limit);
+}
+
+/**
+ * The offset along one axis after zooming a picture from `scale` and `offset` to `nextScale`, as fractions of the
+ * view, so the point that was under `focal` is under `nextFocal`. A picture at `scale` and `offset` starts at
+ * `(1 - scale) / 2 + offset`.
+ */
+export function zoomOffset(
+  scale: number,
+  offset: number,
+  nextScale: number,
+  focal: number,
+  nextFocal: number = focal,
+): number {
+  'worklet';
+  const start = (1 - scale) / 2 + offset;
+  const point = (focal - start) / scale;
+  const nextStart = nextFocal - point * nextScale;
+  return clampOffset(nextStart - (1 - nextScale) / 2, nextScale);
+}

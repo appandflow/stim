@@ -1,4 +1,4 @@
-import { fitRect, liftAbove, zoomRect, type Rect } from '@/lib/zoom';
+import { clampOffset, fitRect, liftAbove, zoomOffset, zoomRect, type Rect } from '@/lib/zoom';
 
 describe('fitRect', () => {
   it('centers a phone screen in a wider stage and a landscape one in a taller stage', () => {
@@ -33,5 +33,31 @@ describe('liftAbove', () => {
 
   it('leaves a screen that already ends above the keyboard in place', () => {
     expect(liftAbove(200, 300, 600, 100)).toBe(0);
+  });
+});
+
+describe('zoomOffset', () => {
+  it('keeps the point under the fingers in place', () => {
+    const offset = zoomOffset(1, 0, 2, 0.25);
+    const start = (1 - 2) / 2 + offset;
+    expect(start + 0.25 * 2).toBeCloseTo(0.25);
+  });
+
+  it('follows the fingers when they move while pinching', () => {
+    const offset = zoomOffset(2, 0, 2, 0.4, 0.5);
+    expect(offset).toBeCloseTo(0.1);
+  });
+
+  it('never pans past the picture edge, and centers the picture back at fit', () => {
+    expect(zoomOffset(2, 0, 2, 0.5, 2)).toBe(0.5);
+    expect(zoomOffset(3, -1, 1, 0.9)).toBeCloseTo(0);
+  });
+});
+
+describe('clampOffset', () => {
+  it('limits a pan to what overflows the view', () => {
+    expect(clampOffset(2, 3)).toBe(1);
+    expect(clampOffset(-2, 3)).toBe(-1);
+    expect(clampOffset(0.3, 1)).toBeCloseTo(0);
   });
 });

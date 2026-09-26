@@ -35,7 +35,6 @@ const CLOSE_MS = 340;
 const RETARGET_MS = 250;
 const DISMISS_DRAG = 120;
 const DISMISS_VELOCITY = 900;
-const STAGE_MARGIN = 8;
 const REMEASURE_MS = 150;
 const EASING = Easing.bezier(0.2, 0.9, 0.1, 1);
 
@@ -118,14 +117,7 @@ export function useDeviceZoom(
   const measure = useCallback(() => {
     root.current?.measureInWindow((rx, ry) => {
       setOffset([rx, ry]);
-      stageRef.current?.measureInWindow((x, y, width, height) =>
-        setStage([
-          x - rx + STAGE_MARGIN,
-          y - ry + STAGE_MARGIN,
-          Math.max(width - STAGE_MARGIN * 2, 0),
-          Math.max(height - STAGE_MARGIN * 2, 0),
-        ]),
-      );
+      stageRef.current?.measureInWindow((x, y, width, height) => setStage([x - rx, y - ry, width, height]));
     });
   }, [root, stageRef]);
 
@@ -200,6 +192,7 @@ export function useDeviceZoom(
 
   const pan = usePanGesture({
     enabled: dragEnabled,
+    maxPointers: 1,
     activeOffsetY: 12,
     failOffsetX: [-24, 24],
     onUpdate: (event) => {
