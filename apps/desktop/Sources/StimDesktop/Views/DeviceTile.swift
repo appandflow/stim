@@ -36,7 +36,7 @@ struct DeviceTile: View {
         }
         Rectangle().fill(Theme.border).frame(height: 1)
         if let workspace, showsStoppedBar {
-          stoppedBar(canBoot ? runCommand(for: device, cwd: workspace) : nil)
+          stoppedBar(runCommand(for: device, cwd: workspace))
         } else {
           screen
             .frame(height: screenHeight)
@@ -103,14 +103,14 @@ struct DeviceTile: View {
           Chip(tint: Theme.warn) { Text("App not running") }
             .fixedSize()
             .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
-          if let workspace {
+          if let workspace, let run = runCommand(for: device, cwd: workspace) {
             Button("Run", systemImage: "play.fill") {
-              actions.run("Run on \(platformName(device.platform))", runCommand(for: device, cwd: workspace))
+              actions.run("Run on \(platformName(device.platform))", run)
             }
             .buttonStyle(.stim(.primary))
             .fixedSize()
             .disabled(actions.active(for: workspace) != nil || build != nil)
-            .help((["stim"] + runCommand(for: device, cwd: workspace).arguments).joined(separator: " "))
+            .help((["stim"] + run.arguments).joined(separator: " "))
           }
         }
         Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
@@ -140,9 +140,9 @@ struct DeviceTile: View {
     }
   }
 
-  private var canBoot: Bool {
-    if case .android(_, let avd) = device { return !avd.physical }
-    return true
+  private var isPhysical: Bool {
+    if case .android(_, let avd) = device { return avd.physical }
+    return false
   }
 
   private var showsStoppedBar: Bool {
@@ -154,7 +154,7 @@ struct DeviceTile: View {
     HStack(spacing: 10) {
       Text(
         run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
-          ?? "Not connected."
+          ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
       )
       .font(Theme.body(12))
       .foregroundStyle(Theme.secondary)
