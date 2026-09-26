@@ -96,10 +96,12 @@ reload and stop a workspace:
   last build with when it ran, a failed build's compiler errors, and why it missed the cache with the changed
   fingerprint sources; then the next build with the median behind its estimate, why it would miss the cache, a
   refusal's remedy, when it was checked, and **Check again**. **Recent builds** lists the platform's last 10 runs
-  from status `builds`, newest first, with a bar per run's duration colored by result: each row shows the result
-  (a cache hit, a cold build, failed, cancelled, or interrupted), its duration, the cache miss reason and when it
-  ran. Tapping a row shows its configuration, fingerprint and phase times, its compiler errors and why it missed. The screen asks for each platform with a last build or a device when it opens, one plan
-  at a time, reuses a result for 60 seconds unless that platform's last build changes, asks again after a failure or a
+  from status `builds`, newest first, under a bar sparkline of the durations of runs that finished (two or more),
+  colored by result. Each row shows the result (a cache hit, a cold build, failed, cancelled, or interrupted), its
+  duration, and a detail line: the miss reason, a failed run's cache hit, or cache reads off; how long ago it ran;
+  and a slot other than the default. Tapping a row shows its configuration, fingerprint and phase times, its
+  compiler errors and why it missed. The screen asks for each platform with a last build or a device when it opens,
+  one plan at a time, reuses a result for 60 seconds unless that platform's last build changes, asks again after a failure or a
   reconnect, ignores a reply that arrives after it closes, and asks nothing while a build runs. Below the cards come
   warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it,

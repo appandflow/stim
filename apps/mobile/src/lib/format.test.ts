@@ -216,6 +216,7 @@ describe('build history rows', () => {
     expect(historyDetail(entry({ result: 'failed', status: 'failed', cacheHit: 'local' }), now)).toBe(
       'local cache hit \u00B7 2h ago',
     );
+    expect(historyDetail(entry({ cacheSkipped: true }), now)).toBe('cache reads off \u00B7 2h ago');
     expect(historyDetail(entry({ result: 'interrupted', status: 'failed', cacheSkipped: true }), now)).toBe('2h ago');
   });
 

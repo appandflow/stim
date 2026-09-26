@@ -193,7 +193,7 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
   return (
     <>
       {bars.length > 1 ? (
-        <View style={styles.spark} accessibilityLabel="Build durations, oldest first">
+        <View style={styles.spark} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           {bars.map((bar, i) => (
             <View
               key={i}
@@ -210,36 +210,37 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
       ) : null}
       <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
         {entries.map((entry) => {
-          const key = `${entry.startedAt}-${entry.result}`;
+          const key = `${entry.startedAt}-${entry.slot}-${entry.result}`;
           const expanded = open === key;
           return (
-            <Pressable
-              key={key}
-              onPress={() => setOpen(expanded ? null : key)}
-              accessibilityRole="button"
-              accessibilityState={{ expanded }}
-              style={styles.historyRow}
-            >
-              <View style={styles.row}>
-                <View style={[styles.dot, { backgroundColor: resultColor(entry.result, colors) }]} />
-                <Text style={[styles.line, styles.grow, { color: colors.text }]} numberOfLines={1}>
-                  {historyTitle(entry)}
-                </Text>
-                <Text style={[styles.detail, { color: colors.secondary }]}>
-                  {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
-                </Text>
-                <View style={{ transform: [{ rotate: expanded ? '90deg' : '0deg' }] }}>
-                  <Icon name="chevron.right" size={12} color={colors.tertiary} />
-                </View>
-              </View>
-              <Text
-                style={[styles.detail, styles.indent, { color: colors.secondary }]}
-                numberOfLines={expanded ? undefined : 1}
+            <View key={key} style={styles.historyRow}>
+              <Pressable
+                onPress={() => setOpen(expanded ? null : key)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                style={styles.historyHeader}
               >
-                {historyDetail(entry, now)}
-              </Text>
+                <View style={styles.row}>
+                  <View style={[styles.dot, { backgroundColor: resultColor(entry.result, colors) }]} />
+                  <Text style={[styles.line, styles.grow, { color: colors.text }]} numberOfLines={1}>
+                    {historyTitle(entry)}
+                  </Text>
+                  <Text style={[styles.detail, { color: colors.secondary }]}>
+                    {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
+                  </Text>
+                  <View style={{ transform: [{ rotate: expanded ? '90deg' : '0deg' }] }}>
+                    <Icon name="chevron.right" size={12} color={colors.tertiary} />
+                  </View>
+                </View>
+                <Text
+                  style={[styles.detail, styles.indent, { color: colors.secondary }]}
+                  numberOfLines={expanded ? undefined : 1}
+                >
+                  {historyDetail(entry, now)}
+                </Text>
+              </Pressable>
               {expanded ? <HistoryEntryDetails entry={entry} root={root} /> : null}
-            </Pressable>
+            </View>
           );
         })}
       </View>
@@ -250,7 +251,11 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
 function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
   const colors = useColors();
   const phases = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined)
-    .map((phase) => `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`)
+    .map((phase) =>
+      entry.result === 'interrupted' && entry.phases[phase] === 0
+        ? `stopped in ${phase}`
+        : `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`,
+    )
     .join(' \u00B7 ');
   const facts = [
     `Started ${new Date(entry.startedAt).toLocaleString()}`,
@@ -352,7 +357,8 @@ const styles = StyleSheet.create({
   source: { fontFamily: mono, fontSize: 12, flex: 1 },
   spark: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 32 },
   bar: { flex: 1, maxWidth: 18, borderRadius: 2 },
-  historyRow: { paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
+  historyRow: { paddingHorizontal: 12, paddingVertical: 8 },
+  historyHeader: { gap: 2 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   grow: { flex: 1 },
   indent: { marginLeft: 14 },
