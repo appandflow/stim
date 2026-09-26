@@ -80,6 +80,24 @@ test('reclaimProject keeps the workspace, its devices and its entry while a nati
   expect(getProject('/proj')).not.toBe(null);
 });
 
+test('reclaimProject keeps the workspace and its entry when the owned Chrome cannot be closed', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  ensureWorkspaceStorage('/proj');
+  const calls: unknown[] = [];
+  const result = await reclaimProject('/proj', {
+    teardownBrowser: async (root, options) => {
+      calls.push([root, options]);
+      return { status: 'failed', reason: 'Chrome pid 5 did not exit' };
+    },
+  });
+  expect(calls).toEqual([['/proj', { deleteProfile: true }]]);
+  expect(result.keptEntry).toBe(true);
+  expect(result.failedDevices).toContainEqual({ name: 'owned Chrome', reason: 'Chrome pid 5 did not exit' });
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')).not.toBeNull();
+});
+
 test('reclaimProject leaves no workspace directory behind for a project that never had one', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });

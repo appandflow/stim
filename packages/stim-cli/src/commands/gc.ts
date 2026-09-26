@@ -54,7 +54,12 @@ import {
   isInsideWorkspaces,
 } from './gc/workspaces.ts';
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
-import { findStaleLedgerEntries, forgetStaleLedgerEntries, type StaleLedgerEntry } from './gc/ledger.ts';
+import {
+  findStaleLedgerEntries,
+  forgetStaleLedgerEntries,
+  staleBrowserProfiles,
+  type StaleLedgerEntry,
+} from './gc/ledger.ts';
 import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
@@ -218,7 +223,7 @@ export async function collectGcReport(
   let unverifiedDevices: UnverifiedDevice[] = [];
   let staleDevices: StaleProjectDevice[] = [];
   let staleDeviceRecords: StaleDeviceRecord[] = [];
-  let staleLedgerEntries: StaleLedgerEntry[] = [];
+  let staleLedgerEntries: StaleLedgerEntry[] = staleBrowserProfiles(readCreatedDevices());
   let idleDevices: IdleDevice[] = [];
 
   const unsweepableReason =
@@ -244,7 +249,7 @@ export async function collectGcReport(
     const ledger = readCreatedDevices();
     try {
       const allSims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
-      staleLedgerEntries = findStaleLedgerEntries(ledger, allSims);
+      staleLedgerEntries = [...staleLedgerEntries, ...findStaleLedgerEntries(ledger, allSims)];
       sims = allSims.filter((sim) => sim.available);
     } catch {
       simsChecked = false;

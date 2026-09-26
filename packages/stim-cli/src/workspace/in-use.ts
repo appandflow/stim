@@ -14,6 +14,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { getProject } from './config.ts';
 import { workspaceDir } from './paths.ts';
 import { readWorkspaceState } from './workspace-state.ts';
+import { readWebRecord, webFacts } from '../web/state.ts';
 
 const NATIVE_RUN = 'native-run';
 const NATIVE_RUN_HELD = 'a stim ios, android or stop run holds its native-run.lock';
@@ -39,6 +40,10 @@ export function workspaceInUse(
     else if (target.status === 'unverified') {
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
+    const browser = webFacts(readWebRecord(root));
+    if (browser?.status === 'running')
+      reasons.push(`its owned Chrome (pid ${browser.record.chromeProcess?.pid}) is running`);
+    else if (browser?.status === 'unverified') reasons.push('its owned Chrome cannot be verified');
   }
   if (nativeRun) {
     const claims = readClaimSet(workspaceProcessLockPath(workspaceDir(root), NATIVE_RUN, true));

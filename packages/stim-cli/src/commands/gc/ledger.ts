@@ -1,10 +1,11 @@
+import { existsSync } from 'node:fs';
 import chalk from 'chalk';
 import type { CreatedDevices } from '@stim-cli/core/state';
 import { forgetCreatedDevice } from '../../devices/created-devices.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 
 export interface StaleLedgerEntry {
-  kind: 'ios';
+  kind: 'ios' | 'web';
   id: string;
 }
 
@@ -12,6 +13,14 @@ export interface StaleLedgerEntry {
 export function findStaleLedgerEntries(ledger: CreatedDevices, sims: readonly IosSimRecord[]): StaleLedgerEntry[] {
   const listed = new Set(sims.map((sim) => sim.udid));
   return [...ledger.ios].filter((udid) => !listed.has(udid)).map((id) => ({ kind: 'ios', id }));
+}
+
+/** Browser profiles the ledger lists whose directory is gone; they live under STIM_HOME, so absence is proof. */
+export function staleBrowserProfiles(
+  ledger: CreatedDevices,
+  exists: (path: string) => boolean = existsSync,
+): StaleLedgerEntry[] {
+  return [...ledger.web].filter((path) => !exists(path)).map((id) => ({ kind: 'web', id }));
 }
 
 export function forgetStaleLedgerEntries(entries: readonly StaleLedgerEntry[]): number {

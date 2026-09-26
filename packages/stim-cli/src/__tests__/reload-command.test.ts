@@ -42,6 +42,7 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     androidProcess: () => 43,
     resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
     reloadMetro: async () => ({ ok: true, peers: 1, targets: 1 }),
+    readBrowser: () => null,
     ...overrides,
   };
 }
@@ -130,9 +131,68 @@ test('reload requires a platform when both owned apps are live', async () => {
     ok: false,
     error: {
       code: 'STIM_RELOAD_AMBIGUOUS',
-      message: 'Both the iOS and Android apps are running.',
+      message: 'More than one platform is live: ios, android.',
       remedy: 'Choose one with `stim reload ios` or `stim reload android`.',
     },
+  });
+});
+
+const browser = {
+  pid: 10,
+  processToken: 't',
+  chromeProcess: { pid: 11, processToken: 'c' },
+  chrome: '/Chrome',
+  headless: true,
+  viewport: 'desktop' as const,
+  ignoreCertificateErrors: false,
+  cdpPort: 8901,
+  profile: '/stim/web/profile',
+  url: 'http://localhost:8082/',
+  startedAt: '2026-09-26T00:00:00.000Z',
+  targetId: 'PAGE',
+  version: 'Chrome/153.0.8010.49',
+};
+
+test('reload reaches the owned Chrome page when it is the only live target, and names web when others are', async () => {
+  const reloaded: string[] = [];
+  const reloadPage = async (record: { targetId: string }) => {
+    reloaded.push(record.targetId);
+  };
+  expect(
+    await runReload({
+      root: '/project',
+      deps: reloadDeps({ readLaunches: () => ({}), readBrowser: () => browser, reloadPage }),
+    }),
+  ).toEqual({
+    ok: true,
+    facts: {
+      platform: 'web',
+      deviceId: 'http://127.0.0.1:8901',
+      deviceName: 'Chrome/153.0.8010.49',
+      appId: 'http://localhost:8082/',
+      metroPort: 8082,
+      strategy: 'cdp',
+      targets: 1,
+    },
+  });
+  expect(reloaded).toEqual(['PAGE']);
+
+  const both = await runReload({ root: '/project', deps: reloadDeps({ readBrowser: () => browser, reloadPage }) });
+  expect(both).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_AMBIGUOUS', remedy: 'Choose one with `stim reload android` or `stim reload web`.' },
+  });
+  expect(
+    await runReload({
+      root: '/project',
+      platform: 'web',
+      deps: reloadDeps({ readBrowser: () => browser, reloadPage }),
+    }),
+  ).toMatchObject({ ok: true, facts: { platform: 'web' } });
+  expect(reloaded).toEqual(['PAGE', 'PAGE']);
+  expect(await runReload({ root: '/project', platform: 'web', deps: reloadDeps() })).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim web` first.' },
   });
 });
 

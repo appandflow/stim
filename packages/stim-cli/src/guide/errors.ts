@@ -804,10 +804,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   metro.publicUrl for an existing endpoint.`,
     },
     STIM_RELOAD_AMBIGUOUS: {
-      summary: 'both owned apps are live; name the platform',
-      separator: '--- RELOAD CODES (`stim reload [ios|android]`) ---',
+      summary: 'more than one owned app or the owned Chrome is live; name the platform',
+      separator: '--- RELOAD CODES (`stim reload [ios|android|web]`) ---',
       body: () => `STIM_RELOAD_AMBIGUOUS
-  Both owned apps are live. Name ios or android; Stim never guesses.`,
+  More than one of the owned iOS app, Android app and Chrome page is live.
+  Name ios, android or web; Stim never guesses.`,
     },
     STIM_RELOAD_RELEASE: {
       summary: 'the live app has embedded JS; run a Debug build first',
@@ -820,7 +821,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       aliases: ['STIM_RELOAD_UNOWNED', 'STIM_RELOAD_PROBE_FAILED'],
       body: () => `STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
   The recorded app is gone, its exact device is not live and owned by this
-  workspace, or simctl/adb could not prove the process exists. No launch or
+  workspace, or simctl/adb could not prove the process exists. For web, no
+  verified owned Chrome is running; run stim web. No launch or
   device lifecycle action is taken; follow the printed platform-command or
   process-probe remedy.`,
     },

@@ -8,6 +8,8 @@ import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findProjectRoot } from '../workspace/project.ts';
+import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
+import { cdpEndpoint, readWebRecord, type WebRecord } from '../web/state.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../devices/android.ts';
 import { resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
@@ -17,15 +19,15 @@ import {
   type WorkspaceLaunchRecord,
 } from '../supervisor/state.ts';
 
-type ReloadPlatform = WorkspaceLaunchPlatform;
+type ReloadPlatform = WorkspaceLaunchPlatform | 'web';
 
 interface ReloadFacts {
   platform: ReloadPlatform;
   deviceId: string;
   deviceName: string;
   appId: string;
-  metroPort: number;
-  strategy: 'metro-websocket' | 'metro-broadcast';
+  metroPort: number | null;
+  strategy: 'metro-websocket' | 'metro-broadcast' | 'cdp';
   targets: number | null;
 }
 
@@ -39,13 +41,13 @@ type ReloadResult = { ok: true; facts: ReloadFacts } | { ok: false; error: Reloa
 
 interface LiveTarget {
   slot: string;
-  platform: ReloadPlatform;
+  platform: WorkspaceLaunchPlatform;
   record: WorkspaceLaunchRecord;
   deviceName: string;
 }
 
 interface TargetFailure {
-  platform: ReloadPlatform;
+  platform: WorkspaceLaunchPlatform;
   error: ReloadFailure;
 }
 
@@ -59,6 +61,8 @@ export interface ReloadDeps {
   androidProcess: typeof androidAppProcess;
   resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
   reloadMetro: typeof reloadThroughMetro;
+  readBrowser: (root: string) => (WebRecord & { targetId: string }) | null;
+  reloadPage: (record: WebRecord & { targetId: string }) => Promise<void>;
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
@@ -71,6 +75,8 @@ const DEFAULT_DEPS: ReloadDeps = {
   androidProcess: androidAppProcess,
   resolveMetro: resolveProjectMetro,
   reloadMetro: reloadThroughMetro,
+  readBrowser: (root) => liveWebRecord(readWebRecord(root)),
+  reloadPage: (record) => sendToOwnedPage(record, 'Page.reload'),
 };
 
 function failure(code: string, message: string, remedy: string | null): ReloadFailure {
@@ -81,8 +87,39 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function reloadBrowser(
+  browser: WebRecord & { targetId: string },
+  metroPort: number | null,
+  d: ReloadDeps,
+): Promise<ReloadResult> {
+  try {
+    await d.reloadPage(browser);
+  } catch (error) {
+    return {
+      ok: false,
+      error: failure(
+        'STIM_RELOAD_FAILED',
+        `The owned Chrome did not accept the reload: ${describe(error)}`,
+        'Run `stim web` to reopen the page.',
+      ),
+    };
+  }
+  return {
+    ok: true,
+    facts: {
+      platform: 'web',
+      deviceId: cdpEndpoint(browser.cdpPort),
+      deviceName: browser.version ?? 'Chrome',
+      appId: browser.url,
+      metroPort,
+      strategy: 'cdp',
+      targets: 1,
+    },
+  };
+}
+
 function processFailure(
-  platform: ReloadPlatform,
+  platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
   d: ReloadDeps,
   slot = 'default',
@@ -111,7 +148,7 @@ function processFailure(
 }
 
 function inspectTarget(
-  platform: ReloadPlatform,
+  platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
   project: ProjectRecord,
   d: ReloadDeps,
@@ -218,6 +255,19 @@ export async function runReload({
       error: failure('STIM_NO_PROJECT', `No Stim environment is registered for ${root}.`, 'Run `stim start` first.'),
     };
   }
+  const browser = platform === null || platform === 'web' ? d.readBrowser(root) : null;
+  if (platform === 'web') {
+    return browser
+      ? reloadBrowser(browser, project.metroPort ?? null, d)
+      : {
+          ok: false,
+          error: failure(
+            'STIM_RELOAD_STOPPED',
+            'No owned Chrome is running for this workspace.',
+            'Run `stim web` first.',
+          ),
+        };
+  }
   const launches = d.readLaunches(root);
   const inspected = Object.entries(launches).flatMap(([key, record]) => {
     const parsed = parseDeviceSlotKey(key);
@@ -234,16 +284,20 @@ export async function runReload({
   });
   const live = inspected.filter((target): target is LiveTarget => !isTargetFailure(target));
 
-  if (new Set(live.map((target) => target.platform)).size > 1) {
+  const livePlatforms = new Set<ReloadPlatform>(live.map((target) => target.platform));
+  if (browser) livePlatforms.add('web');
+  if (livePlatforms.size > 1) {
+    const names = [...livePlatforms];
     return {
       ok: false,
       error: failure(
         'STIM_RELOAD_AMBIGUOUS',
-        'Both the iOS and Android apps are running.',
-        'Choose one with `stim reload ios` or `stim reload android`.',
+        `More than one platform is live: ${names.join(', ')}.`,
+        `Choose one with ${names.map((name) => `\`stim reload ${name}\``).join(' or ')}.`,
       ),
     };
   }
+  if (browser) return reloadBrowser(browser, project.metroPort ?? null, d);
   if (live.length === 0) {
     const firstFailure = inspected.find(isTargetFailure)?.error;
     return {
@@ -338,15 +392,15 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
   program
     .command('reload [platform]')
     .description(
-      "Request a JavaScript reload in this workspace's live app without observing completion. Specify ios or android when both are live.",
+      "Request a JavaScript reload in this workspace's live app, or reload its owned Chrome page, without observing completion. Specify ios, android or web when more than one is live.",
     )
     .option('--json', 'Emit the reload facts as one JSON line')
     .action(async (value: string | undefined, opts: ReloadOptions) => {
-      if (value !== undefined && value !== 'ios' && value !== 'android') {
+      if (value !== undefined && value !== 'ios' && value !== 'android' && value !== 'web') {
         const error = failure(
           'STIM_BAD_ARG',
           `Unknown reload platform ${JSON.stringify(value)}.`,
-          'Use ios or android.',
+          'Use ios, android or web.',
         );
         if (opts.json) console.log(JSON.stringify(error));
         else {
@@ -376,6 +430,12 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         console.log(JSON.stringify(result.facts));
       } else {
         const facts = result.facts;
+        if (facts.strategy === 'cdp') {
+          console.log(
+            `Reload requested for ${facts.appId} in the owned Chrome (DevTools ${facts.deviceId}). Completion is not observed; run stim logs --errors.`,
+          );
+          return;
+        }
         const scope =
           facts.strategy === 'metro-broadcast'
             ? ` This Metro cannot name its connected apps, so the reload request was broadcast to all of them and Stim cannot confirm ${facts.appId} was one. Check the expected UI on ${facts.deviceId}; if nothing changed, reload from the app's own error screen or dev menu.`

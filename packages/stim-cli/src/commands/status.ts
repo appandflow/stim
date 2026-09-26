@@ -65,10 +65,9 @@ import {
   remoteDeviceState,
   tightVolumes,
   unprovisionedWorktrees,
-  webFacts,
   withWebFacts,
 } from '../status.ts';
-import { readWebRecord } from '../web/state.ts';
+import { readWebRecord, webFacts } from '../web/state.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 
