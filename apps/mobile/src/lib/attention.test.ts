@@ -39,6 +39,7 @@ const mac = (environments: EnvironmentState[], extra: Partial<AttentionMachine> 
   usage: usage(200),
   home: '/u',
   disconnectedAt: null,
+  seenAt: null,
   ...extra,
 });
 

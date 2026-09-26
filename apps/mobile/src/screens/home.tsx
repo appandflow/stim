@@ -72,7 +72,10 @@ export function Home() {
     [],
   );
 
-  const macIds = useMemo(() => (macs ?? []).map((mac) => mac.id), [macs]);
+  const macIds = useMemo(
+    () => (macs ? macs.map((mac) => mac.id) : [...new Set(items.map((item) => item.macId))]),
+    [macs, items],
+  );
   const { shown, hiddenByActivity } = useMemo(() => filterWorkspaces(items, filters, macIds), [items, filters, macIds]);
   const sections = useMemo(() => {
     const live = shown.filter((item) => isActive(item.env));

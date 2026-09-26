@@ -220,7 +220,7 @@ export interface MachinePresence {
   online: boolean;
   /** Whether the machine's status is the cached one, not yet replaced by a live status. */
   cached: boolean;
-  /** When the machine was last known connected: the drop, or the cached status's time. */
+  /** When the machine's status was last known current: the cached status's time, or the drop. */
   lastSeenAt: number | null;
 }
 
@@ -232,7 +232,7 @@ export function useMachinePresence(macId: string): MachinePresence {
       return {
         online: link?.state.kind === 'open',
         cached: cachedSeenAt !== null,
-        lastSeenAt: link?.disconnectedAt ?? cachedSeenAt,
+        lastSeenAt: cachedSeenAt ?? link?.disconnectedAt ?? null,
       };
     }),
   );

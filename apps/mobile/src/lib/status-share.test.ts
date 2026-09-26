@@ -41,7 +41,9 @@ describe('shareStatus', () => {
   it('treats an added or removed field as a change', () => {
     const prev = { a: 1, b: undefined as number | undefined };
     expect(share(prev, { a: 1, c: undefined })).not.toBe(prev);
-    expect(share([1, 2], [1, 2, 3])).toEqual([1, 2, 3]);
+    const list = [1, 2];
+    expect(share(list, [1, 2, 3])).not.toBe(list);
+    expect(share(list, [1, 2])).toBe(list);
   });
 });
 

@@ -1,6 +1,5 @@
 import type { StatusPayload } from '@/protocol/types';
 
-/** The subset of `react-native-mmkv`'s `MMKV` the cache uses. */
 export interface KeyValueStore {
   getString(key: string): string | undefined;
   set(key: string, value: string): void;
