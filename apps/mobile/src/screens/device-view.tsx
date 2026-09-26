@@ -28,7 +28,8 @@ import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
-import { framePoint, keyboardDelta, otherDriver, type Size } from '@/lib/device-control';
+import { framePoint, keyboardDelta, otherDriver } from '@/lib/device-control';
+import { aspectOf } from '@/lib/zoom';
 import { devicesOf } from '@/lib/workspaces';
 import type { DevicePosture, InputButton, Platform } from '@/protocol/types';
 import { useColors, type Colors } from '@/theme';
@@ -78,7 +79,19 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
   const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
-  const [screen, setScreen] = useState<Size | null>(null);
+  const insets = useSafeAreaInsets();
+  const root = useRef<ViewInstance>(null);
+  const stage = useRef<ViewInstance>(null);
+  const zoom = useDeviceZoom(
+    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
+    aspectOf(source),
+    platform === 'ios' ? 0.46 : 0.45,
+    !controlling,
+    root,
+    stage,
+  );
+  const snapshot = zoom.landed && source ? null : zoom.snapshot;
+  const screen = zoom.screenSize;
   const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
@@ -145,17 +158,6 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       .finally(() => setMoving(null));
   };
   const title = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
-  const insets = useSafeAreaInsets();
-  const root = useRef<ViewInstance>(null);
-  const stage = useRef<ViewInstance>(null);
-  const zoom = useDeviceZoom(
-    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
-    source && source.height > 0 ? source.width / source.height : platform === 'ios' ? 0.46 : 0.45,
-    !controlling,
-    root,
-    stage,
-  );
-  const snapshot = zoom.landed && source ? null : zoom.snapshot;
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -314,7 +316,6 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 {source ? (
                   <View
                     style={[styles.overlay, controlling && { borderColor: colors.primary }]}
-                    onLayout={(event) => setScreen(event.nativeEvent.layout)}
                     pointerEvents={controlling ? 'auto' : 'none'}
                     {...(controlling ? touchHandlers : {})}
                   />

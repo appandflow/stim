@@ -1,6 +1,11 @@
 /** A rectangle as `[x, y, width, height]`, the shape Reanimated animates as one value. */
 export type Rect = [number, number, number, number];
 
+/** Width over height of a frame, or null without one. */
+export function aspectOf(frame: { width: number; height: number } | null | undefined): number | null {
+  return frame && frame.width > 0 && frame.height > 0 ? frame.width / frame.height : null;
+}
+
 /** The largest rect of `aspect` (width over height) that fits in `box`, centered in it. */
 export function fitRect(aspect: number, box: Rect): Rect {
   const [x, y, width, height] = box;

@@ -12,7 +12,7 @@ import {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { fitRect, zoomRect, type Rect } from '@/lib/zoom';
+import { aspectOf, fitRect, zoomRect, type Rect } from '@/lib/zoom';
 import type { FrameEvent, Platform } from '@/protocol/types';
 
 export interface DeviceTarget {
@@ -27,6 +27,7 @@ export interface ZoomOrigin {
   key: string;
   rect: Rect;
   frame: FrameEvent | null;
+  thumbnail: ViewInstance;
 }
 
 const OPEN_MS = 420;
@@ -35,9 +36,11 @@ const RETARGET_MS = 250;
 const DISMISS_DRAG = 120;
 const DISMISS_VELOCITY = 900;
 const STAGE_MARGIN = 8;
+const REMEASURE_MS = 150;
 const EASING = Easing.bezier(0.2, 0.9, 0.1, 1);
 
 let current: ZoomOrigin | null = null;
+let opening = false;
 const listeners = new Set<() => void>();
 
 function set(next: ZoomOrigin | null) {
@@ -64,8 +67,11 @@ export function openDeviceViewer(thumbnail: ViewInstance | null, target: DeviceT
       params: { id: target.macId, path: target.workspace, platform: target.platform, slot: target.slot },
     });
   if (!thumbnail) return push();
+  if (opening) return;
+  opening = true;
   thumbnail.measureInWindow((x, y, width, height) => {
-    set(width > 0 && height > 0 ? { key: zoomKey(target), rect: [x, y, width, height], frame } : null);
+    opening = false;
+    set(width > 0 && height > 0 ? { key: zoomKey(target), rect: [x, y, width, height], frame, thumbnail } : null);
     push();
   });
 }
@@ -82,7 +88,8 @@ export function useZoomedAway(key: string): boolean {
  */
 export function useDeviceZoom(
   key: string,
-  aspect: number,
+  liveAspect: number | null,
+  fallbackAspect: number,
   dragEnabled: boolean,
   root: RefObject<ViewInstance | null>,
   stageRef: RefObject<ViewInstance | null>,
@@ -90,6 +97,7 @@ export function useDeviceZoom(
   const window = useWindowDimensions();
   const reduced = useReducedMotion();
   const [origin] = useState(() => (current?.key === key ? current : null));
+  const aspect = liveAspect ?? aspectOf(origin?.frame) ?? fallbackAspect;
   const [landed, setLanded] = useState(false);
   const [stage, setStage] = useState<Rect | null>(null);
   const [offset, setOffset] = useState<[number, number] | null>(null);
@@ -98,6 +106,7 @@ export function useDeviceZoom(
   const progress = useSharedValue(0);
   const drag = useSharedValue(0);
   const closing = useRef(false);
+  const closingOnUI = useSharedValue(false);
 
   useEffect(
     () => () => {
@@ -144,10 +153,23 @@ export function useDeviceZoom(
   const close = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
-    const duration = reduced ? 0 : CLOSE_MS;
-    drag.set(withTiming(0, { duration, easing: EASING }));
-    progress.set(withTiming(0, { duration, easing: EASING }, () => scheduleOnRN(pop)));
-  }, [drag, progress, pop, reduced]);
+    closingOnUI.set(true);
+    let collapsed = false;
+    const collapse = () => {
+      if (collapsed) return;
+      collapsed = true;
+      const duration = reduced ? 0 : CLOSE_MS;
+      drag.set(withTiming(0, { duration, easing: EASING }));
+      progress.set(withTiming(0, { duration, easing: EASING }, () => scheduleOnRN(pop)));
+    };
+    const { thumbnail } = origin ?? {};
+    if (!thumbnail || !offset) return collapse();
+    setTimeout(collapse, REMEASURE_MS);
+    thumbnail.measureInWindow((x, y, width, height) => {
+      if (!collapsed && width > 0 && height > 0) from.set([x - offset[0], y - offset[1], width, height]);
+      collapse();
+    });
+  }, [drag, progress, from, closingOnUI, origin, offset, pop, reduced]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -158,6 +180,7 @@ export function useDeviceZoom(
   }, [close]);
 
   const hasOrigin = origin !== null;
+  const fitted = stage ? fitRect(aspect, stage) : null;
   const dismissDistance = window.height / 2;
   const screenStyle = useAnimatedStyle(() => {
     const target = to.get();
@@ -181,11 +204,13 @@ export function useDeviceZoom(
     failOffsetX: [-24, 24],
     onUpdate: (event) => {
       'worklet';
-      drag.set(event.translationY);
+      if (!closingOnUI.get()) drag.set(event.translationY);
     },
     onDeactivate: (event) => {
       'worklet';
-      if (event.translationY > DISMISS_DRAG || event.velocityY > DISMISS_VELOCITY) scheduleOnRN(close);
+      if (closingOnUI.get()) return;
+      const dismiss = event.translationY > DISMISS_DRAG || event.velocityY > DISMISS_VELOCITY;
+      if (dismiss && !event.canceled) scheduleOnRN(close);
       else drag.set(withSpring(0, { damping: 20, stiffness: 220 }));
     },
   });
@@ -196,8 +221,8 @@ export function useDeviceZoom(
     fadeStyle,
     pan,
     close,
-    /** The thumbnail's frame, to cover the video until it lands and the stream shows. */
     snapshot: origin?.frame ?? null,
+    screenSize: fitted ? { width: fitted[2], height: fitted[3] } : null,
     landed,
   };
 }
