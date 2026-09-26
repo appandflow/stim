@@ -1,4 +1,4 @@
-import { pair, StimConnection, type ConnectionState } from '@/lib/connection';
+import { pair, pairingScope, StimConnection, type ConnectionState } from '@/lib/connection';
 import type { ServerEvent } from '@/protocol/types';
 
 class FakeSocket {
@@ -173,17 +173,20 @@ describe('StimConnection', () => {
     connection.subscribe('status.subscribe', {}, () => {});
     connection.start();
     sockets[0].onopen?.();
-    sockets[0].reply('hello', { ...hello, actions: [] });
+    sockets[0].reply('hello', { ...hello, actions: [], device: { id: '1a2b3c4d', name: 'Phone' } });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [] });
+    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [], deviceId: '1a2b3c4d' });
+    expect(pairingScope(states.at(-1)!)).toBe('read');
 
     connection.reconnect();
+    expect(pairingScope(states.at(-1)!)).toBeNull();
     expect(sockets[0].closed).toBe(true);
     expect(timers).toHaveLength(0);
     sockets[1].onopen?.();
     sockets[1].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: ['reload', 'stop'] });
+    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: ['reload', 'stop'], deviceId: null });
+    expect(pairingScope(states.at(-1)!)).toBe('control');
     expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
   });
 

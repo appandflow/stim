@@ -327,6 +327,8 @@ export interface Methods {
       capabilities: string[];
       /** The actions this device may run; absent from servers that predate actions. */
       actions?: ActionName[];
+      /** The paired device this connection authenticated as; absent from servers that predate it. */
+      device?: { id: string; name: string };
       /** Returned once, when `auth` spent a pairing token. */
       deviceToken?: string;
     };

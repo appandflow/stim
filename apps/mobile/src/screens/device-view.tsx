@@ -15,12 +15,14 @@ import {
   type TextInputInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
 import { Toggle } from '@/components/toggle';
 import { useDeviceStream } from '@/hooks/device-stream';
-import { useDeviceControl, useStatus } from '@/hooks/mac-connection';
+import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
+import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, otherDriver, type Size } from '@/lib/device-control';
 import { devicesOf } from '@/lib/workspaces';
@@ -66,6 +68,9 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const stream = useDeviceStream({ workspace, platform, slot }, streamOptions);
   const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot);
+  const { mac, state: link, connection } = useMacConnection();
+  const readOnly = control.allowed === false || control.state.kind === 'forbidden';
+  const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
   const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
   const [screen, setScreen] = useState<Size | null>(null);
@@ -151,15 +156,42 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               {slot}
             </Text>
           </View>
-          {control.allowed ? (
-            <Toggle colors={colors} label={controlling ? 'Control on' : 'Control'} on={controlling} onPress={toggle} />
+          {control.allowed !== null ? (
+            <Toggle
+              colors={colors}
+              label={controlling ? 'Control on' : 'Control'}
+              on={controlling}
+              disabled={readOnly}
+              onPress={toggle}
+            />
           ) : null}
         </View>
+        {readOnly ? (
+          <View style={[styles.banner, { borderColor: colors.warn }]}>
+            <View style={styles.bannerBody}>
+              <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
+              <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
+              <View style={styles.bannerActions}>
+                <Pressable
+                  onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId))}
+                  accessibilityRole="button"
+                  hitSlop={6}
+                >
+                  <Text style={[styles.bannerAction, { color: colors.primary }]}>Copy command</Text>
+                </Pressable>
+                <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
+                  <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
         <Banner
           colors={colors}
           control={control.state}
           driver={driver}
           canTakeOver={control.allowed === true}
+          readOnly={readOnly}
           onTakeOver={takeOver}
         />
         {stream.delayed ? (
@@ -189,22 +221,27 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
           </View>
         )}
-        {controlling ? (
+        {controlling || readOnly ? (
           <View style={styles.toolbar}>
             <ToolButton
               label={typing ? 'Hide keyboard' : 'Keyboard'}
+              disabled={readOnly}
               onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
             />
-            <ToolButton label="Home" onPress={() => press('home')} />
-            {platform === 'android' ? <ToolButton label="Back" onPress={() => press('back')} /> : null}
-            {platform === 'android' ? <ToolButton label="Apps" onPress={() => press('app-switch')} /> : null}
-            <ToolButton label="Lock" onPress={() => press('lock')} />
+            <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
+            {platform === 'android' ? (
+              <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} />
+            ) : null}
+            {platform === 'android' ? (
+              <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
+            ) : null}
+            <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
           </View>
         ) : null}
-        {controlling ? (
+        {controlling || readOnly ? (
           <View style={styles.toolbar}>
-            <ToolButton label="Rotate left" onPress={() => control.rotate('left')} />
-            <ToolButton label="Rotate right" onPress={() => control.rotate('right')} />
+            <ToolButton label="Rotate left" disabled={readOnly} onPress={() => control.rotate('left')} />
+            <ToolButton label="Rotate right" disabled={readOnly} onPress={() => control.rotate('right')} />
             {postures
               .filter((posture) => platform === 'android' || posture !== shown)
               .map((posture) => (
@@ -252,34 +289,47 @@ function Banner({
   control,
   driver,
   canTakeOver,
+  readOnly,
   onTakeOver,
 }: {
   colors: Colors;
   control: ReturnType<typeof useDeviceControl>['state'];
   driver: string | null;
   canTakeOver: boolean;
+  readOnly: boolean;
   onTakeOver: () => void;
 }) {
   const message =
-    control.kind === 'busy'
-      ? control.message
-      : control.kind === 'failed'
+    control.kind === 'forbidden'
+      ? null
+      : control.kind === 'busy'
         ? control.message
-        : control.kind === 'off' && control.ended
-          ? `Control ended. ${control.ended}`
-          : control.kind === 'starting'
-            ? 'Starting control...'
-            : driver
-              ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
-              : null;
+        : control.kind === 'failed'
+          ? control.message
+          : control.kind === 'off' && control.ended
+            ? `Control ended. ${control.ended}`
+            : control.kind === 'starting'
+              ? 'Starting control...'
+              : driver
+                ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
+                : null;
   if (!message) return null;
-  const offer = canTakeOver && (control.kind === 'busy' || (driver !== null && control.kind !== 'starting'));
+  const offer =
+    (canTakeOver || readOnly) && (control.kind === 'busy' || (driver !== null && control.kind !== 'starting'));
   return (
     <View style={[styles.banner, { borderColor: control.kind === 'failed' ? colors.warn : colors.border }]}>
       <Text style={styles.bannerText}>{message}</Text>
       {offer ? (
-        <Pressable onPress={onTakeOver} accessibilityRole="button" style={styles.bannerButton} hitSlop={6}>
-          <Text style={[styles.bannerAction, { color: colors.primary }]}>Take over</Text>
+        <Pressable
+          onPress={onTakeOver}
+          disabled={readOnly}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: readOnly }}
+          accessibilityHint={readOnly ? READ_ONLY_REASON : undefined}
+          style={[styles.bannerButton, readOnly && styles.pressed]}
+          hitSlop={6}
+        >
+          <Text style={[styles.bannerAction, { color: readOnly ? '#FFFFFF99' : colors.primary }]}>Take over</Text>
         </Pressable>
       ) : null}
     </View>
@@ -333,6 +383,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF14',
   },
   bannerText: { flex: 1, color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
+  bannerBody: { flex: 1, gap: 4 },
+  bannerTitle: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  bannerSteps: { color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
+  bannerActions: { flexDirection: 'row', gap: 20, paddingTop: 4 },
   bannerButton: { paddingHorizontal: 4 },
   bannerAction: { fontSize: 14, fontWeight: '600' },
   toolbar: {

@@ -3,7 +3,13 @@ import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
 const machine = (patch: Partial<DrawerMachine> = {}): DrawerMachine => ({
   id: 'a',
   name: 'MacBook Pro',
-  state: { kind: 'open', server: { home: null, stim: '1', version: '1' } as never, actions: null, capabilities: [] },
+  state: {
+    kind: 'open',
+    server: { home: null, stim: '1', version: '1' } as never,
+    actions: null,
+    capabilities: [],
+    deviceId: null,
+  },
   missing: false,
   diskTone: 'normal',
   ...patch,

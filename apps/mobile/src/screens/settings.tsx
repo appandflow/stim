@@ -4,8 +4,11 @@ import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { Icon } from '@/components/icon';
+import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
+import { useMacs } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
+import { pairingScope } from '@/lib/connection';
 import { useColors, type Appearance } from '@/theme';
 
 const APPEARANCE_OPTIONS: { value: Appearance; label: string }[] = [
@@ -30,6 +33,7 @@ export function Settings() {
   const colors = useColors();
   const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
+  const { connections } = useMacs();
 
   return (
     <Host style={styles.host} seedColor={colors.primary}>
@@ -48,6 +52,33 @@ export function Settings() {
         <FieldGroup.Section title="Device view">
           <ChoiceRow options={VIDEO_QUALITY_OPTIONS} value={videoQuality} onChange={setVideoQuality} />
         </FieldGroup.Section>
+        {connections.length > 0 ? (
+          <FieldGroup.Section title="Pairings">
+            {connections.map(({ mac, state, connection }) => {
+              const scope = pairingScope(state);
+              return (
+                <Pressable
+                  key={mac.id}
+                  onPress={scope === 'read' ? () => explainReadOnly(mac.name, state, connection) : undefined}
+                  disabled={scope !== 'read'}
+                  accessibilityRole={scope === 'read' ? 'button' : 'text'}
+                  style={styles.pairing}
+                >
+                  <Text style={[styles.rowLabel, { color: colors.text }]} numberOfLines={1}>
+                    {mac.name}
+                  </Text>
+                  <Text style={[styles.pairingScope, { color: scope === 'read' ? colors.warn : colors.secondary }]}>
+                    {scope === 'control'
+                      ? 'Control'
+                      : scope === 'read'
+                        ? 'Read-only. Tap to see how to allow control.'
+                        : 'Not connected'}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </FieldGroup.Section>
+        ) : null}
         <FieldGroup.Section title="More">
           <LinkRow label="About Stim" onPress={() => router.push('/about')} />
         </FieldGroup.Section>
@@ -96,5 +127,7 @@ const styles = StyleSheet.create({
   host: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowLabel: { fontSize: 16 },
+  pairing: { gap: 2 },
+  pairingScope: { fontSize: 13 },
   segmented: { height: 32 },
 });
