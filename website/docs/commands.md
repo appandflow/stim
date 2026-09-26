@@ -328,8 +328,9 @@ $ stim ios --plan
   expect      unknown: no cold run of this project is recorded yet
 ```
 
-A plan never runs `expo prebuild`. When the run would, the reason's `kind` is
-`prebuild-pending` and it compares the fingerprint before that prebuild. With
+A plan never runs `expo prebuild`. When the run would and there is an earlier
+build to compare with, the reason's `kind` is `prebuild-pending` and it compares
+the fingerprint before that prebuild. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
 `--json` prints

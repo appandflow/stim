@@ -718,9 +718,11 @@ RULES
                 cache has no app, in the shape of lastBuilds.<platform>
                 .missReason (\`guide facts status\`), compared with the same
                 baseline the run would use. kind is "changed",
-                "no-baseline", "same-sources" or "prebuild-pending": the run
-                would prebuild first, the plan does not, so changes compare
-                the fingerprint before that prebuild. rekeyedBy is empty.
+                "no-baseline", "same-sources" or "prebuild-pending": a
+                baseline exists and the run would prebuild first, which the
+                plan does not, so changes compare the fingerprint before that
+                prebuild; changeCount 0 then means those inputs match the
+                baseline. rekeyedBy is empty.
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss

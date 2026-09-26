@@ -53,8 +53,9 @@ import Testing
       """
       {"platform":"android","fingerprint":"f","cacheKey":"k","cacheHit":false,"provider":null,"cacheSkipped":false,
        "prebuild":"regenerate","outcome":"cold","expectedMs":null,"basis":0,
-       "missReason":{"kind":"prebuild-pending","summary":"native inputs match the last build (before prebuild regenerates android/)",
-         "changes":[],"changeCount":0,"baseline":{"fingerprint":"0123456789abcdef","from":"workspace"},"rekeyedBy":[]}}
+       "missReason":{"kind":"prebuild-pending","summary":"native dependency added: expo-clipboard (before prebuild regenerates android/)",
+         "changes":[{"source":"node_modules/expo-clipboard/android","change":"added","category":"native-dependency"}],
+         "changeCount":1,"baseline":{"fingerprint":"0123456789abcdef","from":"workspace"},"rekeyedBy":[]}}
       """)
     #expect(miss.missReason?.baselineLine == "Compared with 01234567, the last build in this workspace.")
     #expect(miss.nextBuild == "cold build, regenerates the native dir")

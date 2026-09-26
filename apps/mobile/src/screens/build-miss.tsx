@@ -23,7 +23,11 @@ export function BuildMiss({ path, platform, next }: { path: string; platform: Pl
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
         <Text style={[styles.note, { color: colors.secondary }]}>
-          {next ? 'The next build no longer predicts a cache miss.' : 'The last build no longer records a cache miss.'}
+          {!next
+            ? 'The last build no longer records a cache miss.'
+            : plan?.kind === 'checking'
+              ? 'Checking the next build\u2026'
+              : 'The next build no longer predicts a cache miss.'}
         </Text>
       </View>
     );
