@@ -27,6 +27,7 @@ import {
   type SettingsPayload,
 } from '@stim-cli/core/state';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { settingDefault, stimDesktopInstalled } from '../devices/stim-desktop.ts';
 
 const MASK = '********';
 
@@ -55,18 +56,21 @@ interface SettingsContext {
   repoRoot: string | null;
   machine: Config | null;
   env: NodeJS.ProcessEnv;
+  desktopInstalled: () => boolean;
 }
 
 function readContext(env: NodeJS.ProcessEnv): SettingsContext {
   const projectPath = findProjectRoot(process.cwd());
   const start = projectPath ?? process.cwd();
   const common = gitCommonDir(start);
+  let installed: boolean | undefined;
   return {
     projectPath,
     gitCommonDir: common,
     repoRoot: common ? (repoRoot(start) ?? projectPath) : null,
     machine: loadConfig(),
     env,
+    desktopInstalled: () => (installed ??= stimDesktopInstalled()),
   };
 }
 
@@ -128,6 +132,7 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
   const winner = PRECEDENCE.find((scope) => scope in layers);
   let value: unknown = null;
   let origin: SettingEntry['origin'] = null;
+  let defaultReason: string | null = null;
   if (env) {
     value = masked(setting, envSettingValue(setting, envValue!));
     origin = 'env';
@@ -138,8 +143,10 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
     value = layers[winner];
     origin = winner;
   } else if (setting.default !== undefined) {
-    value = setting.default;
+    const fallback = settingDefault(setting, context.desktopInstalled);
+    value = fallback.value;
     origin = 'default';
+    defaultReason = fallback.reason;
   }
   return {
     key: setting.key,
@@ -148,6 +155,7 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
     layers,
     ...(env ? { env } : scopedHome ? { env: { name: 'STIM_HOME', value: context.env.STIM_HOME! } } : {}),
     ...(setting.sensitive ? { sensitive: true as const } : {}),
+    ...(defaultReason ? { defaultReason } : {}),
   };
 }
 
@@ -363,6 +371,11 @@ function formatValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
+function formatOrigin(entry: SettingEntry): string {
+  if (entry.origin === null) return 'unset';
+  return entry.defaultReason ? `${entry.origin}: ${entry.defaultReason}` : entry.origin;
+}
+
 interface Output {
   out: (line: string) => void;
   note: (line: string) => void;
@@ -414,9 +427,8 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
         }
         const width = Math.max(...payload.settings.map((entry) => entry.key.length));
         for (const entry of payload.settings) {
-          const origin = entry.origin ?? 'unset';
           const shown = entry.origin === null ? '' : formatValue(entry.value);
-          io.out(`${entry.key.padEnd(width)}  ${shown}${shown ? '  ' : ''}${chalk.dim(`(${origin})`)}`);
+          io.out(`${entry.key.padEnd(width)}  ${shown}${shown ? '  ' : ''}${chalk.dim(`(${formatOrigin(entry)})`)}`);
         }
         for (const entry of payload.unknown) {
           io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.`));
@@ -440,7 +452,9 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           io.out(JSON.stringify(scope ? { key, scope, file: layerFile(context, scope, setting), value } : entry));
           return;
         }
-        if (value !== null) io.out(formatValue(value));
+        if (value === null) return;
+        io.out(formatValue(value));
+        if (!scope && entry.defaultReason) io.note(chalk.dim(`(${formatOrigin(entry)})`));
       }),
     );
 
@@ -498,7 +512,7 @@ function report(
     io.out(JSON.stringify({ ...write, setting: entry }));
     return;
   }
-  const effective = entry.origin === null ? 'unset' : `${formatValue(entry.value)} (${entry.origin})`;
+  const effective = entry.origin === null ? 'unset' : `${formatValue(entry.value)} (${formatOrigin(entry)})`;
   if (!write.changed) {
     io.out(`${write.key} was not set in ${write.file}; effective value: ${effective}`);
     return;

@@ -54,26 +54,31 @@ shuts down a simulator when its window closes by default. In Siniulator Settings
 enable **Leave simulator running after window is closed** to keep Stim's device
 running.
 
-To show owned simulators in Stim Desktop instead of a simulator window, set
-`"iosSimulatorApp": "stim-desktop"`, or pass `--simulator-app stim-desktop` for
-one launch. Stim Desktop selects the workspace that owns the simulator and
-focuses that device. It only displays the simulator; it never boots or shuts
-it down.
+When [Stim Desktop](./desktop.md) is installed, it is the default viewer for
+both platforms: `iosSimulatorApp` and `androidEmulatorApp` default to
+`"stim-desktop"`. Stim looks the app up by its bundle id
+(`dev.stim.desktop`) in Launch Services. Without Stim Desktop the defaults
+stay `"xcode"` and `"emulator"`, and a value you set always wins.
+`stim settings get iosSimulatorApp` prints the effective value and, on stderr,
+`(default: Stim Desktop installed)` when the default comes from the app.
 
-Owned Android emulators open their own window by default. To boot them without
-a window on macOS and show them in Stim Desktop instead, set
-`"androidEmulatorApp": "stim-desktop"`:
+For owned simulators, Stim Desktop selects the workspace that owns the
+simulator and focuses that device, and no simulator window opens. It only
+displays the simulator; it never boots or shuts it down. Pass
+`--simulator-app stim-desktop` to use it for one launch.
+
+For owned Android emulators, Stim starts newly booted emulators on macOS with
+`-no-window -gpu host`, which keeps GPU acceleration, and opens
+`stim-desktop://open?serial=<serial>` in the background so Stim Desktop focuses
+that emulator. An emulator that is already running keeps its current display
+until it next boots, and physical devices are unaffected.
+
+To keep the simulator and emulator windows with Stim Desktop installed:
 
 ```sh
-stim settings set androidEmulatorApp stim-desktop
+stim settings set iosSimulatorApp xcode
+stim settings set androidEmulatorApp emulator
 ```
-
-Stim then starts newly booted owned emulators with `-no-window -gpu host`, which
-keeps GPU acceleration, and opens `stim-desktop://open?serial=<serial>` in the
-background so Stim Desktop focuses that emulator. An emulator that is already
-running keeps its current display until it next boots, and physical devices are
-unaffected. Stim's maintainer runs with `"iosSimulatorApp": "stim-desktop"`;
-setting both shows every owned device in Stim Desktop.
 
 An iPhone Duo simulator shows both of its screens side by side, and the
 unlit one stays black. While **Take over** is on, its tile has a **Fold /

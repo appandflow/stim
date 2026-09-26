@@ -173,9 +173,9 @@ ANDROID EMULATOR RESTARTS
   started is alive. Stim keeps waiting on the same emulator; it never
   launches a duplicate. See \`stim guide errors STIM_NO_DEVICE\` for the
   wait windows, diagnostics, and recovery steps.
-  On macOS, top-level androidEmulatorApp "stim-desktop" in the machine config
-  boots owned emulators without a window and shows them in Stim Desktop; see
-  guide settings. An emulator that is already running keeps its current
+  On macOS, androidEmulatorApp "stim-desktop", the default while Stim Desktop
+  is installed, boots owned emulators without a window and shows them in Stim
+  Desktop; see guide settings. An emulator that is already running keeps its current
   display until it next boots.
 
 DESTRUCTIVE COMMANDS -- ask the user first
@@ -1802,9 +1802,10 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   boot (including the initial boot request) up to 10 minutes, and app installation
   up to 5 minutes. Process termination confirmation can take another 10 seconds;
   a final boot-state query can take 30 seconds. After boot, Stim opens the owned
-  simulator in the selected Xcode's Device Hub on Xcode 27, or Simulator on
-  older Xcode. Top-level iosSimulatorApp in the machine config can select
-  Siniulator or Stim Desktop instead; see guide settings. Override it for one
+  simulator in Stim Desktop while it is installed, otherwise in the selected
+  Xcode's Device Hub on Xcode 27, or Simulator on older Xcode. Top-level
+  iosSimulatorApp in the machine config can select another viewer; see guide
+  settings. Override it for one
   local run with \`stim ios --simulator-app siniulator\`,
   \`--simulator-app stim-desktop\`, or \`--simulator-app xcode\`. This also
   opens an already running owned simulator without rebooting it or saving the

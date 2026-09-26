@@ -29,6 +29,7 @@ export type SettingType =
  * `.stim.json` instead of the app's. A `sensitive` value is never printed and is
  * written to `.stim.json` only as an `env:` or `file:` reference. `scopedHomeValue`
  * replaces every layer and the default while STIM_HOME is set and `env` is not.
+ * `desktopDefault` replaces `default` on macOS while Stim Desktop is installed.
  */
 export interface SettingDefinition {
   key: string;
@@ -40,6 +41,7 @@ export interface SettingDefinition {
   sensitive?: boolean;
   committedAt?: 'repository';
   scopedHomeValue?: number;
+  desktopDefault?: string;
 }
 
 export interface SettingEntry {
@@ -49,6 +51,7 @@ export interface SettingEntry {
   layers: Partial<Record<SettingScope, unknown>>;
   env?: { name: string; value: string };
   sensitive?: true;
+  defaultReason?: string;
 }
 
 /** The payload `stim settings --json` prints. */
@@ -245,14 +248,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'choice', choices: IOS_SIMULATOR_APPS },
     scopes: MACHINE,
     default: 'xcode',
-    description: 'App that displays an owned iOS simulator',
+    desktopDefault: 'stim-desktop',
+    description: 'App that displays an owned iOS simulator; stim-desktop by default when Stim Desktop is installed',
   },
   {
     key: 'androidEmulatorApp',
     type: { kind: 'choice', choices: ANDROID_EMULATOR_APPS },
     scopes: MACHINE,
     default: 'emulator',
-    description: 'App that displays an owned Android emulator Stim boots on macOS',
+    desktopDefault: 'stim-desktop',
+    description:
+      'App that displays an owned Android emulator Stim boots on macOS; stim-desktop by default when Stim Desktop is installed',
   },
   {
     key: 'concurrency.maxBuilds',

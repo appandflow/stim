@@ -84,6 +84,7 @@ beforeEach(() => {
   setExecutor({
     run,
     runQuiet: run,
+    runFileQuiet: () => null,
     runFile(file, args = []) {
       calls.push([file, ...args].join(' '));
       if (args.includes('list')) return packageOutput;

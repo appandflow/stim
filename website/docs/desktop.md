@@ -46,5 +46,7 @@ brew install --cask appandflow/tap/stim
 
 ## Show devices in the app
 
-To show owned simulators and emulators in Stim Desktop instead of their own
-windows, see [Devices and cleanup](./owned-devices.md).
+While Stim Desktop is installed, Stim shows owned simulators and emulators in
+it instead of their own windows, unless `iosSimulatorApp` or
+`androidEmulatorApp` is set to another viewer. See
+[Devices and cleanup](./owned-devices.md).

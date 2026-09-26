@@ -1102,6 +1102,7 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   const args: string[][] = [];
   setExecutor({
     runQuiet: (cmd: string) => (cmd.endsWith(' -version') ? 'Android emulator version 37.1.11.0 (build_id 1)' : null),
+    runFileQuiet: () => null,
     spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
       cwds.push(opts.cwd);
       args.push(spawnArgs);
@@ -1118,16 +1119,18 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   expect(args[2]).not.toContain('-crash-report-mode');
 });
 
-test('only androidEmulatorApp stim-desktop on macOS boots a headless emulator and opens it in Stim Desktop', () => {
+test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Desktop, boots a headless macOS emulator and opens it in Stim Desktop', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const savedDisplay = process.env.DISPLAY;
   process.env.DISPLAY = ':0';
   const spawned: string[][] = [];
   const opened: string[][] = [];
+  let desktop: string | null = null;
   setExecutor({
     runQuiet: () => null,
     runFileQuiet: (file: string, args: string[] = []) => {
+      if (file === 'osascript') return desktop;
       opened.push([file, ...args]);
       return null;
     },
@@ -1136,19 +1139,29 @@ test('only androidEmulatorApp stim-desktop on macOS boots a headless emulator an
       return { unref: () => {}, pid: 42 };
     },
   });
+  const config = join(tmpHome, 'config.json');
   try {
     bootAndroidEmulator('stim-app', 5554, { platform: 'darwin' });
-    writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ androidEmulatorApp: 'stim-desktop' }));
+    writeFileSync(config, JSON.stringify({ androidEmulatorApp: 'stim-desktop' }));
     bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
     bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
+    desktop = '/Applications/Stim.app';
+    writeFileSync(config, JSON.stringify({}));
+    bootAndroidEmulator('stim-app', 5560, { platform: 'darwin' });
+    bootAndroidEmulator('stim-app', 5562, { platform: 'linux' });
+    writeFileSync(config, JSON.stringify({ androidEmulatorApp: 'emulator' }));
+    bootAndroidEmulator('stim-app', 5564, { platform: 'darwin' });
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
   }
-  expect(spawned[0]).not.toContain('-no-window');
+  const headless = spawned.map((args) => args.includes('-no-window'));
+  expect(headless).toEqual([false, true, false, true, false, false]);
   expect(spawned[1]?.slice(-3)).toEqual(['-no-window', '-gpu', 'host']);
-  expect(spawned[2]).not.toContain('-no-window');
-  expect(opened).toEqual([['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5556']]);
+  expect(opened).toEqual([
+    ['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5556'],
+    ['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5560'],
+  ]);
 });
 
 test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 37+, and removes the crash database for an older one', () => {
