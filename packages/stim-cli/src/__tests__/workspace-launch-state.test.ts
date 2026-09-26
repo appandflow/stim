@@ -128,3 +128,19 @@ test('a sibling whose device state cannot be read counts as running, so it can n
     resetExecutor();
   }
 });
+
+test.each([
+  ['cannot be read', '', ['second']],
+  ['names another AVD', 'stim-other\nOK', []],
+])('an Android sibling is judged from the running emulators when an AVD name %s', (_case, avdName, siblings) => {
+  upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
+  setExecutor({
+    run: () => 'List of devices attached\nemulator-5554\tdevice\n',
+    runQuiet: () => avdName,
+  });
+  try {
+    expect(siblingPlatformSlots(root, 'android')).toEqual(siblings);
+  } finally {
+    resetExecutor();
+  }
+});
