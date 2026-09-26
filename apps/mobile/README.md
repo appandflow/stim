@@ -291,7 +291,9 @@ When notifications can arrive:
   with `STIM_DEV_PUSH=1`.
 - **Everything else, and all of Android**: only while the app is open. The
   app notifies from its own connection to each Mac, which iOS closes seconds
-  after the app leaves the foreground. Android push needs FCM credentials the
+  after the app leaves the foreground. What went wrong while the app was
+  closed notifies when you next open it, as one summary when there are four or
+  more. Android push needs FCM credentials the
   app does not have yet. A machine going offline or refusing the pairing is
   only ever noticed by the phone, so it notifies only while the app is open.
 
