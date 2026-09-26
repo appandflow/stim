@@ -4,8 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
-import { BuildCacheCard } from '@/components/build-cache-card';
-import { BuildProgressBar } from '@/components/build-progress';
+import { BuildCard } from '@/components/build-card';
 import { Card } from '@/components/card';
 import { Chip } from '@/components/chip';
 import { ConnectionBanner } from '@/components/connection-banner';
@@ -25,7 +24,6 @@ import {
   pathInCheckout,
   projectOf,
   repositoryRoots,
-  runningBuild,
   workspaceTitleAt,
 } from '@/lib/workspaces';
 import type { ActionName, Platform as DevicePlatform } from '@/protocol/types';
@@ -179,7 +177,6 @@ export function WorkspaceDetail({ path }: { path: string }) {
     );
   }
 
-  const build = runningBuild(env);
   const devices = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, devices);
   const errors = env.logs?.errorsSinceMarker ?? 0;
@@ -218,14 +215,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
             </View>
           </View>
         </Card>
-        {build ? (
-          <Card>
-            <View style={styles.card}>
-              <BuildProgressBar build={build} />
-            </View>
-          </Card>
-        ) : null}
-        <BuildCacheCard env={env} />
+        <BuildCard env={env} />
         {general.map((warning) => (
           <Text key={warning} style={[styles.warning, { color: colors.warn, backgroundColor: `${colors.warn}1A` }]}>
             {tildeHome(warning, home)}
