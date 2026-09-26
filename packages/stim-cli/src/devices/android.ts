@@ -1422,7 +1422,7 @@ export function waitForAndroidEmulatorShutdown(
       const record = identities.get(pid);
       return scanned && (record === null || (record !== undefined && inspectIdentity(record) === 'different'));
     });
-    const unlisted = [...left].filter((pid) => scanned && !identities.has(pid));
+    const unlisted = [...left].filter((pid) => scanned && pid === processId && !identities.has(pid));
     throw new Error(
       `Owned AVD ${avdName} did not finish shutting down after ${Math.ceil((now() - started) / 1000)}s: ` +
         `emulator process ${[...left].join(', ')} is still running` +
