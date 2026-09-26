@@ -22,7 +22,7 @@ entry in the [troubleshooting reference](./troubleshooting.md).
 <StimTabs
 code={`stim doctor
 stim start
-stim ios                 # or: stim android
+stim ios                 # or: stim android, or: stim web
 stim logs --errors
 stim stop`}
 />
@@ -382,16 +382,34 @@ whether the next build is a cache hit, how long it should take, and, on a
 miss, which native change causes it.
 ```
 
+## `web`
+
+```text
+stim web [--headed] [--json]
+```
+
+Opens the workspace's page in a Stim-owned Chrome, headless unless `--headed`,
+and captures its console, uncaught errors and failed requests in `stim logs`.
+Expo apps open their Metro URL, and Metro starts when needed. Other apps set
+`web.url`, for example `http://localhost:{port:web}/`, and run their own dev
+server. The payload reports `launched`, the page URL, the Chrome `pid`, the
+`profile` directory and the reserved `cdpEndpoint`. A second run with the same
+options navigates the same Chrome again.
+
+`stim stop` closes the browser and keeps its profile. `worktree remove` and
+`gc --delete` also delete the profile. See [Web in an owned Chrome](./web.md).
+
 ## `reload`
 
 ```text
-stim reload [ios|android] [--json]
+stim reload [ios|android|web] [--json]
 ```
 
 Requests a JavaScript reload in the live app on this workspace's owned local simulator
-or emulator. It never builds, installs, boots, or cold-launches. Omit the
-platform when exactly one owned app is live; name it when both iOS and Android
-are live.
+or emulator, or reloads its owned Chrome page. It never builds, installs, boots,
+or cold-launches. Omit the platform when exactly one owned app or page is live;
+name it when more than one is live. A web reload sends `Page.reload` to the owned
+page and reports `strategy: "cdp"`.
 
 Every reload goes over the workspace Metro websocket, on both platforms. It never
 reopens a development-client URL, because that restarts the app rather than

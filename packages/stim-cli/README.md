@@ -27,7 +27,7 @@ npx stim <command>
 ```bash
 stim doctor
 stim start
-stim ios                  # or: stim android
+stim ios                  # or: stim android, or: stim web
 stim logs --errors
 stim stop
 ```
@@ -43,6 +43,8 @@ reference:
 
 - [Getting started](https://stim.appandflow.com/docs/getting-started): terms,
   the first run, parallel worktrees, and what to do when a run fails.
+- [Web in an owned Chrome](https://stim.appandflow.com/docs/web): `stim web`
+  for Expo web and other web servers, page logs, and attaching browser tools.
 - [Worktrees](https://stim.appandflow.com/docs/worktrees): `worktree warm`,
   `--refresh`, `worktree remove`, and `gc --worktrees` to remove finished
   worktrees in bulk.
