@@ -42,24 +42,25 @@ import Testing
       20\t/Users/me/Library/Developer/CoreSimulator/Devices
       5\t/Users/me/.android/avd/stim-a-tablet.avd
       9\t/Users/me/.android/avd/Pixel.avd
+      14\t/Users/me/.android/avd
       6\t/Users/me/.gradle/caches
       du: /Users/me/Library/Caches/locked: Permission denied
       1\t/Users/me/Library/Caches
       """
     let report = StorageReport.make(
-      environments: [try workspace()], gc: try gc(), sizes: DiskSizes.parse(du), paths: paths)
+      environments: [try workspace()], gc: try gc(), disk: DiskMeasurements(sizes: DiskSizes.parse(du)), paths: paths)
 
     let row = try #require(report.workspaces.first)
-    #expect(row.buildOutputs == Int64(8192))
+    #expect(row.buildOutputs == .size(8192))
     #expect(row.buildOutputsKept == "in use: dev server running")
-    #expect(row.nodeModules == Int64(4096))
-    #expect(row.devices == Int64((10 + 5) * 1024))
+    #expect(row.nodeModules == .size(4096))
+    #expect(row.devices == .size((10 + 5) * 1024))
     #expect(row.deviceCount == 2)
     #expect(row.worktree?.mergedInto == "origin/main")
 
-    #expect(report.reclaimableDevices?.bytes == Int64(3072))
+    #expect(report.reclaimableDevices?.size == .size(3072))
     let unmanaged: [String: Int64] = Dictionary(
-      report.unmanaged.compactMap { location in location.bytes.map { (location.title, $0) } },
+      report.unmanaged.compactMap { location in location.size.bytes.map { (location.title, $0) } },
       uniquingKeysWith: { a, _ in a })
     #expect(unmanaged["Simulators Stim does not own"] == Int64(7 * 1024))
     #expect(unmanaged["Gradle caches"] == Int64(6 * 1024 - 2048))
@@ -67,11 +68,56 @@ import Testing
     #expect(unmanaged["Xcode DerivedData"] == nil)
   }
 
-  @Test func leavesUnmeasuredCategoriesUnknown() throws {
-    let report = StorageReport.make(environments: [try workspace()], gc: nil, sizes: [:], paths: paths)
-    let row = try #require(report.workspaces.first)
-    #expect(row.buildOutputs == nil && row.nodeModules == nil && row.devices == nil)
-    #expect(report.unmanaged.isEmpty)
+  /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.
+  @Test func givesEveryCategoryASizeOrAReason() throws {
+    let modules = "/r/.worktrees/a/node_modules"
+    let measuring = DiskMeasurements(
+      sizes: ["\(paths.simulatorDevices)/\(owned)": 10_240, paths.simulatorDevices: 20_480],
+      pending: [modules, paths.avds])
+    var row = try #require(
+      StorageReport.make(environments: [try workspace()], gc: nil, disk: measuring, paths: paths).workspaces.first)
+    #expect(row.buildOutputs == .notMeasured && row.nodeModules == .measuring && row.devices == .measuring)
+    #expect(row.total == nil)
+
+    let noOutputs = try JSONDecoder().decode(GcReport.self, from: Data(#"{"sections":{}}"#.utf8))
+    let finished = DiskMeasurements(
+      sizes: ["\(paths.simulatorDevices)/\(owned)": 10_240, paths.simulatorDevices: 20_480, paths.avds: 0],
+      failed: [modules])
+    row = try #require(
+      StorageReport.make(environments: [try workspace()], gc: noOutputs, disk: finished, paths: paths).workspaces.first)
+    #expect(row.buildOutputs == .absent && row.nodeModules == .failed && row.devices == .size(10_240))
+    #expect(row.total == 10_240 && !row.totalComplete)
+  }
+
+  @Test func ranksRowsBySizeWithUnsizedRowsLast() throws {
+    func env(_ path: String) throws -> Workspace {
+      try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"\#(path)","live":false,"warnings":[]}"#.utf8))
+    }
+    let disk = DiskMeasurements(
+      sizes: ["/small/node_modules": 1, "/big/node_modules": 9, "/w/new/node_modules": 5], pending: ["/unknown/node_modules"])
+    let fresh = UnprovisionedWorktree(path: "/w/new", branch: "new", repository: "/w/repo", git: nil)
+    let report = StorageReport.make(
+      environments: [try env("/unknown"), try env("/small"), try env("/big")], unprovisioned: [fresh], gc: nil,
+      disk: disk, paths: paths)
+    #expect(report.workspaces.map(\.path) == ["/big", "/w/new", "/small", "/unknown"])
+    #expect(report.workspaces[1].unprovisioned && report.workspaces[1].repositoryName == "repo")
+  }
+
+  /// Catches per-project Metro stores reading as identical rows whose Empty button can never select one.
+  @Test func namesSameNamedCachesByDirectoryAndSortsThemBySize() throws {
+    let json = """
+      {"sections":{"deadProjects":[{"path":"/gone"}],"caches":[
+        {"name":"Metro transform cache","dir":"/s/metro-cache/app","bytes":0},
+        {"name":"Build cache","dir":"/s/build-cache","bytes":4096},
+        {"name":"Metro transform cache","dir":"/s/metro-cache/tlon-mobile","bytes":8192}]}}
+      """
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let gone = try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/gone","live":false,"warnings":[]}"#.utf8))
+    let report = StorageReport.make(environments: [gone], gc: gc, disk: DiskMeasurements(), paths: paths)
+    #expect(report.caches.map { $0.title(among: report.allCaches) } == ["Metro transform cache: tlon-mobile", "Build cache"])
+    #expect(report.emptyCaches.map(\.dir) == ["/s/metro-cache/app"])
+    #expect(report.caches.first?.selector(among: report.allCaches) == "/s/metro-cache/tlon-mobile")
+    #expect(report.workspaces.first?.missing == true)
   }
 }
 
@@ -186,13 +232,18 @@ import Testing
 }
 
 @Suite struct GcDeleteScopeTests {
-  @Test func offersToEmptyACacheOnlyWhenItsNameSelectsItAlone() {
+  @Test func selectsACacheAloneByNameElseByDirectory() {
     let gradle = GcReport.Cache(name: "Gradle build cache", dir: "/g", bytes: nil, note: nil, willEmpty: nil)
     let build = GcReport.Cache(name: "Build cache", dir: "/b", bytes: nil, note: nil, willEmpty: nil)
     let cas = GcReport.Cache(name: "Xcode CAS", dir: "/x", bytes: nil, note: nil, willEmpty: nil)
-    #expect(gradle.selectedAlone(among: [gradle, build, cas]))
-    #expect(!build.selectedAlone(among: [gradle, build, cas]))
-    #expect(cas.selectedAlone(among: [gradle, build, cas]))
+    let example = GcReport.Cache(name: "Metro", dir: "/m/example", bytes: nil, note: nil, willEmpty: nil)
+    let examples = GcReport.Cache(name: "Metro", dir: "/m/example-2", bytes: nil, note: nil, willEmpty: nil)
+    let all = [gradle, build, cas, example, examples]
+    #expect(gradle.selector(among: all) == "Gradle build cache")
+    #expect(build.selector(among: all) == "/b")
+    #expect(cas.selector(among: all) == "Xcode CAS")
+    #expect(examples.selector(among: all) == "/m/example-2")
+    #expect(example.selector(among: all) == nil)
   }
 
   @Test func aScopedPreviewDeletesOnlyThatScope() {

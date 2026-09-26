@@ -16,8 +16,8 @@ struct StorageView: View {
 
   var body: some View {
     let report = StorageReport.make(
-      environments: status.payload?.environments ?? [], gc: metrics.gcReport, sizes: storage.sizes,
-      paths: storage.paths)
+      environments: status.payload?.environments ?? [], unprovisioned: status.payload?.unprovisionedWorktrees ?? [],
+      gc: metrics.gcReport, disk: storage.disk, paths: storage.paths)
     ScrollView {
       VStack(alignment: .leading, spacing: 28) {
         header
@@ -93,14 +93,16 @@ struct StorageView: View {
 
   private func summary(_ report: StorageReport) -> some View {
     let lowest = metrics.volumes.min { $0.availableBytes < $1.availableBytes } ?? autopilot.lowestVolume
-    let workspaceBytes = report.workspaces.reduce(Int64(0)) { $0 + $1.total }
+    let workspaceBytes = report.workspaces.compactMap(\.total).reduce(0, +)
     let cacheBytes = report.caches.compactMap(\.bytes).reduce(0, +)
     return HStack(spacing: 14) {
       tile(
         "Free", lowest.map { formatDisk($0.unpurgeableFreeBytes ?? $0.availableBytes) } ?? "\u{2014}",
         detail: lowest.map { "\($0.name), without purgeable space" }, icon: "internaldrive")
-      tile("Workspaces", formatDisk(workspaceBytes), detail: "\(report.workspaces.count) environments")
-      tile("Stim caches", formatDisk(cacheBytes), detail: "\(report.caches.count) shared caches")
+      tile(
+        "Workspaces", formatDisk(workspaceBytes),
+        detail: storage.disk.pending.isEmpty ? "\(report.workspaces.count) workspaces and worktrees" : "Measuring\u{2026}")
+      tile("Stim caches", formatDisk(cacheBytes), detail: "\(report.allCaches.count) shared caches")
       VStack(alignment: .leading, spacing: 8) {
         SectionLabel(title: "Reclaimable now")
         Text(metrics.reclaimable.map { formatDisk($0.bytes) } ?? "\u{2014}").font(Theme.heading(20))
@@ -216,13 +218,15 @@ struct StorageView: View {
     return HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
         Text(names.title).lineLimit(1)
-        Text(workspace.branch ?? names.subtitle).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+        Text([workspace.repositoryName, workspace.branch ?? names.subtitle].compactMap { $0 }.joined(separator: " \u{00B7} "))
+          .font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
       }
+      .help(abbreviatingHome(workspace.path))
       .frame(maxWidth: .infinity, alignment: .leading)
-      lifecycleChip(lifecycle, worktree: workspace.worktree).frame(width: 150, alignment: .leading)
+      lifecycleChip(lifecycle, workspace: workspace).frame(width: 150, alignment: .leading)
       size(workspace.buildOutputs)
         .overlay(alignment: .leading) {
-          if workspace.buildOutputs != nil {
+          if case .size = workspace.buildOutputs {
             Image(systemName: workspace.buildOutputsKept == nil ? "trash" : "lock")
               .font(.system(size: 9))
               .foregroundStyle(workspace.buildOutputsKept == nil ? Theme.warn : Theme.tertiary)
@@ -232,14 +236,16 @@ struct StorageView: View {
       size(workspace.nodeModules)
       size(workspace.devices)
         .help(workspace.deviceCount == 0 ? "No owned simulator or emulator" : "\(workspace.deviceCount) owned devices")
-      Text(workspace.total > 0 ? formatDisk(workspace.total) : "\u{2014}")
+      Text(workspace.total.map { (workspace.totalComplete ? "" : "\u{2265} ") + formatDisk($0) } ?? "\u{2014}")
         .font(Theme.mono(11.5)).fontWeight(.semibold)
+        .foregroundStyle(workspace.totalComplete ? Theme.text : Theme.tertiary)
         .frame(width: Self.sizeWidth, alignment: .trailing)
+        .help(workspace.totalComplete ? "" : "Some categories are not sized yet")
       Menu {
         Button("Reveal in Finder") { reveal(workspace.worktreePath) }
         Divider()
         Button("Remove worktree\u{2026}", role: .destructive) { removing = workspace }
-          .disabled(actions.active(for: workspace.path) != nil)
+          .disabled(actions.active(for: workspace.path) != nil || workspace.missing || workspace.unprovisioned)
       } label: {
         Image(systemName: "ellipsis.circle")
       }
@@ -252,7 +258,20 @@ struct StorageView: View {
   }
 
   @ViewBuilder
-  private func lifecycleChip(_ lifecycle: WorktreeLifecycle?, worktree: GcReport.LinkedWorktree?) -> some View {
+  private func lifecycleChip(_ lifecycle: WorktreeLifecycle?, workspace: WorkspaceStorage) -> some View {
+    let worktree = workspace.worktree
+    if workspace.missing {
+      Chip(tint: Theme.warn) { Text("Folder gone") }
+        .help("stim gc --delete drops this project's record and deletes its owned devices")
+    } else {
+      lifecycleText(lifecycle, worktree: worktree, unprovisioned: workspace.unprovisioned)
+    }
+  }
+
+  @ViewBuilder
+  private func lifecycleText(_ lifecycle: WorktreeLifecycle?, worktree: GcReport.LinkedWorktree?, unprovisioned: Bool)
+    -> some View
+  {
     switch lifecycle {
     case .merged:
       Chip(tint: Theme.live) { Text(lifecycle!.title) }.help(abbreviatingHome(worktree?.detail ?? ""))
@@ -265,17 +284,29 @@ struct StorageView: View {
     case .stale:
       Chip(tint: Theme.warn) { Text(lifecycle!.title) }.help("No recorded use for that long")
     case .active:
-      Text("Active").foregroundStyle(Theme.tertiary)
+      Text(unprovisioned ? "Not warmed" : "Active").foregroundStyle(Theme.tertiary)
+        .help(unprovisioned ? "A linked worktree stim worktree warm has not set up" : "")
     case nil:
-      Text("\u{2014}").foregroundStyle(Theme.tertiary).help("Not a linked worktree stim gc sweeps")
+      Text(unprovisioned ? "Not warmed" : "Checkout").foregroundStyle(Theme.tertiary)
+        .help(unprovisioned ? "A linked worktree stim worktree warm has not set up" : "A source checkout; stim gc never removes it")
     }
   }
 
-  private func size(_ bytes: Int64?) -> some View {
-    Text(bytes.map(formatDisk) ?? "\u{2014}")
+  private func size(_ measurement: DiskSize) -> some View {
+    let text: String
+    let reason: String
+    switch measurement {
+    case .size(let bytes): (text, reason) = (formatDisk(bytes), "")
+    case .absent: (text, reason) = ("None", "Nothing on disk")
+    case .measuring: (text, reason) = ("\u{2026}", "Measuring")
+    case .failed: (text, reason) = ("Unknown", "Could not be sized in time; Refresh to try again")
+    case .notMeasured: (text, reason) = ("\u{2014}", "Not measured yet")
+    }
+    return Text(text)
       .font(Theme.mono(11.5))
-      .foregroundStyle(bytes == nil ? Theme.tertiary : Theme.text)
+      .foregroundStyle(measurement.bytes.map { $0 > 0 } == true ? Theme.text : Theme.tertiary)
       .frame(width: Self.sizeWidth, alignment: .trailing)
+      .help(reason)
   }
 
   private func removeMerged(_ merged: [GcReport.LinkedWorktree], report: StorageReport) {
@@ -295,7 +326,7 @@ struct StorageView: View {
           locationRow(
             StorageLocation(
               title: "Build outputs of idle workspaces", path: nil,
-              bytes: outputs.compactMap(\.bytes).reduce(0, +),
+              size: .size(outputs.compactMap(\.bytes).reduce(0, +)),
               detail: outputs.count == 1 ? "1 workspace not in use" : "\(outputs.count) workspaces not in use"),
             icon: "hammer"
           ) {
@@ -303,13 +334,26 @@ struct StorageView: View {
           }
           ForEach(report.caches, id: \.dir) { cache in
             Rectangle().fill(Theme.border).frame(height: 1)
+            let selector = cache.selector(among: report.allCaches)
             locationRow(
-              StorageLocation(title: cache.name, path: cache.dir, bytes: cache.bytes, detail: cache.note ?? cache.dir),
+              StorageLocation(
+                title: cache.title(among: report.allCaches), path: cache.dir, size: cache.bytes.map(DiskSize.size) ?? .failed,
+                detail: [cache.note, abbreviatingHome(cache.dir)].compactMap { $0 }.joined(separator: " \u{00B7} ")),
               icon: "shippingbox"
             ) {
-              previewButton("Empty\u{2026}", ["gc", "--json", "--cache", cache.name])
-                .disabled(!cache.selectedAlone(among: report.caches))
+              previewButton("Empty\u{2026}", ["gc", "--json", "--cache", selector ?? cache.name])
+                .disabled(selector == nil)
             }
+          }
+          if !report.emptyCaches.isEmpty {
+            Rectangle().fill(Theme.border).frame(height: 1)
+            locationRow(
+              StorageLocation(
+                title: report.emptyCaches.count == 1 ? "1 empty cache" : "\(report.emptyCaches.count) empty caches",
+                path: nil, size: .size(0),
+                detail: report.emptyCaches.map { $0.title(among: report.allCaches) }.joined(separator: ", ")),
+              icon: "shippingbox"
+            ) { EmptyView() }
           }
           if let devices = report.reclaimableDevices {
             Rectangle().fill(Theme.border).frame(height: 1)
@@ -324,12 +368,15 @@ struct StorageView: View {
 
   private func unmanaged(_ report: StorageReport) -> some View {
     VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: 4) {
         Text("Outside Stim").font(Theme.heading(15))
-        Text("Information only. Stim never deletes these.").foregroundStyle(Theme.tertiary)
+        Text(
+          "Space that Xcode, Gradle and other apps use on this Mac, shown so you can see what else fills the disk. Stim never deletes these; clear them from the tool that owns them."
+        )
+        .foregroundStyle(Theme.tertiary)
       }
       if report.unmanaged.isEmpty {
-        Text(storage.measuring ? "Measuring\u{2026}" : "Not measured yet.").foregroundStyle(Theme.tertiary)
+        Text("Not measured yet.").foregroundStyle(Theme.tertiary)
       } else {
         Card {
           VStack(spacing: 0) {
@@ -361,7 +408,7 @@ struct StorageView: View {
         }
       }
       Spacer()
-      size(location.bytes)
+      size(location.size)
       action().frame(minWidth: 120, alignment: .trailing)
     }
     .padding(.horizontal, 16)

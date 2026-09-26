@@ -122,10 +122,15 @@ version with `gc --json`.
 ## Storage
 
 **Storage** at the top of the sidebar shows what uses disk space. It never
-blocks on a measurement: sizes load in the background at low priority, are kept
-for 15 minutes, and **Refresh** measures again.
+blocks on a measurement: each path is sized by its own `du` at utility
+priority, three at a time, and shows as soon as it finishes. A path that takes
+more than three minutes reads **Unknown**. Sizes are kept for 15 minutes, and
+**Refresh** measures again. Every size cell shows a size, **None** when nothing
+is on disk, an ellipsis while it is measured, or **Unknown**.
 
-- **Workspaces**: each workspace's build outputs, from `stim gc --json`, and its
+- **Workspaces**: largest first, each workspace and each linked worktree that
+  `stim worktree warm` has not set up (**Not warmed**), named with its
+  repository and branch. The table shows each one's build outputs, from `stim gc --json`, and its
   `node_modules` and owned simulators and emulators, which the app sizes with
   `du` (`~/Library/Developer/CoreSimulator/Devices/<UDID>` and
   `~/.android/avd/<name>.avd`, or `ANDROID_AVD_HOME`). A trash icon marks build
@@ -133,16 +138,21 @@ for 15 minutes, and **Refresh** measures again.
   The lifecycle column reads **Merged into main** from `stim gc --json`, **PR #n
   open** from `gh pr list` in the repository when the GitHub CLI is on the login
   shell's `PATH` and signed in, **Stale Nd** after 7 days without recorded use,
-  or **Active**. Without `gh` the column still shows merged and stale.
+  or **Active**. A source checkout reads **Checkout**, and a registered project
+  whose folder is gone reads **Folder gone** until `stim gc --delete` drops it.
+  Without `gh` the column still shows merged and stale.
   **Remove merged worktrees** runs `stim worktree remove <path>` for each
   worktree gc reports as merged, after a confirmation. A row's menu reveals the
   worktree in Finder or runs `stim worktree remove` in it.
 - **Stim caches and devices**: build outputs of idle workspaces, each shared
-  cache, and parked, orphaned or stale owned devices, from `stim gc --json`.
+  cache largest first, and parked, orphaned or stale owned devices, from `stim gc --json`.
+  Caches that share a name, such as each project's Metro transform cache, are
+  titled with their directory, and empty caches are folded into one row.
   Each row previews a scoped dry run (`stim gc --json --cache workspaces`,
-  `stim gc --json --cache <name>`, or `stim gc --json`) in the activity sheet,
+  `stim gc --json --cache <name or directory>`, or `stim gc --json`) in the activity sheet,
   whose **Delete** runs the same scope with `--delete`.
-- **Outside Stim**: simulators Stim does not own, Xcode DerivedData, Gradle
+- **Outside Stim**: space other tools use on the Mac, shown so the page
+  accounts for what else fills the disk: simulators Stim does not own, Xcode DerivedData, Gradle
   caches and `~/Library/Caches`, measured with `du` and shown for information
   with **Reveal in Finder**. A Stim cache inside one of them is subtracted and
   listed under Stim instead.
