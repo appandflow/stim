@@ -104,3 +104,10 @@ public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {
 public func shellQuote(_ s: String) -> String {
   "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
+
+/// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one local
+/// device, naming its slot unless it is the default one.
+public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand {
+  let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
+  return StimCommand([device.platform] + slot, cwd: cwd)
+}

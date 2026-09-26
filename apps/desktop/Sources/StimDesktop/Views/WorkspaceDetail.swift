@@ -217,7 +217,11 @@ struct Inspector: View {
                 Text(detail).foregroundStyle(Theme.secondary).lineLimit(1).layoutPriority(1)
               }
               Spacer()
-              Text(device.state).foregroundStyle(Theme.tertiary).lineLimit(1)
+              if device.appStopped {
+                Text("App stopped").foregroundStyle(Theme.warn).lineLimit(1).layoutPriority(1)
+              } else {
+                Text(device.state).foregroundStyle(Theme.tertiary).lineLimit(1)
+              }
               if device.isRunning {
                 deviceStopButton(device)
               }
@@ -282,6 +286,7 @@ struct Inspector: View {
       }
     }
     .buttonStyle(.stim(.destructive))
+    .fixedSize()
     .disabled(actions.active(for: env.path) != nil)
     .help(
       isRemote

@@ -44,6 +44,17 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  public var app: AppProcess? {
+    switch self {
+    case .ios(_, let d): return d.app
+    case .android(_, let d): return d.app
+    case .remote: return nil
+    }
+  }
+
+  /// The device is up and `stim status` saw no process of the workspace's app on it.
+  public var appStopped: Bool { isRunning && app?.state == "stopped" }
+
   /// The key `ScreenActivity` records screen changes under: the simulator UDID or the emulator serial.
   public var activityKey: String? {
     switch self {

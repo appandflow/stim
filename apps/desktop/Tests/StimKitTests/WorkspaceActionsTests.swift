@@ -63,6 +63,23 @@ import Testing
     #expect(!(try workspace(metro + shutdown).canReload))
     #expect(!(try workspace(booted).canReload))
   }
+
+  @Test func aStoppedAppNeedsRunNotReload() throws {
+    let stopped = try workspace(
+      #","metro":{"port":8081,"running":true,"pid":1},"slots":[{"slot":"duo","ios":{"name":"stim-w-duo (iPhone Duo 27.1)","udid":"B","owned":true,"state":"Booted","app":{"id":"com.example.app","state":"stopped"}}}]"#
+    )
+    let device = try #require(stopped.devices.first)
+    #expect(device.appStopped)
+    #expect(!stopped.canReload)
+    #expect(runCommand(for: device, cwd: "/w").arguments == ["ios", "--slot", "duo"])
+    let unknown = try workspace(
+      #","metro":{"port":8081,"running":true,"pid":1},"android":{"name":"stim-w","owned":true,"physical":false,"serial":"emulator-5554","state":"detected","app":{"id":"com.example.app","state":"unknown"}}"#
+    )
+    let emulator = try #require(unknown.devices.first)
+    #expect(!emulator.appStopped)
+    #expect(unknown.canReload)
+    #expect(runCommand(for: emulator, cwd: "/w").arguments == ["android"])
+  }
 }
 
 @Suite struct WorktreeRemovalAllowedTests {
