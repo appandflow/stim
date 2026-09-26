@@ -8,11 +8,11 @@ import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
-import type { DevServerStart } from '../engine/build-facts.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
 import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
+import { reserveMetroPort } from '../ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
 import { webLaunchRemedy, webLaunchVerdict, type WebLaunched } from '../web/launch.ts';
@@ -32,7 +32,7 @@ import { detectIsExpo, findCommandWorkspace, isPackageResolvable } from '../work
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings } from '../workspace/settings.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
-import { ensureDevServer, ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
+import { ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
 
 interface WebFailure {
   code: string;
@@ -47,7 +47,6 @@ export interface WebFacts extends WebBrowserState {
   metroPort: number | null;
   logs: { dir: string };
   durationMs: number;
-  devServer?: DevServerStart;
 }
 
 const PORT_PLACEHOLDER = /\{port:([^}]*)\}/g;
@@ -56,7 +55,9 @@ const POLL_MS = 250;
 
 const printNote = (line: string) => console.error(line);
 
-const EXPO_WEB_DEPENDENCIES = 'npx expo install react-dom react-native-web @expo/metro-runtime';
+const EXPO_WEB_PACKAGES = ['react-dom', 'react-native-web', '@expo/metro-runtime'];
+const EXPO_WEB_DEPENDENCIES = `npx expo install ${EXPO_WEB_PACKAGES.join(' ')}`;
+const WEB_SERVER_EXAMPLE = 'pnpm exec vite --port "$(stim ports get web)" --strictPort';
 
 function failure(code: string, message: string, remedy: string | null): { ok: false; error: WebFailure } {
   return { ok: false, error: { code, message, remedy } };
@@ -192,18 +193,18 @@ export async function runWeb({
     return failure(
       'STIM_WEB_DEPS_MISSING',
       'This Expo app cannot render on the web: react-native-web is not installed.',
-      `Run \`${EXPO_WEB_DEPENDENCIES}\`, then run \`stim web\` again.`,
+      `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\`, then run \`stim web\` again.`,
     );
   }
 
   let metroPort = getProject(root)?.metroPort ?? null;
-  let devServer: DevServerStart | null = null;
-  if (usesMetro) {
-    const gate = await ensureDevServer({ root, port: metroPort, settings, remote: false, note });
-    if (!gate.ok) return failure(gate.code, gate.message, gate.remedy);
-    metroPort = gate.port;
-    devServer = gate.devServer;
-  }
+  if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
+  const expoWeb = usesMetro && detectIsExpo(root);
+  const missingWebPackages = expoWeb ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [];
+  let serve: string;
+  if (!usesMetro) serve = `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``;
+  else if (missingWebPackages.length) serve = `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``;
+  else serve = "Start this workspace's Metro with `stim start`";
   let url: string;
   try {
     url = await resolveWebUrl(web.url ?? 'http://localhost:{port:metro}/', {
@@ -270,7 +271,7 @@ export async function runWeb({
   const verdict = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const remedy = webLaunchRemedy(verdict, { url, template: web.url, usesMetro });
+  const remedy = webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,
@@ -291,7 +292,6 @@ export async function runWeb({
       metroPort: usesMetro ? metroPort : null,
       logs: { dir: workspaceLogsDir(root) },
       durationMs: Date.now() - startedAt,
-      ...(devServer ? { devServer } : {}),
     },
   };
 }

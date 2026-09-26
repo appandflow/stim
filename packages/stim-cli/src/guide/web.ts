@@ -7,8 +7,12 @@ If Stim is not installed globally, replace stim with npx stim.
 stim web opens this workspace's page in a Chrome that Stim owns, captures the
 page's console, uncaught errors and failed requests in stim logs, and reports
 whether the page loaded. It uses the installed Google Chrome (or Chromium)
-with a profile Stim creates under STIM_HOME. Stim never installs a browser
-and never runs your web dev server; stim doctor reports a missing Chrome.
+with a profile Stim creates under STIM_HOME. Stim never installs a browser;
+stim doctor reports a missing Chrome.
+
+stim web never starts a web server, for any framework. It opens, reuses or
+reloads the owned Chrome at the page URL. Every web project follows the same
+two steps: start your dev server, then run stim web.
 
   stim web                 # headless, the default
   stim web --headed        # show the Chrome window
@@ -17,21 +21,27 @@ and never runs your web dev server; stim doctor reports a missing Chrome.
   stim reload web          # Page.reload on the owned page
   stim stop                # closes Chrome with the rest; the profile stays
 
-WHICH PAGE
+WHICH PAGE AND WHICH DEV SERVER
 
 Expo web runs on the workspace's Metro. With web.url unset, an Expo app
-opens http://localhost:<metroPort>/, and stim web starts Metro when it is not
-running, like stim ios. The app needs the web dependencies:
-  npx expo install react-dom react-native-web @expo/metro-runtime
+opens http://localhost:<metroPort>/. Its dev server is stim start:
 
-Any other web server (Vite, Next, webpack) is yours to start. Reserve its port
-with stim ports get, start it with strict-port behavior, and point web.url at
-it. {port:<label>} in web.url becomes that named port, {port:metro} the Metro
-port:
+  npx expo install react-dom react-native-web @expo/metro-runtime   # once
+  stim start
+  stim web
+
+Any other web server (Vite, Next, webpack) starts with its own command.
+Reserve its port with stim ports get, start it with strict-port behavior, and
+point web.url at it. {port:<label>} in web.url becomes that named port,
+{port:metro} the Metro port:
 
   pnpm exec vite --port "$(stim ports get web)" --strictPort
   stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
   stim web
+
+When nothing serves the page, stim web still opens Chrome, reports launched
+"unverified", and prints the remedy for this workspace: stim start for an
+Expo web app, the stim ports get web recipe for any other server.
 
 In a monorepo whose web app is its own package (apps/web beside apps/mobile),
 stim ports, web, settings, logs, reload, stop and status run from the web
@@ -56,7 +66,8 @@ window. See stim guide settings.
 MONOREPO RECIPE: A VITE PACKAGE WITH A BASE PATH AND HTTPS
 
 apps/web runs Vite through its dev script, serves the app under /apps/groups/,
-and uses @vitejs/plugin-basic-ssl; apps/mobile is the Stim app.
+and uses @vitejs/plugin-basic-ssl; apps/mobile is the Stim app. The flow is
+the same as for any web project: start the dev server, then run stim web.
 
   cd apps/mobile && stim ports get web     # registers the app; no Metro
   cd ../web
@@ -89,7 +100,7 @@ owned page rather than a shared port:
                  Metro, the page also fetched a web bundle
   "bundling"     Metro was still building the web bundle when the check ended
   "unverified"   the document failed (for example ERR_CONNECTION_REFUSED:
-                 nothing listens on the URL, or ERR_CERT_AUTHORITY_INVALID: a
+                 the dev server is not running, or ERR_CERT_AUTHORITY_INVALID: a
                  self-signed certificate), loaded without a Metro bundle, or
                  did not finish: 20 seconds with no answer, 60 once a server
                  other than Metro answered. The remedy line names the fix

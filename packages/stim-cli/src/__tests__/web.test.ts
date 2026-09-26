@@ -233,6 +233,7 @@ describe('launched', () => {
       url: 'https://localhost:8900/apps/groups/',
       template: 'https://localhost:{port:web}/apps/groups/',
       usesMetro: false,
+      serve: 'Start the web dev server on that port',
     };
     const http = {
       ...https,
@@ -255,8 +256,16 @@ describe('launched', () => {
     expect(webLaunchRemedy(loading, https)).toContain('cold dev server');
   });
 
-  test('on Metro, an HTTP error or a missing bundle points at the Metro build', () => {
-    const metro = { url: 'http://localhost:8081/', template: null, usesMetro: true };
+  test('on Metro, an unserved page points at stim start; an HTTP error or a missing bundle at the Metro build', () => {
+    const metro = {
+      url: 'http://localhost:8081/',
+      template: null,
+      usesMetro: true,
+      serve: "Start this workspace's Metro with `stim start`",
+    };
+    const refused = verdict([at('web_document_failed', 20, { msg: 'GET x failed: net::ERR_CONNECTION_REFUSED' })])!;
+    expect(webLaunchRemedy(refused, metro)).toContain('`stim start`, then run `stim web` again');
+    expect(webLaunchRemedy(verdict([], { elapsedMs: 20_000 })!, metro)).toContain('`stim start`');
     const failed = verdict([at('web_document_failed', 20, { msg: 'GET x failed: HTTP 500' })])!;
     expect(webLaunchRemedy(failed, metro)).toContain('Metro may have failed');
     const answered = verdict([at('web_document_response', 20, { status: 200 })], {

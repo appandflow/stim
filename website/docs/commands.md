@@ -394,9 +394,11 @@ stim web [--headed] [--json]
 
 Opens the workspace's page in a Stim-owned Chrome, headless unless `--headed`,
 and captures its console, uncaught errors and failed requests in `stim logs`.
-Expo apps open their Metro URL, and Metro starts when needed. Other apps set
-`web.url`, for example `http://localhost:{port:web}/`, and run their own dev
-server. The payload reports `launched`, the page URL, the Chrome `pid`, the
+It never starts a web server: start the dev server first, then run
+`stim web`. Expo apps open their Metro URL and start Metro with `stim start`.
+Other apps set `web.url`, for example `http://localhost:{port:web}/`, and run
+their own dev server on `stim ports get web`. When nothing serves the page,
+`launched` is `"unverified"` and the remedy names that step. The payload reports `launched`, the page URL, the Chrome `pid`, the
 `profile` directory and the reserved `cdpEndpoint`. A second run with the same
 options navigates the same Chrome again.
 

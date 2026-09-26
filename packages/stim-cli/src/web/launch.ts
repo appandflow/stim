@@ -75,11 +75,14 @@ export function webLaunchVerdict({
 }
 
 const RETRY = 'then run `stim web` again';
+const METRO_BUILD = (url: string) =>
+  `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`;
 
 export function webLaunchRemedy(
   verdict: WebLaunchVerdict,
-  { url, template, usesMetro }: { url: string; template: string | null; usesMetro: boolean },
+  { url, template, usesMetro, serve }: { url: string; template: string | null; usesMetro: boolean; serve: string },
 ): string | null {
+  const nothingServed = `Nothing served ${url}. ${serve}, ${RETRY}.`;
   const https = url.startsWith('https:');
   const reason = verdict.reason ?? '';
   const withScheme = (scheme: 'http' | 'https') =>
@@ -105,7 +108,7 @@ export function webLaunchRemedy(
       if (!https && /net::ERR_EMPTY_RESPONSE/.test(reason)) {
         return `The server on that port closed the connection without an HTTP answer. If it serves HTTPS, set ${withScheme('https')}, ${RETRY}.`;
       }
-      if (usesMetro) break;
+      if (usesMetro) return Number.isNaN(status) ? nothingServed : METRO_BUILD(url);
       if (status >= 400 && status < 500) {
         return `The server has no page at ${url}. Check web.url's path, including the app's base path, ${RETRY}.`;
       }
@@ -113,11 +116,10 @@ export function webLaunchRemedy(
         return `The dev server failed to serve ${url}. Read its output and \`stim logs --errors\`, ${RETRY}.`;
       }
       break;
-    case 'no-bundle':
     case 'no-response':
+      return nothingServed;
+    case 'no-bundle':
       break;
   }
-  return usesMetro
-    ? `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`
-    : `Nothing served ${url}. Start the web dev server on that port, for example \`pnpm exec vite --port "$(stim ports get web)" --strictPort\`, ${RETRY}.`;
+  return usesMetro ? METRO_BUILD(url) : nothingServed;
 }
