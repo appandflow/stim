@@ -53,11 +53,12 @@ import Testing
         #"""
         {"devices":[
           {"id":"a1","name":"Phone","identity":{"kind":"tailnet","nodeId":"n1","nodeName":"phone.tail1.ts.net","user":"janic@example.com"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
-          {"id":"b2","name":"Sim","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":"2026-09-25T06:00:00.000Z","capabilities":["read"]}
+          {"id":"b2","name":"Sim","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":"2026-09-25T06:00:00.000Z","capabilities":["read","control"]}
         ]}
         """#.utf8)
     ).devices
     #expect(devices.map(\.node) == ["phone.tail1.ts.net (janic@example.com)", "This Mac"])
     #expect(devices[0].lastSeenAt == nil && devices[1].lastSeenAt != nil)
+    #expect(devices.map(\.canControl) == [false, true])
   }
 }

@@ -16,7 +16,7 @@ final class ServerController: ObservableObject {
   @Published private(set) var state = State.off
   @Published private(set) var devices: [PairedDevice] = []
   @Published private(set) var devicesError: String?
-  @Published private(set) var revokeError: String?
+  @Published private(set) var changeError: String?
 
   private var environment: Task<[String: String], Never>?
   private var process: Process?
@@ -142,14 +142,26 @@ final class ServerController: ObservableObject {
     }
   }
 
+  func grant(_ device: PairedDevice, control: Bool) {
+    if let index = devices.firstIndex(where: { $0.id == device.id }) {
+      devices[index].capabilities = control ? ["read", "control"] : ["read"]
+    }
+    Task {
+      let cli = await cli()
+      let result = await Task.detached(operation: { Result { try cli.grant(device.id, control: control) } }).value
+      if case .failure(let error) = result { changeError = error.localizedDescription } else { changeError = nil }
+      reloadDevices()
+    }
+  }
+
   func revoke(_ device: PairedDevice) {
     Task {
       let cli = await cli()
       switch await Task.detached(operation: { Result { try cli.revoke(device.id) } }).value {
       case .success:
-        revokeError = nil
+        changeError = nil
         reloadDevices()
-      case .failure(let error): revokeError = error.localizedDescription
+      case .failure(let error): changeError = error.localizedDescription
       }
     }
   }

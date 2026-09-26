@@ -19,7 +19,7 @@ struct PhonesView: View {
         serverState
       } footer: {
         Text(
-          "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale and can only read."
+          "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs; a phone allowed to control can also drive simulators and emulators and run reload and stop."
         )
         .foregroundStyle(Theme.tertiary)
         .multilineTextAlignment(.leading)
@@ -37,14 +37,14 @@ struct PhonesView: View {
       }
 
       Section {
-        ForEach([server.devicesError, server.revokeError].compactMap { $0 }, id: \.self) { error in
+        ForEach([server.devicesError, server.changeError].compactMap { $0 }, id: \.self) { error in
           Text(abbreviatingHome(error)).foregroundStyle(Theme.error)
         }
         if server.devices.isEmpty {
           Text("No paired phones.").foregroundStyle(Theme.secondary)
         }
         ForEach(server.devices) { device in
-          DeviceRow(device: device) { revoking = device }
+          DeviceRow(device: device, allowControl: { server.grant(device, control: $0) }) { revoking = device }
         }
       } header: {
         HStack {
@@ -221,14 +221,18 @@ private struct RouteSection: View {
 
 private struct DeviceRow: View {
   var device: PairedDevice
+  var allowControl: (Bool) -> Void
   var revoke: () -> Void
 
   var body: some View {
     HStack(spacing: 12) {
       Image(systemName: "iphone").font(.system(size: 18)).foregroundStyle(Theme.lavender)
       VStack(alignment: .leading, spacing: 3) {
-        Text(device.name).font(Theme.body(13, weight: .semibold))
-        Text(device.node).font(Theme.mono()).foregroundStyle(Theme.secondary)
+        HStack(spacing: 6) {
+          Text(device.name).font(Theme.body(13, weight: .semibold))
+          ScopeBadge(canControl: device.canControl)
+        }
+        Text("\(device.id) \u{00B7} \(device.node)").font(Theme.mono()).foregroundStyle(Theme.secondary)
       }
       Spacer()
       VStack(alignment: .trailing, spacing: 3) {
@@ -237,6 +241,9 @@ private struct DeviceRow: View {
           .foregroundStyle(Theme.tertiary)
       }
       .font(Theme.body(11.5))
+      Toggle("Allow control", isOn: .init(get: { device.canControl }, set: allowControl))
+        .toggleStyle(.checkbox)
+        .help("Let this phone drive simulators and emulators and run reload and stop.")
       Button("Revoke", role: .destructive, action: revoke)
     }
     .padding(.vertical, 2)
@@ -248,6 +255,20 @@ private struct DeviceRow: View {
   }
 }
 
+private struct ScopeBadge: View {
+  var canControl: Bool
+
+  var body: some View {
+    Text(canControl ? "Can control" : "Read-only")
+      .font(Theme.body(10.5, weight: .semibold))
+      .foregroundStyle(canControl ? Theme.live : Theme.secondary)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(Capsule().fill((canControl ? Theme.live : Theme.secondary).opacity(0.14)))
+      .lineLimit(1)
+  }
+}
+
 struct PairSheet: View {
   @ObservedObject var server: ServerController
   @Environment(\.dismiss) private var dismiss
@@ -256,21 +277,41 @@ struct PairSheet: View {
   @State private var paired: PairedDevice?
   @State private var openedAt = Date()
   @State private var showsToken = false
+  @State private var allowsControl = true
 
   var body: some View {
     VStack(spacing: 18) {
       Text("Pair a Phone").font(Theme.heading(20))
       if let paired {
         Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(Theme.live)
-        Text("Paired \(paired.name)").font(Theme.body(15, weight: .semibold))
-        Text(paired.node).font(Theme.mono()).foregroundStyle(Theme.secondary)
-      } else if let error {
-        Text(abbreviatingHome(error)).foregroundStyle(Theme.error).textSelection(.enabled)
-        Button("Try Again", action: load)
-      } else if let code {
-        codeView(code)
+        HStack(spacing: 6) {
+          Text("Paired \(paired.name)").font(Theme.body(15, weight: .semibold))
+          ScopeBadge(canControl: paired.canControl)
+        }
+        Text("\(paired.id) \u{00B7} \(paired.node)").font(Theme.mono()).foregroundStyle(Theme.secondary)
       } else {
-        ProgressView().frame(width: 260, height: 260)
+        VStack(alignment: .leading, spacing: 4) {
+          Toggle("Allow this phone to control devices", isOn: $allowsControl)
+            .toggleStyle(.checkbox)
+            .onChange(of: allowsControl) { load() }
+          Text(
+            allowsControl
+              ? "It can drive simulators and emulators and run reload and stop."
+              : "It can only see workspaces, devices and logs. You can allow control later in the Phones tab."
+          )
+          .font(Theme.body(11.5))
+          .foregroundStyle(Theme.tertiary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        if let error {
+          Text(abbreviatingHome(error)).foregroundStyle(Theme.error).textSelection(.enabled)
+          Button("Try Again", action: load)
+        } else if let code {
+          codeView(code)
+        } else {
+          ProgressView().frame(width: 260, height: 260)
+        }
       }
       HStack {
         Spacer()
@@ -366,9 +407,12 @@ struct PairSheet: View {
     code = nil
     showsToken = false
     let port = server.port
+    let control = allowsControl
     Task {
       let cli = await server.cli()
-      switch await Task.detached(operation: { Result { try cli.pair(port: port) } }).value {
+      let result = await Task.detached(operation: { Result { try cli.pair(port: port, control: control) } }).value
+      guard control == allowsControl else { return }
+      switch result {
       case .success(let value): code = value
       case .failure(let failure): error = failure.localizedDescription
       }

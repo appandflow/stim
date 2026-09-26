@@ -272,7 +272,7 @@ A session with no recorded preview URL shows a message instead of the page.
 
 ## Phones
 
-**Stim > Settings > Phones** serves Stim to the read-only phone app through
+**Stim > Settings > Phones** serves Stim to the phone app through
 `stim-server` from `@stim-cli/server`. With **Serve to phones** on, the app
 checks `http://127.0.0.1:7787/health` at launch. When a server answers, the app
 uses it and never starts a second one. Otherwise it runs `stim-server --port
@@ -285,12 +285,19 @@ choose in the same tab. While a server runs, the tab re-checks it every 5
 seconds, and the pairing and device commands use the `STIM_HOME` its health
 reports, so they act on that server's pairing state.
 
-**Pair a Phone** runs `stim-server pair --json` and shows its single-use code as
-a QR code with the time left before it expires, plus the endpoint and token for
-manual entry. The sheet shows the phone once it pairs. The paired phones list
-comes from `stim-server devices --json`: each phone's name, the tailnet node it
-paired from, when it was last seen, and **Revoke**, which runs `stim-server
-devices revoke <id>` after a confirmation.
+A read-only phone sees workspaces, devices and logs. A phone allowed to control
+can also drive simulators and emulators and run reload and stop.
+
+**Pair a Phone** runs `stim-server pair --json`, with `--control` while **Allow
+this phone to control devices** is checked (the default), and shows its
+single-use code as a QR code with the time left before it expires, plus the
+endpoint and token for manual entry. Changing the option generates a new code.
+The sheet shows the phone once it pairs. The paired phones list comes from
+`stim-server devices --json`: each phone's name, a **Read-only** or **Can
+control** badge, its short id, the tailnet node it paired from, when it was last
+seen, an **Allow control** checkbox, which runs `stim-server devices grant <id>
+--control` or `--read`, and **Revoke**, which runs `stim-server devices revoke
+<id>` after a confirmation.
 
 When the server reports that Tailscale is not running, the tab shows the
 steps: `tailscale up`, restart the server (a button when the app started it),
