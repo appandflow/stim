@@ -1248,7 +1248,6 @@ describe('the cache', () => {
     expect(order).toEqual([
       'fingerprintProject',
       'runPrebuild',
-      'fingerprintProject',
       'runPodInstall',
       'fingerprintProject',
       'buildIos',
@@ -4268,19 +4267,32 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       expect(stderr).toContain('expoConfig changed while the build ran');
     });
 
-    test('a config write by prebuild itself is stored under the post-prebuild key', async () => {
+    function resolvedConfigFingerprint(file: string) {
+      return async () => {
+        const contents = readFileSync(file, 'utf8');
+        return {
+          hash: contents.includes('bundleIdentifier') ? WARM : COLD,
+          sources: [{ type: 'contents', id: 'expoConfig', contents, hash: contents, reasons: ['expoConfig'] }],
+        };
+      };
+    }
+
+    test('the bundle identifier prebuild writes into app.json is stored under the post-prebuild key', async () => {
       reserve();
       const config = join(root, 'app.json');
-      writeFileSync(config, 'portrait');
+      writeFileSync(config, JSON.stringify({ name: 'app', ios: { supportsTablet: true } }));
       const { calls, exitCode } = await run(
         {},
         {
           detectIsExpo: () => true,
           planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-          fingerprintProject: configFingerprint(config),
+          fingerprintProject: resolvedConfigFingerprint(config),
           runPrebuild: async () => {
-            writeFileSync(config, 'portrait with bundle id');
+            writeFileSync(
+              config,
+              JSON.stringify({ name: 'app', ios: { bundleIdentifier: 'com.anonymous.app', supportsTablet: true } }),
+            );
             return { ok: true, durationMs: 42000 };
           },
         },
@@ -4289,6 +4301,33 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       expect(exitCode).toBeNull();
       expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
       expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
+    });
+
+    test('a config edit during pod install is not installed from an entry at the post-mutation key', async () => {
+      reserve();
+      const config = join(root, 'app.config.ts');
+      writeFileSync(config, 'portrait');
+      const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
+      const { calls, exitCode } = await run(
+        {},
+        {
+          detectIsExpo: () => true,
+          planPrebuild: () => 'generate',
+          readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+          fingerprintProject: configFingerprint(config),
+          runPodInstall: async () => {
+            writeFileSync(config, 'landscape');
+            return { ok: true, durationMs: 18000 };
+          },
+          resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+        },
+      );
+
+      expect(exitCode).toBeNull();
+      expect(calls.order.includes('buildIos')).toBe(true);
+      expect(calls.args.installIosApp.appPath).not.toBe(cachedApp);
+      expect(calls.order.includes('storeBuild')).toBe(false);
+      expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: null });
     });
 
     test('a node_modules rewrite during xcodebuild moves the key instead of skipping the store', async () => {

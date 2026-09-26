@@ -569,7 +569,7 @@ export async function acquireIosArtifact(
     }
   }
 
-  async function settleStoreKeyAfterCompile(configBaseline: FingerprintSource[]): Promise<void> {
+  async function settleStoreKeyAfterCompile(prebuildRan: boolean): Promise<void> {
     if (!storeHash || !storeKey) return;
     const afterBuild = await refingerprintAfterMutation({
       projectRoot: root,
@@ -580,7 +580,8 @@ export async function acquireIosArtifact(
     const changedDuringBuild = afterBuild
       ? inputsChangedDuringBuild({
           platform: PLATFORM,
-          configBaseline,
+          lookup: fingerprintSources,
+          prebuildRan,
           compiled: storeSources,
           current: afterBuild.sources,
         })
@@ -634,7 +635,6 @@ export async function acquireIosArtifact(
 
       const mutatingSteps: string[] = [];
       const rekeyedBy: string[] = [];
-      let configBaseline: FingerprintSource[] | null = fingerprintSources;
 
       const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
       if (prebuild === 'refuse') {
@@ -660,7 +660,6 @@ export async function acquireIosArtifact(
             : 'ios/ not generated from this fingerprint -> regenerated with --clean';
         phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
-        configBaseline = null;
       }
 
       // A bare (non-Expo) project's ios/ never regenerates; ios.ts already validated --scheme against it.
@@ -675,15 +674,6 @@ export async function acquireIosArtifact(
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
       const action = podAction(podState, verdict);
       if (action.install) {
-        if (configBaseline === null) {
-          const afterPrebuild = await refingerprintAfterMutation({
-            projectRoot: root,
-            platform: PLATFORM,
-            previousHash: fingerprint,
-            fingerprint: d.fingerprintProject,
-          });
-          configBaseline = afterPrebuild?.sources ?? null;
-        }
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
         const podCommand = result?.command || 'pod install';
@@ -713,9 +703,9 @@ export async function acquireIosArtifact(
           previousHash: fingerprint,
           fingerprint: d.fingerprintProject,
         });
-        const editedConfig = after && configBaseline ? configInputsChanged(configBaseline, after.sources) : [];
-        if (after) configBaseline = after.sources;
-        if (after && !editedConfig.length && mutatingSteps.includes('prebuild')) {
+        const prebuildRan = mutatingSteps.includes('prebuild');
+        const editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
+        if (after && !editedConfig.length && prebuildRan) {
           recordPrebuild(root, PLATFORM, after.hash);
         }
         if (!after || editedConfig.length) {
@@ -800,7 +790,7 @@ export async function acquireIosArtifact(
         appPath = result.appPath;
         bundleId = result.bundleId;
 
-        await settleStoreKeyAfterCompile(configBaseline ?? fingerprintSources);
+        await settleStoreKeyAfterCompile(mutatingSteps.includes('prebuild'));
 
         if (storeKey && cachePolicy.write) {
           try {

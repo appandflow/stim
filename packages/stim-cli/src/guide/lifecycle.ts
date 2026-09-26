@@ -1004,9 +1004,11 @@ THE BUILD CACHE HAS THREE LEVELS
   itself makes to a fingerprinted file under node_modules/ or the native
   directory moves the key the same way, printed as \`(after Gradle)\` or
   \`(after xcodebuild)\`. Any other input that changed while the build ran
-  -- the app config or a config plugin after prebuild wrote its own changes,
+  -- the app config or a config plugin at any point after the first lookup,
   or any other source during the compile -- means the artifact may not match
-  the key, so Stim installs what it built and stores nothing:
+  the key, so Stim installs what it built and stores nothing. The one config
+  change exempted is the ios.bundleIdentifier or android.package that
+  \`expo prebuild\` adds to a static app.json that lacks one:
 
     fingerprint expoConfig changed while the build ran, so the artifact may not match its key; the build will be installed but not cached
 
@@ -1014,12 +1016,12 @@ THE BUILD CACHE HAS THREE LEVELS
   run regenerates a CNG directory from the edited config and compiles it
   instead of reusing the stale one. An edit under node_modules/ or the native
   directory during the compile cannot be told apart from the build's own
-  writes and moves the key. Stim also skips storing when the fingerprint after prebuild, pod
-  install or the compile cannot be computed. In every skipped case nothing
-  goes to the local cache, the cache provider or a remote upload, fingerprint
-  and cacheKey are null in the result and lastBuild, and the old key is not
-  reused. These null fields mean unavailable cache information, not an install
-  failure.
+  writes and moves the key. Stim also skips storing when the fingerprint
+  after prebuild, pod install or the compile cannot be computed. In every
+  skipped case nothing goes to the local cache, the cache provider or a
+  remote upload, fingerprint and cacheKey are null in the result and
+  lastBuild, and the old key is not reused. These null fields mean
+  unavailable cache information, not an install failure.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an

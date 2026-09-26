@@ -4509,6 +4509,61 @@ describe('re-fingerprint after Gradle', () => {
     expect(h.calls.install[0]?.apkPath).toBe(apk);
     expect(h.stderr.some((line) => /expoConfig changed while the build ran/.test(line))).toBe(true);
   });
+
+  test('an app config edited during prebuild skips the late lookup and the store', async () => {
+    const config = join(root, 'app.config.ts');
+    writeFileSync(config, 'portrait');
+    const cachedApk = fakeApk();
+    const h = harness({
+      planPrebuildFor: () => 'generate',
+      fingerprint: async () => {
+        const contents = readFileSync(config, 'utf8');
+        return {
+          hash: contents === 'portrait' ? BEFORE_BUILD : AFTER_BUILD,
+          sources: [{ type: 'contents', id: 'expoConfig', contents: '', hash: contents, reasons: ['expoConfig'] }],
+        };
+      },
+      prebuild: async () => {
+        writeFileSync(config, 'landscape');
+        return { ok: true, durationMs: 1000 };
+      },
+      resolveCached: (_platform: string, key: string) => (key.startsWith(AFTER_BUILD) ? cachedApk : null),
+    });
+
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(result.facts?.cacheHit).not.toBe('local');
+    expect(h.calls.storeCached).toEqual([]);
+    expect(result.facts?.cacheKey).toBeNull();
+    expect(readState().prebuild).toEqual({ android: null });
+    expect(h.stderr.some((line) => /expoConfig changed while the build ran/.test(line))).toBe(true);
+  });
+
+  test('the package prebuild writes into app.json is stored under the post-prebuild key', async () => {
+    const config = join(root, 'app.json');
+    writeFileSync(config, JSON.stringify({ name: 'app' }));
+    const h = harness({
+      planPrebuildFor: () => 'generate',
+      fingerprint: async () => {
+        const contents = readFileSync(config, 'utf8');
+        return {
+          hash: contents.includes('package') ? AFTER_BUILD : BEFORE_BUILD,
+          sources: [{ type: 'contents', id: 'expoConfig', contents, hash: contents, reasons: ['expoConfig'] }],
+        };
+      },
+      prebuild: async () => {
+        writeFileSync(config, JSON.stringify({ android: { package: 'com.anonymous.app' }, name: 'app' }));
+        return { ok: true, durationMs: 1000 };
+      },
+    });
+
+    const result = await h.run();
+
+    expect(h.calls.storeCached[0]?.[1]).toBe(`${AFTER_BUILD}-debug-sim`);
+    expect(result.facts?.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
+    expect(readState().prebuild).toEqual({ android: AFTER_BUILD });
+  });
 });
 
 test('a first miss lists untracked files under the native dirs and points at .fingerprintignore', async () => {

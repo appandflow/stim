@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
@@ -342,24 +343,64 @@ function writtenByBuild(name: string, platform: string): boolean {
   );
 }
 
-export function configInputsChanged(before: FingerprintSource[], after: FingerprintSource[]): string[] {
+const PREBUILD_WRITTEN_IDS = [
+  ['ios', 'bundleIdentifier'],
+  ['android', 'package'],
+] as const;
+
+function expoConfigContents(sources: FingerprintSource[]): Record<string, unknown> | null {
+  const source = sources.find((s) => s.type === 'contents' && s.id === 'expoConfig');
+  if (source?.type !== 'contents') return null;
+  try {
+    const parsed: unknown = JSON.parse(String(source.contents));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function onlyPrebuildIdsAdded(before: FingerprintSource[], after: FingerprintSource[]): boolean {
+  const previous = expoConfigContents(before);
+  const current = expoConfigContents(after);
+  if (!previous || !current) return false;
+  const stripped: Record<string, unknown> = { ...current };
+  for (const [section, key] of PREBUILD_WRITTEN_IDS) {
+    const was = previous[section] as Record<string, unknown> | undefined;
+    const now = stripped[section] as Record<string, unknown> | undefined;
+    if (now?.[key] === undefined || was?.[key] !== undefined) continue;
+    const rest = { ...now };
+    delete rest[key];
+    if (was === undefined && Object.keys(rest).length === 0) delete stripped[section];
+    else stripped[section] = rest;
+  }
+  return isDeepStrictEqual(previous, stripped);
+}
+
+export function configInputsChanged(
+  before: FingerprintSource[],
+  after: FingerprintSource[],
+  { prebuildRan }: { prebuildRan: boolean },
+): string[] {
   return compareSourceLists(before, after)
     .filter((change) => change.reasons.some((reason) => CONFIG_INPUT_REASONS.has(reason)))
+    .filter((change) => !(prebuildRan && change.name === 'expoConfig' && onlyPrebuildIdsAdded(before, after)))
     .map((change) => change.name);
 }
 
 export function inputsChangedDuringBuild({
   platform,
-  configBaseline,
+  lookup,
+  prebuildRan,
   compiled,
   current,
 }: {
   platform: string;
-  configBaseline: FingerprintSource[];
+  lookup: FingerprintSource[];
+  prebuildRan: boolean;
   compiled: FingerprintSource[];
   current: FingerprintSource[];
 }): string[] {
-  const names = new Set(configInputsChanged(configBaseline, current));
+  const names = new Set(configInputsChanged(lookup, current, { prebuildRan }));
   for (const change of compareSourceLists(compiled, current)) {
     if (!writtenByBuild(change.name, platform)) names.add(change.name);
   }

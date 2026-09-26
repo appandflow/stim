@@ -11,6 +11,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
   changedDuringBuildLine,
+  configInputsChanged,
   filesystemBuildCapability,
   fingerprintDiffRecord,
   inputsChangedDuringBuild,
@@ -549,18 +550,19 @@ export async function acquireAndroidArtifact(
         }
 
         const rekeyedBy: string[] = [];
-        let configBaseline = fingerprintSources;
+        let editedConfig: string[] = [];
         const prebuildPlan = planPrebuildFor(root, PLATFORM, {
           isExpo,
           fingerprint: hash,
           sources: fingerprintSources,
         });
+        const prebuildRan = prebuildPlan === 'generate' || prebuildPlan === 'regenerate';
         if (prebuildPlan === 'refuse') {
           const refusal = staleNativeDirRefusal(PLATFORM);
           phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
           return false;
         }
-        if (prebuildPlan === 'generate' || prebuildPlan === 'regenerate') {
+        if (prebuildRan) {
           step('prebuild');
           recordPrebuild(root, PLATFORM, null);
           const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, {
@@ -589,11 +591,9 @@ export async function acquireAndroidArtifact(
             previousHash: hash,
             fingerprint,
           });
-          if (after) {
-            recordPrebuild(root, PLATFORM, after.hash);
-            configBaseline = after.sources;
-          }
-          if (after?.moved) {
+          editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
+          if (after && !editedConfig.length) recordPrebuild(root, PLATFORM, after.hash);
+          if (after?.moved && !editedConfig.length) {
             rekeyedBy.push('prebuild');
             storeHash = after.hash;
             storeSources = after.sources;
@@ -666,28 +666,34 @@ export async function acquireAndroidArtifact(
           if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
           const beforeBuildHash = storeHash;
-          const afterBuild = await refingerprintAfterMutation({
-            projectRoot: root,
-            platform: PLATFORM,
-            previousHash: beforeBuildHash,
-            fingerprint,
-          });
+          const afterBuild = editedConfig.length
+            ? null
+            : await refingerprintAfterMutation({
+                projectRoot: root,
+                platform: PLATFORM,
+                previousHash: beforeBuildHash,
+                fingerprint,
+              });
           const changedDuringBuild = afterBuild
             ? inputsChangedDuringBuild({
                 platform: PLATFORM,
-                configBaseline,
+                lookup: fingerprintSources,
+                prebuildRan,
                 compiled: storeSources,
                 current: afterBuild.sources,
               })
-            : [];
-          if (!afterBuild) {
+            : editedConfig;
+          if (!afterBuild || changedDuringBuild.length) {
             record.fingerprint = null;
             record.cacheKey = null;
-            phase('fingerprint', chalk.yellow('unavailable after Gradle; the build will be installed but not cached'));
-          } else if (changedDuringBuild.length) {
-            record.fingerprint = null;
-            record.cacheKey = null;
-            phase('fingerprint', chalk.yellow(changedDuringBuildLine(changedDuringBuild)));
+            phase(
+              'fingerprint',
+              chalk.yellow(
+                changedDuringBuild.length
+                  ? changedDuringBuildLine(changedDuringBuild)
+                  : 'unavailable after Gradle; the build will be installed but not cached',
+              ),
+            );
           } else {
             if (afterBuild.moved) {
               storeHash = afterBuild.hash;

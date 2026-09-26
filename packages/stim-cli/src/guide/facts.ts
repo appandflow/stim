@@ -122,7 +122,8 @@ per session, with the preview URL.`,
                   native directory stores the artifact only under that
                   post-build hash. A stable fingerprint prints no shift line.
                   If any other input changed while the build ran (the app
-                  config or a config plugin after prebuild, or any
+                  config or a config plugin since the first lookup, other
+                  than the bundle id or package prebuild adds, or any
                   other source during the compile), or a fingerprint after
                   prebuild, pod install or the compile cannot be computed,
                   the build is installed but not cached, and fingerprint and
