@@ -79,7 +79,7 @@ struct PhonesView: View {
     .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
       guard pairs else { return }
       OpenRequests.shared.pairsPhone = false
-      pairing = true
+      pairing = server.isRunning
     }
     .confirmationDialog(
       "Revoke \(revoking?.name ?? "")?", isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
