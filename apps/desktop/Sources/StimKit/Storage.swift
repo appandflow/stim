@@ -147,8 +147,6 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// Whether every category has a size, so `total` is not a lower bound.
   public var totalComplete: Bool { [buildOutputs, nodeModules, devices].allSatisfy { $0.bytes != nil } }
 
-  /// The repository folder's name, such as `tlon-apps`.
-  public var repositoryName: String? { repository.map { ($0 as NSString).lastPathComponent } }
 }
 
 /// A location shown with its size: Stim-managed and reclaimable through the CLI, or outside Stim and shown
