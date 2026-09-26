@@ -11,7 +11,7 @@ import {
 } from '@expo/ui/jetpack-compose';
 import { clickable, clip, fillMaxSize, fillMaxWidth, padding, Shapes } from '@expo/ui/jetpack-compose/modifiers';
 import { router } from 'expo-router';
-import { Children, useState, type ReactNode } from 'react';
+import { Children, isValidElement, useState, type ReactNode } from 'react';
 import type { ImageSourcePropType } from 'react-native';
 
 import { describeState } from '@/components/mac-chip';
@@ -41,7 +41,6 @@ const ICONS = {
   about: require('@/assets/icons/info.xml'),
 } satisfies Record<string, ImageSourcePropType>;
 
-/** The Android screen, in Jetpack Compose; `settings.ios.tsx` is the SwiftUI one. */
 export function Settings() {
   const colors = useColors();
   const scheme = useEffectiveScheme();
@@ -156,7 +155,7 @@ function Section({
       </Text>
       {rows.map((row, index) => (
         <Column
-          key={index}
+          key={isValidElement(row) ? row.key : index}
           modifiers={[
             fillMaxWidth(),
             clip(

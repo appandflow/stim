@@ -1,5 +1,6 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Platform } from 'react-native';
 
 import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
@@ -64,6 +65,9 @@ function RootLayoutContent() {
                     title: 'Settings',
                     headerLargeTitle: true,
                     contentStyle: { backgroundColor: colors.grouped },
+                    ...(Platform.OS === 'android'
+                      ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
+                      : null),
                   }}
                 />
                 <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
