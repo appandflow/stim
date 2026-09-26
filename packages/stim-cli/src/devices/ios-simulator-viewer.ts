@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { settingDefault } from './stim-desktop.ts';
+import { STIM_DESKTOP_OPEN_OPTIONS, settingDefault } from './stim-desktop.ts';
 import { IOS_SIMULATOR_APPS, settingDefinition } from '@stim-cli/core/state';
 
 export type IosSimulatorApp = (typeof IOS_SIMULATOR_APPS)[number];
@@ -12,16 +12,6 @@ interface IosSimulatorViewer {
 }
 
 const OPEN_OPTIONS = { timeoutMs: 5000, killSignal: 'SIGKILL' } as const;
-
-/**
- * macOS `open` passes its environment to an app it launches, so Stim Desktop
- * started by a command run under a scoped `STIM_HOME` would serve that home.
- */
-export const STIM_DESKTOP_OPEN_OPTIONS = {
-  timeoutMs: 5000,
-  killSignal: 'SIGKILL',
-  omitEnv: ['STIM_HOME'],
-} as const;
 
 export function parseIosSimulatorApp(value: unknown, source = 'iosSimulatorApp in machine config'): IosSimulatorApp {
   if ((IOS_SIMULATOR_APPS as readonly unknown[]).includes(value)) return value as IosSimulatorApp;

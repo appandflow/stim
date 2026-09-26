@@ -1,7 +1,6 @@
 import { getExecutor } from '../exec.ts';
-import { STIM_DESKTOP_OPEN_OPTIONS } from './ios-simulator-viewer.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { settingDefault, stimDesktopInstalled } from './stim-desktop.ts';
+import { STIM_DESKTOP_OPEN_OPTIONS, settingDefault, stimDesktopInstalled } from './stim-desktop.ts';
 import { ANDROID_EMULATOR_APPS, settingDefinition } from '@stim-cli/core/state';
 
 export type AndroidEmulatorApp = (typeof ANDROID_EMULATOR_APPS)[number];
