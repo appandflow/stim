@@ -143,17 +143,22 @@ is the workspace's name, with the device's model and slot under it. The close
 button at the top left, Android's back button, or dragging the screen down
 while Control is off shrinks it back into the thumbnail; a short drag springs
 back. The route is a transparent modal, so the list stays underneath, and the
-thumbnail hides while the viewer covers it. With Control off, pinching zooms into the
-picture up to 5 times, one finger pans it while zoomed, and a double-tap zooms
-in to 2.5 times where you tap, or back to fit. Dragging down closes the viewer
-only at fit. Turning Control on puts the picture back at fit and turns these
-gestures off, so touches go to the device. The viewer lays the screen out itself, animating its position and
-size rather than a transform, so Android's `SurfaceView` follows it and the
-stream stays live through both animations. With reduced motion on, the viewer
+thumbnail hides while the viewer covers it. With Control off, pinching zooms the
+device's whole frame, its rounded corners and screen together, up to 5 times;
+one finger pans it while zoomed, and a double-tap zooms in to 2.5 times where
+you tap, or back to fit. A zoomed device can extend past the stage and under
+the title bar. While zoomed, the title bar has a dark blurred material on iOS
+(SwiftUI's thin material, through `@expo/ui`) and a translucent dark fill on
+Android. Dragging down closes the viewer only at fit, and closing while
+zoomed takes the device back to fit as it shrinks into the thumbnail. Turning
+Control on puts the device back at fit and turns these gestures off, so
+touches go to the device. The viewer lays the screen out itself, animating its
+position and size rather than a transform, so Android's `SurfaceView` follows
+it and the stream stays live through the open, close and zoom animations. With reduced motion on, the viewer
 opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to
 60 frames a second when the server offers it, JPEG frames at up to 30
 otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
-and fitted to the device's shape. It is view-only until you turn on **Control**. On a read-only pairing,
+and fitted to the device's shape. It is view-only until you turn on **Control**, the button at the top right, which is filled and shows a checkmark while it is on. On a read-only pairing,
 Control, the toolbar buttons and **Take over** show disabled, and a banner
 says the phone is read-only and how to allow control, with **Copy command**
 and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
