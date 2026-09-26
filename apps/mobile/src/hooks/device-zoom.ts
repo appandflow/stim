@@ -222,6 +222,7 @@ export function useDeviceZoom(
     pan,
     close,
     snapshot: origin?.frame ?? null,
+    screenRect: fitted,
     screenSize: fitted ? { width: fitted[2], height: fitted[3] } : null,
     landed,
   };

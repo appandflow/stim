@@ -29,3 +29,12 @@ export function zoomRect(from: Rect, to: Rect, progress: number, drag: number, d
   const centerY = lerp(from[1], to[1]) + height / 2 + pulled;
   return [centerX - (width * scale) / 2, centerY - (height * scale) / 2, width * scale, height * scale];
 }
+
+/**
+ * How far to move up a screen at `top` and `height` points so its bottom rests on `visibleBottom`, such as the
+ * top of the keyboard, without its top rising above `minTop`: 0 when it already ends above `visibleBottom`.
+ */
+export function liftAbove(top: number, height: number, visibleBottom: number, minTop: number): number {
+  'worklet';
+  return Math.max(0, Math.min(top + height - visibleBottom, top - minTop));
+}

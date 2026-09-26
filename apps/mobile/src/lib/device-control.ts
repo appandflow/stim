@@ -77,3 +77,9 @@ export function otherDriver(activity: DeviceActivity | undefined, ownLeaseSince:
   if (tool === 'stim device lock' && ownLeaseSince !== null && since === ownLeaseSince) return null;
   return tool;
 }
+
+/** Whether a frame is wider than tall, or null without one. */
+export function orientationOf(frame: Size | null | undefined): 'landscape' | 'portrait' | null {
+  if (!frame || frame.width <= 0 || frame.height <= 0) return null;
+  return frame.width > frame.height ? 'landscape' : 'portrait';
+}

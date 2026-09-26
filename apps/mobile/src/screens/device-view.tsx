@@ -1,8 +1,8 @@
 import { Image } from 'expo-image';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  KeyboardAvoidingView,
+  Keyboard,
   PixelRatio,
   Platform as OS,
   Pressable,
@@ -16,7 +16,7 @@ import {
   type ViewInstance,
 } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
@@ -28,10 +28,10 @@ import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
-import { framePoint, keyboardDelta, otherDriver } from '@/lib/device-control';
-import { aspectOf } from '@/lib/zoom';
-import { devicesOf } from '@/lib/workspaces';
-import type { DevicePosture, InputButton, Platform } from '@/protocol/types';
+import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
+import { aspectOf, liftAbove } from '@/lib/zoom';
+import { devicesOf, workspaceTitleAt } from '@/lib/workspaces';
+import type { DevicePosture, InputButton, Platform, RotateDirection } from '@/protocol/types';
 import { useColors, type Colors } from '@/theme';
 
 const LIVE_FPS = 60;
@@ -40,6 +40,10 @@ const MOVE_INTERVAL_MS = 16;
 
 const DATA_SAVER_FPS = 10;
 const DATA_SAVER_MAX_EDGE = 640;
+const TYPING_BAR_HEIGHT = 56;
+const ROTATE_WAIT_MS = 2500;
+const ROTATE_NOTE_MS = 4000;
+const NOTE_INSET = 64;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -96,6 +100,50 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
+  const [tookOver, setTookOver] = useState(false);
+  const [rootHeight, setRootHeight] = useState(0);
+  const [barBottom, setBarBottom] = useState(0);
+  const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
+  const typingBarShown = typing && keyboardShown;
+  useEffect(() => {
+    if (!keyboardShown || !controlling) keyboard.current?.blur();
+  }, [keyboardShown, controlling]);
+  const rest = zoom.screenRect;
+  const lift = useAnimatedStyle(() => {
+    const covered = keyboardHeight.get();
+    if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
+    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - TYPING_BAR_HEIGHT, barBottom);
+    return { transform: [{ translateY: -shift }] };
+  });
+  const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
+  const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
+  useEffect(() => {
+    if (!rotateNote) return;
+    const timer = setTimeout(() => setRotateNote(null), ROTATE_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [rotateNote]);
+  const orientation = orientationOf(source);
+  const [rotating, setRotating] = useState<'landscape' | 'portrait' | null>(null);
+  if (rotating && orientation && orientation !== rotating) {
+    setRotating(null);
+    setRotateNote({ text: `Rotated to ${orientation}`, turned: true });
+  }
+  useEffect(() => {
+    if (!rotating) return;
+    const timer = setTimeout(() => {
+      setRotateNote({
+        text: `The screen stayed in ${rotating}. The app in front may not support rotating.`,
+        turned: false,
+      });
+      setRotating(null);
+    }, ROTATE_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [rotating]);
+  const rotate = (direction: RotateDirection) => {
+    control.rotate(direction);
+    setRotateNote(null);
+    setRotating(orientation);
+  };
 
   const touches = useRef({ active: false, lastMove: 0, pending: null as { x: number; y: number } | null });
   const point = (x: number, y: number, clamp: boolean) =>
@@ -138,13 +186,21 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       `${driver ?? 'Another client'} is driving it. Your touches and keys can interfere with its work.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Take over', style: 'destructive', onPress: () => control.begin(true) },
+        {
+          text: 'Take over',
+          style: 'destructive',
+          onPress: () => {
+            setTookOver(true);
+            control.begin(true);
+          },
+        },
       ],
     );
   const toggle = () => {
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
     setTyped('');
+    setTookOver(false);
     control.begin(false);
   };
   const press = (button: InputButton) => control.button(button);
@@ -157,21 +213,42 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       .catch((cause: Error) => Alert.alert('Posture not changed', cause.message))
       .finally(() => setMoving(null));
   };
-  const title = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
+  const model = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
+  const title = workspaceTitleAt(workspace, status);
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <GestureDetector gesture={zoom.pan}>
-        <View ref={root} style={styles.root} collapsable={false}>
+        <View
+          ref={root}
+          style={styles.root}
+          collapsable={false}
+          onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
+        >
           <Animated.View
             style={[StyleSheet.absoluteFill, { backgroundColor: colors.screen }, zoom.fadeStyle]}
             pointerEvents="none"
           />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
             <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-              <KeyboardAvoidingView style={styles.root} behavior={OS.OS === 'ios' ? 'padding' : undefined}>
-                <View style={styles.bar}>
-                  <Pressable onPress={zoom.close} accessibilityRole="button" accessibilityLabel="Back" hitSlop={10}>
+              <View style={styles.root}>
+                <View
+                  style={styles.bar}
+                  onLayout={(event) => {
+                    const { y, height } = event.nativeEvent.layout;
+                    setBarBottom(insets.top + y + height);
+                  }}
+                >
+                  <Pressable
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      keyboardHeight.set(withTiming(0, { duration: 200 }));
+                      zoom.close();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                    hitSlop={10}
+                  >
                     <Text style={styles.back}>{'‹'}</Text>
                   </Pressable>
                   <View style={styles.titles}>
@@ -179,7 +256,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                       {title}
                     </Text>
                     <Text style={styles.subtitle} numberOfLines={1}>
-                      {slot}
+                      {`${model} · ${slot}`}
                     </Text>
                   </View>
                   {control.allowed !== null ? (
@@ -222,6 +299,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   colors={colors}
                   control={control.state}
                   driver={driver}
+                  tookOver={tookOver}
                   canTakeOver={control.allowed === true}
                   readOnly={readOnly}
                   onTakeOver={takeOver}
@@ -255,8 +333,8 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 ) : null}
                 {controlling || readOnly ? (
                   <View style={styles.toolbar}>
-                    <ToolButton label="Rotate left" disabled={readOnly} onPress={() => control.rotate('left')} />
-                    <ToolButton label="Rotate right" disabled={readOnly} onPress={() => control.rotate('right')} />
+                    <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
+                    <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
                     {postures
                       .filter((posture) => platform === 'android' || posture !== shown)
                       .map((posture) => (
@@ -269,39 +347,14 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                       ))}
                   </View>
                 ) : null}
-                <TextInput
-                  ref={keyboard}
-                  style={styles.keyboard}
-                  value={typed}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  spellCheck={false}
-                  keyboardType="ascii-capable"
-                  submitBehavior="submit"
-                  onChangeText={(next) => {
-                    const delta = keyboardDelta(typed, next);
-                    setTyped(next);
-                    if (delta) control.text(delta);
-                  }}
-                  onKeyPress={(event) => {
-                    if (event.nativeEvent.key === 'Backspace' && typed === '') control.text('\b');
-                  }}
-                  onSubmitEditing={() => {
-                    setTyped('');
-                    control.text('\n');
-                  }}
-                  onFocus={() => setTyping(true)}
-                  onBlur={() => setTyping(false)}
-                  accessibilityLabel="Type on the device"
-                />
-              </KeyboardAvoidingView>
+              </View>
             </View>
           </Animated.View>
           {streams ? (
-            <Animated.View style={[styles.flying, zoom.screenStyle]}>
+            <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
               <DeviceScreen
                 stream={stream}
-                label={title}
+                label={model}
                 style={StyleSheet.absoluteFill}
                 requested={{ fps: preset.fps, maxEdge }}
               >
@@ -323,6 +376,57 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               </DeviceScreen>
             </Animated.View>
           ) : null}
+          {rotateNote && rest ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.noteRow, { top: rest[1] + rest[3] - NOTE_INSET }, zoom.fadeStyle, lift]}
+            >
+              <Text
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={[styles.note, { color: rotateNote.turned ? colors.live : colors.warn }]}
+              >
+                {rotateNote.text}
+              </Text>
+            </Animated.View>
+          ) : null}
+          <Animated.View
+            style={[styles.typingBar, typingBar, !typingBarShown && styles.hidden]}
+            pointerEvents={typingBarShown ? 'auto' : 'none'}
+            accessibilityElementsHidden={!typingBarShown}
+            importantForAccessibility={typingBarShown ? 'auto' : 'no-hide-descendants'}
+          >
+            <TextInput
+              ref={keyboard}
+              style={styles.typed}
+              placeholder="Type on the device"
+              placeholderTextColor="#FFFFFF66"
+              value={typed}
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              keyboardType="ascii-capable"
+              submitBehavior="submit"
+              onChangeText={(next) => {
+                const delta = keyboardDelta(typed, next);
+                setTyped(next);
+                if (delta) control.text(delta);
+              }}
+              onKeyPress={(event) => {
+                if (event.nativeEvent.key === 'Backspace' && typed === '') control.text('\b');
+              }}
+              onSubmitEditing={() => {
+                setTyped('');
+                control.text('\n');
+              }}
+              onFocus={() => setTyping(true)}
+              onBlur={() => setTyping(false)}
+              accessibilityLabel="Type on the device"
+            />
+            <Pressable onPress={() => keyboard.current?.blur()} accessibilityRole="button" hitSlop={8}>
+              <Text style={[styles.bannerAction, { color: colors.primary }]}>Done</Text>
+            </Pressable>
+          </Animated.View>
         </View>
       </GestureDetector>
     </GestureHandlerRootView>
@@ -333,6 +437,7 @@ function Banner({
   colors,
   control,
   driver,
+  tookOver,
   canTakeOver,
   readOnly,
   onTakeOver,
@@ -340,6 +445,7 @@ function Banner({
   colors: Colors;
   control: ReturnType<typeof useDeviceControl>['state'];
   driver: string | null;
+  tookOver: boolean;
   canTakeOver: boolean;
   readOnly: boolean;
   onTakeOver: () => void;
@@ -353,12 +459,17 @@ function Banner({
           ? `Control ended. ${control.ended}`
           : control.kind === 'starting'
             ? 'Starting control...'
-            : driver
-              ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
-              : null;
+            : control.kind === 'on' && driver
+              ? tookOver
+                ? `You took over from ${driver}. It can still send input to this device.`
+                : `${driver} is also driving this device. Its input and yours can interfere.`
+              : driver
+                ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
+                : null;
   if (!message) return null;
   const offer =
-    (canTakeOver || readOnly) && (control.kind === 'busy' || (driver !== null && control.kind !== 'starting'));
+    (canTakeOver || readOnly) &&
+    (control.kind === 'busy' || (driver !== null && control.kind !== 'starting' && control.kind !== 'on'));
   return (
     <View style={[styles.banner, { borderColor: control.kind === 'failed' ? colors.warn : colors.border }]}>
       <Text style={styles.bannerText}>{message}</Text>
@@ -402,6 +513,18 @@ const styles = StyleSheet.create({
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12 },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
+  noteRow: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
+  note: {
+    overflow: 'hidden',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#000000D9',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   flying: { position: 'absolute', overflow: 'hidden' },
   overlay: {
@@ -444,5 +567,50 @@ const styles = StyleSheet.create({
   tool: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, backgroundColor: '#FFFFFF1F' },
   pressed: { opacity: 0.6 },
   toolText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500' },
-  keyboard: { position: 'absolute', width: 1, height: 1, opacity: 0, left: -10, bottom: 0 },
+  typingBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: TYPING_BAR_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#1C1C1E',
+  },
+  hidden: { opacity: 0 },
+  typed: {
+    flex: 1,
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF1F',
+    color: '#FFFFFF',
+    fontSize: 16,
+  },
 });
+
+function useKeyboardHeight(): { height: SharedValue<number>; shown: boolean } {
+  const height = useSharedValue(0);
+  const [shown, setShown] = useState(false);
+  // React Native's Android keyboard events report the IME inset minus the system bars' bottom inset.
+  const { bottom } = useSafeAreaInsets();
+  const barInset = OS.OS === 'android' ? bottom : 0;
+  useEffect(() => {
+    const show = OS.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hide = OS.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subscriptions = [
+      Keyboard.addListener(show, (event) => {
+        setShown(true);
+        height.set(withTiming(event.endCoordinates.height + barInset, { duration: event.duration || 250 }));
+      }),
+      Keyboard.addListener(hide, (event) => {
+        setShown(false);
+        height.set(withTiming(0, { duration: event.duration || 250 }));
+      }),
+    ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, [height, barInset]);
+  return { height, shown };
+}
