@@ -62,9 +62,14 @@ test('an old supervisor finishing cannot erase its replacement registration or t
   writeWorkspaceState(root, { supervisor: replacement, metroTunnel });
   upsertProject(root, { supervisor: replacement });
   writePidFile(root, process.pid);
-  await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
+  await running.shutdown(0, 'supervisor_stopped', 'test shutdown', {
+    reason: 'signal',
+    at: '2026-09-26T20:00:00.000Z',
+    signal: 'SIGTERM',
+  });
   expect(closed).toBe(true);
   expect(readWorkspaceState(root)?.supervisor).toEqual(replacement);
+  expect(readWorkspaceState(root)?.devServerStop).toBeUndefined();
   expect(readWorkspaceState(root)?.metroTunnel).toEqual(metroTunnel);
   expect(getProject(root)?.supervisor).toEqual(replacement);
   expect(readPidFile(root)).toBe(process.pid);
@@ -617,7 +622,7 @@ describe('runSupervisor', () => {
   const requested = { reason: 'requested', by: 'stim stop', byPid: 4242 };
 
   test.each([
-    ['this supervisor', true, requested, 'info', /stopped by stim stop \(pid 4242\)/],
+    ['this supervisor', true, requested, 'info', /stop requested by stim stop \(pid 4242\)/],
     ['an earlier supervisor', false, { reason: 'signal', signal: 'SIGTERM' }, 'warn', /from outside Stim/],
   ])(
     'a SIGTERM after a stop request for %s is attributed only when the token matches',
@@ -646,7 +651,7 @@ describe('runSupervisor', () => {
   );
 
   test.each([
-    [true, 0, requested, 'info', /stopped by stim stop/],
+    [true, 0, requested, 'info', /stop requested by stim stop/],
     [
       false,
       1,
@@ -694,7 +699,7 @@ describe('runSupervisor', () => {
       .map(({ level, msg }) => ({ level, msg }));
     const expected = {
       level: 'warn',
-      msg: `supervisor pid ${owner().pid} (started 2026-09-26T19:00:00.000Z) exited without recording a cause: it was killed with SIGKILL, crashed, or the machine restarted`,
+      msg: `supervisor pid ${owner().pid} (started 2026-09-26T19:00:00.000Z) is gone and recorded no cause: usually SIGKILL, a crash or a machine restart`,
     };
     expect(logged).toEqual(vanished ? [expected] : []);
   });

@@ -67,16 +67,17 @@ export function devServerStopRecord(
 }
 
 export function describeDevServerStop(record: DevServerStopRecord): string {
-  if (record.reason === 'idle') return `stopped after ${record.idleMinutes} idle minutes (metro.idleStopMinutes)`;
+  if (record.reason === 'idle') return `idle for ${record.idleMinutes} minutes (metro.idleStopMinutes)`;
   if (record.reason === 'requested') {
-    return `stopped by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})`;
+    return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})`;
   }
-  if (record.reason === 'signal')
-    return `received ${record.signal} from outside Stim: no Stim command asked for this stop`;
+  if (record.reason === 'signal') {
+    return `received ${record.signal} with no Stim stop request recorded, so it likely came from outside Stim`;
+  }
   const detail = record.signal ? `signal ${record.signal}` : `exit code ${record.code ?? 'unknown'}`;
   const expoSignal =
     record.mode === 'expo-child' && record.code === 0
-      ? '; Expo CLI also exits 0 on SIGTERM, and no Stim command asked for this stop'
+      ? '; Expo CLI also exits 0 on SIGTERM, and no Stim stop request was recorded'
       : '';
   return `the ${record.mode} dev server exited unexpectedly (${detail})${expoSignal}`;
 }
@@ -89,14 +90,15 @@ export function devServerStopLevel(record: DevServerStopRecord): 'info' | 'warn'
 /** The log line for a recorded supervisor whose process is proven gone, or null while it may still run. */
 export function vanishedSupervisorMessage(
   record: { pid?: unknown; processToken?: unknown; startedAt?: unknown } | null | undefined,
-  inspect: typeof inspectProcessIdentity = inspectProcessIdentity,
 ): string | null {
   if (!record || typeof record.pid !== 'number') return null;
-  const identity = inspect(record);
+  const identity = inspectProcessIdentity(record);
   if (identity !== 'gone' && identity !== 'different') return null;
   const started = typeof record.startedAt === 'string' ? ` (started ${record.startedAt})` : '';
-  return `supervisor pid ${record.pid}${started} exited without recording a cause: it was killed with SIGKILL, crashed, or the machine restarted`;
+  return `supervisor pid ${record.pid}${started} ${VANISHED}`;
 }
+
+const VANISHED = 'is gone and recorded no cause: usually SIGKILL, a crash or a machine restart';
 
 export function logVanishedSupervisor(
   root: string,
@@ -122,7 +124,5 @@ export function metroLastStop(
 }
 
 export function describeMetroLastStop(stop: MetroLastStop): string {
-  return stop.reason === 'vanished'
-    ? `supervisor pid ${stop.pid} exited without recording a cause: it was killed with SIGKILL, crashed, or the machine restarted`
-    : describeDevServerStop(stop);
+  return stop.reason === 'vanished' ? `supervisor pid ${stop.pid} ${VANISHED}` : describeDevServerStop(stop);
 }

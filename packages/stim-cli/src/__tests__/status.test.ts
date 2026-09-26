@@ -383,7 +383,7 @@ test('status drops a supervisor record whose process is gone and reports it vani
 
     const logs = await runStatus();
     expect(logs.some((l) => /^\s*supervisor:/.test(l))).toBe(false);
-    expect(logs.some((l) => /not running; supervisor pid 999999 exited without recording a cause/.test(l))).toBe(true);
+    expect(logs.some((l) => /not running; supervisor pid 999999 is gone and recorded no cause/.test(l))).toBe(true);
 
     const payload = await runStatusJson();
     expect(payload.environments[0]).toMatchObject({

@@ -151,7 +151,7 @@ export async function runSupervisor({
 }: RunSupervisorOptions): Promise<{
   mode: string;
   server: ServerHandle | undefined;
-  shutdown: (code: number, event: string, msg: string) => Promise<void>;
+  shutdown: (code: number, event: string, msg: string, stop?: DevServerStopRecord) => Promise<void>;
   startedAt: string;
 } | null> {
   root = realpathSync(root);
@@ -173,7 +173,7 @@ export async function runSupervisor({
   clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
   writeWorkspaceState(root, { supervisor: record });
-  clearWorkspaceStateKeys(root, [IDLE_STOP_KEY, DEV_SERVER_STOP_REQUEST_KEY]);
+  clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]);
   try {
     setSupervisor(root, record);
   } catch (err) {
@@ -247,12 +247,7 @@ export async function runSupervisor({
       process.on(signal, () => {
         if (server) {
           const stop = stopCause({ kind: 'signal', signal });
-          shutdown(
-            0,
-            'supervisor_stopped',
-            `received ${signal}; stopping the ${mode} dev server: ${describeDevServerStop(stop)}`,
-            stop,
-          );
+          shutdown(0, 'supervisor_stopped', `stopping the ${mode} dev server: ${describeDevServerStop(stop)}`, stop);
           return;
         }
         // Node runs signal listeners from the event loop, and startExpoServer spawns and returns
@@ -264,7 +259,7 @@ export async function runSupervisor({
           signal === 'SIGINT' ? 130 : 143,
           'supervisor_stopped',
           'warn',
-          `received ${signal} before the ${mode} dev server started; stopping: ${describeDevServerStop(stop)}`,
+          `stopping before the ${mode} dev server started: ${describeDevServerStop(stop)}`,
           stop,
         );
       });
@@ -346,17 +341,17 @@ export async function runSupervisor({
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;
+          const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
           withWorkspaceStateLock(root, () => {
             if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
-              writeWorkspaceState(root, {
-                [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
-              });
+              writeWorkspaceState(root, { [IDLE_STOP_KEY]: stop });
             }
           });
           await shutdown(
             0,
             'supervisor_idle_stopped',
             `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
+            stop,
           );
         };
         try {

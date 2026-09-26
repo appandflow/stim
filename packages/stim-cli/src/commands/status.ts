@@ -339,7 +339,7 @@ function renderStatus(
             )
           : state.metro.lastStop
             ? chalk.dim(
-                `not running; ${describeMetroLastStop(state.metro.lastStop)}${state.metro.lastStop.reason === 'vanished' ? '' : ` at ${state.metro.lastStop.at}`}`,
+                `not running${state.metro.lastStop.reason === 'vanished' ? '' : ` since ${state.metro.lastStop.at}`}; ${describeMetroLastStop(state.metro.lastStop)}`,
               )
             : chalk.dim('not running');
       out.push(`  metro: port ${state.metro.port} ${label}`);
