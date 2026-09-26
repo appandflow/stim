@@ -51,8 +51,11 @@ status runs \`git status --porcelain=v2 --branch\` in every worktree in
 parallel, and caches the merge verdict by HEAD and default-branch commit
 under $STIM_HOME/git-merge. One call starts no new merge check 250 ms after
 its first; later calls judge the rest, and until then a verdict for the same
-HEAD at an older default-branch commit stands in. \`status --watch\` reuses a worktree's git read
-for 5 s. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
+HEAD at an older default-branch commit stands in; a check that timed out
+is retried after 5 minutes. \`status --watch\` reuses a worktree's git read
+until its index, HEAD, reflog or the branch, upstream or default-branch refs
+change, and for at most 60 s, so an edit that is not staged can take up to a
+minute to show. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
 each environment, and the same after each worktree with no environment.
 
 status's remoteDevices lists each environment's recorded EAS Simulator

@@ -1,4 +1,9 @@
-import { inPrivacyProtectedFolder, parseGitStatus } from '../workspace/git-summary.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { inPrivacyProtectedFolder, parseGitStatus, readWorktreeGit } from '../workspace/git-summary.ts';
 
 const oid = 'a'.repeat(40);
 
@@ -50,4 +55,112 @@ test('inPrivacyProtectedFolder matches the folders macOS guards and nothing that
   expect(inPrivacyProtectedFolder('/Volumes/External/repo', home)).toBe(true);
   expect(inPrivacyProtectedFolder('/Users/me/Documentsx/repo', home)).toBe(false);
   expect(inPrivacyProtectedFolder('/Users/me/Developer/Documents', home)).toBe(false);
+});
+
+describe('readWorktreeGit', () => {
+  const realExecutor = getExecutor();
+  let base: string;
+  let statusReads: number;
+  let mergeCalls: number;
+  let mergeTimesOut: boolean;
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
+  const commit = (cwd: string, file: string, message: string) => {
+    writeFileSync(join(cwd, file), `${message}\n`);
+    git(cwd, 'add', file);
+    git(cwd, 'commit', '-qm', message);
+  };
+
+  beforeEach(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-git-summary-')));
+    process.env.STIM_HOME = join(base, 'home');
+    statusReads = 0;
+    mergeCalls = 0;
+    mergeTimesOut = false;
+    setExecutor({
+      runFileAsync: (file: string, args: string[], opts: object) => {
+        if (args.includes('status')) statusReads++;
+        return realExecutor.runFileAsync(file, args, opts);
+      },
+      runFile: (file: string, args: string[], opts: object) => {
+        mergeCalls++;
+        if (mergeTimesOut) throw Object.assign(new Error('git timed out'), { code: 'ETIMEDOUT' });
+        return realExecutor.runFile(file, args, opts);
+      },
+      runFileQuiet: (file: string, args: string[], opts: object) => realExecutor.runFileQuiet(file, args, opts),
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  function linkedWorktree() {
+    const root = join(base, 'repo');
+    execFileSync('git', ['init', '-q', '-b', 'main', root]);
+    git(root, 'config', 'user.name', 'test');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'commit.gpgsign', 'false');
+    commit(root, 'a.txt', 'init');
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(base, 'origin.git')]);
+    git(root, 'remote', 'add', 'origin', join(base, 'origin.git'));
+    git(root, 'push', '-q', '-u', 'origin', 'main');
+    git(root, 'remote', 'set-head', 'origin', 'main');
+    const path = join(base, 'feature-wt');
+    git(root, 'worktree', 'add', '-q', '-b', 'feature', path);
+    git(path, 'push', '-q', '-u', 'origin', 'feature');
+    return { path, branch: 'feature', repository: root };
+  }
+
+  test('reuses a summary while its git files are unchanged, and rereads after a commit, a push or the age ceiling', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const worktree = linkedWorktree();
+    const read = async () =>
+      (await readWorktreeGit([worktree], { skip: () => false, maxAgeMs: 60_000 })).get(worktree.path);
+
+    await read();
+    await read();
+    const reads = statusReads;
+    expect(await read()).toMatchObject({ changed: 0, ahead: 0, behind: 0 });
+    expect(statusReads).toBe(reads);
+
+    writeFileSync(join(worktree.path, 'a.txt'), 'edited\n');
+    expect(await read()).toMatchObject({ changed: 0 });
+    expect(statusReads).toBe(reads);
+
+    commit(worktree.path, 'b.txt', 'local');
+    expect(await read()).toMatchObject({ changed: 1, ahead: 1 });
+    expect(statusReads).toBe(reads + 1);
+
+    git(worktree.path, 'push', '-q');
+    expect(await read()).toMatchObject({ ahead: 0 });
+    expect(statusReads).toBe(reads + 2);
+
+    writeFileSync(join(worktree.path, 'b.txt'), 'edited\n');
+    expect(await read()).toMatchObject({ changed: 1 });
+    expect(statusReads).toBe(reads + 2);
+    vi.setSystemTime(Date.now() + 60_000);
+    expect(await read()).toMatchObject({ changed: 2 });
+    expect(statusReads).toBe(reads + 3);
+  });
+
+  test('a merge judgement that timed out is not retried for the same HEAD for five minutes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const worktree = linkedWorktree();
+    commit(worktree.path, 'b.txt', 'local');
+    mergeTimesOut = true;
+    const read = () => readWorktreeGit([worktree], { skip: () => false });
+
+    expect((await read()).get(worktree.path)?.mergedInto).toBe(null);
+    const judged = mergeCalls;
+    expect(judged).toBeGreaterThan(0);
+    await read();
+    expect(mergeCalls).toBe(judged);
+
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await read();
+    expect(mergeCalls).toBeGreaterThan(judged);
+  });
 });
