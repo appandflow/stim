@@ -4,7 +4,6 @@ import {
   WATCH_DEBOUNCE_MS,
   WATCH_FALLBACK_MS,
   WATCH_LOGS_INTERVAL_MS,
-  WATCH_SIMCTL_INTERVAL_MS,
   watchStatusSources,
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
@@ -123,7 +122,6 @@ interface StatusSnapshot {
   tables: DeviceProcessTables;
 }
 
-/** `simctlListing` is a fresh `simctl list devices --json` output to use instead of listing again. */
 function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): Promise<StatusSnapshot> {
   return withStateReadCache(() => readStatusFacts(gitMaxAgeMs, simctlListing));
 }
@@ -443,7 +441,7 @@ async function watchStatus(json: boolean): Promise<void> {
       let text: string;
       try {
         if (kind === 'logs' && snapshot) refreshLogFacts(snapshot);
-        else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing(2 * WATCH_SIMCTL_INTERVAL_MS));
+        else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));

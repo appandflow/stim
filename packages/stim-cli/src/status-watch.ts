@@ -9,7 +9,7 @@ import { parseSimctlList } from './devices/ios.ts';
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
 export const WATCH_LOGS_INTERVAL_MS = 15_000;
-export const WATCH_SIMCTL_INTERVAL_MS = 5_000;
+const WATCH_SIMCTL_INTERVAL_MS = 5_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
@@ -124,8 +124,11 @@ function simulatorSignature(simctlJson: string): string | null {
 export interface StatusSources {
   /** Re-reads the workspace list and watches the directories that exist now. */
   reconcile(): void;
-  /** The output of the simulator poller's last readable listing, or null when none finished within `maxAgeMs`. */
-  simulatorListing(maxAgeMs: number): string | null;
+  /**
+   * The output of the simulator poller's last readable listing, or null when it started more than two poll intervals
+   * ago or Stim state changed since, since Stim creates, boots and shuts down simulators as it writes its state.
+   */
+  simulatorListing(): string | null;
   stop(): void;
 }
 
@@ -182,7 +185,10 @@ export function watchStatusSources({
         const watcher = watch(dir, (_event, name) => {
           const change = statusChange(kind, name === null ? null : String(name));
           if (!change) return;
-          if (kind === 'home' || kind === 'workspaces' || kind === 'workspace') reconcile();
+          if (kind === 'home' || kind === 'workspaces' || kind === 'workspace') {
+            listingStaleBefore = Date.now();
+            reconcile();
+          }
           onChange(change);
         });
         watcher.on('error', () => {
@@ -198,11 +204,13 @@ export function watchStatusSources({
 
   let simctl: ChildProcess | null = null;
   let listing: { at: number; json: string } | null = null;
+  let listingStaleBefore = 0;
   let simTimer: ReturnType<typeof setInterval> | null = null;
   if (platform === 'darwin') {
     let last: string | null = null;
     const check = () => {
       if (simctl || stopped) return;
+      const startedAt = Date.now();
       let out = '';
       const child = getExecutor().spawn('xcrun', ['simctl', 'list', 'devices', '--json'], {
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -218,7 +226,7 @@ export function watchStatusSources({
         simctl = null;
         const signature = simulatorSignature(out);
         if (signature === null || stopped) return;
-        listing = { at: Date.now(), json: out };
+        listing = { at: startedAt, json: out };
         if (last !== null && signature !== last) onChange('full');
         last = signature;
       });
@@ -231,7 +239,10 @@ export function watchStatusSources({
 
   return {
     reconcile,
-    simulatorListing: (maxAgeMs) => (listing && Date.now() - listing.at <= maxAgeMs ? listing.json : null),
+    simulatorListing: () =>
+      listing && listing.at > listingStaleBefore && Date.now() - listing.at <= 2 * simctlIntervalMs
+        ? listing.json
+        : null,
     stop() {
       stopped = true;
       for (const watcher of watchers.values()) watcher.close();

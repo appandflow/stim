@@ -139,8 +139,8 @@ test('a log append needs only a log refresh; other state changes need a full one
   expect(statusChange('eas', 'ledger.lock')).toBe(null);
 });
 
-test('the simulator poller shares its last readable listing while it is fresh', async () => {
-  vi.useFakeTimers();
+test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] });
   const home = mkdtempSync(join(tmpdir(), 'stim-watch-sims-'));
   const listing = (state: string) =>
     JSON.stringify({
@@ -153,8 +153,9 @@ test('the simulator poller shares its last readable listing while it is fresh', 
   let output = listing('Shutdown');
   setExecutor({
     findExecutable: () => null,
-    spawn() {
+    spawn(file: string) {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
+      if (file !== 'xcrun') return child;
       setTimeout(() => {
         child.stdout.end(output);
         child.emit('close', 0);
@@ -164,17 +165,27 @@ test('the simulator poller shares its last readable listing while it is fresh', 
   });
   const sources = watchStatusSources({ home, onChange: () => {}, platform: 'darwin' });
   try {
-    expect(sources.simulatorListing(10_000)).toBe(null);
+    expect(sources.simulatorListing()).toBe(null);
     await vi.advanceTimersByTimeAsync(20);
-    expect(sources.simulatorListing(10_000)).toBe(listing('Shutdown'));
+    expect(sources.simulatorListing()).toBe(listing('Shutdown'));
 
     output = listing('Booted');
     await vi.advanceTimersByTimeAsync(5000);
-    expect(sources.simulatorListing(10_000)).toBe(listing('Booted'));
+    expect(sources.simulatorListing()).toBe(listing('Booted'));
+
+    vi.setSystemTime(Date.now() + 1);
+    writeFileSync(join(home, 'config.json'), '{}');
+    const deadline = performance.now() + 5000;
+    while (sources.simulatorListing() !== null && performance.now() < deadline) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(sources.simulatorListing()).toBe(null);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sources.simulatorListing()).toBe(listing('Booted'));
 
     output = 'not json';
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(sources.simulatorListing(10_000)).toBe(null);
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(sources.simulatorListing()).toBe(null);
   } finally {
     sources.stop();
     resetExecutor();
