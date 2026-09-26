@@ -320,9 +320,10 @@ THE MIRROR IMAGE: A STALE DEVICE RECORD
   reports such UDIDs under "Stale device ledger entries" when a complete
   simctl listing, unavailable simulators included, does not show them, and
   \`gc --delete\` forgets them under the ledger lock. If the listing fails,
-  nothing is reported or forgotten. UDIDs are never reused, so a forgotten
-  entry cannot belong to a later simulator. Android ledger names are not
-  pruned yet.
+  nothing is reported or forgotten, and like the device sweep it is skipped
+  without a config or under a scoped STIM_HOME. UDIDs are never reused, so a
+  forgotten entry cannot belong to a later simulator. Android ledger names
+  are not pruned yet.
 
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.stim, or a throwaway

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
-import { forgetCreatedDevice, type CreatedDevices } from '../../devices/created-devices.ts';
+import type { CreatedDevices } from '@stim-cli/core/state';
+import { forgetCreatedDevice } from '../../devices/created-devices.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 
 export interface StaleLedgerEntry {
