@@ -90,7 +90,10 @@ if (command === 'status') {
   else setInterval(() => existsSync(env.FAKE_STIM_PLAN_GATE) && answer(), 10);
 } else if (env.FAKE_STIM_GRANDCHILD) {
   const { spawn } = await import('node:child_process');
-  const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'inherit' });
+  const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+    detached: true,
+    stdio: 'inherit',
+  });
   writeFileSync(env.FAKE_STIM_GRANDCHILD, String(grandchild.pid));
   setInterval(() => {}, 1000);
 } else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
@@ -835,9 +838,7 @@ describe('stats.get and settings.get', () => {
       });
       expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
     } finally {
-      try {
-        if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
-      } catch {}
+      if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
     }
   });
 });
