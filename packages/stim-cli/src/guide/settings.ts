@@ -25,7 +25,9 @@ shape, before anything is written. Writes to the machine file take its lock
 and replace it atomically; a committed write keeps the file's other keys and
 indentation. Run \`stim settings\` from the app directory: workspace and
 committed resolve from the nearest package.json, repo from its Git
-repository. worktree.exclude and worktree.defaultBranch are read only from
+repository. From a monorepo web package that resolves to its worktree's app
+(see stim guide ports), workspace and committed are that app's entry and
+.stim.json. worktree.exclude and worktree.defaultBranch are read only from
 the repo layer and the repository root's .stim.json.
 
 android.keystorePassword is sensitive: its value prints as ******** in every

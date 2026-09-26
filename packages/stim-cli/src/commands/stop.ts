@@ -24,7 +24,7 @@ import type { Command } from 'commander';
 import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
-import { findProjectRoot } from '../workspace/project.ts';
+import { findCommandWorkspace } from '../workspace/project.ts';
 import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
@@ -1111,7 +1111,7 @@ export default function stopCommand(program: Command): void {
     )
     .option('--json', 'print the per-step outcomes as JSON')
     .action(async (opts: StopOptions) => {
-      const root = findProjectRoot(process.cwd());
+      const root = findCommandWorkspace(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });
         return;

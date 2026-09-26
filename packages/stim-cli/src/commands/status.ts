@@ -16,7 +16,7 @@ import type { MetroResolution } from '../metro.ts';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
-import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
+import { findServerWorkspace, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { ownedAvdDeviceProfile, ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
@@ -102,7 +102,7 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
   const out: string[] = [];
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
-  const cwdRoot = findProjectRoot(process.cwd());
+  const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,

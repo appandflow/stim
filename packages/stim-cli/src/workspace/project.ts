@@ -139,6 +139,16 @@ export function findServerWorkspace(startDir: string): { root: string; from: str
   return apps.length === 1 ? { root: apps[0]!, from: nearest } : { root: nearest, from: null };
 }
 
+export function findCommandWorkspace(
+  startDir: string,
+  note: (line: string) => void = (line) => console.error(line),
+): string | null {
+  const workspace = findServerWorkspace(startDir);
+  if (workspace?.from)
+    note(`Using the Stim workspace ${workspace.root}: ${workspace.from} is not a React Native or Expo app.`);
+  return workspace?.root ?? null;
+}
+
 // Registry keys can hold Windows 8.3 short names (RUNNER~1) that git never prints; only the native realpath
 // expands them.
 function expandedRealpath(path: string): string {

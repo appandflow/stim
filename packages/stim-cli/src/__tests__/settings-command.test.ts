@@ -137,6 +137,26 @@ test('a machine write keeps the project and device records in the config', async
   });
 });
 
+test("run from a monorepo web package, settings act on the worktree's one registered app", async () => {
+  const web = join(repo, 'apps', 'web');
+  mkdirSync(web);
+  writeFileSync(join(web, 'package.json'), JSON.stringify({ devDependencies: { vite: '^5.0.0' } }));
+  writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '^57.0.0' } }));
+  saveConfig({ version: 2, projects: { [app]: {} }, repos: {} });
+  process.chdir(web);
+
+  const set = await settings(['set', 'web.url', 'https://localhost:{port:web}/apps/', '--scope', 'workspace']);
+  await settings(['set', 'web.viewport', 'phone', '--scope', 'committed']);
+
+  expect(set.exitCode).toBe(0);
+  expect(set.note).toContain(`Using the Stim workspace ${app}: ${web} is not a React Native or Expo app.`);
+  expect(loadConfig()?.projects).toEqual({
+    [app]: { settings: { web: { url: 'https://localhost:{port:web}/apps/' } } },
+  });
+  expect(JSON.parse(readFileSync(join(app, '.stim.json'), 'utf-8'))).toEqual({ web: { viewport: 'phone' } });
+  expect(existsSync(join(web, '.stim.json'))).toBe(false);
+});
+
 test('the viewer settings default to stim-desktop while Stim Desktop is installed on macOS, and a set value wins', async () => {
   const stubbed = getExecutor();
   let desktop = '/Applications/Stim.app';

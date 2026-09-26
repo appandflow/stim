@@ -28,7 +28,7 @@ import {
 } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { detectIsExpo, findServerWorkspace, isPackageResolvable } from '../workspace/project.ts';
+import { detectIsExpo, findCommandWorkspace, isPackageResolvable } from '../workspace/project.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings } from '../workspace/settings.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
@@ -315,7 +315,7 @@ export default function webCommand(program: Command): void {
     .option('--json', 'Print the result as one JSON object; progress goes to stderr')
     .action(async (opts: { headed?: boolean; json?: boolean }) => {
       const json = Boolean(opts.json);
-      const root = findServerWorkspace(process.cwd())?.root;
+      const root = findCommandWorkspace(process.cwd());
       if (!root) {
         refuseNoProject({ json });
         return;
