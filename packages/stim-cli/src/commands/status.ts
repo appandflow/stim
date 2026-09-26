@@ -497,7 +497,6 @@ function activitySuffix(activity: DeviceActivity | undefined): string {
   return label ? ` -- ${activity?.state === 'driven' ? chalk.magenta(label) : chalk.dim(label)}` : '';
 }
 
-/** Reads device activity, and with `apps` the workspace app's process on each owned device. */
 function readDeviceProcesses(
   states: EnvironmentState[],
   tables: DeviceProcessTables,

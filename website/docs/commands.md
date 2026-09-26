@@ -686,9 +686,9 @@ one per change, never two identical payloads in a row. It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, adb device arrivals and
 departures, and simulator state, and recomputes every 30 seconds as a
 fallback. A log append updates only the log error count and device activity,
-no sooner than 15 seconds after the previous refresh. It exits with status 0 on Ctrl+C, SIGTERM, or when its stdout
-closes. Use it to wait for a device, a build, or a dev server instead of
-polling `stim status --json`.
+no sooner than 15 seconds after the previous refresh. It exits with status 0
+on Ctrl+C, SIGTERM, or when its stdout closes. Use it to wait for a device, a
+build, or a dev server instead of polling `stim status --json`.
 
 While `stim ios` or `stim android` runs, the workspace shows the build's phase
 and an estimate of the time left:

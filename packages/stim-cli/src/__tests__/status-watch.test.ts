@@ -61,6 +61,36 @@ describe('createRefreshScheduler', () => {
     scheduler.stop();
   });
 
+  test('a trigger during a run queues one more run: full at the debounce, log-only after the log interval', async () => {
+    const runs: RefreshKind[] = [];
+    let release: (() => void) | null = null;
+    const scheduler = createRefreshScheduler({
+      debounceMs: 250,
+      logsIntervalMs: 15_000,
+      run: async (kind) => {
+        runs.push(kind);
+        await new Promise<void>((resolve) => (release = resolve));
+      },
+    });
+    scheduler.trigger('full', 0);
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.trigger('logs');
+    scheduler.trigger('full');
+    scheduler.trigger('logs');
+    release!();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(runs).toEqual(['full', 'full']);
+
+    scheduler.trigger('logs');
+    release!();
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(runs).toEqual(['full', 'full']);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runs).toEqual(['full', 'full', 'logs']);
+    release!();
+    scheduler.stop();
+  });
+
   test('a log trigger runs promptly after quiet, then at most once per interval, and a full trigger overrides it', async () => {
     const runs: RefreshKind[] = [];
     const scheduler = createRefreshScheduler({
