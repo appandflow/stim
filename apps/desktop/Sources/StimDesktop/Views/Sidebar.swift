@@ -237,26 +237,30 @@ struct WorkspaceRow: View {
     HStack(spacing: 10) {
       StatusDot(color: env.live ? Theme.live : Theme.tertiary, filled: env.live)
       VStack(alignment: .leading, spacing: 1) {
-        Text(env.names.title).lineLimit(1).truncationMode(.middle)
-        SidebarSubtitle(parts: [subtitle, env.names.inCheckout])
-      }
-      .layoutPriority(1)
-      Spacer()
-      if showsGit { GitIndicator(git: env.worktree?.git) }
-      if let errors = env.logs?.errorsSinceMarker, errors > 0 {
-        HStack(spacing: 3) {
-          Image(systemName: "xmark.octagon.fill").font(.system(size: 10))
-          Text("\(errors)").font(Theme.body(10.5, weight: .semibold)).monospacedDigit()
+        HStack(spacing: 6) {
+          Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+          Spacer(minLength: 0)
+          if showsGit { GitIndicator(git: env.worktree?.git) }
+          if let errors = env.logs?.errorsSinceMarker, errors > 0 {
+            HStack(spacing: 3) {
+              Image(systemName: "xmark.octagon.fill").font(.system(size: 10))
+              Text("\(errors)").font(Theme.body(10.5, weight: .semibold)).monospacedDigit()
+            }
+            .foregroundStyle(Theme.error)
+            .fixedSize()
+            .help(countLabel(errors, "error") + " in the logs")
+          }
+          if !env.warnings.isEmpty {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Theme.warn)
+          }
         }
-        .foregroundStyle(Theme.error)
-        .fixedSize()
-        .help(countLabel(errors, "error") + " in the logs")
-      }
-      if !env.warnings.isEmpty {
-        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Theme.warn)
-      }
-      if let metro = env.metro {
-        Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
+        HStack(spacing: 6) {
+          SidebarSubtitle(parts: [subtitle, env.names.inCheckout])
+          Spacer(minLength: 0)
+          if let metro = env.metro {
+            Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
+          }
+        }
       }
     }
     .sidebarTag(.environment(env.path), selection: selection)
