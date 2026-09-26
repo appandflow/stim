@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
 import { Chip } from '@/components/chip';
@@ -145,6 +145,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       .finally(() => setMoving(null));
   };
   const title = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
+  const insets = useSafeAreaInsets();
   const root = useRef<ViewInstance>(null);
   const stage = useRef<ViewInstance>(null);
   const zoom = useDeviceZoom(
@@ -165,7 +166,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             pointerEvents="none"
           />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
-            <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+            <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
               <KeyboardAvoidingView style={styles.root} behavior={OS.OS === 'ios' ? 'padding' : undefined}>
                 <View style={styles.bar}>
                   <Pressable onPress={zoom.close} accessibilityRole="button" accessibilityLabel="Back" hitSlop={10}>
@@ -292,7 +293,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   accessibilityLabel="Type on the device"
                 />
               </KeyboardAvoidingView>
-            </SafeAreaView>
+            </View>
           </Animated.View>
           {streams ? (
             <Animated.View style={[styles.flying, zoom.screenStyle]}>
