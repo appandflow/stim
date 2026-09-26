@@ -1297,11 +1297,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   simulator slot proves its own launch. Any other delivery (Android, a physical
   iPhone, or a simulator request lsof could not resolve) proves the launch only
   while no other slot of the same platform is running: a booted owned device,
-  a log collector or a device lease. stop --slot <name> ends all three. Otherwise the launch reports
-  unverified with "not provably to this device": check the reported device
-  directly. Release verification still
-  checks its process. reload ios/android addresses matching Metro peers across
-  slots; it is not a single-slot reload.
+  a log collector or a device lease. stop --slot <name> ends all three.
+  Otherwise the launch reports unverified with "not provably to this device":
+  check the reported device directly. Release verification still checks its
+  process. reload ios/android addresses matching Metro peers across slots; it
+  is not a single-slot reload.
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
