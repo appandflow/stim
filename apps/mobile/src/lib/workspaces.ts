@@ -2,6 +2,7 @@ import type {
   AndroidState,
   BuildReport,
   DeviceActivity,
+  DeviceAppProcess,
   EnvironmentState,
   Platform,
   SimState,
@@ -126,6 +127,7 @@ export interface DeviceRef {
   owned: boolean;
   physical: boolean;
   activity?: DeviceActivity;
+  app?: DeviceAppProcess;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
@@ -141,6 +143,7 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
     owned: sim.owned,
     physical: false,
     activity: sim.activity,
+    app: sim.app,
   };
 }
 
@@ -156,6 +159,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     owned: avd.owned,
     physical: avd.physical,
     activity: avd.activity,
+    app: avd.app,
   };
 }
 

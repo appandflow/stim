@@ -6,6 +6,7 @@ import { BuildProgressBar } from '@/components/build-progress';
 import { Chip } from '@/components/chip';
 import { GitIndicator } from '@/components/git-indicator';
 import { Icon } from '@/components/icon';
+import { shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
 import { useColors } from '@/theme';
@@ -13,33 +14,45 @@ import { useColors } from '@/theme';
 export function WorkspaceRow({
   item,
   macOnline,
+  disconnectedAt,
+  now,
   onPress,
   onErrors,
 }: {
   item: HomeItem;
   macOnline: boolean;
+  disconnectedAt: number | null;
+  now: number;
   onPress: () => void;
   onErrors: () => void;
 }) {
   const colors = useColors();
+  const offline = !macOnline;
   const { env } = item;
   const build = runningBuild(env);
   const active = isActive(env);
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
   const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
-  const tint = build ? colors.accent : active ? colors.live : colors.tertiary;
+  const tint = offline ? colors.tertiary : build ? colors.accent : active ? colors.live : colors.tertiary;
+  const lastSeen = offline
+    ? disconnectedAt === null
+      ? 'Offline'
+      : `Last seen ${shortDuration(now - disconnectedAt)} ago`
+    : null;
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Workspace ${item.title} on ${item.macName}`}
+      accessibilityLabel={`Workspace ${item.title} on ${item.macName}${lastSeen ? `, ${lastSeen}` : ''}`}
       style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.raised }]}
     >
-      <View style={styles.lead}>
-        <View style={[styles.ring, { borderColor: tint, backgroundColor: active ? tint : 'transparent' }]} />
+      <View style={[styles.lead, offline && styles.dimmed]}>
+        <View
+          style={[styles.ring, { borderColor: tint, backgroundColor: active && !offline ? tint : 'transparent' }]}
+        />
       </View>
-      <View style={styles.body}>
+      <View style={[styles.body, offline && styles.dimmed]}>
         <Text
           style={[styles.title, { color: active ? colors.text : colors.secondary }]}
           numberOfLines={1}
@@ -59,16 +72,17 @@ export function WorkspaceRow({
             {item.macName}
           </Text>
         </View>
-        {active || errors > 0 || env.warnings.length > 0 ? (
+        {lastSeen || active || errors > 0 || env.warnings.length > 0 ? (
           <View style={styles.chips}>
+            {lastSeen ? <Chip>{lastSeen}</Chip> : null}
             {env.metro?.running ? <Chip mono={`:${env.metro.port}`}>{'Metro '}</Chip> : null}
             {env.supervisor && !env.supervisor.healthy ? <Chip tint={colors.warn}>supervisor unhealthy</Chip> : null}
             {running.map((d) => (
               <Fragment key={`${d.platform}-${d.slot}`}>
-                <Chip tint={colors.live}>
+                <Chip tint={offline ? undefined : colors.live}>
                   {`${d.platform === 'ios' ? 'iOS' : 'Android'}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`}
                 </Chip>
-                <ActivityChip activity={d.activity} />
+                <ActivityChip activity={d.activity} frozenAt={offline ? (disconnectedAt ?? now) : null} />
               </Fragment>
             ))}
             {(env.remoteDevices ?? []).map((r) => (
@@ -88,7 +102,7 @@ export function WorkspaceRow({
             ) : null}
           </View>
         ) : null}
-        {build ? <BuildProgressBar build={build} /> : null}
+        {build ? <BuildProgressBar build={build} frozenAt={offline ? (disconnectedAt ?? now) : null} /> : null}
       </View>
     </Pressable>
   );
@@ -99,6 +113,7 @@ const styles = StyleSheet.create({
   lead: { width: 20, alignItems: 'center', paddingTop: 5 },
   ring: { width: 13, height: 13, borderRadius: 7, borderWidth: 2 },
   body: { flex: 1, gap: 6 },
+  dimmed: { opacity: 0.5 },
   title: { fontSize: 18, fontWeight: '500' },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: -2 },
   macIcon: { marginLeft: 6 },

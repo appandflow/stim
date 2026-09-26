@@ -4,11 +4,11 @@ import { activityBadge } from '@/lib/format';
 import type { DeviceActivity } from '@/protocol/types';
 import { useColors } from '@/theme';
 
-export function ActivityChip({ activity }: { activity?: DeviceActivity }) {
+export function ActivityChip({ activity, frozenAt }: { activity?: DeviceActivity; frozenAt?: number | null }) {
   const colors = useColors();
-  const now = useNow(30_000);
-  const badge = activityBadge(activity, now);
+  const ticking = useNow(30_000);
+  const badge = activityBadge(activity, frozenAt ?? ticking);
   if (!badge) return null;
-  const tint = badge.kind === 'driven' ? colors.accent : badge.kind === 'unknown' ? colors.warn : colors.tertiary;
+  const tint = badge.kind === 'driven' ? colors.accent : colors.tertiary;
   return <Chip tint={tint}>{badge.text}</Chip>;
 }
