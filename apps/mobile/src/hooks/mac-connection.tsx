@@ -374,12 +374,13 @@ export function useBuildPlans(
   building: boolean,
 ): { plan: (platform: Platform) => PlanState | undefined; recheck: ((platform: Platform) => void) | null } {
   const { checks, snapshot } = usePlanChecks();
+  const open = useMacConnection().state.kind === 'open';
   const wanted = JSON.stringify(builds);
   useEffect(() => {
     if (!checks) return;
     if (building) checks.cancel(workspace);
     else checks.check(workspace, JSON.parse(wanted) as Partial<Record<Platform, string>>);
-  }, [checks, workspace, wanted, building]);
+  }, [checks, workspace, wanted, building, open]);
   useEffect(() => () => checks?.cancel(workspace), [checks, workspace]);
   const recheck = useCallback(
     (platform: Platform) => checks?.check(workspace, { [platform]: builds[platform] ?? '' }, true),

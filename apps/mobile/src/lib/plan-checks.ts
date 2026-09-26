@@ -20,7 +20,8 @@ export function planKey(last: LastBuild | null | undefined): string {
 
 /**
  * Next-build predictions of one Mac, by workspace and platform. A workspace asks for one plan at a time,
- * a result stays current for `PLAN_FRESH_MS` while its platform's last build is unchanged, and a reply
+ * a plan stays current for `PLAN_FRESH_MS` while its platform's last build is unchanged, a failure is asked
+ * again on the next check, and a reply
  * for a cancelled check is ignored.
  */
 export class PlanChecks {
@@ -52,7 +53,7 @@ export class PlanChecks {
       const entry = this.entries.get(id);
       if (entry?.buildKey === buildKey) {
         if (entry.state.kind === 'checking') continue;
-        if (!force && entry.checkedAt !== null && this.now() - entry.checkedAt < PLAN_FRESH_MS) continue;
+        if (!force && entry.state.kind === 'done' && this.now() - (entry.checkedAt ?? 0) < PLAN_FRESH_MS) continue;
       }
       const token = {};
       this.set(id, { state: { kind: 'checking' }, buildKey, checkedAt: null, token });

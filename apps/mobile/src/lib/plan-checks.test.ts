@@ -57,6 +57,24 @@ describe('PlanChecks', () => {
     expect(mac.calls).toEqual(['/w ios', '/other ios', '/w android', '/w ios', '/w android']);
   });
 
+  it('asks again after a failed check instead of reusing the failure', async () => {
+    let fail = true;
+    const calls: string[] = [];
+    const checks = new PlanChecks(async (workspace, platform) => {
+      calls.push(platform);
+      if (fail) throw new Error('Not connected.');
+      return plan(platform);
+    });
+    checks.check('/w', { ios: 'a' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(PlanChecks.state(checks.snapshot(), '/w', 'ios')).toEqual({ kind: 'failed', message: 'Not connected.' });
+    fail = false;
+    checks.check('/w', { ios: 'a' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toEqual(['ios', 'ios']);
+    expect(PlanChecks.state(checks.snapshot(), '/w', 'ios')).toEqual({ kind: 'done', plan: plan('ios') });
+  });
+
   it('ignores the reply of a cancelled check and lets the next one run after it', async () => {
     const mac = server();
     const checks = new PlanChecks(mac.request);
