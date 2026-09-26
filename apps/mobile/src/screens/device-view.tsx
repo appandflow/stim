@@ -6,6 +6,7 @@ import {
   PixelRatio,
   Platform as OS,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -22,6 +23,7 @@ import * as Clipboard from 'expo-clipboard';
 
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
+import { Icon } from '@/components/icon';
 import { Toggle } from '@/components/toggle';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
@@ -44,6 +46,7 @@ const TYPING_BAR_HEIGHT = 56;
 const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const NOTE_INSET = 64;
+const SIDE_WIDTH = 240;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -62,6 +65,7 @@ const POSTURE_LABELS: Record<DevicePosture, string> = {
 export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
   const colors = useColors();
   const window = useWindowDimensions();
+  const landscape = window.width > window.height;
   const { videoQuality } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
@@ -82,7 +86,10 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
-  const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
+  const [ownLease, setOwnLease] = useState<string | null>(null);
+  const leaseSince = control.state.kind === 'on' ? control.state.leaseSince : null;
+  if (leaseSince && leaseSince !== ownLease) setOwnLease(leaseSince);
+  const driver = otherDriver(device?.activity, leaseSince ?? ownLease);
   const insets = useSafeAreaInsets();
   const root = useRef<ViewInstance>(null);
   const stage = useRef<ViewInstance>(null);
@@ -90,7 +97,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
     aspectOf(source),
     platform === 'ios' ? 0.46 : 0.45,
-    !controlling,
+    !controlling && !(landscape && readOnly),
     root,
     stage,
   );
@@ -100,9 +107,9 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
-  const [tookOver, setTookOver] = useState(false);
   const [rootHeight, setRootHeight] = useState(0);
   const [barBottom, setBarBottom] = useState(0);
+  const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
   const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
   const typingBarShown = typing && keyboardShown;
   useEffect(() => {
@@ -112,7 +119,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const lift = useAnimatedStyle(() => {
     const covered = keyboardHeight.get();
     if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
-    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - TYPING_BAR_HEIGHT, barBottom);
+    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - TYPING_BAR_HEIGHT, insets.top + barBottom);
     return { transform: [{ translateY: -shift }] };
   });
   const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
@@ -189,10 +196,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
         {
           text: 'Take over',
           style: 'destructive',
-          onPress: () => {
-            setTookOver(true);
-            control.begin(true);
-          },
+          onPress: () => control.begin(true),
         },
       ],
     );
@@ -200,7 +204,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
     setTyped('');
-    setTookOver(false);
+    if (driver) return takeOver();
     control.begin(false);
   };
   const press = (button: InputButton) => control.button(button);
@@ -213,6 +217,62 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       .catch((cause: Error) => Alert.alert('Posture not changed', cause.message))
       .finally(() => setMoving(null));
   };
+  const readOnlyBanner = readOnly ? (
+    <View style={[styles.banner, { borderColor: colors.warn }]}>
+      <View style={styles.bannerBody}>
+        <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
+        <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
+        <View style={styles.bannerActions}>
+          {deviceId ? (
+            <Pressable
+              onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
+              accessibilityRole="button"
+              hitSlop={6}
+            >
+              <Text style={[styles.bannerAction, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy command'}</Text>
+            </Pressable>
+          ) : null}
+          <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
+            <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  ) : null;
+  const toolbars =
+    controlling || readOnly ? (
+      <>
+        <View style={styles.toolbar}>
+          <ToolButton
+            label={typing ? 'Hide keyboard' : 'Keyboard'}
+            disabled={readOnly}
+            onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
+          />
+          <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
+          {platform === 'android' ? (
+            <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} />
+          ) : null}
+          {platform === 'android' ? (
+            <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
+          ) : null}
+          <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
+        </View>
+        <View style={styles.toolbar}>
+          <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
+          <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
+          {postures
+            .filter((posture) => platform === 'android' || posture !== shown)
+            .map((posture) => (
+              <ToolButton
+                key={posture}
+                label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
+                disabled={moving !== null}
+                onPress={() => move(posture)}
+              />
+            ))}
+        </View>
+      </>
+    ) : null;
   const model = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
   const title = workspaceTitleAt(workspace, status);
 
@@ -230,76 +290,92 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             pointerEvents="none"
           />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
-            <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+            <View
+              style={[
+                styles.root,
+                {
+                  paddingTop: insets.top,
+                  paddingBottom: insets.bottom,
+                  paddingLeft: insets.left,
+                  paddingRight: insets.right,
+                },
+              ]}
+            >
               <View style={styles.root}>
                 <View
                   style={styles.bar}
                   onLayout={(event) => {
                     const { y, height } = event.nativeEvent.layout;
-                    setBarBottom(insets.top + y + height);
+                    setBarBottom(y + height);
                   }}
                 >
                   <Pressable
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([, right]) => [width, right]);
+                    }}
                     onPress={() => {
                       Keyboard.dismiss();
                       keyboardHeight.set(withTiming(0, { duration: 200 }));
                       zoom.close();
                     }}
                     accessibilityRole="button"
-                    accessibilityLabel="Back"
+                    accessibilityLabel="Close"
                     hitSlop={10}
                   >
-                    <Text style={styles.back}>{'‹'}</Text>
+                    <Icon name="xmark" size={22} color="#FFFFFF" />
                   </Pressable>
-                  <View style={styles.titles}>
+                  <View
+                    style={[
+                      styles.titles,
+                      {
+                        paddingLeft: Math.max(0, barSides[1] - barSides[0]),
+                        paddingRight: Math.max(0, barSides[0] - barSides[1]),
+                      },
+                    ]}
+                  >
                     <Text style={styles.title} numberOfLines={1}>
                       {title}
                     </Text>
-                    <Text style={styles.subtitle} numberOfLines={1}>
-                      {`${model} · ${slot}`}
-                    </Text>
-                  </View>
-                  {control.allowed !== null ? (
-                    <Toggle
-                      colors={colors}
-                      label={controlling ? 'Control on' : 'Control'}
-                      on={controlling}
-                      disabled={readOnly}
-                      onPress={toggle}
-                    />
-                  ) : null}
-                </View>
-                {readOnly ? (
-                  <View style={[styles.banner, { borderColor: colors.warn }]}>
-                    <View style={styles.bannerBody}>
-                      <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
-                      <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
-                      <View style={styles.bannerActions}>
-                        {deviceId ? (
-                          <Pressable
-                            onPress={() =>
-                              void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))
-                            }
-                            accessibilityRole="button"
-                            hitSlop={6}
-                          >
-                            <Text style={[styles.bannerAction, { color: colors.primary }]}>
-                              {copied ? 'Copied' : 'Copy command'}
-                            </Text>
-                          </Pressable>
-                        ) : null}
-                        <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
-                          <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
-                        </Pressable>
-                      </View>
+                    <View style={styles.subtitleRow}>
+                      <Text style={styles.subtitle} numberOfLines={1}>
+                        {`${model} · ${slot}`}
+                      </Text>
+                      {driver ? (
+                        <View
+                          style={styles.driver}
+                          accessible
+                          accessibilityLabel={controlling ? `Also driven by ${driver}` : `Driven by ${driver}`}
+                        >
+                          <View style={[styles.driverDot, { backgroundColor: colors.accent }]} />
+                          <Text style={styles.driverText} numberOfLines={1}>
+                            {driver}
+                          </Text>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
-                ) : null}
+                  <View
+                    onLayout={(event) => {
+                      const { width } = event.nativeEvent.layout;
+                      setBarSides(([left]) => [left, width]);
+                    }}
+                  >
+                    {control.allowed !== null ? (
+                      <Toggle
+                        colors={colors}
+                        label={controlling ? 'Control on' : 'Control'}
+                        on={controlling}
+                        disabled={readOnly}
+                        onPress={toggle}
+                      />
+                    ) : null}
+                  </View>
+                </View>
+                {landscape ? null : readOnlyBanner}
                 <Banner
                   colors={colors}
                   control={control.state}
-                  driver={driver}
-                  tookOver={tookOver}
                   canTakeOver={control.allowed === true}
                   readOnly={readOnly}
                   onTakeOver={takeOver}
@@ -309,44 +385,23 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                     <Chip tint={colors.warn}>Screen updates delayed</Chip>
                   </View>
                 ) : null}
-                <View ref={stage} style={styles.stage} onLayout={zoom.measure} collapsable={false}>
-                  {streams ? null : (
-                    <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+                <View style={landscape ? styles.row : styles.root}>
+                  <View ref={stage} style={styles.stage} onLayout={zoom.measure} collapsable={false}>
+                    {streams ? null : (
+                      <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+                    )}
+                  </View>
+                  {landscape ? (
+                    controlling || readOnly ? (
+                      <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
+                        {readOnlyBanner}
+                        {toolbars}
+                      </ScrollView>
+                    ) : null
+                  ) : (
+                    toolbars
                   )}
                 </View>
-                {controlling || readOnly ? (
-                  <View style={styles.toolbar}>
-                    <ToolButton
-                      label={typing ? 'Hide keyboard' : 'Keyboard'}
-                      disabled={readOnly}
-                      onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
-                    />
-                    <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
-                    {platform === 'android' ? (
-                      <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} />
-                    ) : null}
-                    {platform === 'android' ? (
-                      <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
-                    ) : null}
-                    <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
-                  </View>
-                ) : null}
-                {controlling || readOnly ? (
-                  <View style={styles.toolbar}>
-                    <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
-                    <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
-                    {postures
-                      .filter((posture) => platform === 'android' || posture !== shown)
-                      .map((posture) => (
-                        <ToolButton
-                          key={posture}
-                          label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
-                          disabled={moving !== null}
-                          onPress={() => move(posture)}
-                        />
-                      ))}
-                  </View>
-                ) : null}
               </View>
             </View>
           </Animated.View>
@@ -379,7 +434,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           {rotateNote && rest ? (
             <Animated.View
               pointerEvents="none"
-              style={[styles.noteRow, { top: rest[1] + rest[3] - NOTE_INSET }, zoom.fadeStyle, lift]}
+              style={[
+                styles.noteRow,
+                { top: rest[1] + rest[3] - NOTE_INSET, left: rest[0], width: rest[2] },
+                zoom.fadeStyle,
+                lift,
+              ]}
             >
               <Text
                 accessibilityLiveRegion="polite"
@@ -391,7 +451,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             </Animated.View>
           ) : null}
           <Animated.View
-            style={[styles.typingBar, typingBar, !typingBarShown && styles.hidden]}
+            style={[
+              styles.typingBar,
+              { paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right },
+              typingBar,
+              !typingBarShown && styles.hidden,
+            ]}
             pointerEvents={typingBarShown ? 'auto' : 'none'}
             accessibilityElementsHidden={!typingBarShown}
             importantForAccessibility={typingBarShown ? 'auto' : 'no-hide-descendants'}
@@ -406,6 +471,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               autoCorrect={false}
               spellCheck={false}
               keyboardType="ascii-capable"
+              disableFullscreenUI
               submitBehavior="submit"
               onChangeText={(next) => {
                 const delta = keyboardDelta(typed, next);
@@ -436,16 +502,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
 function Banner({
   colors,
   control,
-  driver,
-  tookOver,
   canTakeOver,
   readOnly,
   onTakeOver,
 }: {
   colors: Colors;
   control: ReturnType<typeof useDeviceControl>['state'];
-  driver: string | null;
-  tookOver: boolean;
   canTakeOver: boolean;
   readOnly: boolean;
   onTakeOver: () => void;
@@ -459,17 +521,9 @@ function Banner({
           ? `Control ended. ${control.ended}`
           : control.kind === 'starting'
             ? 'Starting control...'
-            : control.kind === 'on' && driver
-              ? tookOver
-                ? `You took over from ${driver}. It can still send input to this device.`
-                : `${driver} is also driving this device. Its input and yours can interfere.`
-              : driver
-                ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
-                : null;
+            : null;
   if (!message) return null;
-  const offer =
-    (canTakeOver || readOnly) &&
-    (control.kind === 'busy' || (driver !== null && control.kind !== 'starting' && control.kind !== 'on'));
+  const offer = (canTakeOver || readOnly) && control.kind === 'busy';
   return (
     <View style={[styles.banner, { borderColor: control.kind === 'failed' ? colors.warn : colors.border }]}>
       <Text style={styles.bannerText}>{message}</Text>
@@ -508,12 +562,23 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
 const styles = StyleSheet.create({
   root: { flex: 1 },
   bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
-  back: { color: '#FFFFFF', fontSize: 32, lineHeight: 32 },
-  titles: { flex: 1 },
+  titles: { flex: 1, alignItems: 'center' },
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
-  subtitle: { color: '#FFFFFF99', fontSize: 12 },
+  subtitle: { color: '#FFFFFF99', fontSize: 12, flexShrink: 1 },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '100%' },
+  driver: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF1F',
+  },
+  driverDot: { width: 6, height: 6, borderRadius: 3 },
+  driverText: { color: '#FFFFFFCC', fontSize: 11, fontWeight: '500' },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
-  noteRow: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
+  noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: 16 },
   note: {
     overflow: 'hidden',
     paddingHorizontal: 12,
@@ -525,6 +590,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  row: { flex: 1, flexDirection: 'row' },
+  side: { width: SIDE_WIDTH, flexGrow: 0 },
+  sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: 8 },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   flying: { position: 'absolute', overflow: 'hidden' },
   overlay: {
@@ -576,7 +644,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 16,
     backgroundColor: '#1C1C1E',
   },
   hidden: { opacity: 0 },

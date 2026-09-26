@@ -134,12 +134,12 @@ the mock server.
 Tapping a running device's screen, on the workspace screen or in the devices
 grid, grows it into the full-screen viewer: the thumbnail expands into the
 screen's place while the backdrop, title and toolbars fade in, showing the
-thumbnail's frame until the stream's first frame arrives. The title is the
-workspace's name, with the device's model and slot under it. Back, Android's
-back button, or dragging the screen down while Control is off shrinks it back
-into the thumbnail; a short drag springs back. The route is a transparent
-modal, so the list stays underneath, and the thumbnail hides while the viewer
-covers it. The viewer lays the screen out itself, animating its position and
+thumbnail's frame until the stream's first frame arrives. The centered title
+is the workspace's name, with the device's model and slot under it. The close
+button at the top left, Android's back button, or dragging the screen down
+while Control is off shrinks it back into the thumbnail; a short drag springs
+back. The route is a transparent modal, so the list stays underneath, and the
+thumbnail hides while the viewer covers it. The viewer lays the screen out itself, animating its position and
 size rather than a transform, so Android's `SurfaceView` follows it and the
 stream stays live through both animations. With reduced motion on, the viewer
 opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to
@@ -151,6 +151,16 @@ says the phone is read-only and how to allow control, with **Copy command**
 and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
+
+The viewer is the one screen on a phone that turns to landscape with the
+phone; every other screen stays portrait. In landscape the title stays on
+top, and the Control toolbars and the read-only banner move to a column right
+of the screen. Turning the phone does not restart the stream, and
+touches keep landing where they are drawn once the screen settles into its new
+size. The phone does not turn by itself when the device is landscape. On iPad
+every screen follows the iPad's orientation; Android tablets follow the phone
+rules. On a read-only pairing in landscape, dragging down does not close the
+viewer, so the column can scroll.
 
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
@@ -174,12 +184,13 @@ support rotating; the phone cannot tell that apart from a rotate the device
 did not apply.
 
 When status reports the device driven by something else, such as
-agent-device, a `stim device lock`, or another phone, a banner names it and
-Control is refused with the server's reason. **Take over** asks for
-confirmation, then starts control anyway; the Mac records the takeover in its
-action log. The banner then says you took over from that driver and that it
-can still send input to the device. A driver that starts while you have
-control is named as also driving the device.
+agent-device, a `stim device lock`, or another phone, a small chip with a dot
+next to the model names it. **Control** then asks for confirmation before it
+takes over, and starts control anyway; the Mac records the takeover in its
+action log. The chip stays while you have control, because that driver can
+still send input to the device. When the server refuses
+Control because of a driver that status did not show yet, a banner gives its reason
+with **Take over**, which asks the same confirmation.
 
 ## Actions
 

@@ -10,6 +10,11 @@ import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
 import { useColors, useEffectiveScheme } from '@/theme';
 
+/** On iPad every screen keeps the orientations the system allows, as iPad multitasking requires. */
+function phoneOrientation(orientation: 'portrait_up' | 'default') {
+  return Platform.OS === 'ios' && Platform.isPad ? undefined : orientation;
+}
+
 export default function RootLayout() {
   return (
     <SettingsProvider>
@@ -51,6 +56,7 @@ function RootLayoutContent() {
             <MenuDrawer>
               <Stack
                 screenOptions={{
+                  orientation: phoneOrientation('portrait_up'),
                   headerTintColor: colors.primary,
                   headerTitleStyle: { color: colors.text },
                   headerBackButtonDisplayMode: 'minimal',
@@ -79,6 +85,7 @@ function RootLayoutContent() {
                   name="mac/[id]/device"
                   options={{
                     headerShown: false,
+                    orientation: phoneOrientation('default'),
                     presentation: 'transparentModal',
                     animation: 'none',
                     gestureEnabled: false,
