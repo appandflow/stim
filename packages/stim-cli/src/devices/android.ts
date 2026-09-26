@@ -679,6 +679,18 @@ export function avdPathExists(path: string): boolean {
   }
 }
 
+/**
+ * True only when the AVD home the emulator uses first exists and no AVD root holds a registration or data
+ * directory for `avdName`. A missing first root may be an unmounted volume, so it proves nothing; an
+ * unreadable path throws.
+ */
+export function avdNameAbsent(avdName: string, roots: readonly string[] = avdStorageRoots()): boolean {
+  if (!roots[0] || !avdPathExists(roots[0])) return false;
+  return roots.every(
+    (root) => !avdPathExists(join(root, `${avdName}.ini`)) && !avdPathExists(join(root, `${avdName}.avd`)),
+  );
+}
+
 export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirectory[] {
   const roots = avdStorageRoots();
   const stores = roots.filter(avdPathExists).map((root) => ({

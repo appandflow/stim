@@ -41,6 +41,8 @@ import gcCommand, {
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
+import { forgetStaleLedgerEntries } from '../commands/gc/ledger.ts';
+import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import * as reclaim from '../devices/reclaim.ts';
 import {
   makeConfig,
@@ -538,6 +540,90 @@ test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forg
   } finally {
     delete process.env.ANDROID_AVD_HOME;
   }
+});
+
+describe('android ledger names', () => {
+  const GONE = 'stim-t1401-gone';
+  const avdHome = () => join(tmpHome, 'avd');
+  let listing: string | null;
+
+  beforeEach(() => {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    process.env.ANDROID_AVD_HOME = avdHome();
+    mkdirSync(avdHome(), { recursive: true });
+    mkdirSync(join(avdHome(), 'stim-t1401-data.avd'));
+    writeFileSync(join(avdHome(), 'stim-t1401-ini.ini'), 'path=/Volumes/Offline/stim-t1401-ini.avd\n');
+    const project = join(tmpHome, 'app');
+    mkdirSync(project, { recursive: true });
+    saveConfig({
+      version: 2,
+      projects: {
+        [project]: {
+          platforms: {
+            android: { avdName: 'stim-t1401-reserved', owned: true, deviceName: 'x', setupIncomplete: true },
+          },
+        },
+      },
+      repos: {},
+    });
+    rmSync(join(tmpHome, 'created-devices.json'), { force: true });
+    for (const name of [GONE, 'stim-t1401-listed', 'stim-t1401-data', 'stim-t1401-ini', 'stim-t1401-reserved'])
+      recordCreatedDevice('android', name);
+    listing = 'stim-t1401-listed\n';
+    setExecutor({
+      ...getExecutor(),
+      run: (command) => {
+        if (!command.includes('-list-avds')) return '';
+        if (listing === null) throw new Error('emulator timed out');
+        return listing;
+      },
+      runQuiet: () => null,
+      runFile: () => '',
+    });
+  });
+
+  const androidEntries = async () =>
+    (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
+
+  test('only a name with no registration, data, listing or unfinished setup is stale, and --delete forgets it', async () => {
+    expect(await androidEntries()).toEqual([{ kind: 'android', id: GONE }]);
+    const output = await captureLog(() => runGc({ delete: true }));
+    expect(output).toContain(`Forgot the ledger entry for android ${GONE}`);
+    expect(output).not.toContain('Forgot the ledger entry for android stim-t1401-data');
+    expect([...readCreatedDevices().android].toSorted()).toEqual([
+      'stim-t1401-ini',
+      'stim-t1401-listed',
+      'stim-t1401-reserved',
+    ]);
+  });
+
+  test.each([
+    ['the emulator listing fails', () => (listing = null)],
+    ['the first AVD root is missing, as on an unmounted volume', () => rmSync(avdHome(), { recursive: true })],
+  ])('nothing is pruned when %s', async (_, breakIt) => {
+    breakIt();
+    expect(await androidEntries()).toEqual([]);
+    await captureLog(() => runGc({ delete: true }));
+    expect(readCreatedDevices().android.has(GONE)).toBe(true);
+  });
+
+  test('a name recreated after the report, or claimed by a running setup, is kept at --delete', async () => {
+    const entries = await androidEntries();
+    writeFileSync(join(avdHome(), `${GONE}.ini`), `path=${join(avdHome(), `${GONE}.avd`)}\n`);
+    const output = await captureLog(() => forgetStaleLedgerEntries(entries));
+    expect(output).toContain(`Kept the ledger entry for android ${GONE}`);
+    rmSync(join(avdHome(), `${GONE}.ini`));
+
+    const claim = acquireAvdClaim(GONE);
+    try {
+      expect(await captureLog(() => forgetStaleLedgerEntries(entries))).toContain(
+        `Could not forget the ledger entry for android ${GONE}`,
+      );
+    } finally {
+      releaseClaim(claim);
+    }
+    expect(readCreatedDevices().android.has(GONE)).toBe(true);
+  });
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {

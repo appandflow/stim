@@ -324,8 +324,18 @@ THE MIRROR IMAGE: A STALE DEVICE RECORD
   \`gc --delete\` forgets them under the ledger lock. If the listing fails,
   nothing is reported or forgotten, and like the device sweep it is skipped
   without a config or under a scoped STIM_HOME. UDIDs are never reused, so a
-  forgotten entry cannot belong to a later simulator. Android ledger names
-  are not pruned yet.
+  forgotten entry cannot belong to a later simulator.
+
+  Android ledger entries are AVD names, and names are reused: another
+  STIM_HOME can later create an AVD with the same name. \`gc\` reports an
+  AVD name as stale only when \`emulator -list-avds\` answered, the first AVD
+  root exists (a missing one may be an unmounted volume), no AVD root holds
+  <name>.ini or <name>.avd, and no unfinished setup reserves the name.
+  \`gc --delete\` takes that AVD's claim, then re-checks and forgets the name
+  under the config and ledger locks, so a setup in progress or an AVD
+  recreated since the report keeps its entry. A name reused before \`gc\`
+  runs still counts as this home's; run \`gc\` after deleting a Stim AVD by
+  hand.
 
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.stim, or a throwaway

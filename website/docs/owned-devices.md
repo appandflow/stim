@@ -32,6 +32,14 @@ When a simulator in the ledger is deleted outside Stim, for example from Xcode,
 it from the ledger. Stim does this only when `simctl` lists every simulator,
 unavailable ones included, and that UDID is not among them.
 
+The Android ledger records AVD names, and another `STIM_HOME` can create an AVD
+with the same name later. `stim gc` reports an AVD name as stale when
+`emulator -list-avds` answered, the AVD home exists, and no AVD root has a
+registration or data directory for that name. It does not report a name that an
+unfinished `stim android` setup has reserved. `stim gc --delete` checks again
+before it forgets the name. After you delete a Stim AVD by hand, run `stim gc
+--delete` so a later AVD with that name is not treated as this home's.
+
 `stim android --device [serial]` and `stim ios --device [udid]` install, launch,
 and read available logs on connected physical devices. An iPhone can be cabled
 or paired over Wi-Fi; with no UDID, Stim picks a cabled iPhone first. Stim leases the device

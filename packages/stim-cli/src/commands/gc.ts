@@ -55,6 +55,7 @@ import {
 } from './gc/workspaces.ts';
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
 import {
+  findStaleAndroidLedgerEntries,
   findStaleLedgerEntries,
   forgetStaleLedgerEntries,
   staleBrowserProfiles,
@@ -276,6 +277,9 @@ export async function collectGcReport(
         avdsChecked = false;
         deviceSweepNotices.push(`android data sweep skipped: ${(error as Error).message}`);
       }
+    }
+    if (avdsChecked) {
+      staleLedgerEntries = [...staleLedgerEntries, ...findStaleAndroidLedgerEntries(ledger, avds, cfg)];
     }
     const registeredAvds = new Set(avds);
     avds = [...new Set([...avds, ...orphanedAvdDirectories.map((entry) => entry.name)])];
