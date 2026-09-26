@@ -134,10 +134,14 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
 
   public var id: String { path }
 
-  /// The sum of the categories that have a size, or nil when none has one yet.
+  /// The sum of the categories that have a size: a lower bound while `totalComplete` is false, and nil
+  /// while no category has anything measured on disk.
   public var total: Int64? {
-    let known = [buildOutputs, nodeModules, devices].compactMap(\.bytes)
-    return known.isEmpty ? nil : known.reduce(0, +)
+    let parts = [buildOutputs, nodeModules, devices]
+    guard totalComplete || parts.contains(where: { if case .size = $0 { return true } else { return false } }) else {
+      return nil
+    }
+    return parts.compactMap(\.bytes).reduce(0, +)
   }
 
   /// Whether every category has a size, so `total` is not a lower bound.

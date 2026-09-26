@@ -286,6 +286,8 @@ struct StorageView: View {
     case .active:
       Text(unprovisioned ? "Not warmed" : "Active").foregroundStyle(Theme.tertiary)
         .help(unprovisioned ? "A linked worktree stim worktree warm has not set up" : "")
+    case nil where metrics.gcReport == nil && !unprovisioned:
+      Text("\u{2014}").foregroundStyle(Theme.tertiary).help("Waiting for stim gc")
     case nil:
       Text(unprovisioned ? "Not warmed" : "Checkout").foregroundStyle(Theme.tertiary)
         .help(unprovisioned ? "A linked worktree stim worktree warm has not set up" : "A source checkout; stim gc never removes it")
@@ -299,7 +301,7 @@ struct StorageView: View {
     case .size(let bytes): (text, reason) = (formatDisk(bytes), "")
     case .absent: (text, reason) = ("None", "Nothing on disk")
     case .measuring: (text, reason) = ("\u{2026}", "Measuring")
-    case .failed: (text, reason) = ("Unknown", "Could not be sized in time; Refresh to try again")
+    case .failed: (text, reason) = ("Unknown", "Could not be sized; Refresh to try again")
     case .notMeasured: (text, reason) = ("\u{2014}", "Not measured yet")
     }
     return Text(text)

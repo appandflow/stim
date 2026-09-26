@@ -126,7 +126,8 @@ blocks on a measurement: each path is sized by its own `du` at utility
 priority, three at a time, and shows as soon as it finishes. A path that takes
 more than three minutes reads **Unknown**. Sizes are kept for 15 minutes, and
 **Refresh** measures again. Every size cell shows a size, **None** when nothing
-is on disk, an ellipsis while it is measured, or **Unknown**.
+is on disk, an ellipsis while it is measured, **Unknown** when it could not be sized, or
+a dash before the first measurement.
 
 - **Workspaces**: largest first, each workspace and each linked worktree that
   `stim worktree warm` has not set up (**Not warmed**), named with its

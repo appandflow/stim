@@ -58,27 +58,29 @@ final class StorageStore: ObservableObject {
   }
 
   private func measure(_ jobs: [(path: String, options: [String])]) async {
-    await withTaskGroup(of: (String, [String: Int64], Bool).self) { group in
+    await withTaskGroup(of: (String, [String: Int64]).self) { group in
       var queue = jobs[...]
       func next() {
         guard let job = queue.popFirst() else { return }
-        group.addTask(priority: .utility) {
-          let result = Self.run("/usr/bin/du", job.options + [job.path], cwd: NSHomeDirectory(), environment: nil, timeout: Self.duTimeout)
-          return (job.path, DiskSizes.parse(String(decoding: result?.output ?? Data(), as: UTF8.self)), result?.timedOut != false)
+        group.addTask {
+          let result = await Self.offThread {
+            Self.run("/usr/bin/du", job.options + [job.path], cwd: NSHomeDirectory(), environment: nil, timeout: Self.duTimeout)
+          }
+          return (job.path, DiskSizes.parse(String(decoding: result?.output ?? Data(), as: UTF8.self)))
         }
       }
       for _ in 0..<Self.duConcurrency { next() }
-      for await (path, sizes, failed) in group {
+      for await (path, sizes) in group {
         disk.sizes.merge(sizes, uniquingKeysWith: { _, new in new })
         disk.pending.remove(path)
-        if failed && sizes[path] == nil { disk.failed.insert(path) }
+        if sizes[path] == nil { disk.failed.insert(path) }
         next()
       }
     }
   }
 
   private func loadPulls(repositories: Set<String>, environment: [String: String]) async {
-    let (gh, pulls) = await Task.detached(priority: .utility) {
+    let (gh, pulls) = await Self.offThread {
       let gh = Self.executable("gh", in: environment)
       let pulls = Dictionary(
         uniqueKeysWithValues: repositories.compactMap { repository -> (String, [String: PullRequest])? in
@@ -89,7 +91,7 @@ final class StorageStore: ObservableObject {
           return (repository, byBranch)
         })
       return (gh, pulls)
-    }.value
+    }
     self.pulls = pulls
     hasGitHubCLI = gh != nil
     loadingPulls = false
@@ -104,9 +106,16 @@ final class StorageStore: ObservableObject {
       .first { FileManager.default.isExecutableFile(atPath: $0) }
   }
 
+  /// Runs blocking work on a dispatch queue, so waiting on a child process never holds a Swift concurrency thread.
+  nonisolated private static func offThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async { continuation.resume(returning: work()) }
+    }
+  }
+
   /// Stdout of a run and whether it ran past `timeout` and was terminated, or nil when it could not start. A
-  /// terminated `du` has already printed the entries it finished, and `du` exits 1 after an unreadable entry
-  /// but still prints the rest, so neither case discards the output. The child runs at utility QoS: at
+  /// terminated `du -d 1` has already printed the entries it finished, and `du` exits 1 after an unreadable
+  /// entry but still prints the rest, so neither case discards the output. The child runs at utility QoS: at
   /// background QoS macOS throttles its disk I/O, which made `du` over a large node_modules about 16 times slower.
   nonisolated private static func run(
     _ executable: String, _ arguments: [String], cwd: String, environment: [String: String]?,
@@ -129,13 +138,16 @@ final class StorageStore: ObservableObject {
       box.value = out.fileHandleForReading.readDataToEndOfFile()
       read.signal()
     }
-    let timedOut = read.wait(timeout: .now() + timeout) == .timedOut
-    if timedOut {
-      process.terminate()
-      read.wait()
+    guard read.wait(timeout: .now() + timeout) == .timedOut else {
+      process.waitUntilExit()
+      return (box.value, false)
     }
-    process.waitUntilExit()
-    return (box.value, timedOut)
+    process.terminate()
+    if read.wait(timeout: .now() + 5) == .timedOut {
+      kill(process.processIdentifier, SIGKILL)
+      guard read.wait(timeout: .now() + 5) == .success else { return (Data(), true) }
+    }
+    return (box.value, true)
   }
 }
 

@@ -79,6 +79,14 @@ import Testing
     #expect(row.buildOutputs == .notMeasured && row.nodeModules == .measuring && row.devices == .measuring)
     #expect(row.total == nil)
 
+    let gcLoaded = try JSONDecoder().decode(GcReport.self, from: Data(#"{"sections":{}}"#.utf8))
+    let bare = try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/p","live":false,"warnings":[]}"#.utf8))
+    let unsized = try #require(
+      StorageReport.make(
+        environments: [bare], gc: gcLoaded, disk: DiskMeasurements(failed: ["/p/node_modules"]), paths: paths
+      ).workspaces.first)
+    #expect(unsized.total == nil)
+
     let noOutputs = try JSONDecoder().decode(GcReport.self, from: Data(#"{"sections":{}}"#.utf8))
     let finished = DiskMeasurements(
       sizes: ["\(paths.simulatorDevices)/\(owned)": 10_240, paths.simulatorDevices: 20_480, paths.avds: 0],
