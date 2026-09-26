@@ -29,12 +29,14 @@ function feedbackProps(feedback: TouchFeedback, colors: Colors): Partial<Touchab
 }
 
 /**
- * React Native's iOS view reports a checked switch as the value "1" or "0", which VoiceOver reads as on or off.
- * Gesture Handler's native button maps only `selected` and `disabled` from the accessibility state.
+ * React Native's iOS view reports a checked switch as the value "1" or "0", which VoiceOver reads as on or off, and
+ * an expanded element as "expanded". Gesture Handler's native button maps only `selected` and `disabled` from the
+ * accessibility state.
  */
-function switchValue(role: TouchProps['accessibilityRole'], state: TouchProps['accessibilityState']) {
-  if (Platform.OS !== 'ios' || role !== 'switch' || typeof state?.checked !== 'boolean') return undefined;
-  return { text: state.checked ? '1' : '0' };
+function stateValue(role: TouchProps['accessibilityRole'], state: TouchProps['accessibilityState']) {
+  if (Platform.OS !== 'ios' || !state) return undefined;
+  if (role === 'switch' && typeof state.checked === 'boolean') return { text: state.checked ? '1' : '0' };
+  return state.expanded ? { text: 'expanded' } : undefined;
 }
 
 /** Gesture Handler's `Touchable` with the app's press feedback, exposed to assistive technology as one button. */
@@ -55,7 +57,7 @@ export function Touch({
       accessible={accessible}
       accessibilityRole={accessibilityRole}
       accessibilityState={disabled ? { ...accessibilityState, disabled: true } : accessibilityState}
-      accessibilityValue={accessibilityValue ?? switchValue(accessibilityRole, accessibilityState)}
+      accessibilityValue={accessibilityValue ?? stateValue(accessibilityRole, accessibilityState)}
       disabled={disabled}
       style={[feedback === 'card' && styles.clip, style]}
       {...props}
