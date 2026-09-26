@@ -27,8 +27,8 @@ The workspace is the nearest package.json directory, resolved through
 symlinks. In a monorepo, a package that depends on neither react-native nor
 expo, such as a Vite web app, uses the one Stim app registered in the same
 git worktree instead, and says so on stderr. ports, web, settings, logs,
-reload, stop and status follow this rule; other commands use the nearest
-package.json. Register the app first: run stim ports get <label>, stim start,
+reload, stop and status follow this rule (status stars the app instead of
+printing the note); other commands use the nearest package.json. Register the app first: run stim ports get <label>, stim start,
 stim ios or stim android from the app directory. Every ports command then
 acts on the app's ports, so ports stop without a label there also stops the
 app's other labels. A package that already holds ports keeps them; release

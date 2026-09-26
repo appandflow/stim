@@ -35,8 +35,8 @@ port:
 
 In a monorepo whose web app is its own package (apps/web beside apps/mobile),
 stim ports, web, settings, logs, reload, stop and status run from the web
-package resolve to the one Stim app registered in the same Git worktree, and
-say so on stderr. The port, the browser, web.url and the logs all belong to
+package resolve to the one Stim app registered in the same Git worktree; each
+names the app on stderr, and status stars it. The port, the browser, web.url and the logs all belong to
 that app's workspace, so every command can run from the web package. Register
 the app first, from its directory. See stim guide ports for the exact rule.
 

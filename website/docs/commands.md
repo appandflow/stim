@@ -114,7 +114,7 @@ The workspace is the nearest `package.json` directory. In a monorepo, a package
 that is not a React Native or Expo app, such as a Vite web app in `apps/web`,
 uses the one Stim app registered in the same Git worktree instead, and stderr
 names it. `web`, `settings`, `logs`, `reload`, `stop` and `status` follow the
-same rule. Every `ports` command there then acts on that app's ports, including
+same rule; `status` stars the app instead of printing the note. Every `ports` command there then acts on that app's ports, including
 `stop` and `release` without a label. `status`, `worktree remove` and `gc`
 treat the ports as the app's. A package that already holds ports keeps them
 until you release them. With no registered app, or more than one, run `ports`

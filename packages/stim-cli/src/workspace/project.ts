@@ -139,7 +139,6 @@ export function findServerWorkspace(startDir: string): { root: string; from: str
   return apps.length === 1 ? { root: apps[0]!, from: nearest } : { root: nearest, from: null };
 }
 
-/** The workspace a command acts on from `startDir`; names the app on stderr when a web package resolves to it. */
 export function findCommandWorkspace(
   startDir: string,
   note: (line: string) => void = (line) => console.error(line),
