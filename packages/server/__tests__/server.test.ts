@@ -212,7 +212,7 @@ async function start(
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
     actionLimits: overrides.actionLimits,
-    frameLimits: overrides.frameLimits,
+    frameLimits: { lingerMs: 50, ...overrides.frameLimits },
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
     controlLimits: overrides.controlLimits,
@@ -1526,6 +1526,39 @@ describe('frames.subscribe', () => {
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'keeps the helper for a client that comes back within the linger time, and stops it after',
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
+        { lingerMs: 600 },
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      const oneFrame = async () => {
+        const reply = await client.request('frames.subscribe', { workspace, platform: 'ios', maxEdge: 640 });
+        const { subscription } = (reply as { result: { subscription: string } }).result;
+        const frame = await client.next();
+        expect(frame).toMatchObject({ event: 'frame', subscription });
+        let done = await client.request('unsubscribe', { subscription });
+        while (!('id' in done)) done = await client.next();
+      };
+      const started = () => readFileSync(`${toolCalls}.started`, 'utf8').split('\n').filter(Boolean);
+      await oneFrame();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await oneFrame();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await oneFrame();
+      expect(started()).toHaveLength(1);
+      const pid = Number(started()[0]);
+      expect(alive(pid)).toBe(true);
+      await until(() => !alive(pid));
+      await oneFrame();
+      expect(started()).toHaveLength(2);
     },
     10_000,
   );
