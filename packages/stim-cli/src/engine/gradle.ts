@@ -487,7 +487,7 @@ export async function buildAndroid(
     };
   }
 
-  const sdk = androidHome();
+  const sdk = androidHome(env);
   const refusal = androidSdkRefusal({
     sdkPath: sdk,
     sdkExists: existsSync(sdk),
@@ -581,7 +581,15 @@ export async function buildAndroid(
       spawn(project.gradlew, args, {
         cwd: project.androidDir,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...env, ...ccache?.env, ...cas?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
+        env: {
+          ...env,
+          ...(env.ANDROID_HOME || env.ANDROID_SDK_ROOT ? {} : { ANDROID_HOME: sdk }),
+          ...ccache?.env,
+          ...cas?.env,
+          ...nativeEnv,
+          TERM: 'dumb',
+          FORCE_COLOR: '0',
+        },
       }),
     );
   } catch (err) {

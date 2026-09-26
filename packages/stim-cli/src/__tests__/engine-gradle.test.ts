@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { androidHome } from '../devices/android.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   ASSEMBLE_TASK,
@@ -709,6 +710,44 @@ describe('buildAndroid', () => {
     assert(!result.ok);
     expect(result.remedy).toMatch(/prebuild/);
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test('Gradle gets the SDK path Stim resolved when the caller set no SDK variable, and an explicit one untouched', async () => {
+    makeAndroidProject();
+    const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = root;
+    process.env.USERPROFILE = root;
+    try {
+      const unset = { PATH: process.env.PATH, LOCALAPPDATA: join(root, 'local') };
+      const defaultSdk = androidHome(unset);
+      mkdirSync(defaultSdk, { recursive: true });
+      const gradleEnv = async (env: NodeJS.ProcessEnv) => {
+        let seen: NodeJS.ProcessEnv | undefined;
+        const result = await buildAndroid(
+          { root, logWriter: recordingWriter() },
+          {
+            env,
+            spawnFn: (_cmd, _args, opts) => {
+              seen = opts.env as NodeJS.ProcessEnv;
+              return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+            },
+          },
+        );
+        assert(result.ok);
+        assert(seen);
+        return seen;
+      };
+      expect((await gradleEnv(unset)).ANDROID_HOME).toBe(defaultSdk);
+      expect((await gradleEnv({ ...unset, ANDROID_HOME: sdk })).ANDROID_HOME).toBe(sdk);
+      const sdkRoot = await gradleEnv({ ...unset, ANDROID_SDK_ROOT: sdk });
+      expect(sdkRoot.ANDROID_HOME).toBe(undefined);
+      expect(sdkRoot.ANDROID_SDK_ROOT).toBe(sdk);
+    } finally {
+      for (const [key, value] of Object.entries(savedHome)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   test('a missing Android SDK is reported before anything is spawned', async () => {

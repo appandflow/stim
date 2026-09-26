@@ -31,7 +31,7 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
-import { type AdbDevices, hostSystemImageArch, listAdbDevices } from '../devices/android.ts';
+import { type AdbDevices, androidHome, hostSystemImageArch, listAdbDevices } from '../devices/android.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
@@ -52,6 +52,7 @@ import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } fro
 import { MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION } from '../engine/eas-build.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
+import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
@@ -961,6 +962,7 @@ export function runDoctor(
       ? []
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
     checkAndroidPathRoom(projectRoot, platform, host),
+    checkAndroidSdk(projectRoot, platform),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     easBuildDownloadFinding,
@@ -1003,6 +1005,27 @@ export function checkAndroidPathRoom(
       'The project path leaves no room for Android native object paths',
       `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
       androidPathRoomRemedy(room),
+    ),
+  };
+}
+
+export function checkAndroidSdk(projectRoot: string, platform: DoctorPlatform | undefined): Finding | null {
+  const androidDir = join(projectRoot, 'android');
+  if (platform === 'ios' || (platform !== 'android' && !existsSync(androidDir))) return null;
+  const sdkPath = androidHome();
+  const refusal = androidSdkRefusal({
+    sdkPath,
+    sdkExists: existsSync(sdkPath),
+    hasLocalProperties: existsSync(join(androidDir, 'local.properties')),
+  });
+  if (!refusal) return null;
+  return {
+    code: 'android-sdk-missing',
+    ...finding(
+      'cost',
+      'No Android SDK was found',
+      `${refusal.reason} \`stim android\` refuses with ${refusal.code} before Gradle runs.`,
+      refusal.remedy,
     ),
   };
 }
