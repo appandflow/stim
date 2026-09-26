@@ -1,3 +1,4 @@
+import { NOT_OURS_FOREIGN_CWD, type MetroResolution } from '../metro.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 
 export type WebLaunched = true | 'bundling' | 'unverified';
@@ -78,11 +79,6 @@ export const EXPO_WEB_PACKAGES: readonly string[] = ['react-dom', 'react-native-
 export const EXPO_WEB_DEPENDENCIES: string = `npx expo install ${EXPO_WEB_PACKAGES.join(' ')}`;
 const WEB_SERVER_EXAMPLE = 'pnpm exec vite --port "$(stim ports get web)" --strictPort';
 
-/**
- * Decides, before the page opens, what serves it. `serve` is the step that starts the dev server when nothing
- * does, null while this workspace's Metro or its supervisor holds the port. `foreignHolder` describes another
- * process on the Metro port, which `stim start` replaces with a free port only when no supervisor is recorded.
- */
 export function webServePlan({
   usesMetro,
   metro,
@@ -90,23 +86,32 @@ export function webServePlan({
   missingWebPackages,
 }: {
   usesMetro: boolean;
-  metro: { metro?: unknown; notOurs?: string } | null;
+  metro: MetroResolution | null;
   supervisorHeld: boolean;
   missingWebPackages: readonly string[];
-}): { serve: string | null; foreignHolder: string | null } {
+}): { serve: string | null; foreign: { reason: string; remedy: string } | null } {
   if (!usesMetro) {
     return {
       serve: `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``,
-      foreignHolder: null,
+      foreign: null,
     };
   }
-  if (metro?.metro || supervisorHeld) return { serve: null, foreignHolder: null };
-  if (metro?.notOurs) return { serve: null, foreignHolder: metro.notOurs };
+  if (metro?.notOurs && (!supervisorHeld || metro.kind === NOT_OURS_FOREIGN_CWD)) {
+    const start = supervisorHeld ? 'Run `stim stop`, then `stim start`' : 'Run `stim start`';
+    return {
+      serve: null,
+      foreign: {
+        reason: `Another process holds this workspace's Metro port: ${metro.notOurs}`,
+        remedy: `${start}, which reserves a free Metro port for this workspace, then run \`stim web\` again.`,
+      },
+    };
+  }
+  if (metro?.metro || supervisorHeld) return { serve: null, foreign: null };
   return {
     serve: missingWebPackages.length
       ? `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``
       : "Start this workspace's Metro with `stim start`",
-    foreignHolder: null,
+    foreign: null,
   };
 }
 

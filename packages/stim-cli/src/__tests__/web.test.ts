@@ -21,6 +21,7 @@ import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
+import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
 import { readWebRecord, webFacts, webProfileDir, writeWebRecord, type WebRecord } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -280,28 +281,28 @@ describe('launched', () => {
 
 describe('what serves the page', () => {
   const plan = (opts: Partial<Parameters<typeof webServePlan>[0]>) =>
-    webServePlan({
-      usesMetro: true,
-      metro: { missing: true } as never,
-      supervisorHeld: false,
-      missingWebPackages: [],
-      ...opts,
-    });
+    webServePlan({ usesMetro: true, metro: { missing: true }, supervisorHeld: false, missingWebPackages: [], ...opts });
 
   test('an empty Metro port needs stim start, after the missing web packages', () => {
-    expect(plan({})).toEqual({ serve: "Start this workspace's Metro with `stim start`", foreignHolder: null });
+    expect(plan({})).toEqual({ serve: "Start this workspace's Metro with `stim start`", foreign: null });
     expect(plan({ missingWebPackages: ['react-dom'] }).serve).toMatch(/^Run `npx expo install .*` and `stim start`$/);
     expect(plan({ usesMetro: false }).serve).toContain('stim ports get web');
   });
 
-  test('another process on the port is foreign only while no supervisor of this workspace holds it', () => {
-    const unresponsive = { notOurs: "pid 7 on port 8084 does not answer Metro's /status" };
-    expect(plan({ metro: unresponsive })).toEqual({ serve: null, foreignHolder: unresponsive.notOurs });
-    expect(plan({ metro: unresponsive, supervisorHeld: true })).toEqual({ serve: null, foreignHolder: null });
-    expect(plan({ metro: { metro: { pid: 7 } }, missingWebPackages: ['react-dom'] })).toEqual({
-      serve: null,
-      foreignHolder: null,
-    });
+  test('a running Metro or a starting supervisor serves the page', () => {
+    const running = { metro: { pid: 7, leader: 7, cwd: '/app' } };
+    expect(plan({ metro: running, missingWebPackages: ['react-dom'] })).toEqual({ serve: null, foreign: null });
+    const unresponsive = { notOurs: "pid 7 on port 8084 does not answer Metro's /status", kind: 'unresponsive' };
+    expect(plan({ metro: unresponsive, supervisorHeld: true })).toEqual({ serve: null, foreign: null });
+  });
+
+  test('another process on the port is foreign, and the remedy frees the port the way stim start will', () => {
+    const unresponsive = { notOurs: "pid 7 on port 8084 does not answer Metro's /status", kind: 'unresponsive' };
+    expect(plan({ metro: unresponsive }).foreign?.remedy).toMatch(/^Run `stim start`, which reserves a free/);
+    const stranger = { notOurs: 'pid 7 on port 8084 runs from /other, outside /app', kind: NOT_OURS_FOREIGN_CWD };
+    expect(plan({ metro: stranger, supervisorHeld: true }).foreign?.remedy).toMatch(
+      /^Run `stim stop`, then `stim start`, which reserves a free/,
+    );
   });
 });
 

@@ -211,7 +211,7 @@ export async function runWeb({
     record: getProject(root)?.supervisor,
     reservedPort: metroPort,
   });
-  const { serve, foreignHolder } = webServePlan({
+  const { serve, foreign } = webServePlan({
     usesMetro,
     metro,
     supervisorHeld: supervisor.status !== 'none' && supervisor.status !== 'stale',
@@ -284,16 +284,10 @@ export async function runWeb({
   const measured = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const verdict: WebLaunchVerdict = foreignHolder
-    ? {
-        launched: 'unverified',
-        kind: 'no-bundle',
-        reason: `Another process holds this workspace's Metro port: ${foreignHolder}`,
-      }
+  const verdict: WebLaunchVerdict = foreign
+    ? { launched: 'unverified', kind: 'no-response', reason: foreign.reason }
     : measured;
-  const remedy = foreignHolder
-    ? 'Run `stim start`, which reserves a free Metro port for this workspace, then run `stim web` again.'
-    : webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
+  const remedy = foreign ? foreign.remedy : webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,
