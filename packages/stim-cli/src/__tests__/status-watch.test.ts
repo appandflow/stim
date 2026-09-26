@@ -1,11 +1,14 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
-import { createRefreshScheduler, statusChange, type RefreshKind } from '../status-watch.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { createRefreshScheduler, statusChange, watchStatusSources, type RefreshKind } from '../status-watch.ts';
 
 describe('createRefreshScheduler', () => {
   beforeEach(() => {
@@ -134,6 +137,50 @@ test('a log append needs only a log refresh; other state changes need a full one
   expect(statusChange('leases', null)).toBe('full');
   expect(statusChange('eas', 'sessions.json')).toBe('full');
   expect(statusChange('eas', 'ledger.lock')).toBe(null);
+});
+
+test('the simulator poller shares its last readable listing while it is fresh', async () => {
+  vi.useFakeTimers();
+  const home = mkdtempSync(join(tmpdir(), 'stim-watch-sims-'));
+  const listing = (state: string) =>
+    JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [
+          { udid: 'U1', name: 'stim-a', state, isAvailable: true, deviceTypeIdentifier: 'iPhone' },
+        ],
+      },
+    });
+  let output = listing('Shutdown');
+  setExecutor({
+    findExecutable: () => null,
+    spawn() {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
+      setTimeout(() => {
+        child.stdout.end(output);
+        child.emit('close', 0);
+      }, 10);
+      return child;
+    },
+  });
+  const sources = watchStatusSources({ home, onChange: () => {}, platform: 'darwin' });
+  try {
+    expect(sources.simulatorListing(10_000)).toBe(null);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(sources.simulatorListing(10_000)).toBe(listing('Shutdown'));
+
+    output = listing('Booted');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sources.simulatorListing(10_000)).toBe(listing('Booted'));
+
+    output = 'not json';
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sources.simulatorListing(10_000)).toBe(null);
+  } finally {
+    sources.stop();
+    resetExecutor();
+    vi.useRealTimers();
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe('stim status --watch --json', () => {

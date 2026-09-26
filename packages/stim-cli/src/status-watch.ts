@@ -9,7 +9,7 @@ import { parseSimctlList } from './devices/ios.ts';
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
 export const WATCH_LOGS_INTERVAL_MS = 15_000;
-const WATCH_SIMCTL_INTERVAL_MS = 2_000;
+export const WATCH_SIMCTL_INTERVAL_MS = 5_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
@@ -124,6 +124,8 @@ function simulatorSignature(simctlJson: string): string | null {
 export interface StatusSources {
   /** Re-reads the workspace list and watches the directories that exist now. */
   reconcile(): void;
+  /** The output of the simulator poller's last readable listing, or null when none finished within `maxAgeMs`. */
+  simulatorListing(maxAgeMs: number): string | null;
   stop(): void;
 }
 
@@ -195,6 +197,7 @@ export function watchStatusSources({
   const adb = trackAdbDevices(() => onChange('full'));
 
   let simctl: ChildProcess | null = null;
+  let listing: { at: number; json: string } | null = null;
   let simTimer: ReturnType<typeof setInterval> | null = null;
   if (platform === 'darwin') {
     let last: string | null = null;
@@ -215,6 +218,7 @@ export function watchStatusSources({
         simctl = null;
         const signature = simulatorSignature(out);
         if (signature === null || stopped) return;
+        listing = { at: Date.now(), json: out };
         if (last !== null && signature !== last) onChange('full');
         last = signature;
       });
@@ -227,6 +231,7 @@ export function watchStatusSources({
 
   return {
     reconcile,
+    simulatorListing: (maxAgeMs) => (listing && Date.now() - listing.at <= maxAgeMs ? listing.json : null),
     stop() {
       stopped = true;
       for (const watcher of watchers.values()) watcher.close();
