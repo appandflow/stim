@@ -65,13 +65,11 @@ struct WorkspaceActionsMenu: View {
       if let onRun {
         Button("Run on \(platformName(platform))", systemImage: "play.fill") { onRun(platform) }
           .disabled(busy || building)
-          .help(building ? "A build is already running in this workspace." : "stim \(platform)")
       }
     case .reload:
       if let onReload {
         Button("Reload app", systemImage: "arrow.clockwise", action: onReload)
           .disabled(busy || !reloadAllowed)
-          .help(reloadAllowed ? "" : "Reload needs a running dev server and device.")
       }
     case .startDevServer:
       if let onStartDevServer {

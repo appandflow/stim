@@ -47,8 +47,11 @@ brew install --cask appandflow/tap/stim
 ## Run the app
 
 Each workspace's context menu and "..." menu offer **Run on iOS** and **Run on
-Android**. They run `stim ios` or `stim android` in the workspace, exactly as
-in a terminal, and stream the output into the activity sheet. The inspector's
+Android** for the platforms the workspace has a device or a build for, or both
+when it has neither. They run `stim ios` or `stim android` in the workspace
+with no options, so they use the default slot and configuration, and stream
+the output into the activity sheet. **Reload app** is available only while the
+dev server and a local device run. The inspector's
 **Builds** section has a **Run** button per platform, which reads **Rebuild**
 after a failed build, and a **Check** button that predicts the next build with
 `stim ios --plan` or `stim android --plan` without building.

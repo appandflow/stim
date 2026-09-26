@@ -63,13 +63,15 @@ public func worktreeRemovalAllowed(git: WorktreeGit?) -> Bool {
 }
 
 extension Workspace {
-  /// The platforms Run offers: those with a device or a last build, or both when neither is recorded.
-  public var runPlatforms: [String] {
-    let used = ["ios", "android"].filter { platform in
+  /// The platforms with a device or a last build.
+  public var usedPlatforms: [String] {
+    ["ios", "android"].filter { platform in
       devices.contains { $0.platform == platform } || lastBuilds?.build(for: platform) != nil
     }
-    return used.isEmpty ? ["ios", "android"] : used
   }
+
+  /// The platforms Run offers: `usedPlatforms`, or both when neither is recorded.
+  public var runPlatforms: [String] { usedPlatforms.isEmpty ? ["ios", "android"] : usedPlatforms }
 
   /// Whether `stim reload` can reach an app: the dev server runs and a local device is up.
   public var canReload: Bool {
@@ -81,7 +83,6 @@ extension Workspace {
   }
 }
 
-/// "iOS" or "Android", for action titles.
 public func platformName(_ platform: String) -> String {
   platform == "ios" ? "iOS" : "Android"
 }

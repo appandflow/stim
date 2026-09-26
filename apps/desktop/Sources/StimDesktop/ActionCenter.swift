@@ -123,7 +123,6 @@ final class ActionCenter: ObservableObject {
     return run
   }
 
-  /// `stim ios` or `stim android` in the workspace, streamed into the activity sheet.
   func runApp(_ env: Workspace, platform: String) {
     run("Run \(env.names.title) on \(platformName(platform))", StimCommand([platform], cwd: env.path))
   }

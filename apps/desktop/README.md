@@ -20,7 +20,8 @@ in the workspace directory:
 - Run: **Run on iOS** and **Run on Android** in a workspace's context menu and
   "..." menu, and **Run** on each platform of the inspector's **Builds**
   section (**Rebuild** when that platform's last build failed), run
-  `stim ios` or `stim android` in the workspace with no other arguments. The
+  `stim ios` or `stim android` in the workspace with no other arguments, so the
+  default slot and configuration. The
   menus offer the platforms with a device or a last build, or both when
   neither is recorded. Run is disabled while a build runs in the workspace.
   **Reload app** runs `stim reload` and is disabled unless the dev server and a
