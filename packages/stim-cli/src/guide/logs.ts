@@ -153,7 +153,8 @@ WHAT WRITES WHAT
                        is where a native crash that never reached JS shows up
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
-                       are recorded at info rather than error; the rest is why
+                       are recorded at info rather than error (Synchronous
+                       URL loading diagnostics at warn); the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH counts these records and prints one line:
 
