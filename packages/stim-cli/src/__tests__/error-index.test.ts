@@ -18,9 +18,8 @@ vi.mock('fs', async (importOriginal) => {
     const stat = actual.fstatSync(fd, { bigint: true });
     if (!inodes.beyondDoublePrecision) return options?.bigint ? stat : actual.fstatSync(fd);
     // NTFS file IDs carry a sequence number in their top 16 bits, so they often exceed 2^53.
-    const ino = (1n << 60n) + stat.ino;
-    const size = options?.bigint ? stat.size : Number(stat.size);
-    return { dev: options?.bigint ? stat.dev : Number(stat.dev), ino: options?.bigint ? ino : Number(ino), size };
+    if (options?.bigint) return { dev: stat.dev, ino: (1n << 60n) + stat.ino, size: stat.size };
+    return { dev: Number(stat.dev), ino: 2 ** 60, size: Number(stat.size) };
   }) as typeof actual.fstatSync;
   return { ...actual, fstatSync, default: { ...actual, fstatSync } };
 });
