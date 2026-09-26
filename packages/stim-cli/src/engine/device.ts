@@ -53,6 +53,7 @@ export interface DeviceFlags {
   simulatorApp?: IosSimulatorApp;
   deviceType?: string | null;
   runtime?: string | null;
+  runtimeFlag?: string | null;
   systemImage?: string | null;
   systemImageFlag?: string | null;
   deviceProfile?: string | null;

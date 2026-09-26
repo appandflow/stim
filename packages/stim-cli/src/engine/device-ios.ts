@@ -12,6 +12,7 @@ import {
   iosSimulatorFailureAdvice,
   listAllIosSims,
   listIosDeviceTypes,
+  listIosRuntimes,
   ownedSimName,
   parseRuntimeVersion,
   renameIosSim,
@@ -27,7 +28,7 @@ import { iosSimSlimProfileSetting } from '../workspace/settings.ts';
 import { teardownParkedIosSim } from '../devices/teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
-import { deviceTypeMismatch } from './device-capacity.ts';
+import { deviceTypeMismatch, runtimeMismatch } from './device-capacity.ts';
 import type { BootResult, DeviceFlags, DeviceSettings, Notify, OwnedDeviceRecord } from './device.ts';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -99,6 +100,15 @@ export async function ensureOwnedIosDevice({
           throw new Error(
             `${mismatch}. Stim will not silently boot a different model. ` +
               'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
+          );
+        }
+        const versionMismatch = flags.runtimeFlag
+          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, listIosRuntimes())
+          : null;
+        if (versionMismatch) {
+          throw new Error(
+            `${versionMismatch}. Stim will not silently boot a different iOS version. ` +
+              'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
           );
         }
         const model: SimModel = {

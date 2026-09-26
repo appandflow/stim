@@ -628,7 +628,7 @@ async function runIos(
         projectPath: root,
         settingsRoot: root,
         settings,
-        flags: { deviceType, runtime, simulatorApp },
+        flags: { deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
         note,
         out: note,
       });

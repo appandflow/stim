@@ -1,6 +1,12 @@
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
-import { iosRuntimeMatches, listAllIosSims, listIosDeviceTypes, type IosRuntime } from '../devices/ios.ts';
+import {
+  iosRuntimeMatches,
+  listAllIosSims,
+  listIosDeviceTypes,
+  parseRuntimeVersion,
+  type IosRuntime,
+} from '../devices/ios.ts';
 import { listAdbDevices, type SystemImage } from '../devices/android.ts';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -135,6 +141,17 @@ export function deviceTypeMismatch(
   if (wanted.identifier === recordedTypeId) return null;
   const recorded = (deviceTypes || []).find((d) => d.identifier === recordedTypeId);
   return `this project's sim is ${recorded ? recorded.name : recordedTypeId}, but --device-type asked for ${requestedName}`;
+}
+
+export function runtimeMismatch(
+  recordedRuntimeId: string | undefined | null,
+  requested: string | undefined | null,
+  runtimes: IosRuntime[],
+): string | null {
+  if (!requested || !recordedRuntimeId) return null;
+  const wanted = runtimes.find((r) => iosRuntimeMatches(r, requested));
+  if (!wanted || wanted.identifier === recordedRuntimeId) return null;
+  return `this project's sim runs iOS ${parseRuntimeVersion(recordedRuntimeId)}, but --runtime asked for ${requested}`;
 }
 
 export interface UnknownDeviceNameRefusal {

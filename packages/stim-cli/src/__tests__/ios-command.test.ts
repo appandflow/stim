@@ -6026,14 +6026,14 @@ describe('the simulator model and runtime flags', () => {
     const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '18.5' } };
     const fromSetting = await run({}, { resolveSettings: () => settings });
     expect(fromSetting.calls.args['ensureOwnedDevice']).toMatchObject({
-      flags: { deviceType: 'iPhone 17 Pro', runtime: '18.5' },
+      flags: { deviceType: 'iPhone 17 Pro', runtime: '18.5', runtimeFlag: null },
     });
     const fromFlag = await run(
       { deviceType: 'iPad Pro 13-inch (M4)', runtime: '26.5' },
       { resolveSettings: () => settings },
     );
     expect(fromFlag.calls.args['ensureOwnedDevice']).toMatchObject({
-      flags: { deviceType: 'iPad Pro 13-inch (M4)', runtime: '26.5' },
+      flags: { deviceType: 'iPad Pro 13-inch (M4)', runtime: '26.5', runtimeFlag: '26.5' },
     });
     const neither = await run({});
     expect(neither.calls.args['ensureOwnedDevice']).toMatchObject({ flags: { deviceType: null, runtime: null } });

@@ -922,6 +922,14 @@ const RUNTIMES_JSON = JSON.stringify({
       platform: 'iOS',
       supportedDeviceTypes: TYPES,
     },
+    {
+      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-6',
+      name: 'iOS 18.6',
+      version: '18.6',
+      isAvailable: true,
+      platform: 'iOS',
+      supportedDeviceTypes: TYPES,
+    },
   ],
 });
 
@@ -2530,6 +2538,52 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
       );
 
       expect(run.some((cmd) => /simctl boot/.test(cmd))).toBe(false);
+      expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  const ensureOnSim26 = (flags: { runtime: string; runtimeFlag?: string }) => {
+    const root = projectDir();
+    setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+    const { run, exec } = iosExecutor([
+      {
+        udid: 'U1',
+        name: 'stim-app',
+        state: 'Booted',
+        isAvailable: true,
+        deviceTypeIdentifier: TYPE_16.identifier,
+      },
+    ]);
+    setExecutor(exec);
+    const ensured = ensureOwnedDevice({
+      platform: 'ios',
+      project: getProject(root),
+      projectPath: root,
+      label: 'app',
+      settings: {},
+      flags,
+    });
+    return { root, run, ensured };
+  };
+
+  test('--runtime naming another installed version than the sim runs refuses and creates nothing', async () => {
+    const { root, run, ensured } = ensureOnSim26({ runtime: '18.6', runtimeFlag: '18.6' });
+    try {
+      await expect(ensured).rejects.toThrow(
+        /this project's sim runs iOS 26\.2, but --runtime asked for 18\.6\. Stim will not silently boot a different iOS version\..*--slot <name>/,
+      );
+      expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an ios.runtime setting alone keeps the sim on the version it was created with', async () => {
+    const { root, run, ensured } = ensureOnSim26({ runtime: '18.6' });
+    try {
+      await expect(ensured).resolves.toMatchObject({ deviceUdid: 'U1', runtime: '26.2' });
       expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
