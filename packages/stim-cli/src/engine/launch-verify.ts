@@ -14,6 +14,7 @@ export type VerifyLaunchResult = {
   processAlive?: boolean | null;
   timedOut?: boolean;
   requested?: boolean;
+  unattributed?: boolean;
   mode: string | null;
   waitedMs: number;
   readiness?: AppReadiness;
@@ -169,6 +170,8 @@ function nativeLaunchFailure({
 
 export async function verifyLaunch({
   slot,
+  appPid,
+  platformShared,
   logsDir,
   since,
   metroPort = null,
@@ -188,6 +191,8 @@ export async function verifyLaunch({
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
   slot?: string;
+  appPid?: number | null;
+  platformShared?: boolean;
   logsDir?: string;
   since?: number | string;
   metroPort?: number | string | null;
@@ -206,6 +211,7 @@ export async function verifyLaunch({
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
+  const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
   const read = readRecords || (() => readMetroRecords(logsDir));
   const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
   const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
@@ -220,18 +226,14 @@ export async function verifyLaunch({
   let runtimeStartedAt: number | null = null;
   let nextCrashCheck = startedAt + 1000;
   while (true) {
-    const metroRecords = read().filter(
-      (record) => after(record, since) && (slot === undefined || record.slot === slot),
-    );
+    const metroRecords = read().filter((record) => after(record, since));
     const bundleRecords = metroRecords.filter(
-      (record) => !requireBundleResponse || String(record.event).startsWith('bundle_response_'),
+      (record) => (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
     );
     const deviceRecords = readDevice().filter(
       (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
     );
-    const clientRecords = readClient().filter(
-      (record) => after(record, since) && (slot === undefined || record.slot === slot),
-    );
+    const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
     if (now() >= nextCrashCheck) {
       nextCrashCheck = now() + 2000;
       const crash = nativeLaunchFailure({
@@ -385,6 +387,13 @@ export async function verifyLaunch({
     if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
       return bundleTimeoutOutcome({
         requested: findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity,
+        unattributed:
+          metroRecords.find(
+            (record) =>
+              record.event === 'bundle_response_finished' &&
+              deliveryOwner(record, { slot, appPid, platformShared }) === 'unknown' &&
+              isBundleProof(record, since, platform),
+          ) ?? null,
         processAlive,
         deviceRecords,
         platform,
@@ -401,8 +410,18 @@ export async function verifyLaunch({
   }
 }
 
+function deliveryOwner(
+  record: NdjsonRecord,
+  { slot, appPid, platformShared }: { slot?: string; appPid?: number | null; platformShared?: boolean },
+): 'this' | 'other' | 'unknown' {
+  if (slot === undefined) return 'this';
+  if (typeof record.clientPid === 'number' && appPid) return record.clientPid === appPid ? 'this' : 'other';
+  return platformShared ? 'unknown' : 'this';
+}
+
 function bundleTimeoutOutcome({
   requested,
+  unattributed,
   processAlive,
   deviceRecords,
   platform,
@@ -410,6 +429,7 @@ function bundleTimeoutOutcome({
   waitedMs,
 }: {
   requested: NdjsonRecord | null;
+  unattributed: NdjsonRecord | null;
   processAlive: (() => boolean | null) | null;
   deviceRecords: NdjsonRecord[];
   platform: 'ios' | 'android' | null;
@@ -425,6 +445,8 @@ function bundleTimeoutOutcome({
     );
     return { verified: false, fatal: true, errors, processAlive: false, mode, waitedMs };
   }
+  if (unattributed)
+    return { verified: false, timedOut: true, unattributed: true, record: unattributed, mode, waitedMs };
   return requested
     ? { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs }
     : { verified: false, timedOut: true, mode, waitedMs };
@@ -512,6 +534,25 @@ export function readCollectorRecords(logsDir: string | undefined): NdjsonRecord[
 
 function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
   return logsDir ? readNdjsonGenerations(join(logsDir, name)) : [];
+}
+
+export function unattributedLaunchLines({
+  platform,
+  metroPort,
+  slot = 'default',
+  siblings,
+}: {
+  platform: 'ios' | 'android';
+  metroPort: number | string | null;
+  slot?: string;
+  siblings: string[];
+}): string[] {
+  const others = siblings.length === 1 ? `Slot ${siblings[0]} also runs` : `Slots ${siblings.join(', ')} also run`;
+  return [
+    `UNVERIFIED: Metro delivered ${platform === 'ios' ? 'an iOS' : 'an Android'} bundle on port ${metroPort}, but not provably to this device`,
+    `${others} ${platform} on this workspace's Metro, and this bundle request carried nothing that names the device that sent it.`,
+    `Check this device directly: its screen through your device tool, or \`stim logs --slot ${slot} --source device\`.`,
+  ];
 }
 
 export function unverifiedLaunchLines({

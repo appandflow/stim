@@ -10,9 +10,12 @@ afterEach(async () => {
   if (server?.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-async function listen(handler: (res: ServerResponse) => void) {
+async function listen(
+  handler: (res: ServerResponse) => void,
+  options?: Parameters<typeof bundleResponseMiddleware>[1],
+) {
   const records: Record<string, unknown>[] = [];
-  const middleware = bundleResponseMiddleware((record) => records.push(record));
+  const middleware = bundleResponseMiddleware((record) => records.push(record), options);
   server = createServer((req, res) => middleware(req, res, () => handler(res)));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -81,3 +84,36 @@ test.each(['/index.map?platform=ios', '/assets/icon.png?platform=ios', '/index.b
     expect(records).toEqual([]);
   },
 );
+
+test.each([
+  ['ios', 'this connection', 4242],
+  ['ios', 'another connection on the same client port', undefined],
+  ['android', 'this connection', undefined],
+])('a %s delivery names the process lsof shows on %s: %s', async (platform, connection, clientPid) => {
+  let args: string[] = [];
+  let lsof = '';
+  const { records, url } = await listen((res) => res.end('bundle'), {
+    runLsof: async (lsofArgs) => {
+      args = lsofArgs;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return lsof;
+    },
+  });
+  const request = get(`${url}/index.bundle?platform=${platform}`);
+  request.on('socket', (socket) =>
+    socket.on('connect', () => {
+      const ports = `${socket.localPort}->127.0.0.1:${new URL(url).port}`;
+      lsof =
+        connection === 'this connection'
+          ? `p1\nn127.0.0.1:${new URL(url).port}->127.0.0.1:${socket.localPort}\np4242\nn127.0.0.1:${ports}\n`
+          : `p4242\nn127.0.0.1:${socket.localPort}->10.0.0.9:443\n`;
+    }),
+  );
+  const [incoming] = await once(request, 'response');
+  incoming.resume();
+  await once(incoming, 'end');
+  await vi.waitFor(() => expect(records).toHaveLength(2));
+  expect(records.map((r) => r.event)).toEqual(['bundle_response_started', 'bundle_response_finished']);
+  expect(records.map((r) => r.clientPid)).toEqual([clientPid, clientPid]);
+  if (platform === 'ios') expect(args).toEqual(['-nP', expect.stringMatching(/^-iTCP:\d+$/), '-Fpn']);
+});

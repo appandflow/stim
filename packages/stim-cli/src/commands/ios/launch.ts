@@ -1,5 +1,5 @@
 import type { PreparedIosArtifact } from './artifact.ts';
-import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
+import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase } from '../../engine/build-progress.ts';
@@ -9,6 +9,7 @@ import {
   LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
   readCollectorRecords,
+  unattributedLaunchLines,
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
 } from '../../engine/launch-verify.ts';
@@ -104,7 +105,7 @@ async function verifyIosRun({
   lanOrigin,
   remoteDevice,
   metroOrigin,
-}: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string }> {
+}: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
     remoteDevice
@@ -165,10 +166,13 @@ async function verifyIosRun({
     return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
   }
 
+  const siblings = siblingPlatformSlots(root, 'ios', slot);
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({
         requireBundleResponse: true,
         slot: launchSlotScope(root, slot),
+        appPid: remoteDevice ? null : launched?.pid,
+        platformShared: siblings.length > 0,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
@@ -292,11 +296,78 @@ async function verifyIosRun({
     return { state: LAUNCH_BUNDLING };
   }
 
+  return reportUnverified({
+    verification,
+    siblings,
+    slot,
+    phase,
+    note,
+    metroPort,
+    bundleId,
+    udid,
+    scheme,
+    lanAddress,
+    isExpo,
+    remoteDevice,
+    physical,
+    lanOrigin,
+    metroOrigin,
+    logsDir,
+    launchedAt,
+    launched,
+  });
+}
+
+function reportUnverified({
+  verification,
+  siblings,
+  slot,
+  phase,
+  note,
+  metroPort,
+  bundleId,
+  udid,
+  scheme,
+  lanAddress,
+  isExpo,
+  remoteDevice,
+  physical,
+  lanOrigin,
+  metroOrigin,
+  logsDir,
+  launchedAt,
+  launched,
+}: Pick<
+  VerifyIosRunArgs,
+  | 'slot'
+  | 'phase'
+  | 'note'
+  | 'metroPort'
+  | 'bundleId'
+  | 'udid'
+  | 'scheme'
+  | 'lanAddress'
+  | 'isExpo'
+  | 'remoteDevice'
+  | 'physical'
+  | 'lanOrigin'
+  | 'metroOrigin'
+  | 'logsDir'
+  | 'launchedAt'
+  | 'launched'
+> & { verification: VerifyLaunchResultLike; siblings: string[] }): { state: string; unattributed?: boolean } {
+  if (verification.unattributed) {
+    const [headline, ...lines] = unattributedLaunchLines({ platform: 'ios', metroPort, slot, siblings });
+    phase('verify', chalk.yellow(headline));
+    for (const line of lines) note(chalk.yellow(phaseLine('', line)));
+    return { state: LAUNCH_UNVERIFIED, unattributed: true };
+  }
+
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
   for (const line of unverifiedLaunchLines({
     platform: PLATFORM,
     metroPort: metroPort ?? DEFAULT_METRO_PORT,
-    waitedMs: verification?.waitedMs,
+    waitedMs: verification.waitedMs,
     bundleId,
     udid,
     devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined) : null,
@@ -805,7 +876,11 @@ export async function finishIosRun({
   }
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
-  const { state: launchState, warning: launchWarning } = await verifyIosRun({
+  const {
+    state: launchState,
+    warning: launchWarning,
+    unattributed,
+  } = await verifyIosRun({
     root,
     slot,
     appPath,
@@ -839,7 +914,7 @@ export async function finishIosRun({
       build: { ...buildFailure, appPath, bundleId },
     });
   }
-  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
+  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort, unattributed }));
 
   const leaseFacts = lease?.facts() ?? null;
   releaseLease();

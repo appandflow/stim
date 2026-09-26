@@ -5,6 +5,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
 import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
+import { getExecutor } from '../exec.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type BareModule = any;
@@ -356,7 +357,12 @@ export async function startBareServer({
 
   const httpServer = await metro.runServer(config, {
     unstable_extraMiddleware: [
-      bundleResponseMiddleware((record) => writer?.write(record)),
+      bundleResponseMiddleware((record) => writer?.write(record), {
+        runLsof:
+          process.platform === 'darwin'
+            ? (args) => getExecutor().runFileAsync('lsof', args, { timeoutMs: 2000 })
+            : undefined,
+      }),
       symbolicationReporterMiddleware(reporter),
       communityMiddleware,
       middleware,

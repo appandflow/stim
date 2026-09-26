@@ -25,8 +25,9 @@ MULTIPLE DEVICES
 Use ios/android --slot <name> to retain multiple devices in one workspace,
 including several of the same model. Reuse the same slot name on subsequent
 runs. Read guide lifecycle options for the complete slot workflow. Use the
-reported device ID for UI interaction. All slots share Metro; reload can reach
-multiple devices, and a shared bundle request does not prove a slot launched.
+reported device ID for UI interaction. All slots share Metro and reload can
+reach multiple devices. A launch counts a bundle delivery only when it can
+attribute it to its own device; read guide lifecycle options for the rule.
 Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
 NORMAL WORKFLOW
