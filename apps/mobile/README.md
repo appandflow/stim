@@ -89,11 +89,11 @@ reload and stop a workspace:
   opens the errors; a Build card for each platform the workspace uses: the running
   build's progress with its cache outcome ("Cache hit" or "Cold build",
   "Likely ..." before the run reaches a phase that decides it) in place of the
-  platform's name; the last build (local cache, remote cache, compiled, or
-  failed, with its duration and age), which, when it missed the cache, opens a
-  sheet listing the changed fingerprint sources; and what the next build would find and how long it
-  should take ("Next build: cache hit (local)" or "cold build, ~5:40"), from the server's read-only `build.plan`, with
-  why a predicted cold build would miss the cache, which opens the same sheet. The
+  platform's name; the last build and why it built that way ("Cache hit (local)",
+  "Cold build: app config changed", or failed), with its duration and age, which, when it missed the cache, opens a
+  sheet listing the changed fingerprint sources; and what the next build would find, why, and how long it
+  should take ("Next: cache hit (local)" or "Next: cold build, Podfile.lock changed, ~5:40"), from the server's
+  read-only `build.plan`; a predicted miss opens the same sheet. The
   screen asks for each platform with a last build or a device when it opens, one plan at a time, reuses a result for
   60 seconds unless that platform's last build changes, ignores a reply that arrives after it closes, and asks nothing
   while a build runs. The refresh icon asks again;
