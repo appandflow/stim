@@ -160,7 +160,9 @@ short reason, and **Allow control** explains the upgrade: in Stim Desktop on
 the Mac, **Settings**, **Phones**, turn on **Allow control** for this phone,
 or run `stim-server devices grant <id> --control` with this phone's id. A
 connection learns its scope only from `hello`, so **Reconnect** opens a new
-connection to pick up the grant.
+connection to pick up the grant. When the server refuses control or an action
+with `forbidden`, or ends a control session for that reason, the app
+reconnects on its own, so a revoked grant shows as read-only everywhere.
 
 ## Device video
 

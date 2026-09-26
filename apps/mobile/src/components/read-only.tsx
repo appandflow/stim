@@ -25,9 +25,11 @@ export function explainReadOnly(
 ) {
   const deviceId = state.kind === 'open' ? state.deviceId : null;
   Alert.alert(READ_ONLY_REASON, allowControlSteps(macName, deviceId), [
-    { text: 'Copy command', onPress: () => void Clipboard.setStringAsync(grantCommand(deviceId)) },
+    ...(deviceId
+      ? [{ text: 'Copy command', onPress: () => void Clipboard.setStringAsync(grantCommand(deviceId)) }]
+      : []),
     { text: 'Reconnect', onPress: () => connection?.reconnect() },
-    { text: 'OK', style: 'cancel' },
+    { text: 'OK', style: 'cancel' as const },
   ]);
 }
 

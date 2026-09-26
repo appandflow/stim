@@ -69,7 +69,8 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot);
   const { mac, state: link, connection } = useMacConnection();
-  const readOnly = control.allowed === false || control.state.kind === 'forbidden';
+  const readOnly = control.allowed === false;
+  const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
   const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
@@ -172,13 +173,17 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
               <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
               <View style={styles.bannerActions}>
-                <Pressable
-                  onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId))}
-                  accessibilityRole="button"
-                  hitSlop={6}
-                >
-                  <Text style={[styles.bannerAction, { color: colors.primary }]}>Copy command</Text>
-                </Pressable>
+                {deviceId ? (
+                  <Pressable
+                    onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
+                    accessibilityRole="button"
+                    hitSlop={6}
+                  >
+                    <Text style={[styles.bannerAction, { color: colors.primary }]}>
+                      {copied ? 'Copied' : 'Copy command'}
+                    </Text>
+                  </Pressable>
+                ) : null}
                 <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
                   <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
                 </Pressable>
@@ -300,19 +305,17 @@ function Banner({
   onTakeOver: () => void;
 }) {
   const message =
-    control.kind === 'forbidden'
-      ? null
-      : control.kind === 'busy'
+    control.kind === 'busy'
+      ? control.message
+      : control.kind === 'failed'
         ? control.message
-        : control.kind === 'failed'
-          ? control.message
-          : control.kind === 'off' && control.ended
-            ? `Control ended. ${control.ended}`
-            : control.kind === 'starting'
-              ? 'Starting control...'
-              : driver
-                ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
-                : null;
+        : control.kind === 'off' && control.ended
+          ? `Control ended. ${control.ended}`
+          : control.kind === 'starting'
+            ? 'Starting control...'
+            : driver
+              ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
+              : null;
   if (!message) return null;
   const offer =
     (canTakeOver || readOnly) && (control.kind === 'busy' || (driver !== null && control.kind !== 'starting'));

@@ -402,9 +402,7 @@ export type ControlState =
   | { kind: 'starting' }
   | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[] }
   | { kind: 'busy'; message: string }
-  | { kind: 'failed'; message: string }
-  /** The server refused or ended control because this pairing is read-only; cleared by the next connection. */
-  | { kind: 'forbidden'; message: string };
+  | { kind: 'failed'; message: string };
 
 export interface DeviceControl {
   /** Whether this pairing may control devices: null while not connected. */
@@ -422,8 +420,7 @@ export interface DeviceControl {
 
 type HeldState =
   | ControlState
-  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; link: unknown }
-  | { kind: 'forbidden'; message: string; link: unknown };
+  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; link: unknown };
 
 /**
  * A control session on one device. It ends when the screen unmounts, when the connection drops (the server
@@ -437,15 +434,9 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
   const state: ControlState =
     held.kind === 'on' && 'link' in held && held.link !== link
       ? { kind: 'off', ended: 'The connection dropped.' }
-      : held.kind === 'forbidden' && 'link' in held && held.link !== link
-        ? { kind: 'off' }
-        : held;
+      : held;
   const session = state.kind === 'on' ? state.session : null;
   const mounted = useRef(true);
-  const currentLink = useRef(link);
-  useEffect(() => {
-    currentLink.current = link;
-  }, [link]);
 
   useEffect(() => {
     mounted.current = true;
@@ -458,9 +449,8 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
     if (!connection || !session) return;
     const stop = connection.onControlEnded((event) => {
       if (event.session !== session) return;
-      if (event.reason !== 'forbidden') return setHeld({ kind: 'off', ended: event.message });
-      setHeld({ kind: 'forbidden', message: event.message, link: currentLink.current });
-      connection.reconnect();
+      setHeld({ kind: 'off', ended: event.message });
+      if (event.reason === 'forbidden') connection.reconnect();
     });
     return () => {
       stop();
@@ -485,7 +475,7 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
           const code = cause instanceof RequestError ? cause.error.code : null;
           if (code === 'device-busy') return setHeld({ kind: 'busy', message: cause.message });
           if (code !== 'forbidden') return setHeld({ kind: 'failed', message: cause.message });
-          setHeld({ kind: 'forbidden', message: cause.message, link });
+          setHeld({ kind: 'off' });
           connection.reconnect();
         },
       );
