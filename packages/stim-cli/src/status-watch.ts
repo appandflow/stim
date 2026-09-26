@@ -8,54 +8,71 @@ import { parseSimctlList } from './devices/ios.ts';
 
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
+export const WATCH_LOGS_INTERVAL_MS = 15_000;
 const WATCH_SIMCTL_INTERVAL_MS = 2_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
 
+export type RefreshKind = 'full' | 'logs';
+
 export interface RefreshScheduler {
-  trigger(delayMs?: number): void;
+  trigger(kind?: RefreshKind, delayMs?: number): void;
   stop(): void;
 }
 
 /**
- * Coalesces change signals into refreshes: a burst of triggers runs `run` once
- * after `debounceMs` of quiet, at most one run is in flight, and a trigger that
- * arrives during a run causes exactly one more run after it.
+ * Coalesces change signals into refreshes: a burst of full triggers runs `run('full')` once after `debounceMs` of
+ * quiet, at most one run is in flight, and a trigger that arrives during a run causes exactly one more run after it.
+ * A `logs` trigger runs `run('logs')` no sooner than `debounceMs` from the trigger and `logsIntervalMs` from the start
+ * of the previous run, unless a queued full run covers it; later log triggers do not postpone it.
  */
 export function createRefreshScheduler({
   debounceMs,
+  logsIntervalMs = 0,
   run,
 }: {
   debounceMs: number;
-  run: () => Promise<void>;
+  logsIntervalMs?: number;
+  run: (kind: RefreshKind) => Promise<void>;
 }): RefreshScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let queued: RefreshKind = 'full';
   let running = false;
-  let pending = false;
+  let pending: RefreshKind | null = null;
   let stopped = false;
+  let lastRunAt = -Infinity;
 
   const fire = async () => {
     timer = null;
     running = true;
+    lastRunAt = Date.now();
     try {
-      await run();
+      await run(queued);
     } finally {
       running = false;
       if (pending) {
-        pending = false;
-        trigger();
+        const next = pending;
+        pending = null;
+        trigger(next);
       }
     }
   };
 
-  function trigger(delayMs = debounceMs): void {
+  function trigger(kind: RefreshKind = 'full', delayMs = debounceMs): void {
     if (stopped) return;
     if (running) {
-      pending = true;
+      pending = pending === 'full' ? 'full' : kind;
+      return;
+    }
+    if (kind === 'logs') {
+      if (timer) return;
+      queued = 'logs';
+      timer = setTimeout(() => void fire(), Math.max(delayMs, lastRunAt + logsIntervalMs - Date.now()));
       return;
     }
     if (timer) clearTimeout(timer);
+    queued = 'full';
     timer = setTimeout(() => void fire(), delayMs);
   }
 
@@ -72,21 +89,23 @@ export function createRefreshScheduler({
 type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas';
 
 /**
- * Whether a change to `name` in a watched `$STIM_HOME` directory can change
- * the status payload. A null name means the platform did not report one.
+ * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `logs` for a log append, which can
+ * change only the log-derived fields, `full` for anything else that can change the payload, null for none. A null
+ * name means the platform did not report one.
  */
-export function changeAffectsStatus(dir: WatchedDir, name: string | null): boolean {
-  if (name === null) return true;
-  if (name.includes('.lock')) return false;
+export function statusChange(dir: WatchedDir, name: string | null): RefreshKind | null {
+  if (name?.includes('.lock')) return null;
+  if (dir === 'logs') return 'logs';
+  if (name === null) return 'full';
   switch (dir) {
     case 'home':
-      return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks';
+      return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks' ? 'full' : null;
     case 'workspace':
-      return name.startsWith('state.json') || name === 'logs';
+      return name.startsWith('state.json') || name === 'logs' ? 'full' : null;
     case 'eas':
-      return name.startsWith('sessions.json');
+      return name.startsWith('sessions.json') ? 'full' : null;
     default:
-      return true;
+      return 'full';
   }
 }
 
@@ -120,7 +139,7 @@ export function watchStatusSources({
   simctlIntervalMs = WATCH_SIMCTL_INTERVAL_MS,
 }: {
   home: string;
-  onChange: () => void;
+  onChange: (kind: RefreshKind) => void;
   platform?: NodeJS.Platform;
   simctlIntervalMs?: number;
 }): StatusSources {
@@ -159,10 +178,10 @@ export function watchStatusSources({
       if (watchers.has(dir)) continue;
       try {
         const watcher = watch(dir, (_event, name) => {
-          const file = name === null ? null : String(name);
-          if (!changeAffectsStatus(kind, file)) return;
+          const change = statusChange(kind, name === null ? null : String(name));
+          if (!change) return;
           if (kind === 'home' || kind === 'workspaces' || kind === 'workspace') reconcile();
-          onChange();
+          onChange(change);
         });
         watcher.on('error', () => {
           watcher.close();
@@ -173,7 +192,7 @@ export function watchStatusSources({
     }
   };
 
-  const adb = trackAdbDevices(onChange);
+  const adb = trackAdbDevices(() => onChange('full'));
 
   let simctl: ChildProcess | null = null;
   let simTimer: ReturnType<typeof setInterval> | null = null;
@@ -196,7 +215,7 @@ export function watchStatusSources({
         simctl = null;
         const signature = simulatorSignature(out);
         if (signature === null || stopped) return;
-        if (last !== null && signature !== last) onChange();
+        if (last !== null && signature !== last) onChange('full');
         last = signature;
       });
     };

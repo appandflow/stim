@@ -13,6 +13,7 @@ import {
   poolLine,
   remoteDeviceLine,
   remoteDeviceState,
+  statusActivity,
   tightVolumes,
   unprovisionedWorktrees,
   type DeviceLeaseState,
@@ -457,4 +458,14 @@ test('an idle-stopped dev server is reported on metro only while nothing serves 
 
   const restarted = environmentState(project(), { metro: { metro: { pid: 42 } }, idleStop });
   expect(restarted.metro).toEqual({ port: 8082, running: true, pid: 42 });
+});
+
+test('statusActivity rounds lastActivityAt down to the minute, so records within one minute give the same payload', () => {
+  const at = (iso: string) => statusActivity({ state: 'active', lastActivityAt: iso, basis: ['device-log'] });
+  expect(at('2026-09-24T09:00:01.250Z')).toEqual(at('2026-09-24T09:00:59.999Z'));
+  expect(JSON.stringify(at('2026-09-24T09:00:59.999Z'))).toBe(
+    JSON.stringify({ state: 'active', lastActivityAt: '2026-09-24T09:00:00.000Z', basis: ['device-log'] }),
+  );
+  expect(at('2026-09-24T09:01:00.000Z').lastActivityAt).toBe('2026-09-24T09:01:00.000Z');
+  expect(statusActivity({ state: 'idle', basis: [] })).toEqual({ state: 'idle', basis: [] });
 });

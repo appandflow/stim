@@ -685,7 +685,8 @@ With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, adb device arrivals and
 departures, and simulator state, and recomputes every 30 seconds as a
-fallback. It exits with status 0 on Ctrl+C, SIGTERM, or when its stdout
+fallback. A log append updates only the log error count and device activity,
+no sooner than 15 seconds after the previous refresh. It exits with status 0 on Ctrl+C, SIGTERM, or when its stdout
 closes. Use it to wait for a device, a build, or a dev server instead of
 polling `stim status --json`.
 
@@ -780,7 +781,8 @@ reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (xcodebuild test runners, idb, Maestro, Appium,
 `simctl io|spawn`), and on Android a `uiautomator` or `androidx.test` process.
 `lastActivityAt` is the newest of the device's app log records, the platform's
-Metro bundle requests, and the workspace's last Stim run. Stim reads
+Metro bundle requests, and the workspace's last Stim run, rounded down to the
+minute. Stim reads
 agent-device state without changing it. `stim guide facts status` lists every
 field.
 
