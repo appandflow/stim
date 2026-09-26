@@ -181,6 +181,7 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var physical: Bool
   public var serial: String?
   public var state: String
+  public var deviceProfile: String?
   public var activity: DeviceActivity?
 }
 

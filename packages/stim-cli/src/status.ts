@@ -118,6 +118,21 @@ function avdExpected({
   return running || now - Date.parse(launch.launchedAt) < RECENT_LAUNCH_MS;
 }
 
+function androidStatus(
+  android: NonNullable<ProjectRecord['platforms']>['android'],
+  androidRuntime: AndroidRuntimeFacts | null,
+  androidDeviceProfile: string | null,
+): EnvironmentState['android'] {
+  if (!android) return null;
+  return {
+    name: android.avdName ?? android.serial,
+    owned: Boolean(android.owned),
+    physical: Boolean(android.serial && !android.avdName),
+    ...(androidRuntime ? { serial: androidRuntime.serial, state: androidRuntime.state } : {}),
+    ...(androidDeviceProfile ? { deviceProfile: androidDeviceProfile } : {}),
+  };
+}
+
 export function environmentState(
   project: ProjectRecord & { __path: string },
   {
@@ -127,6 +142,8 @@ export function environmentState(
     simsAvailable = true,
     androidRuntime = null,
     androidRuntimes = {},
+    androidDeviceProfile = null,
+    androidDeviceProfiles = {},
     supervisor = null,
     logs = null,
     remote = null,
@@ -143,6 +160,8 @@ export function environmentState(
     simsAvailable?: boolean;
     androidRuntime?: AndroidRuntimeFacts | null;
     androidRuntimes?: Record<string, AndroidRuntimeFacts | null>;
+    androidDeviceProfile?: string | null;
+    androidDeviceProfiles?: Record<string, string | null>;
     supervisor?: SupervisorFacts | null;
     logs?: LogsFacts | null;
     remote?: RemoteDeviceState | null;
@@ -214,6 +233,7 @@ export function environmentState(
         simsAvailable,
         metro,
         androidRuntime: androidRuntimes[name],
+        androidDeviceProfile: androidDeviceProfiles[name],
         launches,
         leasedIds,
         now,
@@ -242,14 +262,7 @@ export function environmentState(
           state: sim?.state ?? (simsAvailable ? 'missing' : 'unknown'),
         }
       : null,
-    android: android
-      ? {
-          name: android.avdName ?? android.serial,
-          owned: Boolean(android.owned),
-          physical: Boolean(android.serial && !android.avdName),
-          ...(androidRuntime ? { serial: androidRuntime.serial, state: androidRuntime.state } : {}),
-        }
-      : null,
+    android: androidStatus(android, androidRuntime, androidDeviceProfile),
     metro: project.metroPort
       ? {
           port: project.metroPort,

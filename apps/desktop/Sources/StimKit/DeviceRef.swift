@@ -63,12 +63,14 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
-  /// The model and runtime from an owned simulator name, `stim-<label> (<model> <runtime>)`.
+  /// The model and runtime from an owned simulator name, `stim-<label> (<model> <runtime>)`. A name collision makes
+  /// Stim append a disambiguating suffix after the closing paren, so the match stops at the paren that closes the
+  /// one it opened rather than at the name's own end. Only tried on an owned name: Apple's own simulator names carry
+  /// parens too ("iPhone SE (3rd generation)", "iPad Pro 11-inch (M4)"), which are not this format at all.
   public var model: String {
     switch self {
     case .ios(_, let d):
-      guard let open = d.name.firstIndex(of: "("), d.name.hasSuffix(")") else { return d.name }
-      return String(d.name[d.name.index(after: open)..<d.name.index(before: d.name.endIndex)])
+      return d.owned ? (DeviceRef.parenthesizedModel(in: d.name) ?? d.name) : d.name
     case .android(_, let d):
       return d.name
     case .remote(let d):
@@ -76,21 +78,49 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  private static func parenthesizedModel(in name: String) -> String? {
+    guard let open = name.firstIndex(of: "(") else { return nil }
+    var depth = 0
+    var index = open
+    while index < name.endIndex {
+      if name[index] == "(" { depth += 1 } else if name[index] == ")" {
+        depth -= 1
+        if depth == 0 { return String(name[name.index(after: open)..<index]) }
+      }
+      index = name.index(after: index)
+    }
+    return nil
+  }
+
+  /// A readable form of an `avdmanager` hardware profile id ("pixel_fold" -> "Pixel Fold"). Does not special-case an
+  /// abbreviation such as "xl", so "pixel_9_pro_xl" reads "Pixel 9 Pro Xl" rather than Google's own "Pixel 9 Pro XL".
+  private static func readableDeviceProfile(_ profile: String) -> String {
+    guard profile.contains("_") else { return profile }
+    return profile.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+  }
+
   /// Desktop's name for the device: a named slot keeps its name, and the default slot takes the device's own name.
-  /// `stim status` does not report an emulator's hardware profile, so an owned AVD is "Android emulator".
   public var label: String {
     guard slot == DeviceRef.defaultSlot else { return slot }
     switch self {
     case .ios: return iosModel.name
-    case .android(_, let d): return d.owned ? "Android emulator" : d.name
+    case .android(_, let d):
+      guard d.owned else { return d.name }
+      return d.deviceProfile.map(DeviceRef.readableDeviceProfile) ?? "Android emulator"
     case .remote(let d): return "\(d.backend.uppercased()) \(model)"
     }
   }
 
-  /// `label`, followed by the device's kind when another device in `devices` has the same label.
+  /// `label`, followed by whatever tells it apart from another device in `devices` that shares it: the runtime when
+  /// every device sharing the label is an iOS simulator (a model can recur across workspaces on a different iOS
+  /// version), otherwise the platform.
   public func label(among devices: [DeviceRef]) -> String {
     let own = label
-    guard devices.contains(where: { $0.id != id && $0.label == own }) else { return own }
+    let others = devices.filter { $0.id != id && $0.label == own }
+    guard !others.isEmpty else { return own }
+    if case .ios = self, let runtime = iosModel.runtime, others.allSatisfy({ if case .ios = $0 { return true } else { return false } }) {
+      return "\(own) \u{00B7} \(runtime)"
+    }
     switch self {
     case .ios: return "\(own) \u{00B7} iOS"
     case .android: return "\(own) \u{00B7} Android"
@@ -98,7 +128,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
-  /// What `label` leaves out: the model for a named slot, the runtime for a default-slot simulator.
+  /// What `label` leaves out: the model for a named slot, the runtime for a default-slot simulator, the AVD name for
+  /// a default-slot owned emulator.
   public var detail: String? {
     if slot != DeviceRef.defaultSlot { return model }
     switch self {
@@ -108,12 +139,16 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  /// Only splits off a trailing numeric runtime from a name Stim itself formatted as `<model> <runtime>` inside
+  /// parens -- an unowned simulator can be legitimately named e.g. "iPhone 16", which is not `<model> <runtime>`.
   private var iosModel: (name: String, runtime: String?) {
-    let model = self.model
-    guard let space = model.lastIndex(of: " ") else { return (model, nil) }
-    let runtime = model[model.index(after: space)...]
-    guard runtime.first?.isNumber == true, runtime.allSatisfy({ $0.isNumber || $0 == "." }) else { return (model, nil) }
-    return (String(model[..<space]), String(runtime))
+    guard case .ios(_, let d) = self, d.owned, let parsed = DeviceRef.parenthesizedModel(in: d.name) else {
+      return (model, nil)
+    }
+    guard let space = parsed.lastIndex(of: " ") else { return (parsed, nil) }
+    let runtime = parsed[parsed.index(after: space)...]
+    guard runtime.first?.isNumber == true, runtime.allSatisfy({ $0.isNumber || $0 == "." }) else { return (parsed, nil) }
+    return (String(parsed[..<space]), String(runtime))
   }
 
   public var formFactor: FormFactor {

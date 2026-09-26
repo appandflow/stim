@@ -18,7 +18,7 @@ import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts'
 import { readSupervisorState } from './stop.ts';
 import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
-import { ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
+import { ownedAvdDeviceProfile, ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from '../workspace/git-summary.ts';
@@ -120,6 +120,20 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
     androidRuntime:
       proj.platforms?.android?.owned && proj.platforms.android.avdName
         ? androidRuntimeOf(proj.platforms.android.avdName)
+        : null,
+    androidDeviceProfiles: Object.fromEntries(
+      projectDeviceSlots(proj)
+        .slice(1)
+        .map(({ slot, platforms }) => [
+          slot,
+          platforms.android?.owned && platforms.android.avdName
+            ? ownedAvdDeviceProfile(platforms.android.avdName)
+            : null,
+        ]),
+    ),
+    androidDeviceProfile:
+      proj.platforms?.android?.owned && proj.platforms.android.avdName
+        ? ownedAvdDeviceProfile(proj.platforms.android.avdName)
         : null,
   }));
   const logs = projects.map(([path]) => logFacts(path));
