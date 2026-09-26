@@ -919,6 +919,72 @@ describe('verifyLaunch', () => {
     expect(result.waitedMs >= VERIFY_TIMEOUT_MS).toBeTruthy();
   });
 
+  test('an app that died before fetching a bundle is fatal at the deadline, with its device errors', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const launchFailure = {
+      ts: since + 600,
+      src: 'device',
+      platform: 'ios',
+      level: 'error',
+      msg: 'Application failed to launch: UIScene life cycle is required for apps built with this SDK.',
+    };
+    const probes: number[] = [];
+    const result = await verifyLaunch({
+      since,
+      metroPort: 8084,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [],
+      readDeviceRecords: () => [launchFailure],
+      processAlive: () => {
+        probes.push(clock.at());
+        return false;
+      },
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false, errors: [launchFailure] });
+    expect(result.timedOut).toBeUndefined();
+    expect(probes.every((at) => at >= since + VERIFY_TIMEOUT_MS)).toBe(true);
+  });
+
+  test('an app that requested its bundle and then died is fatal, not bundling', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_started' }],
+      readDeviceRecords: () => [],
+      processAlive: () => false,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
+    expect(result.requested).toBeUndefined();
+  });
+
+  test.each([
+    { alive: true, requested: true },
+    { alive: null, requested: true },
+    { alive: null, requested: false },
+  ])('a timeout whose process is not proven gone keeps its outcome: %j', async ({ alive, requested }) => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (requested ? [{ ts: since + 10, event: 'bundle_build_started' }] : []),
+      readDeviceRecords: () => [],
+      processAlive: () => alive,
+    });
+    expect(result).toMatchObject({ verified: false, timedOut: true });
+    expect(result.fatal).toBeUndefined();
+    expect(Boolean(result.requested)).toBe(requested);
+  });
+
   test('the alert stall: a bundle that arrives after the deadline does not retroactively verify', async () => {
     const clock = fakeClock();
     const result = await verifyLaunch({
