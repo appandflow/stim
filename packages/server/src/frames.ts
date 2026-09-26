@@ -52,6 +52,8 @@ export interface FrameLimits {
   failureBackoffMs: number;
   /** Consecutive timed-out captures before the subscription ends with `frames-failed`. */
   maxConsecutiveFailures: number;
+  /** How long a device's `stim-frames` helper keeps running after its last subscriber leaves. */
+  lingerMs: number;
 }
 
 export const DEFAULT_FRAME_LIMITS: FrameLimits = {
@@ -59,6 +61,7 @@ export const DEFAULT_FRAME_LIMITS: FrameLimits = {
   slowCaptureMs: 3_000,
   failureBackoffMs: 3_000,
   maxConsecutiveFailures: 3,
+  lingerMs: 10_000,
 };
 
 const MIN_INTERVAL_MS = 200;
@@ -648,7 +651,9 @@ class FrameSource {
 }
 
 /**
- * One capture per device, shared by its subscribers and stopped with the last of them. With the `stim-frames`
+ * One capture per device, shared by its subscribers. A `stim-frames` helper stops `lingerMs` after the last of
+ * them leaves, so a client that takes one frame at a time reuses it; a screenshot loop stops with the last of
+ * them. With the `stim-frames`
  * helper, a device streams frames as its screen changes, at the rate its subscribers ask for; an iPhone Duo
  * streams its lit panel, which is its posture. Without the helper, and while it is still being built, a
  * screenshot loop sends a frame only when the screen changed: up to 5 times a second while it changes, backing
@@ -771,6 +776,7 @@ export class FramePool {
       () => {
         if (this.sources.get(key) === created) this.sources.delete(key);
       },
+      this.limits.lingerMs,
       lit,
     );
     this.sources.set(key, created);

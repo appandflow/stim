@@ -158,7 +158,8 @@ async function compiled(
 }
 
 /**
- * One `stim-frames` process per device, shared by its subscribers and stopped with the last of them. It runs
+ * One `stim-frames` process per device, shared by its subscribers and stopped `lingerMs` after the last of them
+ * leaves, unchanged meanwhile, so a subscriber that comes back within that time gets the latest frame at once. It runs
  * at the highest fps and the largest edge any subscriber asked for; each subscriber paces its own frames. The
  * helper exits when its stdin closes, so it cannot outlive the server. `lit` turns the display the helper
  * reports it streams into a posture, which the frames and access units after it carry.
@@ -178,15 +179,19 @@ export class HelperSource {
   private keyframeTimer: NodeJS.Timeout | null = null;
   private readonly lit: ((display: number) => Posture | undefined) | undefined;
   private posture: Posture | undefined;
+  private readonly lingerMs: number;
+  private lingerTimer: NodeJS.Timeout | null = null;
 
   constructor(
     helper: string,
     device: Device,
     env: NodeJS.ProcessEnv,
     ended: () => void,
+    lingerMs: number,
     lit?: (display: number) => Posture | undefined,
   ) {
     this.ended = ended;
+    this.lingerMs = lingerMs;
     this.lit = lit;
     const id = device.platform === 'ios' ? device.udid : device.serial;
     this.child = spawn(helper, [device.platform, id], { env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -205,14 +210,16 @@ export class HelperSource {
 
   /** A null `hint` keeps the helper running for input without asking for frames. */
   add(listener: FrameListener, hint: FrameHint | null): () => void {
+    if (this.lingerTimer) clearTimeout(this.lingerTimer);
+    this.lingerTimer = null;
     this.listeners.set(listener, hint);
     this.configure();
     if (listener.video) this.keyframe();
     else if (this.last) listener.frame(this.last);
     return () => {
       if (!this.listeners.delete(listener)) return;
-      if (this.listeners.size === 0) void this.stop();
-      else this.configure();
+      if (this.listeners.size > 0) this.configure();
+      else this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
     };
   }
 
@@ -220,6 +227,7 @@ export class HelperSource {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
     if (this.keyframeTimer) clearTimeout(this.keyframeTimer);
+    if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.listeners.clear();
     this.ended();
     this.child.stdin!.end();
@@ -250,6 +258,7 @@ export class HelperSource {
   }
 
   private configure(): void {
+    if (this.listeners.size === 0) return;
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
     const jpegFps = watching.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
