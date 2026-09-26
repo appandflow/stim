@@ -5,7 +5,6 @@ import {
   Keyboard,
   PixelRatio,
   Platform as OS,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -31,6 +30,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
@@ -242,17 +242,16 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
         <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
         <View style={styles.bannerActions}>
           {deviceId ? (
-            <Pressable
+            <Touch
               onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
-              accessibilityRole="button"
               hitSlop={6}
             >
               <Text style={[styles.bannerAction, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy command'}</Text>
-            </Pressable>
+            </Touch>
           ) : null}
-          <Pressable onPress={() => connection?.reconnect()} accessibilityRole="button" hitSlop={6}>
+          <Touch onPress={() => connection?.reconnect()} hitSlop={6}>
             <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
-          </Pressable>
+          </Touch>
         </View>
       </View>
     </View>
@@ -406,7 +405,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           >
             {underBar ? <ViewerBackdrop /> : null}
             <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
-              <Pressable
+              <Touch
                 onLayout={(event) => {
                   const { width } = event.nativeEvent.layout;
                   setBarSides(([, right]) => [width, right]);
@@ -416,12 +415,11 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   keyboardHeight.set(withTiming(0, { duration: 200 }));
                   zoom.close();
                 }}
-                accessibilityRole="button"
                 accessibilityLabel="Close"
                 hitSlop={10}
               >
                 <Icon name="xmark" size={22} color="#FFFFFF" />
-              </Pressable>
+              </Touch>
               <View
                 style={[
                   styles.titles,
@@ -522,9 +520,9 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               onBlur={() => setTyping(false)}
               accessibilityLabel="Type on the device"
             />
-            <Pressable onPress={() => keyboard.current?.blur()} accessibilityRole="button" hitSlop={8}>
+            <Touch onPress={() => keyboard.current?.blur()} hitSlop={8}>
               <Text style={[styles.bannerAction, { color: colors.primary }]}>Done</Text>
-            </Pressable>
+            </Touch>
           </Animated.View>
         </View>
       </GestureDetector>
@@ -561,17 +559,16 @@ function Banner({
     <View style={[styles.banner, { borderColor: control.kind === 'failed' ? colors.warn : colors.border }]}>
       <Text style={styles.bannerText}>{message}</Text>
       {offer ? (
-        <Pressable
+        <Touch
           onPress={onTakeOver}
           disabled={readOnly}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: readOnly }}
+          defaultOpacity={readOnly ? 0.6 : 1}
           accessibilityHint={readOnly ? READ_ONLY_REASON : undefined}
-          style={[styles.bannerButton, readOnly && styles.pressed]}
+          style={styles.bannerButton}
           hitSlop={6}
         >
           <Text style={[styles.bannerAction, { color: readOnly ? '#FFFFFF99' : colors.primary }]}>Take over</Text>
-        </Pressable>
+        </Touch>
       ) : null}
     </View>
   );
@@ -589,38 +586,34 @@ function ControlButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <Touch
       onPress={onPress}
       disabled={disabled}
+      defaultOpacity={disabled ? 0.4 : 1}
       accessibilityRole="switch"
       accessibilityLabel="Control"
       accessibilityState={{ checked: on, disabled }}
       hitSlop={7}
-      style={({ pressed }) => [
-        styles.control,
-        { backgroundColor: on ? colors.primary : '#FFFFFF1F' },
-        pressed && styles.pressed,
-        disabled && styles.disabled,
-      ]}
+      style={[styles.control, { backgroundColor: on ? colors.primary : '#FFFFFF1F' }]}
     >
       {on ? <Icon name="checkmark" size={13} color={colors.onPrimary} /> : null}
       <Text style={[styles.controlText, { color: on ? colors.onPrimary : '#FFFFFF' }]}>Control</Text>
-    </Pressable>
+    </Touch>
   );
 }
 
 function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
-    <Pressable
+    <Touch
       onPress={onPress}
       disabled={disabled}
-      accessibilityRole="button"
+      defaultOpacity={disabled ? 0.6 : 1}
       accessibilityState={{ disabled }}
-      style={({ pressed }) => [styles.tool, (pressed || disabled) && styles.pressed]}
+      style={styles.tool}
       hitSlop={4}
     >
       <Text style={styles.toolText}>{label}</Text>
-    </Pressable>
+    </Touch>
   );
 }
 
@@ -701,8 +694,6 @@ const styles = StyleSheet.create({
   toolScroll: { flexGrow: 0 },
   toolRow: { flexGrow: 1, justifyContent: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6 },
   tool: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#FFFFFF1F' },
-  pressed: { opacity: 0.6 },
-  disabled: { opacity: 0.4 },
   control: {
     flexDirection: 'row',
     alignItems: 'center',
