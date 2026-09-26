@@ -10,7 +10,7 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
-import { drivenLabel, driversSummary, shortDuration } from '@/lib/format';
+import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
 
@@ -59,7 +59,12 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     <Touch
       feedback="row"
       onPress={() => onOpen(item, false)}
-      accessibilityLabel={[`Workspace ${item.title} on ${item.macName}`, lastSeen, ...drivenLabels]
+      accessibilityLabel={[
+        `Workspace ${item.title} on ${item.macName}`,
+        lastSeen,
+        gitBadges(env.worktree?.git)?.label,
+        ...drivenLabels,
+      ]
         .filter(Boolean)
         .join(', ')}
       style={styles.row}

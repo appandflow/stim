@@ -7,6 +7,8 @@ import { withAlpha } from '@/design/color';
 import { gitBadges } from '@/lib/format';
 import type { WorktreeGit } from '@/protocol/types';
 
+const commits = (n: number) => `${n} ${n === 1 ? 'commit' : 'commits'}`;
+
 /** Uncommitted changes, commits ahead and behind, and a merged branch: inline text, or pills with `chips`. */
 export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null | undefined; chips?: boolean }) {
   const { theme } = useUnistyles();
@@ -16,13 +18,20 @@ export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null |
     return (
       <>
         {badges.uncommitted ? <Pill tone="warning">{`${badges.uncommitted} uncommitted`}</Pill> : null}
-        {badges.arrows ? <Pill tabular={badges.arrows} /> : null}
+        {badges.ahead ? (
+          <Pill accessibilityLabel={`${commits(badges.ahead)} not pushed`}>{`\u2191${badges.ahead} unpushed`}</Pill>
+        ) : null}
+        {badges.behind ? (
+          <Pill accessibilityLabel={`${commits(badges.behind)} behind the upstream`}>
+            {`\u2193${badges.behind} behind`}
+          </Pill>
+        ) : null}
         {badges.merged ? <Pill tone="accent">merged</Pill> : null}
       </>
     );
   }
   return (
-    <View style={styles.inline} accessible accessibilityLabel={badges.label}>
+    <View style={styles.inline}>
       {badges.uncommitted ? (
         <>
           <StatusDot color={theme.colors.warning} />

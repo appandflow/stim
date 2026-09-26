@@ -190,15 +190,19 @@ describe('gitBadges', () => {
   it('counts changed and untracked files together and shows ahead and behind as arrows', () => {
     expect(gitBadges({ ...git, changed: 2, untracked: 1, ahead: 3, behind: 1 })).toEqual({
       uncommitted: 3,
+      ahead: 3,
+      behind: 1,
       arrows: '↑3 ↓1',
       merged: false,
-      label: '3 uncommitted changes, 3 ahead, 1 behind',
+      label: '3 uncommitted changes, 3 commits not pushed, 1 commit behind the upstream',
     });
   });
 
   it('flags a merged branch', () => {
     expect(gitBadges({ ...git, ahead: null, behind: null, mergedInto: 'origin/main' })).toEqual({
       uncommitted: 0,
+      ahead: 0,
+      behind: 0,
       arrows: null,
       merged: true,
       label: 'merged into origin/main',

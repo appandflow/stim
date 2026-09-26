@@ -201,6 +201,8 @@ export function planDetail(plan: BuildPlan): string | null {
 
 export interface GitBadges {
   uncommitted: number;
+  ahead: number;
+  behind: number;
   arrows: string | null;
   merged: boolean;
   label: string;
@@ -215,13 +217,14 @@ export function gitBadges(git: WorktreeGit | null | undefined): GitBadges | null
   const merged = git.mergedInto !== null;
   if (!uncommitted && !ahead && !behind && !merged) return null;
   const arrows = [ahead ? `\u2191${ahead}` : '', behind ? `\u2193${behind}` : ''].filter(Boolean).join(' ');
+  const commits = (n: number) => `${n} ${n === 1 ? 'commit' : 'commits'}`;
   const label = [
     uncommitted ? `${uncommitted} uncommitted ${uncommitted === 1 ? 'change' : 'changes'}` : '',
-    ahead ? `${ahead} ahead` : '',
-    behind ? `${behind} behind` : '',
+    ahead ? `${commits(ahead)} not pushed` : '',
+    behind ? `${commits(behind)} behind the upstream` : '',
     merged ? `merged into ${git.mergedInto}` : '',
   ]
     .filter(Boolean)
     .join(', ');
-  return { uncommitted, arrows: arrows || null, merged, label };
+  return { uncommitted, ahead, behind, arrows: arrows || null, merged, label };
 }
