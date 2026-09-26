@@ -84,7 +84,7 @@ beforeEach(() => {
   setExecutor({
     run,
     runQuiet: run,
-    runFileQuiet: () => null,
+    runFileQuiet: (file) => (file === 'ps' ? '' : null),
     runFile(file, args = []) {
       calls.push([file, ...args].join(' '));
       if (args.includes('list')) return packageOutput;
@@ -307,7 +307,7 @@ test('parking shuts down an owned AVD and overflow deletion failures keep both o
     del: true,
     owner: { projectPath: '/source' },
     park: { projectPath: '/source', max: 1, configuration },
-    waitForShutdown: (_name, shutdown) => shutdown(1000),
+    waitForShutdown: (_name, shutdown) => shutdown!(1000),
   });
   expect(result.parked?.name).toBe('stim-new');
   expect(result.evictionFailures).toEqual([expect.stringContaining('AVD deletion failed')]);

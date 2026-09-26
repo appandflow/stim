@@ -286,6 +286,15 @@ test('AVD claim recovery requires checking native processes and keeping incomple
   expect(body).toContain('Keep the AVD and its incomplete workspace record');
 });
 
+test('emulator teardown signals only a verified process and names the refusal', () => {
+  const body = renderSection('errors', 'teardown');
+  expect(body).toContain('did not finish shutting down after <n>s');
+  expect(body).toMatch(
+    /signals\s+only a pid whose command line names the AVD and whose process identity,\s+recorded before shutdown, still matches/,
+  );
+  expect(body).toContain('so it sent no signal');
+});
+
 test('short lock recovery requires checking the holder before manual removal', () => {
   const body = renderSection('errors', 'STIM_LOCK_TIMEOUT');
   expect(body).toMatch(/never expire based on age/);

@@ -421,7 +421,7 @@ function teardownClaimedAvd(
         }
       });
     } else {
-      assertStopped(avdName);
+      waitForShutdown(avdName, null);
     }
     if (del) {
       const current = resolveAvd(avdName);

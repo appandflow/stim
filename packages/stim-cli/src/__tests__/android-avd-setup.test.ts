@@ -104,6 +104,7 @@ beforeEach(() => {
         return null;
       }
     },
+    runFileQuiet: (file) => (file === 'ps' ? '' : null),
   });
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });

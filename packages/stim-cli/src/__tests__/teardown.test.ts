@@ -647,7 +647,7 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
   setExecutor(exec);
   const r = teardownOwnedAvd('stim-app', {
     del: true,
-    waitForShutdown: (_avdName, shutdown) => shutdown(60_000),
+    waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
     assertStopped: () => {},
     resolveAvd: () => resolutions.shift()!,
   });
@@ -684,7 +684,7 @@ test('teardownOwnedAvd contains a throw instead of propagating it', () => {
   const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
   const r = teardownOwnedAvd('stim-app', {
     del: true,
-    waitForShutdown: (_avdName, shutdown) => shutdown(60_000),
+    waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
     assertStopped: () => {},
     resolveAvd: () => resolutions.shift()!,
   });
@@ -703,7 +703,7 @@ test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out',
   const r = teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: (_avdName, shutdown) => {
-      shutdown(60_000);
+      shutdown!(60_000);
       throw new Error('shutdown timed out');
     },
   });
@@ -725,7 +725,7 @@ test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down whe
   const r = teardownOwnedAvd('stim-app', {
     del: false,
     waitForShutdown: (_avdName, shutdown) => {
-      shutdown(60_000);
+      shutdown!(60_000);
       throw new Error('Owned AVD stim-app did not finish shutting down within 60s.');
     },
   });
@@ -735,16 +735,20 @@ test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down whe
   expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedAvd refuses an AVD with a live process that adb cannot resolve', () => {
+test('teardownOwnedAvd stops an AVD that adb cannot resolve without a console command, and refuses when it stays', () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
   setExecutor(exec);
+  const consoleShutdowns: unknown[] = [];
 
   const r = teardownOwnedAvd('stim-app', {
     del: true,
-    assertStopped: () => {
+    waitForShutdown: (_avdName, shutdown) => {
+      consoleShutdowns.push(shutdown);
       throw new Error('live emulator process');
     },
   });
+
+  expect(consoleShutdowns).toEqual([null]);
 
   expect(r.status).toBe('failed');
   expect(r.reason).toMatch(/live emulator process/);
