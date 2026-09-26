@@ -16,8 +16,31 @@ import Testing
   }
 
   @Test func namesDefaultSlotsAfterTheirDeviceAndNamedSlotsAfterTheSlot() {
-    #expect(workspace.devices.map(\.label) == ["iPhone 18 Pro", "Android emulator", "ipad", "EAS iOS"])
+    #expect(workspace.devices.map(\.label) == ["iPhone 18 Pro", "Pixel Fold", "ipad", "EAS iOS"])
     #expect(workspace.devices.map(\.detail) == ["iOS 27.0", "stim-wide-insets-mobile", "iPad Pro 11-inch (M5) 27.0", nil])
+  }
+
+  @Test func stripsTheDisambiguationSuffixStimAppendsAfterTheClosingParen() {
+    let sim = IosDevice(
+      name: "stim-1347-expo-sdk-58 (iPhone 18 Pro 27.0) ff9a999768f466d6", udid: "U1", owned: true, state: "Booted")
+    let device: DeviceRef = .ios(slot: "default", sim)
+    #expect(device.label == "iPhone 18 Pro")
+    #expect(device.detail == "iOS 27.0")
+  }
+
+  @Test func doesNotInventARuntimeForAnUnownedSimulatorNamedLikeAModelAndVersion() {
+    let sim = IosDevice(name: "iPhone 16", udid: "U1", owned: false, state: "Booted")
+    let device: DeviceRef = .ios(slot: "default", sim)
+    #expect(device.label == "iPhone 16")
+    #expect(device.detail == nil)
+  }
+
+  @Test func readsAnAndroidDeviceProfileAndFallsBackWithoutOne() {
+    let fold = AndroidDevice(
+      name: "stim-a", owned: true, physical: false, serial: "S1", state: "detected", deviceProfile: "pixel_fold")
+    let unknown = AndroidDevice(name: "stim-b", owned: true, physical: false, serial: "S2", state: "detected")
+    #expect(DeviceRef.android(slot: "default", fold).label == "Pixel Fold")
+    #expect(DeviceRef.android(slot: "default", unknown).label == "Android emulator")
   }
 
   @Test func appendsTheKindWhenTwoDevicesShareALabel() {
@@ -26,6 +49,13 @@ import Testing
     let devices: [DeviceRef] = [.ios(slot: "default", sim), .android(slot: "default", phone)]
     #expect(devices.map { $0.label(among: devices) } == ["Pixel \u{00B7} iOS", "Pixel \u{00B7} Android"])
     #expect(workspace.devices.map { $0.label(among: workspace.devices) } == workspace.devices.map(\.label))
+  }
+
+  @Test func appendsTheRuntimeWhenTwoIosDevicesShareAModel() {
+    let newer = IosDevice(name: "stim-a (iPhone 18 Pro 27.0)", udid: "U1", owned: true, state: "Booted")
+    let older = IosDevice(name: "stim-b (iPhone 18 Pro 18.6)", udid: "U2", owned: true, state: "Shutdown")
+    let devices: [DeviceRef] = [.ios(slot: "default", newer), .ios(slot: "default", older)]
+    #expect(devices.map { $0.label(among: devices) } == ["iPhone 18 Pro \u{00B7} 27.0", "iPhone 18 Pro \u{00B7} 18.6"])
   }
 
 

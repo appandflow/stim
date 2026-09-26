@@ -196,6 +196,7 @@ export interface EnvironmentState {
     physical: boolean;
     serial?: string | null;
     state?: AndroidRuntimeFacts['state'];
+    deviceProfile?: string | null;
     activity?: DeviceActivity;
   } | null;
   metro?: { port: number; running: boolean; pid: number | null; idleStop?: IdleStopRecord } | null;

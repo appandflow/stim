@@ -79,6 +79,23 @@ test('an unreadable sim listing leaves the state unknown instead of warning per 
   expect(s.warnings.join(' ').includes('no longer exists')).toBe(false);
 });
 
+test('an owned AVD reports its device profile alongside runtime facts', () => {
+  const s = environmentState(project({ platforms: { android: { avdName: 'stim-app', owned: true } } }), {
+    androidRuntime: { serial: 'emulator-5554', state: 'detected' },
+    androidDeviceProfile: 'pixel_fold',
+  });
+  assert(s.android);
+  expect(s.android.deviceProfile).toBe('pixel_fold');
+});
+
+test('an owned AVD with no known device profile omits the field rather than reporting null', () => {
+  const s = environmentState(project({ platforms: { android: { avdName: 'stim-app', owned: true } } }), {
+    androidRuntime: { serial: 'emulator-5554', state: 'detected' },
+  });
+  assert(s.android);
+  expect(s.android.deviceProfile).toBeUndefined();
+});
+
 test('capacity warns once committed memory passes a comfortable share of the machine', () => {
   const live = makeEnvironmentState({ memoryMb: 2200 });
   expect(capacity([live, live], 16384).overCapacity).toBe(false);

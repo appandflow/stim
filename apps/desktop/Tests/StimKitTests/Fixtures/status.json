@@ -36,6 +36,7 @@
         "physical": false,
         "serial": "emulator-5554",
         "state": "detected",
+        "deviceProfile": "pixel_fold",
         "activity": { "state": "idle", "lastActivityAt": "2026-09-24T23:00:00.000Z", "basis": ["device-log"] }
       },
       "metro": { "port": 8091, "running": true, "pid": 33394 },
