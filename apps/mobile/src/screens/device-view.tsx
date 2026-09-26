@@ -17,7 +17,14 @@ import {
   type ViewInstance,
 } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, {
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
@@ -25,6 +32,7 @@ import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
 import { Toggle } from '@/components/toggle';
+import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
@@ -103,6 +111,14 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     root,
     stage,
     screenZoom.lens,
+  );
+  const [underBar, setUnderBar] = useState(false);
+  const zoomScale = screenZoom.lens.scale;
+  useAnimatedReaction(
+    () => zoomScale.get() > 1.001,
+    (now, before) => {
+      if (now !== before) scheduleOnRN(setUnderBar, now);
+    },
   );
   const snapshot = zoom.landed && source ? null : zoom.snapshot;
   const screen = zoom.screenSize;
@@ -389,6 +405,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               zoom.fadeStyle,
             ]}
           >
+            {underBar ? <ViewerBackdrop /> : null}
             <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
               <Pressable
                 onLayout={(event) => {

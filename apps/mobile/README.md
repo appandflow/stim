@@ -147,7 +147,9 @@ thumbnail hides while the viewer covers it. With Control off, pinching zooms the
 device's whole frame, its rounded corners and screen together, up to 5 times;
 one finger pans it while zoomed, and a double-tap zooms in to 2.5 times where
 you tap, or back to fit. A zoomed device can extend past the stage and under
-the title. Dragging down closes the viewer only at fit, and closing while
+the title bar. While zoomed, the title bar has a dark blurred material on iOS
+(SwiftUI's thin material, through `@expo/ui`) and a translucent dark fill on
+Android. Dragging down closes the viewer only at fit, and closing while
 zoomed takes the device back to fit as it shrinks into the thumbnail. Turning
 Control on puts the device back at fit and turns these gestures off, so
 touches go to the device. The viewer lays the screen out itself, animating its
