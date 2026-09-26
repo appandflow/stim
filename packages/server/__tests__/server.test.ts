@@ -1831,6 +1831,7 @@ describe('frames.subscribe', () => {
         expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
           error: { code: 'action-failed', message: 'sim-fold did not finish within 0.5 s.' },
         });
+        await until(() => existsSync(grandchild));
         expect(() => process.kill(Number(readFileSync(grandchild, 'utf8')), 0)).not.toThrow();
       } finally {
         if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
