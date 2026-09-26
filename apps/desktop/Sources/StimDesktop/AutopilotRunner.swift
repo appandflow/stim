@@ -31,7 +31,7 @@ final class AutopilotRunner: ObservableObject {
   private var checking = false
   private var lastIdleRun: Date?
   private var lastPressureRun: Date?
-  private var budget: (minFree: Double, hardFloor: Double)?
+  private(set) var budget: (minFree: Double, hardFloor: Double)?
   private var budgetAt: Date?
   private var report: GcReport?
   private var reportAt: Date?
@@ -81,11 +81,11 @@ final class AutopilotRunner: ObservableObject {
   }
 
   /// The Do it of a pressure notification, which can be clicked long after it was posted: it runs the plan
-  /// only while disk is still under the budget, and otherwise opens Storage.
+  /// only while disk is still under the budget, and otherwise opens the Machine page.
   func runPlanFromNotification() {
     NSApp.activate(ignoringOtherApps: true)
     guard let plan = pressure, !plan.isEmpty else {
-      OpenRequests.shared.showsStorage = true
+      OpenRequests.shared.showsMachine = true
       return
     }
     runPressurePlan(trigger: .manual, present: true)

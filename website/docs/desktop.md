@@ -61,6 +61,49 @@ closed or was never launched there, the device shows **App not running**. On a
 Stim-owned simulator or emulator it also has a **Run** button; any other device
 has none.
 
+## See what uses the disk
+
+**Machine** in the sidebar shows what fills the Mac's disk, largest first, and
+what Stim can free. Every row has a size, or a reason when it has none, and
+the action that frees a row sits next to it.
+
+- The top of the page shows free disk against your Stim disk budget
+  ([`budget.minFreeDiskGb`](./settings.md)), with one bar split into Stim's
+  devices, Stim's caches and build outputs, `node_modules`, other simulators and
+  AVDs, simulator runtimes and Android system images, and other tools.
+- **Safe to free now** lists what `stim gc` reports as reclaimable: parked,
+  orphaned and stale owned devices, merged worktrees, build outputs of idle
+  workspaces, logs over the cap, records of deleted folders and shared caches.
+  Each row has a checkbox. Rows marked **stim gc** are freed together by one
+  `stim gc --delete`, which also covers the worktree and build-output rows.
+  Shared caches start unchecked, because builds refill them. **Free** previews a
+  single `stim gc` run in the activity sheet before deleting. When the
+  selection needs several commands, it lists them and asks you first.
+- **Projects** groups worktrees by repository, with each repository's total.
+  Expand one to see each worktree's `node_modules`, devices, build outputs, logs
+  and lifecycle, and remove a worktree from its menu.
+- **Simulators and emulators** lists every simulator and AVD with its runtime,
+  last use, size and owner. The owner is a Stim workspace, Stim's parked pool,
+  this Stim home with no workspace, another Stim home, or you. Stim only lists devices it did not create in this
+  home; manage those in Xcode or Android Studio.
+- **Runtimes and system images** shows how many devices use each iOS runtime
+  and Android system image, and marks unused ones. **Copy** copies the
+  `xcrun simctl runtime delete` or `sdkmanager --uninstall` command. Stim never
+  runs it.
+- **Other tools** shows Xcode DerivedData, Gradle caches and `~/Library/Caches`
+  for information.
+
+The device, runtime and system image lists need a `stim` whose `stim gc --json`
+reports an inventory.
+
+Try it with an agent:
+
+```text
+Run `stim gc --json` and list the simulator runtimes and Android system images
+that no device uses, with their sizes and the command to remove each. Do not
+run those commands.
+```
+
 ## Show devices in the app
 
 While Stim Desktop is installed, Stim shows owned simulators and emulators in

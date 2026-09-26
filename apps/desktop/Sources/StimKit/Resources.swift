@@ -258,6 +258,7 @@ public struct MachineMemory: Equatable, Sendable {
 /// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Sendable {
   public struct Sized: Decodable, Hashable, Sendable {
+    public var dir: String?
     public var bytes: Int64?
   }
 
@@ -374,6 +375,55 @@ public struct GcReport: Decodable, Sendable {
   }
 
   public var sections: Sections
+  /// Every simulator, AVD, iOS runtime and system image on the machine; nil from a CLI that predates it.
+  public var inventory: Inventory?
+
+  public struct Inventory: Decodable, Sendable {
+    public var devices: [InventoryDevice]
+    public var runtimes: [InventoryRuntime]
+    public var systemImages: [InventorySystemImage]
+    public var notices: [String]
+  }
+
+  public struct InventoryDevice: Decodable, Hashable, Sendable {
+    public enum Owner: String, Decodable, Sendable {
+      case workspace, parked, orphaned, otherStimHome, user
+
+      public init(from decoder: Decoder) throws {
+        self = Owner(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .user
+      }
+    }
+
+    public var kind: String
+    public var id: String
+    public var name: String
+    public var model: String?
+    public var runtime: String?
+    public var state: String?
+    public var lastUsedAt: String?
+    public var bytes: Int64?
+    public var directory: String?
+    public var owner: Owner
+    public var project: String?
+    public var slot: String?
+  }
+
+  public struct InventoryRuntime: Decodable, Hashable, Sendable {
+    public var identifier: String
+    public var runtimeIdentifier: String?
+    public var version: String?
+    public var build: String?
+    public var bytes: Int64?
+    public var deviceCount: Int
+    public var command: String?
+  }
+
+  public struct InventorySystemImage: Decodable, Hashable, Sendable {
+    public var package: String
+    public var directory: String
+    public var avdCount: Int
+    public var command: String
+  }
 
   public struct Reclaimable: Equatable, Sendable {
     public var bytes: Int64

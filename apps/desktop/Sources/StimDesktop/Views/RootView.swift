@@ -7,7 +7,7 @@ enum SidebarItem: Hashable {
   case environment(String)
   case worktree(String)
   case attention
-  case storage
+  case machine
 }
 
 struct RootView: View {
@@ -110,10 +110,10 @@ struct RootView: View {
       restoreLastProject()
     }
     .onReceive(store.$projects) { _ in restoreLastProject() }
-    .onReceive(openRequests.$showsStorage) { shows in
+    .onReceive(openRequests.$showsMachine) { shows in
       guard shows else { return }
-      openRequests.showsStorage = false
-      selection = .storage
+      openRequests.showsMachine = false
+      selection = .machine
     }
     .onReceive(openRequests.$workspacePath) { path in
       guard let path else { return }
@@ -222,8 +222,8 @@ struct RootView: View {
       }
     case .attention:
       AttentionView(store: store, autopilot: autopilot, openLogs: openErrors)
-    case .storage:
-      StorageView(status: store, metrics: metrics, storage: storage, autopilot: autopilot)
+    case .machine:
+      MachineView(status: store, metrics: metrics, storage: storage, autopilot: autopilot)
     default:
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }
