@@ -32,8 +32,8 @@ export interface HomeAttentionItem {
   target: AttentionTarget;
 }
 
-/** A running build this many times its median is probably stuck. */
-export const OVERRUN_FACTOR = 2;
+const OVERRUN_FACTOR = 2;
+const RECENT_FAILURE_MS = 24 * 60 * 60 * 1000;
 
 const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : 'Android');
 
@@ -46,7 +46,7 @@ function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | nu
     return { ...base, key: `${mac.id}\noffline`, severity: 'error', detail: `Refused the connection: ${fix}` };
   }
   if (state.kind === 'open' || (state.kind === 'connecting' && mac.disconnectedAt === null)) return null;
-  const seen = mac.disconnectedAt === null ? '' : ` · last seen ${shortDuration(now - mac.disconnectedAt)} ago`;
+  const seen = mac.disconnectedAt === null ? '' : ` \u00B7 last seen ${shortDuration(now - mac.disconnectedAt)} ago`;
   return { ...base, key: `${mac.id}\noffline`, severity: 'warning', detail: `Offline${seen}` };
 }
 
@@ -69,6 +69,7 @@ function diskItem(mac: AttentionMachine): HomeAttentionItem | null {
 function workspaceItems(
   mac: AttentionMachine,
   env: EnvironmentState,
+  active: boolean,
   title: string,
   issues: { message: string; severity: 'error' | 'warning' }[],
   now: number,
@@ -89,12 +90,14 @@ function workspaceItems(
     const last = env.lastBuilds?.[platform];
     if (!last || last.status !== 'failed' || runningBuild(env)?.platform === platform) continue;
     const ended = Date.parse(last.finishedAt ?? last.startedAt);
-    const age = Number.isNaN(ended) ? '' : ` · ${shortDuration(now - ended)} ago`;
-    add(`build-${platform}`, 'error', `${platformName(platform)} build failed (${last.errorCode ?? 'error'})${age}`);
+    if (!active && !(now - ended < RECENT_FAILURE_MS)) continue;
+    const age = Number.isNaN(ended) ? '' : ` \u00B7 ${shortDuration(now - ended)} ago`;
+    const code = last.errorCode ? ` (${last.errorCode})` : '';
+    add(`build-${platform}`, 'error', `${platformName(platform)} build failed${code}${age}`);
   }
 
   const errors = env.logs?.errorsSinceMarker ?? 0;
-  if (errors > 0) add('logs', 'error', `${errors === 1 ? '1 error' : `${errors} errors`} in the logs`, true);
+  if (active && errors > 0) add('logs', 'error', `${errors === 1 ? '1 error' : `${errors} errors`} in the logs`, true);
 
   issues.forEach((issue, i) => add(`issue-${i}`, issue.severity, tildeHome(issue.message, mac.home)));
 
@@ -121,9 +124,9 @@ const SEVERITY_RANK = { error: 0, warning: 1 };
 
 /**
  * What home's attention strip lists, most important first: errors before warnings, then machine problems, then
- * live workspaces, then idle ones, each in status order. A machine that is not connected yields only its offline
- * item, since its status is stale. Status issues that are warnings on an idle workspace are left to the machine
- * sheet, where every issue is listed.
+ * active workspaces, then idle ones, each in status order. A machine that is not connected yields only its offline
+ * item, since its status is stale. An idle workspace contributes its error issues and a build that failed in the last
+ * day; its warnings and log errors are left to the machine sheet and the workspace screen.
  */
 export function homeAttention(machines: AttentionMachine[], now: number): HomeAttentionItem[] {
   const ranked: { item: HomeAttentionItem; scope: number }[] = [];
@@ -139,7 +142,7 @@ export function homeAttention(machines: AttentionMachine[], now: number): HomeAt
     for (const env of mac.status.environments) {
       const active = isActive(env);
       const issues = (issuesByPath.get(env.path) ?? []).filter((i) => active || i.severity === 'error');
-      for (const item of workspaceItems(mac, env, workspaceTitle(env, roots), issues, now)) {
+      for (const item of workspaceItems(mac, env, active, workspaceTitle(env, roots), issues, now)) {
         ranked.push({ item, scope: active ? 1 : 2 });
       }
     }

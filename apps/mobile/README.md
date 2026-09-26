@@ -22,16 +22,18 @@ reload and stop a workspace:
   their activity (driven by a tool, or idle), build progress, error and warning
   counts, and remote EAS sessions. A machine that is not connected keeps its
   last status: its rows are dimmed with a hollow dot and "Last seen 3m ago",
-  and their activity and build times stop at the moment it disconnected.
+  and their activity and build times stop at the moment it disconnected. Its
+  device chips turn grey.
   "Activity unknown" is grey: it means Stim has no data, not a problem.
 - **Needs attention**: a strip between the machine chips and the list, hidden
   when nothing is wrong, lists the problems on every paired machine, whatever
   the filters, errors (red) before warnings (amber): a machine that is offline
   or refuses the connection, free disk below 5 GB (the default of Stim's
   refuse floor), a failed last build, errors in the logs since the marker,
-  status issues (warnings only for live workspaces; the machine status sheet
-  lists them all), a running build at more than twice its median, and a live
-  simulator or emulator whose app is not running. A disconnected machine shows
+  status issues, a running build at more than twice its median, and a live
+  simulator or emulator whose app is not running. A workspace that is not live,
+  building or holding a remote session adds only its error issues and a build
+  that failed in the last day; the machine status sheet lists every issue. A disconnected machine shows
   only its offline item, because its status is stale. It shows three items
   until you expand it. A machine item opens the machine's status, log errors
   open the workspace's errors, and every other item opens the workspace.

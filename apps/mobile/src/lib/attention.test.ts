@@ -71,32 +71,50 @@ describe('homeAttention', () => {
     expect(summary([mac([env('fine', { live: true, ios: booted('running') })])])).toEqual([]);
   });
 
+  const failedBuild = (msAgo: number) => ({
+    ios: {
+      platform: 'ios' as const,
+      status: 'failed' as const,
+      cacheHit: false as const,
+      cacheSkipped: false,
+      durationMs: 1000,
+      fingerprint: null,
+      startedAt: new Date(NOW - msAgo).toISOString(),
+      finishedAt: new Date(NOW - msAgo).toISOString(),
+      errorCode: 'STIM_BUILD_FAILED',
+    },
+  });
+
   it('lists failed builds and log errors, linking errors to the logs', () => {
     expect(
       summary([
         mac([
-          env('broken', {
-            lastBuilds: {
-              ios: {
-                platform: 'ios',
-                status: 'failed',
-                cacheHit: false,
-                cacheSkipped: false,
-                durationMs: 1000,
-                fingerprint: null,
-                startedAt: new Date(NOW - 3_600_000).toISOString(),
-                finishedAt: new Date(NOW - 3_600_000).toISOString(),
-                errorCode: 'STIM_BUILD_FAILED',
-              },
-            },
-          }),
+          env('broken', { lastBuilds: failedBuild(3_600_000) }),
           env('bundle', { live: true, logs: { dir: '/l', errorsSinceMarker: 2 } }),
         ]),
       ]),
     ).toEqual([
       'error bundle: 2 errors in the logs -> logs',
-      'error broken: iOS build failed (STIM_BUILD_FAILED) · 1h ago -> workspace',
+      'error broken: iOS build failed (STIM_BUILD_FAILED) \u00B7 1h ago -> workspace',
     ]);
+  });
+
+  it('leaves out log errors and day-old failed builds of idle workspaces', () => {
+    expect(
+      summary([
+        mac([env('abandoned', { lastBuilds: failedBuild(2 * 86_400_000), logs: { dir: '/l', errorsSinceMarker: 3 } })]),
+      ]),
+    ).toEqual([]);
+    expect(
+      summary([
+        mac([
+          env('building', {
+            build: running(10_000, null),
+            lastBuilds: { android: { ...failedBuild(2 * 86_400_000).ios, platform: 'android' } },
+          }),
+        ]),
+      ]),
+    ).toEqual(['error building: Android build failed (STIM_BUILD_FAILED) \u00B7 2d ago -> workspace']);
   });
 
   it('drops a failed build while the same platform builds again', () => {
@@ -170,27 +188,39 @@ describe('homeAttention', () => {
       disconnectedAt: NOW - 5 * 60_000,
       usage: usage(1),
     });
-    expect(summary([stale])).toEqual(['warning MacBook Pro: Offline · last seen 5m ago -> machine']);
+    expect(summary([stale])).toEqual(['warning MacBook Pro: Offline \u00B7 last seen 5m ago -> machine']);
     expect(summary([{ ...stale, state: { kind: 'connecting' } }])).toHaveLength(1);
     expect(summary([{ ...stale, state: { kind: 'connecting' }, disconnectedAt: null, status: null }])).toEqual([]);
     expect(summary([{ ...stale, state: { kind: 'refused', code: 'unauthorized', reason: 'No.' } }])).toEqual([
       'error MacBook Pro: Refused the connection: pair again -> machine',
     ]);
+    expect(summary([{ ...stale, state: { kind: 'refused', code: 'protocol-unsupported', reason: 'No.' } }])).toEqual([
+      'error MacBook Pro: Refused the connection: needs an update -> machine',
+    ]);
+    expect(summary([{ ...stale, missing: true, state: { kind: 'closed' }, status: null }])).toEqual([
+      'error MacBook Pro: Not paired: pair again -> machine',
+    ]);
   });
 
-  it('ranks errors first, then machine problems, then live workspaces before idle ones', () => {
+  it('ranks errors first, then machine problems, then active workspaces before idle ones', () => {
     const errors = { dir: '/l', errorsSinceMarker: 1 };
     const titles = homeAttention(
       [
         mac(
           [
-            env('idle-error', { logs: errors }),
+            env('idle-error', { lastBuilds: failedBuild(60_000) }),
             env('live-warning', { live: true, ios: booted('stopped') }),
             env('live-error', { live: true, logs: errors }),
           ],
           { usage: usage(2) },
         ),
-        { ...mac([]), id: 'b', name: 'Mac mini', state: { kind: 'closed' }, disconnectedAt: NOW },
+        {
+          ...mac([]),
+          id: 'b',
+          name: 'Mac mini',
+          state: { kind: 'waiting', retryInMs: 1000, reason: 'Closed.' },
+          disconnectedAt: NOW,
+        },
       ],
       NOW,
     ).map((i) => i.title);

@@ -15,8 +15,9 @@ export function AttentionStrip({
   onOpen: (item: HomeAttentionItem) => void;
 }) {
   const colors = useColors();
-  const [expanded, setExpanded] = useState(false);
+  const [expandedState, setExpanded] = useState(false);
   if (items.length === 0) return null;
+  const expanded = expandedState && items.length > COLLAPSED;
   const shown = expanded ? items : items.slice(0, COLLAPSED);
   const more = items.length - shown.length;
   return (

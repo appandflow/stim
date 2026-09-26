@@ -79,7 +79,7 @@ export function WorkspaceRow({
             {env.supervisor && !env.supervisor.healthy ? <Chip tint={colors.warn}>supervisor unhealthy</Chip> : null}
             {running.map((d) => (
               <Fragment key={`${d.platform}-${d.slot}`}>
-                <Chip tint={colors.live}>
+                <Chip tint={offline ? undefined : colors.live}>
                   {`${d.platform === 'ios' ? 'iOS' : 'Android'}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`}
                 </Chip>
                 <ActivityChip activity={d.activity} frozenAt={offline ? (disconnectedAt ?? now) : null} />
