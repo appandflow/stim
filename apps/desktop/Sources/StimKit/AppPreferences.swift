@@ -29,9 +29,11 @@ public enum AppPreferences {
     public static let autopilotNightlyHour = "autopilot.nightlyHour"
     public static let autopilotNightlyOlderThanDays = "autopilot.nightlyOlderThanDays"
     public static let autopilotPressure = "autopilot.pressure"
+    public static let autopilotPullRequests = "autopilot.pullRequests"
     public static let autopilotLastNightly = "autopilot.lastNightly"
     public static let autopilotLog = "autopilot.log"
     public static let notifiesDiskPressure = "notify.diskPressure"
+    public static let notifiesWorktreeRemoval = "notify.worktreeRemoval"
     public static let servesPhones = "servesPhones"
     public static let stimServerExecutable = "stimServerExecutable"
     public static let showsInspector = "showsInspector"
@@ -43,7 +45,8 @@ public enum AppPreferences {
   public static let frameRates: [Double] = [60, 30, 15, 5]
 
   /// Autopilot is on by default: idle devices shut down after an hour, a cleanup of what has gone unused for
-  /// 7 days runs at 3:00, and disk pressure is acted on.
+  /// 7 days runs at 3:00, disk pressure is acted on, and worktrees whose pull request finished are removed when
+  /// `stim gc` finds nothing in them would be lost.
   public static var defaults: [String: Any] {
     [
       Key.autopilotIdleShutdown: true,
@@ -52,7 +55,9 @@ public enum AppPreferences {
       Key.autopilotNightlyHour: 3,
       Key.autopilotNightlyOlderThanDays: 7,
       Key.autopilotPressure: true,
+      Key.autopilotPullRequests: true,
       Key.notifiesDiskPressure: true,
+      Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
     ]
   }

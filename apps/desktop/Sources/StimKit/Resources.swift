@@ -269,8 +269,44 @@ public struct GcReport: Decodable, Sendable {
     public var path: String
     public var idleDays: Int?
     public var mergedInto: String?
+    public var pullRequest: PullRequestState?
     public var willRemove: Bool
+    public var reason: String?
     public var detail: String?
+    public var eligibleAt: String?
+
+    public init(
+      path: String, idleDays: Int? = nil, mergedInto: String? = nil, pullRequest: PullRequestState? = nil,
+      willRemove: Bool, reason: String? = nil, detail: String? = nil, eligibleAt: String? = nil
+    ) {
+      self.path = path
+      self.idleDays = idleDays
+      self.mergedInto = mergedInto
+      self.pullRequest = pullRequest
+      self.willRemove = willRemove
+      self.reason = reason
+      self.detail = detail
+      self.eligibleAt = eligibleAt
+    }
+  }
+
+  /// The pull request of a worktree's branch whose head is or contains HEAD, as `gh` reported it to `stim gc`.
+  public struct PullRequestState: Decodable, Hashable, Sendable {
+    public var number: Int
+    /// `open`, `merged` or `closed`.
+    public var state: String
+    public var url: String
+    public var containsHead: Bool
+
+    public init(number: Int, state: String, url: String, containsHead: Bool) {
+      self.number = number
+      self.state = state
+      self.url = url
+      self.containsHead = containsHead
+    }
+
+    /// Merged or closed, with every commit of HEAD in it.
+    public var isFinished: Bool { containsHead && (state == "merged" || state == "closed") }
   }
 
   public struct BuildOutputs: Decodable, Hashable, Sendable {
@@ -343,9 +379,12 @@ public struct GcReport: Decodable, Sendable {
     (sections.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
   }
 
-  /// Linked worktrees `stim gc --delete` removes because their branch is merged.
+  /// Linked worktrees `stim gc --delete` removes because their branch or pull request is merged, or their pull
+  /// request was closed.
   public var mergedWorktrees: [LinkedWorktree] {
-    (sections.linkedWorktrees ?? []).filter { $0.willRemove && $0.mergedInto != nil }
+    (sections.linkedWorktrees ?? []).filter {
+      $0.willRemove && ($0.mergedInto != nil || $0.pullRequest?.isFinished == true)
+    }
   }
 
   public var reclaimable: Reclaimable {

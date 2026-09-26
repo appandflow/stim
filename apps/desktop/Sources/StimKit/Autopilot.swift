@@ -111,7 +111,7 @@ public struct PressurePlan: Hashable, Sendable {
 /// One autopilot or plan run, kept in the app's activity log.
 public struct AutopilotLogEntry: Codable, Hashable, Identifiable, Sendable {
   public enum Trigger: String, Codable, Sendable {
-    case idle, nightly, pressure, manual
+    case idle, nightly, pressure, manual, pullRequests
 
     public var title: String {
       switch self {
@@ -119,6 +119,7 @@ public struct AutopilotLogEntry: Codable, Hashable, Identifiable, Sendable {
       case .nightly: return "Nightly cleanup"
       case .pressure: return "Disk pressure"
       case .manual: return "Requested"
+      case .pullRequests: return "Finished pull requests"
       }
     }
   }
