@@ -111,6 +111,13 @@ reload and stop a workspace:
   Build and Agent sources, a slot, a minimum level, errors only, and a regular
   expression search. The list follows new records until you scroll up, keeps
   the newest 5,000, and a tap on a record shows its whole message and stack.
+  The records of one failed Expo bundle (`Bundling failed`, the error line with
+  its code frame and stack lines, and a failed bundle response) are one entry.
+  An entry leads with the error type and message, then the file and line
+  relative to the workspace, such as `App.js:12:31`. Tapping it shows the code
+  frame; when a filter leaves the code frame lines out, such as Errors only,
+  the app fetches them from the Metro log. **Copy** copies the message and location,
+  and **Share** shares the whole entry.
 
 Paths under the Mac's home folder show as `~/...`; the server reports the home
 folder in `hello`. Copy path copies the full path.
