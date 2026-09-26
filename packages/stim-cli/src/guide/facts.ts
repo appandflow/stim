@@ -683,6 +683,9 @@ RULES
              browser-unverified     the owned Chrome's supervisor or Chrome
                                     process cannot be proven gone or ours;
                                     stop and stim web refuse to signal it
+             browser-orphaned       the owned Chrome runs but its supervisor
+                                    exited, so page logs are not captured;
+                                    stim stop closes it
   severity   "error" when stop or start refuses until it is resolved, else
              "warning"
   remedy     a command to run from workspace, such as "stim android --slot

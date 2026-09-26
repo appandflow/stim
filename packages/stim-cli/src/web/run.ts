@@ -17,7 +17,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { captureProcessIdentity, captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { captureProcessIdentity, captureProcessToken } from '../process-identity.ts';
 import { connectOwnedBrowser, type CdpConnection, type CdpEvent } from './cdp.ts';
 import { PHONE_SCREEN, chromeArgs } from './chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from './events.ts';
@@ -36,6 +36,7 @@ import {
 
 export interface WebSupervisorOptions {
   root: string;
+  launchId: string | null;
   chrome: string;
   url: string;
   port: number;
@@ -45,7 +46,7 @@ export interface WebSupervisorOptions {
 }
 
 const USAGE =
-  'Usage: web-run --root <path> --chrome <path> --url <url> --port <n> [--headed] [--viewport desktop|phone] [--ignore-certificate-errors]';
+  'Usage: web-run --root <path> --chrome <path> --url <url> --port <n> [--launch-id <id>] [--headed] [--viewport desktop|phone] [--ignore-certificate-errors]';
 
 export function parseArgs(argv: string[]): WebSupervisorOptions | { error: string } {
   const values: Record<string, string> = {};
@@ -55,7 +56,7 @@ export function parseArgs(argv: string[]): WebSupervisorOptions | { error: strin
     const arg = argv[i]!;
     if (arg === '--headed') headless = false;
     else if (arg === '--ignore-certificate-errors') ignoreCertificateErrors = true;
-    else if (['--root', '--chrome', '--url', '--port', '--viewport'].includes(arg)) {
+    else if (['--root', '--chrome', '--url', '--port', '--viewport', '--launch-id'].includes(arg)) {
       const value = argv[++i];
       if (value === undefined) return { error: `${arg} needs a value. ${USAGE}` };
       values[arg.slice(2)] = value;
@@ -69,7 +70,16 @@ export function parseArgs(argv: string[]): WebSupervisorOptions | { error: strin
   if (!Number.isInteger(port) || port <= 0 || port > 65535) return { error: `--port must be a TCP port. ${USAGE}` };
   const viewport = (values.viewport ?? 'desktop') as WebViewport;
   if (!WEB_VIEWPORTS.includes(viewport)) return { error: `--viewport must be desktop or phone. ${USAGE}` };
-  return { root: resolve(root), chrome, url, port, headless, viewport, ignoreCertificateErrors };
+  return {
+    root: resolve(root),
+    launchId: values['launch-id'] ?? null,
+    chrome,
+    url,
+    port,
+    headless,
+    viewport,
+    ignoreCertificateErrors,
+  };
 }
 
 const DEVTOOLS_WAIT_MS = 20_000;
@@ -151,6 +161,16 @@ export async function runWebSupervisor(
       } catch {}
       if (claim) clearClaimChild(claim);
     }
+    if (!chromeGone()) {
+      log(
+        'error',
+        event,
+        `${msg}; Chrome pid ${chromeRecord?.pid} is still running, so its record and claim are kept for stim stop`,
+      );
+      writer.close();
+      onExit(1);
+      return;
+    }
     log(level, event, msg);
     try {
       clearWebRecord(root, owner);
@@ -167,7 +187,8 @@ export async function runWebSupervisor(
     } catch {}
     const deadline = Date.now() + CHROME_EXIT_WAIT_MS;
     while (!chromeGone() && Date.now() < deadline) await sleep(POLL_MS);
-    if (!chromeGone() && chromeRecord && inspectProcessIdentity(chromeRecord) === 'same') {
+    const state = chromeRecord ? chromeProcessState(chromeRecord) : 'gone';
+    if (chromeRecord && (state === 'running' || state === 'lingering')) {
       try {
         signalProcessTree(chromeRecord.pid, 'SIGKILL', { group: true });
       } catch {}
@@ -204,6 +225,7 @@ export async function runWebSupervisor(
       profile,
       url: options.url,
       startedAt: new Date().toISOString(),
+      ...(options.launchId ? { launchId: options.launchId } : {}),
     });
 
     const fd = openSync(browserLogFile(root), 'a');
@@ -350,7 +372,9 @@ export async function runWebSupervisor(
       'web_browser_started',
       `browser supervisor pid ${process.pid} runs ${version} (pid ${pid}) on ${profile}`,
     );
-    await connection.send('Page.navigate', { url: options.url }, sessionId);
+    connection.send('Page.navigate', { url: options.url }, sessionId).catch((error: unknown) => {
+      log('debug', 'web_navigation_slow', `Page.navigate did not answer: ${describe(error)}; the page may still load`);
+    });
   } catch (error) {
     stderr(`Stim browser supervisor: ${describe(error)}`);
     await stopChrome();

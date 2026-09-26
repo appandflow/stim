@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, openSync } from 'node:fs';
 import chalk from 'chalk';
 import type { Command } from 'commander';
@@ -8,6 +9,7 @@ import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import type { DevServerStart } from '../engine/build-facts.ts';
+import { windowsLauncherArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
 import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
@@ -86,15 +88,37 @@ function sameLaunch(record: WebRecord, config: WebLaunchConfig): boolean {
 
 function startSupervisor(
   root: string,
-  { url, port, config }: { url: string; port: number; config: WebLaunchConfig },
+  { url, port, config, launchId }: { url: string; port: number; config: WebLaunchConfig; launchId: string },
 ): ChildProcess {
-  const args = [spawnEntry('web-run'), '--root', root, '--chrome', config.chrome, '--url', url, '--port', String(port)];
+  const entry = spawnEntry('web-run');
+  const args = [
+    '--root',
+    root,
+    '--chrome',
+    config.chrome,
+    '--url',
+    url,
+    '--port',
+    String(port),
+    '--launch-id',
+    launchId,
+  ];
   if (!config.headless) args.push('--headed');
   if (config.viewport !== 'desktop') args.push('--viewport', config.viewport);
   if (config.ignoreCertificateErrors) args.push('--ignore-certificate-errors');
   mkdirSync(workspaceLogsDir(root), { recursive: true });
-  const fd = openSync(webSupervisorLogFile(root), 'a');
-  const child = getExecutor().spawn(process.execPath, args, {
+  const logFile = webSupervisorLogFile(root);
+  if (process.platform === 'win32') {
+    const launcher = windowsLauncherArgs({ entry, args, cwd: root, logFile });
+    return getExecutor().spawn(launcher.file, launcher.args, {
+      cwd: root,
+      stdio: 'ignore',
+      env: { ...process.env, ...launcher.env },
+      windowsHide: true,
+    });
+  }
+  const fd = openSync(logFile, 'a');
+  const child = getExecutor().spawn(process.execPath, [entry, ...args], {
     cwd: root,
     detached: true,
     stdio: ['ignore', fd, fd],
@@ -104,15 +128,17 @@ function startSupervisor(
   return child;
 }
 
-async function waitForSupervisor(root: string, child: ChildProcess): Promise<WebRecord | null> {
+async function waitForSupervisor(root: string, child: ChildProcess, launchId: string): Promise<WebRecord | null> {
   let exited = false;
-  child.once('exit', () => {
-    exited = true;
-  });
+  if (process.platform !== 'win32') {
+    child.once('exit', () => {
+      exited = true;
+    });
+  }
   const deadline = Date.now() + REGISTER_WAIT_MS;
   while (Date.now() < deadline) {
     const record = readWebRecord(root);
-    if (record && record.pid === child.pid && record.targetId) return record;
+    if (record?.launchId === launchId && record.targetId) return record;
     if (exited) return null;
     await sleep(POLL_MS);
   }
@@ -227,8 +253,9 @@ export async function runWeb({
       note(
         chalk.dim(phaseLine('device', `starting ${config.headless ? 'headless ' : ''}Chrome on DevTools port ${port}`)),
       );
-      const child = startSupervisor(root, { url, port, config });
-      const record = await waitForSupervisor(root, child);
+      const launchId = randomUUID();
+      const child = startSupervisor(root, { url, port, config, launchId });
+      const record = await waitForSupervisor(root, child, launchId);
       if (!record) {
         return failure(
           'STIM_WEB_LAUNCH_FAILED',
@@ -243,7 +270,8 @@ export async function runWeb({
   if (!launch.ok) return launch;
 
   const verdict = await verifyLaunch(root, launch.since, usesMetro);
-  const record = readWebRecord(root) ?? launch.record;
+  const live = liveWebRecord(readWebRecord(root));
+  const record = live ?? launch.record;
   const remedy =
     verdict.launched === true
       ? null
@@ -251,7 +279,7 @@ export async function runWeb({
         ? 'Metro is still building the web bundle. Run `stim logs --errors` in a moment to confirm the page rendered.'
         : usesMetro
           ? `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`
-          : `Nothing served ${url}. Start the web dev server on that port, for example \`VITE_PORT="$(stim ports get web)" pnpm dev\`, then run \`stim web\` again.`;
+          : `Nothing served ${url}. Start the web dev server on that port, for example \`pnpm exec vite --port "$(stim ports get web)" --strictPort\`, then run \`stim web\` again.`;
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,
@@ -259,14 +287,14 @@ export async function runWeb({
       platform: 'web',
       browser: 'chrome',
       version: record.version ?? null,
-      running: true,
-      pid: record.chromeProcess?.pid ?? null,
-      supervisorPid: record.pid,
+      running: live !== null,
+      pid: live?.chromeProcess?.pid ?? null,
+      supervisorPid: live?.pid ?? null,
       url,
       headless: record.headless,
       viewport: record.viewport,
       profile: record.profile,
-      cdpEndpoint: cdpEndpoint(record.cdpPort),
+      cdpEndpoint: live ? cdpEndpoint(live.cdpPort) : null,
       reused: launch.reused,
       launched: verdict.launched,
       metroPort: usesMetro ? metroPort : null,

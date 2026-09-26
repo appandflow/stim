@@ -5,6 +5,7 @@ import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 import type { RemoteSessionRecord } from './supervisor/state.ts';
 import { inspectProcessIdentity } from './process-identity.ts';
+import { chromeProcessState } from './web/profile.ts';
 import { cdpEndpoint, type WebRecord } from './web/state.ts';
 import type {
   AndroidRuntimeFacts,
@@ -293,14 +294,16 @@ export function environmentState(
 /** The workspace's browser record and whether its supervisor and Chrome are verified live. */
 export interface WebFacts {
   record: WebRecord;
-  status: 'running' | 'stopped' | 'unverified';
+  status: 'running' | 'orphaned' | 'stopped' | 'unverified';
 }
 
 export function webFacts(record: WebRecord | null): WebFacts | null {
   if (!record) return null;
-  const identities = [record, ...(record.chromeProcess ? [record.chromeProcess] : [])].map(inspectProcessIdentity);
-  if (identities.includes('unknown')) return { record, status: 'unverified' };
-  return { record, status: identities.every((identity) => identity === 'same') ? 'running' : 'stopped' };
+  const supervisor = inspectProcessIdentity(record);
+  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess) : 'gone';
+  if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
+  if (chrome === 'gone') return { record, status: 'stopped' };
+  return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };
 }
 
 /** Adds the workspace's owned Chrome to its status: the web entry, its memory, and an unverifiable browser. */
@@ -308,6 +311,15 @@ export function withWebFacts(state: EnvironmentState, web: WebFacts | null): Env
   if (!web) return state;
   const running = web.status === 'running';
   const issues = [...state.issues];
+  if (web.status === 'orphaned') {
+    issues.push({
+      code: 'browser-orphaned',
+      severity: 'warning',
+      message: `the owned Chrome (pid ${web.record.chromeProcess?.pid}) runs without its supervisor, so its page logs are not captured`,
+      remedy: 'stim stop',
+      workspace: state.path,
+    });
+  }
   if (web.status === 'unverified') {
     issues.push({
       code: 'browser-unverified',
@@ -319,8 +331,8 @@ export function withWebFacts(state: EnvironmentState, web: WebFacts | null): Env
   }
   return {
     ...state,
-    live: state.live || running,
-    memoryMb: state.memoryMb + (running ? BROWSER_MB : 0),
+    live: state.live || running || web.status === 'orphaned',
+    memoryMb: state.memoryMb + (running || web.status === 'orphaned' ? BROWSER_MB : 0),
     warnings: issues.map(issueText),
     issues,
     web: webBrowserState(web),

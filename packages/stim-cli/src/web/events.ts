@@ -171,7 +171,7 @@ export function networkFailureRecord({
     src: 'device',
     platform: 'web',
     level: canceled ? 'debug' : document || status === undefined || status >= 500 ? 'error' : 'warn',
-    event: document ? 'web_document_failed' : 'web_request_failed',
+    event: canceled ? 'web_request_canceled' : document ? 'web_document_failed' : 'web_request_failed',
     ...(status === undefined ? {} : { status }),
     msg: `${method} ${url} ${canceled ? 'canceled' : `failed: ${failure}`}`,
   };

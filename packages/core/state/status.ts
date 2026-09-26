@@ -190,6 +190,7 @@ export const STATUS_ISSUE_CODES = [
   'avd-unchecked',
   'supervisor-unverified',
   'browser-unverified',
+  'browser-orphaned',
 ] as const;
 
 export type StatusIssueCode = (typeof STATUS_ISSUE_CODES)[number];

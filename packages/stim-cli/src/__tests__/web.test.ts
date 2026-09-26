@@ -157,7 +157,10 @@ describe('page logs', () => {
       event: 'web_document_failed',
     });
     expect(networkFailureRecord({ ...base, document: false, status: 404 })).toMatchObject({ level: 'warn' });
-    expect(networkFailureRecord({ ...base, document: false, errorText: 'x', canceled: true }).level).toBe('debug');
+    expect(networkFailureRecord({ ...base, document: true, errorText: 'x', canceled: true })).toMatchObject({
+      level: 'debug',
+      event: 'web_request_canceled',
+    });
   });
 });
 
@@ -250,7 +253,7 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     const reused = { pid: stranger.pid!, processToken: reusedToken };
     writeWebRecord(workspace, { ...record, pid: reused.pid, processToken: reused.processToken, chromeProcess: reused });
     expect(inspectProcessIdentity(reused)).toBe('different');
-    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('skipped');
     expect(inspectProcessIdentity({ pid: stranger.pid, processToken: captureProcessToken(stranger.pid!) })).toBe(
       'same',
     );
@@ -274,6 +277,31 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     symlinkSync(`${hostname()}-${process.pid}`, join(profile, 'SingletonLock'));
     expect(await teardownOwnedBrowser(workspace, { deleteProfile: true })).toMatchObject({ status: 'skipped' });
     expect(lstatSync(join(profile, 'SingletonLock')).isSymbolicLink()).toBe(true);
+  });
+
+  test('status reports a Chrome whose supervisor exited as orphaned, and stop still closes it', async () => {
+    const workspace = realpathSync(root);
+    const record = await ownedBrowser();
+    process.kill(record.pid, 'SIGKILL');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const state = withWebFacts(
+      environmentState({ ...getProject(workspace)!, __path: workspace }),
+      webFacts(readWebRecord(workspace)),
+    );
+    expect(state.issues.map((issue) => issue.code)).toEqual(['browser-orphaned']);
+    expect(state.live).toBe(true);
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(inspectProcessIdentity(record.chromeProcess)).not.toBe('same');
+  });
+
+  test('keeps the record when a Chrome the record does not name holds the profile', async () => {
+    const workspace = realpathSync(root);
+    const record = await ownedBrowser();
+    const { chromeProcess, ...unrecorded } = record;
+    writeWebRecord(workspace, unrecorded);
+    expect(await teardownOwnedBrowser(workspace)).toMatchObject({ status: 'skipped', kind: 'not-verified' });
+    expect(inspectProcessIdentity(chromeProcess)).toBe('same');
+    expect(readWebRecord(workspace)).not.toBeNull();
   });
 
   test('status reports the running browser with its DevTools endpoint and counts the workspace live', async () => {

@@ -36,6 +36,7 @@ export interface WebRecord extends OwnedProcess, WebLaunchConfig {
   startedAt: string;
   targetId?: string;
   version?: string;
+  launchId?: string;
 }
 
 export function webDir(root: string): string {
@@ -90,6 +91,7 @@ function parseWebRecord(value: unknown): WebRecord | null {
     startedAt: typeof record.startedAt === 'string' ? record.startedAt : '',
     ...(typeof record.targetId === 'string' ? { targetId: record.targetId } : {}),
     ...(typeof record.version === 'string' ? { version: record.version } : {}),
+    ...(typeof record.launchId === 'string' ? { launchId: record.launchId } : {}),
   };
 }
 

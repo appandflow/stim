@@ -868,7 +868,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Only Expo serves web from Metro, so for any other app Stim needs web.url.
   Stim never starts the web dev server. Start it on a named port and point
   web.url at it:
-    VITE_PORT="$(stim ports get web)" pnpm dev
+    pnpm exec vite --port "$(stim ports get web)" --strictPort
     stim settings set web.url 'http://localhost:{port:web}/'
   See stim guide web.`,
     },

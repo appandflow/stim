@@ -12,7 +12,14 @@ import { signalProcessTree } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
-import { CDP_PORT_LABEL, clearWebRecord, readWebRecord, webProfileDir, type OwnedProcess } from '../web/state.ts';
+import {
+  CDP_PORT_LABEL,
+  clearWebRecord,
+  readWebRecord,
+  webClaimRoot,
+  webProfileDir,
+  type OwnedProcess,
+} from '../web/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import {
   deleteParkedIosSim,
@@ -45,7 +52,14 @@ import {
 } from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
-import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import {
+  claimRemoveCommand,
+  clearClaimChild,
+  clearFreeClaimSet,
+  markClaimChildPending,
+  releaseClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 
 export interface ParkedDevice {
   udid: string;
@@ -509,7 +523,7 @@ function teardownClaimedAvd(
   }
 }
 
-const BROWSER_EXIT_WAIT_MS = 10_000;
+const BROWSER_EXIT_WAIT_MS = 15_000;
 const CHROME_KILL_WAIT_MS = 5_000;
 
 async function stopOwnedChrome(record: OwnedProcess): Promise<boolean> {
@@ -577,6 +591,22 @@ export async function teardownBrowserHeld(
       }
       if (record.chromeProcess && !(await stopOwnedChrome(record.chromeProcess))) {
         return { status: 'failed', reason: `Chrome pid ${record.chromeProcess.pid} did not exit` };
+      }
+      const holder = liveProfileHolder(profile);
+      if (holder !== null) {
+        return {
+          status: 'skipped',
+          kind: 'not-verified',
+          reason: `pid ${holder} still holds ${profile}, and the browser record does not name it; it was left running`,
+        };
+      }
+      const claims = clearFreeClaimSet({ root: webClaimRoot(root), label: 'browser supervisor' });
+      if (claims.status !== 'cleared') {
+        return {
+          status: 'skipped',
+          kind: 'not-verified',
+          reason: `the browser supervisor claim could not be cleared (${claims.status === 'held' ? 'still held' : claims.reason}); remove it with ${claimRemoveCommand(webClaimRoot(root))}`,
+        };
       }
       clearWebRecord(root, record);
       await releaseBrowserPort(root, record.cdpPort);

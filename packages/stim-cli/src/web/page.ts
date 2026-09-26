@@ -9,6 +9,10 @@ export function liveWebRecord(record: WebRecord | null): (WebRecord & { targetId
   return record as WebRecord & { targetId: string };
 }
 
+// Chrome answers Page.navigate only once the response arrives, and a cold dev server can take longer than any
+// sensible wait; the owned supervisor observes the load either way.
+const NAVIGATE_ACK_MS = 1000;
+
 /** Sends one page-level DevTools command to the owned page, through a connection verified to reach its Chrome. */
 export async function sendToOwnedPage(
   record: WebRecord & { targetId: string },
@@ -20,7 +24,13 @@ export async function sendToOwnedPage(
     const { sessionId } = (await cdp.send('Target.attachToTarget', { targetId: record.targetId, flatten: true })) as {
       sessionId: string;
     };
-    await cdp.send(method, params, sessionId);
+    const reply = cdp.send(method, params, sessionId);
+    if (method === 'Page.navigate') {
+      reply.catch(() => {});
+      await Promise.race([reply, new Promise((resolve) => setTimeout(resolve, NAVIGATE_ACK_MS))]);
+    } else {
+      await reply;
+    }
   } finally {
     cdp.close();
   }
