@@ -155,8 +155,9 @@ SWEEPING FINISHED WORKTREES
   not block removal, because their change is on the default branch, and the
   branch is kept.
 
-  PULL REQUESTS: for each linked worktree on a branch, gc runs
-  \`gh pr list --head <branch> --state all --json ...\` in the worktree and
+  PULL REQUESTS: gc runs one \`gh api graphql\` query per repository that
+  asks for the 20 newest pull requests of each linked worktree's branch, as
+  \`gh pr list --head <branch> --state all\` would, and for each worktree
   takes the pull request whose head is HEAD, else one whose head contains
   HEAD. A pull request whose head HEAD is past ("PR #12 merged, and HEAD has
   commits it does not"), one unrelated to HEAD (an older use of the branch

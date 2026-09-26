@@ -785,9 +785,9 @@ describe('choosing the pull request of a worktree', () => {
   });
 });
 
-function gitRepoWithWorktrees(names: string[]) {
-  const repo = join(projects, 'repo');
-  const remote = join(projects, 'remote.git');
+function gitRepoWithWorktrees(names: string[], repoName = 'repo') {
+  const repo = join(projects, repoName);
+  const remote = join(projects, `${repoName}-remote.git`);
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 });
   git(`init -q --bare "${remote}"`, projects);
@@ -807,6 +807,29 @@ function gitRepoWithWorktrees(names: string[]) {
     }),
   );
   return { repo, worktrees };
+}
+
+function answerGh(pullsOf: (branch: string) => object[], calls: { cwd?: string; args: string[] }[] = []) {
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
+    runFile: (file, args: string[], opts) => {
+      if (file !== 'gh') return current.runFile(file, args, opts);
+      calls.push({ cwd: opts?.cwd, args });
+      return JSON.stringify(pullsOf(args[args.indexOf('--head') + 1]!));
+    },
+    runFileAsync: async (file, args: string[], opts) => {
+      if (file !== 'gh') return current.runFileAsync(file, args, opts);
+      calls.push({ cwd: opts?.cwd, args });
+      const fields = args.flatMap((arg) => {
+        const variable = /^(b\d+)=(.*)$/s.exec(arg);
+        return variable ? [[variable[1], { nodes: pullsOf(variable[2]!) }]] : [];
+      });
+      return JSON.stringify({ data: { repository: Object.fromEntries(fields) } });
+    },
+  });
+  return calls;
 }
 
 test('gc --worktrees reports each linked worktree, and --delete removes only the clean idle ones', async () => {
@@ -960,18 +983,7 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
     ],
     noPr: [],
   };
-  const current = getExecutor();
-  const ghCalls: string[][] = [];
-  setExecutor({
-    ...current,
-    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
-    runFile: (file, args: string[], opts) => {
-      if (file !== 'gh') return current.runFile(file, args, opts);
-      ghCalls.push(args);
-      const branch = args[args.indexOf('--head') + 1]!;
-      return JSON.stringify(pulls[branch] ?? []);
-    },
-  });
+  const ghCalls = answerGh((branch) => pulls[branch] ?? []);
 
   const { payload } = await gcJson({});
   const byName = Object.fromEntries(
@@ -995,18 +1007,14 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
     pullRequest: { state: 'closed', containsHead: true },
   });
   expect(byName.noPr).toMatchObject({ willRemove: false, pullRequest: null, pullRequestUnknown: null });
-  expect(ghCalls).toContainEqual([
-    'pr',
-    'list',
-    '--head',
-    'shipped',
-    '--state',
-    'all',
-    '--limit',
-    '20',
-    '--json',
-    'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository',
-  ]);
+  expect(ghCalls).toHaveLength(1);
+  const { args } = ghCalls[0]!;
+  expect(args.slice(0, 6)).toEqual(['api', 'graphql', '-F', 'owner={owner}', '-F', 'repo={repo}']);
+  const branches = args.filter((arg) => /^b\d+=/.test(arg)).map((arg) => arg.replace(/^b\d+=/, ''));
+  expect(branches.toSorted()).toEqual(names.toSorted());
+  expect(args.at(-1)).toMatch(
+    /^query=.*b0: pullRequests\(headRefName: \$b0, states: \[OPEN, CLOSED, MERGED\], first: 20,.*headRefOid/,
+  );
 
   await captureLog(() => runGc({ delete: true }));
   expect(existsSync(worktrees.shipped!)).toBe(false);
@@ -1014,20 +1022,20 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
   for (const name of ['unsaved', 'wip', 'gone', 'noPr']) expect(existsSync(worktrees[name]!)).toBe(true);
 }, 120_000);
 
-test('a signed-out or unresponsive gh is asked once per gc run, and every worktree says why', async () => {
+test('a signed-out or unresponsive gh is asked once per repository per gc run, and every worktree says why', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const current = getExecutor();
   for (const [failure, reason] of [
     [{ status: 4 }, 'gh is not signed in; run `gh auth login`'],
-    [{ code: 'ETIMEDOUT' }, 'gh pr list did not answer within 20s'],
+    [{ code: 'ETIMEDOUT' }, 'gh api graphql did not answer within 20s'],
   ] as const) {
     let calls = 0;
     setExecutor({
       ...current,
       findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
-      runFile: (file, args, opts) => {
-        if (file !== 'gh') return current.runFile(file, args, opts);
+      runFileAsync: async (file, args, opts) => {
+        if (file !== 'gh') return current.runFileAsync(file, args, opts);
         calls++;
         throw Object.assign(new Error('gh failed'), failure);
       },
@@ -1039,6 +1047,109 @@ test('a signed-out or unresponsive gh is asked once per gc run, and every worktr
       reason,
     ]);
   }
+}, 60_000);
+
+test('gc asks GitHub once per repository, and a repository whose query fails leaves the others answered', async () => {
+  const first = gitRepoWithWorktrees(['alpha', 'beta'], 'first');
+  const second = gitRepoWithWorktrees(['gamma'], 'second');
+  const heads: Record<string, string> = {};
+  for (const [name, path] of Object.entries({ ...first.worktrees, ...second.worktrees })) {
+    upsertProject(path, { metroPort: null });
+    heads[name] = execSync('git rev-parse HEAD', { cwd: path, encoding: 'utf-8' }).trim();
+  }
+  const merged = (branch: string) => [
+    {
+      number: branch.length,
+      url: `https://github.com/o/r/pull/${branch.length}`,
+      state: 'MERGED',
+      headRefOid: heads[branch],
+      mergedAt: '2026-09-01T00:00:00Z',
+      closedAt: '2026-09-01T00:00:00Z',
+    },
+  ];
+  const calls = answerGh(merged);
+  const answering = getExecutor();
+  setExecutor({
+    ...answering,
+    runFileAsync: async (file, args, opts) => {
+      if (file === 'gh' && opts?.cwd === realpathSync.native(second.repo)) {
+        calls.push({ cwd: opts.cwd, args: args ?? [] });
+        throw Object.assign(new Error('Command failed: gh api graphql'), { status: 1, stderr: 'HTTP 502' });
+      }
+      return answering.runFileAsync(file, args, opts);
+    },
+  });
+
+  const { payload } = await gcJson({});
+  const byName = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+  );
+  expect(calls.map(({ cwd }) => cwd).toSorted()).toEqual(
+    [realpathSync.native(first.repo), realpathSync.native(second.repo)].toSorted(),
+  );
+  expect(byName.alpha).toMatchObject({ pullRequest: { number: 5, state: 'merged' }, pullRequestUnknown: null });
+  expect(byName.beta).toMatchObject({ pullRequest: { number: 4, state: 'merged' }, pullRequestUnknown: null });
+  expect(byName.gamma).toMatchObject({ pullRequest: null, pullRequestUnknown: 'gh api graphql failed: HTTP 502' });
+}, 60_000);
+
+test('one gc report lists simulators and AVDs once, however many worktrees own devices', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['one', 'two', 'three']);
+  for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
+  const real = getExecutor();
+  const iphone = 'com.apple.CoreSimulator.SimDeviceType.iPhone-15';
+  const simctl = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-0': ['one', 'two', 'three'].map((name) => ({
+        udid: `U-${name}`,
+        name: `stim-${name}`,
+        state: name === 'two' ? 'Booted' : 'Shutdown',
+        isAvailable: true,
+        deviceTypeIdentifier: iphone,
+      })),
+    },
+  });
+  let lists = { sims: 0, avds: 0 };
+  const fake = (command: string) => {
+    if (/simctl list/.test(command)) {
+      lists.sims++;
+      return simctl;
+    }
+    if (/-list-avds/.test(command)) lists.avds++;
+    return '';
+  };
+  setExecutor({
+    ...real,
+    run: fake,
+    runQuiet: fake,
+    runFile: (file, args = [], opts) =>
+      file === 'git' || file === 'du' ? real.runFile(file, args, opts) : fake([file, ...args].join(' ')),
+    runFileQuiet: (file, args = [], opts) =>
+      file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' ')),
+  });
+  const baseline = async () => {
+    lists = { sims: 0, avds: 0 };
+    return (await gcJson({})).payload;
+  };
+  await baseline();
+  const without = lists;
+  for (const [name, path] of Object.entries(worktrees)) {
+    upsertProject(path, {
+      platforms: {
+        ios: { deviceUdid: `U-${name}`, owned: true, deviceName: `stim-${name}` },
+        android: { avdName: `stim-${name}`, owned: true },
+      },
+    });
+  }
+
+  const payload = await baseline();
+
+  expect(lists).toEqual({ sims: without.sims + 1, avds: without.avds + 1 });
+  const byName = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+  );
+  expect(byName.two).toMatchObject({ willRemove: false, reason: 'in-use' });
+  expect(byName.two.detail).toContain('its owned simulator stim-two is Booted');
+  expect(byName.one.reason).not.toBe('in-use');
 }, 60_000);
 
 test('worktree remove accepts local-only commits that a merged pull request holds, not a closed one', async () => {

@@ -1499,10 +1499,12 @@ export function ownedAvdSerialResolver({ timeoutMs }: { timeoutMs?: number } = {
   });
   const avds = once(() => listAvds(remaining()));
   const adb = once(() => listAdbDevices(remaining()));
-  const names = new Map<string, string | null>();
+  const names = new Map<string, string>();
   const avdNameOf = (serial: string) => {
-    if (!names.has(serial)) names.set(serial, getAvdNameForSerial(serial, remaining()));
-    return names.get(serial);
+    if (names.has(serial)) return names.get(serial);
+    const name = getAvdNameForSerial(serial, remaining());
+    if (name !== null) names.set(serial, name);
+    return name;
   };
   return (avdName) => {
     if (!avds().includes(avdName)) return { missing: true };
