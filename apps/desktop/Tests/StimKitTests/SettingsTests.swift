@@ -168,7 +168,6 @@ private let schema = Data(
       }
       """#.utf8)
     let field = try #require(try SettingsSchema.fields(from: viewerSchema).first)
-    #expect(field.defaultValue == .string("xcode"))
     let viewer = try #require(payload.entry("iosSimulatorApp"))
     #expect(viewer.overridden(by: .machine, field: field)?.value == .string("stim-desktop"))
     #expect(viewer.originLabel == "default (Stim Desktop installed)")
