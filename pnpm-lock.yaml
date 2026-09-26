@@ -238,6 +238,9 @@ importers:
       oxfmt:
         specifier: ^0.65.0
         version: 0.65.0
+      sf-symbols-typescript:
+        specifier: 2.2.0
+        version: 2.2.0
       sharp:
         specifier: ^0.35.4
         version: 0.35.4(@types/node@26.3.0)
