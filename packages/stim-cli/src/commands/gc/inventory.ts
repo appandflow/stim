@@ -295,15 +295,17 @@ function listAvdRecords(notices: string[], roots: readonly string[] = avdStorage
       }
       let directory: string | null = null;
       let config = '';
+      let unreadable: unknown = null;
       for (const candidate of avdIniPaths(root, ini)) {
         try {
           config = readFileSync(join(candidate, 'config.ini'), 'utf8');
           directory = candidate;
           break;
         } catch (error) {
-          if (!isMissing(error)) notices.push(unreadableNotice(`details of AVD ${name}`, error));
+          if (!isMissing(error)) unreadable ??= error;
         }
       }
+      if (!directory && unreadable) notices.push(unreadableNotice(`details of AVD ${name}`, unreadable));
       records.set(name, {
         name,
         directory,

@@ -2656,7 +2656,7 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     for (const name of ['Pixel_9', 'Locked', 'Sealed']) {
       const directory = join(userAvdRoot, `${name}.avd`);
       mkdirSync(directory, { recursive: true });
-      writeFileSync(join(userAvdRoot, `${name}.ini`), `path=${directory}\n`);
+      writeFileSync(join(userAvdRoot, `${name}.ini`), `path=${directory}\npath.rel=avd/${name}.avd\n`);
       writeFileSync(join(directory, 'config.ini'), 'image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\n');
     }
     const sdk = join(fakeHome, 'sdk');
