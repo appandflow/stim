@@ -142,7 +142,7 @@ its step with a notice, and a partly set group fails the run.
 | `ASC_ISSUER_ID`           | secret   | The issuer ID shown above the keys list in App Store Connect                         |
 | `SPARKLE_ED_PRIVATE_KEY`  | secret   | The private EdDSA key from Sparkle's `generate_keys -x <file>`                       |
 | `SPARKLE_PUBLIC_ED_KEY`   | variable | The matching public key that `generate_keys` prints                                  |
-| `HOMEBREW_TAP_TOKEN`      | secret   | A fine-grained token with Contents read and write on `appandflow/homebrew-tap` only  |
+| `HOMEBREW_TAP_DEPLOY_KEY` | secret   | The private half of a write deploy key on `appandflow/homebrew-tap`                  |
 
 ### Apple artifacts
 
@@ -169,7 +169,8 @@ apps can no longer verify updates.
 `brew install --cask appandflow/tap/stim`. `packaging/bump-cask.sh <version>
 [output]` fills in the version and the DMG's SHA-256 from the release's
 `SHA256SUMS`. The workflow runs it and pushes `Casks/stim.rb` to the tap when
-`HOMEBREW_TAP_TOKEN` is set.
+`HOMEBREW_TAP_DEPLOY_KEY` is set. The key is an SSH deploy key with write
+access to that repository only; rotate it with `gh repo deploy-key` on the tap.
 
 ## Troubleshooting
 
