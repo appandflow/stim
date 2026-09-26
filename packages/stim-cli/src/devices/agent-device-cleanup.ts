@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { sep } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import { readAgentDeviceRecords } from './activity.ts';
@@ -64,11 +64,13 @@ export function isOwnDeviceSession(
   if (device.platform === 'android' && session.device !== device.avdName.replaceAll('_', ' ')) return false;
   if (!owner) return true;
   return owner.claims.some(
-    (claim) =>
-      claim.session === session.name &&
-      claim.workspace !== null &&
-      (claim.workspace === owner.workspace || claim.workspace.startsWith(owner.workspace + sep)),
+    (claim) => claim.session === session.name && claim.workspace !== null && within(owner.workspace, claim.workspace),
   );
+}
+
+function within(root: string, path: string): boolean {
+  const rest = relative(root, path);
+  return rest === '' || (!isAbsolute(rest) && rest.split(sep)[0] !== '..');
 }
 
 function canonical(path: string): string | null {
