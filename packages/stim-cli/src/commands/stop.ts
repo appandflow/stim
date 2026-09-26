@@ -348,8 +348,8 @@ async function stopWorkspace({
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  teardownIos?: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
-  teardownAvd?: (avdName: string, opts: { del?: boolean }) => TeardownResult;
+  teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
+  teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
@@ -494,7 +494,7 @@ async function stopWorkspace({
   if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
-    outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
+    outcomes.device = shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
@@ -762,13 +762,14 @@ function occupiedSkipReason(reason: string, holders: string[] | null | undefined
 
 function shutDownDevices(
   project: ProjectRecord | null | undefined,
+  workspace: string,
   {
     teardownIos,
     teardownAvd,
     report,
   }: {
-    teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => TeardownResult;
-    teardownAvd: (avdName: string, opts: { del?: boolean }) => TeardownResult;
+    teardownIos: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
+    teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
     report: (line: string) => void;
   },
 ): DeviceOutcome {
@@ -790,7 +791,12 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
       } else {
-        device[iosKey] = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report, 'ios');
+        device[iosKey] = reportDevice(
+          iosUdid,
+          teardownIos(iosUdid, { del: false, label: iosName, workspace }),
+          report,
+          'ios',
+        );
       }
     }
 
@@ -807,7 +813,7 @@ function shutDownDevices(
       } else {
         device[androidKey] = reportDevice(
           android.avdName,
-          teardownAvd(android.avdName, { del: false }),
+          teardownAvd(android.avdName, { del: false, workspace }),
           report,
           'android',
         );

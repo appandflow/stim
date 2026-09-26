@@ -1,8 +1,25 @@
-import { closeOwnedDeviceSessions, parseAgentDeviceSessions } from '../devices/agent-device-cleanup.ts';
+import {
+  closeOwnedDeviceSessions,
+  isOwnDeviceSession,
+  parseAgentDeviceSessions,
+} from '../devices/agent-device-cleanup.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
-const ios = { name: 'ios-task', platform: 'ios', device_udid: 'U1', id: 'U1', createdAt: 1789292795715 };
-const android = { name: 'android-task', platform: 'android', id: 'emulator-5554', createdAt: 1789292795716 };
+const ios = {
+  name: 'ios-task',
+  platform: 'ios',
+  device: 'stim-app (iPhone 17 26.0)',
+  device_udid: 'U1',
+  id: 'U1',
+  createdAt: 1789292795715,
+};
+const android = {
+  name: 'android-task',
+  platform: 'android',
+  device: 'stim-app fold',
+  id: 'emulator-5554',
+  createdAt: 1789292795716,
+};
 const payload = (sessions: unknown[]) => JSON.stringify({ success: true, data: { sessions } });
 let stderr: ReturnType<typeof vi.spyOn>;
 
@@ -26,12 +43,37 @@ test('parses live CLI records without treating malformed or cross-platform ident
         { ...ios, createdAt: undefined },
         { ...ios, name: '' },
         { ...ios, device_udid: undefined },
+        { ...android, name: 'default', address: 'cwd:a504:android' },
       ]),
     ),
-  ).toEqual([{ name: ios.name, platform: 'ios', id: 'U1', createdAt: ios.createdAt }, android]);
+  ).toEqual([
+    { name: ios.name, platform: 'ios', id: 'U1', device: ios.device, createdAt: ios.createdAt },
+    android,
+    { ...android, name: 'cwd:a504:android' },
+  ]);
   for (const output of ['oops', '{}', '{"success":false,"data":{"sessions":[]}}']) {
     expect(() => parseAgentDeviceSessions(output)).toThrow(/JSON|successful session list/);
   }
+});
+
+test('closes an Android session only when it names the AVD now on that serial', () => {
+  const device = { platform: 'android' as const, id: 'emulator-5554', avdName: 'stim-app_fold' };
+  expect(isOwnDeviceSession(android, device)).toBe(true);
+  expect(isOwnDeviceSession({ ...android, device: 'stim-other' }, device)).toBe(false);
+  expect(isOwnDeviceSession({ ...android, device: null }, device)).toBe(false);
+  expect(isOwnDeviceSession({ ...android, id: 'emulator-5556' }, device)).toBe(false);
+});
+
+test('with an owner, closes only a session its claim places inside that workspace', () => {
+  const device = { platform: 'ios' as const, id: 'U1' };
+  const session = { ...ios, device: ios.device };
+  const owner = (claims: { session: string | null; workspace: string | null }[]) => ({ workspace: '/w/app', claims });
+  expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app' }]))).toBe(true);
+  expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app/src' }]))).toBe(true);
+  expect(isOwnDeviceSession(session, device, owner([]))).toBe(false);
+  expect(isOwnDeviceSession(session, device, owner([{ session: 'other', workspace: '/w/app' }]))).toBe(false);
+  expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app-2' }]))).toBe(false);
+  expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: null }]))).toBe(false);
 });
 
 function executor(lists: string[], close?: (args: string[]) => string) {
@@ -53,7 +95,7 @@ function executor(lists: string[], close?: (args: string[]) => string) {
 
 test.each([
   [{ platform: 'ios' as const, id: 'U1' }, ios, '--udid'],
-  [{ platform: 'android' as const, id: 'emulator-5554' }, android, '--serial'],
+  [{ platform: 'android' as const, id: 'emulator-5554', avdName: 'stim-app_fold' }, android, '--serial'],
 ])('closes only exact matching sessions with a rejecting target guard: %j', (device, session, selector) => {
   const calls = executor([payload([ios, android, { ...ios, name: 'unrelated', device_udid: 'U10', id: 'U10' }])]);
   const owned = vi.fn<() => boolean>(() => true);

@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Command } from 'commander';
@@ -23,6 +23,8 @@ import { endRecordedSession } from '../engine/device-remote.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { teardownOwnedAvd } from '../devices/teardown.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -1437,4 +1439,69 @@ test('stop --slot default never ends the workspace remote session', async () => 
   const result = await runStop({ ...opts, slot: 'default' });
   expect(remoteTeardownCalled).toBe(false);
   expect(result.outcomes.device.remote).toBeUndefined();
+});
+
+test('stop --slot closes only the agent-device session this workspace holds on the slot emulator', async () => {
+  const claims = join(tmpHome, 'agent-device-claims');
+  mkdirSync(claims);
+  const other = mkdtempSync(join(tmpdir(), 'stim-other-'));
+  const claim = (file: string, serial: string, session: string, workspace: string) =>
+    writeFileSync(join(claims, file), JSON.stringify({ session, workspace, device: { id: serial } }));
+  claim('fold.json', 'emulator-5554', 'cwd:a504:android', join(tmpRoot, 'app'));
+  claim('phone.json', 'emulator-5556', 'phone-task', other);
+  const sessions = [
+    {
+      name: 'default',
+      address: 'cwd:a504:android',
+      platform: 'android',
+      device: 'stim-app-fold',
+      id: 'emulator-5554',
+      createdAt: 2,
+    },
+    { name: 'phone-task', platform: 'android', device: 'stim-other', id: 'emulator-5556', createdAt: 1 },
+    { name: 'earlier-emulator', platform: 'android', device: 'stim-old', id: 'emulator-5554', createdAt: 0 },
+  ];
+  const closed: string[] = [];
+  const previousClaims = process.env.AGENT_DEVICE_CLAIMS_DIR;
+  process.env.AGENT_DEVICE_CLAIMS_DIR = claims;
+  mkdirSync(join(tmpRoot, 'app'));
+  recordCreatedDevice('android', 'stim-app-fold');
+  setExecutor({
+    run: () => '',
+    runQuiet: () => '',
+    spawn: () => {},
+    findExecutable: () => '/bin/agent-device',
+    runFile: (file: string, args: string[] = []) => {
+      if (file !== 'agent-device') return '';
+      if (args[0] === 'close') {
+        closed.push(args[2]!);
+        return '{"success":true}';
+      }
+      return JSON.stringify({ success: true, data: { sessions } });
+    },
+  });
+  try {
+    const { opts } = seams({
+      root: tmpRoot,
+      project: {
+        metroPort: 8083,
+        platforms: {},
+        deviceSlots: { fold: { android: { avdName: 'stim-app-fold', owned: true } } },
+      },
+      collectors: {},
+      teardownAvd: (name: string, options: { del?: boolean; workspace?: string }) =>
+        teardownOwnedAvd(name, {
+          ...options,
+          resolveAvd: () => ({ serial: 'emulator-5554' }),
+          waitForShutdown: () => {},
+        }),
+    });
+    const result = await runStop({ ...opts, slot: 'fold' });
+    expect(result.outcomes.device.android?.status).toBe('shut-down');
+    expect(closed).toEqual(['cwd:a504:android']);
+  } finally {
+    if (previousClaims === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+    else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaims;
+    rmSync(other, { recursive: true, force: true });
+  }
 });

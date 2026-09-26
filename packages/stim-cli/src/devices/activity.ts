@@ -60,6 +60,7 @@ export interface AgentDeviceRecord {
   kind: 'claim' | 'runner-lease';
   deviceId: string | null;
   session: string | null;
+  workspace: string | null;
   deviceName: string | null;
   readable: boolean;
   owner: PidStart | null;
@@ -100,6 +101,7 @@ export function parseAgentDeviceRecord(
     kind,
     deviceId,
     session: kind === 'claim' && typeof entry?.session === 'string' && entry.session ? entry.session : null,
+    workspace: kind === 'claim' && typeof entry?.workspace === 'string' && entry.workspace ? entry.workspace : null,
     deviceName: kind === 'claim' && typeof device?.name === 'string' ? device.name : null,
     readable: Boolean(entry && deviceId),
     owner: entry ? field(entry, 'ownerPid', 'ownerStartTime') : null,

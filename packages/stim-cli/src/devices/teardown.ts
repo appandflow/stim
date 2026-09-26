@@ -160,8 +160,15 @@ export function teardownOwnedIosSim(
     del = false,
     label,
     park,
+    workspace,
     shutdownClock = {},
-  }: { del?: boolean; label?: string; park?: ParkRequest; shutdownClock?: ShutdownSettleClock } = {},
+  }: {
+    del?: boolean;
+    label?: string;
+    park?: ParkRequest;
+    workspace?: string;
+    shutdownClock?: ShutdownSettleClock;
+  } = {},
 ): TeardownOutcome {
   let parkFallback: string | undefined;
   try {
@@ -174,7 +181,7 @@ export function teardownOwnedIosSim(
       };
     }
     if (resolved.missing) return { status: 'missing' };
-    closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
+    closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim), workspace);
     const current = resolveOwnedIosSim(udid);
     if (current.missing) return { status: 'missing' };
     if (current.notOwned)
@@ -328,6 +335,7 @@ interface AvdTeardownOptions {
   del?: boolean;
   park?: ParkRequest;
   owner?: AvdOwner;
+  workspace?: string;
   orphanedDirectory?: OrphanedAvdDirectory;
   onlyIfMissing?: boolean;
   onRemoved?: () => void;
@@ -364,6 +372,7 @@ function teardownClaimedAvd(
     del = false,
     park,
     owner,
+    workspace,
     orphanedDirectory,
     onlyIfMissing = false,
     waitForShutdown = waitForAndroidEmulatorShutdown,
@@ -391,7 +400,7 @@ function teardownClaimedAvd(
         const current = resolveAvd(avdName);
         return !current.notOwned && !current.missing && current.serial === serial;
       };
-      closeOwnedDeviceSessions({ platform: 'android', id: serial }, stillOwned);
+      closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillOwned, workspace);
       if (!stillOwned()) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       waitForShutdown(avdName, (timeoutMs) => {
         markClaimChildPending(claim);
