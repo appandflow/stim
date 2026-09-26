@@ -57,8 +57,8 @@ public struct AttentionGroup: Hashable, Sendable {
 }
 
 /// The workspaces with something to fix: live ones first, then those with an error, each in status order. Items
-/// come from `issues`, or from the `warnings` text when `stim` reports no issues, then from failed last builds and
-/// from errors in the logs since the marker.
+/// come from `issues`, or from the `warnings` text when `stim` reports no issues, then from failed last runs, else
+/// from errors in the logs since the marker, which already count a failed run's build errors.
 public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
   let groups = workspaces.compactMap { env -> AttentionGroup? in
     let items: [AttentionItem]
@@ -78,7 +78,8 @@ public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
         return AttentionItem(text: warning, isError: false, command: command, runnable: command != nil)
       }
     }
-    let all = items + failedBuildItems(env) + logErrorItems(env)
+    let failed = failedRunItems(env)
+    let all = items + failed + (failed.isEmpty ? logErrorItems(env) : [])
     return all.isEmpty ? nil : AttentionGroup(workspace: env, items: all)
   }
   func rank(_ group: AttentionGroup) -> Int {
@@ -89,11 +90,12 @@ public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
   }.map(\.element)
 }
 
-private func failedBuildItems(_ env: Workspace) -> [AttentionItem] {
+private func failedRunItems(_ env: Workspace) -> [AttentionItem] {
   ["ios", "android"].compactMap { platform in
-    guard let build = env.lastBuilds?.build(for: platform), build.status != "ok" else { return nil }
+    guard let build = env.lastBuilds?.build(for: platform), build.status != "ok", build.errorCode != "STIM_CANCELLED"
+    else { return nil }
     return AttentionItem(
-      text: "\(platform == "ios" ? "iOS" : "Android") build failed (\(build.errorCode ?? "error"))", isError: true,
+      text: "\(platform == "ios" ? "iOS" : "Android") run failed (\(build.errorCode ?? "error"))", isError: true,
       command: StimCommand([platform], cwd: env.path), runnable: true, opensLogs: true)
   }
 }

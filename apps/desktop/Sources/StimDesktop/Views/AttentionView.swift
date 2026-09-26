@@ -42,7 +42,7 @@ struct AttentionView: View {
             Button(
               expanded
                 ? "Show fewer"
-                : "Show \(groups.count - shown.count) more \(groups.count - shown.count == 1 ? "workspace" : "workspaces")"
+                : "Show \(countLabel(groups.count - shown.count, "more workspace", plural: "more workspaces"))"
             ) { expanded.toggle() }
             .buttonStyle(.link)
             .padding(.horizontal, 16)

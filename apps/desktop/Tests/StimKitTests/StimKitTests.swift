@@ -354,7 +354,7 @@ import Testing
     #expect(groups[1].items.map(\.runnable) == [false])
   }
 
-  @Test func listsFailedLastBuildsAndLogErrorsWithoutIssues() throws {
+  @Test func listsAFailedRunElseLogErrorsAndSkipsACancelledRun() throws {
     let groups = attentionGroups([
       try workspace(
         #"{"path":"/ok","live":true,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":0},"lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-26T00:00:00Z"}}}"#
@@ -362,14 +362,20 @@ import Testing
       try workspace(
         #"{"path":"/broken","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":1},"lastBuilds":{"android":{"platform":"android","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_BUILD_FAILED"}}}"#
       ),
+      try workspace(
+        #"{"path":"/metro","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":2},"lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_CANCELLED"}}}"#
+      ),
     ])
-    #expect(groups.map(\.workspace.path) == ["/broken"])
+    #expect(groups.map(\.workspace.path) == ["/broken", "/metro"])
+    #expect(
+      groups[1].items == [
+        AttentionItem(text: "2 errors in the logs", isError: true, command: nil, runnable: false, opensLogs: true)
+      ])
     #expect(
       groups[0].items == [
         AttentionItem(
-          text: "Android build failed (STIM_BUILD_FAILED)", isError: true,
-          command: StimCommand(["android"], cwd: "/broken"), runnable: true, opensLogs: true),
-        AttentionItem(text: "1 error in the logs", isError: true, command: nil, runnable: false, opensLogs: true),
+          text: "Android run failed (STIM_BUILD_FAILED)", isError: true,
+          command: StimCommand(["android"], cwd: "/broken"), runnable: true, opensLogs: true)
       ])
   }
 
