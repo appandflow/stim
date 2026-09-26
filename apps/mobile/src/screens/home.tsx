@@ -11,7 +11,7 @@ import {
   StyleSheet,
   Text,
   View,
-  type ViewToken,
+  type ListViewToken,
 } from 'react-native';
 
 import { DeviceGridTile } from '@/components/device-grid-tile';
@@ -64,8 +64,8 @@ export function Home() {
     }, []),
   );
   const onViewable = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken<DeviceTileItem[]>[] }) =>
-      setVisible(new Set(viewableItems.flatMap((token) => token.item.map((tile) => tile.key)))),
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) =>
+      setVisible(new Set(viewableItems.flatMap((token) => (token.item as DeviceTileItem[]).map((tile) => tile.key)))),
     [],
   );
 
@@ -312,7 +312,7 @@ export function Home() {
                 <Text style={{ color: colors.primary }}>Show all</Text>
               </Text>
             </Pressable>
-          ) : null
+          ) : undefined
         }
       />
     </View>

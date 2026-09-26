@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, View, type ViewProps } from 'react-native';
 
 import { radius, useColors } from '@/theme';
 
-export function Card({ children, ring, style }: { children: ReactNode; ring?: string; style?: StyleProp<ViewStyle> }) {
+export function Card({ children, ring, style }: { children: ReactNode; ring?: string; style?: ViewProps['style'] }) {
   const colors = useColors();
   return (
     <View

@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
+  type TextInputInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -68,7 +69,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const controlling = control.state.kind === 'on';
   const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
   const [screen, setScreen] = useState<Size | null>(null);
-  const keyboard = useRef<TextInput>(null);
+  const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
