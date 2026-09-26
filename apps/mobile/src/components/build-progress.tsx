@@ -6,10 +6,18 @@ import { buildProgress, clockDuration, outcomeLabel } from '@/lib/format';
 import type { BuildReport } from '@/protocol/types';
 import { mono, useColors } from '@/theme';
 
-export function BuildProgressBar({ build, compact = false }: { build: BuildReport; compact?: boolean }) {
+export function BuildProgressBar({
+  build,
+  compact = false,
+  frozenAt,
+}: {
+  build: BuildReport;
+  compact?: boolean;
+  frozenAt?: number | null;
+}) {
   const colors = useColors();
-  const now = useNow(1000);
-  const progress = buildProgress(build, now);
+  const ticking = useNow(1000);
+  const progress = buildProgress(build, frozenAt ?? ticking);
   const elapsed = clockDuration(progress.elapsedMs);
   const timing = build.expectedMs && progress.remaining ? `${elapsed} / ~${clockDuration(build.expectedMs)}` : elapsed;
   const platform = build.platform === 'ios' ? 'iOS' : 'Android';

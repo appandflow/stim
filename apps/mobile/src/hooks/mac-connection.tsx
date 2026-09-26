@@ -47,6 +47,8 @@ export interface MacConnection {
   usage: MachineUsage | null;
   /** The Mac's home folder, from `hello`; null until connected or from an older server. */
   home: string | null;
+  /** When the connection last dropped; null while connected or before the first connection. */
+  disconnectedAt: number | null;
 }
 
 interface Live {
@@ -56,6 +58,7 @@ interface Live {
   status: StatusPayload | null;
   usage: MachineUsage | null;
   home: string | null;
+  disconnectedAt: number | null;
 }
 
 const IDLE: Live = {
@@ -65,6 +68,7 @@ const IDLE: Live = {
   status: null,
   usage: null,
   home: null,
+  disconnectedAt: null,
 };
 
 interface Pool {
@@ -84,6 +88,7 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
   useEffect(() => {
     let created: StimConnection | null = null;
     let cancelled = false;
+    let wasOpen = false;
     (async () => {
       const token = await macToken(mac.id);
       if (cancelled) return;
@@ -97,8 +102,17 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
         client: CLIENT,
         onState: (state) => {
           if (cancelled) return;
-          setOpen(state.kind === 'open');
-          update(mac.id, state.kind === 'open' ? { state, home: state.server.home ?? null } : { state });
+          const isOpen = state.kind === 'open';
+          setOpen(isOpen);
+          update(
+            mac.id,
+            state.kind === 'open'
+              ? { state, home: state.server.home ?? null, disconnectedAt: null }
+              : wasOpen
+                ? { state, disconnectedAt: Date.now() }
+                : { state },
+          );
+          wasOpen = isOpen;
         },
       });
       created = next;

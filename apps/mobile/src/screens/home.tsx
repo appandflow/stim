@@ -14,6 +14,7 @@ import {
   type ListViewToken,
 } from 'react-native';
 
+import { AttentionStrip } from '@/components/attention-strip';
 import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
@@ -23,6 +24,8 @@ import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
+import { useNow } from '@/hooks/use-now';
+import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
 import {
   filtersActive,
   filterWorkspaces,
@@ -84,6 +87,24 @@ export function Home() {
       { title: 'Idle', data: idle },
     ].filter((s) => s.data.length > 0);
   }, [shown]);
+  const now = useNow(30_000);
+  const attention = useMemo(
+    () =>
+      homeAttention(
+        connections.map((c) => ({
+          id: c.mac.id,
+          name: c.mac.name,
+          state: c.state,
+          missing: c.missing,
+          status: c.status,
+          usage: c.usage,
+          home: c.home,
+          disconnectedAt: c.disconnectedAt,
+        })),
+        now,
+      ),
+    [connections, now],
+  );
   const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
   const rows = useMemo(() => gridRows(tiles, aspects), [tiles, aspects]);
   const noFilterSet = useMemo(() => !filtersActive(filters, macIds, projectNames(items)), [filters, macIds, items]);
@@ -172,6 +193,15 @@ export function Home() {
       params: { id: item.macId, path: item.env.path, ...(errors ? { errors: '1' } : {}) },
     });
 
+  const openAttention = ({ target }: HomeAttentionItem) => {
+    if (target.kind === 'machine') router.push({ pathname: '/mac/[id]', params: { id: target.macId } });
+    else
+      router.push({
+        pathname: target.kind === 'logs' ? '/mac/[id]/logs' : '/mac/[id]/workspace',
+        params: { id: target.macId, path: target.path, ...(target.kind === 'logs' ? { errors: '1' } : {}) },
+      });
+  };
+
   const listHeader = (
     <View>
       <View style={styles.sectionHeader}>
@@ -194,6 +224,7 @@ export function Home() {
           />
         ))}
       </ScrollView>
+      {view === 'workspaces' ? <AttentionStrip items={attention} onOpen={openAttention} /> : null}
     </View>
   );
 
@@ -272,6 +303,8 @@ export function Home() {
             <WorkspaceRow
               item={item}
               macOnline={mac?.state.kind === 'open'}
+              disconnectedAt={mac?.disconnectedAt ?? null}
+              now={now}
               onPress={() => openWorkspace(item, false)}
               onErrors={() => openWorkspace(item, true)}
             />
