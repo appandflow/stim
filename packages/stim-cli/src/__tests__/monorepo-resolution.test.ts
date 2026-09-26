@@ -1,11 +1,10 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runDoctor } from '../diagnostics/doctor.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
-import { execFileSync } from 'node:child_process';
 import { upsertProject } from '../workspace/config.ts';
 import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
