@@ -62,7 +62,7 @@ struct ActivitySheet: View {
     } else if let failure = failureMessage {
       failureView(failure)
     } else if case .success(let report) = report {
-      GcPreviewView(report: report).frame(maxHeight: 380)
+      GcPreviewView(report: report).frame(height: report.sections.isEmpty ? nil : 360)
     } else if case .success(let outcome) = outcome {
       outcomeView(outcome)
     } else {
@@ -162,13 +162,15 @@ struct ActivitySheet: View {
       }
       if !outcome.kept.isEmpty {
         DisclosureGroup(isExpanded: $showsKept) {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-              ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Theme.tertiary) }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+          let rows = VStack(alignment: .leading, spacing: 6) {
+            ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Theme.tertiary) }
           }
-          .frame(maxHeight: 180)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          if outcome.kept.count > 5 {
+            ScrollView { rows }.frame(height: 200)
+          } else {
+            rows
+          }
         } label: {
           Text("\(outcome.kept.count) left alone").foregroundStyle(Theme.secondary)
         }
