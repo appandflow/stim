@@ -28,9 +28,11 @@ const runPrep = (root, ...args) =>
 // `workspace:` ranges and `link:` targets.
 const makeWorkspace = () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-release-prep-'));
-  mkdirSync(join(root, 'website'), { recursive: true });
   for (const file of ['pnpm-workspace.yaml', 'pnpm-lock.yaml']) cpSync(join(REPO, file), join(root, file));
-  cpSync(join(REPO, 'website', 'package.json'), join(root, 'website', 'package.json'));
+  for (const dir of ['website', 'apps/mobile']) {
+    mkdirSync(join(root, dir), { recursive: true });
+    cpSync(join(REPO, dir, 'package.json'), join(root, dir, 'package.json'));
+  }
   for (const dir of readdirSync(join(REPO, 'packages'))) {
     mkdirSync(join(root, 'packages', dir), { recursive: true });
     cpSync(join(REPO, 'packages', dir, 'package.json'), manifestIn(root, dir));

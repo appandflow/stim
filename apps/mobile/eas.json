@@ -5,6 +5,7 @@
   },
   "build": {
     "development": {
+      "pnpm": "12.0.0",
       "developmentClient": true,
       "distribution": "internal",
       "env": {
@@ -13,9 +14,11 @@
       "channel": "development"
     },
     "preview": {
+      "pnpm": "12.0.0",
       "distribution": "internal"
     },
     "production": {
+      "pnpm": "12.0.0",
       "distribution": "store",
       "autoIncrement": true,
       "channel": "production"

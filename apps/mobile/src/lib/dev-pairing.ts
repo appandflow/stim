@@ -7,7 +7,7 @@ export interface DevPairing {
 }
 
 /**
- * The Mac `npm run dev:pair` wrote to `.env.local`. Expo loads `.env.local` for release bundles too,
+ * The Mac `pnpm run dev:pair` wrote to `.env.local`. Expo loads `.env.local` for release bundles too,
  * so the variables are read only under `__DEV__`, which lets the minifier drop their values.
  */
 export function devPairing(): DevPairing | null {

@@ -252,17 +252,14 @@ directories to the fingerprint, which does not hash inline modules on its own.
 
 `src/protocol/types.ts` holds the protocol messages and the `stim status --json`
 and `stim logs --json` payload types the app reads. It is a copy of the types
-`@stim-cli/server` exports, not an import, because this npm app cannot consume
-the pnpm workspace packages cleanly:
+`@stim-cli/server` and `@stim-cli/core/state` export, not an import:
 
-- `@stim-cli/server` is not published yet, and the app is not a workspace
-  member, so there is no package to install.
-- A TypeScript path into `packages/server/src/protocol.ts` makes the app's `tsc`
-  compile `@stim-cli/core/state` from source, which imports Node built-ins and
-  `unique-pid`, neither of which the app installs. Metro would also have to
-  bundle `PROTOCOL_VERSION` from outside the project root.
-- The built `dist/protocol.d.mts` would make the app's checks depend on a
-  pnpm install and build of the workspace.
+- The copy describes what the app accepts from any paired Mac, including one
+  running an older `stim-server`. Fields that older servers omit, such as
+  `issues` or `home`, are optional here and required in the server's types.
+- Both packages export their types from `dist`, so importing them would make
+  the app's typecheck, tests, Metro and EAS builds depend on building the
+  workspace packages first.
 
 `packages/server/__tests__/mobile-protocol.test.ts` keeps the copy honest: the
 root `pnpm run typecheck` fails when the app would send params the server
@@ -273,17 +270,25 @@ narrower than the server's on purpose: the server forwards whatever
 
 ## Develop
 
-The app lives outside the pnpm workspace and uses npm. It needs Node.js 22.
+The app is a member of the repository's pnpm workspace, `stim-mobile`. It
+needs Node.js 22. Install from the repository root; `pnpm install` there
+installs the app with the published packages, from the one `pnpm-lock.yaml`.
 
 ```bash
+pnpm install
 cd apps/mobile
-npm install
 stim start
 stim ios          # or: stim android
-npm run mock-server
+pnpm run mock-server
 ```
 
-`npm run mock-server` serves a Stim server on `ws://127.0.0.1:7787` that
+To install only the app, run `pnpm install --filter stim-mobile` from the root.
+
+A checkout that installed the app with npm before it joined the workspace has an
+`apps/mobile/node_modules` pnpm does not clean up. Delete it once, then run
+`pnpm install` from the root.
+
+`pnpm run mock-server` serves a Stim server on `ws://127.0.0.1:7787` that
 replays payloads captured from a real Mac in `mock-server/fixtures/`: a
 `stim status --json` payload taken while `stim ios` was installing, records
 from `stim logs --json`, and one simulator screenshot as the frame of every
@@ -306,7 +311,7 @@ at a time per workspace, without changing the fixtures. The `chat-perf-demo`
 workspace runs an iOS simulator and an Android emulator, so reload there asks
 for a platform, and the mock server refuses a reload without one, like
 `stim reload`. Start it with
-`npm run mock-server -- --read` to see a read-only pairing, which gets no
+`pnpm run mock-server --read` to see a read-only pairing, which gets no
 actions.
 
 To try the home screen with two Macs, run two mock servers on different ports.
@@ -325,12 +330,12 @@ the app with agent-device skips the pairing screen:
 
 ```bash
 cd apps/mobile
-npm run dev:pair  # or: npm run dev:pair -- --mock, with npm run mock-server running
+pnpm run dev:pair  # or: pnpm run dev:pair --mock, with pnpm run mock-server running
 stim start
 stim ios
 ```
 
-`npm run dev:pair` runs `stim-server pair --json` against the server running on
+`pnpm run dev:pair` runs `stim-server pair --json` against the server running on
 this Mac, spends the pairing token the way the app does, and writes the
 endpoint and the device token it gets to `.env.local`:
 
@@ -344,7 +349,7 @@ On launch, a development build stores that Mac, named from the server's
 `.env.local` is gitignored; never commit a device token. Metro picks up a
 rewritten `.env.local`; reload the app after `dev:pair`.
 
-- `--mock` pairs with `npm run mock-server` instead of `stim-server`. The mock
+- `--mock` pairs with `pnpm run mock-server` instead of `stim-server`. The mock
   server writes its current pairing code to a file in the system temporary
   directory, and issues and prints a new code after each pairing and every 5
   minutes.
@@ -423,7 +428,7 @@ device, so the app installs only on phones the team already has.
 
 A Release build ignores `.env.local`; pair it with the QR code or the
 endpoint and token, as with the TestFlight app. It gets updates published
-to channel `development` (see [Updates](#updates)). `npm run dev:pair` is for
+to channel `development` (see [Updates](#updates)). `pnpm run dev:pair` is for
 development builds on this Mac's simulators and emulators.
 
 ## Updates
@@ -471,13 +476,14 @@ the commit the builds were made from, plus JS changes only.
 ## Checks
 
 ```bash
-npm run format:check
-npm run lint
-npm run typecheck
-npm test
+pnpm run format:check
+pnpm run lint
+pnpm run typecheck
+pnpm test
 ```
 
-`.github/workflows/mobile.yml` runs them for changes under `apps/mobile`.
+`.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
+the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 
 ## Ship to TestFlight
 
@@ -496,6 +502,10 @@ build profiles:
 
 `development` and `preview` builds install only on devices registered with
 `eas device:create`.
+
+EAS installs from the repository root with pnpm. Each profile sets `pnpm` to
+the root `packageManager` version: the EAS images ship pnpm 11, which cannot
+switch to pnpm 12.0.0 on its own (pnpm/pnpm#14346). Change both together.
 
 The app declares `ITSAppUsesNonExemptEncryption` as `false`: it uses only the
 TLS that iOS provides, so App Store Connect does not ask the export compliance

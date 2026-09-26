@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['apps/mobile/**', '.github/workflows/mobile.yml']
+    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
   pull_request:
-    paths: ['apps/mobile/**', '.github/workflows/mobile.yml']
+    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -23,13 +23,12 @@ jobs:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup-stim
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/mobile/package-lock.json
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test -- --ci
+          install: 'false'
+          build: 'false'
+      - run: pnpm install --frozen-lockfile --filter stim-mobile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm test --ci

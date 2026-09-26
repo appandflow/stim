@@ -5,12 +5,12 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
-const USAGE = `Usage: npm run dev:pair -- [--mock] [--control] [--port <n>] [--endpoint <url>]
+const USAGE = `Usage: pnpm run dev:pair [--mock] [--control] [--port <n>] [--endpoint <url>]
 
 Pairs this app's development builds with the Stim server on this Mac and writes
 the endpoint and device token to .env.local.
 
-  --mock            pair with \`npm run mock-server\` instead of stim-server
+  --mock            pair with \`pnpm run mock-server\` instead of stim-server
   --control         let this pairing run actions (stim-server only)
   --port <n>        the server's port (default 7787)
   --endpoint <url>  the endpoint the app connects to (default ws://127.0.0.1:<port>),
@@ -31,7 +31,7 @@ function pairingToken(mock, port, control) {
     try {
       return JSON.parse(readFileSync(file, 'utf8')).pairingToken;
     } catch {
-      fail(`no mock server pairing code in ${file}. Start it with \`npm run mock-server -- --port ${port}\`.`);
+      fail(`no mock server pairing code in ${file}. Start it with \`pnpm run mock-server --port ${port}\`.`);
     }
   }
   try {

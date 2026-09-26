@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - website
+  - apps/mobile
 
 # Defence in depth: the packages declare each other with `workspace:` ranges,
 # which link regardless. This keeps a plain semver internal dep linking to the
@@ -21,6 +22,7 @@ allowBuilds:
   '@swc/core': false
   core-js: false
   esbuild: false
+  unrs-resolver: false
 
 # Docusaurus uses image-size only while building repository-owned content, and
 # image-size has no patched release (facebook/docusaurus#12231).

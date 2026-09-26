@@ -1,6 +1,12 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+// pnpm's bin shims export NODE_PATH with node_modules/.pnpm/node_modules, where
+// pnpm hoists every workspace dependency, including apps/mobile's expo and
+// react-native. Forked test workers would then resolve them from any temporary
+// project directory.
+delete process.env.NODE_PATH;
+
 export default defineConfig({
   oxc: {
     jsx: {
