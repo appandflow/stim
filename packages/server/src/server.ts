@@ -83,6 +83,8 @@ interface ControlLimits {
   inputPerSecond: number;
   textCharsPerSecond: number;
   shapeChangesPerSecond: number;
+  /** `sim-fold` waits up to 20 seconds for SpringBoard to finish the fold; Stim Desktop stops it after 40. */
+  foldTimeoutMs: number;
 }
 
 interface ServerHealth {
@@ -135,6 +137,7 @@ const CONTROL_LIMITS: ControlLimits = {
   inputPerSecond: 120,
   textCharsPerSecond: 40,
   shapeChangesPerSecond: 2,
+  foldTimeoutMs: 40_000,
 };
 const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
@@ -305,6 +308,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     renewMs: controlLimits.renewMs,
     leaseFor: controlLimits.leaseFor,
     foldHelper,
+    foldTimeoutMs: controlLimits.foldTimeoutMs,
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 

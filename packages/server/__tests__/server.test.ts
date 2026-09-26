@@ -1090,6 +1090,11 @@ if (basename(process.argv[1]) === 'sips' && args.includes('bmp')) {
   process.exit(0);
 }
 if (basename(process.argv[1]) === 'adb') process.exit(0);
+if (args[0] === 'simctl' && args[1] === 'spawn' && env.FAKE_FOLD_GRANDCHILD) {
+  const grandchild = require('node:child_process').spawn('sleep', ['30'], { stdio: 'inherit' });
+  writeFileSync(env.FAKE_FOLD_GRANDCHILD, String(grandchild.pid));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
+}
 if (args[0] === 'simctl' && args[1] === 'spawn') process.exit(0);
 if (basename(process.argv[1]) === 'sips') {
   writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
@@ -1800,6 +1805,36 @@ describe('frames.subscribe', () => {
       expect(spawns()).toEqual([{ tool: 'xcrun', args: ['simctl', 'spawn', 'SIM-1', join(root, 'sim-fold')] }]);
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
       expect(spawns()).toHaveLength(1);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'ends a hung fold at its timeout while a grandchild still holds its output',
+    async () => {
+      const grandchild = join(root, 'grandchild.pid');
+      const port = await startControl(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
+          FAKE_HELPER_DISPLAYS: '[0]',
+          FAKE_FOLD_GRANDCHILD: grandchild,
+        },
+        { shapeChangesPerSecond: 100, foldTimeoutMs: 500 },
+      );
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      const { session } = (begun as { result: { session: string } }).result;
+      const viewer = await authed(port);
+      await viewer.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await viewer.next()).toMatchObject({ event: 'frame', posture: 'folded' });
+      try {
+        expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
+          error: { code: 'action-failed', message: 'sim-fold did not finish within 0.5 s.' },
+        });
+        expect(() => process.kill(Number(readFileSync(grandchild, 'utf8')), 0)).not.toThrow();
+      } finally {
+        if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
+      }
     },
     10_000,
   );

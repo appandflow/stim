@@ -371,7 +371,8 @@ streams its frames:
   through gRPC `setPhysicalModel` for rotation and `setPosture` for its hinge.
   An iPhone Duo folds with `sim-fold`, which the server builds from Stim
   Desktop's sources on the first fold and runs inside the simulator with
-  `xcrun simctl spawn`; it answers `{}` once the fold finished. `sim-fold`
+  `xcrun simctl spawn`; it answers `{}` once the fold finished, and fails
+  with `action-failed` when the fold does not finish within 40 seconds. `sim-fold`
   swaps the posture, so the server runs it only when the Duo's latest frame
   shows the other posture, and refuses the request until a frame showed one.
 
