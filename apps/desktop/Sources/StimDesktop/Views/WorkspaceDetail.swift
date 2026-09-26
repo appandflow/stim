@@ -314,7 +314,7 @@ struct Inspector: View {
         }
         GitIndicator(git: env.worktree?.git, chips: true)
         if let mb = env.memoryMb, mb > 0 {
-          Pill { Text(formatGigabytes(mb: mb)) }.help("Committed memory estimate from stim status")
+          MemoryEstimatePill(mb: mb)
         }
         if env.logs != nil {
           Button(action: openLogs) {

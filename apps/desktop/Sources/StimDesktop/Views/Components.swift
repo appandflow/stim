@@ -62,6 +62,21 @@ struct GitIndicator: View {
   }
 }
 
+/// The workspace's committed memory estimate from `stim status`, which is a fixed budget rather than a measurement.
+struct MemoryEstimatePill: View {
+  var mb: Int
+
+  var body: some View {
+    Pill {
+      Image(systemName: "memorychip")
+      Text(formatGigabytes(mb: mb))
+    }
+    .help("Committed memory estimate from stim status")
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Estimated to use about \(formatGigabytes(mb: mb)) of memory")
+  }
+}
+
 /// Lays out subviews left to right, wrapping to a new line when a subview would not fit
 /// in the remaining width of the proposed size.
 struct FlowLayout: Layout {

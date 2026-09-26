@@ -127,8 +127,7 @@ struct WorkspaceHeader: View {
         .help("Resident memory of the workspace's processes, simulators and emulators")
       }
       if let mb = env.memoryMb, mb > 0 {
-        Pill { Text(formatGigabytes(mb: mb)) }
-          .help("Committed memory estimate from stim status")
+        MemoryEstimatePill(mb: mb)
       }
       if let errors = env.logs?.errorsSinceMarker {
         Button(action: openLogs) {
