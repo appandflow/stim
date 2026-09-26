@@ -326,8 +326,51 @@ profile. `-destination generic/platform=iOS` also signs, but registers no
 device, so the app installs only on phones the team already has.
 
 A Release build ignores `.env.local`; pair it with the QR code or the
-endpoint and token, as with the TestFlight app. `npm run dev:pair` is for
+endpoint and token, as with the TestFlight app. It gets updates published
+to channel `development` (see [Updates](#updates)). `npm run dev:pair` is for
 development builds on this Mac's simulators and emulators.
+
+## Updates
+
+Release builds run `expo-updates` against EAS Update. The production variant
+reads channel `production`: TestFlight builds from the EAS `production`
+profile, `preview` builds, and local Release builds. A Release build of the
+Stim Dev variant, such as the phone build above, reads channel
+`development`. The channel is `updates.requestHeaders` in `app.config.ts`, so
+a local `xcodebuild` gets it too; `eas.json` sets the same `channel` on the
+`production` and `development` profiles. Debug builds, including the EAS
+`development` development client, load JS from Metro and fetch no updates on
+launch.
+
+`runtimeVersion` uses the `fingerprint` policy: the runtime is a hash of the
+native project inputs. A JS-only change keeps the runtime, so an update
+reaches the builds already installed. A change to native code, a native
+dependency, `eas.json`, an asset the config names, or the native parts of
+`app.config.ts` gives a new runtime, which needs a new build; installed
+builds ignore updates for another runtime. `xcodebuild` computes the
+fingerprint from `app.config.ts` during the build, which is why the phone
+build passes `APP_VARIANT` to it. The two variants have different bundle ids,
+so they never share a runtime.
+
+The app checks for an update on every launch without waiting for it: it
+starts the update it already has, downloads a newer one in the background,
+and runs it on the next launch. This is the `expo-updates` default. A
+monitor that opens to glance at a build should open at once, even on a slow
+or captive network, and one launch on the previous JS changes nothing on the
+Mac.
+
+**About** shows the running update's id, or `embedded` when the app runs the
+JS it was built with. Debug builds show `embedded` too.
+
+Publish an update by hand from `apps/mobile`:
+
+```bash
+eas update --channel production --environment production --platform ios --message "<what changed>"
+APP_VARIANT=development eas update --channel development --environment development --platform ios --message "<what changed>"
+```
+
+`eas update` computes the runtime from the checked-out project, so run it on
+the commit the builds were made from, plus JS changes only.
 
 ## Checks
 
@@ -349,8 +392,9 @@ build profiles:
 - `development`: a development client of the Stim Dev variant (see
   [Variants](#variants)), distributed internally.
 - `preview`: a release build of the production variant, distributed
-  internally. It replaces the TestFlight app on a phone.
-- `production`: an App Store build. EAS owns the build number
+  internally. It replaces the TestFlight app on a phone and gets updates from
+  channel `production`.
+- `production`: an App Store build on update channel `production`. EAS owns the build number
   (`appVersionSource: "remote"`) and increments it on every build. The
   marketing version is `version` in `app.config.ts`.
 

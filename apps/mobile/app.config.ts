@@ -76,6 +76,11 @@ const config: ExpoConfig = {
     },
   },
   owner: 'app_and_flow',
+  runtimeVersion: { policy: 'fingerprint' },
+  updates: {
+    url: 'https://u.expo.dev/1e92e2da-38f5-415b-b82e-72f4edd2b2bc',
+    requestHeaders: { 'expo-channel-name': dev ? 'development' : 'production' },
+  },
 };
 
 export default config;
