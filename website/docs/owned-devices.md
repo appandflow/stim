@@ -24,8 +24,8 @@ when `STIM_HOME` points somewhere else. For devices created before that ledger,
 it also accepts a device its config records in the device pool or in a
 workspace as owned. `stim gc --delete` removes only those devices when no
 workspace references them. It lists any other `stim-*` device, including one
-another `STIM_HOME` created, with the command that deletes it, and leaves it
-for you to run.
+another `STIM_HOME` created, with the command that deletes it (`rm -rf <dir>`
+for AVD data with no registration), and leaves it for you to run.
 
 `stim android --device [serial]` and `stim ios --device [udid]` install, launch,
 and read available logs on connected physical devices. An iPhone can be cabled

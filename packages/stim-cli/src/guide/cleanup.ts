@@ -226,7 +226,8 @@ WHICH stim-* DEVICES gc DELETES
   the device pool or in a project as owned. gc lists any other stim-* device,
   including those another STIM_HOME created, under
   "Unrecognized stim-* devices" with the command that deletes it
-  (\`xcrun simctl delete <udid>\` or \`avdmanager delete avd -n <name>\`), and
+  (\`xcrun simctl delete <udid>\`, \`avdmanager delete avd -n <name>\`, or
+  \`rm -rf <dir>\` for AVD data with no registration), and
   never runs it. Boot, shutdown and teardown re-check ownership by the same
   rule, so a device that stops matching is left alone.
 
