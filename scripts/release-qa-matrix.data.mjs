@@ -327,7 +327,8 @@ export const pathRules = [
   { path: 'apps/mobile', exempt: 'Expo mobile app, not part of the published npm packages' },
   {
     path: 'patches',
-    exempt: 'pnpm patches of Expo mobile app dependencies; a patch of a published package dependency needs its own rule',
+    exempt:
+      'pnpm patches of Expo mobile app dependencies; a patch of a published package dependency needs its own rule',
   },
   { path: 'scripts', exempt: 'repository tooling, not published behavior' },
   { path: '.claude', exempt: 'local agent configuration, not published behavior' },
