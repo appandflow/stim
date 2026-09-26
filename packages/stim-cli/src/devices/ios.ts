@@ -16,6 +16,7 @@ export interface IosSimRecord {
   deviceTypeIdentifier: string;
   dataPath?: string;
   dataPathSize?: number;
+  lastUsedAt?: string;
   available: boolean;
 }
 
@@ -88,6 +89,7 @@ export function parseSimctlList(
         isAvailable: boolean;
         dataPath?: string;
         dataPathSize?: number;
+        lastUsedAt?: unknown;
       };
       const available = Boolean(typed.isAvailable);
       if (!available && !includeUnavailable) continue;
@@ -100,6 +102,7 @@ export function parseSimctlList(
         available,
         ...(typed.dataPath !== undefined ? { dataPath: typed.dataPath } : {}),
         ...(typed.dataPathSize !== undefined ? { dataPathSize: typed.dataPathSize } : {}),
+        ...(typeof typed.lastUsedAt === 'string' ? { lastUsedAt: typed.lastUsedAt } : {}),
       });
     }
   }

@@ -1030,6 +1030,16 @@ is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
 failed. For example, a deleted simulator reads
 `{ "kind": "device", "status": "done", "label": "stim-app (iPhone 17 26.5)", "id": "9C1F...", "bytes": null, "detail": null }`.
 `results` is empty on a dry run.
+A dry run without `--cache` or `--idle` also carries `inventory`, which is
+`null` otherwise. It lists every simulator and AVD on the machine with its
+runtime or system image, last use and `owner`: `workspace` (with `project` and
+`slot`), `parked`, `orphaned`, `otherStimHome` for a `stim-*` device this Stim
+home did not create, or `user`. It also lists the iOS simulator runtimes and
+Android system images with how many devices use each (a runtime that
+`simctl runtime list` does not show has no size), and the
+`xcrun simctl runtime delete` or `sdkmanager --uninstall` command that removes
+it. The inventory is report only: Stim never runs those commands and never
+acts on a device through it.
 `stim guide facts gc` lists every section, field and reason code.
 
 Try it with an agent:

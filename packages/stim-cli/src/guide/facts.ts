@@ -490,7 +490,7 @@ RULES
   full commands.`,
     },
     gc: {
-      summary: 'the gc report payload: mode, sections, reasons, failures, results, and the gc refusals',
+      summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
       body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
           [--worktrees] [--idle <duration>] --json
 
@@ -522,6 +522,34 @@ RULES
                   buildSlot, deviceLease, easSession, worktree, cache.
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null
+  inventory       null except on a dry run without --cache or --idle. Report
+                  only: gc never acts on it, even under --delete.
+                  { devices, runtimes, systemImages, notices }
+    devices       { kind, id, name, model, runtime, state, lastUsedAt, bytes,
+                    directory, owner, project, slot }  every available iOS
+                    simulator and registered AVD. runtime is the simctl
+                    runtime identifier or the AVD's system image package.
+                    lastUsedAt is simctl's last use, or when the emulator
+                    last wrote the AVD's hardware-qemu.ini. bytes is the
+                    simulator's data size from simctl; null for AVDs.
+                    owner is workspace (project and slot say which),
+                    parked, orphaned (this Stim home created it and no
+                    workspace holds it), otherStimHome (a stim-* device this
+                    home has no record of creating, even when a workspace
+                    names it) or user. Off macOS no simulator is listed
+    runtimes      { identifier, runtimeIdentifier, version, build, bytes,
+                    lastUsedAt, deviceCount, command }  iOS simulator
+                    runtimes from \`xcrun simctl runtime list -j\`, then
+                    any other \`simctl list runtimes\` shows, with bytes
+                    and command null. deviceCount is the simulators on
+                    it; command is the \`xcrun simctl runtime delete\`
+                    line for a deletable runtime, else null. Stim never
+                    runs it
+    systemImages  { package, directory, avdCount, command }  installed
+                    Android system images; avdCount is the AVDs whose
+                    image.sysdir.1 names it; command is the
+                    \`sdkmanager --uninstall\` line. Stim never runs it
+    notices       why a listing is missing, such as simctl timing out
   sections        one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }

@@ -90,6 +90,7 @@ const SDK_TOOL_LOCATIONS = {
   emulator: ['emulator', 'emulator'],
   adb: ['platform-tools', 'adb'],
   avdmanager: ['cmdline-tools', 'latest', 'bin', 'avdmanager'],
+  sdkmanager: ['cmdline-tools', 'latest', 'bin', 'sdkmanager'],
 } as const;
 
 // The Windows SDK ships avdmanager as a batch wrapper around its jar; adb and the emulator are
@@ -98,6 +99,7 @@ const WINDOWS_SDK_TOOL_EXTENSIONS: Readonly<Record<AndroidTool, string>> = {
   emulator: '.exe',
   adb: '.exe',
   avdmanager: '.bat',
+  sdkmanager: '.bat',
 };
 
 type AndroidTool = keyof typeof SDK_TOOL_LOCATIONS;
@@ -300,7 +302,7 @@ export function parseAvdSystemImage(configIni: string): string | null {
   return dir.split(/[\\/]/).join(';');
 }
 
-function parseAvdDeviceProfile(configIni: string): string | null {
+export function parseAvdDeviceProfile(configIni: string): string | null {
   return avdIniValue(configIni, 'hw.device.name') || null;
 }
 
@@ -636,7 +638,7 @@ export function parseAvdRootIni(contents: string): { path: string | null; relati
   return { path, relativePath };
 }
 
-function avdIniPaths(root: string, ini: string): string[] {
+export function avdIniPaths(root: string, ini: string): string[] {
   const parsed = parseAvdRootIni(ini);
   return [
     parsed.relativePath && !isAbsolute(parsed.relativePath) ? resolve(dirname(root), parsed.relativePath) : null,

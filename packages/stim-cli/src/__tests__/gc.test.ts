@@ -2465,6 +2465,187 @@ test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's 
   expect(execCalls.some((c) => c.includes('FOREIGN-UDID') && !c.includes('list'))).toBe(false);
 });
 
+test('gc --json lists every device with its owner and every runtime and system image with its use, under a scoped STIM_HOME', async () => {
+  const otherHome = mkdtempSync(join(tmpdir(), 'stim-other-home-'));
+  process.env.STIM_HOME = otherHome;
+  recordCreatedDevice('ios', 'FOREIGN');
+  process.env.STIM_HOME = tmpHome;
+  recordCreatedDevice('ios', 'MINE');
+  recordCreatedDevice('ios', 'LEFT');
+  recordCreatedDevice('android', 'stim-app-tablet');
+  const project = join(fakeHome, 'app');
+  mkdirSync(project);
+  saveConfig({
+    version: 2,
+    projects: {
+      [project]: {
+        metroPort: 8100,
+        platforms: { ios: { deviceUdid: 'MINE', owned: true } },
+        deviceSlots: {
+          tablet: { android: { avdName: 'stim-app-tablet', owned: true } },
+        },
+      },
+    },
+    parked: {
+      ios: [
+        {
+          udid: 'PARKED',
+          name: 'stim-parked (iPhone 15 17.4) p1',
+          deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-17-4',
+          parkedAt: '2026-09-03T00:00:00.000Z',
+          simslimManaged: false,
+        },
+      ],
+      android: [],
+    },
+    repos: {},
+  });
+  const avdHome = process.env.ANDROID_AVD_HOME as string;
+  const writeAvd = (name: string, sysdir: string, booted: boolean) => {
+    const directory = join(avdHome, `${name}.avd`);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(avdHome, `${name}.ini`), `avd.ini.encoding=UTF-8\npath=${directory}\n`);
+    writeFileSync(join(directory, 'config.ini'), `image.sysdir.1=${sysdir}\nhw.device.name=pixel_9\n`);
+    if (booted) writeFileSync(join(directory, 'hardware-qemu.ini'), '');
+    return directory;
+  };
+  const tabletDirectory = writeAvd('stim-app-tablet', 'system-images/android-36/google_apis/arm64-v8a/', true);
+  writeAvd('Pixel_9', 'system-images/android-36/google_apis/arm64-v8a/', false);
+  const sdk = join(fakeHome, 'sdk');
+  for (const image of ['android-36/google_apis/arm64-v8a', 'android-30/google_apis/arm64-v8a']) {
+    mkdirSync(join(sdk, 'system-images', image), { recursive: true });
+  }
+  const savedSdk = {
+    ANDROID_HOME: process.env.ANDROID_HOME,
+    ANDROID_SDK_ROOT: process.env.ANDROID_SDK_ROOT,
+  };
+  process.env.ANDROID_HOME = sdk;
+  delete process.env.ANDROID_SDK_ROOT;
+  const devices = [
+    { udid: 'MINE', name: 'stim-app (iPhone 15 17.4)' },
+    { udid: 'LEFT', name: 'stim-gone (iPhone 15 17.4)' },
+    { udid: 'PARKED', name: 'stim-parked (iPhone 15 17.4) p1' },
+    { udid: 'FOREIGN', name: 'stim-1362-mobile (iPhone 15 17.4)' },
+    { udid: 'USER', name: 'iPhone 15' },
+  ];
+  const runtimes = {
+    A: {
+      identifier: 'A',
+      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-17-4',
+      platformIdentifier: 'com.apple.platform.iphonesimulator',
+      version: '17.4',
+      build: '21E213',
+      sizeBytes: 7000,
+      deletable: true,
+    },
+    B: {
+      identifier: 'B',
+      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-16-4',
+      platformIdentifier: 'com.apple.platform.iphonesimulator',
+      version: '16.4',
+      build: '20E247',
+      sizeBytes: 5000,
+      deletable: true,
+    },
+    C: {
+      identifier: 'C',
+      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-15-0',
+      platformIdentifier: 'com.apple.platform.iphonesimulator',
+      deletable: false,
+    },
+    W: {
+      identifier: 'W',
+      platformIdentifier: 'com.apple.platform.watchsimulator',
+      deletable: true,
+    },
+  };
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  const execCalls: string[] = [];
+  setExecutor({
+    ...getExecutor(),
+    runFile(file, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
+      execCalls.push(cmd);
+      if (cmd === 'xcrun simctl list devices --json') return iosListJson(devices);
+      if (cmd === 'xcrun simctl runtime list -j') return JSON.stringify(runtimes);
+      if (cmd === 'xcrun simctl list runtimes -j') {
+        return JSON.stringify({
+          runtimes: [
+            { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-17-4', version: '17.4', buildversion: '21E213' },
+            { identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-6', version: '18.6', buildversion: '22G86' },
+            { identifier: 'com.apple.CoreSimulator.SimRuntime.watchOS-10-4', version: '10.4' },
+          ],
+        });
+      }
+      throw new Error(`unexpected runFile: ${cmd}`);
+    },
+  });
+
+  try {
+    const { stdout } = await captureJson(() => runGc({ json: true }));
+    const { inventory } = JSON.parse(stdout[0] ?? '');
+    expect(
+      inventory.devices.map((d: { id: string; owner: string; project: string | null; slot: string | null }) => [
+        d.id,
+        d.owner,
+        d.project,
+        d.slot,
+      ]),
+    ).toEqual([
+      ['MINE', 'workspace', project, 'default'],
+      ['LEFT', 'orphaned', null, null],
+      ['PARKED', 'parked', null, null],
+      ['FOREIGN', 'otherStimHome', null, null],
+      ['USER', 'user', null, null],
+      ['Pixel_9', 'user', null, null],
+      ['stim-app-tablet', 'workspace', project, 'tablet'],
+    ]);
+    expect(inventory.devices.find((d: { id: string }) => d.id === 'stim-app-tablet')).toMatchObject({
+      runtime: 'system-images;android-36;google_apis;arm64-v8a',
+      directory: tabletDirectory,
+      lastUsedAt: expect.any(String),
+    });
+    expect(inventory.devices.find((d: { id: string }) => d.id === 'Pixel_9').lastUsedAt).toBe(null);
+    expect(inventory.runtimes).toEqual([
+      expect.objectContaining({
+        identifier: 'A',
+        deviceCount: 5,
+        command: 'xcrun simctl runtime delete A',
+      }),
+      expect.objectContaining({
+        identifier: 'B',
+        bytes: 5000,
+        deviceCount: 0,
+        command: 'xcrun simctl runtime delete B',
+      }),
+      expect.objectContaining({
+        identifier: 'C',
+        deviceCount: 0,
+        command: null,
+      }),
+      expect.objectContaining({
+        identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-6',
+        version: '18.6',
+        bytes: null,
+        command: null,
+      }),
+    ]);
+    expect(inventory.systemImages.map((i: { package: string; avdCount: number }) => [i.package, i.avdCount])).toEqual([
+      ['system-images;android-30;google_apis;arm64-v8a', 0],
+      ['system-images;android-36;google_apis;arm64-v8a', 2],
+    ]);
+    expect(inventory.notices).toEqual([]);
+    expect(execCalls.filter((c) => !c.includes(' list '))).toEqual([]);
+  } finally {
+    rmSync(otherHome, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(savedSdk)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or delete command', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
