@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
 import {
@@ -6,12 +6,11 @@ import {
   declaresAppDependency,
   findProjectRoot,
   detectIsExpo,
-  detectBundleId,
-  detectAndroidPackage,
   resolveRegisteredProject,
   projectShortcut,
   ownedDeviceLabel,
 } from '../workspace/project.ts';
+import { detectAndroidPackage, detectAppIds, detectBundleId } from '../workspace/app-id.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 
@@ -161,6 +160,69 @@ test('detectAndroidPackage reads android.package from app.json', () => {
 test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', () => {
   expect(detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
 });
+
+describe.skipIf(process.platform === 'win32')(
+  'app ids from a dynamic app config (POSIX executable stub; skipped on win32)',
+  { timeout: 30_000 },
+  () => {
+    let root: string;
+    const previousVariant = process.env.APP_VARIANT;
+
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), 'stim-app-id-'));
+      writeFileSync(
+        join(root, 'app.config.ts'),
+        "const id = process.env.APP_VARIANT === 'development' ? 'com.example.app.dev' : 'com.example.app';\n" +
+          'export default { ios: { bundleIdentifier: id }, android: { package: id } };\n' +
+          "// ios: { bundleIdentifier: 'com.example.literal' }, android: { package: 'com.example.literal' }\n",
+      );
+      const bin = join(root, 'node_modules', '.bin', 'expo');
+      mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+      writeFileSync(
+        bin,
+        `#!/usr/bin/env node
+const variant = process.env.APP_VARIANT;
+if (variant === 'bogus') process.exit(1);
+const id = variant === 'development' ? 'com.example.app.dev' : 'com.example.app';
+process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }, android: { package: id } }));
+`,
+      );
+      chmodSync(bin, 0o755);
+    });
+
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true });
+      if (previousVariant === undefined) delete process.env.APP_VARIANT;
+      else process.env.APP_VARIANT = previousVariant;
+    });
+
+    test("ids come from evaluating the config in Stim's environment, not from matching its text", () => {
+      delete process.env.APP_VARIANT;
+      expect(detectBundleId(root)).toBe('com.example.app');
+      expect(detectAndroidPackage(root)).toBe('com.example.app');
+      process.env.APP_VARIANT = 'development';
+      expect(detectBundleId(root)).toBe('com.example.app.dev');
+      expect(detectAndroidPackage(root)).toBe('com.example.app.dev');
+    });
+
+    test('a config that fails to evaluate falls back to the literal ids in its text', () => {
+      process.env.APP_VARIANT = 'bogus';
+      expect(detectBundleId(root)).toBe('com.example.literal');
+      expect(detectAndroidPackage(root)).toBe('com.example.literal');
+    });
+
+    test('a config that fails to evaluate still takes the ids app.json declares', () => {
+      process.env.APP_VARIANT = 'bogus';
+      writeFileSync(
+        join(root, 'app.json'),
+        JSON.stringify({
+          expo: { ios: { bundleIdentifier: 'com.example.json' }, android: { package: 'com.example.json' } },
+        }),
+      );
+      expect(detectAppIds(root)).toEqual({ bundleId: 'com.example.json', androidPackage: 'com.example.json' });
+    });
+  },
+);
 
 let tmpHome: string;
 beforeEach(() => {
