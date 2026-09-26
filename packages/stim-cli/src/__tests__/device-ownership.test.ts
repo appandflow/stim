@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { forgetCreatedDevice, readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { ownedSimName } from '../devices/ios.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -34,6 +34,18 @@ test('a device another Stim home created is not owned by this home, whatever its
   useHome();
   expect(isStimOwnedSim(foreignSim)).toBe(false);
   expect(isStimOwnedAvd('stim-1362-mobile')).toBe(false);
+});
+
+test('recording or forgetting a device of one platform keeps the other platforms, browser profiles included', () => {
+  useHome();
+  recordCreatedDevice('web', '/stim/workspaces/app/web/profile');
+  recordCreatedDevice('ios', 'SIM');
+  forgetCreatedDevice('android', 'stim-gone');
+  expect(readCreatedDevices()).toEqual({
+    ios: new Set(['SIM']),
+    android: new Set(),
+    web: new Set(['/stim/workspaces/app/web/profile']),
+  });
 });
 
 test('this home owns a pre-ledger device its project registry or pool records as owned', () => {

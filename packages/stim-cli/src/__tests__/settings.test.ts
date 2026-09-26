@@ -405,6 +405,9 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
+  'web.url': { valid: 'http://localhost:{port:web}/', invalid: 8080, expected: 'a string' },
+  'web.ignoreCertificateErrors': { valid: true, invalid: 'yes', expected: 'true or false' },
+  'web.viewport': { valid: 'phone', invalid: 'tablet', expected: 'one of: desktop, phone' },
   'metro.warmupUrl': { valid: {}, invalid: '/index.bundle', expected: 'an object' },
   'metro.warmupUrl.ios': {
     valid: '/custom.bundle?platform=ios&dev=true',

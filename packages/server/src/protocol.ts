@@ -152,6 +152,11 @@ export type SettingsResult = Record<string, unknown>;
 
 export type Platform = 'ios' | 'android';
 
+/** `reload` also reaches the workspace's Stim-owned Chrome page. */
+export const RELOAD_PLATFORMS = ['ios', 'android', 'web'] as const;
+
+export type ReloadPlatform = (typeof RELOAD_PLATFORMS)[number];
+
 export const FRAME_FPS = { default: 5, max: 30, video: 60 } as const;
 
 export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
@@ -222,11 +227,11 @@ export const ACTIONS = ['reload', 'stop'] as const;
 export type ActionName = (typeof ACTIONS)[number];
 
 /**
- * `reload` runs `stim reload --json`, with `platform` when both platforms are live; `stop` runs
+ * `reload` runs `stim reload --json`, with `platform` when more than one platform is live; `stop` runs
  * `stim stop --json`. `workspace` is an environment `path` from a status payload. Needs `control`.
  */
 export type ActionParams =
-  | { action: 'reload'; workspace: string; platform?: Platform }
+  | { action: 'reload'; workspace: string; platform?: ReloadPlatform }
   | { action: 'stop'; workspace: string };
 
 /** `output` is the JSON the command printed. */
@@ -656,7 +661,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               action: { const: 'reload' },
               workspace: { type: 'string', description: 'An environment path from a status payload.' },
-              platform: { enum: ['ios', 'android'] },
+              platform: { enum: [...RELOAD_PLATFORMS] },
             },
           },
           {

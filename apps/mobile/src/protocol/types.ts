@@ -8,6 +8,9 @@ export const PROTOCOL_VERSION = 1;
 
 export type Platform = 'ios' | 'android';
 
+/** `reload` also reaches the workspace's Stim-owned Chrome page. */
+export type ReloadPlatform = Platform | 'web';
+
 /** The JSON a Stim Desktop pairing QR code encodes. */
 export interface PairingPayload {
   v: 1;
@@ -150,6 +153,20 @@ export interface StatusIssue {
   slot?: string;
 }
 
+/** The workspace's Stim-owned Chrome; `cdpEndpoint` is null while it is not running. */
+export interface WebBrowserState {
+  browser: 'chrome';
+  version: string | null;
+  running: boolean;
+  pid: number | null;
+  supervisorPid: number | null;
+  url: string;
+  headless: boolean;
+  viewport: 'desktop' | 'phone';
+  profile: string;
+  cdpEndpoint: string | null;
+}
+
 export interface EnvironmentState {
   path: string;
   labelOnly?: boolean;
@@ -162,6 +179,7 @@ export interface EnvironmentState {
   ios?: SimState | null;
   android?: AndroidState | null;
   metro?: { port: number; running: boolean; pid: number | null } | null;
+  web?: WebBrowserState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
@@ -282,7 +300,7 @@ export type ActionName = 'reload' | 'stop';
 
 /** Runs one fixed `stim` command in the workspace; the server refuses it unless the device has `control`. */
 export type ActionParams =
-  | { action: 'reload'; workspace: string; platform?: Platform }
+  | { action: 'reload'; workspace: string; platform?: ReloadPlatform }
   | { action: 'stop'; workspace: string };
 
 export interface ActionResult {

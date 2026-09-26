@@ -1,3 +1,4 @@
+import type { WebViewport } from './settings-registry.ts';
 import type { IdleStopRecord } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
@@ -205,6 +206,24 @@ export interface StatusIssue {
   slot?: string;
 }
 
+/**
+ * The workspace's Stim-owned Chrome. `pid` is Chrome's process and `supervisorPid` the Stim process that holds
+ * its DevTools session. `cdpEndpoint` is the loopback DevTools HTTP endpoint agents can attach to, null when the
+ * browser is not running. `profile` is the Stim-owned user data directory.
+ */
+export interface WebBrowserState {
+  browser: 'chrome';
+  version: string | null;
+  running: boolean;
+  pid: number | null;
+  supervisorPid: number | null;
+  url: string;
+  headless: boolean;
+  viewport: WebViewport;
+  profile: string;
+  cdpEndpoint: string | null;
+}
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
@@ -231,6 +250,7 @@ export interface EnvironmentState {
     app?: DeviceAppProcess;
   } | null;
   metro?: { port: number; running: boolean; pid: number | null; idleStop?: IdleStopRecord } | null;
+  web?: WebBrowserState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;

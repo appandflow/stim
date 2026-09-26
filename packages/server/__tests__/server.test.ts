@@ -1014,10 +1014,12 @@ describe('action', () => {
       result: { action: 'reload', workspace, output: { command: 'reload', cwd: workspace } },
     });
     await client.request('action', { action: 'reload', workspace });
+    await client.request('action', { action: 'reload', workspace, platform: 'web' });
     await client.request('action', { action: 'stop', workspace });
     expect(stimCalls()).toEqual([
       { args: 'reload ios --json', cwd: workspace },
       { args: 'reload --json', cwd: workspace },
+      { args: 'reload web --json', cwd: workspace },
       { args: 'stop --json', cwd: workspace },
     ]);
     const [first] = readAudit();
@@ -1031,6 +1033,7 @@ describe('action', () => {
       durationMs: expect.any(Number),
     });
     expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
+      ['reload', true],
       ['reload', true],
       ['reload', true],
       ['stop', true],
