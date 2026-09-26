@@ -199,7 +199,7 @@ struct Inspector: View {
 
         if let usage {
           VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(title: "Resources \u{00B7} \(usage.latest.processCount) processes")
+            SectionLabel(title: "Resources \u{00B7} " + countLabel(usage.latest.processCount, "process", plural: "processes"))
             ViewThatFits(in: .horizontal) {
               HStack(alignment: .top, spacing: 10) { usageCards(usage) }
               VStack(spacing: 10) { usageCards(usage) }
@@ -322,7 +322,7 @@ struct Inspector: View {
         }
         if env.logs != nil {
           Button(action: openLogs) {
-            Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
+            Chip(tint: errors > 0 ? Theme.error : nil) { Text(countLabel(errors, "error")) }
           }
           .buttonStyle(.plain)
           .help("Open the logs filtered to errors")
@@ -432,7 +432,7 @@ struct Inspector: View {
       Text(title).foregroundStyle(Theme.secondary)
       Text("\(Int((platform.hitRate * 100).rounded()))%").font(Theme.heading(22))
       ProgressView(value: platform.hitRate).tint(Theme.lavender)
-      Text("\(platform.hits) hits \u{00B7} \(platform.misses) misses").foregroundStyle(Theme.secondary)
+      Text("\(countLabel(platform.hits, "hit")) \u{00B7} \(countLabel(platform.misses, "miss", plural: "misses"))").foregroundStyle(Theme.secondary)
       if let cold = platform.lastColdBuildMs {
         Text("Last cold \(formatDuration(ms: cold))").foregroundStyle(Theme.secondary)
       }

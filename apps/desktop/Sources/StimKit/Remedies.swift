@@ -47,6 +47,8 @@ public struct AttentionItem: Hashable, Sendable {
   public var command: StimCommand?
   /// False for a remedy that only explains, such as a `stim guide` topic.
   public var runnable: Bool
+  /// Whether the workspace's error logs explain the item.
+  public var opensLogs = false
 }
 
 public struct AttentionGroup: Hashable, Sendable {
@@ -55,7 +57,8 @@ public struct AttentionGroup: Hashable, Sendable {
 }
 
 /// The workspaces with something to fix: live ones first, then those with an error, each in status order. Items
-/// come from `issues`, or from the `warnings` text when `stim` reports no issues.
+/// come from `issues`, or from the `warnings` text when `stim` reports no issues, then from failed last runs, else
+/// from errors in the logs since the marker, which already count a failed run's build errors.
 public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
   let groups = workspaces.compactMap { env -> AttentionGroup? in
     let items: [AttentionItem]
@@ -75,7 +78,9 @@ public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
         return AttentionItem(text: warning, isError: false, command: command, runnable: command != nil)
       }
     }
-    return items.isEmpty ? nil : AttentionGroup(workspace: env, items: items)
+    let failed = failedRunItems(env)
+    let all = items + failed + (failed.isEmpty ? logErrorItems(env) : [])
+    return all.isEmpty ? nil : AttentionGroup(workspace: env, items: all)
   }
   func rank(_ group: AttentionGroup) -> Int {
     (group.workspace.live ? 0 : 2) + (group.items.contains(where: \.isError) ? 0 : 1)
@@ -83,6 +88,30 @@ public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
   return groups.enumerated().sorted { a, b in
     rank(a.element) != rank(b.element) ? rank(a.element) < rank(b.element) : a.offset < b.offset
   }.map(\.element)
+}
+
+private func failedRunItems(_ env: Workspace) -> [AttentionItem] {
+  ["ios", "android"].compactMap { platform in
+    guard let build = env.lastBuilds?.build(for: platform), build.status != "ok", build.errorCode != "STIM_CANCELLED"
+    else { return nil }
+    return AttentionItem(
+      text: "\(platform == "ios" ? "iOS" : "Android") run failed (\(build.errorCode ?? "error"))", isError: true,
+      command: StimCommand([platform], cwd: env.path), runnable: true, opensLogs: true)
+  }
+}
+
+private func logErrorItems(_ env: Workspace) -> [AttentionItem] {
+  guard let errors = env.logs?.errorsSinceMarker, errors > 0 else { return [] }
+  return [
+    AttentionItem(
+      text: "\(countLabel(errors, "error")) in the logs", isError: true, command: nil, runnable: false,
+      opensLogs: true)
+  ]
+}
+
+/// `1 error`, `2 errors`: the count with the noun made plural when it is not one.
+public func countLabel(_ count: Int, _ noun: String, plural: String? = nil) -> String {
+  "\(count.formatted()) \(count == 1 ? noun : plural ?? noun + "s")"
 }
 
 /// The commands that create an environment for a worktree Stim has not registered.

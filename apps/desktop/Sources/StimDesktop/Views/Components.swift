@@ -14,7 +14,7 @@ struct StatusDot: View {
   }
 }
 
-/// A worktree's git state: a dot with the uncommitted count, arrows for commits ahead and behind, and "merged".
+/// A worktree's git state: the uncommitted count after a plus-minus sign, arrows for commits ahead and behind, and "merged".
 /// Compact for sidebar rows; `chips` for the workspace header. Shows nothing for a clean branch level with its upstream.
 struct GitIndicator: View {
   var git: WorktreeGit?
@@ -29,8 +29,7 @@ struct GitIndicator: View {
       } else {
         HStack(spacing: 4) {
           if git.uncommitted > 0 {
-            StatusDot(color: Theme.warn)
-            Text("\(git.uncommitted)").foregroundStyle(Theme.warn)
+            Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Theme.secondary)
           }
           if let arrows = git.arrows { Text(arrows).foregroundStyle(Theme.secondary) }
           if git.mergedInto != nil {
