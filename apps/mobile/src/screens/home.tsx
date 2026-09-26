@@ -39,6 +39,7 @@ import { radius, useColors } from '@/theme';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const PLUS_ICON = require('@/assets/icons/plus.png');
 const WORDMARK = require('@/assets/images/wordmark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
@@ -122,12 +123,12 @@ export function Home() {
       <Stack.Toolbar placement="right">
         {view === 'machines' ? (
           <Stack.Toolbar.Button
-            tintColor={colors.primary}
+            icon={Platform.OS === 'ios' ? 'plus' : PLUS_ICON}
+            iconRenderingMode="template"
+            tintColor={colors.text}
             accessibilityLabel="Pair a machine"
             onPress={() => router.push('/pair')}
-          >
-            Pair
-          </Stack.Toolbar.Button>
+          />
         ) : (
           <Stack.Toolbar.Button
             icon={FUNNEL_ICON}
