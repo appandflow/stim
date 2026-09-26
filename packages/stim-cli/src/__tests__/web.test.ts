@@ -70,13 +70,14 @@ describe('Chrome launch', () => {
 
   test('prefers an installed app bundle, then Chrome or Chromium on PATH, else none', () => {
     const onPath = (names: Record<string, string>) => (name: string) => names[name] ?? null;
+    const chromium = join('/Applications', 'Chromium.app', 'Contents', 'MacOS', 'Chromium');
     expect(
       findChrome({
         host: 'darwin',
-        exists: (path) => path === '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        exists: (path) => path === chromium,
         findExecutable: onPath({ 'google-chrome': '/usr/bin/google-chrome' }),
       }),
-    ).toBe('/Applications/Chromium.app/Contents/MacOS/Chromium');
+    ).toBe(chromium);
     expect(
       findChrome({ host: 'linux', exists: () => true, findExecutable: onPath({ chromium: '/usr/bin/chromium' }) }),
     ).toBe('/usr/bin/chromium');
