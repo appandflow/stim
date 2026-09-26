@@ -6,28 +6,20 @@ import SwiftUI
 struct BuildCacheSection: View {
   var env: Workspace
   @EnvironmentObject private var checks: BuildPlanChecks
-
-  private var used: Set<String> {
-    Set(env.devices.map(\.platform)).union(["ios", "android"].filter { env.lastBuilds?.build(for: $0) != nil })
-  }
-
-  private var platforms: [String] {
-    let shown = ["ios", "android"].filter(used.contains)
-    return shown.isEmpty ? ["ios", "android"] : shown
-  }
+  @EnvironmentObject private var actions: ActionCenter
 
   private var running: Build? { env.build.flatMap { $0.isRunning ? $0 : nil } }
 
   private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
 
   private var trigger: [String] {
-    [running == nil ? "idle" : "building"] + ["ios", "android"].filter(used.contains).map(buildKey)
+    [running == nil ? "idle" : "building"] + env.usedPlatforms.map(buildKey)
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       SectionLabel(title: "Builds")
-      ForEach(platforms, id: \.self) { platform in
+      ForEach(env.runPlatforms, id: \.self) { platform in
         card(platform)
       }
     }
@@ -38,23 +30,32 @@ struct BuildCacheSection: View {
 
   private func checkUsed() {
     if running != nil { return checks.cancel(workspace: env.path) }
-    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: used.map { ($0, buildKey($0)) }))
+    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: env.usedPlatforms.map { ($0, buildKey($0)) }))
   }
 
   private func card(_ platform: String) -> some View {
     let entry = checks.entry(workspace: env.path, platform: platform)
     return VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text(platform == "ios" ? "iOS" : "Android").font(Theme.body(12, weight: .semibold))
+      HStack(spacing: 6) {
+        Text(platformName(platform)).font(Theme.body(12, weight: .semibold))
         Spacer()
         Button {
           checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
         } label: {
-          Image(systemName: "arrow.clockwise").accessibilityLabel("Check the next build again")
+          Label("Check", systemImage: "magnifyingglass")
         }
         .buttonStyle(.stim())
-        .disabled(running != nil || entry?.state == .checking)
-        .help("stim \(platform) --plan: fingerprint and look up the caches without building")
+        .disabled(running != nil || entry?.state == .checking || actions.active(for: env.path) != nil)
+        .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
+        let failed = env.lastBuilds?.build(for: platform)?.status == "failed"
+        Button {
+          actions.runApp(env, platform: platform)
+        } label: {
+          Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
+        }
+        .buttonStyle(.stim(.primary))
+        .disabled(running != nil || actions.active(for: env.path) != nil)
+        .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
       }
       if let last = env.lastBuilds?.build(for: platform) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -77,7 +78,7 @@ struct BuildCacheSection: View {
           Text("Next build: checked after the running build").foregroundStyle(Theme.tertiary)
         }
       } else {
-        nextBuild(entry?.state)
+        nextBuild(entry)
       }
     }
     .padding(12)
@@ -86,8 +87,17 @@ struct BuildCacheSection: View {
   }
 
   @ViewBuilder
-  private func nextBuild(_ state: BuildPlanChecks.State?) -> some View {
-    switch state {
+  private func checkedAt(_ date: Date?) -> some View {
+    if let date {
+      TimelineView(.periodic(from: .now, by: 30)) { context in
+        Text("Checked \(formatAgo(context.date.timeIntervalSince(date)))").foregroundStyle(Theme.tertiary)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func nextBuild(_ entry: BuildPlanChecks.Entry?) -> some View {
+    switch entry?.state {
     case .checking:
       HStack(spacing: 6) {
         ProgressView().controlSize(.mini)
@@ -98,6 +108,7 @@ struct BuildCacheSection: View {
         Text("Next build: \(plan.nextBuild)")
           .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Theme.warn : Theme.live)
           .help(plan.detail ?? "")
+        checkedAt(entry?.checkedAt)
         if let reason = plan.missReason {
           MissReasonButton(reason: reason, help: "Why the next build would miss the cache")
         }

@@ -11,7 +11,10 @@ struct WorkspaceActionsMenu: View {
   var path: String
   var busy: Bool
   var removalAllowed: Bool
+  var building: Bool = false
+  var reloadAllowed: Bool = true
   var onShowLastOutput: (() -> Void)?
+  var onRun: ((String) -> Void)?
   var onReload: (() -> Void)?
   var onStartDevServer: (() -> Void)?
   var onStopDevServer: (() -> Void)?
@@ -58,9 +61,15 @@ struct WorkspaceActionsMenu: View {
       if let onShowLastOutput {
         Button("Last output", systemImage: "doc.plaintext", action: onShowLastOutput)
       }
+    case .run(let platform):
+      if let onRun {
+        Button("Run on \(platformName(platform))", systemImage: "play.fill") { onRun(platform) }
+          .disabled(busy || building)
+      }
     case .reload:
       if let onReload {
-        Button("Reload app", systemImage: "arrow.clockwise", action: onReload).disabled(busy)
+        Button("Reload app", systemImage: "arrow.clockwise", action: onReload)
+          .disabled(busy || !reloadAllowed)
       }
     case .startDevServer:
       if let onStartDevServer {

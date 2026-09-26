@@ -17,6 +17,15 @@ in the workspace directory:
   `stim android --slot fold`, and can copy it; a `stim guide` remedy is copy
   only. With a `stim` that reports only warning text, `stim android` still
   answers an undetected emulator and `stim stop` a stale supervisor record.
+- Run: **Run on iOS** and **Run on Android** in a workspace's context menu and
+  "..." menu, and **Run** on each platform of the inspector's **Builds**
+  section (**Rebuild** when that platform's last build failed), run
+  `stim ios` or `stim android` in the workspace with no other arguments, so the
+  default slot and configuration. The
+  menus offer the platforms with a device or a last build, or both when
+  neither is recorded. Run is disabled while a build runs in the workspace.
+  **Reload app** runs `stim reload` and is disabled unless the dev server and a
+  local device are running.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch. Each running device,
   in the device tile and the inspector's device list, has its own **Stop**
@@ -98,7 +107,8 @@ boots and installs nothing, but it fingerprints the project, so a workspace
 runs one plan at a time, a result
 stays for 60 seconds unless that platform's last build changes, closing the
 section stops the plan, and nothing is checked while a build runs; the row
-shows the running build instead. The refresh button checks again.
+shows the running build instead. **Check** runs the plan again, and the row
+shows when it was last checked.
 
 Each device tile shows the `activity` that `stim status` reports: "Driven by
 <tool> · 12m" while agent-device, a Stim device lock, or a test runner drives

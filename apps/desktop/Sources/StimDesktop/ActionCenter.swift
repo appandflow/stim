@@ -122,4 +122,8 @@ final class ActionCenter: ObservableObject {
     }
     return run
   }
+
+  func runApp(_ env: Workspace, platform: String) {
+    run("Run \(env.names.title) on \(platformName(platform))", StimCommand([platform], cwd: env.path))
+  }
 }
