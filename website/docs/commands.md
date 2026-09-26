@@ -714,8 +714,8 @@ no sooner than 15 seconds after the previous refresh. With `--json`, while
 on Ctrl+C, SIGTERM, or when its stdout closes. On Linux it also exits when the
 process that started it exits while its stdout is a pipe. It notices within a
 few seconds, even when nothing changes, except a closed stdout pipe on Linux
-whose starter is still running, which it notices at the next change. Use it to wait for a device, a build, or a dev server instead
-of polling `stim status --json`.
+whose starter is still running, which it notices at the next change.
+Use it to wait for a device, a build, or a dev server instead of polling `stim status --json`.
 
 While `stim ios` or `stim android` runs, the workspace shows the build's phase
 and an estimate of the time left:

@@ -238,7 +238,8 @@ WAITING FOR A CHANGE
   with exit 0. On Linux, so does the exit of the process that started it
   when its stdout is a pipe. It notices within a few seconds even when
   nothing changes, except a closed stdout pipe on Linux whose starter is
-  still running, which it notices at the next change. Without --json it reprints the human view on change.`,
+  still running, which it notices at the next change.
+  Without --json it reprints the human view on change.`,
   sections: {
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',
