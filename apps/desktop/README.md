@@ -400,7 +400,9 @@ toggles, numbers steppers, paths file pickers, string lists token fields, and
 objects JSON fields. Values come from `stim settings --json` run in the chosen
 workspace: each row shows the effective value and its layer, the lower layer a
 value there overrides, an environment override when one is set, and a
-**Reset** that unsets the layer. Edits run
+**Reset** that unsets the layer. A default `stim` picks per machine, such as
+`stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
+reason `stim` reports, for example `default (Stim Desktop installed)`. Edits run
 `stim settings set|unset <key> --scope <layer> --json`, and a refusal shows
 under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.

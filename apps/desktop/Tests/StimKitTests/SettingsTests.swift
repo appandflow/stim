@@ -135,6 +135,7 @@ private let schema = Data(
         "settings": [
           { "key": "android.dataPartitionSizeGb", "value": 12, "origin": "repo", "layers": { "repo": 12, "committed": 10 } },
           { "key": "optimizations.buildCache", "value": true, "origin": "default", "layers": {} },
+          { "key": "iosSimulatorApp", "value": "stim-desktop", "origin": "default", "layers": {}, "defaultReason": "Stim Desktop installed" },
           { "key": "tempDir", "value": "/fast", "origin": "env", "layers": { "machine": "/slow" }, "env": { "name": "STIM_TMPDIR", "value": "/fast" } },
           { "key": "android.keystorePassword", "value": "********", "origin": "repo", "layers": { "repo": "********" }, "sensitive": true }
         ],
@@ -151,6 +152,26 @@ private let schema = Data(
     #expect(size.overridden(by: .committed, field: field)?.source == "default")
     let cache = try #require(payload.entry("optimizations.buildCache"))
     #expect(cache.overridden(by: .committed, field: try #require(fields["optimizations.buildCache"]))?.value == .bool(true))
+  }
+
+  @Test func overridesTheMachineDependentDefaultStimReports() throws {
+    let viewerSchema = Data(
+      #"""
+      {
+        "type": "object", "properties": {},
+        "$defs": { "machine": { "type": "object", "properties": {
+          "iosSimulatorApp": {
+            "description": "Viewer", "type": "string", "enum": ["xcode", "stim-desktop"], "default": "xcode",
+            "x-stim": { "key": "iosSimulatorApp", "kind": "choice", "scopes": ["machine"] }
+          }
+        } } }
+      }
+      """#.utf8)
+    let field = try #require(try SettingsSchema.fields(from: viewerSchema).first)
+    let viewer = try #require(payload.entry("iosSimulatorApp"))
+    #expect(viewer.overridden(by: .machine, field: field)?.value == .string("stim-desktop"))
+    #expect(viewer.originLabel == "default (Stim Desktop installed)")
+    #expect(try #require(payload.entry("tempDir")).originLabel == "env")
   }
 
   @Test func keepsTheEnvironmentOverrideAndUnknownKeys() throws {

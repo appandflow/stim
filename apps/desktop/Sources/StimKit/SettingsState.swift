@@ -27,6 +27,9 @@ public struct SettingEntry: Decodable, Hashable, Sendable {
   public var layers: [String: JSONValue]
   public var env: EnvOverride?
   public var sensitive: Bool?
+  /// Why the default applies on this machine, such as `Stim Desktop installed`, for a default `stim` picks per
+  /// machine; nil otherwise.
+  public var defaultReason: String?
 
   public func layer(_ scope: SettingScope) -> JSONValue? { layers[scope.rawValue] }
 
@@ -34,14 +37,20 @@ public struct SettingEntry: Decodable, Hashable, Sendable {
   /// variable's string, so a numeric string counts.
   public var number: Double? { value.number ?? value.string.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) } }
 
-  /// The layer a value in `scope` would override: the next lower layer that
-  /// holds a value, or the default.
+  /// `origin`, with `defaultReason` when there is one.
+  public var originLabel: String? {
+    origin.map { origin in defaultReason.map { "\(origin) (\($0))" } ?? origin }
+  }
+
+  /// The layer a value in `scope` would override: the next lower layer that holds a value, or the default. The
+  /// default is the effective value while it wins, since `stim` can pick it per machine, and the schema's otherwise.
   public func overridden(by scope: SettingScope, field: SettingField) -> (source: String, value: JSONValue)? {
     let order: [SettingScope] = [.workspace, .repo, .committed, .machine]
     guard let index = order.firstIndex(of: scope) else { return nil }
     for lower in order[(index + 1)...] where field.scopes.contains(lower) {
       if let value = layer(lower) { return (lower.rawValue, value) }
     }
+    if origin == "default" { return ("default", value) }
     return field.defaultValue.map { ("default", $0) }
   }
 }
