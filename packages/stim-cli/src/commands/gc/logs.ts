@@ -20,6 +20,8 @@ import { listWorkspaceDirs } from './workspaces.ts';
 
 const CAPPED_LOGS: readonly string[] = ['metro.ndjson', 'client.ndjson', 'device.ndjson'];
 
+const TRIM_ABOVE_BYTES = 2 * LOG_ROTATE_BYTES;
+
 export type WorkspaceLogsKeptCode = 'unresolved' | 'in-use' | 'collector';
 
 export interface WorkspaceLogs {
@@ -51,8 +53,12 @@ function cappedFiles(logsDir: string): { file: string; log: string }[] {
   });
 }
 
+function trimmable(size: number): number {
+  return size > TRIM_ABOVE_BYTES ? size - LOG_ROTATE_BYTES : 0;
+}
+
 function excess(logsDir: string): number {
-  return cappedFiles(logsDir).reduce((sum, { file }) => sum + Math.max(0, fileSize(file) - LOG_ROTATE_BYTES), 0);
+  return cappedFiles(logsDir).reduce((sum, { file }) => sum + trimmable(fileSize(file)), 0);
 }
 
 function collectorReason(root: string): string | null {
@@ -108,10 +114,10 @@ export function collectWorkspaceLogs({ exclude = [] }: { exclude?: readonly stri
 }
 
 function trimToNewest({ file, log }: { file: string; log: string }, maxBytes: number): number {
-  if (fileSize(file) <= maxBytes) return 0;
+  if (!trimmable(fileSize(file))) return 0;
   return withDirLock(`${log}.lock`, () => {
     const { size, atime, mtime } = statSync(file);
-    if (size <= maxBytes) return 0;
+    if (!trimmable(size)) return 0;
     const tail = Buffer.alloc(maxBytes);
     const fd = openSync(file, 'r');
     try {

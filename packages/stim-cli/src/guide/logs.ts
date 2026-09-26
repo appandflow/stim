@@ -13,7 +13,7 @@ becomes <name>.1, replacing the previous .1, and a new file starts. Queries read
 both generations, so the oldest records drop off first. History and --since
 reach back only as far as those records. A file written before the cap
 existed can be larger; \`gc\` reports each workspace's log size and \`gc
---delete\` trims such a file to its newest 8 MiB in a workspace not in use
+--delete\` trims a file over 16 MiB to its newest 8 MiB in a workspace not in use
 (\`guide cleanup disk\`).
 
 EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched. A clean

@@ -877,8 +877,8 @@ workspace keeps its state, logs, devices and ports. See
 
 `gc` reports the size of each workspace's logs. The Metro, client and device
 logs rotate at about 8 MiB, but a file written by a Stim version before that cap
-can be hundreds of MB. `--delete` trims each of those files to its newest 8 MiB
-in every workspace that is not in use and has no device log collector recorded.
+can be hundreds of MB. `--delete` trims each of those files that is over 16 MiB
+to its newest 8 MiB, whatever `--older-than` says, in every workspace that is not in use and has no device log collector recorded.
 Build transcripts and other files under `logs/` are never trimmed.
 
 - `--older-than <days>` also selects devices and workspace build outputs of

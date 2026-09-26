@@ -27,7 +27,7 @@ EAS session sweep notices (1):
   one session could not be verified
 Skipped (1) - not classified as dead:
   /Volumes/Offline/app: volume /Volumes/Offline is not mounted
-Workspace logs (820M in 3 workspaces) - 2 over the 8 MiB log cap:
+Workspace logs (820M in 3 workspaces) - 2 with a log over twice the 8 MiB cap:
         800M  /w/a
               would TRIM 792M: Metro, client and device logs keep their newest 8 MiB
          20M  /w/b

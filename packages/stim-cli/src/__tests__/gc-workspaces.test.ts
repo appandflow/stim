@@ -492,7 +492,7 @@ function loggedWorkspace(name: string): { root: string; logs: string } {
 
 function oversizedLog(file: string): void {
   const line = `${JSON.stringify({ msg: 'x'.repeat(1000) })}\n`;
-  writeFileSync(file, `${line.repeat(Math.ceil((LOG_ROTATE_BYTES + 64 * 1024) / line.length))}{"msg":"last"}\n`);
+  writeFileSync(file, `${line.repeat(Math.ceil((2 * LOG_ROTATE_BYTES + 64 * 1024) / line.length))}{"msg":"last"}\n`);
 }
 
 test('gc --json reports the logs of every workspace, and --delete trims oversized capped logs of idle workspaces', async () => {
@@ -501,6 +501,8 @@ test('gc --json reports the logs of every workspace, and --delete trims oversize
   const big = loggedWorkspace('big');
   oversizedLog(join(big.logs, 'device.ndjson'));
   oversizedLog(join(big.logs, 'metro.ndjson.1'));
+  const rotated = `${'x'.repeat(LOG_ROTATE_BYTES + LOG_ROTATE_BYTES / 16)}\n`;
+  writeFileSync(join(quiet.logs, 'device.ndjson.1'), rotated);
   oversizedLog(join(big.logs, 'build-ios.ndjson'));
   const busy = loggedWorkspace('busy');
   oversizedLog(join(busy.logs, 'device.ndjson'));
@@ -513,7 +515,7 @@ test('gc --json reports the logs of every workspace, and --delete trims oversize
   const byRoot = Object.fromEntries(
     payload.sections.workspaceLogs.map((w: { projectRoot: string }) => [w.projectRoot, w]),
   );
-  expect(byRoot[quiet.root]).toMatchObject({ bytes: 3, trimBytes: 0, willTrim: false, reason: null });
+  expect(byRoot[quiet.root]).toMatchObject({ bytes: 3 + rotated.length, trimBytes: 0, willTrim: false, reason: null });
   expect(byRoot[big.root]).toMatchObject({ willTrim: true, reason: null });
   expect(byRoot[big.root].trimBytes).toBeGreaterThan(0);
   expect(byRoot[big.root].bytes).toBeGreaterThan(3 * LOG_ROTATE_BYTES);
@@ -534,6 +536,7 @@ test('gc --json reports the logs of every workspace, and --delete trims oversize
   }
   expect(statSync(join(big.logs, 'build-ios.ndjson')).size).toBe(buildBytes);
   expect(statSync(join(big.logs, 'device.ndjson')).mtimeMs).toBe(longAgo.getTime());
+  expect(statSync(join(quiet.logs, 'device.ndjson.1')).size).toBe(rotated.length);
   expect(statSync(join(busy.logs, 'device.ndjson')).size).toBeGreaterThan(LOG_ROTATE_BYTES);
   expect(statSync(join(collecting.logs, 'device.ndjson')).size).toBeGreaterThan(LOG_ROTATE_BYTES);
   expect(output).toMatch(/Kept the logs of .*collecting: a device log collector is recorded for ios/);

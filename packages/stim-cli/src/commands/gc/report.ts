@@ -319,7 +319,7 @@ function workspaceLogLines(workspaceLogs: readonly WorkspaceLogs[]): string[] {
   if (!over.length) return [];
   const total = workspaceLogs.reduce((n, w) => n + w.bytes, 0);
   const lines = [
-    `Workspace logs (${formatBytes(total)} in ${workspaceLogs.length} workspace${workspaceLogs.length === 1 ? '' : 's'}) - ${over.length} over the 8 MiB log cap:`,
+    `Workspace logs (${formatBytes(total)} in ${workspaceLogs.length} workspace${workspaceLogs.length === 1 ? '' : 's'}) - ${over.length} with a log over twice the 8 MiB cap:`,
   ];
   for (const w of over) {
     lines.push(`  ${formatBytes(w.bytes).padStart(10)}  ${w.projectRoot ?? w.dir}`);

@@ -469,7 +469,9 @@ WORKSPACE LOGS
   section of \`gc --json\`). metro.ndjson, client.ndjson and device.ndjson and
   their .1 generations rotate at 8 MiB (\`guide logs\`), but a file written by
   a Stim version before the cap can be hundreds of MB. \`gc --delete\` trims
-  each of those six files to its newest 8 MiB, cut at a record boundary. It
+  each of those six files that is over 16 MiB to its newest 8 MiB, cut at a
+  record boundary; a file just past 8 MiB is normal rotation and stays. It
+  ignores --older-than. It
   skips a workspace that is in use (a dev server, a native run, a build or a
   held tunnel) or that has a device log collector recorded; \`stim stop\`
   stops the collector. Build transcripts keep the whole run and are never

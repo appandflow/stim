@@ -582,8 +582,9 @@ RULES
     workspaceLogs           { dir, projectRoot, bytes, trimBytes, willTrim,
                               reason, detail }  logs/ of each workspace;
                               trimBytes is what --delete would drop from
-                              Metro, client and device logs over the 8 MiB
-                              cap; willTrim marks the ones it would trim
+                              Metro, client and device logs over twice the
+                              8 MiB cap; willTrim marks the ones it would
+                              trim
     workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
                               reason, detail }  derived-data, gradle-build,
                               android-cas and cache-provider of each

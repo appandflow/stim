@@ -516,6 +516,11 @@ import Testing
           {"dir":"/s/workspaces/b","bytes":1000,"willClear":false,"reason":"in-use","detail":"in use: supervisor running"},
           {"dir":"/s/workspaces/c","bytes":500,"willClear":true,"reason":null,"detail":null}],
         "buildsInProgress":[{"path":"/s/build-locks/x.lock","pid":1}],
+        "workspaceLogs":[
+          {"dir":"/s/workspaces/d","bytes":900,"trimBytes":700,"willTrim":true,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/e","bytes":300,"trimBytes":0,"willTrim":false,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/f","bytes":90,"trimBytes":50,"willTrim":false,"reason":"collector",
+           "detail":"a device log collector is recorded for ios"}],
         "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}],
         "futureSection":[{"id":"z"}]
       }}
@@ -524,14 +529,17 @@ import Testing
     #expect(report.actionable)
     #expect(
       report.sections.map(\.key) == [
-        "orphanedWorkspaces", "buildsInProgress", "workspaceBuildOutputs", "caches", "futureSection",
+        "orphanedWorkspaces", "buildsInProgress", "workspaceLogs", "workspaceBuildOutputs", "caches", "futureSection",
       ])
+    let logs = report.sections.first { $0.key == "workspaceLogs" }!.entries
+    #expect(logs.map(\.bytes) == [700, 50])
+    #expect(logs.map(\.kept) == [nil, "a device log collector is recorded for ios"])
     let outputs = report.sections.first { $0.key == "workspaceBuildOutputs" }!.entries
     #expect(outputs.map(\.kept) == ["in use: supervisor running", nil])
     #expect(report.sections.first { $0.key == "buildsInProgress" }!.entries[0].kept != nil)
     #expect(report.sections.first { $0.key == "caches" }!.entries[0].kept == "no eviction")
-    #expect(report.deletableCount == 3)
-    #expect(report.reclaimableBytes == 4596)
+    #expect(report.deletableCount == 4)
+    #expect(report.reclaimableBytes == 5296)
   }
 
   @Test func surfacesTheRefusalContract() {
