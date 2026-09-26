@@ -80,7 +80,7 @@ interface StatusOptions {
   watch?: boolean;
 }
 
-const WATCH_GIT_MAX_AGE_MS = 5000;
+const WATCH_GIT_MAX_AGE_MS = 60_000;
 
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
