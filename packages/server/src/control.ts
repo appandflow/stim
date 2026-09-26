@@ -182,9 +182,6 @@ function adbPath(env: NodeJS.ProcessEnv): string {
 
 const ADB_TIMEOUT_MS = 10_000;
 
-/** `sim-fold` waits up to 20 seconds for SpringBoard to finish the fold; Stim Desktop stops it after 40. */
-const FOLD_TIMEOUT_MS = 40_000;
-
 const POSTURE_TIMEOUT_MS = 5_000;
 
 function runQuietly(
@@ -197,18 +194,24 @@ function runQuietly(
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    const timer = setTimeout(() => void terminate(child), timeoutMs);
+    const finish = (code: number | null) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
+    };
+    const timer = setTimeout(() => {
+      child.stderr.destroy();
+      if (child.exitCode !== null || child.signalCode !== null) return finish(child.exitCode);
+      void terminate(child);
+      reject(new Error(`${label} did not finish within ${timeoutMs / 1000} s.`));
+    }, timeoutMs);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => (stderr = (stderr + chunk).slice(-500)));
     child.on('error', (error) => {
       clearTimeout(timer);
       reject(new Error(`${label} could not start (${error.message}).`));
     });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
-    });
+    child.on('close', finish);
   });
 }
 
@@ -274,6 +277,7 @@ export interface ControlOptions {
   leaseFor: string;
   /** Resolves to the `sim-fold` helper, building it on first use. */
   foldHelper: () => Promise<string>;
+  foldTimeoutMs: number;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -471,7 +475,13 @@ export class ControlHub {
     try {
       const helper = await this.options.foldHelper();
       if (session.ended) return null;
-      await runQuietly(this.options.env, 'xcrun', ['simctl', 'spawn', udid, helper], 'sim-fold', FOLD_TIMEOUT_MS);
+      await runQuietly(
+        this.options.env,
+        'xcrun',
+        ['simctl', 'spawn', udid, helper],
+        'sim-fold',
+        this.options.foldTimeoutMs,
+      );
       this.options.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');
       return null;
     } catch (cause) {
