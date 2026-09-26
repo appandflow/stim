@@ -23,6 +23,7 @@ import * as Clipboard from 'expo-clipboard';
 
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
+import { Icon } from '@/components/icon';
 import { Toggle } from '@/components/toggle';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
@@ -315,10 +316,10 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                       zoom.close();
                     }}
                     accessibilityRole="button"
-                    accessibilityLabel="Back"
+                    accessibilityLabel="Close"
                     hitSlop={10}
                   >
-                    <Text style={styles.back}>{'‹'}</Text>
+                    <Icon name="xmark" size={22} color="#FFFFFF" />
                   </Pressable>
                   <View style={styles.titles}>
                     <Text style={styles.title} numberOfLines={1}>
@@ -542,7 +543,6 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
 const styles = StyleSheet.create({
   root: { flex: 1 },
   bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
-  back: { color: '#FFFFFF', fontSize: 32, lineHeight: 32 },
   titles: { flex: 1 },
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12 },
