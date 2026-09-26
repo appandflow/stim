@@ -216,8 +216,8 @@ function take(bucket: { tokens: number; at: number }, cost: number, perSecond: n
   return true;
 }
 
-function send(socket: WebSocket, message: ServerMessage): void {
-  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+function send(socket: WebSocket, message: ServerMessage | string): void {
+  if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
 function requestId(value: unknown): RequestId | null {
@@ -516,9 +516,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function subscribeStatus(id: RequestId): void {
       const subscription = openSubscription(id);
       if (!subscription) return;
+      const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
       const unsubscribe = feeds.subscribe(STATUS_FEED, {
-        item: (payload) =>
-          send(socket, { event: 'status', subscription, payload: payload as unknown as StatusPayload }),
+        item: (_payload, text) => send(socket, `${envelope}${text}}`),
         failed: (message) => {
           subscriptions.delete(subscription);
           send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });

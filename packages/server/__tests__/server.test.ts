@@ -548,6 +548,8 @@ describe('status.subscribe', () => {
     await second.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
     await second.request('status.subscribe');
     expect(await second.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
+    expect(await second.request('status.subscribe')).toMatchObject({ result: { subscription: 's2' } });
+    expect(await second.next()).toEqual({ event: 'status', subscription: 's2', payload: PAYLOADS[1] });
     expect(childPids()).toEqual([pid]);
 
     expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
