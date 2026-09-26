@@ -711,8 +711,11 @@ fallback. A log append updates only the log error count and device activity,
 no sooner than 15 seconds after the previous refresh. With `--json`, while
 `machine` is not `null`, it rereads the process table every 15 seconds so
 `machine` stays current. It exits with status 0
-on Ctrl+C, SIGTERM, or when its stdout closes. Use it to wait for a device, a
-build, or a dev server instead of polling `stim status --json`.
+on Ctrl+C, SIGTERM, when its stdout closes, or when the process that started it
+exits while its stdout is a pipe. It notices within a few seconds, even when
+nothing changes, except a closed stdout on Linux, which it notices at the next
+change. Use it to wait for a device, a build, or a dev server instead
+of polling `stim status --json`.
 
 While `stim ios` or `stim android` runs, the workspace shows the build's phase
 and an estimate of the time left:

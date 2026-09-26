@@ -30,12 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // `swift run` starts a bare executable as a background process with no Dock icon or focus.
     NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
-    // AppKit exits on SIGTERM without calling applicationWillTerminate, which would orphan stim-server.
+    // AppKit exits on SIGTERM without posting willTerminateNotification, which would orphan stim-server
+    // and the stim children the stores stop from that notification.
     signal(SIGTERM, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     source.setEventHandler {
-      MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
-      exit(0)
+      MainActor.assumeIsolated { NSApp.terminate(nil) }
     }
     source.resume()
     terminationSource = source

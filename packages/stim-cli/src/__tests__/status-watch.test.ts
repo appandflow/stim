@@ -214,6 +214,12 @@ describe('stim status --watch --json', () => {
     delete process.env.STIM_HOME;
   });
 
+  const cli = join(import.meta.dirname, '..', '..', 'bin', 'cli.ts');
+
+  function watchEnv() {
+    return { STIM_HOME: process.env.STIM_HOME, ANDROID_HOME: join(root, 'sdk'), PATH: join(root, 'bin'), HOME: root };
+  }
+
   function startWatch() {
     const androidHome = join(root, 'sdk');
     mkdirSync(join(androidHome, 'platform-tools'), { recursive: true });
@@ -224,10 +230,9 @@ describe('stim status --watch --json', () => {
       `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; printf 0000; exec /bin/sleep 600; fi\n`,
     );
     chmodSync(adb, 0o755);
-    const cli = join(import.meta.dirname, '..', '..', 'bin', 'cli.ts');
     const proc = spawn(process.execPath, [cli, 'status', '--watch', '--json'], {
       cwd: root,
-      env: { STIM_HOME: process.env.STIM_HOME, ANDROID_HOME: androidHome, PATH: join(root, 'bin'), HOME: root },
+      env: watchEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     child = proc;
@@ -371,4 +376,45 @@ describe('stim status --watch --json', () => {
     saveConfig(makeConfig({ projects: { [join(root, 'app')]: { label: 'watched', platforms: {} } } }));
     expect(await exited).toBe(0);
   }, 30_000);
+
+  test.skipIf(process.platform === 'win32')(
+    'exits when stdout closes and nothing changes; skipped on win32, where a zero-length pipe write is not known to report a closed reader',
+    async () => {
+      const { proc, lines, exited } = startWatch();
+      await until(() => lines.length === 1);
+      const closedAt = Date.now();
+      proc.stdout!.destroy();
+      expect(await exited).toBe(0);
+      expect(Date.now() - closedAt).toBeLessThan(6000);
+    },
+    30_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'exits when the process reading it is killed; skipped on win32, which does not reparent orphans',
+    async () => {
+      const middleman = spawn(
+        process.execPath,
+        [
+          '-e',
+          `const w = require('node:child_process').spawn(process.execPath, ${JSON.stringify([cli, 'status', '--watch', '--json'])}, { cwd: ${JSON.stringify(root)}, env: ${JSON.stringify(watchEnv())}, stdio: ['ignore', 'pipe', 'ignore'] });
+          w.stdout.once('data', () => console.log(w.pid));
+          setInterval(() => {}, 1000);`,
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      child = middleman;
+      let out = '';
+      middleman.stdout!.on('data', (chunk: Buffer) => (out += chunk.toString()));
+      await until(() => out.includes('\n'));
+      const watch = Number(out.trim());
+      middleman.kill('SIGKILL');
+      try {
+        await until(() => !alive(watch), 6000);
+      } finally {
+        if (alive(watch)) process.kill(watch, 'SIGKILL');
+      }
+    },
+    30_000,
+  );
 });
