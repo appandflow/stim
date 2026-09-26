@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import StimKit
 
 /// Disk sizes Stim Desktop measures itself with `du`, and open pull requests from `gh`. Each path is sized by
@@ -10,6 +10,7 @@ final class StorageStore: ObservableObject {
   nonisolated static let toolTimeout: TimeInterval = 30
   nonisolated static let duTimeout: TimeInterval = 180
   nonisolated static let duConcurrency = 3
+  nonisolated private static let running = RunningProcesses()
 
   @Published private(set) var disk = DiskMeasurements()
   @Published private(set) var measuredAt: Date?
@@ -28,6 +29,9 @@ final class StorageStore: ObservableObject {
   init(status: StatusStore, cli: Task<StimCLI, Never>) {
     self.status = status
     self.cli = cli
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+    ) { _ in Self.running.terminateAll() }
   }
 
   func refresh(force: Bool = false) {
@@ -133,6 +137,8 @@ final class StorageStore: ObservableObject {
     process.standardError = FileHandle.nullDevice
     process.standardInput = FileHandle.nullDevice
     guard (try? process.run()) != nil else { return nil }
+    running.insert(process)
+    defer { running.remove(process) }
     let box = DataBox()
     let read = DispatchSemaphore(value: 0)
     DispatchQueue.global(qos: .default).async {
@@ -150,6 +156,17 @@ final class StorageStore: ObservableObject {
     }
     return (box.value, true)
   }
+}
+
+/// Children still running, which quitting the app terminates: an orphaned `du` keeps reading the disk until it
+/// finishes, however long that takes.
+private final class RunningProcesses: @unchecked Sendable {
+  private let lock = NSLock()
+  private var processes: Set<Process> = []
+
+  func insert(_ process: Process) { lock.withLock { _ = processes.insert(process) } }
+  func remove(_ process: Process) { lock.withLock { _ = processes.remove(process) } }
+  func terminateAll() { lock.withLock { processes.forEach { $0.terminate() } } }
 }
 
 private final class DataBox: @unchecked Sendable {
