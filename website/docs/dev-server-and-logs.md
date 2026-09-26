@@ -320,9 +320,10 @@ listeners before releasing their named allocations.
 Allocations belong to the nearest directory with a `package.json`, resolved
 through symlinks. In a monorepo whose web app lives in its own package, a
 package that depends on neither `react-native` nor `expo` uses the one Stim app
-registered in the same Git worktree, and stderr names it. Register the app
-first with `stim start`, `stim ios` or `stim android`, then run `ports` from
-the web package:
+registered in the same Git worktree, and stderr names it. `web`, `settings`,
+`logs`, `reload`, `stop` and `status` follow the same rule. Register the app
+first by running `stim ports get web`, `stim start`, `stim ios` or
+`stim android` from the app directory, then run `ports` from the web package:
 
 <StimTabs
 code={`cd apps/web

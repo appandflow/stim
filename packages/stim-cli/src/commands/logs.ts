@@ -5,7 +5,7 @@ import type { Command } from 'commander';
 import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import { isPathPrefix, loadConfig } from '../workspace/config.ts';
-import { findProjectRoot } from '../workspace/project.ts';
+import { findCommandWorkspace } from '../workspace/project.ts';
 import { refuseNoProject } from '../command-output.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
@@ -188,7 +188,7 @@ export default function logsCommand(program: Command): void {
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')
     .action(async (opts: LogsOptions) => {
-      const root = findProjectRoot(process.cwd());
+      const root = findCommandWorkspace(process.cwd());
       if (!root) {
         refuseNoProject({ json: false });
         return;

@@ -113,7 +113,8 @@ or hyphens. `metro` is reserved for `stim start` and `stim stop`.
 The workspace is the nearest `package.json` directory. In a monorepo, a package
 that is not a React Native or Expo app, such as a Vite web app in `apps/web`,
 uses the one Stim app registered in the same Git worktree instead, and stderr
-names it. Every `ports` command there then acts on that app's ports, including
+names it. `web`, `settings`, `logs`, `reload`, `stop` and `status` follow the
+same rule. Every `ports` command there then acts on that app's ports, including
 `stop` and `release` without a label. `status`, `worktree remove` and `gc`
 treat the ports as the app's. A package that already holds ports keeps them
 until you release them. With no registered app, or more than one, run `ports`
@@ -586,7 +587,8 @@ changes one layer. `<layer>` is `machine`, `workspace`, `repo`, or `committed`.
 `workspace` is this project's entry in `~/.stim/config.json`, `repo` is this
 repository's entry, and `committed` is the app's `.stim.json` (the repository
 root's for `worktree.*`). A key accepts only the layers Stim reads it from;
-`--scope` can be omitted when there is one. Run it from the app directory.
+`--scope` can be omitted when there is one. Run it from the app directory, or
+from a monorepo web package that resolves to the app (see `ports`).
 
 Strings and choices are passed as-is. Booleans, numbers, arrays, and objects
 are JSON:

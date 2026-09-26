@@ -11,7 +11,7 @@ import {
   writeConfigSetting,
   type Config,
 } from '../workspace/config.ts';
-import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { findCommandWorkspace, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { readCommittedSettings, unknownSettingKeys, type SettingsObject } from '../workspace/settings.ts';
 import {
   coerceSettingText,
@@ -59,8 +59,8 @@ interface SettingsContext {
   desktopInstalled: () => boolean;
 }
 
-function readContext(env: NodeJS.ProcessEnv): SettingsContext {
-  const projectPath = findProjectRoot(process.cwd());
+function readContext(env: NodeJS.ProcessEnv, note: (line: string) => void = () => {}): SettingsContext {
+  const projectPath = findCommandWorkspace(process.cwd(), note);
   const start = projectPath ?? process.cwd();
   const common = gitCommonDir(start);
   let installed: boolean | undefined;
@@ -420,7 +420,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--json', 'print every setting, its origin, and each layer value as JSON')
     .action((opts: { json?: boolean }) =>
       run(Boolean(opts.json), io, () => {
-        const payload = settingsPayload(readContext(env));
+        const payload = settingsPayload(readContext(env, io.note));
         if (opts.json) {
           io.out(JSON.stringify(payload));
           return;
@@ -445,7 +445,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
       run(wantsJson(opts, command), io, () => {
         const setting = requireSetting(key);
         const scope = opts.scope === undefined ? null : readScope(opts.scope, setting);
-        const context = readContext(env);
+        const context = readContext(env, io.note);
         const entry = settingEntry(context, setting);
         const value = scope ? (entry.layers[scope] ?? null) : entry.value;
         if (wantsJson(opts, command)) {
@@ -475,7 +475,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
             `Set the secret with --scope workspace or --scope repo, or commit a reference such as env:MY_KEYSTORE_PASSWORD.`,
           );
         }
-        const context = readContext(env);
+        const context = readContext(env, io.note);
         const file = requireLayer(context, scope, setting);
         const changed = writeSetting(context, setting, scope, value);
         report(io, wantsJson(opts, command), { key, scope, file, changed }, setting, readContext(env), 'set');
@@ -491,7 +491,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
       run(wantsJson(opts, command), io, () => {
         const setting = requireSetting(key);
         const scope = readScope(opts.scope, setting);
-        const context = readContext(env);
+        const context = readContext(env, io.note);
         const file = requireLayer(context, scope, setting);
         const changed = writeSetting(context, setting, scope, undefined);
         report(io, wantsJson(opts, command), { key, scope, file, changed }, setting, readContext(env), 'unset');

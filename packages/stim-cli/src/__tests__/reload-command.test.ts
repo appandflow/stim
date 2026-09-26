@@ -33,7 +33,7 @@ const project: ProjectRecord = {
 
 function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
   return {
-    findProjectRoot: () => '/project',
+    findWorkspace: () => '/project',
     getProject: () => project,
     readLaunches: () => ({ android: androidLaunch }),
     resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Booted' } }) as never,

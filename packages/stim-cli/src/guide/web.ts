@@ -34,11 +34,11 @@ port:
   stim web
 
 In a monorepo whose web app is its own package (apps/web beside apps/mobile),
-stim ports and stim web run from the web package resolve to the one Stim app
-registered in the same Git worktree, so the port and the browser belong to
-that app's workspace. See stim guide ports. Every other command keeps the
-nearest package: set web.url in the app's .stim.json, or run stim settings,
-logs, reload and stop from the app directory.
+stim ports, web, settings, logs, reload, stop and status run from the web
+package resolve to the one Stim app registered in the same Git worktree, and
+say so on stderr. The port, the browser, web.url and the logs all belong to
+that app's workspace, so every command can run from the web package. Register
+the app first, from its directory. See stim guide ports for the exact rule.
 
 web.ignoreCertificateErrors true accepts a dev server's self-signed
 certificate, in the owned profile only. web.viewport phone gives the page a

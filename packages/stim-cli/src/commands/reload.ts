@@ -7,7 +7,7 @@ import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
-import { findProjectRoot } from '../workspace/project.ts';
+import { findCommandWorkspace } from '../workspace/project.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import { cdpEndpoint, readWebRecord, webFacts, type WebRecord } from '../web/state.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -52,7 +52,7 @@ interface TargetFailure {
 }
 
 export interface ReloadDeps {
-  findProjectRoot: typeof findProjectRoot;
+  findWorkspace: typeof findCommandWorkspace;
   getProject: typeof getProject;
   readLaunches: typeof readWorkspaceLaunches;
   resolveIos: (udid: string) => ResolvedIosSim;
@@ -66,7 +66,7 @@ export interface ReloadDeps {
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
-  findProjectRoot,
+  findWorkspace: findCommandWorkspace,
   getProject,
   readLaunches: readWorkspaceLaunches,
   resolveIos: resolveOwnedIosSim,
@@ -442,7 +442,7 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         process.exitCode = 1;
         return;
       }
-      const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
+      const root = (deps.findWorkspace ?? DEFAULT_DEPS.findWorkspace)(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });
         return;

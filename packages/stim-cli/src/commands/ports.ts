@@ -1,16 +1,13 @@
 import type { Command } from 'commander';
 import { getProject } from '../workspace/config.ts';
 import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
-import { findServerWorkspace } from '../workspace/project.ts';
+import { findCommandWorkspace } from '../workspace/project.ts';
 
 async function inProject(action: (root: string) => Promise<void>): Promise<void> {
   try {
-    const workspace = findServerWorkspace(process.cwd());
-    if (!workspace) throw new Error('No package.json found. Run stim ports from the workspace that owns the server.');
-    if (workspace.from) {
-      console.error(`Using the Stim workspace ${workspace.root}: ${workspace.from} is not a React Native or Expo app.`);
-    }
-    await action(workspace.root);
+    const root = findCommandWorkspace(process.cwd());
+    if (!root) throw new Error('No package.json found. Run stim ports from the workspace that owns the server.');
+    await action(root);
   } catch (error) {
     console.error((error as Error).message);
     process.exitCode = 1;
