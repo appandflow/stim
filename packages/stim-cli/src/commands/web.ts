@@ -31,9 +31,10 @@ import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { detectIsExpo, findCommandWorkspace, isPackageResolvable } from '../workspace/project.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings } from '../workspace/settings.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
+import { liveSupervisor } from './start.ts';
 
 interface WebFailure {
   code: string;
@@ -201,12 +202,20 @@ export async function runWeb({
   let metroPort = getProject(root)?.metroPort ?? null;
   if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
   const metro = usesMetro && metroPort !== null ? await resolveProjectMetro(metroPort, root) : null;
+  const ownSupervisor =
+    usesMetro &&
+    metroPort !== null &&
+    liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port: metroPort });
+  const foreignHolder = metro?.notOurs && !ownSupervisor ? metro.notOurs : null;
   const missingWebPackages =
     usesMetro && detectIsExpo(root) ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [];
   let serve: string | null = null;
   if (!usesMetro) serve = `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``;
-  else if (missingWebPackages.length) serve = `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``;
-  else if (!metro?.metro) serve = "Start this workspace's Metro with `stim start`";
+  else if (!metro?.metro && !ownSupervisor) {
+    serve = missingWebPackages.length
+      ? `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``
+      : "Start this workspace's Metro with `stim start`";
+  }
   let url: string;
   try {
     url = await resolveWebUrl(web.url ?? 'http://localhost:{port:metro}/', {
@@ -273,14 +282,14 @@ export async function runWeb({
   const measured = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const verdict: WebLaunchVerdict = metro?.notOurs
+  const verdict: WebLaunchVerdict = foreignHolder
     ? {
         launched: 'unverified',
         kind: 'no-bundle',
-        reason: `Port ${metroPort} is held by another process: ${metro.notOurs}`,
+        reason: `Port ${metroPort} is held by another process: ${foreignHolder}`,
       }
     : measured;
-  const remedy = metro?.notOurs
+  const remedy = foreignHolder
     ? 'Run `stim start`, which reserves a free Metro port for this workspace, then run `stim web` again.'
     : webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
   return {
