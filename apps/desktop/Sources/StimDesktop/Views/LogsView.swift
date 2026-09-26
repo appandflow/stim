@@ -150,7 +150,7 @@ struct LogsView: View {
         EmptyView()
       }
       Text(
-        "\(model.count.formatted()) records"
+        countLabel(model.count, "record")
           + (model.count >= LogsModel.limit * 9 / 10 ? " (oldest dropped past \(LogsModel.limit.formatted()))" : "")
       )
       .foregroundStyle(Theme.tertiary)

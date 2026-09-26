@@ -182,7 +182,7 @@ final class StatusStore: ObservableObject {
       project: project(ofPath:), options: options)
   }
 
-  var warningCount: Int {
-    (payload?.environments ?? []).reduce(0) { $0 + $1.warnings.count }
+  var attentionCount: Int {
+    attentionGroups(payload?.environments ?? []).reduce(0) { $0 + $1.items.count }
   }
 }

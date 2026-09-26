@@ -354,6 +354,31 @@ import Testing
     #expect(groups[1].items.map(\.runnable) == [false])
   }
 
+  @Test func listsFailedLastBuildsAndLogErrorsWithoutIssues() throws {
+    let groups = attentionGroups([
+      try workspace(
+        #"{"path":"/ok","live":true,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":0},"lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-26T00:00:00Z"}}}"#
+      ),
+      try workspace(
+        #"{"path":"/broken","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":1},"lastBuilds":{"android":{"platform":"android","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_BUILD_FAILED"}}}"#
+      ),
+    ])
+    #expect(groups.map(\.workspace.path) == ["/broken"])
+    #expect(
+      groups[0].items == [
+        AttentionItem(
+          text: "Android build failed (STIM_BUILD_FAILED)", isError: true,
+          command: StimCommand(["android"], cwd: "/broken"), runnable: true, opensLogs: true),
+        AttentionItem(text: "1 error in the logs", isError: true, command: nil, runnable: false, opensLogs: true),
+      ])
+  }
+
+  @Test func pluralizesCounts() {
+    #expect(countLabel(1, "hit") == "1 hit")
+    #expect(countLabel(2, "miss", plural: "misses") == "2 misses")
+    #expect(countLabel(0, "record") == "0 records")
+  }
+
   @Test func fallsBackToWarningTextWithoutIssues() throws {
     let groups = attentionGroups([
       try workspace(

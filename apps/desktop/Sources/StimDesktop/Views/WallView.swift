@@ -126,7 +126,7 @@ struct WorkspaceHeader: View {
       }
       if let errors = env.logs?.errorsSinceMarker {
         Button(action: openLogs) {
-          Chip(tint: errors > 0 ? Theme.error : nil) { Text(errors == 1 ? "1 error" : "\(errors) errors") }
+          Chip(tint: errors > 0 ? Theme.error : nil) { Text(countLabel(errors, "error")) }
         }
         .buttonStyle(.plain)
         .help("Open logs")

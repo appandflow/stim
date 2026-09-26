@@ -5,6 +5,7 @@ import SwiftUI
 struct AttentionView: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var autopilot: AutopilotRunner
+  var openLogs: (String) -> Void
   @EnvironmentObject private var actions: ActionCenter
   @State private var expanded = false
 
@@ -28,7 +29,7 @@ struct AttentionView: View {
             }
           }
         }
-        group("Warnings", count: groups.reduce(0) { $0 + $1.items.count }) {
+        group("Problems", count: groups.reduce(0) { $0 + $1.items.count }) {
           ForEach(Array(shown.enumerated()), id: \.element.workspace.path) { index, group in
             if index > 0 { divider }
             workspaceHeader(group.workspace)
@@ -121,6 +122,10 @@ struct AttentionView: View {
         }
       }
       Spacer()
+      if item.opensLogs {
+        Button("Open logs") { openLogs(workspace.path) }
+          .help("Show this workspace's errors")
+      }
       if let command = item.command {
         Button("Copy command") {
           NSPasteboard.general.clearContents()

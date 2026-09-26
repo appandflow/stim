@@ -196,7 +196,7 @@ enum LogRowText {
     let first = lines.first.map(String.init) ?? ""
     add(abbreviatingHome(first).replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Theme.error : Theme.text)
     let extra = record.msg.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } + (record.stack?.count ?? 0)
-    if extra > 0 { add("  +\(extra) lines", Theme.tertiary) }
+    if extra > 0 { add("  +" + countLabel(extra, "line"), Theme.tertiary) }
     return text
   }
 }

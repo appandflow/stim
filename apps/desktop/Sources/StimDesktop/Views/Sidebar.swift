@@ -65,7 +65,7 @@ struct Sidebar: View {
       PinnedRow(item: .attention, selection: $selection) {
         SidebarLabel(title: "Needs attention", icon: "exclamationmark.triangle", selected: selection == .attention)
         Spacer()
-        let count = store.warningCount + autopilot.finishedPullRequests.count
+        let count = store.attentionCount + autopilot.finishedPullRequests.count
         if count > 0 {
           Text("\(count)")
             .font(Theme.body(11, weight: .medium))
@@ -242,6 +242,15 @@ struct WorkspaceRow: View {
       }
       Spacer()
       if showsGit { GitIndicator(git: env.worktree?.git) }
+      if let errors = env.logs?.errorsSinceMarker, errors > 0 {
+        HStack(spacing: 3) {
+          Image(systemName: "xmark.octagon.fill").font(.system(size: 10))
+          Text("\(errors)").font(Theme.body(10.5, weight: .semibold)).monospacedDigit()
+        }
+        .foregroundStyle(Theme.error)
+        .fixedSize()
+        .help(countLabel(errors, "error") + " in the logs")
+      }
       if !env.warnings.isEmpty {
         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Theme.warn)
       }
