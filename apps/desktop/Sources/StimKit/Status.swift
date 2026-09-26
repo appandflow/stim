@@ -40,13 +40,15 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var remoteDevices: [RemoteDevice]?
   public var build: Build?
   public var lastBuilds: LastBuilds?
+  /// Each platform's last runs, newest first; absent from an older `stim`.
+  public var builds: BuildHistory?
   public var worktree: WorktreeInfo?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
     case path, live, memoryMb, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
-    case lastBuilds, worktree
+    case lastBuilds, builds, worktree
   }
 
   public var id: String { path }

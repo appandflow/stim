@@ -95,6 +95,69 @@ public struct LastBuilds: Decodable, Hashable, Sendable {
   public func build(for platform: String) -> LastBuild? { platform == "ios" ? ios : android }
 }
 
+/// One run in a workspace's recent build history, from `builds.<platform>` in `stim status --json`: the fields
+/// of a last build plus how the run ended, its slot, configuration and phase timings.
+public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
+  public var build: LastBuild
+  /// `succeeded`, `failed`, `cancelled`, or `interrupted` for a run whose process ended without a result.
+  public var result: String
+  public var slot: String
+  public var configuration: String?
+  /// Milliseconds spent in each build phase the run entered, keyed by phase name.
+  public var phases: [String: Double]
+
+  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases }
+
+  public init(from decoder: Decoder) throws {
+    build = try LastBuild(from: decoder)
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    result = try container.decode(String.self, forKey: .result)
+    slot = try container.decode(String.self, forKey: .slot)
+    configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
+    phases = try container.decode([String: Double].self, forKey: .phases)
+  }
+
+  /// How the run ended in a word or two, for a list row; `detail` carries the error code and miss reason.
+  public var outcome: String {
+    switch (result, build.cacheHit) {
+    case ("interrupted", _): return "Interrupted"
+    case ("cancelled", _): return "Cancelled"
+    case ("failed", _): return "Failed"
+    case (_, .local): return "Local cache"
+    case (_, .remote): return "Remote cache"
+    case (_, .none): return "Compiled"
+    }
+  }
+
+  /// A list row's second line: a failed run's error code, the miss reason, and a slot other than the default.
+  public var detail: String? {
+    let parts = [
+      result == "failed" ? build.errorCode : nil,
+      build.missReason?.summary,
+      slot == DeviceRef.defaultSlot ? nil : "slot \(slot)",
+    ].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  }
+
+
+  /// The phases the run entered, in build order, as `compile 1m 58s · install 0m 3s`.
+  public var phaseLine: String? {
+    let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "install", "launch"]
+    let stoppedIn = result == "interrupted" ? order.last { phases[$0] != nil } : nil
+    let parts = order.compactMap { phase in
+      phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(formatDuration(ms: ms))" }
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  }
+}
+
+public struct BuildHistory: Decodable, Hashable, Sendable {
+  public var ios: [BuildHistoryEntry]?
+  public var android: [BuildHistoryEntry]?
+
+  public func builds(for platform: String) -> [BuildHistoryEntry] { (platform == "ios" ? ios : android) ?? [] }
+}
+
 /// The payload of `stim ios --plan --json` or `stim android --plan --json`.
 public struct BuildPlan: Decodable, Hashable, Sendable {
   public var platform: String

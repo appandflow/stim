@@ -23,6 +23,44 @@ import Testing
     #expect(workspace.lastBuilds?.build(for: "android")?.summary == "Failed (STIM_BUILD_FAILED) in 0m 4s")
   }
 
+  @Test func readsTheBuildHistoryOfEachPlatformWithHowEachRunEnded() throws {
+    let workspace = try decode(
+      Workspace.self,
+      """
+      {"path":"/w","live":true,"warnings":[],"builds":{
+        "ios":[
+          {"platform":"ios","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":99918,
+           "fingerprint":null,"startedAt":"2026-09-26T12:58:00.000Z","finishedAt":"2026-09-26T12:59:39.918Z",
+           "errorCode":"STIM_CANCELLED","result":"cancelled","slot":"default","configuration":"Debug","cacheKey":null,
+           "phases":{"pods":90794,"prepare":2260}},
+          {"platform":"ios","status":"ok","cacheHit":"local","cacheSkipped":false,"durationMs":18128,
+           "fingerprint":"7a512dbf","startedAt":"2026-09-26T12:50:00.000Z","finishedAt":"2026-09-26T12:50:18.128Z",
+           "result":"succeeded","slot":"default","configuration":"Debug","cacheKey":"7a512dbf-debug-sim","phases":{}}],
+        "android":[
+          {"platform":"android","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":null,
+           "fingerprint":null,"startedAt":"2026-09-26T13:00:20.861Z","finishedAt":null,"result":"interrupted",
+           "slot":"tablet","configuration":null,"cacheKey":null,"phases":{"prepare":1524,"compile":0}}]}}
+      """)
+    let ios = try #require(workspace.builds?.builds(for: "ios"))
+    #expect(ios.map(\.result) == ["cancelled", "succeeded"])
+    #expect(ios[0].outcome == "Cancelled" && ios[0].detail == nil)
+    #expect(ios[0].phaseLine == "prepare 0m 2s \u{00B7} pods 1m 30s")
+    #expect(ios[1].outcome == "Local cache" && ios[1].slot == "default" && ios[1].phases.isEmpty)
+    let android = try #require(workspace.builds?.builds(for: "android").first)
+    #expect(android.outcome == "Interrupted" && android.detail == "slot tablet" && android.configuration == nil)
+    #expect(android.phaseLine == "prepare 0m 1s \u{00B7} stopped in compile")
+    let failed = try decode(
+      BuildHistoryEntry.self,
+      """
+      {"platform":"android","status":"failed","cacheHit":false,"durationMs":27583,"startedAt":"2026-09-26T12:57:50.000Z",
+       "finishedAt":null,"errorCode":"STIM_BUILD_FAILED","result":"failed","slot":"default","phases":{},
+       "missReason":{"kind":"changed","summary":"android/ added (+2 more)","changes":[],"changeCount":3,
+         "baseline":null,"rekeyedBy":[]}}
+      """)
+    #expect(failed.outcome == "Failed" && failed.detail == "STIM_BUILD_FAILED \u{00B7} android/ added (+2 more)")
+    #expect(try decode(Workspace.self, #"{"path":"/w","live":false,"warnings":[]}"#).builds == nil)
+  }
+
   @Test func readsAMissReasonAndNamesItsBaseline() throws {
     let last = try decode(
       LastBuild.self,
