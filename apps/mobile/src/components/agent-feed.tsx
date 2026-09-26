@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { Touch } from '@/components/touch';
 import { useLogs, useMacConnection, type LogsChange } from '@/hooks/mac-connection';
 import { agentActions, agentFeedFilter, type AgentAction } from '@/lib/logs';
 import { mono, useColors } from '@/theme';
@@ -28,9 +29,8 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
     });
   return (
     <View style={[styles.feed, { borderTopColor: colors.border }]}>
-      <Pressable
+      <Touch
         onPress={() => openLog()}
-        accessibilityRole="button"
         accessibilityLabel="Agent actions"
         accessibilityHint="Opens every agent action on this device"
         hitSlop={6}
@@ -38,26 +38,28 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
       >
         <Text style={[styles.title, { color: colors.secondary }]}>Agent actions</Text>
         <Text style={[styles.title, { color: colors.primary }]}>{'All ›'}</Text>
-      </Pressable>
-      {actions.map(({ key, record }) => (
-        <Pressable
-          key={key}
-          onPress={() => openLog(record.ts)}
-          accessibilityRole="button"
-          accessibilityHint="Opens this action in the agent log"
-          style={styles.row}
-        >
-          <Text style={[styles.time, { color: colors.tertiary }]}>
-            {new Date(record.ts).toTimeString().slice(0, 8)}
-          </Text>
-          <Text
-            style={[styles.msg, { color: record.level === 'error' ? colors.error : colors.text }]}
-            numberOfLines={1}
+      </Touch>
+      {actions.map(({ key, record }) => {
+        const time = new Date(record.ts).toTimeString().slice(0, 8);
+        return (
+          <Touch
+            key={key}
+            feedback="row"
+            onPress={() => openLog(record.ts)}
+            accessibilityLabel={`${time}, ${record.msg}`}
+            accessibilityHint="Opens this action in the agent log"
+            style={styles.row}
           >
-            {record.msg}
-          </Text>
-        </Pressable>
-      ))}
+            <Text style={[styles.time, { color: colors.tertiary }]}>{time}</Text>
+            <Text
+              style={[styles.msg, { color: record.level === 'error' ? colors.error : colors.text }]}
+              numberOfLines={1}
+            >
+              {record.msg}
+            </Text>
+          </Touch>
+        );
+      })}
     </View>
   );
 }

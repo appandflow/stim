@@ -1,10 +1,11 @@
 import { Image } from 'expo-image';
 import { useEffect, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View, type ViewInstance } from 'react-native';
+import { StyleSheet, Text, View, type ViewInstance } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot } from '@/hooks/mac-connection';
 import type { StimConnection } from '@/lib/connection';
@@ -49,67 +50,61 @@ export function DeviceGridTile({
   const target = { macId: item.macId, workspace: item.env.path, platform: device.platform, slot: device.slot };
   const zoomedAway = useZoomedAway(zoomKey(target));
   return (
-    <Pressable
+    <Card
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
-      style={({ pressed }) => [styles.tile, wide && styles.wide, pressed && styles.pressed]}
+      style={[styles.tile, wide && styles.wide]}
     >
-      <Card style={styles.card}>
-        <View style={[styles.screen, { backgroundColor: colors.screen }]}>
-          {frame ? (
-            <Pressable
-              ref={thumbnail}
-              onPress={() => openDeviceViewer(thumbnail.current, target, frame)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open the live screen of ${device.model}`}
-              style={[{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }, zoomedAway && styles.away]}
-            >
-              <Image
-                source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-                style={[StyleSheet.absoluteFill, { borderRadius: 6 }]}
-                contentFit="contain"
-                transition={0}
-              />
-            </Pressable>
-          ) : (
-            <Text style={[styles.placeholder, { color: colors.tertiary }]}>
-              {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
-            </Text>
-          )}
+      <View style={[styles.screen, { backgroundColor: colors.screen }]}>
+        {frame ? (
+          <Touch
+            ref={thumbnail}
+            onPress={() => openDeviceViewer(thumbnail.current, target, frame)}
+            accessibilityLabel={`Open the live screen of ${device.model}`}
+            style={{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }}
+          >
+            <Image
+              source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
+              style={[StyleSheet.absoluteFill, { borderRadius: 6 }, zoomedAway && styles.away]}
+              contentFit="contain"
+              transition={0}
+            />
+          </Touch>
+        ) : (
+          <Text style={[styles.placeholder, { color: colors.tertiary }]}>
+            {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
+          </Text>
+        )}
+      </View>
+      {frame && error ? (
+        <Text style={[styles.stale, { color: colors.warn }]} numberOfLines={2}>
+          {error}
+        </Text>
+      ) : null}
+      <View style={styles.meta}>
+        <Text style={[styles.model, { color: colors.text }]} numberOfLines={1}>
+          {device.model}
+        </Text>
+        <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="middle">
+          {item.title}
+        </Text>
+        <View style={styles.mac}>
+          <Icon name="laptopcomputer" size={13} color={colors.tertiary} />
+          <Text style={[styles.detail, { color: colors.tertiary }]} numberOfLines={1}>
+            {item.macName}
+          </Text>
         </View>
-        {frame && error ? (
-          <Text style={[styles.stale, { color: colors.warn }]} numberOfLines={2}>
-            {error}
-          </Text>
-        ) : null}
-        <View style={styles.meta}>
-          <Text style={[styles.model, { color: colors.text }]} numberOfLines={1}>
-            {device.model}
-          </Text>
-          <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="middle">
-            {item.title}
-          </Text>
-          <View style={styles.mac}>
-            <Icon name="laptopcomputer" size={13} color={colors.tertiary} />
-            <Text style={[styles.detail, { color: colors.tertiary }]} numberOfLines={1}>
-              {item.macName}
-            </Text>
-          </View>
-          <View style={styles.badge}>
-            <ActivityChip activity={device.activity} />
-          </View>
+        <View style={styles.badge}>
+          <ActivityChip activity={device.activity} />
         </View>
-      </Card>
-    </Pressable>
+      </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
   tile: { flex: 1, maxWidth: '50%' },
   wide: { maxWidth: '100%' },
-  card: { flex: 1 },
-  pressed: { opacity: 0.7 },
   away: { opacity: 0 },
   screen: { height: SCREEN_HEIGHT, alignItems: 'center', justifyContent: 'center', padding: 8 },
   placeholder: { fontSize: 12, textAlign: 'center', paddingHorizontal: 8 },

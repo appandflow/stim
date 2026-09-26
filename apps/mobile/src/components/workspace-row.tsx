@@ -1,11 +1,12 @@
 import { Fragment } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { BuildProgressBar } from '@/components/build-progress';
 import { Chip } from '@/components/chip';
 import { GitIndicator } from '@/components/git-indicator';
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
@@ -41,11 +42,11 @@ export function WorkspaceRow({
       : `Last seen ${shortDuration(now - disconnectedAt)} ago`
     : null;
   return (
-    <Pressable
+    <Touch
+      feedback="row"
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={`Workspace ${item.title} on ${item.macName}${lastSeen ? `, ${lastSeen}` : ''}`}
-      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.raised }]}
+      style={styles.row}
     >
       <View style={[styles.lead, offline && styles.dimmed]}>
         <View
@@ -91,9 +92,9 @@ export function WorkspaceRow({
               </Chip>
             ))}
             {errors > 0 ? (
-              <Pressable onPress={onErrors} accessibilityRole="button" hitSlop={6}>
+              <Touch onPress={onErrors} hitSlop={6}>
                 <Chip tint={colors.error}>{errors === 1 ? '1 error' : `${errors} errors`}</Chip>
-              </Pressable>
+              </Touch>
             ) : null}
             {env.warnings.length > 0 ? (
               <Chip tint={colors.warn}>
@@ -104,7 +105,7 @@ export function WorkspaceRow({
         ) : null}
         {build ? <BuildProgressBar build={build} frozenAt={offline ? (disconnectedAt ?? now) : null} /> : null}
       </View>
-    </Pressable>
+    </Touch>
   );
 }
 

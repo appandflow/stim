@@ -4,7 +4,6 @@ import { Stack } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
@@ -17,6 +16,7 @@ import {
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Toggle } from '@/components/toggle';
+import { Touch } from '@/components/touch';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
 import {
   appendRecords,
@@ -216,16 +216,16 @@ export function Logs({
         }}
       />
       {!following && entries.length > 0 ? (
-        <Pressable
+        <Touch
+          feedback="card"
           onPress={() => {
             setFollowing(true);
             list.current?.scrollToEnd({ animated: true });
           }}
           style={[styles.jump, { backgroundColor: colors.primary }]}
-          accessibilityRole="button"
         >
           <Text style={[styles.jumpText, { color: colors.onPrimary }]}>Jump to latest</Text>
-        </Pressable>
+        </Touch>
       ) : null}
     </View>
   );
@@ -260,7 +260,12 @@ function LogRow({
   const view = viewEntry(entry, workspace, home);
   const [copied, setCopied] = useState(false);
   return (
-    <Pressable onPress={onPress} style={[styles.logRow, { borderBottomColor: colors.border }]}>
+    <Touch
+      feedback="row"
+      onPress={onPress}
+      accessibilityRole="none"
+      style={[styles.logRow, { borderBottomColor: colors.border }]}
+    >
       <View style={[styles.levelBar, { backgroundColor: tint }]} />
       <View style={styles.logBody}>
         <Text style={[styles.logMeta, { color: colors.tertiary }]}>
@@ -295,22 +300,20 @@ function LogRow({
         ) : null}
         {expanded ? (
           <View style={styles.actions}>
-            <Pressable
+            <Touch
               onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
-              accessibilityRole="button"
               accessibilityLabel="Copy message and location"
               style={[styles.action, { borderColor: colors.border }]}
             >
               <Text style={[styles.actionText, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy'}</Text>
-            </Pressable>
-            <Pressable
+            </Touch>
+            <Touch
               onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
-              accessibilityRole="button"
               accessibilityLabel="Share entry"
               style={[styles.action, { borderColor: colors.border }]}
             >
               <Text style={[styles.actionText, { color: colors.primary }]}>Share</Text>
-            </Pressable>
+            </Touch>
           </View>
         ) : null}
         {expanded && view.details.length > 0 ? (
@@ -319,7 +322,7 @@ function LogRow({
           </Text>
         ) : null}
       </View>
-    </Pressable>
+    </Touch>
   );
 }
 

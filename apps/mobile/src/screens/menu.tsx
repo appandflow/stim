@@ -1,10 +1,11 @@
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
@@ -86,30 +87,29 @@ export function Menu({ onClose }: { onClose: () => void }) {
           <>
             <Text style={[styles.sectionTitle, { color: colors.secondary }]}>Recent workspaces</Text>
             {recentRows.map((recent) => (
-              <Pressable
+              <Touch
                 key={`${recent.macId}\n${recent.path}`}
+                feedback="row"
                 onPress={() => go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })}
-                accessibilityRole="button"
                 accessibilityLabel={recent.live ? `${recent.title}, live` : recent.title}
-                style={({ pressed }) => [styles.recent, pressed && { backgroundColor: colors.border }]}
+                style={styles.recent}
               >
                 <Icon name="arrow.triangle.branch" size={15} color={recent.live ? colors.live : colors.tertiary} />
                 <Text numberOfLines={1} ellipsizeMode="middle" style={[styles.recentTitle, { color: colors.text }]}>
                   {recent.title}
                 </Text>
-              </Pressable>
+              </Touch>
             ))}
           </>
         ) : null}
       </ScrollView>
       <View style={styles.footer}>
-        <Pressable
+        <Touch
           onPress={() => go(status.macId ? { pathname: '/mac/[id]', params: { id: status.macId } } : '/about')}
-          accessibilityRole="button"
           accessibilityLabel={
             connections.length === 1 ? `1 machine, ${status.text}` : `${connections.length} machines, ${status.text}`
           }
-          style={({ pressed }) => [styles.footerLeft, pressed && { opacity: 0.6 }]}
+          style={styles.footerLeft}
         >
           <View style={[styles.badge, { backgroundColor: colors.text }]}>
             <Text style={[styles.badgeText, { color: colors.sidebar }]}>{connections.length}</Text>
@@ -122,16 +122,16 @@ export function Menu({ onClose }: { onClose: () => void }) {
               {status.text}
             </Text>
           </View>
-        </Pressable>
-        <Pressable
+        </Touch>
+        <Touch
+          feedback="row"
           onPress={() => go('/settings')}
-          accessibilityRole="button"
           accessibilityLabel="Settings"
           hitSlop={8}
-          style={({ pressed }) => [styles.gearButton, pressed && { backgroundColor: colors.border }]}
+          style={styles.gearButton}
         >
           <Icon name="gearshape" size={20} color={colors.secondary} />
-        </Pressable>
+        </Touch>
       </View>
     </View>
   );
@@ -150,16 +150,16 @@ function NavRow({
 }) {
   const colors = useColors();
   return (
-    <Pressable
+    <Touch
+      feedback="row"
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={title}
       accessibilityState={{ selected }}
-      style={({ pressed }) => [styles.row, (selected || pressed) && { backgroundColor: colors.border }]}
+      style={[styles.row, selected && { backgroundColor: colors.border }]}
     >
       <Icon name={icon} size={20} color={colors.text} />
       <Text style={[styles.rowTitle, { color: colors.text }]}>{title}</Text>
-    </Pressable>
+    </Touch>
   );
 }
 

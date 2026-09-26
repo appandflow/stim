@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { Touch } from '@/components/touch';
 import { useMacs } from '@/hooks/mac-connection';
 import { listMacs, renameMac } from '@/lib/macs';
 import { radius, useColors } from '@/theme';
@@ -33,9 +34,9 @@ export function Rename({ id }: { id: string }) {
         returnKeyType="done"
         style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
       />
-      <Pressable onPress={save} style={[styles.button, { backgroundColor: colors.primary }]} accessibilityRole="button">
+      <Touch feedback="card" onPress={save} style={[styles.button, { backgroundColor: colors.primary }]}>
         <Text style={[styles.buttonText, { color: colors.onPrimary }]}>Save</Text>
-      </Pressable>
+      </Touch>
     </View>
   );
 }

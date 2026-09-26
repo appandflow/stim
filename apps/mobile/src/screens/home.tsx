@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   FlatList,
   Platform,
-  Pressable,
   ScrollView,
   SectionList,
   StyleSheet,
@@ -20,6 +19,7 @@ import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { MacChip } from '@/components/mac-chip';
 import { StimJar } from '@/components/stim-jar';
+import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
@@ -175,13 +175,13 @@ export function Home() {
           title="No machine paired"
           message="In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
         >
-          <Pressable
+          <Touch
+            feedback="card"
             onPress={() => router.push('/pair')}
             style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-            accessibilityRole="button"
           >
             <Text style={[styles.primaryButtonText, { color: colors.onPrimary }]}>Pair a machine</Text>
-          </Pressable>
+          </Touch>
         </EmptyState>
       </View>
     );
@@ -206,14 +206,9 @@ export function Home() {
     <View>
       <View style={styles.sectionHeader}>
         <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>Machines</Text>
-        <Pressable
-          onPress={() => router.push('/pair')}
-          accessibilityRole="button"
-          accessibilityLabel="Pair a machine"
-          hitSlop={10}
-        >
+        <Touch onPress={() => router.push('/pair')} accessibilityLabel="Pair a machine" hitSlop={10}>
           <Icon name="plus" size={22} color={colors.text} />
-        </Pressable>
+        </Touch>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
         {connections.map((c) => (
@@ -339,12 +334,12 @@ export function Home() {
         }
         ListFooterComponent={
           filters.activity === 'live' && hiddenByActivity > 0 ? (
-            <Pressable onPress={() => update({ activity: 'all' })} accessibilityRole="button" style={styles.footer}>
+            <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
               <Text style={[styles.footerText, { color: colors.secondary }]}>
                 {`${hiddenByActivity} idle ${hiddenByActivity === 1 ? 'workspace' : 'workspaces'} hidden. `}
                 <Text style={{ color: colors.primary }}>Show all</Text>
               </Text>
-            </Pressable>
+            </Touch>
           ) : undefined
         }
       />

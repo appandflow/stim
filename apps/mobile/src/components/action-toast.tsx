@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Touch } from '@/components/touch';
 import { useColors } from '@/theme';
 
 export interface Toast {
@@ -22,15 +23,16 @@ export function ActionToast({ toast, onDismiss }: { toast: Toast | null; onDismi
   if (!toast) return null;
   const tint = toast.kind === 'error' ? colors.error : toast.kind === 'success' ? colors.live : colors.text;
   return (
-    <Pressable
+    <Touch
       onPress={toast.kind === 'pending' ? undefined : onDismiss}
+      {...(toast.kind === 'pending' ? { activeOpacity: 1 } : null)}
       accessibilityRole="alert"
       accessibilityLiveRegion="polite"
       style={[styles.toast, { bottom: insets.bottom + 16, backgroundColor: colors.raised, borderColor: colors.border }]}
     >
       {toast.kind === 'pending' ? <ActivityIndicator size="small" color={colors.secondary} /> : null}
       <Text style={[styles.text, { color: tint }]}>{toast.message}</Text>
-    </Pressable>
+    </Touch>
   );
 }
 

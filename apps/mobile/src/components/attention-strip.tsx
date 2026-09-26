@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import type { HomeAttentionItem } from '@/lib/attention';
 import { radius, useColors } from '@/theme';
 
@@ -25,15 +26,14 @@ export function AttentionStrip({
       {shown.map((item, index) => {
         const tint = item.severity === 'error' ? colors.error : colors.warn;
         return (
-          <Pressable
+          <Touch
             key={item.key}
+            feedback="row"
             onPress={() => onOpen(item)}
-            accessibilityRole="button"
             accessibilityLabel={`${item.severity === 'error' ? 'Error' : 'Warning'}: ${item.title} on ${item.macName}, ${item.detail}`}
-            style={({ pressed }) => [
+            style={[
               styles.row,
               index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-              pressed && { backgroundColor: colors.raised },
             ]}
           >
             <View style={[styles.dot, { backgroundColor: tint }]} />
@@ -46,17 +46,17 @@ export function AttentionStrip({
               </Text>
             </View>
             <Icon name="chevron.right" size={13} color={colors.tertiary} />
-          </Pressable>
+          </Touch>
         );
       })}
       {more > 0 || expanded ? (
-        <Pressable
+        <Touch
+          feedback="row"
           onPress={() => setExpanded(!expanded)}
-          accessibilityRole="button"
           style={[styles.more, { borderTopColor: colors.border }]}
         >
           <Text style={[styles.moreText, { color: colors.primary }]}>{expanded ? 'Show fewer' : `${more} more`}</Text>
-        </Pressable>
+        </Touch>
       ) : null}
     </View>
   );

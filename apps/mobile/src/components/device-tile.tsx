@@ -1,11 +1,12 @@
 import { Image } from 'expo-image';
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, type ViewInstance } from 'react-native';
+import { StyleSheet, Text, View, type ViewInstance } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { AgentFeed } from '@/components/agent-feed';
 import { Card } from '@/components/card';
 import { Chip, StatusDot } from '@/components/chip';
+import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { tildeHome } from '@/lib/paths';
@@ -86,21 +87,22 @@ export function DeviceTile({
         ]}
       >
         {streams && frame ? (
-          <Pressable
+          <Touch
             ref={thumbnail}
             onPress={() => mac && openDeviceViewer(thumbnail.current, target, frame)}
-            accessibilityRole="button"
             accessibilityLabel={`Open the live screen of ${device.name}`}
-            style={zoomedAway && styles.away}
           >
             <Image
               source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-              style={{ height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: 6 }}
+              style={[
+                { height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: 6 },
+                zoomedAway && styles.away,
+              ]}
               contentFit="contain"
               transition={0}
               accessibilityLabel={`Latest frame of ${device.name}`}
             />
-          </Pressable>
+          </Touch>
         ) : (
           <Text style={[styles.placeholder, { color: colors.tertiary }]}>
             {streams

@@ -1,12 +1,13 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { MachineStatsRow } from '@/components/machine-stats';
 import { explainReadOnly, ScopeChip } from '@/components/read-only';
+import { Touch } from '@/components/touch';
 import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
 import { useMacById } from '@/hooks/mac-connection';
 import { pairingScope } from '@/lib/connection';
@@ -85,13 +86,9 @@ export function MacStatus({ id }: { id: string }) {
           <Text style={[styles.readOnlyText, { color: colors.secondary }]}>
             This phone is read-only: it cannot reload or stop workspaces, or control devices.
           </Text>
-          <Pressable
-            onPress={() => explainReadOnly(mac.name, state, connection)}
-            accessibilityRole="button"
-            hitSlop={6}
-          >
+          <Touch onPress={() => explainReadOnly(mac.name, state, connection)} hitSlop={6}>
             <Text style={[styles.readOnlyAction, { color: colors.primary }]}>Allow control</Text>
-          </Pressable>
+          </Touch>
         </View>
       ) : null}
       {usage ? <MachineStatsRow usage={usage} large /> : null}
@@ -229,14 +226,13 @@ function NeedsAttention({
                   <Text style={[styles.command, { color: colors.text }]} selectable numberOfLines={2}>
                     {item.remedy}
                   </Text>
-                  <Pressable
-                    accessibilityRole="button"
+                  <Touch
                     accessibilityLabel="Copy command"
                     onPress={() => void Clipboard.setStringAsync(item.command ?? '')}
                     hitSlop={8}
                   >
                     <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>Copy</Text>
-                  </Pressable>
+                  </Touch>
                 </View>
               ) : null}
             </View>
@@ -244,11 +240,11 @@ function NeedsAttention({
         </View>
       ))}
       {groups.length > COLLAPSED_GROUPS ? (
-        <Pressable accessibilityRole="button" onPress={() => setExpanded(!expanded)} hitSlop={8}>
+        <Touch onPress={() => setExpanded(!expanded)} hitSlop={8}>
           <Text style={{ color: colors.primary, fontSize: 14 }}>
             {expanded ? 'Show fewer' : `Show ${hidden} more ${hidden === 1 ? 'workspace' : 'workspaces'}`}
           </Text>
-        </Pressable>
+        </Touch>
       ) : null}
     </Section>
   );

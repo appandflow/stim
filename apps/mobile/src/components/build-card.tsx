@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { BuildProgressBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
@@ -56,38 +56,33 @@ function PlatformCard({
   const name = platform === 'ios' ? 'iOS' : 'Android';
   const building = build?.platform === platform;
   return (
-    <Pressable
+    <Card
       onPress={() => router.push({ pathname: '/mac/[id]/build', params: { id: macId, path: env.path, platform } })}
-      accessibilityRole="button"
       accessibilityHint={`Shows the details of the ${name} builds`}
     >
-      {({ pressed }) => (
-        <Card style={pressed && styles.pressed}>
-          <View style={styles.platform}>
-            {building ? (
-              <BuildProgressBar build={build} />
-            ) : (
-              <View style={styles.header}>
-                <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
-                <Text style={[styles.name, { color: colors.tertiary }]}>{'\u203A'}</Text>
-              </View>
-            )}
-            {last ? (
-              <Text style={[styles.line, { color: last.status === 'failed' ? colors.error : colors.secondary }]}>
-                {`Last: ${lastBuildSummary(last, now)}`}
-              </Text>
-            ) : building ? null : (
-              <Text style={[styles.line, { color: colors.secondary }]}>No build recorded</Text>
-            )}
-            {building ? null : build ? (
-              <Text style={[styles.line, { color: colors.tertiary }]}>Next: checked after the running build</Text>
-            ) : (
-              <NextBuild plan={plan} />
-            )}
+      <View style={styles.platform}>
+        {building ? (
+          <BuildProgressBar build={build} />
+        ) : (
+          <View style={styles.header}>
+            <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
+            <Text style={[styles.name, { color: colors.tertiary }]}>{'\u203A'}</Text>
           </View>
-        </Card>
-      )}
-    </Pressable>
+        )}
+        {last ? (
+          <Text style={[styles.line, { color: last.status === 'failed' ? colors.error : colors.secondary }]}>
+            {`Last: ${lastBuildSummary(last, now)}`}
+          </Text>
+        ) : building ? null : (
+          <Text style={[styles.line, { color: colors.secondary }]}>No build recorded</Text>
+        )}
+        {building ? null : build ? (
+          <Text style={[styles.line, { color: colors.tertiary }]}>Next: checked after the running build</Text>
+        ) : (
+          <NextBuild plan={plan} />
+        )}
+      </View>
+    </Card>
   );
 }
 
@@ -120,5 +115,4 @@ const styles = StyleSheet.create({
   name: { fontSize: 14, fontWeight: '600' },
   line: { fontSize: 13, lineHeight: 18 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  pressed: { opacity: 0.6 },
 });
