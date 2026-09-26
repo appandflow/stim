@@ -392,6 +392,37 @@ test('findOrphanedDevices proposes only Stim devices absent from config', () => 
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
 });
 
+test('orphaned and stale iOS simulators carry the data size simctl reports', () => {
+  const now = Date.now();
+  const sims = [
+    makeIosSim({ udid: 'U-ORPHAN', name: 'stim-gone', dataPathSize: 3 * 1024 ** 3 }),
+    makeIosSim({ udid: 'U-STALE', name: 'stim-stale', dataPathSize: 2 * 1024 ** 3 }),
+    makeIosSim({ udid: 'U-UNSIZED', name: 'stim-unsized' }),
+  ];
+  recordCreatedDevice('ios', 'U-ORPHAN');
+  recordCreatedDevice('ios', 'U-UNSIZED');
+  const config = makeConfig({
+    projects: { '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE', owned: true } } } },
+  });
+  const { orphaned } = findOrphanedDevices({ sims, config, isMounted: () => true });
+  expect(orphaned).toEqual([
+    { kind: 'ios', id: 'U-ORPHAN', name: 'stim-gone', bytes: 3 * 1024 ** 3 },
+    { kind: 'ios', id: 'U-UNSIZED', name: 'stim-unsized' },
+  ]);
+  const stale = findStaleProjectDevices({
+    config,
+    sims,
+    olderThanDays: 30,
+    now,
+    lastTouched: () => now - 90 * DAY_MS,
+  });
+  expect(stale.map((d) => d.bytes)).toEqual([2 * 1024 ** 3]);
+  const lines = formatGcReport({ orphanedDevices: orphaned, staleDevices: stale, olderThan: 30 });
+  expect(lines).toContain('  ios stim-gone (U-ORPHAN) - 3.0G on disk');
+  expect(lines).toContain('  ios stim-stale (U-STALE) - 2.0G on disk');
+  expect(lines).toContain('  ios stim-unsized (U-UNSIZED)');
+});
+
 test('gc deletes only unreferenced devices this home recorded, and lists other stim-* devices', () => {
   recordCreatedDevice('ios', 'RECORDED');
   const avdRoot = join(tmpHome, 'avd');

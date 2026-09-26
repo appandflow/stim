@@ -403,7 +403,8 @@ THE ONE CASE GC WILL NOT REAP
   change it. When enabled, Quick Boot keeps one automatic snapshot until the AVD is
   parked or deleted.
   \`gc\` prints the on-disk size beside an orphaned or stale owned Android AVD
-  when its content directory can be read.
+  when its content directory can be read, and beside an orphaned or stale
+  owned simulator the data size simctl reports for it.
 
   So are the logs, and one of them is not small: build-ios.ndjson /
   build-android.ndjson hold the whole xcodebuild or gradle transcript at debug
