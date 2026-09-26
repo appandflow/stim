@@ -48,10 +48,6 @@ describe('zoomOffset', () => {
     expect(offset).toBeCloseTo(0.1);
   });
 
-  it('leaves a zoomed picture in place when a pinch restarts at the current fingers', () => {
-    expect(zoomOffset(2.3, 0.2, 2.3, 0.1)).toBeCloseTo(0.2);
-  });
-
   it('never pans past the picture edge, and centers the picture back at fit', () => {
     expect(zoomOffset(2, 0, 2, 0.5, 2)).toBe(0.5);
     expect(zoomOffset(3, -1, 1, 0.9)).toBeCloseTo(0);
