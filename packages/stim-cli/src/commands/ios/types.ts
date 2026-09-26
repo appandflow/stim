@@ -47,6 +47,7 @@ export interface VerifyLaunchResultLike {
   verified?: boolean;
   skipped?: boolean;
   requested?: boolean;
+  unattributed?: boolean;
   fatal?: boolean;
   processAlive?: boolean | null;
   errors?: LaunchErrorRecord[];

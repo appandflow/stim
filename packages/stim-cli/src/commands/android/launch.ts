@@ -1,4 +1,4 @@
-import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
+import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../devices/android.ts';
 import type { ChildProcess } from 'node:child_process';
@@ -13,6 +13,7 @@ import {
   LAUNCH_BUNDLING,
   LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
+  unattributedLaunchLines,
   unverifiedLaunchLines,
   RELEASE_VERIFY_WAIT_MS,
   VERIFY_TIMEOUT_MS,
@@ -111,7 +112,7 @@ async function verifyAndroidRun({
   scheme,
   component = null,
   phase,
-}: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string }> {
+}: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
   const readNativeCrashes = () =>
     remoteDevice
@@ -164,11 +165,13 @@ async function verifyAndroidRun({
   const newEmulator = Boolean(device.created && device.owned && !remoteDevice);
   const timeoutMs = newEmulator ? 60000 : VERIFY_TIMEOUT_MS;
   if (metroCheck && newEmulator) phase('verify', 'waiting up to 60s for bundle load (new emulator)');
+  const siblings = siblingPlatformSlots(root, 'android', slot);
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({
         timeoutMs,
         requireBundleResponse: true,
         slot: launchSlotScope(root, slot),
+        platformShared: siblings.length > 0,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
         logsDir,
         since: launchedAt,
@@ -280,6 +283,13 @@ async function verifyAndroidRun({
       chalk.dim('Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
     );
     return { state: LAUNCH_BUNDLING };
+  }
+
+  if (verification?.unattributed) {
+    const [headline, ...lines] = unattributedLaunchLines({ platform: 'android', metroPort, slot, siblings });
+    phase('verify', chalk.yellow(headline));
+    for (const line of lines) phase('', chalk.yellow(line));
+    return { state: LAUNCH_UNVERIFIED, unattributed: true };
   }
 
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
@@ -713,7 +723,11 @@ export async function finishAndroidRun({
   }
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
-  const { state: launchState, warning: launchWarning } = await verifyAndroidRun({
+  const {
+    state: launchState,
+    warning: launchWarning,
+    unattributed,
+  } = await verifyAndroidRun({
     root,
     slot,
     release,
@@ -744,7 +758,14 @@ export async function finishAndroidRun({
     );
   }
   writer.write(
-    launchOutcomeRecord({ launchState, release, bundleId: androidPackage, configuration: variant, metroPort }),
+    launchOutcomeRecord({
+      launchState,
+      release,
+      bundleId: androidPackage,
+      configuration: variant,
+      metroPort,
+      unattributed,
+    }),
   );
 
   const leaseFacts = lease?.facts() ?? null;

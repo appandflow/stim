@@ -77,12 +77,14 @@ export function launchOutcomeRecord({
   bundleId,
   configuration,
   metroPort,
+  unattributed = false,
 }: {
   launchState: boolean | string;
   release: boolean;
   bundleId: string | null;
   configuration: string | null;
   metroPort?: number | null;
+  unattributed?: boolean;
 }): Record<string, unknown> {
   const unverified = launchState === LAUNCH_UNVERIFIED;
   const bundling = launchState === LAUNCH_BUNDLING;
@@ -91,6 +93,8 @@ export function launchOutcomeRecord({
     msg = unverified
       ? `${bundleId} could not be verified as running after its ${configuration} launch`
       : `${bundleId} is running its embedded ${configuration} bundle`;
+  } else if (unverified && unattributed) {
+    msg = `a bundle delivered on this workspace's Metro port ${metroPort} could not be attributed to ${bundleId} on this device: another slot of the same platform shares that Metro`;
   } else if (unverified) {
     msg = `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`;
   } else if (bundling) {
