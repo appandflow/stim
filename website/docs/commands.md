@@ -525,7 +525,8 @@ session, even `--slot default`; use plain `stop` for that. `--slot web` closes
 only the owned Chrome from `stim web` and keeps its profile; Metro and every
 device keep running, so no device slot can be named `web`. A slot the
 workspace has not recorded is refused with `STIM_BAD_ARG` and the list of its
-slots, and nothing is stopped.
+slots, and nothing is stopped. A slot whose first build is still running
+counts as recorded, and that build is interrupted.
 
 ### Stopping during a build
 

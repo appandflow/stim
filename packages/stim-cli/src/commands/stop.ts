@@ -1133,7 +1133,7 @@ export async function stopWorkspaceNow({
         workspaceDir(root),
         NATIVE_RUN_LOCK,
         () => {
-          if (unknownSlot) throw unknownSlotRefusal();
+          if (unknownSlot && !recordedSlots(root).includes(slot!)) throw unknownSlotRefusal();
           return stop({ root, slot });
         },
         {

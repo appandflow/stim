@@ -1288,7 +1288,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   session even though remote sessions use the default slot. stop --slot web
   closes only the owned Chrome from stim web. A slot the workspace has not
   recorded is refused with STIM_BAD_ARG and the list of its slots; nothing is
-  stopped. Plain stop handles the whole workspace.
+  stopped. A slot whose first build is still running counts as recorded, and
+  that build is interrupted. Plain stop handles the whole workspace.
   status reports named devices under slots and counts their memory. Device
   caps count every slot. Recycling uses the same model/runtime-matched pool
   for every slot, with one shared cap per platform and oldest-first eviction.
