@@ -101,6 +101,17 @@ public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {
   }
 }
 
+/// The `stim ios` or `stim android` command that boots a local device's slot and installs the app; nil for
+/// a physical device or a remote session, which Stim cannot boot.
+public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
+  let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
+  switch device {
+  case .ios: return StimCommand(["ios"] + slot, cwd: cwd)
+  case .android(_, let avd): return avd.physical ? nil : StimCommand(["android"] + slot, cwd: cwd)
+  case .remote: return nil
+  }
+}
+
 public func shellQuote(_ s: String) -> String {
   "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }

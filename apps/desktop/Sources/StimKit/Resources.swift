@@ -161,6 +161,9 @@ public struct DiskVolume: Equatable, Identifiable, Sendable {
   /// Free space without purgeable space, which is what Stim's disk budget measures.
   public var unpurgeableFreeBytes: Int64?
 
+  /// The free space Stim Desktop shows: without purgeable space when the volume reports it.
+  public var freeBytes: Int64 { unpurgeableFreeBytes ?? availableBytes }
+
   public init(
     id: String, name: String, availableBytes: Int64, totalBytes: Int64, holds: [String], unpurgeableFreeBytes: Int64? = nil
   ) {

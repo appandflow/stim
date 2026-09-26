@@ -279,17 +279,17 @@ struct MachineSummary: View {
           )
         }
       }
-      if let lowest = metrics.volumes.min(by: { $0.availableBytes < $1.availableBytes }) {
+      if let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes }) {
         Button { showsDisk.toggle() } label: {
           HStack(spacing: 6) {
-            statItem(icon: "internaldrive", value: formatDiskFree(lowest.availableBytes), tone: UsageThresholds.disk(freeBytes: lowest.availableBytes))
+            statItem(icon: "internaldrive", value: "\(formatDisk(lowest.freeBytes)) free", tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
             if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
               Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Theme.primary)
             }
           }
         }
         .buttonStyle(.plain)
-        .help("Free space on the fullest volume holding the repositories, Stim home or simulators, purgeable space included")
+        .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
         .popover(isPresented: $showsDisk, arrowEdge: .bottom) {
           DiskPopover(volumes: metrics.volumes, reclaimable: metrics.reclaimable)
         }
@@ -325,10 +325,6 @@ private func formatMemoryPair(_ memory: MachineMemory) -> String {
   return "\(used)/\(totalGb) GB"
 }
 
-private func formatDiskFree(_ bytes: Int64) -> String {
-  "\(Int((Double(bytes) / 1e9).rounded())) GB free"
-}
-
 /// macOS proposes no width to a toolbar item, so this proposes `width` to its content and takes the content's size.
 private struct ProposedWidth: Layout {
   var width: CGFloat
@@ -354,12 +350,12 @@ struct DiskPopover: View {
           HStack {
             Text(volume.name).font(Theme.body(12, weight: .semibold))
             Spacer()
-            Text("\(formatDisk(volume.availableBytes)) free of \(formatDisk(volume.totalBytes))")
+            Text("\(formatDisk(volume.freeBytes)) free of \(formatDisk(volume.totalBytes))")
               .font(Theme.mono())
               .foregroundStyle(Theme.secondary)
           }
-          ProgressView(value: 1 - Double(volume.availableBytes) / Double(max(1, volume.totalBytes)))
-            .tint(volume.availableBytes < UsageThresholds.lowDiskBytes ? Theme.warn : Theme.lavender)
+          ProgressView(value: 1 - Double(volume.freeBytes) / Double(max(1, volume.totalBytes)))
+            .tint(volume.freeBytes < UsageThresholds.lowDiskBytes ? Theme.warn : Theme.lavender)
           Text(volume.holds.joined(separator: ", ")).foregroundStyle(Theme.tertiary)
         }
       }

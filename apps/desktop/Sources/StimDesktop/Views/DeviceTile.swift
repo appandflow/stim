@@ -35,9 +35,13 @@ struct DeviceTile: View {
           BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
         }
         Rectangle().fill(Theme.border).frame(height: 1)
-        screen
-          .frame(height: screenHeight)
-          .background(Theme.screen)
+        if let workspace, let run = runCommand(for: device, cwd: workspace), !device.isRunning {
+          stoppedBar(run)
+        } else {
+          screen
+            .frame(height: screenHeight)
+            .background(Theme.screen)
+        }
       }
     }
     .overlay {
@@ -130,6 +134,22 @@ struct DeviceTile: View {
           .help("Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
       }
     }
+  }
+
+  private func stoppedBar(_ run: StimCommand) -> some View {
+    HStack(spacing: 10) {
+      Text("\(device.state). Run stim \(run.arguments.joined(separator: " ")) to boot it and install the app.")
+        .font(Theme.body(12))
+        .foregroundStyle(Theme.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 0)
+      Button("Run") { actions.run("Run \(device.slot)", run) }
+        .buttonStyle(.stim())
+        .fixedSize()
+        .disabled(actions.active(for: run.cwd) != nil)
+        .help(run.displayLine())
+    }
+    .padding(12)
   }
 
   private func stopButton(workspace: String) -> some View {
