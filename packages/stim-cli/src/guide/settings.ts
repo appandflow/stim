@@ -394,6 +394,8 @@ Stim Desktop selects the workspace that owns the simulator and focuses that
 device. It only displays the simulator; it never boots or shuts it down.
 When Stim Desktop is not running, Stim starts it without the command's
 \`STIM_HOME\`, so it reads the same Stim home as when you open it yourself.
+It shows only devices from that home: under another \`STIM_HOME\`, pick
+\`--simulator-app xcode\` to see the simulator.
 
 Override the preference for one local launch with
 \`stim ios --simulator-app siniulator\`, \`stim ios --simulator-app stim-desktop\`,
