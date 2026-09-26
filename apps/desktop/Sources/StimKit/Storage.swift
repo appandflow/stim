@@ -138,7 +138,7 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// while no category has anything measured on disk.
   public var total: Int64? {
     let parts = [buildOutputs, nodeModules, devices]
-    guard totalComplete || parts.contains(where: { if case .size = $0 { return true } else { return false } }) else {
+    guard totalComplete || parts.contains(where: { if case .size(let bytes) = $0 { return bytes > 0 } else { return false } }) else {
       return nil
     }
     return parts.compactMap(\.bytes).reduce(0, +)

@@ -110,7 +110,6 @@ final class StorageStore: ObservableObject {
       .first { FileManager.default.isExecutableFile(atPath: $0) }
   }
 
-  /// Runs blocking work on a dispatch queue, so waiting on a child process never holds a Swift concurrency thread.
   nonisolated private static func offThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
     await withCheckedContinuation { continuation in
       DispatchQueue.global(qos: .default).async { continuation.resume(returning: work()) }
@@ -151,15 +150,13 @@ final class StorageStore: ObservableObject {
     }
     process.terminate()
     if read.wait(timeout: .now() + 5) == .timedOut {
-      kill(process.processIdentifier, SIGKILL)
+      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
       guard read.wait(timeout: .now() + 5) == .success else { return (Data(), true) }
     }
     return (box.value, true)
   }
 }
 
-/// Children still running, which quitting the app terminates: an orphaned `du` keeps reading the disk until it
-/// finishes, however long that takes.
 private final class RunningProcesses: @unchecked Sendable {
   private let lock = NSLock()
   private var processes: Set<Process> = []
