@@ -283,9 +283,12 @@ When notifications can arrive:
   with each Mac over the existing connection; the Mac sends through Expo's push
   service and Apple, with the workspace title, a short reason, the screen to
   open and the workspace's path. The app then does not notify those events
-  itself, so nothing arrives twice. Push needs the production app: Stim Dev has
-  no push credentials and notifies only locally, unless Metro starts with
-  `STIM_DEV_PUSH=1`.
+  itself, so nothing arrives twice. Push needs the production app and an
+  APNs key in the EAS credentials for `com.appandflow.stim` (`eas credentials
+--platform ios`, **Push Notifications**); without one Expo refuses every
+  push with `InvalidCredentials`, which `stim-server` prints on stderr. Stim
+  Dev has no push credentials and notifies only locally, unless Metro starts
+  with `STIM_DEV_PUSH=1`.
 - **Everything else, and all of Android**: only while the app is open. The
   app notifies from its own connection to each Mac, which iOS closes seconds
   after the app leaves the foreground. Android push needs FCM credentials the
