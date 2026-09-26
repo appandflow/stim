@@ -29,20 +29,20 @@ struct LogsView: View {
   var body: some View {
     VStack(spacing: 0) {
       filterBar
-      Rectangle().fill(Theme.border).frame(height: 1)
+      Rectangle().fill(Palette.border).frame(height: 1)
       ZStack(alignment: .bottomTrailing) {
         LogTable(model: model, selection: $selection)
         overlay
       }
       if let record = selectedRecord {
-        Rectangle().fill(Theme.border).frame(height: 1)
+        Rectangle().fill(Palette.border).frame(height: 1)
         RecordDetail(record: record)
           .frame(height: 170)
       }
-      Rectangle().fill(Theme.border).frame(height: 1)
+      Rectangle().fill(Palette.border).frame(height: 1)
       footer
     }
-    .background(Theme.background)
+    .background(Palette.background)
     .onAppear { search = query.search }
     .task(id: search) {
       guard search != query.search else { return }
@@ -74,12 +74,12 @@ struct LogsView: View {
             query.sources.insert(source)
           }
         } label: {
-          ToggleChip(on: on, tint: Theme.lavender) { Text(Self.title(source)) }
+          ToggleChip(on: on, tint: Palette.accent) { Text(Self.title(source)) }
         }
         .buttonStyle(.plain)
         .help(Self.help(source))
       }
-      Rectangle().fill(Theme.border).frame(width: 1, height: 18)
+      Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if !slots.isEmpty {
         Picker("Slot", selection: Binding(get: { effectiveQuery.slot }, set: { query.slot = $0 })) {
           Text("All slots").tag(String?.none)
@@ -98,7 +98,7 @@ struct LogsView: View {
       Button {
         query.errorsOnly.toggle()
       } label: {
-        ToggleChip(on: query.errorsOnly, tint: Theme.error) {
+        ToggleChip(on: query.errorsOnly, tint: Palette.error) {
           Image(systemName: "xmark.octagon")
           Text("Errors only")
         }
@@ -121,7 +121,7 @@ struct LogsView: View {
       EmptyState(title: "No logs", message: message)
     } else if model.count == 0 {
       Text(model.phase == .following ? "No matching records yet" : "")
-        .foregroundStyle(Theme.tertiary)
+        .foregroundStyle(Palette.tertiary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)
     } else if !model.pinnedToLatest {
@@ -129,8 +129,8 @@ struct LogsView: View {
         Label("Jump to latest", systemImage: "arrow.down.to.line")
           .padding(.horizontal, 10)
           .padding(.vertical, 6)
-          .background(Capsule().fill(Theme.purple))
-          .foregroundStyle(Theme.text)
+          .background(Capsule().fill(Palette.brand))
+          .foregroundStyle(Palette.text)
       }
       .buttonStyle(.plain)
       .padding(16)
@@ -141,10 +141,10 @@ struct LogsView: View {
     HStack(spacing: 10) {
       switch model.phase {
       case .following:
-        StatusDot(color: model.pinnedToLatest ? Theme.live : Theme.warn)
+        StatusDot(color: model.pinnedToLatest ? Palette.success : Palette.warning)
         Text(model.pinnedToLatest ? "Following" : "Paused")
       case .ended(let message):
-        StatusDot(color: Theme.error)
+        StatusDot(color: Palette.error)
         Text(abbreviatingHome(message)).lineLimit(1).truncationMode(.middle).help(abbreviatingHome(message))
       case .idle:
         EmptyView()
@@ -153,7 +153,7 @@ struct LogsView: View {
         countLabel(model.count, "record")
           + (model.count >= LogsModel.limit * 9 / 10 ? " (oldest dropped past \(LogsModel.limit.formatted()))" : "")
       )
-      .foregroundStyle(Theme.tertiary)
+      .foregroundStyle(Palette.tertiary)
       Spacer()
       Button("Copy") { copy() }
         .help(selection.isEmpty ? "Copy every loaded record" : "Copy the selected records")
@@ -163,7 +163,7 @@ struct LogsView: View {
       .disabled(env.logs?.dir == nil)
     }
     .font(Theme.body(11.5))
-    .foregroundStyle(Theme.secondary)
+    .foregroundStyle(Palette.secondary)
     .controlSize(.small)
     .padding(.horizontal, 14)
     .padding(.vertical, 8)
@@ -205,11 +205,11 @@ private struct ToggleChip<Content: View>: View {
   var body: some View {
     HStack(spacing: 6) { content }
       .font(Theme.body(11.5))
-      .foregroundStyle(on ? tint : Theme.tertiary)
+      .foregroundStyle(on ? tint : Palette.tertiary)
       .padding(.horizontal, 9)
       .padding(.vertical, 4)
       .background(RoundedRectangle(cornerRadius: 7).fill(on ? tint.opacity(0.16) : .clear))
-      .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(on ? .clear : Theme.border))
+      .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(on ? .clear : Palette.border))
       .contentShape(Rectangle())
   }
 }
@@ -221,16 +221,16 @@ private struct RecordDetail: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 6) {
         HStack(spacing: 8) {
-          Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Theme.tertiary)
+          Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
           Text(record.level.rawValue.uppercased()).foregroundStyle(LogRowText.color(record.level))
-          Text(LogRowText.sourceLabel(record.src)).foregroundStyle(Theme.primary)
-          if let slot = record.slot { Text(slot).foregroundStyle(Theme.lavender) }
-          if let event = record.event { Text(event).foregroundStyle(Theme.tertiary) }
-          if let proc = record.proc { Text(proc).foregroundStyle(Theme.tertiary) }
+          Text(LogRowText.sourceLabel(record.src)).foregroundStyle(Palette.primary)
+          if let slot = record.slot { Text(slot).foregroundStyle(Palette.accent) }
+          if let event = record.event { Text(event).foregroundStyle(Palette.tertiary) }
+          if let proc = record.proc { Text(proc).foregroundStyle(Palette.tertiary) }
         }
-        Text(abbreviatingHome(record.msg)).foregroundStyle(Theme.text)
+        Text(abbreviatingHome(record.msg)).foregroundStyle(Palette.text)
         ForEach(Array((record.stack ?? []).enumerated()), id: \.offset) { _, frame in
-          Text("  at \(abbreviatingHome(frame.description))").foregroundStyle(Theme.secondary)
+          Text("  at \(abbreviatingHome(frame.description))").foregroundStyle(Palette.secondary)
         }
       }
       .font(Theme.mono(11.5))
@@ -238,6 +238,6 @@ private struct RecordDetail: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(12)
     }
-    .background(Theme.sidebar)
+    .background(Palette.sidebar)
   }
 }

@@ -1,4 +1,7 @@
-/** Brand colors match website/src/css/custom.css and apps/desktop Theme.swift. */
+/**
+ * Brand colors match website/src/css/custom.css. Stim Desktop's Swift tokens are generated from this file by
+ * apps/desktop/scripts/generate-tokens.mjs, so this module stays plain data with no imports.
+ */
 
 export const space = {
   xxs: 2,
@@ -50,8 +53,20 @@ export const text = {
 
 export type TextVariant = keyof typeof text;
 
+/** Stim Desktop's sizes for the same text styles. macOS body text is 13 pt. */
+export const macosText: Partial<Record<TextVariant, Partial<TextStyleToken>>> = {
+  caption2: { fontSize: 10.5, lineHeight: 13 },
+  caption: { fontSize: 11, lineHeight: 14 },
+  footnote: { fontSize: 11.5, lineHeight: 15 },
+  callout: { fontSize: 12, lineHeight: 16 },
+  body: { fontSize: 13, lineHeight: 17 },
+  headline: { fontSize: 15, lineHeight: 20 },
+  title: { fontSize: 22, lineHeight: 28, fontWeight: 'semibold' },
+};
+
 export const fonts = {
-  mono: { ios: 'Menlo', android: 'monospace' },
+  sans: { macos: 'InterVariable' },
+  mono: { ios: 'Menlo', android: 'monospace', macos: 'JetBrainsMono-Regular' },
 } as const;
 
 export const opacity = {
@@ -72,6 +87,9 @@ const light = {
   primary: '#5521FF',
   accent: '#7045FF',
   onPrimary: '#FFFFFF',
+  brand: '#5521FF',
+  onBrand: '#FFFFFF',
+  selection: '#F3EFFF',
   background: '#FFFFFF',
   sidebar: '#F6F4FA',
   surface: '#FCFBFF',
@@ -97,6 +115,9 @@ const dark: Record<ColorToken, string> = {
   primary: '#B39CFF',
   accent: '#AA90FF',
   onPrimary: '#15121D',
+  brand: '#5521FF',
+  onBrand: '#FFFFFF',
+  selection: '#2E2445',
   background: '#15121D',
   sidebar: '#0E0C13',
   surface: '#201B2B',

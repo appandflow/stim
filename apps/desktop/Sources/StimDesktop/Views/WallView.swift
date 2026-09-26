@@ -90,10 +90,10 @@ struct WorkspaceHeader: View {
     HStack(spacing: 12) {
       Text(env.names.title).font(Theme.heading(16)).lineLimit(1).truncationMode(.middle)
       if project.name != env.names.title {
-        Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary).lineLimit(1).fixedSize()
+        Text(project.name).font(Theme.body(12)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
       }
       if let inCheckout = env.names.inCheckout {
-        Text(inCheckout).font(Theme.body(12)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
+        Text(inCheckout).font(Theme.body(12)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
       }
     }
   }
@@ -101,14 +101,14 @@ struct WorkspaceHeader: View {
   private var chips: some View {
     FlowLayout(spacing: 8, lineSpacing: 6) {
       if let metro = env.metro {
-        Chip(tint: metro.running ? nil : Theme.error) {
-          StatusDot(color: metro.running ? Theme.live : Theme.error)
+        Chip(tint: metro.running ? nil : Palette.error) {
+          StatusDot(color: metro.running ? Palette.success : Palette.error)
           Text("Metro")
           Text(":\(String(metro.port))").font(Theme.mono())
         }
       }
       if let supervisor = env.supervisor, supervisor.healthy != true {
-        Chip(tint: Theme.warn) { Text("supervisor unhealthy") }
+        Chip(tint: Palette.warning) { Text("supervisor unhealthy") }
       }
       if let usage {
         if let cpu = usage.latest.cpuPercent {
@@ -132,7 +132,7 @@ struct WorkspaceHeader: View {
       }
       if let errors = env.logs?.errorsSinceMarker {
         Button(action: openLogs) {
-          Chip(tint: errors > 0 ? Theme.error : nil) { Text(countLabel(errors, "error")) }
+          Chip(tint: errors > 0 ? Palette.error : nil) { Text(countLabel(errors, "error")) }
         }
         .buttonStyle(.plain)
         .help("Open logs")

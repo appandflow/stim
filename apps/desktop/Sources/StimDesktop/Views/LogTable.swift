@@ -16,7 +16,7 @@ struct LogTable: NSViewRepresentable {
     table.intercellSpacing = .zero
     table.allowsMultipleSelection = true
     table.usesAlternatingRowBackgroundColors = false
-    table.backgroundColor = NSColor(Theme.background)
+    table.backgroundColor = NSColor(Palette.background)
     table.style = .plain
     table.selectionHighlightStyle = .regular
     table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
@@ -28,7 +28,7 @@ struct LogTable: NSViewRepresentable {
     scroll.documentView = table
     scroll.hasVerticalScroller = true
     scroll.drawsBackground = true
-    scroll.backgroundColor = NSColor(Theme.background)
+    scroll.backgroundColor = NSColor(Palette.background)
     scroll.contentView.postsBoundsChangedNotifications = true
     context.coordinator.attach(table: table, scroll: scroll)
     return scroll
@@ -165,10 +165,10 @@ enum LogRowText {
 
   static func color(_ level: LogLevel) -> Color {
     switch level {
-    case .debug: return Theme.tertiary
-    case .info: return Theme.secondary
-    case .warn: return Theme.warn
-    case .error, .fatal: return Theme.error
+    case .debug: return Palette.tertiary
+    case .info: return Palette.secondary
+    case .warn: return Palette.warning
+    case .error, .fatal: return Palette.error
     }
   }
 
@@ -188,15 +188,15 @@ enum LogRowText {
     func add(_ string: String, _ color: Color) {
       text.append(NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: NSColor(color)]))
     }
-    add(record.date.formatted(LogRecord.timeFormat) + "  ", Theme.tertiary)
+    add(record.date.formatted(LogRecord.timeFormat) + "  ", Palette.tertiary)
     add(record.level.rawValue.uppercased().padding(toLength: 6, withPad: " ", startingAt: 0), color(record.level))
-    add(sourceLabel(record.src).padding(toLength: 7, withPad: " ", startingAt: 0), Theme.primary)
-    if let slot = record.slot { add("[\(slot)] ", Theme.lavender) }
+    add(sourceLabel(record.src).padding(toLength: 7, withPad: " ", startingAt: 0), Palette.primary)
+    if let slot = record.slot { add("[\(slot)] ", Palette.accent) }
     let lines = record.msg.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
     let first = lines.first.map(String.init) ?? ""
-    add(abbreviatingHome(first).replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Theme.error : Theme.text)
+    add(abbreviatingHome(first).replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Palette.error : Palette.text)
     let extra = record.msg.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } + (record.stack?.count ?? 0)
-    if extra > 0 { add("  +" + countLabel(extra, "line"), Theme.tertiary) }
+    if extra > 0 { add("  +" + countLabel(extra, "line"), Palette.tertiary) }
     return text
   }
 }

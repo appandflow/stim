@@ -38,7 +38,7 @@ struct ActivitySheet: View {
     .font(Theme.body(12))
     .padding(22)
     .frame(width: 560)
-    .background(Theme.background)
+    .background(Palette.background)
     .onChange(of: run.exitStatus) { _, status in
       guard status == 0, closesOnSuccess else { return }
       Task {
@@ -64,7 +64,7 @@ struct ActivitySheet: View {
     } else {
       Label(Self.pastTense(run.title), systemImage: "checkmark.circle.fill")
         .font(Theme.body(13, weight: .medium))
-        .foregroundStyle(Theme.live)
+        .foregroundStyle(Palette.success)
     }
   }
 
@@ -73,7 +73,7 @@ struct ActivitySheet: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(run.isRunning ? Self.gerund(run.title) : run.title).font(Theme.heading(17))
         if abbreviatingHome(run.command.cwd) != "~" {
-          Text(abbreviatingHome(run.command.cwd)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.middle)
+          Text(abbreviatingHome(run.command.cwd)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle)
         }
       }
       Spacer()
@@ -87,23 +87,23 @@ struct ActivitySheet: View {
         HStack(spacing: 10) {
           ProgressView().controlSize(.small)
           Text(currentStep)
-            .foregroundStyle(Theme.text)
+            .foregroundStyle(Palette.text)
             .lineLimit(1)
             .truncationMode(.middle)
           Spacer()
           Text(formatDuration(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
             .font(Theme.mono())
-            .foregroundStyle(Theme.tertiary)
+            .foregroundStyle(Palette.tertiary)
         }
         if let waiting = ActivityProgress.waitingStep(steps) {
           Label(abbreviatingHome(waiting.fact), systemImage: "hourglass")
-            .foregroundStyle(Theme.warn)
+            .foregroundStyle(Palette.warning)
             .lineLimit(2)
         }
       }
       .padding(12)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+      .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
     }
   }
 
@@ -127,10 +127,10 @@ struct ActivitySheet: View {
   private func failureView(_ message: String) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Label(abbreviatingHome(message), systemImage: "xmark.octagon.fill")
-        .foregroundStyle(Theme.error)
+        .foregroundStyle(Palette.error)
         .textSelection(.enabled)
       ForEach(steps.filter { $0.label == "remedy" }) { remedy in
-        Text(abbreviatingHome(remedy.fact)).foregroundStyle(Theme.secondary).textSelection(.enabled)
+        Text(abbreviatingHome(remedy.fact)).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
     }
   }
@@ -139,27 +139,27 @@ struct ActivitySheet: View {
     VStack(alignment: .leading, spacing: 12) {
       Label(outcome.headline, systemImage: outcome.failures > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
         .font(Theme.body(13, weight: .medium))
-        .foregroundStyle(outcome.failures > 0 ? Theme.warn : Theme.live)
+        .foregroundStyle(outcome.failures > 0 ? Palette.warning : Palette.success)
       if !outcome.done.isEmpty, outcome.done.count <= 6 {
         VStack(alignment: .leading, spacing: 4) {
-          ForEach(outcome.done, id: \.self) { item in itemRow(item, icon: "checkmark", tint: Theme.tertiary) }
+          ForEach(outcome.done, id: \.self) { item in itemRow(item, icon: "checkmark", tint: Palette.tertiary) }
         }
       }
       if !outcome.failed.isEmpty {
         VStack(alignment: .leading, spacing: 6) {
           Text(outcome.failed.count == 1 ? "1 failed" : "\(outcome.failed.count) failed")
             .font(Theme.heading(13))
-            .foregroundStyle(Theme.error)
-          ForEach(outcome.failed, id: \.self) { item in itemRow(item, icon: "xmark.octagon.fill", tint: Theme.error) }
+            .foregroundStyle(Palette.error)
+          ForEach(outcome.failed, id: \.self) { item in itemRow(item, icon: "xmark.octagon.fill", tint: Palette.error) }
         }
       } else if outcome.failures > 0 {
         Text("\(outcome.failures) could not be cleaned up. Open Details for the reason, then run it again.")
-          .foregroundStyle(Theme.error)
+          .foregroundStyle(Palette.error)
       }
       if !outcome.kept.isEmpty {
         DisclosureGroup(isExpanded: $showsKept) {
           let rows = VStack(alignment: .leading, spacing: 6) {
-            ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Theme.tertiary) }
+            ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Palette.tertiary) }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           if outcome.kept.count > 5 {
@@ -168,7 +168,7 @@ struct ActivitySheet: View {
             rows
           }
         } label: {
-          Text("\(outcome.kept.count) left alone").foregroundStyle(Theme.secondary)
+          Text("\(outcome.kept.count) left alone").foregroundStyle(Palette.secondary)
         }
       }
     }
@@ -180,14 +180,14 @@ struct ActivitySheet: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(abbreviatingHome(item.label)).lineLimit(2).truncationMode(.middle)
         if let detail = item.detail {
-          Text(abbreviatingHome(detail)).foregroundStyle(Theme.tertiary).lineLimit(3)
+          Text(abbreviatingHome(detail)).foregroundStyle(Palette.tertiary).lineLimit(3)
         }
       }
       Spacer()
       if let bytes = item.bytes, bytes > 0 {
         Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
           .font(Theme.mono())
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
       }
     }
     .textSelection(.enabled)
@@ -211,7 +211,7 @@ struct ActivitySheet: View {
       }
     }
     .font(Theme.body(11.5))
-    .foregroundStyle(Theme.tertiary)
+    .foregroundStyle(Palette.tertiary)
   }
 
   /// A present-tense header for common action verbs, falling back to the plain title.
@@ -254,7 +254,7 @@ struct ActivitySheet: View {
   @ViewBuilder private var footer: some View {
     HStack {
       if run.isRunning {
-        Text("Closing keeps it running in the background.").foregroundStyle(Theme.tertiary)
+        Text("Closing keeps it running in the background.").foregroundStyle(Palette.tertiary)
       }
       Spacer()
       if case .success(let report) = report, run.command.arguments == ["gc", "--json"], !report.idleDevices.isEmpty {
@@ -320,14 +320,14 @@ struct ActivitySheet: View {
 
   @ViewBuilder private var status: some View {
     if run.launchError != nil {
-      Chip(tint: Theme.error) { Text("Failed") }
+      Chip(tint: Palette.error) { Text("Failed") }
     } else if let code = run.exitStatus {
-      Chip(tint: code == 0 ? Theme.live : Theme.error) {
+      Chip(tint: code == 0 ? Palette.success : Palette.error) {
         Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
         Text(code == 0 ? "Done" : "Failed")
       }
     } else {
-      Chip(tint: Theme.lavender) {
+      Chip(tint: Palette.accent) {
         ProgressView().controlSize(.mini)
         Text("Running")
       }
@@ -340,7 +340,7 @@ struct ActivitySheet: View {
         LazyVStack(alignment: .leading, spacing: 1) {
           ForEach(Array(run.logLines.enumerated()), id: \.offset) { index, line in
             Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
-              .foregroundStyle(line.channel == .stderr ? Theme.secondary : Theme.text)
+              .foregroundStyle(line.channel == .stderr ? Palette.secondary : Palette.text)
               .frame(maxWidth: .infinity, alignment: .leading)
               .id(index)
           }
@@ -349,8 +349,8 @@ struct ActivitySheet: View {
         .textSelection(.enabled)
         .padding(10)
       }
-      .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
-      .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+      .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
+      .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.border))
       .onAppear {
         if !run.logLines.isEmpty { proxy.scrollTo(run.logLines.count - 1, anchor: .bottom) }
       }
@@ -368,12 +368,12 @@ struct GcPreviewView: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 14) {
           Text(report.actionable ? "stim gc --delete would act on the entries not marked kept." : "Nothing here is deletable.")
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
           ForEach(report.sections, id: \.key) { section in
             VStack(alignment: .leading, spacing: 6) {
               HStack(spacing: 8) {
                 Text(section.title).font(Theme.heading(13))
-                Text("\(section.entries.count)").foregroundStyle(Theme.tertiary)
+                Text("\(section.entries.count)").foregroundStyle(Palette.tertiary)
               }
               ForEach(Array(section.entries.enumerated()), id: \.offset) { _, entry in
                 entryRow(entry)
@@ -389,23 +389,23 @@ struct GcPreviewView: View {
   private func entryRow(_ entry: GcPreview.Entry) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Image(systemName: entry.kept == nil ? "trash" : "lock")
-        .foregroundStyle(entry.kept == nil ? Theme.warn : Theme.tertiary)
+        .foregroundStyle(entry.kept == nil ? Palette.warning : Palette.tertiary)
         .frame(width: 14)
       VStack(alignment: .leading, spacing: 2) {
         Text(abbreviatingHome(entry.label))
           .font(Theme.mono())
-          .foregroundStyle(entry.kept == nil ? Theme.text : Theme.secondary)
+          .foregroundStyle(entry.kept == nil ? Palette.text : Palette.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
         if let kept = entry.kept {
-          Text("kept: \(abbreviatingHome(kept))").foregroundStyle(Theme.tertiary).lineLimit(2)
+          Text("kept: \(abbreviatingHome(kept))").foregroundStyle(Palette.tertiary).lineLimit(2)
         }
       }
       Spacer()
       if let bytes = entry.bytes, bytes > 0 {
         Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
           .font(Theme.mono())
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
       }
     }
     .textSelection(.enabled)

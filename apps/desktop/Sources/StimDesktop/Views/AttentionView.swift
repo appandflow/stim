@@ -18,7 +18,7 @@ struct AttentionView: View {
       VStack(alignment: .leading, spacing: 28) {
         VStack(alignment: .leading, spacing: 4) {
           Text("Needs attention").font(Theme.heading(22))
-          Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Theme.secondary)
+          Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Palette.secondary)
         }
         cleanup
         if !autopilot.finishedPullRequests.isEmpty {
@@ -57,7 +57,7 @@ struct AttentionView: View {
   }
 
   private var divider: some View {
-    Rectangle().fill(Theme.border).frame(height: 1)
+    Rectangle().fill(Palette.border).frame(height: 1)
   }
 
   private var cleanup: some View {
@@ -65,11 +65,11 @@ struct AttentionView: View {
       Text("Machine cleanup").font(Theme.heading(15))
       Card {
         HStack(spacing: 14) {
-          Image(systemName: "trash").foregroundStyle(Theme.lavender)
+          Image(systemName: "trash").foregroundStyle(Palette.accent)
           VStack(alignment: .leading, spacing: 3) {
             Text("Reclaim what Stim left behind")
             Text("Preview the stim gc report, then confirm before anything is deleted.")
-              .font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
+              .font(Theme.body(11.5)).foregroundStyle(Palette.secondary)
           }
           Spacer()
           runButton(
@@ -101,9 +101,9 @@ struct AttentionView: View {
   private func workspaceHeader(_ env: Workspace) -> some View {
     HStack(spacing: 8) {
       Text(env.names.title).font(Theme.heading(13))
-      Text(store.project(of: env).name).font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
+      Text(store.project(of: env).name).font(Theme.body(11.5)).foregroundStyle(Palette.secondary)
       Spacer()
-      Text(env.live ? "live" : "idle").font(Theme.body(11.5)).foregroundStyle(env.live ? Theme.live : Theme.tertiary)
+      Text(env.live ? "live" : "idle").font(Theme.body(11.5)).foregroundStyle(env.live ? Palette.success : Palette.tertiary)
     }
     .padding(.horizontal, 16)
     .padding(.top, 12)
@@ -113,15 +113,15 @@ struct AttentionView: View {
   private func row(_ item: AttentionItem, workspace: Workspace) -> some View {
     HStack(spacing: 14) {
       Image(systemName: item.isError ? "xmark.octagon" : "exclamationmark.triangle")
-        .foregroundStyle(item.isError ? Theme.error : Theme.warn)
+        .foregroundStyle(item.isError ? Palette.error : Palette.warning)
       VStack(alignment: .leading, spacing: 3) {
         Text(abbreviatingHome(item.text)).lineLimit(2)
         if let detail = item.detail {
-          Text(detail).font(Theme.mono(11.5)).foregroundStyle(Theme.error).lineLimit(3).textSelection(.enabled)
+          Text(detail).font(Theme.mono(11.5)).foregroundStyle(Palette.error).lineLimit(3).textSelection(.enabled)
         }
         if let command = item.command {
           Text("stim \(command.arguments.joined(separator: " "))").font(Theme.mono(11.5)).foregroundStyle(
-            Theme.secondary)
+            Palette.secondary)
         }
       }
       Spacer()
@@ -146,11 +146,11 @@ struct AttentionView: View {
 
   private func finishedRow(_ flag: PullRequestCleanup.Flag) -> some View {
     HStack(spacing: 14) {
-      Image(systemName: "arrow.triangle.pull").foregroundStyle(Theme.warn)
+      Image(systemName: "arrow.triangle.pull").foregroundStyle(Palette.warning)
       VStack(alignment: .leading, spacing: 3) {
         Text(store.names(ofPath: flag.path).title)
-        Text(flag.text).font(Theme.body(11.5)).foregroundStyle(Theme.secondary).lineLimit(2)
-        Text(abbreviatingHome(flag.path)).font(Theme.mono(11.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
+        Text(flag.text).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(2)
+        Text(abbreviatingHome(flag.path)).font(Theme.mono(11.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
       }
       Spacer()
       if let url = URL(string: flag.pullRequest.url) {
@@ -169,10 +169,10 @@ struct AttentionView: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 8) {
         Text(title).font(Theme.heading(15))
-        Text("\(count)").foregroundStyle(Theme.tertiary)
+        Text("\(count)").foregroundStyle(Palette.tertiary)
       }
       if count == 0 {
-        Text("Nothing here.").foregroundStyle(Theme.tertiary)
+        Text("Nothing here.").foregroundStyle(Palette.tertiary)
       } else {
         Card { VStack(spacing: 0) { content() } }
       }

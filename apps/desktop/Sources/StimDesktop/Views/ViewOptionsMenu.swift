@@ -48,13 +48,13 @@ struct ViewOptionsButton: View {
     } label: {
       Image(systemName: "slider.horizontal.3")
         .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(differs ? Theme.primary : Theme.secondary)
+        .foregroundStyle(differs ? Palette.primary : Palette.secondary)
         .frame(width: 28, height: 24)
         .background(
-          RoundedRectangle(cornerRadius: 6).fill(hovering || isPresented ? Theme.raised : Color.clear))
+          RoundedRectangle(cornerRadius: 6).fill(hovering || isPresented ? Palette.raised : Color.clear))
         .overlay(alignment: .topTrailing) {
           if differs {
-            Circle().fill(Theme.primary).frame(width: 6, height: 6).offset(x: -2, y: 2)
+            Circle().fill(Palette.primary).frame(width: 6, height: 6).offset(x: -2, y: 2)
           }
         }
         .contentShape(Rectangle())
@@ -270,29 +270,29 @@ private struct MenuRow: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      Text(item.title).foregroundStyle(Theme.text).lineLimit(1)
+      Text(item.title).foregroundStyle(Palette.text).lineLimit(1)
       Spacer(minLength: 16)
       switch item.accessory {
       case .none:
         EmptyView()
       case .value(let value):
-        Text(value).foregroundStyle(Theme.secondary).lineLimit(1)
+        Text(value).foregroundStyle(Palette.secondary).lineLimit(1)
       case .check(let on):
         Image(systemName: "checkmark")
           .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(Theme.primary)
+          .foregroundStyle(Palette.primary)
           .opacity(on ? 1 : 0)
       }
       if item.submenu != nil {
         Image(systemName: "chevron.right")
           .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(Theme.tertiary)
+          .foregroundStyle(Palette.tertiary)
       }
     }
     .font(Theme.body(13))
     .padding(.horizontal, 10)
     .frame(height: 28)
-    .background(RoundedRectangle(cornerRadius: 6).fill(highlighted ? Theme.selected : Color.clear))
+    .background(RoundedRectangle(cornerRadius: 6).fill(highlighted ? Palette.selection : Color.clear))
     .contentShape(Rectangle())
   }
 }

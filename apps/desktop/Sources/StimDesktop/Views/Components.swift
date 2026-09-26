@@ -23,20 +23,20 @@ struct GitIndicator: View {
   var body: some View {
     if let git, git.isNotable {
       if chips {
-        if git.uncommitted > 0 { Chip(tint: Theme.warn) { Text("\(git.uncommitted) uncommitted") } }
+        if git.uncommitted > 0 { Chip(tint: Palette.warning) { Text("\(git.uncommitted) uncommitted") } }
         if let arrows = git.arrows { Chip { Text(arrows).monospacedDigit() } }
-        if git.mergedInto != nil { Chip(tint: Theme.primary) { Text("merged") } }
+        if git.mergedInto != nil { Chip(tint: Palette.primary) { Text("merged") } }
       } else {
         HStack(spacing: 4) {
           if git.uncommitted > 0 {
-            Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Theme.secondary)
+            Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Palette.secondary)
           }
-          if let arrows = git.arrows { Text(arrows).foregroundStyle(Theme.secondary) }
+          if let arrows = git.arrows { Text(arrows).foregroundStyle(Palette.secondary) }
           if git.mergedInto != nil {
             Text("merged")
-              .foregroundStyle(Theme.primary)
+              .foregroundStyle(Palette.primary)
               .padding(.horizontal, 4)
-              .background(RoundedRectangle(cornerRadius: 4).fill(Theme.primary.opacity(0.14)))
+              .background(RoundedRectangle(cornerRadius: 4).fill(Palette.primary.opacity(0.14)))
           }
         }
         .font(Theme.body(10.5, weight: .semibold))
@@ -57,10 +57,10 @@ struct Chip<Content: View>: View {
   var body: some View {
     HStack(spacing: 6) { content }
       .font(Theme.body(11.5))
-      .foregroundStyle(tint ?? Theme.secondary)
+      .foregroundStyle(tint ?? Palette.secondary)
       .padding(.horizontal, 9)
       .padding(.vertical, 4)
-      .background(RoundedRectangle(cornerRadius: 7).fill(tint?.opacity(0.16) ?? Theme.surface))
+      .background(RoundedRectangle(cornerRadius: 7).fill(tint?.opacity(0.16) ?? Palette.surface))
       .fixedSize()
   }
 }
@@ -136,7 +136,7 @@ struct SectionLabel: View {
     Text(title.uppercased())
       .font(Theme.body(10.5, weight: .semibold))
       .tracking(0.6)
-      .foregroundStyle(Theme.tertiary)
+      .foregroundStyle(Palette.tertiary)
   }
 }
 
@@ -145,9 +145,9 @@ struct Card<Content: View>: View {
 
   var body: some View {
     content
-      .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
+      .background(RoundedRectangle(cornerRadius: 12).fill(Palette.surface))
       .clipShape(RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border))
+      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border))
   }
 }
 
@@ -168,7 +168,7 @@ struct EmptyState: View {
           .id(jar)
       }
       Text(title).font(Theme.heading(17))
-      Text(message).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+      Text(message).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -181,17 +181,17 @@ struct CommandText: View {
   var body: some View {
     Text(command)
       .font(Theme.mono())
-      .foregroundStyle(Theme.secondary)
+      .foregroundStyle(Palette.secondary)
       .padding(.horizontal, 8)
       .padding(.vertical, 5)
-      .background(RoundedRectangle(cornerRadius: 6).fill(Theme.background))
+      .background(RoundedRectangle(cornerRadius: 6).fill(Palette.background))
       .textSelection(.enabled)
   }
 }
 
 struct Sparkline: View {
   var values: [Double]
-  var color: Color = Theme.lavender
+  var color: Color = Palette.accent
   var minimumPeak: Double = 1
 
   var body: some View {
@@ -265,7 +265,7 @@ private struct StimButtonBody: View {
       .padding(.horizontal, sizing.horizontalPadding)
       .frame(height: sizing.height)
       .background(Capsule().fill(fill))
-      .overlay(Capsule().strokeBorder(Theme.lavender.opacity(isFocused ? 0.8 : 0), lineWidth: 2))
+      .overlay(Capsule().strokeBorder(Palette.accent.opacity(isFocused ? 0.8 : 0), lineWidth: 2))
       .contentShape(Capsule())
       .opacity(isEnabled ? 1 : 0.45)
       .scaleEffect(configuration.isPressed ? 0.97 : 1)
@@ -276,9 +276,9 @@ private struct StimButtonBody: View {
 
   private var accent: Color {
     switch variant {
-    case .primary: return Theme.purple
-    case .secondary: return Theme.lavender
-    case .destructive: return Theme.error
+    case .primary: return Palette.brand
+    case .secondary: return Palette.accent
+    case .destructive: return Palette.error
     }
   }
 
@@ -305,11 +305,11 @@ struct BuildProgressBar: View {
         HStack(spacing: 8) {
           Group {
             if compact {
-              Text(build.phase).font(Theme.mono()).foregroundStyle(Theme.primary)
+              Text(build.phase).font(Theme.mono()).foregroundStyle(Palette.primary)
             } else {
               Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")  ")
-                .foregroundStyle(Theme.text)
-                + Text(build.phase).font(Theme.mono()).foregroundStyle(Theme.primary)
+                .foregroundStyle(Palette.text)
+                + Text(build.phase).font(Theme.mono()).foregroundStyle(Palette.primary)
             }
           }
           .lineLimit(1)
@@ -318,18 +318,18 @@ struct BuildProgressBar: View {
           Spacer(minLength: 4)
           Text(timing(progress))
             .font(Theme.mono())
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Palette.secondary)
             .lineLimit(1)
             .fixedSize()
         }
         .font(Theme.body(11.5))
         if let fraction = progress.fraction {
-          ProgressView(value: fraction).tint(Theme.lavender)
+          ProgressView(value: fraction).tint(Palette.accent)
         } else {
-          ProgressView().progressViewStyle(.linear).tint(Theme.lavender)
+          ProgressView().progressViewStyle(.linear).tint(Palette.accent)
         }
         if let remaining = progress.remaining {
-          Text(remaining).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
+          Text(remaining).font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
         }
       }
       .help(help)

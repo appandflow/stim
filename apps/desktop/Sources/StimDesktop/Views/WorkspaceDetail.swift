@@ -34,12 +34,12 @@ struct WorkspaceDetail: View {
       content(devices: devices, focused: focused)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if inspector == .column {
-        Rectangle().fill(Theme.border).frame(width: 1)
+        Rectangle().fill(Palette.border).frame(width: 1)
           .overlay { resizeHandle }
         inspectorPanel
           .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
-          .background(Theme.sidebar)
-          .toolbarBackdrop(Theme.sidebar)
+          .background(Palette.sidebar)
+          .toolbarBackdrop(Palette.sidebar)
       }
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -47,9 +47,9 @@ struct WorkspaceDetail: View {
       if inspector == .overlay {
         inspectorPanel
           .frame(width: Self.inspectorWidth)
-          .background(Theme.sidebar, ignoresSafeAreaEdges: [])
+          .background(Palette.sidebar, ignoresSafeAreaEdges: [])
           .clipped()
-          .overlay(alignment: .leading) { Rectangle().fill(Theme.border).frame(width: 1) }
+          .overlay(alignment: .leading) { Rectangle().fill(Palette.border).frame(width: 1) }
           .shadow(color: .black.opacity(0.25), radius: 16)
       }
     }
@@ -71,7 +71,7 @@ struct WorkspaceDetail: View {
       .labelsHidden()
       .fixedSize()
       .padding(.vertical, 12)
-      Rectangle().fill(Theme.border).frame(height: 1)
+      Rectangle().fill(Palette.border).frame(height: 1)
       switch tab {
       case .device: deviceView(devices: devices, focused: focused)
       case .logs: LogsView(cli: cli, env: env, query: $logQuery)
@@ -122,7 +122,7 @@ struct WorkspaceDetail: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(device.id == focused?.id ? Theme.surface : .clear))
+                .background(RoundedRectangle(cornerRadius: 6).fill(device.id == focused?.id ? Palette.surface : .clear))
                 .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
@@ -130,7 +130,7 @@ struct WorkspaceDetail: View {
             }
           }
           .padding(2)
-          .background(RoundedRectangle(cornerRadius: 8).fill(Theme.border))
+          .background(RoundedRectangle(cornerRadius: 8).fill(Palette.border))
         }
         if !stopped.isEmpty {
           Menu {
@@ -152,8 +152,8 @@ struct WorkspaceDetail: View {
   }
 
   private func stateColor(_ device: DeviceRef) -> Color {
-    if device.state == "Booting" || env.runningBuild(for: device) != nil { return Theme.warn }
-    return device.isRunning ? Theme.live : Theme.tertiary
+    if device.state == "Booting" || env.runningBuild(for: device) != nil { return Palette.warning }
+    return device.isRunning ? Palette.success : Palette.tertiary
   }
 
   private func deviceView(devices: [DeviceRef], focused: DeviceRef?) -> some View {
@@ -212,17 +212,17 @@ struct Inspector: View {
           SectionLabel(title: "Devices")
           ForEach(env.orderedDevices) { device in
             HStack(spacing: 8) {
-              StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
+              StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
               Text(device.label(among: env.devices)).font(Theme.body(12, weight: .semibold)).lineLimit(1)
                 .layoutPriority(1)
               if let detail = device.detail {
-                Text(detail).foregroundStyle(Theme.secondary).lineLimit(1)
+                Text(detail).foregroundStyle(Palette.secondary).lineLimit(1)
               }
               Spacer()
               if device.appStopped {
-                Text("App stopped").foregroundStyle(Theme.warn).lineLimit(1).layoutPriority(1)
+                Text("App stopped").foregroundStyle(Palette.warning).lineLimit(1).layoutPriority(1)
               } else {
-                Text(device.state).foregroundStyle(Theme.tertiary).lineLimit(1)
+                Text(device.state).foregroundStyle(Palette.tertiary).lineLimit(1)
               }
               if device.isRunning {
                 deviceStopButton(device)
@@ -230,7 +230,7 @@ struct Inspector: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+            .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
           }
         }
 
@@ -252,7 +252,7 @@ struct Inspector: View {
             SectionLabel(title: "Warnings")
             ForEach(env.warnings, id: \.self) { warning in
               Label(abbreviatingHome(warning), systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.warn)
+                .foregroundStyle(Palette.warning)
                 .textSelection(.enabled)
             }
           }
@@ -306,14 +306,14 @@ struct Inspector: View {
           Text(branch).font(Theme.body(12, weight: .semibold)).lineLimit(1)
         }
         if let folder = pathInCheckout(env.path, worktree: env.worktree?.path) {
-          Text(folder).font(Theme.mono()).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+          Text(folder).font(Theme.mono()).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
         }
         Spacer(minLength: 0)
         actionsMenu
       }
       FlowLayout(spacing: 6) {
         if let metro = env.metro {
-          Chip(tint: metroHealthy ? Theme.live : Theme.error) {
+          Chip(tint: metroHealthy ? Palette.success : Palette.error) {
             Text("Metro :\(String(metro.port)) \u{00B7} \(metro.running ? (metroHealthy ? "healthy" : "unhealthy") : "stopped")")
           }
           .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "")
@@ -324,7 +324,7 @@ struct Inspector: View {
         }
         if env.logs != nil {
           Button(action: openLogs) {
-            Chip(tint: errors > 0 ? Theme.error : nil) { Text(countLabel(errors, "error")) }
+            Chip(tint: errors > 0 ? Palette.error : nil) { Text(countLabel(errors, "error")) }
           }
           .buttonStyle(.plain)
           .help("Open the logs filtered to errors")
@@ -341,8 +341,8 @@ struct Inspector: View {
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border))
+    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.border))
     .controlSize(.small)
   }
 
@@ -420,30 +420,30 @@ struct Inspector: View {
     -> some View
   {
     VStack(alignment: .leading, spacing: 6) {
-      Label(title, systemImage: icon).foregroundStyle(Theme.secondary)
+      Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
       Text(value).font(Theme.heading(22))
       Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 32)
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
   }
 
   private func statCard(_ title: String, _ platform: ProjectStats.Platform) -> some View {
     VStack(alignment: .leading, spacing: 6) {
-      Text(title).foregroundStyle(Theme.secondary)
+      Text(title).foregroundStyle(Palette.secondary)
       Text("\(Int((platform.hitRate * 100).rounded()))%").font(Theme.heading(22))
-      ProgressView(value: platform.hitRate).tint(Theme.lavender)
-      Text("\(countLabel(platform.hits, "hit")) \u{00B7} \(countLabel(platform.misses, "miss", plural: "misses"))").foregroundStyle(Theme.secondary)
+      ProgressView(value: platform.hitRate).tint(Palette.accent)
+      Text("\(countLabel(platform.hits, "hit")) \u{00B7} \(countLabel(platform.misses, "miss", plural: "misses"))").foregroundStyle(Palette.secondary)
       if let cold = platform.lastColdBuildMs {
-        Text("Last cold \(formatDuration(ms: cold))").foregroundStyle(Theme.secondary)
+        Text("Last cold \(formatDuration(ms: cold))").foregroundStyle(Palette.secondary)
       }
       if let saved = platform.timeSavedMs {
-        Text("Saved \(formatDuration(ms: saved))").foregroundStyle(Theme.primary)
+        Text("Saved \(formatDuration(ms: saved))").foregroundStyle(Palette.primary)
       }
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+    .background(RoundedRectangle(cornerRadius: 10).fill(Palette.surface))
   }
 }
