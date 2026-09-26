@@ -116,9 +116,9 @@ Branch on the code, never on the message.`,
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
   Three Android refusals share this code without gradle itself failing:
-  - NO ANDROID SDK, before gradle starts: nothing exists at ANDROID_HOME,
-    ANDROID_SDK_ROOT or the default SDK location, and there is no
-    android/local.properties. Set ANDROID_HOME to the SDK or write sdk.dir
+  - NO ANDROID SDK, before gradle starts: nothing exists at the SDK path
+    Stim resolves (ANDROID_HOME, else ANDROID_SDK_ROOT, else the default
+    location), and there is no android/local.properties. Set ANDROID_HOME to the SDK or write sdk.dir
     into android/local.properties; \`stim doctor --platform android\` reports
     the same condition. When the SDK is found and neither variable is set,
     Stim passes its path to gradle as ANDROID_HOME.
