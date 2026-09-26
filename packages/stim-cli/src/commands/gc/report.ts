@@ -29,6 +29,7 @@ import type {
   UnverifiedDevice,
 } from './devices.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
+import type { StaleLedgerEntry } from './ledger.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 
@@ -44,6 +45,7 @@ export interface GcReport {
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
   staleDeviceRecords: StaleDeviceRecord[];
+  staleLedgerEntries: StaleLedgerEntry[];
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[]; unresolved?: BuildSlotInfo[] };
   deviceLeases: DeviceLeaseGarbage;
@@ -132,6 +134,7 @@ export function formatGcReport(
     unverifiedDevices = [],
     staleDevices = [],
     staleDeviceRecords = [],
+    staleLedgerEntries = [],
     buildLocks = { stale: [], live: [], unresolved: [] },
     buildSlots = { stale: [], live: [], unresolved: [] },
     deviceLeases = { expired: [], kept: [] },
@@ -164,6 +167,7 @@ export function formatGcReport(
       orphanedDevices,
       staleDevices,
       staleDeviceRecords,
+      staleLedgerEntries,
       staleLocks,
       staleSlots,
       expiredLeases,
@@ -237,6 +241,14 @@ export function formatGcReport(
       lines.push(`              recorded by ${r.project}`);
     }
     lines.push('              --delete clears the RECORD only; there is no device left to touch.');
+  }
+
+  if (staleLedgerEntries.length) {
+    lines.push(
+      `Stale device ledger entries (${staleLedgerEntries.length}) - Stim created these devices; they are gone:`,
+    );
+    for (const entry of staleLedgerEntries) lines.push(`  ${entry.kind} ${entry.id} is not on this machine`);
+    lines.push('              --delete forgets the LEDGER ENTRY only; there is no device left to touch.');
   }
 
   if (easSessionSweep.orphaned.length) {
@@ -479,6 +491,7 @@ export interface GcJsonSections {
     bytes: number | null;
   }[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
+  staleLedgerEntries: { kind: 'ios'; id: string }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;
@@ -536,6 +549,7 @@ export function gcReportSections({
   unverifiedDevices = [],
   staleDevices = [],
   staleDeviceRecords = [],
+  staleLedgerEntries = [],
   buildLocks = { stale: [], live: [], unresolved: [] },
   buildSlots = { stale: [], live: [], unresolved: [] },
   deviceLeases = { expired: [], kept: [] },
@@ -610,6 +624,7 @@ export function gcReportSections({
       project: r.project,
       slot: r.slot ?? null,
     })),
+    staleLedgerEntries: staleLedgerEntries.map(({ kind, id }) => ({ kind, id })),
     idleDevices: idleDevices.map(({ kind, id, name, project, slot, lastActivityAt, idleForMs, buildInProgress }) => ({
       kind,
       id,

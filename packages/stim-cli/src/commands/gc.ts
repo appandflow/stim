@@ -54,6 +54,8 @@ import {
   isInsideWorkspaces,
 } from './gc/workspaces.ts';
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
+import { findStaleLedgerEntries, forgetStaleLedgerEntries, type StaleLedgerEntry } from './gc/ledger.ts';
+import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
@@ -143,6 +145,7 @@ export async function collectGcReport(
       unverifiedDevices: [],
       staleDevices: [],
       staleDeviceRecords: [],
+      staleLedgerEntries: [],
       buildLocks: { stale: [], live: [], unresolved: [] },
       buildSlots: { stale: [], live: [], unresolved: [] },
       deviceLeases: { expired: [], kept: [] },
@@ -211,6 +214,7 @@ export async function collectGcReport(
   let unverifiedDevices: UnverifiedDevice[] = [];
   let staleDevices: StaleProjectDevice[] = [];
   let staleDeviceRecords: StaleDeviceRecord[] = [];
+  let staleLedgerEntries: StaleLedgerEntry[] = [];
   let idleDevices: IdleDevice[] = [];
 
   const unsweepableReason =
@@ -233,8 +237,11 @@ export async function collectGcReport(
   } else {
     let sims: IosSimRecord[] = [];
     let simsChecked = true;
+    const ledger = readCreatedDevices();
     try {
-      sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+      const allSims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
+      staleLedgerEntries = findStaleLedgerEntries(ledger, allSims);
+      sims = allSims.filter((sim) => sim.available);
     } catch {
       simsChecked = false;
       deviceSweepNotices.push(
@@ -339,6 +346,7 @@ export async function collectGcReport(
     unverifiedDevices,
     staleDevices,
     staleDeviceRecords,
+    staleLedgerEntries,
     buildLocks: {
       stale: locks.filter((l) => !l.alive && !l.unresolved),
       live: locks.filter((l) => l.alive),
@@ -572,6 +580,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     orphanedDevices.length > 0 ||
     staleDevices.length > 0 ||
     staleDeviceRecords.length > 0 ||
+    report.staleLedgerEntries.length > 0 ||
     buildLocks.stale.length > 0 ||
     buildSlots.stale.length > 0 ||
     deviceLeases.expired.length > 0 ||
@@ -623,6 +632,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += await deleteOrphanedWorkspaces(report.orphanedWorkspaces);
 
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
+  deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
 
   for (const lock of buildLocks.stale) {
     const cleared = clearFreeClaimSet({ root: lock.path, label: `${lock.platform} build` });

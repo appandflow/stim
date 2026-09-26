@@ -18,7 +18,7 @@ import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
@@ -481,6 +481,63 @@ test('a simulator in the parked pool is referenced rather than orphaned', () => 
 
   expect(result.orphaned).toEqual([]);
   expect(result.kept[0]?.reason).toBe('referenced by the simulator pool');
+});
+
+test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forgets only those', async () => {
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  process.env.ANDROID_AVD_HOME = join(tmpHome, 'avd');
+  const project = join(tmpHome, 'app');
+  mkdirSync(project);
+  saveConfig({
+    version: 2,
+    projects: { [project]: { platforms: { ios: { deviceUdid: 'LIVE', owned: true } } } },
+    repos: {},
+  });
+  rmSync(join(tmpHome, 'created-devices.json'), { force: true });
+  for (const udid of ['GONE', 'UNAVAILABLE', 'LIVE']) recordCreatedDevice('ios', udid);
+  const device = (udid: string, isAvailable: boolean) => ({
+    udid,
+    name: `stim-${udid.toLowerCase()}`,
+    state: 'Shutdown',
+    deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+    isAvailable,
+  });
+  let listing: string | null = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [device('LIVE', true), device('UNAVAILABLE', false)],
+    },
+  });
+  setExecutor({
+    ...getExecutor(),
+    run: () => '',
+    runQuiet: () => null,
+    runFile: (file, args) => {
+      if (file === 'xcrun' && args[0] === 'simctl' && args[1] === 'list') {
+        if (listing === null) throw new Error('simctl timed out');
+        return listing;
+      }
+      return '';
+    },
+  });
+  try {
+    expect((await collectGcReport()).staleLedgerEntries).toEqual([{ kind: 'ios', id: 'GONE' }]);
+
+    listing = null;
+    expect((await collectGcReport()).staleLedgerEntries).toEqual([]);
+    await captureLog(() => runGc({ delete: true }));
+    expect([...readCreatedDevices().ios].toSorted()).toEqual(['GONE', 'LIVE', 'UNAVAILABLE']);
+
+    listing = JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [device('LIVE', true), device('UNAVAILABLE', false)],
+      },
+    });
+    const output = await captureLog(() => runGc({ delete: true }));
+    expect(output).toContain('Forgot the ledger entry for ios GONE');
+    expect([...readCreatedDevices().ios].toSorted()).toEqual(['LIVE', 'UNAVAILABLE']);
+  } finally {
+    delete process.env.ANDROID_AVD_HOME;
+  }
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
@@ -3105,6 +3162,7 @@ describe('gc --json', () => {
       'unverifiedDevices',
       'staleDevices',
       'staleDeviceRecords',
+      'staleLedgerEntries',
       'idleDevices',
       'orphanedEasSessions',
       'staleBuildLocks',
