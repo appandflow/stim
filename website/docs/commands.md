@@ -875,6 +875,12 @@ or `stim android` run, a live build, or a held tunnel or remote lock.
 workspace keeps its state, logs, devices and ports. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
 
+`gc` reports the size of each workspace's logs. The Metro, client and device
+logs rotate at about 8 MiB, but a file written by a Stim version before that cap
+can be hundreds of MB. `--delete` trims each of those files to its newest 8 MiB
+in every workspace that is not in use and has no device log collector recorded.
+Build transcripts and other files under `logs/` are never trimmed.
+
 - `--older-than <days>` also selects devices and workspace build outputs of
   workspaces no Stim command has used for that many days, and unused cache
   entries. It limits the parked simulators and emulators `--delete` clears to
@@ -969,6 +975,17 @@ prints, for example:
         "reason": "dirty",
         "detail": "dirty: 2 uncommitted or untracked files",
         "eligibleAt": null
+      }
+    ],
+    "workspaceLogs": [
+      {
+        "dir": "~/.stim/workspaces/old-feature--9e8f",
+        "projectRoot": "/path/to/old-feature",
+        "bytes": 778043392,
+        "trimBytes": 761266176,
+        "willTrim": true,
+        "reason": null,
+        "detail": null
       }
     ],
     "workspaceBuildOutputs": [

@@ -40,8 +40,9 @@ WHAT RECLAIMS AN OWNED DEVICE
 
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
 \`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
---delete\` also clears workspace build outputs (\`guide cleanup disk\`) and
-orphaned workspace directories, never a checkout. \`stim stop\` shuts a device
+--delete\` also clears workspace build outputs, trims oversized workspace logs
+(\`guide cleanup disk\`) and removes orphaned workspace directories, never a
+checkout. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
@@ -392,7 +393,7 @@ THE ONE CASE GC WILL NOT REAP
     },
     disk: {
       summary:
-        'disk usage, workspace build outputs, AVD and build-log sizes, the data partition, trimming the shared caches',
+        'disk usage, workspace build outputs and logs, AVD and build-log sizes, the data partition, trimming the shared caches',
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
   directory, and \`worktree remove\` reclaims them. \`gc --delete\` clears the
@@ -462,6 +463,17 @@ WORKSPACE BUILD OUTPUTS
   After a native change the Xcode compilation cache speeds the rebuild, but on
   React Native 0.86 Swift does not use it (explicit modules are off), so that
   build recompiles Swift.
+
+WORKSPACE LOGS
+  \`gc\` reports the size of each workspace's logs/ (the workspaceLogs
+  section of \`gc --json\`). metro.ndjson, client.ndjson and device.ndjson and
+  their .1 generations rotate at 8 MiB (\`guide logs\`), but a file written by
+  a Stim version before the cap can be hundreds of MB. \`gc --delete\` trims
+  each of those six files to its newest 8 MiB, cut at a record boundary. It
+  skips a workspace that is in use (a dev server, a native run, a build or a
+  held tunnel) or that has a device log collector recorded; \`stim stop\`
+  stops the collector. Build transcripts keep the whole run and are never
+  trimmed, and nothing else under logs/ is touched.
 
 SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and never

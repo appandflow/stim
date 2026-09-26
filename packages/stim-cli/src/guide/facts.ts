@@ -579,6 +579,11 @@ RULES
     deviceSweepNotices      { message }
     easSessionSweepNotices  { message }
     skipped                 { path, detail }  not classified as dead
+    workspaceLogs           { dir, projectRoot, bytes, trimBytes, willTrim,
+                              reason, detail }  logs/ of each workspace;
+                              trimBytes is what --delete would drop from
+                              Metro, client and device logs over the 8 MiB
+                              cap; willTrim marks the ones it would trim
     workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
                               reason, detail }  derived-data, gradle-build,
                               android-cas and cache-provider of each
@@ -597,6 +602,7 @@ RULES
   A linked worktree's detail is never null.
     workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
                             recently-used
+    workspaceLogs           unresolved | in-use | collector
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
                             locked | in-use | status-unreadable | dirty |

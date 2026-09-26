@@ -3174,6 +3174,7 @@ describe('gc --json', () => {
       'deviceSweepNotices',
       'easSessionSweepNotices',
       'skipped',
+      'workspaceLogs',
       'workspaceBuildOutputs',
       'caches',
     ]);

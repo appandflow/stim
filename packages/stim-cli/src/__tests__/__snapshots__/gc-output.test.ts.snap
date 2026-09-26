@@ -27,6 +27,11 @@ EAS session sweep notices (1):
   one session could not be verified
 Skipped (1) - not classified as dead:
   /Volumes/Offline/app: volume /Volumes/Offline is not mounted
+Workspace logs (820M in 3 workspaces) - 2 over the 8 MiB log cap:
+        800M  /w/a
+              would TRIM 792M: Metro, client and device logs keep their newest 8 MiB
+         20M  /w/b
+              kept: a device log collector is recorded for ios
 Shared build caches (2) - alive, not garbage:
          12K  Workspace build outputs (detected)
               /h/workspaces
@@ -80,6 +85,7 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
   "parkedAvds": [],
   "caches": [],
   "workspaceOutputs": null,
+  "workspaceLogs": [],
   "worktreeSweep": null,
   "cacheScope": "gc-output-test-no-matching-cache",
   "olderThan": null,

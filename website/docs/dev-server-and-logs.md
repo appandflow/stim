@@ -250,7 +250,10 @@ the workspace's owned simulators and emulators. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
 project checkout. The Metro, client, and device files are capped at about 8 MiB each.
 Stim keeps one previous generation of each file, and queries read both. The oldest
-records are dropped first.
+records are dropped first. A file written before Stim capped it can be much
+larger. `stim gc` reports each workspace's log size, and `stim gc --delete` trims
+those files to their newest 8 MiB in workspaces that are not in use. See
+[`gc`](./commands.md#gc).
 
 Exit code 0 means the query succeeded, including when it prints errors. A clean
 `stim logs --errors` check requires exit code 0 and no matching errors in the
