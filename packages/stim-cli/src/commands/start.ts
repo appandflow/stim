@@ -15,14 +15,8 @@ import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
-import {
-  appProjectProblem,
-  detectAndroidPackage,
-  detectBundleId,
-  detectIsExpo,
-  findProjectRoot,
-  NO_PROJECT_REFUSAL,
-} from '../workspace/project.ts';
+import { appProjectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { detectAndroidPackage, detectBundleId } from '../workspace/app-id.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,

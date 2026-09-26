@@ -62,7 +62,7 @@ import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/rem
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
-import { detectAndroidPackage } from '../../workspace/project.ts';
+import { detectAndroidPackage } from '../../workspace/app-id.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
 import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';

@@ -11,13 +11,8 @@ import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
-import {
-  appProjectProblem,
-  findProjectRoot,
-  detectAndroidPackage,
-  detectBundleId,
-  projectShortcut,
-} from '../workspace/project.ts';
+import { appProjectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
+import { detectAndroidPackage, detectBundleId } from '../workspace/app-id.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
   resolveCacheProviderConfig,

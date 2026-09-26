@@ -50,7 +50,8 @@ import {
 } from '../../engine/xcode.ts';
 import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
-import { detectBundleId, detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
+import { detectBundleId } from '../../workspace/app-id.ts';
+import { detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
 import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
 import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';

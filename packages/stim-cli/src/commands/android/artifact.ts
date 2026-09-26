@@ -54,7 +54,7 @@ import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase } from '../../engine/build-progress.ts';
 import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
-import { detectAndroidPackage } from '../../workspace/project.ts';
+import { detectAndroidPackage } from '../../workspace/app-id.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
 import type { androidDeviceAbi } from '../../devices/android.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';

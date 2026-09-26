@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { createRequire } from 'module';
 import { basename, join, dirname, resolve } from 'path';
 import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject } from './config.ts';
@@ -12,8 +12,6 @@ interface PackageJson {
 
 interface AnyJson {
   expo?: {
-    ios?: { bundleIdentifier?: unknown };
-    android?: { package?: unknown };
     [key: string]: unknown;
   };
   extra?: { eas?: unknown };
@@ -241,7 +239,7 @@ function readAppJson(projectRoot: string): AnyJson | null {
   }
 }
 
-function readAppConfigText(projectRoot: string): string | null {
+export function readAppConfigText(projectRoot: string): string | null {
   for (const name of ['app.config.js', 'app.config.ts', 'app.config.cjs', 'app.config.mjs']) {
     const p = join(projectRoot, name);
     if (existsSync(p)) {
@@ -250,92 +248,5 @@ function readAppConfigText(projectRoot: string): string | null {
       } catch {}
     }
   }
-  return null;
-}
-
-export function detectBundleId(projectRoot: string): string | null {
-  const appJson = readAppJson(projectRoot);
-  const fromJson = appJson?.expo?.ios?.bundleIdentifier;
-  if (typeof fromJson === 'string' && fromJson) return fromJson;
-
-  const text = readAppConfigText(projectRoot);
-  if (text) {
-    const m = text.match(/bundleIdentifier\s*:\s*["']([^"']+)["']/);
-    const id = m?.[1];
-    if (id) return id;
-  }
-
-  return detectBundleIdFromPbxproj(projectRoot);
-}
-
-export function detectAndroidPackage(projectRoot: string): string | null {
-  const appJson = readAppJson(projectRoot);
-  const fromJson = appJson?.expo?.android?.package;
-  if (typeof fromJson === 'string' && fromJson) return fromJson;
-
-  const text = readAppConfigText(projectRoot);
-  if (text) {
-    const m = text.match(/package\s*:\s*["']([^"']+)["']/);
-    const pkg = m?.[1];
-    if (pkg) return pkg;
-  }
-
-  return detectAndroidPackageFromGradle(projectRoot);
-}
-
-function detectBundleIdFromPbxproj(projectRoot: string): string | null {
-  const iosDir = join(projectRoot, 'ios');
-  if (!existsSync(iosDir)) return null;
-  let entries: import('fs').Dirent[];
-  try {
-    entries = readdirSync(iosDir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.endsWith('.xcodeproj')) continue;
-    const pbx = join(iosDir, entry.name, 'project.pbxproj');
-    if (!existsSync(pbx)) continue;
-    let text: string;
-    try {
-      text = readFileSync(pbx, 'utf-8');
-    } catch {
-      continue;
-    }
-    const all = [...text.matchAll(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s"]+)\s*;/g)].map((m) => m[1]);
-    const concrete = all.filter((id): id is string => !!id && !id.startsWith('$') && !id.includes('('));
-    if (concrete.length === 0) continue;
-    const counts: Record<string, number> = {};
-    for (const id of concrete) counts[id] = (counts[id] || 0) + 1;
-    let best: string | null = null,
-      bestCount = 0,
-      bestLen = Infinity;
-    for (const [id, count] of Object.entries(counts)) {
-      if (count > bestCount || (count === bestCount && id.length < bestLen)) {
-        best = id;
-        bestCount = count;
-        bestLen = id.length;
-      }
-    }
-    return best;
-  }
-  return null;
-}
-
-function detectAndroidPackageFromGradle(projectRoot: string): string | null {
-  const gradle = join(projectRoot, 'android', 'app', 'build.gradle');
-  if (!existsSync(gradle)) return null;
-  let text: string;
-  try {
-    text = readFileSync(gradle, 'utf-8');
-  } catch {
-    return null;
-  }
-  const ns = text.match(/namespace\s+["']([^"']+)["']/);
-  const nsId = ns?.[1];
-  if (nsId) return nsId;
-  const app = text.match(/applicationId\s+["']([^"']+)["']/);
-  const appId = app?.[1];
-  if (appId) return appId;
   return null;
 }
