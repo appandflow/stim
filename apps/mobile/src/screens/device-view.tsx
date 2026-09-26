@@ -31,7 +31,6 @@ import * as Clipboard from 'expo-clipboard';
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
-import { Toggle } from '@/components/toggle';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
@@ -460,13 +459,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 }}
               >
                 {control.allowed !== null ? (
-                  <Toggle
-                    colors={colors}
-                    label={controlling ? 'Control on' : 'Control'}
-                    on={controlling}
-                    disabled={readOnly}
-                    onPress={toggle}
-                  />
+                  <ControlButton colors={colors} on={controlling} disabled={readOnly} onPress={toggle} />
                 ) : null}
               </View>
             </View>
@@ -584,6 +577,38 @@ function Banner({
   );
 }
 
+function ControlButton({
+  colors,
+  on,
+  disabled,
+  onPress,
+}: {
+  colors: Colors;
+  on: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="switch"
+      accessibilityLabel="Control"
+      accessibilityState={{ checked: on, disabled }}
+      hitSlop={7}
+      style={({ pressed }) => [
+        styles.control,
+        { backgroundColor: on ? colors.primary : '#FFFFFF1F' },
+        pressed && styles.pressed,
+        disabled && styles.disabled,
+      ]}
+    >
+      {on ? <Icon name="checkmark" size={13} color={colors.onPrimary} /> : null}
+      <Text style={[styles.controlText, { color: on ? colors.onPrimary : '#FFFFFF' }]}>Control</Text>
+    </Pressable>
+  );
+}
+
 function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
     <Pressable
@@ -677,6 +702,16 @@ const styles = StyleSheet.create({
   toolRow: { flexGrow: 1, justifyContent: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6 },
   tool: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#FFFFFF1F' },
   pressed: { opacity: 0.6 },
+  disabled: { opacity: 0.4 },
+  control: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 30,
+    paddingHorizontal: 12,
+    borderRadius: 15,
+  },
+  controlText: { fontSize: 14, fontWeight: '600' },
   toolText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500' },
   typingBar: {
     position: 'absolute',

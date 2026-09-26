@@ -158,7 +158,7 @@ it and the stream stays live through the open, close and zoom animations. With r
 opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to
 60 frames a second when the server offers it, JPEG frames at up to 30
 otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
-and fitted to the device's shape. It is view-only until you turn on **Control**. On a read-only pairing,
+and fitted to the device's shape. It is view-only until you turn on **Control**, the button at the top right, which is filled and shows a checkmark while it is on. On a read-only pairing,
 Control, the toolbar buttons and **Take over** show disabled, and a banner
 says the phone is read-only and how to allow control, with **Copy command**
 and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
