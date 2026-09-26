@@ -30,7 +30,11 @@ struct NowBand: View {
         )
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
-      } else if status.payload?.environments.contains(where: \.live) == true {
+      } else if status.payload == nil {
+        Text("Waiting for stim status...")
+          .font(.stim(.callout))
+          .foregroundStyle(Palette.secondary)
+      } else if status.payload?.environments.contains(where: { $0.live || $0.build?.isRunning == true }) == true {
         Text("Live usage is unavailable: this stim does not report it, or it could not read the process table.")
           .font(.stim(.callout))
           .foregroundStyle(Palette.secondary)
@@ -70,7 +74,7 @@ struct NowBand: View {
       Text("What").frame(maxWidth: .infinity, alignment: .leading)
       Text("CPU").frame(width: Self.valueWidth, alignment: .trailing)
       Text("Memory").frame(width: Self.valueWidth, alignment: .trailing)
-      Color.clear.frame(width: actionWidth, height: 1)
+      if actionWidth > 0 { Color.clear.frame(width: actionWidth, height: 1) }
     }
     .font(.stim(.caption2, weight: .semibold))
     .foregroundStyle(Palette.tertiary)
