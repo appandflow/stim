@@ -301,7 +301,7 @@ describe('what serves the page', () => {
     expect(plan({ metro: unresponsive }).foreign?.remedy).toMatch(/^Run `stim start`, which reserves a free/);
     const stranger = { notOurs: 'pid 7 on port 8084 runs from /other, outside /app', kind: NOT_OURS_FOREIGN_CWD };
     expect(plan({ metro: stranger, supervisorHeld: true }).foreign?.remedy).toMatch(
-      /^Run `stim stop`, then `stim start`, which reserves a free/,
+      /^Run `stim stop` and follow its output, then `stim start`/,
     );
   });
 });

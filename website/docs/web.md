@@ -164,7 +164,8 @@ from a port that any tab can reach:
   page, it names this workspace's dev server step: `stim start` for Expo web,
   the `stim ports get web` recipe for any other server. A Metro port held by
   another process is also `"unverified"`; `stim start` then reserves a free
-  port for this workspace.
+  port for this workspace. When this workspace's supervisor is still recorded,
+  run `stim stop` first.
 
 A page that loads and then throws still reports `true`. Its errors are in
 `stim logs --errors`.

@@ -97,12 +97,13 @@ export function webServePlan({
     };
   }
   if (metro?.notOurs && (!supervisorHeld || metro.kind === NOT_OURS_FOREIGN_CWD)) {
-    const start = supervisorHeld ? 'Run `stim stop`, then `stim start`' : 'Run `stim start`';
     return {
       serve: null,
       foreign: {
         reason: `Another process holds this workspace's Metro port: ${metro.notOurs}`,
-        remedy: `${start}, which reserves a free Metro port for this workspace, then run \`stim web\` again.`,
+        remedy: supervisorHeld
+          ? 'Run `stim stop` and follow its output, then `stim start`, then run `stim web` again.'
+          : 'Run `stim start`, which reserves a free Metro port for this workspace, then run `stim web` again.',
       },
     };
   }
