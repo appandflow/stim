@@ -1,5 +1,5 @@
 import type { WebViewport } from './settings-registry.ts';
-import type { IdleStopRecord } from './workspace-state.ts';
+import type { IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 export type RunOutcomeKind = 'hit' | 'cold';
@@ -274,7 +274,13 @@ export interface EnvironmentState {
     activity?: DeviceActivity;
     app?: DeviceAppProcess;
   } | null;
-  metro?: { port: number; running: boolean; pid: number | null; idleStop?: IdleStopRecord } | null;
+  metro?: {
+    port: number;
+    running: boolean;
+    pid: number | null;
+    idleStop?: IdleStopRecord;
+    lastStop?: MetroLastStop;
+  } | null;
   web?: WebBrowserState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;

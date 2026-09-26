@@ -11,6 +11,7 @@ import type {
   DeviceLeaseState,
   EnvironmentState,
   IdleStopRecord,
+  MetroLastStop,
   RemoteDeviceState,
   StatusCapacity,
   StatusIssue,
@@ -136,6 +137,13 @@ function androidStatus(
   };
 }
 
+function stoppedMetroFacts(
+  idleStop: IdleStopRecord | null,
+  lastStop: MetroLastStop | null,
+): { idleStop?: IdleStopRecord; lastStop?: MetroLastStop } {
+  return { ...(idleStop ? { idleStop } : {}), ...(lastStop ? { lastStop } : {}) };
+}
+
 export function environmentState(
   project: ProjectRecord & { __path: string },
   {
@@ -151,6 +159,7 @@ export function environmentState(
     logs = null,
     remote = null,
     idleStop = null,
+    lastStop = null,
     launches = {},
     leasedIds = new Set(),
     now = Date.now(),
@@ -169,6 +178,7 @@ export function environmentState(
     logs?: LogsFacts | null;
     remote?: RemoteDeviceState | null;
     idleStop?: IdleStopRecord | null;
+    lastStop?: MetroLastStop | null;
     launches?: Readonly<Record<string, { launchedAt: string }>>;
     leasedIds?: ReadonlySet<string>;
     now?: number;
@@ -271,7 +281,7 @@ export function environmentState(
           port: project.metroPort,
           running: metroRunning,
           pid: metro?.metro?.pid ?? null,
-          ...(idleStop && !metroRunning ? { idleStop } : {}),
+          ...(metroRunning ? {} : stoppedMetroFacts(idleStop, lastStop)),
         }
       : null,
     supervisor:

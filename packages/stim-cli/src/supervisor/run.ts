@@ -16,10 +16,22 @@ import {
   readWorkspaceState,
   withWorkspaceStateLock,
 } from '../workspace/workspace-state.ts';
-import { IDLE_STOP_KEY } from '@stim-cli/core/state';
+import {
+  DEV_SERVER_STOP_REQUEST_KEY,
+  IDLE_STOP_KEY,
+  readDevServerStopRequest,
+  type DevServerStopRecord,
+} from '@stim-cli/core/state';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { trackDevServerActivity, watchIdleDevServer, workspaceIdleProbe, type IdleProbe } from './idle-stop.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
+import {
+  describeDevServerStop,
+  devServerStopLevel,
+  devServerStopRecord,
+  vanishedSupervisorMessage,
+  type SupervisorExitTrigger,
+} from './stop-cause.ts';
 
 export {
   MODE_BARE,
@@ -139,7 +151,7 @@ export async function runSupervisor({
 }: RunSupervisorOptions): Promise<{
   mode: string;
   server: ServerHandle | undefined;
-  shutdown: (code: number, event: string, msg: string) => Promise<void>;
+  shutdown: (code: number, event: string, msg: string, stop?: DevServerStopRecord) => Promise<void>;
   startedAt: string;
 } | null> {
   root = realpathSync(root);
@@ -155,6 +167,8 @@ export async function runSupervisor({
     return null;
   }
   const record = { pid: process.pid, processToken, port, mode, startedAt };
+  const vanished = vanishedSupervisorMessage(readWorkspaceState(root)?.supervisor);
+  if (vanished) writer.write({ src: 'metro', level: 'warn', event: 'supervisor_vanished', msg: vanished });
 
   clearExpoMetroTunnel(root);
   writePidFile(root, process.pid);
@@ -181,9 +195,25 @@ export async function runSupervisor({
 
   let stopping = false;
   let stopWatchingIdle: (() => void) | null = null;
-  const finish = (code: number, event: string, level: string, msg: string) => {
+  const stopCause = (trigger: SupervisorExitTrigger): DevServerStopRecord => {
+    const request = readDevServerStopRequest(readWorkspaceState(root));
+    return devServerStopRecord(
+      trigger,
+      request?.processToken === processToken ? request : null,
+      new Date(now()).toISOString(),
+    );
+  };
+  const finish = (code: number, event: string, level: string, msg: string, stop?: DevServerStopRecord) => {
     stopWatchingIdle?.();
-    writer.write({ src: 'metro', level, event, msg });
+    writer.write({ src: 'metro', level, event, msg, ...(stop ? { stop } : {}) });
+    try {
+      withWorkspaceStateLock(root, () => {
+        const current = readWorkspaceState(root)?.supervisor;
+        if (current && current.processToken !== processToken) return;
+        if (stop) writeWorkspaceState(root, { [IDLE_STOP_KEY]: stop });
+        clearWorkspaceStateKeys(root, [DEV_SERVER_STOP_REQUEST_KEY]);
+      });
+    } catch {}
     try {
       clearSupervisor(root, record);
     } catch {}
@@ -200,7 +230,7 @@ export async function runSupervisor({
   };
 
   let server: ServerHandle | undefined;
-  const shutdown = async (code: number, event: string, msg: string) => {
+  const shutdown = async (code: number, event: string, msg: string, stop?: DevServerStopRecord) => {
     if (stopping || !server) return;
     stopping = true;
     stopWatchingIdle?.();
@@ -209,25 +239,28 @@ export async function runSupervisor({
     } catch (err) {
       writer.write({ src: 'metro', level: 'warn', event: 'server_close_failed', msg: describeError(err) });
     }
-    finish(code, event, code === 0 ? 'info' : 'error', msg);
+    finish(code, event, stop ? devServerStopLevel(stop) : code === 0 ? 'info' : 'error', msg, stop);
   };
 
   if (attachSignals) {
     for (const signal of ['SIGTERM', 'SIGINT']) {
       process.on(signal, () => {
         if (server) {
-          shutdown(0, 'supervisor_stopped', `received ${signal}; stopping the ${mode} dev server`);
+          const stop = stopCause({ kind: 'signal', signal });
+          shutdown(0, 'supervisor_stopped', `stopping the ${mode} dev server: ${describeDevServerStop(stop)}`, stop);
           return;
         }
         // Node runs signal listeners from the event loop, and startExpoServer spawns and returns
         // without awaiting, so a listener that finds no server runs before any child exists.
         if (stopping) return;
         stopping = true;
+        const stop = stopCause({ kind: 'signal', signal });
         finish(
           signal === 'SIGINT' ? 130 : 143,
           'supervisor_stopped',
           'warn',
-          `received ${signal} before the ${mode} dev server started; stopping`,
+          `stopping before the ${mode} dev server started: ${describeDevServerStop(stop)}`,
+          stop,
         );
       });
     }
@@ -308,17 +341,17 @@ export async function runSupervisor({
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;
+          const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
           withWorkspaceStateLock(root, () => {
             if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
-              writeWorkspaceState(root, {
-                [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(now()).toISOString(), idleMinutes },
-              });
+              writeWorkspaceState(root, { [IDLE_STOP_KEY]: stop });
             }
           });
           await shutdown(
             0,
             'supervisor_idle_stopped',
             `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
+            stop,
           );
         };
         try {
@@ -341,11 +374,14 @@ export async function runSupervisor({
 
   server.onExit?.((info) => {
     if (stopping) return;
-    const detail = info?.signal ? `signal ${info.signal}` : `exit code ${info?.code ?? 'unknown'}`;
+    const stop = stopCause({ kind: 'server-exit', mode, code: info?.code ?? null, signal: info?.signal ?? null });
     shutdown(
-      1,
+      stop.reason === 'requested' ? 0 : 1,
       'supervisor_stopped',
-      `the ${mode} dev server exited unexpectedly (${detail}); shutting the supervisor down`,
+      stop.reason === 'requested'
+        ? `the ${mode} dev server exited; ${describeDevServerStop(stop)}`
+        : `${describeDevServerStop(stop)}; shutting the supervisor down`,
+      stop,
     );
   });
 

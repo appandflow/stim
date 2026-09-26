@@ -27,6 +27,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
+import { goneClaimOwner, liveClaimOwner, recycledClaimOwner } from './_factories.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -61,9 +62,14 @@ test('an old supervisor finishing cannot erase its replacement registration or t
   writeWorkspaceState(root, { supervisor: replacement, metroTunnel });
   upsertProject(root, { supervisor: replacement });
   writePidFile(root, process.pid);
-  await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
+  await running.shutdown(0, 'supervisor_stopped', 'test shutdown', {
+    reason: 'signal',
+    at: '2026-09-26T20:00:00.000Z',
+    signal: 'SIGTERM',
+  });
   expect(closed).toBe(true);
   expect(readWorkspaceState(root)?.supervisor).toEqual(replacement);
+  expect(readWorkspaceState(root)?.devServerStop).toBeUndefined();
   expect(readWorkspaceState(root)?.metroTunnel).toEqual(metroTunnel);
   expect(getProject(root)?.supervisor).toEqual(replacement);
   expect(readPidFile(root)).toBe(process.pid);
@@ -411,7 +417,9 @@ describe('runSupervisor', () => {
         added[0]?.(signal);
         expect(exits).toEqual([code]);
         expect(existsSync(supervisorPidFile(root))).toBe(false);
-        expect(readWorkspaceState(root)).toBe(null);
+        expect(readWorkspaceState(root)).toEqual({
+          devServerStop: { reason: 'signal', signal, at: expect.any(String) },
+        });
         expect(getProject(root)?.supervisor).toBe(undefined);
         expect(readMetroLog().at(-1)?.event).toBe('supervisor_stopped');
       } finally {
@@ -445,7 +453,7 @@ describe('runSupervisor', () => {
       expect(await running).toBe(null);
       expect(exits).toEqual([143]);
       expect(server.state.closed).toBe(1);
-      expect(readWorkspaceState(root)).toBe(null);
+      expect(readWorkspaceState(root)?.supervisor).toBeUndefined();
       expect(readMetroLog().some((record) => record.event === 'server_started')).toBe(false);
     } finally {
       for (const name of ['SIGTERM', 'SIGINT'] as const) {
@@ -473,7 +481,10 @@ describe('runSupervisor', () => {
       added[0]?.('SIGTERM');
       await vi.waitFor(() => expect(exits).toEqual([0]));
       expect(server.state.closed).toBe(1);
-      expect(readWorkspaceState(root)).toBe(null);
+      expect(readWorkspaceState(root)).toEqual({
+        devServerStop: { reason: 'signal', signal: 'SIGTERM', at: expect.any(String) },
+      });
+      expect(readMetroLog().at(-1)).toMatchObject({ level: 'warn', msg: expect.stringMatching(/from outside Stim/) });
     } finally {
       for (const name of ['SIGTERM', 'SIGINT'] as const) {
         for (const listener of process.listeners(name)) {
@@ -601,6 +612,96 @@ describe('runSupervisor', () => {
     expect(last.event).toBe('supervisor_stopped');
     expect(last.level).toBe('error');
     expect(last.msg).toMatch(/exited unexpectedly \(exit code 3\)/);
+  });
+
+  const requestStop = (processToken: unknown) =>
+    writeWorkspaceState(root, {
+      devServerStopRequest: { processToken, by: 'stim stop', pid: 4242, at: '2026-09-26T20:00:00.000Z' },
+    });
+
+  const requested = { reason: 'requested', by: 'stim stop', byPid: 4242 };
+
+  test.each([
+    ['this supervisor', true, requested, 'info', /stop requested by stim stop \(pid 4242\)/],
+    ['an earlier supervisor', false, { reason: 'signal', signal: 'SIGTERM' }, 'warn', /from outside Stim/],
+  ])(
+    'a SIGTERM after a stop request for %s is attributed only when the token matches',
+    async (_, matches, stop, level, msg) => {
+      const before = process.listeners('SIGTERM');
+      const exits: number[] = [];
+      await runSupervisor({
+        root,
+        port: 8104,
+        isExpo: () => false,
+        onExit: (code) => exits.push(code),
+        startBare: async () => fakeServer().handle,
+      });
+      try {
+        requestStop(matches ? readWorkspaceState(root)?.supervisor?.processToken : 'upid1.earlier');
+        process.listeners('SIGTERM').find((listener) => !before.includes(listener))?.('SIGTERM');
+        await vi.waitFor(() => expect(exits).toEqual([0]));
+        expect(readWorkspaceState(root)).toEqual({ devServerStop: { ...stop, at: expect.any(String) } });
+        expect(readMetroLog().at(-1)).toMatchObject({ level, msg: expect.stringMatching(msg) });
+      } finally {
+        for (const listener of process.listeners('SIGTERM')) {
+          if (!before.includes(listener)) process.off('SIGTERM', listener);
+        }
+      }
+    },
+  );
+
+  test.each([
+    [true, 0, requested, 'info', /stop requested by stim stop/],
+    [
+      false,
+      1,
+      { reason: 'server-exited', mode: MODE_EXPO, code: 0, signal: null },
+      'error',
+      /exit code 0\); Expo CLI also exits 0 on SIGTERM/,
+    ],
+  ])(
+    'an Expo exit 0 with a stop request (%s) is that request, and without one it is flagged',
+    async (hasRequest, exitCode, stop, level, msg) => {
+      const server = fakeServer({ mode: MODE_EXPO, serverPid: 31340 });
+      const exits: number[] = [];
+      await runSupervisor({
+        root,
+        port: 8105,
+        isExpo: () => true,
+        attachSignals: false,
+        onExit: (code) => exits.push(code),
+        startExpo: async () => server.handle,
+      });
+      if (hasRequest) requestStop(readWorkspaceState(root)?.supervisor?.processToken);
+      server.state.listeners[0]?.({ code: 0, signal: null });
+      await vi.waitFor(() => expect(exits).toEqual([exitCode]));
+      expect(readWorkspaceState(root)?.devServerStop).toEqual({ ...stop, at: expect.any(String) });
+      expect(readMetroLog().at(-1)).toMatchObject({ level, msg: expect.stringMatching(msg) });
+    },
+  );
+
+  test.each([
+    ['gone', goneClaimOwner, true],
+    ['recycled', recycledClaimOwner, true],
+    ['alive', liveClaimOwner, false],
+  ])('a new supervisor logs a %s predecessor that recorded no cause', async (_, owner, vanished) => {
+    writeWorkspaceState(root, { supervisor: { ...owner(), startedAt: '2026-09-26T19:00:00.000Z' } });
+    await runSupervisor({
+      root,
+      port: 8106,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      startBare: async () => fakeServer().handle,
+    });
+    const logged = readMetroLog()
+      .filter((record) => record.event === 'supervisor_vanished')
+      .map(({ level, msg }) => ({ level, msg }));
+    const expected = {
+      level: 'warn',
+      msg: `supervisor pid ${owner().pid} (started 2026-09-26T19:00:00.000Z) is gone and recorded no cause: usually SIGKILL, a crash or a machine restart`,
+    };
+    expect(logged).toEqual(vanished ? [expected] : []);
   });
 
   test('a server that fails to start leaves no registration and exits 1 with the structured error', async () => {

@@ -5,12 +5,13 @@ import { resolveSupervisorTarget } from './ownership.ts';
 import { clearWorkspaceSupervisor } from './state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { supervisorError } from './errors.ts';
+import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from './stop-cause.ts';
 
 export type OwnedMetroStop =
   | { status: 'stopped' | 'not-running' }
   | { status: 'unverified' | 'external' | 'stuck' | 'port-occupied'; reason: string };
 
-export async function stopOwnedMetro(root: string): Promise<OwnedMetroStop> {
+export async function stopOwnedMetro(root: string, requester: StopRequester): Promise<OwnedMetroStop> {
   const project = getProject(root);
   const port = project?.metroPort;
   const target = resolveSupervisorTarget({
@@ -24,7 +25,10 @@ export async function stopOwnedMetro(root: string): Promise<OwnedMetroStop> {
   }
   if (target.status !== 'ours') return { status: 'not-running' };
   const expected = { pid: target.pid, processToken: target.processToken };
-  if (!killMetroTree(target.pid, target.processToken) || !(await waitForProcessExit(expected, 10_000))) {
+  requestDevServerStop(root, target.processToken, requester);
+  const signalled = killMetroTree(target.pid, target.processToken);
+  if (!signalled) withdrawDevServerStopRequest(root, target.processToken);
+  if (!signalled || !(await waitForProcessExit(expected, 10_000))) {
     return { status: 'stuck', reason: `supervisor pid ${target.pid} did not exit` };
   }
   if (port && !(await resolveProjectMetro(port, root)).missing) {
@@ -36,7 +40,7 @@ export async function stopOwnedMetro(root: string): Promise<OwnedMetroStop> {
 }
 
 export async function stopOwnedMetroForReset(root: string): Promise<void> {
-  const stopped = await stopOwnedMetro(root);
+  const stopped = await stopOwnedMetro(root, { by: 'stim start --reset-cache' });
   switch (stopped.status) {
     case 'unverified':
       throw supervisorError(

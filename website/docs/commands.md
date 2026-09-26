@@ -685,7 +685,9 @@ workspace ends the session.
 A dev server that its supervisor stopped after
 [`metro.idleStopMinutes`](./dev-server-and-logs.md#idle-stop) with no use
 prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
-`metro` carries `idleStop` with `reason`, `at`, and `idleMinutes`.
+`metro` carries `idleStop` with `reason`, `at`, and `idleMinutes`. Any other
+known cause prints after `not running`, and `metro.lastStop` carries it; see
+[why the dev server stopped](./dev-server-and-logs.md#why-the-dev-server-stopped).
 
 In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and

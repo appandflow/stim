@@ -132,6 +132,29 @@ WHAT THE SUPERVISOR IS
   is read when \`start\` spawns the supervisor; a value that is not a whole
   number of 0 or more is refused, as \`stim settings set\` refuses it.
 
+  WHY IT STOPPED: a supervisor that stops its dev server writes a
+  supervisor_stopped line (supervisor_idle_stopped for an idle stop) whose
+  stop field and message give the cause, and records the same cause as
+  devServerStop in state.json. A dev server that failed to start is
+  supervisor_failed instead. Plain \`status\` prints it after "not running"
+  while the workspace keeps its port (\`stim stop\` releases the port, so its
+  own stops show only in the log).
+    requested      a Stim command stopped it and says which: stim stop,
+                   stim worktree remove, stim gc --delete, stim start
+                   --reset-cache, or budget reclaim (with the workspace whose
+                   ios, android or start run reclaimed it)
+    signal         a SIGTERM or SIGINT with no Stim stop request recorded,
+                   so it likely came from outside Stim (level warn)
+    server-exited  the dev server exited on its own (level error). Expo CLI
+                   also exits 0 when it gets SIGTERM, so "exit code 0" with
+                   no request usually means something outside Stim signalled
+                   the Expo process
+    idle           metro.idleStopMinutes, above
+  A supervisor killed with SIGKILL, or one that crashed, cannot write
+  anything; neither can one whose state file was not writable. The next
+  supervisor logs supervisor_vanished (level warn) for it, and until then
+  \`status\` reports metro.lastStop.reason "vanished".
+
   ENVIRONMENT: the supervisor -- and through it the dev server, including a
   metro.config.js evaluated inside the expo child -- inherits the environment
   of the \`start\` call that SPAWNED it. A later \`start\` that finds a healthy

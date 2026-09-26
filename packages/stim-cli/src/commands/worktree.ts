@@ -444,6 +444,7 @@ async function reclaimAll(
         deleteOwnedDevices: true,
         parkOwnedDevices: true,
         preserveProjectRecord: preserveRootProject && key === rootPath,
+        stopRequester: { by: 'stim worktree remove' },
       });
     } catch (error) {
       keptEntries.push(key);

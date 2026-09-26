@@ -26,6 +26,7 @@ import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../w
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
+import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
   clearManagedMetroTunnel,
@@ -394,6 +395,7 @@ async function stopWorkspace({
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
+    logVanishedSupervisor(root, sup);
     outcomes.supervisor = {
       status: 'already-stopped',
       pid: target.pid,
@@ -406,7 +408,7 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { killGroup, waiter, report });
+    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
@@ -659,16 +661,19 @@ async function reapCollectors(
 async function stopSupervisor(
   target: SupervisorTarget,
   {
+    root,
     killGroup,
     waiter,
     report,
   }: {
+    root: string;
     killGroup: typeof killMetroTree;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
   },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
+  requestDevServerStop(root, target.processToken, { by: 'stim stop' });
   let signalled = false;
   try {
     signalled = killGroup(target.pid, target.processToken);
@@ -681,6 +686,7 @@ async function stopSupervisor(
     );
   }
   if (!signalled) {
+    withdrawDevServerStopRequest(root, target.processToken);
     const reason = `could not signal supervisor pid ${target.pid}`;
     report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };

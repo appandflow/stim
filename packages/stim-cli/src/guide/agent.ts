@@ -274,6 +274,7 @@ Read the matching guide before acting in these situations:
 | Web app in an owned Chrome (stim web)                 | stim guide web                   |
 | Web or API server ports                               | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
+| Metro stopped and no one ran stim stop                | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
 | budget lines, reclaimed field, or low disk            | stim guide lifecycle budget      |

@@ -342,7 +342,8 @@ async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): 
             return await withWorkspaceProcessLock(
               workspaceDir(path),
               'metro-start',
-              async () => (stillIdle(path, pid) ? stopOwnedMetro(path) : 'busy'),
+              async () =>
+                stillIdle(path, pid) ? stopOwnedMetro(path, { by: 'budget reclaim', workspace: root }) : 'busy',
               { external: true, waitMs: 0, ownerPurpose: 'budget reclaim' },
             );
           } catch (error) {

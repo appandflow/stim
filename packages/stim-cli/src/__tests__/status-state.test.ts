@@ -20,6 +20,7 @@ import {
 } from '../status.ts';
 import type { LeaseFileEntry } from '../engine/device-lease.ts';
 import { makeEnvironmentState } from './_factories.ts';
+import { metroLastStop } from '../supervisor/stop-cause.ts';
 
 const BOOTED = { udid: 'U1', name: 'stim-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'stim-app', state: 'Shutdown' };
@@ -458,6 +459,28 @@ test('an idle-stopped dev server is reported on metro only while nothing serves 
 
   const restarted = environmentState(project(), { metro: { metro: { pid: 42 } }, idleStop });
   expect(restarted.metro).toEqual({ port: 8082, running: true, pid: 42 });
+});
+
+test('a stopped dev server reports its recorded cause, or a vanished supervisor that recorded none', () => {
+  const requested = { reason: 'requested', at: '2026-09-26T20:00:00.000Z', by: 'budget reclaim', byPid: 7 };
+  const stale = { status: 'stale', pid: 99, startedAt: '2026-09-26T19:00:00.000Z' };
+  expect(metroLastStop({ devServerStop: requested }, stale)).toEqual(requested);
+  expect(metroLastStop({}, stale)).toEqual({ reason: 'vanished', pid: 99, startedAt: '2026-09-26T19:00:00.000Z' });
+  expect(metroLastStop({}, { ...stale, status: 'ours' })).toBeNull();
+  expect(metroLastStop({}, null)).toBeNull();
+
+  const lastStop = metroLastStop({ devServerStop: requested }, null);
+  expect(environmentState(project(), { metro: { missing: true }, lastStop }).metro).toEqual({
+    port: 8082,
+    running: false,
+    pid: null,
+    lastStop: requested,
+  });
+  expect(environmentState(project(), { metro: { metro: { pid: 42 } }, lastStop }).metro).toEqual({
+    port: 8082,
+    running: true,
+    pid: 42,
+  });
 });
 
 test('statusActivity rounds lastActivityAt down to the minute, so records within one minute give the same payload', () => {

@@ -496,7 +496,7 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
       recordGcResult('project', 'kept', path, { detail: 'its absence can no longer be confirmed' });
       continue;
     }
-    const result = await reclaimProject(path).catch((error: unknown) => {
+    const result = await reclaimProject(path, { stopRequester: { by: 'stim gc --delete' } }).catch((error: unknown) => {
       deleteFailures++;
       console.log(chalk.red(`Could not prune ${path}; its registry entry was kept: ${(error as Error).message}`));
       recordGcResult('project', 'failed', path, { detail: `its registry entry was kept: ${(error as Error).message}` });
