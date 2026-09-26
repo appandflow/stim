@@ -149,7 +149,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   };
   const press = (button: InputButton) => control.button(button);
   const postures = control.state.kind === 'on' ? control.state.postures : [];
-  const shown = stream.frame?.posture;
+  const shown = stream.frame?.posture ?? stream.video?.posture;
   const move = (posture: DevicePosture) => {
     setMoving(posture);
     control

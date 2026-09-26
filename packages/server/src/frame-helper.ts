@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Device, Frame, FrameListener } from './frames.ts';
+import type { Device, Frame, FrameListener, Posture } from './frames.ts';
 import { FRAME_EDGE, FRAME_FPS } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
@@ -160,7 +160,8 @@ async function compiled(
 /**
  * One `stim-frames` process per device, shared by its subscribers and stopped with the last of them. It runs
  * at the highest fps and the largest edge any subscriber asked for; each subscriber paces its own frames. The
- * helper exits when its stdin closes, so it cannot outlive the server.
+ * helper exits when its stdin closes, so it cannot outlive the server. `lit` turns the display the helper
+ * reports it streams into a posture, which the frames and access units after it carry.
  */
 export class HelperSource {
   private readonly listeners = new Map<FrameListener, FrameHint | null>();
@@ -175,9 +176,18 @@ export class HelperSource {
   private readonly bitrate = new Bitrate(DEFAULT_VIDEO_LIMITS, Date.now());
   private keyframeAt = -Infinity;
   private keyframeTimer: NodeJS.Timeout | null = null;
+  private readonly lit: ((display: number) => Posture | undefined) | undefined;
+  private posture: Posture | undefined;
 
-  constructor(helper: string, device: Device, env: NodeJS.ProcessEnv, ended: () => void) {
+  constructor(
+    helper: string,
+    device: Device,
+    env: NodeJS.ProcessEnv,
+    ended: () => void,
+    lit?: (display: number) => Posture | undefined,
+  ) {
     this.ended = ended;
+    this.lit = lit;
     const id = device.platform === 'ios' ? device.udid : device.serial;
     this.child = spawn(helper, [device.platform, id], { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
@@ -291,6 +301,7 @@ export class HelperSource {
       height: body.readUInt16BE(3),
       capturedAt: new Date().toISOString(),
       data: body.subarray(5).toString('base64'),
+      ...(this.posture ? { posture: this.posture } : {}),
     };
     for (const listener of this.listeners.keys()) if (!listener.video) listener.frame(this.last);
   }
@@ -303,6 +314,7 @@ export class HelperSource {
       width: body.readUInt16BE(10),
       height: body.readUInt16BE(12),
       data: body.subarray(VIDEO_HEADER_BYTES),
+      ...(this.posture ? { posture: this.posture } : {}),
     };
     if (this.bitrate.tick(Date.now()) !== null) this.configure();
     for (const listener of this.listeners.keys()) listener.video?.(unit);
@@ -317,6 +329,8 @@ export class HelperSource {
       if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
       if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
+      const display = (notice as { display?: unknown } | null)?.display;
+      if (this.lit && typeof display === 'number') this.posture = this.lit(display);
     } catch {}
   }
 }

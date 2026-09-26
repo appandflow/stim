@@ -13,7 +13,7 @@ import type { AccessUnit } from './video.ts';
 /** `foldable` marks an iPhone Duo, whose posture lights one of two panels. */
 export type Device = { platform: 'ios'; udid: string; foldable: boolean } | { platform: 'android'; serial: string };
 
-type Posture = 'folded' | 'unfolded';
+export type Posture = 'folded' | 'unfolded';
 
 export interface Frame {
   width: number;
@@ -263,6 +263,9 @@ function simulatorCapturer(
 }
 
 type DuoPanel = 'primary' | 'primary-1';
+
+/** The Duo's panels in the order the helper indexes CoreSimulator's displays, by screen ID. */
+const DUO_PANELS: readonly DuoPanel[] = ['primary', 'primary-1'];
 
 const POSTURES: Record<DuoPanel, Posture> = { primary: 'folded', 'primary-1': 'unfolded' };
 
@@ -646,11 +649,12 @@ class FrameSource {
 
 /**
  * One capture per device, shared by its subscribers and stopped with the last of them. With the `stim-frames`
- * helper, a device streams frames as its screen changes, at the rate its subscribers ask for. Without it, for
- * an iPhone Duo, and while the helper is still being built, a screenshot loop sends a frame only when the
- * screen changed: up to 5 times a second while it changes, backing off to once a second while it does not,
- * spending at most half of its time capturing, with at most two captures at once across all devices. A helper
- * that fails before its first frame gives way to the screenshot loop.
+ * helper, a device streams frames as its screen changes, at the rate its subscribers ask for; an iPhone Duo
+ * streams its lit panel, which is its posture. Without the helper, and while it is still being built, a
+ * screenshot loop sends a frame only when the screen changed: up to 5 times a second while it changes, backing
+ * off to once a second while it does not, spending at most half of its time capturing, with at most two
+ * captures at once across all devices. A helper that fails before its first frame gives way to the screenshot
+ * loop.
  */
 export class FramePool {
   private readonly sources = new Map<string, FrameSource | HelperSource>();
@@ -672,9 +676,7 @@ export class FramePool {
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
     const helper = this.helper();
-    if (helper === null || (device.platform === 'ios' && device.foldable)) {
-      return this.screenshots(device).add(listener);
-    }
+    if (helper === null) return this.screenshots(device).add(listener);
     let streamed = false;
     let cancelled = false;
     const { video } = listener;
@@ -753,9 +755,24 @@ export class FramePool {
     const key = `helper:${deviceKey(device)}`;
     const existing = this.sources.get(key);
     if (existing instanceof HelperSource) return existing;
-    const created: HelperSource = new HelperSource(helper, device, this.env, () => {
-      if (this.sources.get(key) === created) this.sources.delete(key);
-    });
+    const lit =
+      device.platform === 'ios' && device.foldable
+        ? (display: number) => {
+            const panel = DUO_PANELS[display];
+            if (!panel) return undefined;
+            this.litPanels.set(device.udid, panel);
+            return POSTURES[panel];
+          }
+        : undefined;
+    const created: HelperSource = new HelperSource(
+      helper,
+      device,
+      this.env,
+      () => {
+        if (this.sources.get(key) === created) this.sources.delete(key);
+      },
+      lit,
+    );
     this.sources.set(key, created);
     return created;
   }

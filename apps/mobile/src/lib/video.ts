@@ -6,12 +6,16 @@ export interface VideoPacket {
   capturedAt: number;
   width: number;
   height: number;
+  /** An iPhone Duo's posture, from the panel the server streams. */
+  posture?: 'folded' | 'unfolded';
   /** One Annex-B H.264 access unit, a view into the message's buffer. */
   accessUnit: Uint8Array;
 }
 
 const VERSION = 1;
 const KEYFRAME = 1;
+const FOLDED = 2;
+const UNFOLDED = 4;
 const FIXED_HEADER_BYTES = 21;
 
 /** Reads the binary message stim-server sends for a video subscription, or null for anything else. */
@@ -23,9 +27,12 @@ export function parseVideoPacket(buffer: ArrayBuffer): VideoPacket | null {
   const idLength = view.getUint8(20);
   if (headerLength < FIXED_HEADER_BYTES + idLength || headerLength > buffer.byteLength) return null;
   const id = new Uint8Array(buffer, FIXED_HEADER_BYTES, idLength);
+  const flags = view.getUint8(1);
+  const posture = flags & FOLDED ? 'folded' : flags & UNFOLDED ? 'unfolded' : undefined;
   return {
     subscription: String.fromCharCode(...id),
-    keyframe: (view.getUint8(1) & KEYFRAME) !== 0,
+    keyframe: (flags & KEYFRAME) !== 0,
+    ...(posture ? { posture } : {}),
     sequence: view.getUint32(4),
     capturedAt: view.getFloat64(8),
     width: view.getUint16(16),

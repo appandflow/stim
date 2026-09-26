@@ -135,6 +135,7 @@ which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. A second row has **Rotate left** and **Rotate right**, and, when the
 device has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
+whichever its latest frame or video shows it is not,
 and **Fold**, **Half open** and **Unfold** on a foldable emulator. The session ends when you turn Control off, leave the view, lose the
 connection, or after 5 minutes without input; the banner says why.
 

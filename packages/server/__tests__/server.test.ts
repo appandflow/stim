@@ -1144,7 +1144,9 @@ process.stdin.on('data', (chunk) => {
 });
 process.stdin.on('end', () => process.exit(0));
 let sent = 0;
+const displays = JSON.parse(env.FAKE_HELPER_DISPLAYS ?? '[]');
 setInterval(() => {
+  if (typeof displays[sent] === 'number') message(2, Buffer.from(JSON.stringify({ display: displays[sent] })));
   if (config.video) {
     const header = Buffer.alloc(13);
     header[0] = keyframe ? 1 : 0;
@@ -1536,6 +1538,39 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
+  test.skipIf(!fakeTailscale)(
+    'streams the lit iPhone Duo panel through the helper and reports its posture',
+    async () => {
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_INTERVAL_MS: '10',
+          FAKE_HELPER_DISPLAYS: JSON.stringify([0, ...Array(29).fill(null), 1]),
+        },
+        undefined,
+        fakeHelper(),
+      );
+      const viewer = await authed(port);
+      const tile = await authed(port);
+      expect(
+        await viewer.request('frames.subscribe', { workspace, platform: 'ios', fps: 60, video: ['h264'] }),
+      ).toMatchObject({ result: { video: 'h264' } });
+      await tile.request('frames.subscribe', { workspace, platform: 'ios', fps: 30 });
+      const flags: number[] = [];
+      while (!((flags.at(-1) ?? 0) & 4))
+        flags.push(((await viewer.next()) as unknown as { binary: Buffer }).binary[1]!);
+      expect(flags[0]).toBe(1 | 2);
+      expect(flags.slice(1, -1).every((flag) => flag === 2)).toBe(true);
+      const postures = new Set<unknown>();
+      while (!postures.has('unfolded')) postures.add(((await tile.next()) as { posture?: string }).posture);
+      expect([...postures]).toEqual(['folded', 'unfolded']);
+      expect(helperRuns()).toEqual([]);
+      expect(toolRuns().filter((run) => run.tool === 'xcrun')).toEqual([]);
+    },
+    10_000,
+  );
+
   test.skipIf(!fakeTailscale)('sends JPEG frame events when no helper can encode video', async () => {
     const port = await startWithTools({
       FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
@@ -1741,7 +1776,7 @@ describe('frames.subscribe', () => {
       const port = await startControl(
         {
           FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
-          FAKE_FRAMES: JSON.stringify([jpeg(1398, 2034, 'cover').toString('base64')]),
+          FAKE_HELPER_DISPLAYS: '[0]',
         },
         { shapeChangesPerSecond: 100 },
       );
@@ -1752,8 +1787,9 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
         error: { code: 'action-failed' },
       });
-      await client.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await client.next()).toMatchObject({ event: 'frame', posture: 'folded' });
+      const viewer = await authed(port);
+      await viewer.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await viewer.next()).toMatchObject({ event: 'frame', posture: 'folded' });
       expect(await client.request('input.posture', { session, posture: 'folded' })).toMatchObject({ result: {} });
       expect(await client.request('input.posture', { session, posture: 'half-open' })).toMatchObject({
         error: { code: 'bad-request' },

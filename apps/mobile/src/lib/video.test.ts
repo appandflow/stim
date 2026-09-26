@@ -1,11 +1,11 @@
 import { parseVideoPacket, VideoMeter } from '@/lib/video';
 
-function packet(subscription: string, keyframe: boolean, accessUnit: number[]): ArrayBuffer {
+function packet(subscription: string, flags: number, accessUnit: number[]): ArrayBuffer {
   const header = 21 + subscription.length;
   const buffer = new ArrayBuffer(header + accessUnit.length);
   const view = new DataView(buffer);
   view.setUint8(0, 1);
-  view.setUint8(1, keyframe ? 1 : 0);
+  view.setUint8(1, flags);
   view.setUint16(2, header);
   view.setUint32(4, 42);
   view.setFloat64(8, 1759000000123.5);
@@ -19,7 +19,7 @@ function packet(subscription: string, keyframe: boolean, accessUnit: number[]): 
 
 describe('parseVideoPacket', () => {
   it('reads the header stim-server writes and exposes the access unit without copying', () => {
-    const buffer = packet('s12', true, [0, 0, 0, 1, 0x65]);
+    const buffer = packet('s12', 1, [0, 0, 0, 1, 0x65]);
     const parsed = parseVideoPacket(buffer)!;
     expect(parsed).toMatchObject({
       subscription: 's12',
@@ -31,13 +31,19 @@ describe('parseVideoPacket', () => {
     });
     expect([...parsed.accessUnit]).toEqual([0, 0, 0, 1, 0x65]);
     expect(parsed.accessUnit.buffer).toBe(buffer);
+    expect(parsed).not.toHaveProperty('posture');
+  });
+
+  it("reads an iPhone Duo's posture from the flags", () => {
+    expect(parseVideoPacket(packet('s1', 1 | 2, [1]))).toMatchObject({ keyframe: true, posture: 'folded' });
+    expect(parseVideoPacket(packet('s1', 4, [1]))).toMatchObject({ keyframe: false, posture: 'unfolded' });
   });
 
   it('rejects another version and a header longer than the message', () => {
-    const other = packet('s1', false, [1]);
+    const other = packet('s1', 0, [1]);
     new DataView(other).setUint8(0, 2);
     expect(parseVideoPacket(other)).toBeNull();
-    const truncated = packet('s1', false, []);
+    const truncated = packet('s1', 0, []);
     new DataView(truncated).setUint16(2, 200);
     expect(parseVideoPacket(truncated)).toBeNull();
   });

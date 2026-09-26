@@ -229,7 +229,8 @@ the app cannot connect in v1.
     asked for. Each subscriber is paced and drops frames while its socket has
     more than two frames unsent.
   - The screenshot path remains as the fallback when the helper cannot be
-    built or fails before its first frame, and for the iPhone Duo.
+    built or fails before its first frame. The helper streams the lit panel
+    of an iPhone Duo (#1382).
 - H.264 (#1243, added 2026-09-25): the helper also encodes H.264 with
   VideoToolbox for clients that ask for it with `video: ["h264"]`, sent as
   binary messages on the same WebSocket, not over WebRTC. The authenticated
