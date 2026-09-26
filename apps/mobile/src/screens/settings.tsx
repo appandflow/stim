@@ -11,6 +11,7 @@ import {
 } from '@expo/ui/jetpack-compose';
 import { clickable, clip, fillMaxSize, fillMaxWidth, padding, Shapes } from '@expo/ui/jetpack-compose/modifiers';
 import { router } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 import { Children, isValidElement, useState, type ReactNode } from 'react';
 import type { ImageSourcePropType } from 'react-native';
 
@@ -30,7 +31,7 @@ import {
   VIDEO_QUALITY_OPTIONS,
   type Option,
 } from '@/lib/settings-options';
-import { useColors, useEffectiveScheme, type Colors } from '@/theme';
+import type { Theme } from '@/design/theme';
 
 const ICONS = {
   appearance: require('@/assets/icons/contrast.xml'),
@@ -42,8 +43,9 @@ const ICONS = {
 } satisfies Record<string, ImageSourcePropType>;
 
 export function Settings() {
-  const colors = useColors();
-  const scheme = useEffectiveScheme();
+  const { theme, rt } = useUnistyles();
+  const colors = theme.colors;
+  const scheme = rt.themeName === 'dark' ? 'dark' : 'light';
   const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
@@ -113,7 +115,7 @@ export function Settings() {
                   value={
                     scope === 'control' ? 'Can control' : scope === 'read' ? 'Read-only' : describeState(state, missing)
                   }
-                  valueColor={scope === 'read' ? colors.warn : undefined}
+                  valueColor={scope === 'read' ? colors.warning : undefined}
                   onPress={() =>
                     scope === 'read'
                       ? explainReadOnly(mac.name, state, connection)
@@ -141,7 +143,7 @@ function Section({
   footer,
   children,
 }: {
-  colors: Colors;
+  colors: Theme['colors'];
   title: string;
   footer?: string;
   children: ReactNode;
@@ -189,7 +191,7 @@ function Row({
   trailing,
   onPress,
 }: {
-  colors: Colors;
+  colors: Theme['colors'];
   title: string;
   icon: ImageSourcePropType;
   value?: string;
@@ -230,7 +232,7 @@ function Choice<T extends string>({
   value,
   onChange,
 }: {
-  colors: Colors;
+  colors: Theme['colors'];
   title: string;
   icon: ImageSourcePropType;
   options: Option<T>[];

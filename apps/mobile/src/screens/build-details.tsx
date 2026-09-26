@@ -1,10 +1,14 @@
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { BuildProgressBar } from '@/components/build-progress';
 import { Icon } from '@/components/icon';
+import { ListSection, SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import type { Theme } from '@/design/theme';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import {
@@ -29,7 +33,6 @@ import type {
   LastBuild,
   Platform,
 } from '@/protocol/types';
-import { mono, useColors, type Colors } from '@/theme';
 
 const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', removed: '\u2212', changed: '~' };
 
@@ -46,7 +49,7 @@ const PHASE_ORDER: readonly BuildPhase[] = [
 
 /** One platform's builds in a workspace: the running build, the last build, recent runs, and what the next would do. */
 export function BuildDetails({ path, platform }: { path: string; platform: Platform }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
   const last = env?.lastBuilds?.[platform];
@@ -58,8 +61,8 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
   const checking = plan?.kind === 'checking';
   const canCheck = recheck !== null && !checking;
   return (
-    <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={styles.container}>
-      <Text style={[styles.title, { color: colors.text }]}>{`${name} builds`}</Text>
+    <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
+      <Text variant="title">{`${name} builds`}</Text>
       {running?.platform === platform ? <BuildProgressBar build={running} /> : null}
 
       <Section title="Last build">
@@ -82,8 +85,8 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
             hitSlop={10}
             style={styles.refresh}
           >
-            <Icon name="arrow.clockwise" size={14} color={canCheck ? colors.primary : colors.tertiary} />
-            <Text style={[styles.refreshText, { color: canCheck ? colors.primary : colors.tertiary }]}>
+            <Icon name="arrow.clockwise" size={14} color={canCheck ? theme.colors.primary : theme.colors.tertiary} />
+            <Text variant="footnote" weight="medium" tone={canCheck ? 'brand' : 'tertiary'}>
               Check again
             </Text>
           </Touch>
@@ -93,26 +96,25 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
           <Note>Checked after the running build.</Note>
         ) : checking ? (
           <View style={styles.row}>
-            <ActivityIndicator size="small" color={colors.tertiary} />
+            <ActivityIndicator size="small" color={theme.colors.tertiary} />
             <Note>{'Checking the next build\u2026'}</Note>
           </View>
         ) : plan?.kind === 'failed' ? (
-          <Text style={[styles.line, { color: colors.warn }]} selectable>
+          <Text tone="warning" selectable>
             {`Cannot plan: ${plan.message}`}
           </Text>
         ) : plan?.kind === 'done' ? (
           <>
             <Text
-              style={[
-                styles.headline,
-                { color: plan.plan.refusal || plan.plan.cacheHit === false ? colors.warn : colors.live },
-              ]}
+              variant="body"
+              weight="semibold"
+              tone={plan.plan.refusal || plan.plan.cacheHit === false ? 'warning' : 'success'}
             >
               {`Next: ${nextBuild(plan.plan, false)}`}
             </Text>
             {planDetail(plan.plan) ? <Note>{planDetail(plan.plan)}</Note> : null}
             {plan.plan.refusal ? (
-              <Text style={[styles.line, { color: colors.secondary }]} selectable>
+              <Text tone="secondary" selectable>
                 {`${plan.plan.refusal.message} ${plan.plan.refusal.remedy}`}
               </Text>
             ) : null}
@@ -122,7 +124,7 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
           <Note>Not checked yet.</Note>
         )}
         {checkedAt !== null && !checking && !running ? (
-          <Text style={[styles.detail, { color: colors.tertiary }]}>
+          <Text variant="footnote" tone="tertiary">
             {`Checked ${shortDuration(now - checkedAt)} ago`}
           </Text>
         ) : null}
@@ -132,7 +134,6 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
 }
 
 function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
-  const colors = useColors();
   const failed = last.status === 'failed';
   const when = [
     `Started ${new Date(last.startedAt).toLocaleString()}`,
@@ -148,7 +149,7 @@ function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; r
     .join(', ');
   return (
     <>
-      <Text style={[styles.headline, { color: failed ? colors.error : colors.text }]}>
+      <Text variant="body" weight="semibold" tone={failed ? 'error' : 'default'}>
         {lastBuildSummary(last, now, false)}
       </Text>
       <Note>{when}</Note>
@@ -159,36 +160,35 @@ function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; r
 }
 
 function Diagnostics({ diagnostics, root }: { diagnostics: BuildDiagnostic[]; root: string }) {
-  const colors = useColors();
   const { home } = useMacConnection();
   return (
-    <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+    <ListSection>
       {diagnostics.map((d, i) => (
         <View key={i} style={styles.diagnostic}>
           {d.file ? (
-            <Text style={[styles.source, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="head">
+            <Text variant="caption" tone="secondary" mono style={styles.source} numberOfLines={1} ellipsizeMode="head">
               {`${tildeHome(relativeTo(d.file, root), home)}${d.line === null ? '' : `:${d.line}`}${
                 d.column === null ? '' : `:${d.column}`
               }`}
             </Text>
           ) : null}
-          <Text style={[styles.source, { color: colors.error }]} selectable>
+          <Text variant="caption" tone="error" mono style={styles.source} selectable>
             {d.message}
           </Text>
         </View>
       ))}
-    </View>
+    </ListSection>
   );
 }
 
-function resultColor(result: BuildHistoryEntry['result'], colors: Colors): string {
-  if (result === 'succeeded') return colors.live;
-  if (result === 'failed') return colors.error;
-  return colors.warn;
+function resultColor(result: BuildHistoryEntry['result'], theme: Theme): string {
+  if (result === 'succeeded') return theme.colors.success;
+  if (result === 'failed') return theme.colors.error;
+  return theme.colors.warning;
 }
 
 function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: number; root: string }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const [open, setOpen] = useState<string | null>(null);
   const bars = durationBars(entries);
   return (
@@ -202,14 +202,14 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                 styles.bar,
                 {
                   height: `${Math.max(8, Math.round(bar.fraction * 100))}%`,
-                  backgroundColor: resultColor(bar.result, colors),
+                  backgroundColor: resultColor(bar.result, theme),
                 },
               ]}
             />
           ))}
         </View>
       ) : null}
-      <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+      <ListSection>
         {entries.map((entry) => {
           const key = `${entry.startedAt}-${entry.slot}-${entry.result}`;
           const expanded = open === key;
@@ -222,19 +222,21 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                 style={styles.historyHeader}
               >
                 <View style={styles.row}>
-                  <View style={[styles.dot, { backgroundColor: resultColor(entry.result, colors) }]} />
-                  <Text style={[styles.line, styles.grow, { color: colors.text }]} numberOfLines={1}>
+                  <View style={[styles.dot, { backgroundColor: resultColor(entry.result, theme) }]} />
+                  <Text style={styles.grow} numberOfLines={1}>
                     {historyTitle(entry)}
                   </Text>
-                  <Text style={[styles.detail, { color: colors.secondary }]}>
+                  <Text variant="footnote" tone="secondary">
                     {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
                   </Text>
                   <View style={{ transform: [{ rotate: expanded ? '90deg' : '0deg' }] }}>
-                    <Icon name="chevron.right" size={12} color={colors.tertiary} />
+                    <Icon name="chevron.right" size={12} color={theme.colors.tertiary} />
                   </View>
                 </View>
                 <Text
-                  style={[styles.detail, styles.indent, { color: colors.secondary }]}
+                  variant="footnote"
+                  tone="secondary"
+                  style={styles.indent}
                   numberOfLines={expanded ? undefined : 1}
                 >
                   {historyDetail(entry, now)}
@@ -244,13 +246,12 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
             </View>
           );
         })}
-      </View>
+      </ListSection>
     </>
   );
 }
 
 function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
-  const colors = useColors();
   const entered = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined);
   const stoppedIn = entry.result === 'interrupted' ? entered.at(-1) : undefined;
   const phases = entered
@@ -268,7 +269,11 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
   return (
     <View style={[styles.indent, styles.expanded]}>
       <Note>{facts}</Note>
-      {phases ? <Text style={[styles.detail, { color: colors.tertiary }]}>{phases}</Text> : null}
+      {phases ? (
+        <Text variant="footnote" tone="tertiary">
+          {phases}
+        </Text>
+      ) : null}
       {entry.result === 'interrupted' ? (
         <Note>The run ended without recording a result; the next run in this workspace recorded it.</Note>
       ) : null}
@@ -279,7 +284,6 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
 }
 
 function MissReason({ reason }: { reason: BuildMissReason }) {
-  const colors = useColors();
   const hidden = reason.changeCount - reason.changes.length;
   const baseline = reason.baseline
     ? `Compared with ${reason.baseline.fingerprint.slice(0, 8)}, the last build ${
@@ -288,33 +292,25 @@ function MissReason({ reason }: { reason: BuildMissReason }) {
     : null;
   return (
     <>
-      <Text style={[styles.line, { color: colors.text }]}>{reason.summary}</Text>
+      <Text>{reason.summary}</Text>
       {baseline ? <Note>{baseline}</Note> : null}
       {reason.changes.length ? (
-        <View style={[styles.list, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+        <ListSection>
           {reason.changes.map((change) => (
             <View key={`${change.change}-${change.source}`} style={styles.change}>
               <Text
-                style={[
-                  styles.mark,
-                  {
-                    color:
-                      change.change === 'added'
-                        ? colors.live
-                        : change.change === 'removed'
-                          ? colors.error
-                          : colors.warn,
-                  },
-                ]}
+                mono
+                tone={change.change === 'added' ? 'success' : change.change === 'removed' ? 'error' : 'warning'}
+                style={styles.mark}
               >
                 {CHANGE_MARK[change.change]}
               </Text>
-              <Text style={[styles.source, { color: colors.text }]} numberOfLines={2}>
+              <Text variant="caption" mono style={styles.source} numberOfLines={2}>
                 {change.source}
               </Text>
             </View>
           ))}
-        </View>
+        </ListSection>
       ) : null}
       {hidden > 0 ? <Note>{hidden === 1 ? '1 more source changed.' : `${hidden} more sources changed.`}</Note> : null}
     </>
@@ -322,46 +318,42 @@ function MissReason({ reason }: { reason: BuildMissReason }) {
 }
 
 function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  const colors = useColors();
   return (
     <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.secondary }]}>{title.toUpperCase()}</Text>
-        {action}
-      </View>
+      <SectionHeader title={title} action={action} />
       {children}
     </View>
   );
 }
 
 function Note({ children }: { children: ReactNode }) {
-  const colors = useColors();
-  return <Text style={[styles.detail, { color: colors.secondary }]}>{children}</Text>;
+  return (
+    <Text variant="footnote" tone="secondary">
+      {children}
+    </Text>
+  );
 }
 
-const styles = StyleSheet.create({
-  container: { padding: 20, paddingTop: 28, gap: 20, paddingBottom: 48 },
-  title: { fontSize: 20, fontWeight: '700' },
-  section: { gap: 8 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sectionTitle: { fontSize: 12, fontWeight: '600' },
-  refresh: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  refreshText: { fontSize: 13, fontWeight: '500' },
-  headline: { fontSize: 16, fontWeight: '600' },
-  line: { fontSize: 14, lineHeight: 19 },
-  detail: { fontSize: 13, lineHeight: 18 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  list: { borderWidth: 1, borderRadius: 12, borderCurve: 'continuous', paddingVertical: 6 },
-  change: { flexDirection: 'row', gap: 10, paddingHorizontal: 12, paddingVertical: 6 },
-  diagnostic: { paddingHorizontal: 12, paddingVertical: 6, gap: 2 },
-  mark: { fontFamily: mono, fontSize: 14, width: 12, textAlign: 'center' },
-  source: { fontFamily: mono, fontSize: 12, flex: 1 },
+const styles = StyleSheet.create((theme) => ({
+  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xxl, paddingBottom: 48 },
+  section: { gap: theme.space.md },
+  refresh: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
+  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  change: {
+    flexDirection: 'row',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.sm,
+  },
+  diagnostic: { paddingHorizontal: theme.space.lg, paddingVertical: theme.space.sm, gap: theme.space.xxs },
+  mark: { width: 12, textAlign: 'center' },
+  source: { flex: 1 },
   spark: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 32 },
   bar: { flex: 1, maxWidth: 18, borderRadius: 2 },
-  historyRow: { paddingHorizontal: 12, paddingVertical: 8 },
-  historyHeader: { gap: 2 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
+  historyRow: { paddingHorizontal: theme.space.lg, paddingVertical: theme.space.md },
+  historyHeader: { gap: theme.space.xxs },
+  dot: { width: 8, height: 8, borderRadius: theme.radius.round },
   grow: { flex: 1 },
   indent: { marginLeft: 14 },
-  expanded: { gap: 6, paddingTop: 6 },
-});
+  expanded: { gap: theme.space.sm, paddingTop: theme.space.sm },
+}));

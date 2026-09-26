@@ -357,6 +357,26 @@ node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-a
 node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
 ```
 
+## Design system
+
+Styles come from the tokens in `src/design/tokens.ts`: spacing, text styles,
+radii, light and dark colors, the fixed colors of the device viewer's chrome,
+and opacities. The file is plain data. `src/design/theme.ts` turns it into the
+[Unistyles](https://www.unistyl.es) light and dark themes, and
+`src/design/unistyles.ts` configures them before the router loads. The theme
+follows the Appearance setting in Settings.
+
+Write styles with `StyleSheet.create((theme) => ...)` from
+`react-native-unistyles`, and text with `Text` from `src/components/text.tsx`
+(`variant`, `tone`). Unistyles re-styles only React Native and Reanimated
+components when the theme changes. A color passed as a prop to anything else,
+such as `Icon`, an `@expo/ui` view or a Gesture Handler list, comes from
+`useUnistyles().theme`, which re-renders the component.
+
+The shared components are `Button`, `IconButton`, `Pill`, `Banner`,
+`ListSection` and `ListRow`, in `src/components`. A debug build shows all of
+them at `stim://gallery`, with a button that switches between light and dark.
+
 ## Driving the app
 
 Development builds can start already paired, so a person or an agent driving

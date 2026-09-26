@@ -2,18 +2,12 @@ import { Host, Picker, Switch } from '@expo/ui';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-} from 'react-native';
+import { Share, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { FlatList, ScrollView } from '@/components/lists';
+import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
@@ -34,8 +28,8 @@ import {
   type LogFilterState,
 } from '@/lib/logs';
 import { workspaceTitleAt } from '@/lib/workspaces';
+import type { Theme } from '@/design/theme';
 import type { LogLevel, LogRecord } from '@/protocol/types';
-import { mono, useColors, type Colors } from '@/theme';
 
 const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
 
@@ -46,7 +40,7 @@ export function Logs({
   path: string;
   params: { errors?: string; source?: string; slot?: string; at?: string };
 }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const { state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
@@ -119,10 +113,10 @@ export function Logs({
   };
 
   return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+    <View style={styles.screen}>
       <Stack.Screen options={{ title: `Logs \u00B7 ${workspaceTitleAt(path, status)}` }} />
       <ConnectionBanner state={state} />
-      <View style={[styles.filters, { borderBottomColor: colors.border }]}>
+      <View style={styles.filters}>
         <View style={styles.row}>
           {SOURCES.map(({ source, label }) => (
             <Toggle
@@ -142,7 +136,7 @@ export function Logs({
           </View>
         ) : null}
         <View style={styles.row}>
-          <Host matchContents seedColor={colors.primary}>
+          <Host matchContents seedColor={theme.colors.primary}>
             <Picker selectedValue={filter.level} onValueChange={(level) => update({ level: level as LogLevel })}>
               {LEVELS.map((level) => (
                 <Picker.Item key={level} label={level === 'debug' ? 'All levels' : `${level} and up`} value={level} />
@@ -150,7 +144,7 @@ export function Logs({
             </Picker>
           </Host>
           <View style={styles.spacer} />
-          <Host matchContents seedColor={colors.primary}>
+          <Host matchContents seedColor={theme.colors.primary}>
             <Switch label="Errors only" value={filter.errors} onValueChange={(errors) => update({ errors })} />
           </Host>
         </View>
@@ -160,14 +154,18 @@ export function Logs({
           onSubmitEditing={applyGrep}
           onBlur={applyGrep}
           placeholder="Search (regular expression)"
-          placeholderTextColor={colors.tertiary}
+          placeholderTextColor={theme.colors.tertiary}
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="search"
           accessibilityLabel="Search logs"
-          style={[styles.search, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
+          style={styles.search}
         />
-        {problem ? <Text style={[styles.problem, { color: colors.error }]}>{problem}</Text> : null}
+        {problem ? (
+          <Text variant="footnote" tone="error">
+            {problem}
+          </Text>
+        ) : null}
       </View>
       <FlatList
         ref={list}
@@ -179,13 +177,14 @@ export function Logs({
           if (following) list.current?.scrollToEnd({ animated: false });
         }}
         ListEmptyComponent={
-          <Text style={[styles.empty, { color: colors.tertiary }]}>No records match these filters.</Text>
+          <Text tone="tertiary" style={styles.empty}>
+            No records match these filters.
+          </Text>
         }
         renderItem={({ item }) => {
           const context = fetched.get(item.key);
           return (
             <LogRow
-              colors={colors}
               entry={context && context.length > 0 ? { ...item, context } : item}
               workspace={path}
               home={home}
@@ -209,31 +208,31 @@ export function Logs({
             setFollowing(true);
             list.current?.scrollToEnd({ animated: true });
           }}
-          style={[styles.jump, { backgroundColor: colors.primary }]}
+          style={styles.jump}
         >
-          <Text style={[styles.jumpText, { color: colors.onPrimary }]}>Jump to latest</Text>
+          <Text weight="semibold" tone="onBrand">
+            Jump to latest
+          </Text>
         </Touch>
       ) : null}
     </View>
   );
 }
 
-function levelColor(colors: Colors, level: string): string {
-  if (level === 'error' || level === 'fatal') return colors.error;
-  if (level === 'warn') return colors.warn;
-  if (level === 'debug') return colors.tertiary;
-  return colors.secondary;
+function levelColor(theme: Theme, level: string): string {
+  if (level === 'error' || level === 'fatal') return theme.colors.error;
+  if (level === 'warn') return theme.colors.warning;
+  if (level === 'debug') return theme.colors.tertiary;
+  return theme.colors.secondary;
 }
 
 function LogRow({
-  colors,
   entry,
   workspace,
   home,
   expanded,
   onPress,
 }: {
-  colors: Colors;
   entry: LogEntry;
   workspace: string;
   home: string | null;
@@ -242,44 +241,37 @@ function LogRow({
 }) {
   const record = entry.lead;
   const time = new Date(record.ts).toTimeString().slice(0, 8);
-  const tint = levelColor(colors, record.level);
   const error = record.level === 'error' || record.level === 'fatal';
   const view = viewEntry(entry, workspace, home);
   const [copied, setCopied] = useState(false);
   return (
-    <Touch
-      feedback="row"
-      onPress={onPress}
-      accessibilityRole="none"
-      style={[styles.logRow, { borderBottomColor: colors.border }]}
-    >
-      <View style={[styles.levelBar, { backgroundColor: tint }]} />
+    <Touch feedback="row" onPress={onPress} accessibilityRole="none" style={styles.logRow}>
+      <View style={styles.levelBar(record.level)} />
       <View style={styles.logBody}>
-        <Text style={[styles.logMeta, { color: colors.tertiary }]}>
+        <Text variant="caption2" tone="tertiary" mono>
           {time} {SOURCE_LABEL[record.src] ?? record.src}
           {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''} {record.level}
           {entry.related.length > 0 ? ` \u00B7 ${entry.related.length + 1} records` : ''}
         </Text>
         <Text
-          style={[styles.logText, error && styles.title, { color: error ? tint : colors.text }]}
+          variant={error ? 'footnote' : 'caption'}
+          weight={error ? 'semibold' : undefined}
+          tone={error ? 'error' : 'default'}
+          mono
           numberOfLines={expanded ? undefined : 3}
           selectable={expanded}
         >
           {view.title}
         </Text>
         {view.location ? (
-          <Text
-            style={[styles.location, { color: colors.text }]}
-            numberOfLines={expanded ? undefined : 1}
-            selectable={expanded}
-          >
+          <Text variant="caption" weight="semibold" mono numberOfLines={expanded ? undefined : 1} selectable={expanded}>
             {view.location}
           </Text>
         ) : null}
         {expanded && view.codeFrame.length > 0 ? (
-          <View style={[styles.codeFrame, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.codeFrame}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <Text style={[styles.logText, { color: colors.text }]} selectable>
+              <Text variant="caption" mono selectable>
                 {view.codeFrame.join('\n')}
               </Text>
             </ScrollView>
@@ -290,21 +282,25 @@ function LogRow({
             <Touch
               onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
               accessibilityLabel="Copy message and location"
-              style={[styles.action, { borderColor: colors.border }]}
+              style={styles.action}
             >
-              <Text style={[styles.actionText, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy'}</Text>
+              <Text weight="semibold" tone="brand">
+                {copied ? 'Copied' : 'Copy'}
+              </Text>
             </Touch>
             <Touch
               onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
               accessibilityLabel="Share entry"
-              style={[styles.action, { borderColor: colors.border }]}
+              style={styles.action}
             >
-              <Text style={[styles.actionText, { color: colors.primary }]}>Share</Text>
+              <Text weight="semibold" tone="brand">
+                Share
+              </Text>
             </Touch>
           </View>
         ) : null}
         {expanded && view.details.length > 0 ? (
-          <Text style={[styles.logText, { color: colors.secondary }]} selectable>
+          <Text variant="caption" tone="secondary" mono selectable>
             {view.details.join('\n')}
           </Text>
         ) : null}
@@ -313,32 +309,53 @@ function LogRow({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  filters: { padding: 12, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth },
-  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+const styles = StyleSheet.create((theme) => ({
+  screen: { flex: 1, backgroundColor: theme.colors.background },
+  filters: {
+    padding: theme.space.lg,
+    gap: theme.space.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.sm },
   spacer: { flex: 1 },
-  search: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14 },
-  problem: { fontSize: 13 },
-  empty: { textAlign: 'center', padding: 32, fontSize: 14 },
-  logRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth },
-  levelBar: { width: 3 },
-  logBody: { flex: 1, paddingHorizontal: 10, paddingVertical: 6, gap: 2 },
-  logMeta: { fontSize: 11, fontFamily: mono },
-  logText: { fontSize: 12, fontFamily: mono, lineHeight: 17 },
-  title: { fontSize: 13, fontWeight: '600' },
-  location: { fontSize: 12, fontFamily: mono, fontWeight: '600' },
-  codeFrame: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, padding: 8, marginVertical: 4 },
-  actions: { flexDirection: 'row', gap: 8, paddingTop: 6 },
-  action: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 },
-  actionText: { fontSize: 14, fontWeight: '600' },
+  search: {
+    borderWidth: 1,
+    borderRadius: theme.radius.control,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    fontSize: theme.typography.callout.fontSize,
+    color: theme.colors.text,
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+  },
+  empty: { textAlign: 'center', padding: theme.space.huge },
+  logRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border },
+  levelBar: (level: string) => ({ width: 3, backgroundColor: levelColor(theme, level) }),
+  logBody: { flex: 1, paddingHorizontal: theme.space.md, paddingVertical: theme.space.sm, gap: theme.space.xxs },
+  codeFrame: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: theme.radius.control,
+    padding: theme.space.md,
+    marginVertical: theme.space.xs,
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+  },
+  actions: { flexDirection: 'row', gap: theme.space.md, paddingTop: theme.space.sm },
+  action: {
+    borderWidth: 1,
+    borderRadius: theme.radius.control,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.sm,
+    borderColor: theme.colors.border,
+  },
   jump: {
     position: 'absolute',
     alignSelf: 'center',
-    bottom: 32,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
+    bottom: theme.space.huge,
+    paddingHorizontal: theme.space.xl,
+    paddingVertical: theme.space.md,
+    borderRadius: theme.radius.sheet,
+    backgroundColor: theme.colors.primary,
   },
-  jumpText: { fontSize: 14, fontWeight: '600' },
-});
+}));

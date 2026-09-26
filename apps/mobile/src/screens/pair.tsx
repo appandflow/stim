@@ -2,25 +2,19 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  type TextInputProps,
-} from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, TextInput, View, type TextInputProps } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Button, IconButton } from '@/components/button';
 import { Icon } from '@/components/icon';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { CLIENT, useMacs } from '@/hooks/mac-connection';
 import { pair } from '@/lib/connection';
 import { renameMac, saveMac } from '@/lib/macs';
 import { manualPairing, parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
-import { mono, radius, useColors, type Colors } from '@/theme';
 
 type Step =
   | { kind: 'scan' }
@@ -29,7 +23,7 @@ type Step =
   | { kind: 'name'; id: string; name: string };
 
 export function Pair() {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const router = useRouter();
   const { reload } = useMacs();
   const [step, setStep] = useState<Step>({ kind: 'scan' });
@@ -84,14 +78,19 @@ export function Pair() {
   };
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.background }}>
-      <Stack.Screen options={{ headerLeft: () => <CloseButton colors={colors} onPress={() => router.dismiss()} /> }} />
+    <KeyboardAvoidingView behavior="padding" style={styles.screen}>
+      <Stack.Screen
+        options={{
+          headerLeft: () => (
+            <IconButton icon="xmark" tone="brand" accessibilityLabel="Close" onPress={() => router.dismiss()} />
+          ),
+        }}
+      />
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {step.kind === 'scan' ? <Scanner colors={colors} onScanned={onScanned} /> : null}
+        {step.kind === 'scan' ? <Scanner onScanned={onScanned} /> : null}
         {step.kind === 'manual' ? (
           <View style={styles.form}>
             <Field
-              colors={colors}
               mono
               label="Endpoint"
               value={endpoint}
@@ -102,7 +101,6 @@ export function Pair() {
               importantForAutofill="no"
             />
             <Field
-              colors={colors}
               mono
               secret
               label="Pairing token"
@@ -113,29 +111,31 @@ export function Pair() {
               autoComplete="off"
               importantForAutofill="no"
             />
-            <Button colors={colors} title="Pair" onPress={onManual} />
+            <Button title="Pair" onPress={onManual} />
           </View>
         ) : null}
         {step.kind === 'connecting' ? (
           <View style={styles.connecting}>
-            <ActivityIndicator color={colors.primary} />
-            <Text style={[styles.hint, { color: colors.secondary }]}>Pairing with {step.endpoint}</Text>
+            <ActivityIndicator color={theme.colors.primary} />
+            <Text variant="footnote" tone="secondary" style={styles.centered}>
+              Pairing with {step.endpoint}
+            </Text>
           </View>
         ) : null}
         {step.kind === 'name' ? (
           <View style={styles.form}>
-            <Text style={[styles.title, { color: colors.text }]}>Paired</Text>
-            <Field
-              colors={colors}
-              label="Name this machine"
-              value={name}
-              onChangeText={setName}
-              placeholder={step.name}
-            />
-            <Button colors={colors} title="Save" onPress={onSave} />
+            <Text variant="title" weight="semibold">
+              Paired
+            </Text>
+            <Field label="Name this machine" value={name} onChangeText={setName} placeholder={step.name} />
+            <Button title="Save" onPress={onSave} />
           </View>
         ) : null}
-        {error ? <Text style={[styles.error, { color: colors.error }]}>{error}</Text> : null}
+        {error ? (
+          <Text variant="callout" tone="error">
+            {error}
+          </Text>
+        ) : null}
         {step.kind === 'scan' || step.kind === 'manual' ? (
           <Touch
             onPress={() => {
@@ -144,12 +144,12 @@ export function Pair() {
             }}
             hitSlop={8}
           >
-            <Text style={[styles.link, { color: colors.primary }]}>
+            <Text variant="body" weight="medium" tone="brand" style={styles.centered}>
               {step.kind === 'scan' ? 'Enter the endpoint and token instead' : 'Scan a QR code instead'}
             </Text>
           </Touch>
         ) : null}
-        <Text style={[styles.hint, { color: colors.tertiary }]}>
+        <Text variant="footnote" tone="tertiary" style={styles.centered}>
           Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any
           network where both devices are signed in to the same tailnet.
         </Text>
@@ -158,16 +158,16 @@ export function Pair() {
   );
 }
 
-function Scanner({ colors, onScanned }: { colors: Colors; onScanned: (result: BarcodeScanningResult) => void }) {
+function Scanner({ onScanned }: { onScanned: (result: BarcodeScanningResult) => void }) {
   const [permission, requestPermission] = useCameraPermissions();
-  if (!permission) return <View style={[styles.camera, { backgroundColor: colors.screen }]} />;
+  if (!permission) return <View style={[styles.camera, styles.cameraPending]} />;
   if (!permission.granted) {
     return (
-      <View style={[styles.camera, styles.cameraMessage, { backgroundColor: colors.raised }]}>
-        <Text style={[styles.hint, { color: colors.secondary }]}>
+      <View style={[styles.camera, styles.cameraMessage]}>
+        <Text variant="footnote" tone="secondary" style={styles.centered}>
           Stim needs the camera to scan the pairing QR code.
         </Text>
-        {permission.canAskAgain ? <Button colors={colors} title="Allow camera" onPress={requestPermission} /> : null}
+        {permission.canAskAgain ? <Button title="Allow camera" onPress={requestPermission} /> : null}
       </View>
     );
   }
@@ -182,13 +182,11 @@ function Scanner({ colors, onScanned }: { colors: Colors; onScanned: (result: Ba
 }
 
 function Field({
-  colors,
   label,
   mono: monospaced = false,
   secret = false,
   ...input
 }: {
-  colors: Colors;
   label: string;
   mono?: boolean;
   secret?: boolean;
@@ -199,11 +197,14 @@ function Field({
   autoComplete?: TextInputProps['autoComplete'];
   importantForAutofill?: TextInputProps['importantForAutofill'];
 }) {
+  const { theme } = useUnistyles();
   const [revealed, setRevealed] = useState(false);
   return (
     <View style={styles.field}>
-      <Text style={[styles.label, { color: colors.secondary }]}>{label}</Text>
-      <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Text variant="footnote" weight="medium" tone="secondary">
+        {label}
+      </Text>
+      <View style={styles.inputRow}>
         <TextInput
           {...input}
           accessibilityLabel={label}
@@ -211,8 +212,8 @@ function Field({
           autoCorrect={false}
           spellCheck={false}
           secureTextEntry={secret && !revealed}
-          placeholderTextColor={colors.tertiary}
-          style={[styles.input, { color: colors.text }, monospaced && { fontFamily: mono }]}
+          placeholderTextColor={theme.colors.tertiary}
+          style={styles.input(monospaced)}
         />
         {secret ? (
           <Touch
@@ -221,7 +222,7 @@ function Field({
             hitSlop={8}
             style={styles.reveal}
           >
-            <Icon name={revealed ? 'eye.slash' : 'eye'} size={20} color={colors.secondary} />
+            <Icon name={revealed ? 'eye.slash' : 'eye'} size={20} color={theme.colors.secondary} />
           </Touch>
         ) : null}
       </View>
@@ -229,38 +230,37 @@ function Field({
   );
 }
 
-function CloseButton({ colors, onPress }: { colors: Colors; onPress: () => void }) {
-  return (
-    <Touch onPress={onPress} accessibilityLabel="Close" hitSlop={8}>
-      <Text style={[styles.close, { color: colors.primary }]}>{'\u2715'}</Text>
-    </Touch>
-  );
-}
-
-function Button({ colors, title, onPress }: { colors: Colors; title: string; onPress: () => void }) {
-  return (
-    <Touch feedback="card" onPress={onPress} style={[styles.button, { backgroundColor: colors.primary }]}>
-      <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{title}</Text>
-    </Touch>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: { padding: 20, gap: 18 },
-  camera: { width: '100%', aspectRatio: 1, borderRadius: radius.card, overflow: 'hidden' },
-  cameraMessage: { alignItems: 'center', justifyContent: 'center', gap: 14, padding: 20 },
-  form: { gap: 14 },
-  field: { gap: 6 },
-  label: { fontSize: 13, fontWeight: '500' },
-  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 10 },
-  input: { flex: 1, paddingHorizontal: 12, paddingVertical: 11, fontSize: 15 },
-  reveal: { paddingHorizontal: 12 },
-  button: { alignItems: 'center', paddingVertical: 13, paddingHorizontal: 20, borderRadius: radius.card },
-  close: { fontSize: 17, fontWeight: '600' },
-  buttonText: { fontSize: 16, fontWeight: '600' },
-  connecting: { alignItems: 'center', gap: 12, paddingVertical: 40 },
-  title: { fontSize: 22, fontWeight: '600' },
-  error: { fontSize: 14 },
-  link: { fontSize: 15, fontWeight: '500', textAlign: 'center' },
-  hint: { fontSize: 13, lineHeight: 19, textAlign: 'center' },
-});
+const styles = StyleSheet.create((theme) => ({
+  screen: { flex: 1, backgroundColor: theme.colors.background },
+  container: { padding: theme.space.xxl, gap: theme.space.xl },
+  camera: { width: '100%', aspectRatio: 1, borderRadius: theme.radius.card, overflow: 'hidden' },
+  cameraPending: { backgroundColor: theme.media.screen },
+  cameraMessage: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.space.lg,
+    padding: theme.space.xxl,
+    backgroundColor: theme.colors.raised,
+  },
+  form: { gap: theme.space.lg },
+  field: { gap: theme.space.sm },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: theme.radius.control,
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+  },
+  input: (monospaced: boolean) => ({
+    flex: 1,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.lg,
+    fontSize: theme.typography.body.fontSize,
+    color: theme.colors.text,
+    fontFamily: monospaced ? theme.mono : undefined,
+  }),
+  reveal: { paddingHorizontal: theme.space.lg },
+  connecting: { alignItems: 'center', gap: theme.space.lg, paddingVertical: 40 },
+  centered: { textAlign: 'center' },
+}));

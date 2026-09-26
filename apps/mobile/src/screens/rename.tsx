@@ -1,14 +1,13 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { TextInput, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { Touch } from '@/components/touch';
+import { Button } from '@/components/button';
 import { useMacs } from '@/hooks/mac-connection';
 import { listMacs, renameMac } from '@/lib/macs';
-import { radius, useColors } from '@/theme';
 
 export function Rename({ id }: { id: string }) {
-  const colors = useColors();
   const router = useRouter();
   const { reload } = useMacs();
   const [name, setName] = useState('');
@@ -24,7 +23,7 @@ export function Rename({ id }: { id: string }) {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={styles.container}>
       <TextInput
         value={name}
         onChangeText={setName}
@@ -32,18 +31,23 @@ export function Rename({ id }: { id: string }) {
         accessibilityLabel="Machine name"
         onSubmitEditing={save}
         returnKeyType="done"
-        style={[styles.input, { color: colors.text, backgroundColor: colors.surface, borderColor: colors.border }]}
+        style={styles.input}
       />
-      <Touch feedback="card" onPress={save} style={[styles.button, { backgroundColor: colors.primary }]}>
-        <Text style={[styles.buttonText, { color: colors.onPrimary }]}>Save</Text>
-      </Touch>
+      <Button title="Save" onPress={save} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, gap: 14 },
-  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontSize: 16 },
-  button: { alignItems: 'center', paddingVertical: 13, borderRadius: radius.card },
-  buttonText: { fontSize: 16, fontWeight: '600' },
-});
+const styles = StyleSheet.create((theme) => ({
+  container: { flex: 1, padding: theme.space.xxl, gap: theme.space.lg, backgroundColor: theme.colors.background },
+  input: {
+    fontSize: theme.typography.body.fontSize,
+    borderWidth: 1,
+    borderRadius: theme.radius.control,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.lg,
+    color: theme.colors.text,
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+  },
+}));
