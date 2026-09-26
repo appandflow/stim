@@ -582,6 +582,23 @@ behind its upstream, and whether its branch is merged, as a
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
 
+A workspace that needs attention prints each issue under it with the command
+that fixes it:
+
+```text
+  ! owned AVD stim-app is not detected by adb; run `stim android`
+```
+
+In `--json`, each environment's `issues` array holds
+`{ code, severity, message, remedy, workspace, slot? }`, and `warnings` holds
+the same issues as text. Run `remedy` from `workspace`. An idle workspace's
+shut-down emulator is not an issue: Stim warns that adb does not see an owned
+emulator only while the workspace's dev server runs, a build runs, it holds a
+lease on the device, or it launched on that device in the last 30 minutes. A
+supervisor record whose process is gone is not an issue either; the next
+`stim stop` or `stim start` clears it. `stim guide facts status` lists every
+issue code.
+
 A workspace with a recorded EAS Simulator session prints a
 `remote <platform>: EAS session <id> billable` line with the session's preview
 URL. In `--json`, each environment's `remoteDevices` array holds

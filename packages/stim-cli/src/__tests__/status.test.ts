@@ -356,7 +356,7 @@ test('status counts a device-only noise storm as zero errors', async () => {
   }
 });
 
-test('status warns about a supervisor record whose process is gone', async () => {
+test('status drops a supervisor record whose process is gone', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
@@ -370,10 +370,10 @@ test('status warns about a supervisor record whose process is gone', async () =>
     );
 
     const logs = await runStatus();
-    expect(logs.some((l) => /stale supervisor record/.test(l))).toBeTruthy();
+    expect(logs.some((l) => /supervisor/.test(l))).toBe(false);
 
     const payload = await runStatusJson();
-    expect(payload.environments[0].supervisor.healthy).toBe(false);
+    expect(payload.environments[0]).toMatchObject({ supervisor: null, warnings: [], issues: [] });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -394,12 +394,18 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
 test('the printed lines name the supervisor and the error count', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
-    writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
+    writeState(root, {
+      pid: process.pid,
+      processToken: captureProcessToken(process.pid),
+      port: 8083,
+      mode: 'expo-child',
+      startedAt: 5,
+    });
     writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
     saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
 
     const logs = await runStatus();
-    expect(logs.some((l) => /supervisor: pid 999999/.test(l))).toBeTruthy();
+    expect(logs.some((l) => new RegExp(`supervisor: pid ${process.pid}`).test(l))).toBeTruthy();
     expect(logs.some((l) => /1 error/.test(l))).toBeTruthy();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -664,7 +670,7 @@ describe('the device lease section', () => {
   });
 });
 
-test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
+test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
   'status observes owned Android serials without changing state (%s)',
   async (scenario) => {
     saveConfig(
@@ -677,6 +683,14 @@ test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
         },
       }),
     );
+    if (scenario === 'launched') {
+      ensureWorkspaceStorage('/proj/android');
+      const launch = { appId: 'com.app', deviceId: 'emulator-5554', metroPort: null, release: true };
+      writeFileSync(
+        workspaceStateFile('/proj/android'),
+        JSON.stringify({ launches: { android: { ...launch, launchedAt: new Date().toISOString() } } }),
+      );
+    }
     const before = loadConfig();
     const commands: string[] = [];
     setExecutor({
@@ -708,7 +722,8 @@ test.each(['moved', 'absent', 'missing', 'unavailable'] as const)(
     const state = payload.environments[0];
     const expected = {
       moved: { serial: 'emulator-5556', state: 'detected', warning: /emulator-5554 -> emulator-5556.*stim android/ },
-      absent: { serial: null, state: 'not-detected', warning: /not detected by adb/ },
+      absent: { serial: null, state: 'not-detected', warning: /^$/ },
+      launched: { serial: null, state: 'not-detected', warning: /not detected by adb; run `stim android`/ },
       missing: { serial: null, state: 'missing', warning: /no longer exists/ },
       unavailable: { serial: null, state: 'unknown', warning: /could not check.*listing unavailable/ },
     }[scenario];

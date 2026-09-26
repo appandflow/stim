@@ -1,3 +1,4 @@
+import { RECENT_LAUNCH_MS } from '../status.ts';
 import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
@@ -594,8 +595,43 @@ RULES
     },
     status: {
       summary:
-        "the status payload's build and device activity fields: a running build, its estimate, each platform's last build, and who drives each device",
+        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, and who drives each device",
       body: () => `  stim status --json
+
+  Each environment carries issues, the things in that workspace that need
+  the user, and warnings, the same issues as text ("<slot>: " when not the
+  default slot, then "<message>; run \`<remedy>\`"):
+
+  issues   [{ code, severity, message, remedy, workspace, slot? }]
+
+  code       port-not-ours          something other than this workspace's
+                                    Metro answers its reserved port
+             sim-missing            the recorded simulator no longer exists
+             sim-without-metro      the simulator is booted and no Metro
+                                    serves the workspace
+             avd-serial-changed     the owned emulator came back on another
+                                    serial, so Metro forwarding is lost
+             avd-missing            the recorded AVD no longer exists
+             avd-not-detected       adb does not see the owned emulator while
+                                    the workspace expects it: its supervisor
+                                    or Metro runs, a build runs, it holds a
+                                    lease on that device, or it launched on
+                                    that platform and slot in the last
+                                    ${RECENT_LAUNCH_MS / 60_000} minutes. An idle workspace's shut-down
+                                    emulator is android.state "not-detected"
+                                    with no issue.
+             avd-unchecked          the emulator listing could not be read
+             supervisor-unverified  a supervisor record whose process status
+                                    cannot prove gone or ours; stop refuses to
+                                    signal it
+  severity   "error" when stop or start refuses until it is resolved, else
+             "warning"
+  remedy     a command to run from workspace, such as "stim android --slot
+             fold"
+  slot       absent for the default slot
+
+  A supervisor record whose pid is gone or reused is not an issue: status
+  reports supervisor null, and the next stop or start clears the record.
 
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:

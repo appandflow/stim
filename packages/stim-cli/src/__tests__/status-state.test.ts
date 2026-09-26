@@ -6,6 +6,7 @@ import {
   deviceLeaseLines,
   deviceLeaseStates,
   diskIsTight,
+  devicesInUse,
   diskLine,
   environmentState,
   formatSpace,
@@ -49,13 +50,14 @@ test('a booted sim with Metro running is live, and counts both', () => {
   expect(s.metro.pid).toBe(42);
 });
 
-test('a port answered by something that is not our Metro is warned about', () => {
-  const s = environmentState(project(), {
+test('a port answered by something that is not our Metro is warned about once, not per slot', () => {
+  const s = environmentState(project({ deviceSlots: { tablet: { ios: { deviceUdid: 'U1', owned: true } } } }), {
     simsByUdid: { U1: BOOTED },
     metro: { notOurs: 'pid 99 runs from /somewhere/else' },
   });
   assert(s.metro);
   expect(s.metro.running).toBe(false);
+  expect(s.issues.filter((i) => i.code === 'port-not-ours')).toHaveLength(1);
   expect(s.warnings.join(' ')).toMatch(/somewhere\/else/);
 });
 
@@ -139,27 +141,118 @@ test('a healthy supervisor is reported with its pid, mode and start time', () =>
   const s = environmentState(project(), {
     simsByUdid: { U1: BOOTED },
     metro: { metro: { pid: 42 } },
-    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', alive: true, healthy: true },
+    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', status: 'ours', healthy: true },
   });
   expect(s.supervisor).toEqual({ pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', healthy: true });
   expect(s.warnings.join(' ').includes('stale supervisor')).toBe(false);
 });
 
-test('a supervisor record whose pid is dead is warned about as stale', () => {
+test('a supervisor record proven gone is dropped without a warning', () => {
   const s = environmentState(project(), {
     simsByUdid: { U1: SHUTDOWN },
     metro: { missing: true },
-    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', alive: false, healthy: false },
+    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', status: 'stale', healthy: false },
   });
-  assert(s.supervisor);
-  expect(s.supervisor.healthy).toBe(false);
-  expect(s.warnings.join(' ')).toMatch(/stale supervisor record for \/proj\/a/);
+  expect(s.supervisor).toBe(null);
+  expect(s.issues).toEqual([]);
+});
+
+test('a supervisor record that cannot be verified keeps a warning with its reason and remedy', () => {
+  const s = environmentState(project(), {
+    simsByUdid: { U1: SHUTDOWN },
+    metro: { missing: true },
+    supervisor: { pid: 4242, status: 'unverified', reason: 'identities disagree', healthy: false },
+  });
+  expect(s.issues).toEqual([
+    {
+      code: 'supervisor-unverified',
+      severity: 'error',
+      message: 'supervisor pid 4242 could not be verified: identities disagree',
+      remedy: 'stim guide errors teardown',
+      workspace: '/proj/a',
+    },
+  ]);
+  expect(s.warnings).toEqual([
+    'supervisor pid 4242 could not be verified: identities disagree; run `stim guide errors teardown`',
+  ]);
+});
+
+describe('an owned AVD that adb does not detect', () => {
+  const androidProject = project({
+    platforms: { android: { avdName: 'stim-app', consolePort: 5554, owned: true } },
+    deviceSlots: { fold: { android: { avdName: 'stim-app-fold', consolePort: 5556, owned: true } } },
+  });
+  const notDetected = { serial: null, state: 'not-detected' as const };
+  const codes = (s: ReturnType<typeof environmentState>) => s.issues.map((i) => `${i.slot ?? 'default'}:${i.code}`);
+
+  test('is the resting state of an idle workspace, not a warning', () => {
+    const s = environmentState(androidProject, {
+      metro: { missing: true },
+      androidRuntime: notDetected,
+      androidRuntimes: { fold: notDetected },
+    });
+    expect(s.android?.state).toBe('not-detected');
+    expect(s.issues).toEqual([]);
+    expect(s.warnings).toEqual([]);
+  });
+
+  test('is warned about in every slot while the workspace serves Metro', () => {
+    const s = environmentState(androidProject, {
+      metro: { metro: { pid: 42 } },
+      androidRuntime: notDetected,
+      androidRuntimes: { fold: notDetected },
+    });
+    expect(codes(s)).toEqual(['default:avd-not-detected', 'fold:avd-not-detected']);
+    expect(s.issues[1]).toMatchObject({ remedy: 'stim android --slot fold', workspace: '/proj/a' });
+    expect(s.warnings[1]).toBe('fold: owned AVD stim-app-fold is not detected by adb; run `stim android --slot fold`');
+  });
+
+  test('is warned about only in the slot the workspace is using', () => {
+    const s = environmentState(androidProject, {
+      metro: { missing: true },
+      androidRuntime: notDetected,
+      androidRuntimes: { fold: notDetected },
+      inUse: new Set(['android:fold', 'ios:default']),
+    });
+    expect(codes(s)).toEqual(['fold:avd-not-detected']);
+  });
+});
+
+test('devicesInUse names running builds, held leases and recent launches, and nothing stale', () => {
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  const lease = (over: Partial<DeviceLeaseState>): DeviceLeaseState => ({
+    path: '/l',
+    platform: 'android',
+    id: 'emulator-5554',
+    deviceName: null,
+    holder: '/proj/a',
+    grantedAt: null,
+    expiresAt: null,
+    mine: true,
+    expired: false,
+    parsed: true,
+    ...over,
+  });
+  const build = (state: 'running' | 'stale') =>
+    ({ platform: 'ios', slot: 'default', state }) as Parameters<typeof devicesInUse>[0]['build'];
+  const minutesAgo = (m: number) => ({ launchedAt: new Date(now - m * 60_000).toISOString() });
+  expect(
+    [
+      ...devicesInUse({
+        build: build('running'),
+        leases: [lease({ slot: 'fold' }), lease({ platform: 'ios', mine: false }), lease({ expired: true })],
+        launches: { android: minutesAgo(5), 'ios:tablet': minutesAgo(5), 'android:old': minutesAgo(120) },
+        now,
+      }),
+    ].toSorted(),
+  ).toEqual(['android:default', 'android:fold', 'ios:default', 'ios:tablet']);
+  expect(devicesInUse({ build: build('stale'), leases: [], launches: {}, now }).size).toBe(0);
 });
 
 test('a live supervisor that is not answering is unhealthy but not stale', () => {
   const s = environmentState(project(), {
     metro: { missing: true },
-    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', alive: true, healthy: false },
+    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', status: 'ours', healthy: false },
   });
   assert(s.supervisor);
   expect(s.supervisor.healthy).toBe(false);
@@ -189,7 +282,7 @@ test('every pre-v3 field survives the extension', () => {
   const s = environmentState(project(), {
     simsByUdid: { U1: BOOTED },
     metro: { metro: { pid: 42 } },
-    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '5', alive: true, healthy: true },
+    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '5', status: 'ours', healthy: true },
     logs: { dir: '/proj/a/.stim/logs', errorsSinceMarker: 0 },
   });
   for (const key of ['path', 'live', 'memoryMb', 'warnings', 'ios', 'android', 'metro', 'worktree']) {

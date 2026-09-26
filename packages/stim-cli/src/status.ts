@@ -1,17 +1,20 @@
 import { sep } from 'path';
-import { projectDeviceSlots } from './devices/device-slots.ts';
+import { parseDeviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 import type { RemoteSessionRecord } from './supervisor/state.ts';
 import type {
   AndroidRuntimeFacts,
+  BuildReport,
   DeviceActivity,
   DeviceLeaseState,
   EnvironmentState,
   IdleStopRecord,
   RemoteDeviceState,
   StatusCapacity,
+  StatusIssue,
+  StatusIssueCode,
   WorktreeFacts,
   WorktreeGit,
 } from '@stim-cli/core/state';
@@ -44,7 +47,8 @@ interface SupervisorFacts {
   pid?: number | null;
   mode?: string | null;
   startedAt?: string | null;
-  alive?: boolean;
+  status: 'ours' | 'stale' | 'unverified';
+  reason?: string;
   healthy?: boolean;
 }
 
@@ -92,6 +96,36 @@ export function poolLine({ platform, parked, max }: PoolFacts): string | null {
   return max > 0 ? `pool: ${what} (max ${max})` : `pool: ${what} (parking off; gc --delete removes them)`;
 }
 
+export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;
+
+/**
+ * The `platform:slot` devices a workspace is using right now: a running build, an unexpired lease it holds, or a
+ * launch recorded in the last RECENT_LAUNCH_MS.
+ */
+export function devicesInUse({
+  build,
+  leases,
+  launches,
+  now,
+}: {
+  build?: BuildReport | null;
+  leases: readonly DeviceLeaseState[];
+  launches: Readonly<Record<string, { launchedAt: string }>>;
+  now: number;
+}): Set<string> {
+  const keys = new Set<string>();
+  if (build?.state === 'running') keys.add(`${build.platform}:${build.slot}`);
+  for (const lease of leases) {
+    if (lease.mine && !lease.expired) keys.add(`${lease.platform}:${lease.slot ?? 'default'}`);
+  }
+  for (const [key, launch] of Object.entries(launches)) {
+    const device = parseDeviceSlotKey(key);
+    const at = Date.parse(launch.launchedAt);
+    if (device && now - at < RECENT_LAUNCH_MS) keys.add(`${device.platform}:${device.slot}`);
+  }
+  return keys;
+}
+
 export function environmentState(
   project: ProjectRecord & { __path: string },
   {
@@ -105,6 +139,9 @@ export function environmentState(
     logs = null,
     remote = null,
     idleStop = null,
+    inUse = new Set(),
+    slot = 'default',
+    workspaceRunning = false,
   }: {
     simsByUdid?: Record<string, SimFacts>;
     metro?: MetroFacts | null;
@@ -116,6 +153,9 @@ export function environmentState(
     logs?: LogsFacts | null;
     remote?: RemoteDeviceState | null;
     idleStop?: IdleStopRecord | null;
+    inUse?: ReadonlySet<string>;
+    slot?: string;
+    workspaceRunning?: boolean;
   } = {},
 ): EnvironmentState {
   const ios = project.platforms?.ios;
@@ -132,40 +172,59 @@ export function environmentState(
   if (androidDetected) memoryMb += ANDROID_EMULATOR_MB;
   if (metroRunning) memoryMb += METRO_MB;
 
-  const warnings: string[] = [];
-  if (metro?.notOurs) warnings.push(`port ${project.metroPort}: ${metro.notOurs}`);
-  if (ios && !sim && simsAvailable) warnings.push(`recorded sim ${ios.deviceUdid} no longer exists`);
+  const running = workspaceRunning || metroRunning || supervisor?.status === 'ours';
+  const issues: StatusIssue[] = [];
+  const add = (code: StatusIssueCode, message: string, remedy: string, severity: StatusIssue['severity'] = 'warning') =>
+    issues.push({
+      code,
+      severity,
+      message,
+      remedy,
+      workspace: project.__path,
+      ...(slot === 'default' ? {} : { slot }),
+    });
+  const slotFlag = slot === 'default' ? '' : ` --slot ${slot}`;
+  if (metro?.notOurs && slot === 'default') {
+    add('port-not-ours', `port ${project.metroPort}: ${metro.notOurs}`, 'stim guide errors teardown', 'error');
+  }
+  if (ios && !sim && simsAvailable) {
+    add('sim-missing', `recorded sim ${ios.deviceUdid} no longer exists`, `stim ios${slotFlag}`);
+  }
   if (simBooted && project.metroPort && !metroRunning) {
-    warnings.push('simulator is booted with no Metro serving it');
+    add('sim-without-metro', 'simulator is booted with no Metro serving it', 'stim start');
   }
   if (androidRuntime && android?.avdName) {
-    const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
-    if (androidRuntime.serial && recordedSerial && androidRuntime.serial !== recordedSerial) {
-      warnings.push(
-        `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${androidRuntime.serial}); rerun your \`stim android\` command in this workspace to restore Metro forwarding, then reopen agent-device on ${androidRuntime.serial}`,
-      );
+    for (const [code, message] of androidIssues(android, androidRuntime, running || inUse.has(`android:${slot}`))) {
+      add(code, message, code === 'avd-unchecked' ? 'stim doctor' : `stim android${slotFlag}`);
     }
-    if (androidRuntime.state === 'missing') warnings.push(`recorded AVD ${android.avdName} no longer exists`);
-    if (androidRuntime.state === 'not-detected')
-      warnings.push(
-        `owned AVD ${android.avdName} is not detected by adb; rerun your \`stim android\` command in this workspace to reconnect`,
-      );
-    if (androidRuntime.error) warnings.push(`could not check owned AVD ${android.avdName}: ${androidRuntime.error}`);
   }
-  if (supervisor && supervisor.alive === false) {
-    warnings.push(`stale supervisor record for ${project.__path}`);
+  if (supervisor?.status === 'unverified') {
+    add(
+      'supervisor-unverified',
+      `supervisor pid ${supervisor.pid} could not be verified${supervisor.reason ? `: ${supervisor.reason}` : ''}`,
+      'stim guide errors teardown',
+      'error',
+    );
   }
 
   const slots: NonNullable<EnvironmentState['slots']> = [];
-  for (const { slot, platforms } of projectDeviceSlots(project).slice(1)) {
+  for (const { slot: name, platforms } of projectDeviceSlots(project).slice(1)) {
     const deviceState = environmentState(
       { ...project, platforms, deviceSlots: undefined },
-      { simsByUdid, simsAvailable, metro, androidRuntime: androidRuntimes[slot] },
+      {
+        simsByUdid,
+        simsAvailable,
+        metro,
+        androidRuntime: androidRuntimes[name],
+        inUse,
+        slot: name,
+        workspaceRunning: running,
+      },
     );
-    slots.push({ slot, ios: deviceState.ios, android: deviceState.android });
+    slots.push({ slot: name, ios: deviceState.ios, android: deviceState.android });
     memoryMb += deviceState.memoryMb - (metroRunning ? METRO_MB : 0);
     live ||= deviceState.live;
-    warnings.push(...deviceState.warnings.map((warning) => `${slot}: ${warning}`));
+    issues.push(...deviceState.issues);
   }
 
   return {
@@ -173,7 +232,8 @@ export function environmentState(
     ...(slots.length ? { slots } : {}),
     live,
     memoryMb,
-    warnings,
+    warnings: issues.map(issueText),
+    issues,
     ios: ios
       ? {
           name: sim?.name ?? null,
@@ -198,18 +258,46 @@ export function environmentState(
           ...(idleStop && !metroRunning ? { idleStop } : {}),
         }
       : null,
-    supervisor: supervisor
-      ? {
-          pid: supervisor.pid ?? null,
-          mode: supervisor.mode ?? null,
-          startedAt: supervisor.startedAt ?? null,
-          healthy: Boolean(supervisor.healthy),
-        }
-      : null,
+    supervisor:
+      supervisor && supervisor.status !== 'stale'
+        ? {
+            pid: supervisor.pid ?? null,
+            mode: supervisor.mode ?? null,
+            startedAt: supervisor.startedAt ?? null,
+            healthy: Boolean(supervisor.healthy),
+          }
+        : null,
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
   };
+}
+
+function androidIssues(
+  android: NonNullable<NonNullable<ProjectRecord['platforms']>['android']>,
+  runtime: AndroidRuntimeFacts,
+  expected: boolean,
+): [StatusIssueCode, string][] {
+  const issues: [StatusIssueCode, string][] = [];
+  const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
+  if (runtime.serial && recordedSerial && runtime.serial !== recordedSerial) {
+    issues.push([
+      'avd-serial-changed',
+      `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${runtime.serial}), so Metro forwarding is lost; after the remedy, reopen agent-device on ${runtime.serial}`,
+    ]);
+  }
+  if (runtime.state === 'missing') issues.push(['avd-missing', `recorded AVD ${android.avdName} no longer exists`]);
+  if (runtime.state === 'not-detected' && expected) {
+    issues.push(['avd-not-detected', `owned AVD ${android.avdName} is not detected by adb`]);
+  }
+  if (runtime.error) {
+    issues.push(['avd-unchecked', `could not check owned AVD ${android.avdName}: ${runtime.error}`]);
+  }
+  return issues;
+}
+
+function issueText(issue: StatusIssue): string {
+  return `${issue.slot ? `${issue.slot}: ` : ''}${issue.message}; run \`${issue.remedy}\``;
 }
 
 export function activityLabel(activity: DeviceActivity | undefined, now: number): string | null {
