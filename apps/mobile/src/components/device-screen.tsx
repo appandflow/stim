@@ -18,12 +18,15 @@ export function DeviceScreen({
   label,
   style,
   children,
+  requested,
 }: {
   stream: DeviceStream;
   platform: Platform;
   label: string;
   style?: StyleProp<ViewStyle>;
   children?: ReactNode;
+  /** The fps and max edge asked of the server, shown in the dev-only stats overlay next to the measured rate. */
+  requested?: { fps: number; maxEdge: number };
 }) {
   const colors = useColors();
   const [bounds, setBounds] = useState({ width: 0, height: 0 });
@@ -60,25 +63,38 @@ export function DeviceScreen({
         ) : null}
         {children}
         {__DEV__ ? (
-          <StreamStats meter={stream.meter} mode={stream.video ? 'video' : stream.frame ? 'jpeg' : null} />
+          <StreamStats
+            meter={stream.meter}
+            mode={stream.video ? 'video' : stream.frame ? 'jpeg' : null}
+            requested={requested}
+          />
         ) : null}
       </View>
     </View>
   );
 }
 
-function StreamStats({ meter, mode }: { meter: DeviceStream['meter']; mode: 'video' | 'jpeg' | null }) {
+function StreamStats({
+  meter,
+  mode,
+  requested,
+}: {
+  meter: DeviceStream['meter'];
+  mode: 'video' | 'jpeg' | null;
+  requested?: { fps: number; maxEdge: number };
+}) {
   const [text, setText] = useState('');
+  const asked = requested ? ` (asked ${requested.fps}fps/${requested.maxEdge}px)` : '';
   useEffect(() => {
     const show = () => {
-      if (mode !== 'video') return setText(mode === 'jpeg' ? 'JPEG' : '');
+      if (mode !== 'video') return setText(mode === 'jpeg' ? `JPEG${asked}` : '');
       const { fps, kbps, latencyMs } = meter.stats();
-      setText(`H.264 ${fps.toFixed(0)} fps ${kbps.toFixed(0)} kbps ${latencyMs?.toFixed(0) ?? '-'} ms`);
+      setText(`H.264 ${fps.toFixed(0)} fps ${kbps.toFixed(0)} kbps ${latencyMs?.toFixed(0) ?? '-'} ms${asked}`);
     };
     show();
     const timer = setInterval(show, 500);
     return () => clearInterval(timer);
-  }, [meter, mode]);
+  }, [meter, mode, asked]);
   return text ? (
     <Text style={styles.stats} pointerEvents="none">
       {text}

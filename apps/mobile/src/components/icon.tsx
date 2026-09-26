@@ -12,6 +12,7 @@ const ANDROID_GLYPHS = {
   'rectangle.stack': '\u2261',
   'square.grid.2x2': '\u25A6',
   'arrow.triangle.branch': '\u2442',
+  gearshape: '\u2699',
   cpu: '\u25A3',
   memorychip: '\u25A4',
   internaldrive: '\u25CF',

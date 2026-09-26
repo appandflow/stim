@@ -41,8 +41,19 @@ const dark: typeof light = {
 
 export type Colors = typeof light;
 
+export type Appearance = 'system' | 'light' | 'dark';
+
+/**
+ * The Settings screen's Appearance choice applies with `Appearance.setColorScheme`, which overrides
+ * `useColorScheme()` (and the OS-native chrome: nav bars, `@expo/ui`'s SwiftUI controls) app-wide, so reading the
+ * system scheme here already reflects it.
+ */
+export function useEffectiveScheme(): 'light' | 'dark' {
+  return useColorScheme() === 'dark' ? 'dark' : 'light';
+}
+
 export function useColors(): Colors {
-  return useColorScheme() === 'dark' ? dark : light;
+  return useEffectiveScheme() === 'dark' ? dark : light;
 }
 
 export const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });

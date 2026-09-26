@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -20,6 +20,7 @@ import { DeviceScreen } from '@/components/device-screen';
 import { Toggle } from '@/components/toggle';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceControl, useStatus } from '@/hooks/mac-connection';
+import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, otherDriver, type Size } from '@/lib/device-control';
 import { devicesOf } from '@/lib/workspaces';
 import type { InputButton, Platform } from '@/protocol/types';
@@ -29,15 +30,33 @@ const LIVE_FPS = 60;
 const MAX_EDGE = 1600;
 const MOVE_INTERVAL_MS = 16;
 
+const DATA_SAVER_FPS = 10;
+const DATA_SAVER_MAX_EDGE = 640;
+
+/** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
+const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
+  // `maxEdge: null` keeps the window-sized cap computed below.
+  auto: { fps: LIVE_FPS, maxEdge: null, video: ['h264'] },
+  high: { fps: LIVE_FPS, maxEdge: MAX_EDGE, video: ['h264'] },
+  dataSaver: { fps: DATA_SAVER_FPS, maxEdge: DATA_SAVER_MAX_EDGE, video: [] },
+};
+
 export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
   const colors = useColors();
   const window = useWindowDimensions();
-  const maxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
+  const { videoQuality } = useSettings();
+  const preset = QUALITY_PRESETS[videoQuality];
+  const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
+  const maxEdge = preset.maxEdge ?? windowMaxEdge;
   const status = useStatus();
   const env = status?.environments.find((candidate) => candidate.path === workspace);
   const device = env ? devicesOf(env).find((entry) => entry.platform === platform && entry.slot === slot) : undefined;
   const streams = Boolean(device?.running && device.owned && !device.physical);
-  const stream = useDeviceStream({ workspace, platform, slot }, { enabled: streams, fps: LIVE_FPS, maxEdge });
+  const streamOptions = useMemo(
+    () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video }),
+    [streams, preset.fps, maxEdge, preset.video],
+  );
+  const stream = useDeviceStream({ workspace, platform, slot }, streamOptions);
   const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot);
   const controlling = control.state.kind === 'on';
@@ -132,7 +151,13 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           </View>
         ) : null}
         {streams ? (
-          <DeviceScreen stream={stream} platform={platform} label={title} style={styles.stage}>
+          <DeviceScreen
+            stream={stream}
+            platform={platform}
+            label={title}
+            style={styles.stage}
+            requested={{ fps: preset.fps, maxEdge }}
+          >
             {source ? (
               <View
                 style={[styles.overlay, controlling && { borderColor: colors.primary }]}
