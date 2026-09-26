@@ -22,6 +22,7 @@ export interface SimState {
   owned: boolean;
   state: string;
   activity?: DeviceActivity;
+  app?: DeviceAppProcess;
 }
 
 export interface AndroidState {
@@ -31,6 +32,12 @@ export interface AndroidState {
   serial?: string | null;
   state?: 'detected' | 'not-detected' | 'missing' | 'unknown';
   activity?: DeviceActivity;
+  app?: DeviceAppProcess;
+}
+
+export interface DeviceAppProcess {
+  id: string;
+  state: 'running' | 'stopped' | 'unknown';
 }
 
 export interface DeviceActivity {

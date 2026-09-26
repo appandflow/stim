@@ -734,6 +734,23 @@ Metro bundle requests, and the workspace's last Stim run. Stim reads
 agent-device state without changing it. `stim guide facts status` lists every
 field.
 
+An owned booted simulator or detected emulator also reports whether the
+workspace's app is running on it now:
+
+```text
+  ios: stim-app (iPhone 18 Pro 27.0) booted (owned) -- idle 3h -- com.example.app not running
+```
+
+In `--json`, those devices carry `app: { id, state }`. `id` is the bundle
+identifier or package Stim checked, and `state` is `running`, `stopped` (the
+app crashed, was killed, or never launched), or `unknown` when the process list
+or the app's `Info.plist` could not be read. `app` is absent when the device is
+not owned or Stim knows no app id for it. This is the app's current process state, not a record of
+the last launch. Stim reads it from one host `ps` for every simulator and the
+same `adb shell ps` it reads for activity, so `status --watch` notices an app
+that exits within 30 seconds. Run `stim ios` or `stim android` to launch it
+again.
+
 Try it with an agent:
 
 ```text

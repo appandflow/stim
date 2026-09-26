@@ -116,6 +116,19 @@ export interface DeviceActivity {
   basis: string[];
 }
 
+/** Every state a device's app process can report. */
+export const APP_PROCESS_STATES = ['running', 'stopped', 'unknown'] as const;
+
+/**
+ * Whether the workspace's app process is alive on a device now. This is current process state, not launch evidence:
+ * `launched` in an `ios` or `android` result stays the record of one launch. `id` is the bundle identifier or
+ * package that was checked; `state` is "unknown" when the process listing could not be read.
+ */
+export interface DeviceAppProcess {
+  id: string;
+  state: (typeof APP_PROCESS_STATES)[number];
+}
+
 /**
  * A linked worktree's `git status`. `changed` counts tracked paths with staged or unstaged changes, including
  * conflicts; `untracked` counts untracked entries as `git status` lists them, so an untracked directory counts once.
@@ -189,7 +202,14 @@ export interface EnvironmentState {
   memoryMb: number;
   warnings: string[];
   issues: StatusIssue[];
-  ios?: { name: string | null; udid: string; owned: boolean; state: string; activity?: DeviceActivity } | null;
+  ios?: {
+    name: string | null;
+    udid: string;
+    owned: boolean;
+    state: string;
+    activity?: DeviceActivity;
+    app?: DeviceAppProcess;
+  } | null;
   android?: {
     name: string | undefined;
     owned: boolean;
@@ -198,6 +218,7 @@ export interface EnvironmentState {
     state?: AndroidRuntimeFacts['state'];
     deviceProfile?: string | null;
     activity?: DeviceActivity;
+    app?: DeviceAppProcess;
   } | null;
   metro?: { port: number; running: boolean; pid: number | null; idleStop?: IdleStopRecord } | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
