@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearSupervisorState } from '../commands/stop.ts';
 import { readWorkspaceLaunches, writeWorkspaceLaunch, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import type { DeviceRecord } from '@stim-cli/core/state';
 import { siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -94,17 +95,21 @@ test('launches in named slots coexist with default launches and share the superv
   expect(Object.keys(readWorkspaceLaunches(root))).toHaveLength(3);
 });
 
-test('a sibling slot shares Metro only while its collector or lease is live, not for a stopped device record', () => {
+test('a sibling slot shares Metro while its collector, lease or owned device is live, not once it is stopped', () => {
   upsertProject(root, {
     platforms: { android: { avdName: 'stim-a', owned: true } },
-    deviceSlots: { parked: { android: { avdName: 'stim-b', owned: true } } },
+    deviceSlots: {
+      stopped: { android: { avdName: 'stim-stopped', owned: true } },
+      booted: { android: { avdName: 'stim-booted', owned: true } },
+    },
   });
   const collector = { pid: 1, processToken: 't' };
   writeWorkspaceState(root, {
     collectors: { android: collector, 'android:second': collector, 'ios:tablet': collector },
     deviceLeases: { 'android:hardware': { id: 'R5C', token: 'lease', kind: 'declared' } },
   });
-  expect(siblingPlatformSlots(root, 'android')).toEqual(['hardware', 'second']);
-  expect(siblingPlatformSlots(root, 'android', 'second')).toEqual(['default', 'hardware']);
-  expect(siblingPlatformSlots(root, 'ios', 'tablet')).toEqual([]);
+  const deviceRunning = (device: DeviceRecord) => device.avdName !== 'stim-stopped';
+  expect(siblingPlatformSlots(root, 'android', 'default', { deviceRunning })).toEqual(['booted', 'hardware', 'second']);
+  expect(siblingPlatformSlots(root, 'android', 'second', { deviceRunning })).toEqual(['booted', 'default', 'hardware']);
+  expect(siblingPlatformSlots(root, 'ios', 'tablet', { deviceRunning })).toEqual([]);
 });

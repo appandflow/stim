@@ -1296,8 +1296,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   which simulator app process requested an iOS bundle (through lsof), so each
   simulator slot proves its own launch. Any other delivery (Android, a physical
   iPhone, or a simulator request lsof could not resolve) proves the launch only
-  while no other slot of the same platform has a running log collector or a
-  device lease; stop --slot <name> releases both. Otherwise the launch reports
+  while no other slot of the same platform is running: a booted owned device,
+  a log collector or a device lease. stop --slot <name> ends all three. Otherwise the launch reports
   unverified with "not provably to this device": check the reported device
   directly. Release verification still
   checks its process. reload ios/android addresses matching Metro peers across

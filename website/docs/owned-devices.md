@@ -146,11 +146,13 @@ rejected. A name is scoped to its platform within the workspace.
 Slots share one Metro server and compatible native build caches. Native runs
 serialize changes to shared build output; the devices can remain running
 together afterward. A Debug launch counts a Metro bundle delivery only when it
-can tell that its own device requested it. Each iOS simulator slot proves its
-own launch: on macOS, Stim looks up which simulator app process opened the
-bundle request. Android and physical-device requests carry no device identity,
-so they prove a launch only while no other slot of the same platform is running
-(has a log collector or a device lease; `stim stop --slot <name>` ends both).
+can tell that its own device requested it. An iOS simulator slot proves its own
+launch: on macOS, Stim looks up which simulator app process opened the bundle
+request. Android and physical-device requests carry no device identity, nor
+does a simulator request whose process lookup failed, so they prove a launch
+only while no other slot of the same platform is running (a booted owned
+device, a log collector or a device lease; `stim stop --slot <name>` ends all
+three).
 Otherwise the launch reports `unverified`, and you should inspect the intended
 device and its logs before claiming success. `reload` remains platform-wide, and named
 slots are not supported for remote sessions. Local runs using an
