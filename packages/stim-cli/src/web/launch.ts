@@ -74,6 +74,42 @@ export function webLaunchVerdict({
     : { launched: 'unverified', kind: 'no-response', reason: 'the page never received a response' };
 }
 
+export const EXPO_WEB_PACKAGES: readonly string[] = ['react-dom', 'react-native-web', '@expo/metro-runtime'];
+export const EXPO_WEB_DEPENDENCIES: string = `npx expo install ${EXPO_WEB_PACKAGES.join(' ')}`;
+const WEB_SERVER_EXAMPLE = 'pnpm exec vite --port "$(stim ports get web)" --strictPort';
+
+/**
+ * Decides, before the page opens, what serves it. `serve` is the step that starts the dev server when nothing
+ * does, null while this workspace's Metro or its supervisor holds the port. `foreignHolder` describes another
+ * process on the Metro port, which `stim start` replaces with a free port only when no supervisor is recorded.
+ */
+export function webServePlan({
+  usesMetro,
+  metro,
+  supervisorHeld,
+  missingWebPackages,
+}: {
+  usesMetro: boolean;
+  metro: { metro?: unknown; notOurs?: string } | null;
+  supervisorHeld: boolean;
+  missingWebPackages: readonly string[];
+}): { serve: string | null; foreignHolder: string | null } {
+  if (!usesMetro) {
+    return {
+      serve: `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``,
+      foreignHolder: null,
+    };
+  }
+  if (metro?.metro || supervisorHeld) return { serve: null, foreignHolder: null };
+  if (metro?.notOurs) return { serve: null, foreignHolder: metro.notOurs };
+  return {
+    serve: missingWebPackages.length
+      ? `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``
+      : "Start this workspace's Metro with `stim start`",
+    foreignHolder: null,
+  };
+}
+
 const RETRY = 'then run `stim web` again';
 const METRO_BUILD = (url: string) =>
   `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`;

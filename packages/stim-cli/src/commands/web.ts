@@ -15,8 +15,17 @@ import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
-import { webLaunchRemedy, webLaunchVerdict, type WebLaunched, type WebLaunchVerdict } from '../web/launch.ts';
+import {
+  EXPO_WEB_DEPENDENCIES,
+  EXPO_WEB_PACKAGES,
+  webLaunchRemedy,
+  webLaunchVerdict,
+  webServePlan,
+  type WebLaunched,
+  type WebLaunchVerdict,
+} from '../web/launch.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import {
   cdpEndpoint,
@@ -34,7 +43,6 @@ import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings 
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
-import { liveSupervisor } from './start.ts';
 
 interface WebFailure {
   code: string;
@@ -56,10 +64,6 @@ const REGISTER_WAIT_MS = 30_000;
 const POLL_MS = 250;
 
 const printNote = (line: string) => console.error(line);
-
-const EXPO_WEB_PACKAGES = ['react-dom', 'react-native-web', '@expo/metro-runtime'];
-const EXPO_WEB_DEPENDENCIES = `npx expo install ${EXPO_WEB_PACKAGES.join(' ')}`;
-const WEB_SERVER_EXAMPLE = 'pnpm exec vite --port "$(stim ports get web)" --strictPort';
 
 function failure(code: string, message: string, remedy: string | null): { ok: false; error: WebFailure } {
   return { ok: false, error: { code, message, remedy } };
@@ -202,20 +206,18 @@ export async function runWeb({
   let metroPort = getProject(root)?.metroPort ?? null;
   if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
   const metro = usesMetro && metroPort !== null ? await resolveProjectMetro(metroPort, root) : null;
-  const ownSupervisor =
-    usesMetro &&
-    metroPort !== null &&
-    liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port: metroPort });
-  const foreignHolder = metro?.notOurs && !ownSupervisor ? metro.notOurs : null;
-  const missingWebPackages =
-    usesMetro && detectIsExpo(root) ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [];
-  let serve: string | null = null;
-  if (!usesMetro) serve = `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``;
-  else if (!metro?.metro && !ownSupervisor) {
-    serve = missingWebPackages.length
-      ? `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``
-      : "Start this workspace's Metro with `stim start`";
-  }
+  const supervisor = resolveSupervisorTarget({
+    state: readWorkspaceState(root)?.supervisor,
+    record: getProject(root)?.supervisor,
+    reservedPort: metroPort,
+  });
+  const { serve, foreignHolder } = webServePlan({
+    usesMetro,
+    metro,
+    supervisorHeld: supervisor.status !== 'none' && supervisor.status !== 'stale',
+    missingWebPackages:
+      usesMetro && detectIsExpo(root) ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [],
+  });
   let url: string;
   try {
     url = await resolveWebUrl(web.url ?? 'http://localhost:{port:metro}/', {
@@ -286,7 +288,7 @@ export async function runWeb({
     ? {
         launched: 'unverified',
         kind: 'no-bundle',
-        reason: `Port ${metroPort} is held by another process: ${foreignHolder}`,
+        reason: `Another process holds this workspace's Metro port: ${foreignHolder}`,
       }
     : measured;
   const remedy = foreignHolder
