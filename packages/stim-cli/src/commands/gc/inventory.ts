@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
@@ -260,13 +260,26 @@ function modifiedAt(path: string): string | null {
   }
 }
 
-function listAvdRecords(roots: readonly string[] = avdStorageRoots()): AvdRecord[] {
+function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+function unreadableNotice(what: string, error: unknown): string {
+  const notice = `${what} not listed: ${describeError(error)}`;
+  if (process.platform !== 'darwin' || (error as NodeJS.ErrnoException).code !== 'EPERM') return notice;
+  const app = process.env.STIM_DESKTOP_APP ? 'Stim Desktop' : 'the app that runs stim';
+  return `${notice}. macOS privacy protection blocked the read; allow ${app} under System Settings > Privacy & Security > Files and Folders (Removable Volumes for an external disk) or Full Disk Access`;
+}
+
+function listAvdRecords(notices: string[], roots: readonly string[] = avdStorageRoots()): AvdRecord[] {
   const records = new Map<string, AvdRecord>();
   for (const root of roots) {
     let names: string[];
     try {
       names = readdirSync(root);
-    } catch {
+    } catch (error) {
+      if (!isMissing(error)) notices.push(unreadableNotice(`AVDs in ${root}`, error));
       continue;
     }
     for (const entry of names) {
@@ -276,14 +289,23 @@ function listAvdRecords(roots: readonly string[] = avdStorageRoots()): AvdRecord
       let ini: string;
       try {
         ini = readFileSync(join(root, entry), 'utf8');
-      } catch {
+      } catch (error) {
+        if (!isMissing(error)) notices.push(unreadableNotice(`AVD ${name}`, error));
         continue;
       }
-      const directory = avdIniPaths(root, ini).find((candidate) => existsSync(join(candidate, 'config.ini'))) ?? null;
+      let directory: string | null = null;
       let config = '';
-      try {
-        if (directory) config = readFileSync(join(directory, 'config.ini'), 'utf8');
-      } catch {}
+      let unreadable: unknown = null;
+      for (const candidate of avdIniPaths(root, ini)) {
+        try {
+          config = readFileSync(join(candidate, 'config.ini'), 'utf8');
+          directory = candidate;
+          break;
+        } catch (error) {
+          if (!isMissing(error)) unreadable ??= error;
+        }
+      }
+      if (!directory && unreadable) notices.push(unreadableNotice(`details of AVD ${name}`, unreadable));
       records.set(name, {
         name,
         directory,
@@ -326,14 +348,16 @@ export function collectInventory(config: Config | null, deadProjects: readonly s
     }
   }
   const imagesRoot = join(androidHome(), 'system-images');
-  const images = listInstalledSystemImages().map((image) => ({
+  const images = listInstalledSystemImages((error) =>
+    notices.push(unreadableNotice('Android system images', error)),
+  ).map((image) => ({
     pkg: image.pkg,
     directory: join(imagesRoot, `android-${image.api}`, image.tag, image.arch),
   }));
   return {
     ...buildInventory({
       sims,
-      avds: listAvdRecords(),
+      avds: listAvdRecords(notices),
       runtimes,
       systemImages: images,
       config,

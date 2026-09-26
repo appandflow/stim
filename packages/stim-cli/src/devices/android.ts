@@ -187,29 +187,29 @@ function androidTool(tool: AndroidTool): string {
   return resolved === tool ? tool : `"${resolved}"`;
 }
 
-export function listInstalledSystemImages(): SystemImage[] {
+export function listInstalledSystemImages(onUnreadable?: (error: unknown) => void): SystemImage[] {
   const root = join(androidHome(), 'system-images');
   const images: SystemImage[] = [];
-  if (!existsSync(root)) return images;
-  for (const apiDir of safeList(root)) {
+  const list = (dir: string): string[] => {
+    try {
+      return readdirSync(dir);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') onUnreadable?.(error);
+      return [];
+    }
+  };
+  for (const apiDir of list(root)) {
     const m = apiDir.match(/^android-(\d+)$/);
     if (!m) continue;
     const apiPath = join(root, apiDir);
-    for (const tag of safeList(apiPath)) {
-      for (const arch of safeList(join(apiPath, tag))) {
+    for (const tag of list(apiPath)) {
+      for (const arch of list(join(apiPath, tag))) {
         images.push({ api: Number(m[1]), tag, arch, pkg: `system-images;${apiDir};${tag};${arch}` });
       }
     }
   }
   return images;
-}
-
-function safeList(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
 }
 
 function pageSizeRank(image: SystemImage): number {

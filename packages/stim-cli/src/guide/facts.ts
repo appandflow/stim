@@ -582,7 +582,10 @@ RULES
                     Android system images; avdCount is the AVDs whose
                     image.sysdir.1 names it; command is the
                     \`sdkmanager --uninstall\` line. Stim never runs it
-    notices       why a listing is missing, such as simctl timing out
+    notices       why a listing is missing or partial, such as simctl
+                    timing out or an AVD or system image folder Stim
+                    cannot read. A macOS privacy denial (EPERM) names the
+                    Privacy & Security setting to grant
   sections        one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }
