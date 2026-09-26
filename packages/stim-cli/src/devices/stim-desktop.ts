@@ -17,15 +17,13 @@ export const STIM_DESKTOP_OPEN_OPTIONS = {
   omitEnv: ['STIM_HOME'],
 } as const;
 
-/** Set by Stim Desktop, to its bundle path, for every command it runs. A non-empty value means Desktop is installed. */
-const STIM_DESKTOP_APP_ENV = 'STIM_DESKTOP_APP';
-
+/** Stim Desktop sets `STIM_DESKTOP_APP` to its bundle path for every command it runs; a non-empty value means Desktop is installed. */
 export function stimDesktopInstalled(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (platform !== 'darwin') return false;
-  if (env[STIM_DESKTOP_APP_ENV]) return true;
+  if (env.STIM_DESKTOP_APP) return true;
   const found = getExecutor().runFileQuiet('osascript', ['-l', 'JavaScript', '-e', LAUNCH_SERVICES_LOOKUP], {
     timeoutMs: 5000,
     killSignal: 'SIGKILL',
