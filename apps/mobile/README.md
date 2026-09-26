@@ -106,7 +106,9 @@ driven. Touches on the frame go to the device as a touch that follows your
 finger: a tap, a drag or swipe, or a long press. The toolbar has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
-**Apps**. The session ends when you turn Control off, leave the view, lose the
+**Apps**. A second row has **Rotate left** and **Rotate right**, and, when the
+device has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
+and **Fold**, **Half open** and **Unfold** on a foldable emulator. The session ends when you turn Control off, leave the view, lose the
 connection, or after 5 minutes without input; the banner says why.
 
 When status reports the device driven by something else, such as

@@ -6,3 +6,6 @@ EmulatorFrames/ScreenshotMessages.swift
 EmulatorFrames/ScreenshotStream.swift
 EmulatorFrames/InputMessages.swift
 EmulatorFrames/EmulatorInput.swift
+SimulatorFrames/SimulatorRotation.swift
+EmulatorFrames/EmulatorRotation.swift
+EmulatorFrames/EmulatorPosture.swift

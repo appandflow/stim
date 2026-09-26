@@ -19,6 +19,7 @@ import { PlanChecks, type PlanSnapshot, type PlanState } from '@/lib/plan-checks
 import type {
   ActionName,
   ActionParams,
+  DevicePosture,
   FrameEvent,
   InputButton,
   LogFilter,
@@ -26,6 +27,7 @@ import type {
   MachineUsage,
   Methods,
   Platform,
+  RotateDirection,
   StatusPayload,
   TouchPhase,
 } from '@/protocol/types';
@@ -397,7 +399,7 @@ function usePlanChecks(): { checks: PlanChecks | null; snapshot: PlanSnapshot } 
 export type ControlState =
   | { kind: 'off'; ended?: string }
   | { kind: 'starting' }
-  | { kind: 'on'; session: string; leaseSince: string | null }
+  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[] }
   | { kind: 'busy'; message: string }
   | { kind: 'failed'; message: string };
 
@@ -410,9 +412,14 @@ export interface DeviceControl {
   touch: (phase: TouchPhase, x: number, y: number) => void;
   text: (text: string) => void;
   button: (button: InputButton) => void;
+  rotate: (direction: RotateDirection) => void;
+  /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
+  posture: (posture: DevicePosture) => Promise<void>;
 }
 
-type HeldState = ControlState | { kind: 'on'; session: string; leaseSince: string | null; link: unknown };
+type HeldState =
+  | ControlState
+  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; link: unknown };
 
 /**
  * A control session on one device. It ends when the screen unmounts, when the connection drops (the server
@@ -453,7 +460,14 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
       if (!connection) return;
       setHeld({ kind: 'starting' });
       connection.request('control.begin', { workspace, platform, slot, ...(takeOver ? { takeOver } : {}) }).then(
-        (result) => setHeld({ kind: 'on', session: result.session, leaseSince: result.lease?.grantedAt ?? null, link }),
+        (result) =>
+          setHeld({
+            kind: 'on',
+            session: result.session,
+            leaseSince: result.lease?.grantedAt ?? null,
+            postures: result.postures,
+            link,
+          }),
         (cause: Error) =>
           setHeld(
             cause instanceof RequestError && cause.error.code === 'device-busy'
@@ -466,7 +480,7 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
   );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
   const send = useCallback(
-    <M extends 'input.touch' | 'input.text' | 'input.button'>(
+    <M extends 'input.touch' | 'input.text' | 'input.button' | 'input.rotate'>(
       method: M,
       params: Omit<Methods[M]['params'], 'session'>,
     ) => {
@@ -485,5 +499,13 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
     [send],
   );
   const button = useCallback((value: InputButton) => send('input.button', { button: value }), [send]);
-  return { allowed, state, begin, end, touch, text, button };
+  const rotate = useCallback((direction: RotateDirection) => send('input.rotate', { direction }), [send]);
+  const posture = useCallback(
+    async (value: DevicePosture) => {
+      if (!connection || !session) return;
+      await connection.request('input.posture', { session, posture: value });
+    },
+    [connection, session],
+  );
+  return { allowed, state, begin, end, touch, text, button, rotate, posture };
 }

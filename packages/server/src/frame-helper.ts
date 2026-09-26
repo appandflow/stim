@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Device, Frame, FrameListener } from './frames.ts';
 import { FRAME_EDGE, FRAME_FPS } from './protocol.ts';
@@ -80,34 +80,76 @@ export async function buildFrameHelper(
   if (process.platform !== 'darwin') throw new Error('stim-frames runs only on macOS.');
   const sources = readdirSync(sourcesDir)
     .filter((name) => name.endsWith('.swift'))
-    .toSorted();
+    .toSorted()
+    .map((name) => join(sourcesDir, name));
   if (!sources.length) throw new Error(`${sourcesDir} has no Swift sources.`);
   const version = await run('xcrun', ['swiftc', '--version'], env, VERSION_TIMEOUT_MS, signal);
-  const hash = createHash('sha256').update(version);
-  for (const name of sources) hash.update(name).update(readFileSync(join(sourcesDir, name)));
-  const dir = join(serverDir(), 'helpers');
-  const helper = join(dir, `stim-frames-${hash.digest('hex').slice(0, 16)}`);
-  if (existsSync(helper)) return helper;
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const output = `${helper}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-  try {
+  return compiled('stim-frames', sources, version, async (output) => {
+    await run(
+      'xcrun',
+      ['swiftc', '-O', '-swift-version', '5', '-module-name', 'StimFrames', '-o', output, ...sources],
+      env,
+      BUILD_TIMEOUT_MS,
+      signal,
+    );
+  });
+}
+
+/**
+ * Compiles `sim-fold`, which folds or unfolds an iPhone Duo from inside the simulator, from the Stim Desktop
+ * sources shipped in `dist/stim-frames/`, the way Stim Desktop's bundle script builds it.
+ */
+export async function buildFoldHelper(
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+  sourcesDir: string = SOURCES_DIR,
+): Promise<string> {
+  if (process.platform !== 'darwin') throw new Error('sim-fold runs only on macOS.');
+  const source = join(sourcesDir, 'sim-fold.m');
+  const entitlements = join(sourcesDir, 'sim-fold.entitlements');
+  const clang = ['-sdk', 'iphonesimulator', 'clang'];
+  const version = await run('xcrun', [...clang, '--version'], env, VERSION_TIMEOUT_MS, signal);
+  return compiled('sim-fold', [source, entitlements], version, async (output) => {
     await run(
       'xcrun',
       [
-        'swiftc',
-        '-O',
-        '-swift-version',
-        '5',
-        '-module-name',
-        'StimFrames',
+        ...clang,
+        '-fobjc-arc',
+        '-arch',
+        'arm64',
+        '-arch',
+        'x86_64',
+        '-mios-simulator-version-min=18.0',
+        '-framework',
+        'Foundation',
+        source,
         '-o',
         output,
-        ...sources.map((source) => join(sourcesDir, source)),
+        `-Wl,-sectcreate,__TEXT,__entitlements,${entitlements}`,
       ],
       env,
       BUILD_TIMEOUT_MS,
       signal,
     );
+    await run('codesign', ['--force', '--sign', '-', output], env, VERSION_TIMEOUT_MS, signal);
+  });
+}
+
+async function compiled(
+  name: string,
+  inputs: string[],
+  version: string,
+  compile: (output: string) => Promise<void>,
+): Promise<string> {
+  const hash = createHash('sha256').update(version);
+  for (const input of inputs) hash.update(basename(input)).update(readFileSync(input));
+  const dir = join(serverDir(), 'helpers');
+  const helper = join(dir, `${name}-${hash.digest('hex').slice(0, 16)}`);
+  if (existsSync(helper)) return helper;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const output = `${helper}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
+  try {
+    await compile(output);
     renameSync(output, helper);
   } finally {
     rmSync(output, { force: true });

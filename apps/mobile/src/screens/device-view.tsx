@@ -23,7 +23,7 @@ import { useDeviceControl, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, otherDriver, type Size } from '@/lib/device-control';
 import { devicesOf } from '@/lib/workspaces';
-import type { InputButton, Platform } from '@/protocol/types';
+import type { DevicePosture, InputButton, Platform } from '@/protocol/types';
 import { useColors, type Colors } from '@/theme';
 
 const LIVE_FPS = 60;
@@ -39,6 +39,12 @@ const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | nul
   auto: { fps: LIVE_FPS, maxEdge: null, video: ['h264'] },
   high: { fps: LIVE_FPS, maxEdge: MAX_EDGE, video: ['h264'] },
   dataSaver: { fps: DATA_SAVER_FPS, maxEdge: DATA_SAVER_MAX_EDGE, video: [] },
+};
+
+const POSTURE_LABELS: Record<DevicePosture, string> = {
+  folded: 'Fold',
+  'half-open': 'Half open',
+  unfolded: 'Unfold',
 };
 
 export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
@@ -65,6 +71,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const keyboard = useRef<TextInput>(null);
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
+  const [moving, setMoving] = useState<DevicePosture | null>(null);
 
   const touches = useRef({ active: false, lastMove: 0, pending: null as { x: number; y: number } | null });
   const point = (x: number, y: number, clamp: boolean) =>
@@ -117,6 +124,15 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     control.begin(false);
   };
   const press = (button: InputButton) => control.button(button);
+  const postures = control.state.kind === 'on' ? control.state.postures : [];
+  const shown = stream.frame?.posture;
+  const move = (posture: DevicePosture) => {
+    setMoving(posture);
+    control
+      .posture(posture)
+      .catch((cause: Error) => Alert.alert('Posture not changed', cause.message))
+      .finally(() => setMoving(null));
+  };
   const title = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
 
   return (
@@ -182,6 +198,22 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             {platform === 'android' ? <ToolButton label="Back" onPress={() => press('back')} /> : null}
             {platform === 'android' ? <ToolButton label="Apps" onPress={() => press('app-switch')} /> : null}
             <ToolButton label="Lock" onPress={() => press('lock')} />
+          </View>
+        ) : null}
+        {controlling ? (
+          <View style={styles.toolbar}>
+            <ToolButton label="Rotate left" onPress={() => control.rotate('left')} />
+            <ToolButton label="Rotate right" onPress={() => control.rotate('right')} />
+            {postures
+              .filter((posture) => platform === 'android' || posture !== shown)
+              .map((posture) => (
+                <ToolButton
+                  key={posture}
+                  label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
+                  disabled={moving !== null}
+                  onPress={() => move(posture)}
+                />
+              ))}
           </View>
         ) : null}
         <TextInput
@@ -253,12 +285,14 @@ function Banner({
   );
 }
 
-function ToolButton({ label, onPress }: { label: string; onPress: () => void }) {
+function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
-      style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [styles.tool, (pressed || disabled) && styles.pressed]}
       hitSlop={4}
     >
       <Text style={styles.toolText}>{label}</Text>
@@ -300,7 +334,14 @@ const styles = StyleSheet.create({
   bannerText: { flex: 1, color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
   bannerButton: { paddingHorizontal: 4 },
   bannerAction: { fontSize: 14, fontWeight: '600' },
-  toolbar: { flexDirection: 'row', justifyContent: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  toolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
   tool: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, backgroundColor: '#FFFFFF1F' },
   pressed: { opacity: 0.6 },
   toolText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500' },

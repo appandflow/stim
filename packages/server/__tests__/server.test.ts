@@ -170,6 +170,7 @@ async function start(
     tailscaleState?: ServerOptions['tailscaleState'];
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
+    foldHelper?: string;
     controlLimits?: ServerOptions['controlLimits'];
   } = {},
 ): Promise<number> {
@@ -205,6 +206,7 @@ async function start(
     actionLimits: overrides.actionLimits,
     frameLimits: overrides.frameLimits,
     frameHelper: overrides.frameHelper ?? null,
+    foldHelper: overrides.foldHelper,
     controlLimits: overrides.controlLimits,
   });
   return server.addresses[0]!.port;
@@ -1088,6 +1090,7 @@ if (basename(process.argv[1]) === 'sips' && args.includes('bmp')) {
   process.exit(0);
 }
 if (basename(process.argv[1]) === 'adb') process.exit(0);
+if (args[0] === 'simctl' && args[1] === 'spawn') process.exit(0);
 if (basename(process.argv[1]) === 'sips') {
   writeFileSync(args[args.indexOf('--out') + 1], Buffer.from(env.FAKE_SIPS_JPEG, 'base64'));
   process.exit(0);
@@ -1620,6 +1623,7 @@ describe('frames.subscribe', () => {
         ...env,
       },
       frameHelper: fakeHelper(),
+      foldHelper: join(root, 'sim-fold'),
       controlLimits,
     });
   }
@@ -1646,20 +1650,32 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'sends input to the helper under a device lease and releases the lease when the session ends',
     async () => {
-      const port = await startControl();
+      const port = await startControl({}, { shapeChangesPerSecond: 1 });
       const client = await authed(port, true);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
-      const { session, lease } = begun.result as { session: string; lease: { expiresAt: string } };
+      const { session, lease, postures } = begun.result as {
+        session: string;
+        lease: { expiresAt: string };
+        postures: string[];
+      };
       expect(lease.expiresAt).toEqual(expect.any(String));
+      expect(postures).toEqual([]);
       await until(() => existsSync(`${toolCalls}.started`));
       expect(await client.request('input.touch', { session, phase: 'down', x: 0.25, y: 0.75 })).toMatchObject({
         result: {},
       });
       expect(await client.request('input.text', { session, text: 'Hi!\n' })).toMatchObject({ result: {} });
       expect(await client.request('input.button', { session, button: 'home' })).toMatchObject({ result: {} });
+      expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({ result: {} });
+      expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({
+        error: { code: 'limit-exceeded', message: expect.stringContaining('rotate or fold') },
+      });
       expect(await client.request('input.button', { session, button: 'back' })).toMatchObject({
         error: { code: 'bad-request' },
+      });
+      expect(await client.request('input.posture', { session, posture: 'folded' })).toMatchObject({
+        error: { code: 'bad-request', message: 'This device has no hinge.' },
       });
       expect(await client.request('input.text', { session, text: `caf${String.fromCharCode(233)}` })).toMatchObject({
         error: { code: 'bad-request' },
@@ -1671,6 +1687,7 @@ describe('frames.subscribe', () => {
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 0 },
         { input: 'text', text: 'Hi!\n' },
         { input: 'button', button: 'home' },
+        { input: 'rotate', direction: 'left' },
       ]);
       await until(() => lockCalls().length === 2);
       expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json', 'device unlock ios --json']);
@@ -1714,6 +1731,88 @@ describe('frames.subscribe', () => {
         { input: 'button', button: 'app-switch' },
       ]);
       expect(toolRuns().filter((run) => run.tool === 'adb')).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'folds an iPhone Duo with sim-fold only when its frames show the other posture',
+    async () => {
+      const port = await startControl(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
+          FAKE_FRAMES: JSON.stringify([jpeg(1398, 2034, 'cover').toString('base64')]),
+        },
+        { shapeChangesPerSecond: 100 },
+      );
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
+      expect(postures).toEqual(['folded', 'unfolded']);
+      expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
+        error: { code: 'action-failed' },
+      });
+      await client.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await client.next()).toMatchObject({ event: 'frame', posture: 'folded' });
+      expect(await client.request('input.posture', { session, posture: 'folded' })).toMatchObject({ result: {} });
+      expect(await client.request('input.posture', { session, posture: 'half-open' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      const spawns = () => toolRuns().filter((run) => run.args[1] === 'spawn');
+      expect(spawns()).toEqual([]);
+      expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
+      expect(spawns()).toEqual([{ tool: 'xcrun', args: ['simctl', 'spawn', 'SIM-1', join(root, 'sim-fold')] }]);
+      expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
+      expect(spawns()).toHaveLength(1);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'moves the hinge of a foldable emulator and rotates it through the helper',
+    async () => {
+      const grpc = createHttp2Server();
+      grpc.on('stream', (stream: ServerHttp2Stream) => {
+        stream.resume();
+        stream.on('end', () => {
+          const value = Buffer.alloc(4);
+          value.writeFloatLE(3);
+          const message = Buffer.from([0x08, 0x10, 0x1a, 0x06, 0x0a, 0x04, ...value]);
+          const header = Buffer.alloc(5);
+          header.writeUInt32BE(message.length, 1);
+          stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true });
+          stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': '0' }));
+          stream.end(Buffer.concat([header, message]));
+        });
+      });
+      await new Promise<void>((resolve) => grpc.listen(0, '127.0.0.1', resolve));
+      try {
+        const port = await startControl();
+        const running = join(root, 'fake-home/Library/Caches/TemporaryItems/avd/running');
+        mkdirSync(running, { recursive: true });
+        writeFileSync(
+          join(running, `pid_${process.pid}.ini`),
+          `port.serial=5554\ngrpc.port=${(grpc.address() as { port: number }).port}\n`,
+        );
+        const client = await authed(port, true);
+        const begun = await client.request('control.begin', { workspace, platform: 'android' });
+        const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
+        expect(postures).toEqual(['folded', 'half-open', 'unfolded']);
+        await until(() => existsSync(`${toolCalls}.started`));
+        expect(await client.request('input.posture', { session, posture: 'half-open' })).toMatchObject({ result: {} });
+        expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({ result: {} });
+        expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+        await until(() => helperRuns().length === 1);
+        expect(helperRuns()[0]!.configs.slice(1)).toEqual([
+          { input: 'posture', posture: 'half-open' },
+          { input: 'rotate', direction: 'right' },
+        ]);
+        expect(toolRuns().filter((run) => run.tool === 'adb')).toEqual([]);
+      } finally {
+        await server?.close();
+        server = null;
+        await new Promise((resolve) => grpc.close(resolve));
+      }
     },
     10_000,
   );

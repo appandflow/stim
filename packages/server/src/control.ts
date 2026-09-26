@@ -5,18 +5,21 @@ import { join } from 'node:path';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
 import type { FeedPool, FeedSpec } from './feed.ts';
-import { deviceKey, ownedDevice, type Device, type DeviceInput, type FramePool } from './frames.ts';
+import { deviceKey, devicePostures, ownedDevice, type Device, type DeviceInput, type FramePool } from './frames.ts';
 import {
   INPUT_BUTTONS,
   MAX_INPUT_TEXT,
+  ROTATE_DIRECTIONS,
   TOUCH_PHASES,
   type ControlBeginParams,
   type ControlBeginResult,
   type ControlEndedEvent,
+  type DevicePosture,
   type ErrorCode,
   type InputButton,
   type Platform,
   type ProtocolError,
+  type RotateDirection,
   type ServerMessage,
   type TouchPhase,
 } from './protocol.ts';
@@ -53,7 +56,17 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
 export type InputCommand =
   | { input: 'touch'; phase: TouchPhase; x: number; y: number; display: number }
   | { input: 'text'; text: string }
-  | { input: 'button'; button: InputButton };
+  | { input: 'button'; button: InputButton }
+  | { input: 'rotate'; direction: RotateDirection }
+  | { input: 'posture'; posture: DevicePosture };
+
+type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture';
+
+/** What a control session accepts: its device's platform and the postures `input.posture` takes. */
+export interface SessionTarget {
+  platform: Platform;
+  postures: readonly DevicePosture[];
+}
 
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
 
@@ -61,19 +74,34 @@ function fraction(value: unknown): boolean {
   return typeof value === 'number' && value >= 0 && value <= 1;
 }
 
-/** Validates an `input.*` request for a session on `platform`; returns its session id and command. */
+/** Validates an `input.*` request for one of the connection's sessions; returns its session id and command. */
 export function parseInput(
-  method: 'input.touch' | 'input.text' | 'input.button',
+  method: InputMethod,
   params: unknown,
-  platformOf: (session: string) => Platform | null,
+  targetOf: (session: string) => SessionTarget | null,
 ): Parsed<{ session: string; command: InputCommand }> {
   if (!isJsonObject(params) || typeof params.session !== 'string') {
     return { code: 'bad-request', message: `${method} needs params.session from control.begin.` };
   }
-  const platform = platformOf(params.session);
-  if (!platform)
-    return { code: 'unknown-session', message: `No control session ${params.session} on this connection.` };
+  const target = targetOf(params.session);
+  if (!target) return { code: 'unknown-session', message: `No control session ${params.session} on this connection.` };
+  const { platform, postures } = target;
   const session = params.session;
+  if (method === 'input.rotate') {
+    const { direction } = params;
+    if (!ROTATE_DIRECTIONS.includes(direction as RotateDirection)) {
+      return { code: 'bad-request', message: 'input.rotate needs direction left or right.' };
+    }
+    return { value: { session, command: { input: 'rotate', direction: direction as RotateDirection } } };
+  }
+  if (method === 'input.posture') {
+    const { posture } = params;
+    if (!postures.includes(posture as DevicePosture)) {
+      const accepted = postures.length ? `takes these postures: ${postures.join(', ')}` : 'has no hinge';
+      return { code: 'bad-request', message: `This device ${accepted}.` };
+    }
+    return { value: { session, command: { input: 'posture', posture: posture as DevicePosture } } };
+  }
   if (method === 'input.touch') {
     const { phase, x, y, display = 0 } = params;
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
@@ -154,23 +182,38 @@ function adbPath(env: NodeJS.ProcessEnv): string {
 
 const ADB_TIMEOUT_MS = 10_000;
 
-function runAdb(env: NodeJS.ProcessEnv, serial: string, args: string[]): Promise<void> {
+/** `sim-fold` waits up to 20 seconds for SpringBoard to finish the fold; Stim Desktop stops it after 40. */
+const FOLD_TIMEOUT_MS = 40_000;
+
+const POSTURE_TIMEOUT_MS = 5_000;
+
+function runQuietly(
+  env: NodeJS.ProcessEnv,
+  file: string,
+  args: string[],
+  label: string,
+  timeoutMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(adbPath(env), ['-s', serial, ...args], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(file, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    const timer = setTimeout(() => void terminate(child), ADB_TIMEOUT_MS);
+    const timer = setTimeout(() => void terminate(child), timeoutMs);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => (stderr = (stderr + chunk).slice(-500)));
     child.on('error', (error) => {
       clearTimeout(timer);
-      reject(new Error(`adb could not start (${error.message}).`));
+      reject(new Error(`${label} could not start (${error.message}).`));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`adb ${args.slice(0, 3).join(' ')} failed (code ${code}): ${stderr.trim()}`));
+      else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
     });
   });
+}
+
+function runAdb(env: NodeJS.ProcessEnv, serial: string, args: string[]): Promise<void> {
+  return runQuietly(env, adbPath(env), ['-s', serial, ...args], `adb ${args.slice(0, 3).join(' ')}`, ADB_TIMEOUT_MS);
 }
 
 function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceActivity | undefined {
@@ -202,6 +245,7 @@ interface Session {
   cwd: string;
   lease: Lease | null;
   input: DeviceInput;
+  postures: DevicePosture[];
   startedAt: number;
   idle: NodeJS.Timeout;
   renew: NodeJS.Timeout;
@@ -228,6 +272,8 @@ export interface ControlOptions {
   idleMs: number;
   renewMs: number;
   leaseFor: string;
+  /** Resolves to the `sim-fold` helper, building it on first use. */
+  foldHelper: () => Promise<string>;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -243,6 +289,7 @@ export class ControlHub {
   private readonly byDevice = new Map<string, Session>();
   private readonly ownLeases = new Set<string>();
   private readonly starting = new Set<string>();
+  private readonly folding = new Set<string>();
   private closing = false;
   private next = 1;
 
@@ -250,9 +297,11 @@ export class ControlHub {
     this.options = options;
   }
 
-  platformOf(owner: Controller, session: string): Platform | null {
+  targetOf(owner: Controller, session: string): SessionTarget | null {
     const found = this.sessions.get(session);
-    return found && found.owner === owner && !found.ended ? found.target.platform : null;
+    return found && found.owner === owner && !found.ended
+      ? { platform: found.target.platform, postures: found.postures }
+      : null;
   }
 
   /**
@@ -284,8 +333,12 @@ export class ControlHub {
     }
     this.starting.add(key);
     let lease: Lease | Refusal;
+    let postures: DevicePosture[];
     try {
-      lease = await this.lock(device, target, cwd, beganAt);
+      [lease, postures] = await Promise.all([
+        this.lock(device, target, cwd, beganAt),
+        devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
+      ]);
     } finally {
       this.starting.delete(key);
     }
@@ -324,6 +377,7 @@ export class ControlHub {
       cwd,
       lease: granted ? { ...granted, mine: granted.mine || inherited } : null,
       input,
+      postures,
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
       renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
@@ -352,6 +406,7 @@ export class ControlHub {
       session: id,
       platform: target.platform,
       lease: session.lease ? { grantedAt: session.lease.grantedAt, expiresAt: session.lease.expiresAt } : null,
+      postures,
     };
   }
 
@@ -370,7 +425,16 @@ export class ControlHub {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
     }
     session.idle.refresh();
-    if (session.device.platform === 'ios' || command.input === 'touch' || session.input.keys()) {
+    if (command.input === 'posture' && session.device.platform === 'ios') {
+      return this.fold(session, session.device.udid, command.posture);
+    }
+    if (
+      session.device.platform === 'ios' ||
+      command.input === 'touch' ||
+      command.input === 'rotate' ||
+      command.input === 'posture' ||
+      session.input.keys()
+    ) {
       session.input.send(command);
       return Promise.resolve(null);
     }
@@ -379,7 +443,7 @@ export class ControlHub {
     const run = (async (): Promise<Refusal | null> => {
       await previous;
       try {
-        for (const args of adbInputArgs(command)) {
+        for (const args of adbInputArgs(command as Extract<InputCommand, { input: 'text' | 'button' }>)) {
           if (session.ended) return null;
           await runAdb(this.options.env, serial, args);
         }
@@ -390,6 +454,31 @@ export class ControlHub {
     })();
     session.adb = run.then(() => undefined);
     return run;
+  }
+
+  /**
+   * `sim-fold` sweeps the hinge to the other posture, so it runs only when the Duo's last frame shows the
+   * other one.
+   */
+  private async fold(session: Session, udid: string, posture: DevicePosture): Promise<Refusal | null> {
+    if (this.folding.has(udid)) return { code: 'device-busy', message: 'The device is still folding.' };
+    const current = this.options.frames.litPosture(session.device);
+    if (!current) {
+      return { code: 'action-failed', message: 'Subscribe to frames of this device to learn its posture first.' };
+    }
+    if (current === posture) return null;
+    this.folding.add(udid);
+    try {
+      const helper = await this.options.foldHelper();
+      if (session.ended) return null;
+      await runQuietly(this.options.env, 'xcrun', ['simctl', 'spawn', udid, helper], 'sim-fold', FOLD_TIMEOUT_MS);
+      this.options.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');
+      return null;
+    } catch (cause) {
+      return { code: 'action-failed', message: (cause as Error).message };
+    } finally {
+      this.folding.delete(udid);
+    }
   }
 
   endById(owner: Controller, id: string): boolean {

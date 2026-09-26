@@ -15,8 +15,10 @@ import IOSurface
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
 // and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
 // is Return, "\t" is Tab and "\u{8}" is Delete; and {"input": "button", "button":
-// "home|lock"}, or on an emulator also "back|app-switch". An emulator types and presses
-// buttons only with a hardware keyboard.
+// "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
+// "left|right"}; and on an emulator {"input": "posture", "posture":
+// "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
+// keyboard.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
 // ({"error": message} before a failed exit, {"inputError": message}, or on an emulator
@@ -370,6 +372,8 @@ enum Command {
   case touch(TouchPhase, CGPoint, display: Int)
   case text(String)
   case button(String)
+  case rotate(clockwise: Bool)
+  case posture(EmulatorPosture)
 }
 
 func parseCommand(_ line: String, base: Config) -> Command? {
@@ -386,6 +390,12 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     return (object["text"] as? String).map { .text($0) }
   case "button":
     return (object["button"] as? String).map { .button($0) }
+  case "rotate":
+    let directions = ["left": false, "right": true]
+    return (object["direction"] as? String).flatMap { directions[$0] }.map { .rotate(clockwise: $0) }
+  case "posture":
+    let postures: [String: EmulatorPosture] = ["folded": .closed, "half-open": .halfOpened, "unfolded": .opened]
+    return (object["posture"] as? String).flatMap { postures[$0] }.map { .posture($0) }
   case nil:
     var config = base
     if let fps = object["fps"] as? Double, fps >= 0 { config.fps = min(fps, 60) }
@@ -465,6 +475,12 @@ extension SimulatorSource: Source {
   }
 
   private func apply(_ command: Command) {
+    if case .rotate(let clockwise) = command {
+      if !SimulatorRotation.rotate(udid: udid, clockwise: clockwise) {
+        Output.notice(["inputError": "\(udid) did not take the rotation."])
+      }
+      return
+    }
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
@@ -490,10 +506,14 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe:
+    case .config, .keyframe, .rotate, .posture:
       break
     }
   }
+}
+
+private final class Applied: @unchecked Sendable {
+  var value = false
 }
 
 extension EmulatorSource: Source {
@@ -528,8 +548,24 @@ extension EmulatorSource: Source {
       let keys = ["home": "GoHome", "back": "GoBack", "app-switch": "AppSwitch", "lock": "Power"]
       guard let key = keys[name] else { return Output.notice(["inputError": "Android has no \(name) button."]) }
       input.call("sendKey", InputMessages.namedKey(key))
+    case .rotate(let clockwise):
+      wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
+    case .posture(let posture):
+      wait("posture") { await posture.apply(serial: self.serial) }
     case .config, .keyframe:
       break
+    }
+  }
+
+  private func wait(_ change: String, _ operation: @escaping () async -> Bool) {
+    let done = DispatchSemaphore(value: 0)
+    let applied = Applied()
+    Task {
+      applied.value = await operation()
+      done.signal()
+    }
+    if done.wait(timeout: .now() + 10) == .timedOut || !applied.value {
+      Output.notice(["inputError": "\(serial) did not take the \(change) change."])
     }
   }
 

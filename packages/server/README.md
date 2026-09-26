@@ -307,7 +307,11 @@ A device with `control` can drive a simulator or emulator that `stim status`
 lists as owned by a workspace. Nothing it sends reaches any other device.
 
 - `control.begin` takes `workspace`, `platform`, `slot` (`default` when
-  absent) and `takeOver`, and returns `{ "session", "platform", "lease" }`.
+  absent) and `takeOver`, and returns `{ "session", "platform", "lease",
+"postures" }`. `postures` lists what `input.posture` takes for the device:
+  `folded` and `unfolded` for an iPhone Duo, `folded`, `half-open` and
+  `unfolded` for an emulator with a hinge, such as a `pixel_fold` AVD, and
+  none otherwise.
   The server refuses with `device-busy` when status reports the device driven
   (agent-device, a `stim device lock`, a test runner) or another client
   controls it, naming the driver. With `takeOver: true` it proceeds anyway;
@@ -327,10 +331,13 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   as fractions of the upright screen, and `display` (0, the main display).
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
-  and on Android also `back` or `app-switch`. Each answers `{}` once the input
+  and on Android also `back` or `app-switch`. `input.rotate` takes
+  `direction` (`left` or `right`) and turns the device a quarter turn.
+  `input.posture` takes one of the session's `postures`. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
   helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
-  characters a second, with a burst of 256; more fail with `limit-exceeded`.
+  characters a second, with a burst of 256, and rotate or change posture twice a
+  second; more fail with `limit-exceeded`.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
   without input (`idle`), when another client takes the device over
@@ -353,6 +360,14 @@ streams its frames:
   buttons go through gRPC `sendKey` when the emulator reports a hardware
   keyboard, which AVDs Stim creates have. An emulator without one drops key
   events, so for it text and buttons go through `adb -s <serial> shell input`.
+- Rotation and posture go the way Stim Desktop sends them: a simulator turns
+  through the orientation message Simulator.app sends it, and an emulator
+  through gRPC `setPhysicalModel` for rotation and `setPosture` for its hinge.
+  An iPhone Duo folds with `sim-fold`, which the server builds from Stim
+  Desktop's sources on the first fold and runs inside the simulator with
+  `xcrun simctl spawn`; it answers `{}` once the fold finished. `sim-fold`
+  swaps the posture, so the server runs it only when the Duo's latest frame
+  shows the other posture, and refuses the request until a frame showed one.
 
 Every session start, takeover and end, and every refused `control.begin`,
 appends a line to the action log, with `action` set to `control.begin`,
