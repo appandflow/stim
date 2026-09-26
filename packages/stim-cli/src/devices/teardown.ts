@@ -605,7 +605,10 @@ export async function teardownBrowserHeld(
         return {
           status: 'skipped',
           kind: 'not-verified',
-          reason: `the browser supervisor claim could not be cleared (${claims.status === 'held' ? 'still held' : claims.reason}); remove it with ${claimRemoveCommand(webClaimRoot(root))}`,
+          reason:
+            claims.status === 'held'
+              ? `the browser supervisor claim is still held${claims.holder ? ` by pid ${claims.holder.owner.pid}` : ''}`
+              : `the browser supervisor claim could not be cleared (${claims.reason}); remove it with ${claimRemoveCommand(webClaimRoot(root))}`,
         };
       }
       clearWebRecord(root, record);

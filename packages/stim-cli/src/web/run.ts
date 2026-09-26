@@ -155,13 +155,14 @@ export async function runWebSupervisor(
     if (finished) return;
     finished = true;
     cdp?.close();
-    if (chromeGone()) {
+    const gone = chromeGone();
+    if (gone) {
       try {
         removeSingletonFiles(profile);
       } catch {}
       if (claim) clearClaimChild(claim);
     }
-    if (!chromeGone()) {
+    if (!gone) {
       log(
         'error',
         event,

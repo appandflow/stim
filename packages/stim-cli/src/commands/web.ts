@@ -340,7 +340,9 @@ export default function webCommand(program: Command): void {
           ? chalk.green('loaded')
           : chalk.yellow(facts.launched === 'bundling' ? 'bundling' : 'unverified');
       console.log(
-        `${facts.url} ${launched} in ${facts.version ?? 'Chrome'} (pid ${facts.pid}, ${facts.headless ? 'headless' : 'headed'}, ${facts.viewport}). DevTools: ${facts.cdpEndpoint}. Logs: stim logs --errors.`,
+        facts.running
+          ? `${facts.url} ${launched} in ${facts.version ?? 'Chrome'} (pid ${facts.pid}, ${facts.headless ? 'headless' : 'headed'}, ${facts.viewport}). DevTools: ${facts.cdpEndpoint}. Logs: stim logs --errors.`
+          : `${facts.url} ${launched}, and the owned Chrome is no longer running. Run stim logs --errors, then stim web again.`,
       );
     });
 }
