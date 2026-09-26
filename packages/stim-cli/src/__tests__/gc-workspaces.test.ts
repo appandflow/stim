@@ -679,8 +679,9 @@ describe('choosing the pull request of a worktree', () => {
     expect(selectPullRequest([gh(3, 'MERGED', 'base')], 'head', isAncestor)).toMatchObject({ containsHead: false });
   });
 
-  test('a pull request unrelated to HEAD is ignored', () => {
+  test('a pull request unrelated to HEAD, or from a fork that reuses the branch name, is ignored', () => {
     expect(selectPullRequest([gh(4, 'MERGED', 'unrelated')], 'head', isAncestor)).toBe(null);
+    expect(selectPullRequest([{ ...gh(5, 'MERGED', 'head'), isCrossRepository: true }], 'head', isAncestor)).toBe(null);
   });
 });
 
@@ -904,7 +905,7 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
     '--limit',
     '20',
     '--json',
-    'number,state,url,headRefOid,mergedAt,closedAt',
+    'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository',
   ]);
 
   await captureLog(() => runGc({ delete: true }));

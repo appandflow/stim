@@ -2,7 +2,7 @@ import { getExecutor } from '../exec.ts';
 
 const GH_TIMEOUT_MS = 20_000;
 const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
-const GH_FIELDS = 'number,state,url,headRefOid,mergedAt,closedAt';
+const GH_FIELDS = 'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository';
 const SIGNED_OUT_EXIT = 4;
 
 export interface GhPullRequest {
@@ -12,6 +12,7 @@ export interface GhPullRequest {
   headRefOid: string;
   mergedAt: string | null;
   closedAt: string | null;
+  isCrossRepository?: boolean;
 }
 
 /**
@@ -45,7 +46,8 @@ function epoch(text: string | null): number | null {
 /**
  * Picks the pull request that describes `head` among those `gh pr list --head <branch>` returned. One whose head is
  * `head` wins, then one whose head contains `head`, then one whose head `head` contains. An open one wins a tier,
- * then the newest. A pull request unrelated to `head` is from an earlier use of the branch name and is ignored.
+ * then the newest. A pull request unrelated to `head` is from an earlier use of the branch name, and one from a fork
+ * only shares the branch name; both are ignored.
  * `isAncestor(a, b)` answers whether commit `a` is an ancestor of commit `b`, and false when git cannot tell.
  */
 export function selectPullRequest(
@@ -55,7 +57,7 @@ export function selectPullRequest(
 ): PullRequestFact | null {
   const known = pulls.flatMap((pull) => {
     const state = stateOf(pull.state);
-    return state && pull.headRefOid ? [{ pull, state }] : [];
+    return state && pull.headRefOid && !pull.isCrossRepository ? [{ pull, state }] : [];
   });
   const tiers = [
     known.filter(({ pull }) => pull.headRefOid === head),
@@ -90,12 +92,13 @@ function firstLine(error: unknown): string {
  * times out, every later lookup through the same function answers `unavailable` without running it again.
  */
 export function pullRequestLookup(): (cwd: string, branch: string, head: string) => PullRequestLookup {
-  const exec = getExecutor();
-  let unavailable: string | null = exec.findExecutable('gh') ? null : 'gh is not installed';
-  const isAncestor = (cwd: string) => (ancestor: string, descendant: string) =>
-    exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;
+  let unavailable: string | null | undefined;
   return (cwd, branch, head) => {
+    const exec = getExecutor();
+    unavailable ??= exec.findExecutable('gh') ? null : 'gh is not installed';
     if (unavailable) return { unavailable };
+    const isAncestor = (ancestor: string, descendant: string) =>
+      exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;
     let out: string;
     try {
       out = exec.runFile(
@@ -120,7 +123,7 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
     } catch {
       return { unavailable: 'gh pr list printed no JSON' };
     }
-    return { pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls, head, isAncestor(cwd)) : null };
+    return { pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls, head, isAncestor) : null };
   };
 }
 

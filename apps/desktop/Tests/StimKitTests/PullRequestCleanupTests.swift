@@ -21,6 +21,9 @@ import Testing
         {"path":"/r/local","mergedInto":null,"willRemove":false,"reason":"unpushed",
          "detail":"unpushed: 1 commit on no remote or other branch",
          "pullRequest":{"number":7,"state":"closed","url":"https://github.com/o/r/pull/7","containsHead":true}},
+        {"path":"/r/followup","mergedInto":null,"willRemove":false,"reason":"not-merged",
+         "detail":"PR #9 merged, and HEAD has commits it does not",
+         "pullRequest":{"number":9,"state":"merged","url":"https://github.com/o/r/pull/9","containsHead":false}},
         {"path":"/r/fresh","mergedInto":null,"willRemove":false,"reason":"recent-activity",
          "detail":"recent activity: PR #8 merged 5m ago; removable after 2026-09-25T14:00:00.000Z",
          "eligibleAt":"2026-09-25T14:00:00.000Z",
@@ -36,7 +39,7 @@ import Testing
   }
 
   /// Catches an unsafe worktree with a finished pull request going unmentioned, or one that only waits out the
-  /// grace period being flagged as needing a person.
+  /// grace period, or has moved past its pull request, being flagged as needing a person.
   @Test func flagsKeptWorktreesWithTheirReason() throws {
     let flags = PullRequestCleanup.flagged(try report())
     #expect(
@@ -62,6 +65,20 @@ import Testing
     let environments = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
     let finished = try #require(PullRequestCleanup.branches(Data(#"[{"headRefName":"done"}]"#.utf8)))
     #expect(PullRequestCleanup.candidates(environments, finished: ["/r": finished]) == ["/r/wt"])
+  }
+
+  /// Catches a removal of a worktree that became live, or switched to another branch, after gc judged it.
+  @Test func removesOnlyWhatStatusStillShowsIdleOnTheFinishedBranch() throws {
+    let json = """
+      [{"path":"/r/shipped/app","live":false,"warnings":[],"worktree":{"path":"/r/shipped","branch":"a","repository":"/r"}},
+       {"path":"/r/abandoned/app","live":true,"warnings":[],"worktree":{"path":"/r/abandoned","branch":"b","repository":"/r"}}]
+      """
+    let environments = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    let removable = PullRequestCleanup.removable(try report())
+    #expect(
+      PullRequestCleanup.stillRemovable(removable, environments: environments, finished: ["/r": ["a", "b"]]).map(\.path)
+        == ["/r/shipped"])
+    #expect(PullRequestCleanup.stillRemovable(removable, environments: environments, finished: ["/r": ["b"]]).isEmpty)
   }
 
   @Test func summaryNamesWhatFinished() throws {

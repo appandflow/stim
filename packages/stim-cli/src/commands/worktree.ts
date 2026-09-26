@@ -838,7 +838,14 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
   let mergedHead = opts.mergedHead;
   let inspection = inspectRemoval(path, mergedHead);
-  if (inspection.blockers.length && !opts.force && !mergedHead && branch && inspection.unpushed?.length) {
+  if (
+    inspection.blockers.length &&
+    !opts.force &&
+    !mergedHead &&
+    branch &&
+    inspection.unpushed?.length &&
+    !inspection.dirtyLines.length
+  ) {
     const head = resolveFullRef(path, 'HEAD');
     const pr = head ? endedPullRequest(pullRequestLookup()(path, branch, head)) : null;
     if (head && pr?.state === 'merged') {

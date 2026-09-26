@@ -57,17 +57,21 @@ The autopilot in **Stim > Settings > App** removes a worktree soon after its
 pull request is merged or closed. It is on by default. Every 5 minutes, and
 when the app becomes active, it asks `gh` for each repository's merged and
 closed pull requests. When a Stim worktree's branch is among them, it runs
-`stim gc --json`, which finds the pull request whose head is the worktree's
-HEAD, and `stim worktree remove` on each worktree gc reports as safe:
+`stim gc --json`, which finds the pull request whose head is or contains the
+worktree's HEAD, and `stim worktree remove` on each worktree gc reports as
+safe:
 
 - no uncommitted or untracked files;
-- no unpushed commits; for a closed pull request, no commit that exists only
-  locally;
+- no commit that exists only locally, except commits a merged pull request
+  holds;
 - no running Metro, build or owned device;
 - 2 hours since the merge and since its last activity
   ([`gc.worktreeGraceMinutes`](./settings.md)).
 
-A worktree that fails a check is never removed. It is listed under **Finished
+Just before removing, the app skips a worktree that `stim status` now shows
+live or on another branch, and `stim worktree remove` checks again for
+uncommitted and unpushed work under its locks. A worktree that fails a check
+is not removed. It is listed under **Finished
 pull requests** in **Needs attention** with the reason, such as "PR #123
 merged, 2 uncommitted or untracked files". Removals are listed under
 **Autopilot activity** and posted as a notification, such as "Removed 3

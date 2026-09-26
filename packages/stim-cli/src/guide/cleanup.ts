@@ -158,8 +158,8 @@ SWEEPING FINISHED WORKTREES
   \`gh pr list --head <branch> --state all --json ...\` in the worktree and
   takes the pull request whose head is HEAD, else one whose head contains
   HEAD. A pull request whose head HEAD is past ("PR #12 merged, and HEAD has
-  commits it does not") or one unrelated to HEAD (an older use of the branch
-  name) does not count. A merged or closed one makes the worktree finished
+  commits it does not"), one unrelated to HEAD (an older use of the branch
+  name), and one from a fork do not count. A merged or closed one makes the worktree finished
   under the same clean state. Merged, its commits are kept on GitHub, so local
   commits whose remote branch was deleted do not block removal. Closed, they
   do: a closed pull request whose remote branch is gone keeps the worktree as
@@ -167,8 +167,8 @@ SWEEPING FINISHED WORKTREES
   not installed, not signed in, or fails, the JSON pullRequestUnknown field
   and the report say why, and gc judges from git alone. A detached HEAD is
   not looked up. \`stim worktree remove\` makes the same check when
-  local-only commits would refuse the removal, and accepts a merged pull
-  request whose head is HEAD.
+  local-only commits alone would refuse the removal, and accepts a merged
+  pull request whose head is or contains HEAD.
     stim gc                                        # report merged worktrees
     stim gc --delete                               # remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones

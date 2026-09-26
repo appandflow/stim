@@ -258,7 +258,9 @@ final class AutopilotRunner: ObservableObject {
           $0.candidates != candidates || now.timeIntervalSince($0.at) >= PullRequestCleanup.reportMaxAge
             || $0.nextEligible.map { now >= $0 } == true
         } ?? true
-      let report = !candidates.isEmpty && stale ? try? cli.gcReport() : nil
+      let answered = finished
+      let asked = !candidates.isEmpty && stale
+      let report = asked ? try? cli.gcReport() : nil
       await MainActor.run {
         self.pollingPullRequests = false
         self.pullRequestCheck = problem
@@ -267,10 +269,14 @@ final class AutopilotRunner: ObservableObject {
           self.finishedPullRequests = []
           return
         }
+        guard asked else { return }
+        self.pullRequestVerdict = (candidates, now, report.flatMap(PullRequestCleanup.nextEligible))
         guard let report else { return }
-        self.pullRequestVerdict = (candidates, now, PullRequestCleanup.nextEligible(report))
         self.finishedPullRequests = PullRequestCleanup.flagged(report)
-        self.removeFinished(PullRequestCleanup.removable(report))
+        self.removeFinished(
+          PullRequestCleanup.stillRemovable(
+            PullRequestCleanup.removable(report), environments: self.status.payload?.environments ?? [],
+            finished: answered))
       }
     }
   }

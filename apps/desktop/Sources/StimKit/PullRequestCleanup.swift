@@ -10,7 +10,7 @@ public enum PullRequestCleanup {
   /// How long a `stim gc` verdict on the same candidates stands before it is asked again.
   public static let reportMaxAge: TimeInterval = 30 * 60
 
-  /// `gh pr list` arguments for the repository's latest merged and closed pull requests.
+  /// `gh pr list` arguments for the repository's 100 newest merged and closed pull requests.
   public static let listArguments = ["pr", "list", "--state", "closed", "--limit", "100", "--json", "headRefName"]
 
   /// Head branch names from `gh pr list --json headRefName` output, or nil when it is not that.
@@ -23,7 +23,7 @@ public enum PullRequestCleanup {
   public static func problem(hasGitHubCLI: Bool, repositories: Int, answered: Int) -> String? {
     if !hasGitHubCLI { return "gh is not on the login shell's PATH, so no worktree is removed for its pull request." }
     if repositories > 0, answered == 0 {
-      return "gh answered for no repository. Run gh auth login, or check the network."
+      return "gh answered for no repository: it is signed out, offline, or no repository is on GitHub."
     }
     return nil
   }
@@ -44,6 +44,17 @@ public enum PullRequestCleanup {
     (report.sections.linkedWorktrees ?? []).filter { $0.willRemove && $0.pullRequest?.isFinished == true }
   }
 
+  /// The worktrees of `removable` that the latest `stim status` still shows on a branch with a finished pull
+  /// request and not live, so one that started Metro, a build or a device, or switched branches, since
+  /// `stim gc --json` judged it is left for the next check.
+  public static func stillRemovable(
+    _ removable: [GcReport.LinkedWorktree], environments: [Workspace], finished: [String: Set<String>]
+  ) -> [GcReport.LinkedWorktree] {
+    let current = candidates(environments.filter { !$0.live }, finished: finished)
+    let live = Set(environments.filter(\.live).compactMap { $0.worktree?.path })
+    return removable.filter { current.contains($0.path) && !live.contains($0.path) }
+  }
+
   /// A worktree whose pull request was merged or closed that `stim gc` keeps, with the reason.
   public struct Flag: Hashable, Sendable {
     public var path: String
@@ -56,7 +67,7 @@ public enum PullRequestCleanup {
   /// out the grace period after recent activity is left out: it is removed once that passes.
   public static func flagged(_ report: GcReport) -> [Flag] {
     (report.sections.linkedWorktrees ?? []).compactMap { worktree in
-      guard let pr = worktree.pullRequest, pr.state != "open", !worktree.willRemove,
+      guard let pr = worktree.pullRequest, pr.isFinished, !worktree.willRemove,
         worktree.reason != "recent-activity"
       else { return nil }
       return Flag(path: worktree.path, pullRequest: pr, text: "PR #\(pr.number) \(pr.state), \(keptBecause(worktree))")
