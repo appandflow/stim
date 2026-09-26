@@ -1,7 +1,15 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
-import { ACTIONS, type ActionName, type ActionParams, type ErrorCode, type ProtocolError } from './protocol.ts';
+import {
+  ACTIONS,
+  RELOAD_PLATFORMS,
+  type ActionName,
+  type ActionParams,
+  type ErrorCode,
+  type ProtocolError,
+  type ReloadPlatform,
+} from './protocol.ts';
 import { serverDir } from './registry.ts';
 import type { CommandOutcome } from './stim-command.ts';
 
@@ -25,10 +33,10 @@ export function parseAction(params: unknown): ParsedAction {
   if (action === 'stop' && platform !== undefined) extra.push('platform');
   if (extra.length) return { code: 'bad-request', message: `${action} does not take ${extra.join(', ')}.` };
   if (action === 'stop') return { action: { action, workspace } };
-  if (platform !== undefined && platform !== 'ios' && platform !== 'android') {
-    return { code: 'bad-request', message: 'platform must be ios or android.' };
+  if (platform !== undefined && !RELOAD_PLATFORMS.includes(platform as ReloadPlatform)) {
+    return { code: 'bad-request', message: `platform must be one of ${RELOAD_PLATFORMS.join(', ')}.` };
   }
-  return { action: { action: 'reload', workspace, ...(platform ? { platform } : {}) } };
+  return { action: { action: 'reload', workspace, ...(platform ? { platform: platform as ReloadPlatform } : {}) } };
 }
 
 export function actionArgs(action: ActionParams): string[] {

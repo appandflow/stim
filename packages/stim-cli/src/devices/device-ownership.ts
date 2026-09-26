@@ -1,9 +1,11 @@
 import { loadConfig } from '@stim-cli/core/state';
-import { readCreatedDevices, type CreatedDevicePlatform } from './created-devices.ts';
+import { readCreatedDevices } from './created-devices.ts';
+
+type DevicePlatform = 'ios' | 'android';
 import { projectDeviceSlots } from './device-slots.ts';
 import { readParked } from './sim-pool.ts';
 
-function recordedAsOwned(platform: CreatedDevicePlatform, id: string): boolean {
+function recordedAsOwned(platform: DevicePlatform, id: string): boolean {
   const config = loadConfig();
   if (!config) return false;
   const parked =
@@ -26,7 +28,7 @@ function recordedAsOwned(platform: CreatedDevicePlatform, id: string): boolean {
   return false;
 }
 
-function isStimOwnedDevice(platform: CreatedDevicePlatform, id: string): boolean {
+function isStimOwnedDevice(platform: DevicePlatform, id: string): boolean {
   return readCreatedDevices()[platform].has(id) || recordedAsOwned(platform, id);
 }
 

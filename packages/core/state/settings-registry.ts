@@ -68,6 +68,10 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as con
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
+export const WEB_VIEWPORTS = ['desktop', 'phone'] as const;
+
+export type WebViewport = (typeof WEB_VIEWPORTS)[number];
+
 const PROJECT: readonly SettingScope[] = ['workspace', 'repo', 'committed'];
 const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committed'];
 const MACHINE: readonly SettingScope[] = ['machine'];
@@ -226,6 +230,30 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     default: 60,
     description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
+  },
+  {
+    key: 'web.url',
+    type: {
+      kind: 'string',
+      pattern: '^https?://',
+      patternHelp: 'an http:// or https:// URL; {port:<label>} is replaced by a named or the Metro port',
+    },
+    scopes: PROJECT,
+    description: 'Page `stim web` opens; unset opens Metro for Expo web',
+  },
+  {
+    key: 'web.ignoreCertificateErrors',
+    type: BOOLEAN,
+    scopes: PROJECT,
+    default: false,
+    description: "Accept self-signed dev certificates in Stim's owned Chrome profile",
+  },
+  {
+    key: 'web.viewport',
+    type: { kind: 'choice', choices: WEB_VIEWPORTS },
+    scopes: PROJECT,
+    default: 'desktop',
+    description: 'Viewport of the owned Chrome page: desktop, or phone for a 390x844 touch screen',
   },
   {
     key: 'worktree.exclude',

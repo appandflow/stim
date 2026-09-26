@@ -275,6 +275,21 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         driven. Read
                         when \`start\` spawns the supervisor; see
                         \`guide metro\`.
+  web.url               the page \`stim web\` opens in the owned Chrome, an
+                        http:// or https:// URL. {port:<label>} becomes the
+                        workspace's named port (allocated like \`stim ports
+                        get <label>\`), and {port:metro} its Metro port.
+                        Unset, Expo apps open http://localhost:<metroPort>/
+                        and other apps refuse until it is set. Example:
+                        http://localhost:{port:web}/apps/groups/.
+                        See \`guide web\`.
+  web.ignoreCertificateErrors
+                        true starts the owned Chrome with
+                        --ignore-certificate-errors, for dev servers with
+                        self-signed certificates (default false). It applies
+                        only to Stim's own profile, never to your browser.
+  web.viewport          desktop (default, 1280x800) or phone (390x844 at 3x
+                        with touch events) for the owned Chrome page.
   worktree.exclude      ignored-path skip list for worktree warm. Settings
                         come from the source checkout's repository-root
                         .stim.json. A nonempty .worktreeexclude in the source
@@ -317,7 +332,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them from the environment or the machine layers.
 
 Each setting takes its documented type: string, array of strings, number,
-boolean, or object. ios.remote, android.remote, metro.tunnel,
+boolean, or object. ios.remote, android.remote, metro.tunnel, web.viewport,
 optimizations.android.compilerCache and optimizations.android.pch take only
 their listed choices. A value of the wrong
 type or outside those choices is refused by name on every command that resolves

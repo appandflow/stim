@@ -3,11 +3,13 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { workspaceName } from '../index.ts';
 import { createdDevicesFile, easMachineStateRoot, easSessionLedgerFile } from './paths.ts';
 
-export type CreatedDevicePlatform = 'ios' | 'android';
+export type CreatedDevicePlatform = 'ios' | 'android' | 'web';
 
+/** `web` lists the absolute paths of browser profile directories Stim created. */
 export interface CreatedDevices {
   ios: ReadonlySet<string>;
   android: ReadonlySet<string>;
+  web: ReadonlySet<string>;
 }
 
 function ids(value: unknown): string[] {
@@ -19,9 +21,9 @@ function ids(value: unknown): string[] {
 export function readCreatedDevices(): CreatedDevices {
   try {
     const parsed = JSON.parse(readFileSync(createdDevicesFile(), 'utf8')) as Record<string, unknown>;
-    return { ios: new Set(ids(parsed?.ios)), android: new Set(ids(parsed?.android)) };
+    return { ios: new Set(ids(parsed?.ios)), android: new Set(ids(parsed?.android)), web: new Set(ids(parsed?.web)) };
   } catch {
-    return { ios: new Set(), android: new Set() };
+    return { ios: new Set(), android: new Set(), web: new Set() };
   }
 }
 

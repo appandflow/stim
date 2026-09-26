@@ -18,7 +18,13 @@ function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) 
       const current = readCreatedDevices();
       const entries = new Set(current[platform]);
       if (!change(entries)) return;
-      const next = { version: 1, ios: [...current.ios], android: [...current.android], [platform]: [...entries] };
+      const next = {
+        version: 1,
+        ios: [...current.ios],
+        android: [...current.android],
+        web: [...current.web],
+        [platform]: [...entries],
+      };
       const file = createdDevicesFile();
       const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
       writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
