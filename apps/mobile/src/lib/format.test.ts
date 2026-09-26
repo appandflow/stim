@@ -1,6 +1,8 @@
 import {
   activityBadge,
   buildProgress,
+  drivenLabel,
+  driversSummary,
   gitBadges,
   durationBars,
   historyDetail,
@@ -10,7 +12,7 @@ import {
   nextBuild,
   planDetail,
 } from '@/lib/format';
-import type { BuildHistoryEntry, BuildMissReason, BuildPlan, BuildReport } from '@/protocol/types';
+import type { BuildHistoryEntry, BuildMissReason, BuildPlan, BuildReport, DeviceActivity } from '@/protocol/types';
 
 const now = Date.parse('2026-09-25T12:00:00Z');
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -35,6 +37,32 @@ describe('activityBadge', () => {
       now,
     );
     expect(badge).toEqual({ kind: 'driven', text: 'Driven by agent-device \u00B7 12m' });
+  });
+});
+
+describe('driversSummary', () => {
+  const driven = (tool: string, minutesAgo: number): DeviceActivity => ({
+    state: 'driven',
+    driver: { tool, pid: 1, since: ago(minutesAgo * 60_000) },
+    basis: [],
+  });
+
+  it('names a tool that drives two devices once, timed from the most recent start', () => {
+    expect(driversSummary([driven('agent-device', 47), driven('agent-device', 0)], now)).toBe(
+      'agent-device \u00B7 <1m',
+    );
+  });
+
+  it('lists each distinct tool and ignores devices that are not driven', () => {
+    expect(driversSummary([driven('agent-device', 12), { state: 'idle', basis: [] }, driven('claude', 30)], now)).toBe(
+      'agent-device, claude \u00B7 12m',
+    );
+    expect(driversSummary([{ state: 'idle', basis: [] }, undefined], now)).toBeNull();
+  });
+
+  it('spells the driving time out for assistive technology', () => {
+    expect(drivenLabel('iOS', driven('agent-device', 47), now)).toBe('iOS, driven by agent-device for 47 minutes');
+    expect(drivenLabel('Android', driven('claude', 61), now)).toBe('Android, driven by claude for 1 hour 1 minute');
   });
 });
 

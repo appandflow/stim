@@ -10,7 +10,7 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
-import { shortDuration } from '@/lib/format';
+import { drivenLabel, driversSummary, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
 
@@ -32,6 +32,16 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const active = isActive(env);
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
+  const activityAt = offline ? (lastSeenAt ?? now) : now;
+  const platformName = (d: (typeof running)[number]) =>
+    `${d.platform === 'ios' ? 'iOS' : 'Android'}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`;
+  const drivenLabels = running.flatMap((d) =>
+    d.activity?.state === 'driven' ? [drivenLabel(platformName(d), d.activity, activityAt)] : [],
+  );
+  const drivers = driversSummary(
+    running.map((d) => d.activity),
+    activityAt,
+  );
   const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = offline
     ? theme.colors.tertiary
@@ -49,7 +59,9 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     <Touch
       feedback="row"
       onPress={() => onOpen(item, false)}
-      accessibilityLabel={`Workspace ${item.title} on ${item.macName}${lastSeen ? `, ${lastSeen}` : ''}`}
+      accessibilityLabel={[`Workspace ${item.title} on ${item.macName}`, lastSeen, ...drivenLabels]
+        .filter(Boolean)
+        .join(', ')}
       style={styles.row}
     >
       <View style={[styles.lead, offline && styles.dimmed]}>
@@ -84,14 +96,24 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             {lastSeen ? <Pill>{lastSeen}</Pill> : null}
             {env.metro?.running ? <Pill tabular={`:${env.metro.port}`}>{'Metro '}</Pill> : null}
             {env.supervisor && !env.supervisor.healthy ? <Pill tone="warning">supervisor unhealthy</Pill> : null}
-            {running.map((d) => (
-              <Fragment key={`${d.platform}-${d.slot}`}>
-                <Pill tone={offline ? 'neutral' : 'success'}>
-                  {`${d.platform === 'ios' ? 'iOS' : 'Android'}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`}
-                </Pill>
-                <ActivityChip activity={d.activity} frozenAt={offline ? (lastSeenAt ?? now) : null} />
-              </Fragment>
-            ))}
+            {running.map((d) => {
+              const driven = d.activity?.state === 'driven';
+              return (
+                <Fragment key={`${d.platform}-${d.slot}`}>
+                  <Pill tone={offline ? 'neutral' : driven ? 'accent' : 'success'} dot={driven}>
+                    {platformName(d)}
+                  </Pill>
+                  {driven ? null : (
+                    <ActivityChip activity={d.activity} frozenAt={offline ? (lastSeenAt ?? now) : null} />
+                  )}
+                </Fragment>
+              );
+            })}
+            {drivers ? (
+              <Pill tone={offline ? 'neutral' : 'accent'} dot>
+                {drivers}
+              </Pill>
+            ) : null}
             {(env.remoteDevices ?? []).map((r) => (
               <Pill key={r.sessionId} tone="info">
                 EAS session

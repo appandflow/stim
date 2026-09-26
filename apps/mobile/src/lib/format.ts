@@ -51,6 +51,39 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
   }
 }
 
+/**
+ * The tools driving any of `activities`, each named once, with how long the most recently started one has driven.
+ * Null when nothing is driven.
+ */
+export function driversSummary(activities: (DeviceActivity | undefined)[], now: number): string | null {
+  const driven = activities.filter((a): a is DeviceActivity => a?.state === 'driven');
+  if (driven.length === 0) return null;
+  const tools = [...new Set(driven.map((a) => a.driver?.tool ?? 'unknown tool'))];
+  const starts = driven.map((a) => (a.driver?.since ? Date.parse(a.driver.since) : NaN)).filter(Number.isFinite);
+  const latest = starts.length ? Math.max(...starts) : NaN;
+  return Number.isFinite(latest)
+    ? `${tools.join(', ')} \u00B7 ${shortDuration(Math.max(0, now - latest))}`
+    : tools.join(', ');
+}
+
+function spokenDuration(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return 'less than a minute';
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+  if (minutes < 60) return plural(minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? plural(hours, 'hour') : `${plural(hours, 'hour')} ${plural(minutes % 60, 'minute')}`;
+}
+
+/** A driven device's accessibility label, such as "iOS, driven by agent-device for 47 minutes". */
+export function drivenLabel(name: string, activity: DeviceActivity, now: number): string {
+  const tool = activity.driver?.tool ?? 'an unknown tool';
+  const since = activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
+  return Number.isFinite(since)
+    ? `${name}, driven by ${tool} for ${spokenDuration(Math.max(0, now - since))}`
+    : `${name}, driven by ${tool}`;
+}
+
 export interface BuildProgress {
   elapsedMs: number;
   /** Elapsed over the median of comparable runs, capped below 1; null without history. */
