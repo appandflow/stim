@@ -197,7 +197,7 @@ private struct SettingRow: View {
   @ViewBuilder private var facts: some View {
     HStack(spacing: 12) {
       if let entry {
-        if let origin = entry.origin {
+        if let origin = entry.originLabel {
           Text(abbreviatingHome("Effective: \(entry.value.display) from \(origin)"))
         } else {
           Text("Not set")
