@@ -17,6 +17,10 @@ in the workspace directory:
   `stim android --slot fold`, and can copy it; a `stim guide` remedy is copy
   only. With a `stim` that reports only warning text, `stim android` still
   answers an undetected emulator and `stim stop` a stale supervisor record.
+  A workspace whose last iOS or Android build failed is listed with **Open
+  logs** and a rerun of `stim ios` or `stim android`, and one with errors in
+  its logs since the last marker with **Open logs**. The sidebar count is the
+  number of listed items.
 - Run: **Run on iOS** and **Run on Android** in a workspace's context menu and
   "..." menu, and **Run** on each platform of the inspector's **Builds**
   section (**Rebuild** when that platform's last build failed), run
