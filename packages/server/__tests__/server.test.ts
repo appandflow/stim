@@ -1557,6 +1557,7 @@ describe('frames.subscribe', () => {
       const pid = Number(started()[0]);
       expect(alive(pid)).toBe(true);
       await until(() => !alive(pid));
+      expect(helperRuns()[0]!.configs).toHaveLength(1);
       await oneFrame();
       expect(started()).toHaveLength(2);
     },

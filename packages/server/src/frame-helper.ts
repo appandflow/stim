@@ -219,7 +219,7 @@ export class HelperSource {
     return () => {
       if (!this.listeners.delete(listener)) return;
       if (this.listeners.size > 0) this.configure();
-      else if (!this.stopped) this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
+      else this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
     };
   }
 
@@ -258,6 +258,7 @@ export class HelperSource {
   }
 
   private configure(): void {
+    if (this.listeners.size === 0) return;
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
     const jpegFps = watching.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));

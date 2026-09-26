@@ -176,7 +176,6 @@ Events are `{ "event", "subscription", ... }`.
   running for 10 seconds after the last subscriber leaves, so a client that
   subscribes for one frame at a time reuses it and gets the latest frame at
   once, and exits after that or when the server's end of its stdin closes.
-  The screenshot fallback keeps capturing for the same 10 seconds.
 
   A client that decodes H.264 adds `video: ["h264"]`. When the helper is
   built, the result carries `video: "h264"`, `fps` may go up to 60, and
