@@ -315,6 +315,15 @@ THE MIRROR IMAGE: A STALE DEVICE RECORD
   at simctl or avdmanager, and the project keeps its entry, its label and its
   Metro port. The next \`ios\` / \`android\` creates a fresh owned device.
 
+  The ledger of devices Stim created (created-devices.json) keeps a
+  simulator's UDID after the simulator is deleted outside Stim. \`gc\`
+  reports such UDIDs under "Stale device ledger entries" when a complete
+  simctl listing, unavailable simulators included, does not show them, and
+  \`gc --delete\` forgets them under the ledger lock. If the listing fails,
+  nothing is reported or forgotten. UDIDs are never reused, so a forgotten
+  entry cannot belong to a later simulator. Android ledger names are not
+  pruned yet.
+
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.stim, or a throwaway
   STIM_HOME), gc cannot tell your stale devices from another config's LIVE

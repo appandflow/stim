@@ -549,6 +549,10 @@ RULES
                               bytes }  only with --older-than
     staleDeviceRecords      { kind, id, project, slot }  --delete clears
                               the record only
+    staleLedgerEntries      { kind: "ios", id }  simulators this Stim home
+                              created that a complete simctl listing no
+                              longer shows; --delete forgets the ledger
+                              entry only
     idleDevices             { kind, id, name, project, slot, lastActivityAt,
                               idleForMs, buildInProgress }  booted owned
                               devices whose status activity is "idle";
