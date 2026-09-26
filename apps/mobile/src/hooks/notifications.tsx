@@ -126,6 +126,7 @@ const pushedMacs = new Set(
 );
 /** Per Mac, the connection state and registration last sent, so each is sent once per connection. */
 const sentRegistrations = new Map<string, { state: unknown; key: string }>();
+const forgotten = new Set<string>();
 const pushListeners = new Set<() => void>();
 const setPushed = (id: string, pushed: boolean) => {
   if (pushedMacs.has(id) === pushed) return;
@@ -198,6 +199,7 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
 
 /** Asks the Mac to stop pushing to this phone, before this phone forgets it. */
 export function unregisterPush(connection: StimConnection | null, macId: string): void {
+  forgotten.add(macId);
   setPushed(macId, false);
   sentRegistrations.delete(macId);
   storage.remove(`${PUSHED_PREFIX}${macId}`);
@@ -243,13 +245,13 @@ function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
 
   useEffect(() => {
     for (const { mac, state, connection } of connections) {
-      if (state.kind !== 'open' || !connection) continue;
+      if (state.kind !== 'open' || !connection || forgotten.has(mac.id)) continue;
       if (pushWanted && wanted === null) continue;
       const key = `${wanted}`;
       const last = sentRegistrations.get(mac.id);
       if (last && last.state === state && last.key === key) continue;
       sentRegistrations.set(mac.id, { state, key });
-      const current = () => sentRegistrations.get(mac.id)?.key === key;
+      const current = () => !forgotten.has(mac.id) && sentRegistrations.get(mac.id)?.key === key;
       if (wanted === null) {
         const registered = storage.contains(`${PUSHED_PREFIX}${mac.id}`);
         setPushed(mac.id, false);
