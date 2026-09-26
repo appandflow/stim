@@ -1449,6 +1449,7 @@ test('stop --slot closes only the agent-device session this workspace holds on t
     writeFileSync(join(claims, file), JSON.stringify({ session, workspace, device: { id: serial } }));
   claim('fold.json', 'emulator-5554', 'cwd:a504:android', join(tmpRoot, 'app'));
   claim('phone.json', 'emulator-5556', 'phone-task', other);
+  claim('fold-other.json', 'emulator-5554', 'cwd:bbbb:android', other);
   const sessions = [
     {
       name: 'default',
@@ -1460,6 +1461,14 @@ test('stop --slot closes only the agent-device session this workspace holds on t
     },
     { name: 'phone-task', platform: 'android', device: 'stim-other', id: 'emulator-5556', createdAt: 1 },
     { name: 'earlier-emulator', platform: 'android', device: 'stim-old', id: 'emulator-5554', createdAt: 0 },
+    {
+      name: 'default',
+      address: 'cwd:bbbb:android',
+      platform: 'android',
+      device: 'stim-app-fold',
+      id: 'emulator-5554',
+      createdAt: 3,
+    },
   ];
   const closed: string[] = [];
   const previousClaims = process.env.AGENT_DEVICE_CLAIMS_DIR;

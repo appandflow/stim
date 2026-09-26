@@ -66,7 +66,7 @@ test('closes an Android session only when it names the AVD now on that serial', 
 
 test('with an owner, closes only a session its claim places inside that workspace', () => {
   const device = { platform: 'ios' as const, id: 'U1' };
-  const session = { ...ios, device: ios.device };
+  const session = ios;
   const owner = (claims: { session: string | null; workspace: string | null }[]) => ({ workspace: '/w/app', claims });
   expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app' }]))).toBe(true);
   expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app/src' }]))).toBe(true);

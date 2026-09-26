@@ -49,7 +49,7 @@ closes local agent-device sessions bound to its exact iOS UDID or live Android
 serial. An Android session must also name the owned AVD, because the next
 emulator on a console port reuses its serial. \`stop\` closes a session only
 when agent-device's claim on the device names it and was taken inside this
-workspace; sessions from another workspace or claim stay open. It rechecks
+workspace; sessions from another workspace or claim stay open. Stim rechecks
 device ownership and uses agent-device's rejecting session target guard;
 sessions on other devices stay open. Physical devices are outside
 this cleanup. agent-device is optional: a missing binary skips this step, and a
