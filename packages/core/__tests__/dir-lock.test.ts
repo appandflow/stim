@@ -119,17 +119,20 @@ test.each(['empty', 'legacy'])('an unidentified %s directory needs explicit remo
   utimesSync(lock, old, old);
   const body = vi.fn<() => void>();
 
-  expect(() => withDirLock(lock, body, { waitMs: 0 })).toThrow(
-    expect.objectContaining({
-      code: 'STIM_LOCK_TIMEOUT',
-      lockPath: lock,
-      message: expect.stringContaining(`\n  rm -rf '${lock}'`),
-    }),
-  );
+  let refusal: (Error & { code?: string; lockPath?: string }) | undefined;
+  try {
+    withDirLock(lock, body, { waitMs: 0 });
+  } catch (error) {
+    refusal = error as Error & { code?: string; lockPath?: string };
+  }
+  expect(refusal).toMatchObject({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
   expect(body).not.toHaveBeenCalled();
   expect(existsSync(lock)).toBe(true);
 
-  execFileSync('sh', ['-c', `rm -rf '${lock}'`]);
+  const remedy = refusal!.message.split('\n  ').at(-1)!;
+  expect(remedy).toMatch(/^rm -rf /);
+  if (process.platform === 'win32') rmSync(lock, { recursive: true });
+  else execFileSync('sh', ['-c', remedy]);
   expect(withDirLock(lock, () => 'recovered')).toBe('recovered');
 });
 

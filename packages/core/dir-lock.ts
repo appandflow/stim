@@ -125,7 +125,7 @@ function acquireDirLock(
         const error = new Error(
           `Timed out waiting for the lock at ${lockPath}. ` +
             (claim
-              ? 'No running Stim holds it: the directory is empty or was left by an older Stim version. ' +
+              ? 'No current Stim holds it: the directory is empty, or an older Stim version holds or left it. ' +
                 `If no older Stim is running, remove it and run the command again:\n  rm -rf ${quotedPath(lockPath)}`
               : 'Another Stim process is holding it; wait for that command to finish and run the command again.'),
         );
