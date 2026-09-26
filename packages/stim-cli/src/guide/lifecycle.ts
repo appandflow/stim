@@ -1004,15 +1004,17 @@ THE BUILD CACHE HAS THREE LEVELS
   itself makes to a fingerprinted file under node_modules/ or the native
   directory moves the key the same way, printed as \`(after Gradle)\` or
   \`(after xcodebuild)\`. Any other input that changed while the build ran
-  -- the app config or a config plugin at any point after the first lookup,
+  -- the app config or a config plugin after prebuild wrote its own changes,
   or any other source during the compile -- means the artifact may not match
   the key, so Stim installs what it built and stores nothing:
 
     fingerprint expoConfig changed while the build ran, so the artifact may not match its key; the build will be installed but not cached
 
-  The prebuild record is cleared as well, so the next run regenerates a CNG
-  directory from the edited config and compiles it instead of reusing the
-  stale one. Stim also skips storing when the fingerprint after prebuild, pod
+  The prebuild record never takes a hash that includes the edit, so the next
+  run regenerates a CNG directory from the edited config and compiles it
+  instead of reusing the stale one. An edit under node_modules/ or the native
+  directory during the compile cannot be told apart from the build's own
+  writes and moves the key. Stim also skips storing when the fingerprint after prebuild, pod
   install or the compile cannot be computed. In every skipped case nothing
   goes to the local cache, the cache provider or a remote upload, fingerprint
   and cacheKey are null in the result and lastBuild, and the old key is not

@@ -549,6 +549,7 @@ export async function acquireAndroidArtifact(
         }
 
         const rekeyedBy: string[] = [];
+        let configBaseline = fingerprintSources;
         const prebuildPlan = planPrebuildFor(root, PLATFORM, {
           isExpo,
           fingerprint: hash,
@@ -588,7 +589,10 @@ export async function acquireAndroidArtifact(
             previousHash: hash,
             fingerprint,
           });
-          if (after) recordPrebuild(root, PLATFORM, after.hash);
+          if (after) {
+            recordPrebuild(root, PLATFORM, after.hash);
+            configBaseline = after.sources;
+          }
           if (after?.moved) {
             rekeyedBy.push('prebuild');
             storeHash = after.hash;
@@ -671,7 +675,7 @@ export async function acquireAndroidArtifact(
           const changedDuringBuild = afterBuild
             ? inputsChangedDuringBuild({
                 platform: PLATFORM,
-                lookup: fingerprintSources,
+                configBaseline,
                 compiled: storeSources,
                 current: afterBuild.sources,
               })
@@ -683,7 +687,6 @@ export async function acquireAndroidArtifact(
           } else if (changedDuringBuild.length) {
             record.fingerprint = null;
             record.cacheKey = null;
-            if (prebuildPlan === 'generate' || prebuildPlan === 'regenerate') recordPrebuild(root, PLATFORM, null);
             phase('fingerprint', chalk.yellow(changedDuringBuildLine(changedDuringBuild)));
           } else {
             if (afterBuild.moved) {

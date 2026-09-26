@@ -342,21 +342,24 @@ function writtenByBuild(name: string, platform: string): boolean {
   );
 }
 
+export function configInputsChanged(before: FingerprintSource[], after: FingerprintSource[]): string[] {
+  return compareSourceLists(before, after)
+    .filter((change) => change.reasons.some((reason) => CONFIG_INPUT_REASONS.has(reason)))
+    .map((change) => change.name);
+}
+
 export function inputsChangedDuringBuild({
   platform,
-  lookup,
+  configBaseline,
   compiled,
   current,
 }: {
   platform: string;
-  lookup: FingerprintSource[];
+  configBaseline: FingerprintSource[];
   compiled: FingerprintSource[];
   current: FingerprintSource[];
 }): string[] {
-  const names = new Set<string>();
-  for (const change of compareSourceLists(lookup, current)) {
-    if (change.reasons.some((reason) => CONFIG_INPUT_REASONS.has(reason))) names.add(change.name);
-  }
+  const names = new Set(configInputsChanged(configBaseline, current));
   for (const change of compareSourceLists(compiled, current)) {
     if (!writtenByBuild(change.name, platform)) names.add(change.name);
   }

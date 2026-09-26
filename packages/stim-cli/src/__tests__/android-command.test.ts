@@ -4505,7 +4505,7 @@ describe('re-fingerprint after Gradle', () => {
     expect(result.facts?.fingerprint).toBeNull();
     expect(result.facts?.cacheKey).toBeNull();
     expect(readState().lastBuild.cacheKey).toBeNull();
-    expect(readState().prebuild).toEqual({ android: null });
+    expect(readState().prebuild).toEqual({ android: BEFORE_BUILD });
     expect(h.calls.install[0]?.apkPath).toBe(apk);
     expect(h.stderr.some((line) => /expoConfig changed while the build ran/.test(line))).toBe(true);
   });

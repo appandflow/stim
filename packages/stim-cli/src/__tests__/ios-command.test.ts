@@ -1248,6 +1248,7 @@ describe('the cache', () => {
     expect(order).toEqual([
       'fingerprintProject',
       'runPrebuild',
+      'fingerprintProject',
       'runPodInstall',
       'fingerprintProject',
       'buildIos',
@@ -4263,8 +4264,61 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       expect(facts.cacheKey).toBeNull();
       const state = readWorkspaceState(root) as WorkspaceState;
       expect(state.lastBuild?.cacheKey).toBeNull();
-      expect(state.prebuild).toEqual({ ios: null });
+      expect(state.prebuild).toEqual({ ios: step === 'runPodInstall' ? null : COLD });
       expect(stderr).toContain('expoConfig changed while the build ran');
+    });
+
+    test('a config write by prebuild itself is stored under the post-prebuild key', async () => {
+      reserve();
+      const config = join(root, 'app.json');
+      writeFileSync(config, 'portrait');
+      const { calls, exitCode } = await run(
+        {},
+        {
+          detectIsExpo: () => true,
+          planPrebuild: () => 'generate',
+          readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+          fingerprintProject: configFingerprint(config),
+          runPrebuild: async () => {
+            writeFileSync(config, 'portrait with bundle id');
+            return { ok: true, durationMs: 42000 };
+          },
+        },
+      );
+
+      expect(exitCode).toBeNull();
+      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
+      expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
+    });
+
+    test('a node_modules rewrite during xcodebuild moves the key instead of skipping the store', async () => {
+      reserve();
+      const manifest = join(root, 'generated.txt');
+      writeFileSync(manifest, 'before');
+      const { calls, errs } = await run(
+        {},
+        {
+          fingerprintProject: async () => {
+            const contents = readFileSync(manifest, 'utf8');
+            return {
+              hash: contents === 'before' ? COLD : WARM,
+              sources: [{ type: 'file', filePath: '../../node_modules/example/ios/Generated.h', hash: contents }],
+            };
+          },
+          buildIos: async () => {
+            writeFileSync(manifest, 'after');
+            return makeIosBuildSuccess({
+              appPath: join(root, 'build', 'Fixture.app'),
+              bundleId: 'com.example.app',
+              durationMs: 161000,
+              scheme: 'Fixture',
+            });
+          },
+        },
+      );
+
+      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
+      expect(errs.join('\n')).toMatch(/aaaaaa\.\. -> bbbbbb\.\. \(after xcodebuild\)/);
     });
   });
 });

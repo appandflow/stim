@@ -61,11 +61,11 @@ Stim fingerprints the project again after the compile, so it never stores an
 artifact under a key its inputs no longer match. Changes the build makes to
 files under `node_modules/` or the native directory, such as a Gradle plugin
 rewriting a library manifest, move the key and the artifact is stored under
-the new one. An edit to the app config or a config plugin at any point during
-the run, or to any other input during the compile, means the artifact may not
-match. Stim installs it
-for the current run, and skips the local cache, the cache provider, and remote
-uploads:
+the new one. Stim cannot tell your own edits in those directories during the
+compile apart from the build's. An edit to the app config or a config plugin
+after prebuild, or to any other input during the compile, means the artifact
+may not match. Stim installs it for the current run, and skips the local cache,
+the cache provider, and remote uploads:
 
 ```text
   fingerprint expoConfig changed while the build ran, so the artifact may not match its key; the build will be installed but not cached

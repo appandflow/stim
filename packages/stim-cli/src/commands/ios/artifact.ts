@@ -11,6 +11,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
   changedDuringBuildLine,
+  configInputsChanged,
   filesystemBuildCapability,
   fingerprintDiffRecord,
   inputsChangedDuringBuild,
@@ -568,6 +569,50 @@ export async function acquireIosArtifact(
     }
   }
 
+  async function settleStoreKeyAfterCompile(configBaseline: FingerprintSource[]): Promise<void> {
+    if (!storeHash || !storeKey) return;
+    const afterBuild = await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: PLATFORM,
+      previousHash: storeHash,
+      fingerprint: d.fingerprintProject,
+    });
+    const changedDuringBuild = afterBuild
+      ? inputsChangedDuringBuild({
+          platform: PLATFORM,
+          configBaseline,
+          compiled: storeSources,
+          current: afterBuild.sources,
+        })
+      : [];
+    if (!afterBuild || changedDuringBuild.length) {
+      storeHash = null;
+      storeKey = null;
+      buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
+      note(
+        chalk.yellow(
+          phaseLine(
+            'fingerprint',
+            afterBuild
+              ? changedDuringBuildLine(changedDuringBuild)
+              : 'unavailable after xcodebuild; the build will be installed but not cached',
+          ),
+        ),
+      );
+    } else if (afterBuild.moved) {
+      const beforeBuildHash = storeHash;
+      storeHash = afterBuild.hash;
+      storeSources = afterBuild.sources;
+      storeKey = buildCacheKey(PLATFORM, afterBuild.hash, keyOptions);
+      buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
+      note(
+        chalk.dim(
+          phaseLine('fingerprint', `${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} (after xcodebuild)`),
+        ),
+      );
+    }
+  }
+
   async function buildArtifact(): Promise<void> {
     buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
     if (!appPath) {
@@ -589,6 +634,7 @@ export async function acquireIosArtifact(
 
       const mutatingSteps: string[] = [];
       const rekeyedBy: string[] = [];
+      let configBaseline: FingerprintSource[] | null = fingerprintSources;
 
       const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
       if (prebuild === 'refuse') {
@@ -614,6 +660,7 @@ export async function acquireIosArtifact(
             : 'ios/ not generated from this fingerprint -> regenerated with --clean';
         phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
+        configBaseline = null;
       }
 
       // A bare (non-Expo) project's ios/ never regenerates; ios.ts already validated --scheme against it.
@@ -628,6 +675,15 @@ export async function acquireIosArtifact(
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
       const action = podAction(podState, verdict);
       if (action.install) {
+        if (configBaseline === null) {
+          const afterPrebuild = await refingerprintAfterMutation({
+            projectRoot: root,
+            platform: PLATFORM,
+            previousHash: fingerprint,
+            fingerprint: d.fingerprintProject,
+          });
+          configBaseline = afterPrebuild?.sources ?? null;
+        }
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
         const podCommand = result?.command || 'pod install';
@@ -657,8 +713,12 @@ export async function acquireIosArtifact(
           previousHash: fingerprint,
           fingerprint: d.fingerprintProject,
         });
-        if (after && mutatingSteps.includes('prebuild')) recordPrebuild(root, PLATFORM, after.hash);
-        if (!after) {
+        const editedConfig = after && configBaseline ? configInputsChanged(configBaseline, after.sources) : [];
+        if (after) configBaseline = after.sources;
+        if (after && !editedConfig.length && mutatingSteps.includes('prebuild')) {
+          recordPrebuild(root, PLATFORM, after.hash);
+        }
+        if (!after || editedConfig.length) {
           storeHash = null;
           storeKey = null;
           buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
@@ -666,7 +726,9 @@ export async function acquireIosArtifact(
             chalk.yellow(
               phaseLine(
                 'fingerprint',
-                `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
+                after
+                  ? changedDuringBuildLine(editedConfig)
+                  : `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
               ),
             ),
           );
@@ -738,49 +800,7 @@ export async function acquireIosArtifact(
         appPath = result.appPath;
         bundleId = result.bundleId;
 
-        if (storeHash && storeKey) {
-          const afterBuild = await refingerprintAfterMutation({
-            projectRoot: root,
-            platform: PLATFORM,
-            previousHash: storeHash,
-            fingerprint: d.fingerprintProject,
-          });
-          const changedDuringBuild = afterBuild
-            ? inputsChangedDuringBuild({
-                platform: PLATFORM,
-                lookup: fingerprintSources,
-                compiled: storeSources,
-                current: afterBuild.sources,
-              })
-            : [];
-          if (!afterBuild || changedDuringBuild.length) {
-            storeHash = null;
-            storeKey = null;
-            buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
-            if (mutatingSteps.includes('prebuild')) recordPrebuild(root, PLATFORM, null);
-            note(
-              chalk.yellow(
-                phaseLine(
-                  'fingerprint',
-                  afterBuild
-                    ? changedDuringBuildLine(changedDuringBuild)
-                    : 'unavailable after xcodebuild; the build will be installed but not cached',
-                ),
-              ),
-            );
-          } else if (afterBuild.moved) {
-            const beforeBuildHash = storeHash;
-            storeHash = afterBuild.hash;
-            storeSources = afterBuild.sources;
-            storeKey = buildCacheKey(PLATFORM, afterBuild.hash, keyOptions);
-            buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
-            note(
-              chalk.dim(
-                phaseLine('fingerprint', `${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} (after xcodebuild)`),
-              ),
-            );
-          }
-        }
+        await settleStoreKeyAfterCompile(configBaseline ?? fingerprintSources);
 
         if (storeKey && cachePolicy.write) {
           try {
