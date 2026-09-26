@@ -23,10 +23,12 @@ function ownedDeviceRunning(platform: 'ios' | 'android'): (device: DeviceRecord)
   const list = (): ((device: DeviceRecord) => boolean) => {
     if (platform === 'android') {
       const { emulators, unhealthy } = listAdbDevices({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
-      const names = [...emulators, ...unhealthy.filter((entry) => entry.kind === 'emulator')].map((entry) =>
-        getAvdNameForSerial(entry.serial, { timeoutMs: DEVICE_LISTING_TIMEOUT_MS }),
-      );
-      if (names.includes(null)) return () => true;
+      const names: string[] = [];
+      for (const entry of [...emulators, ...unhealthy.filter((candidate) => candidate.kind === 'emulator')]) {
+        const name = getAvdNameForSerial(entry.serial, { timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
+        if (name === null) return () => true;
+        names.push(name);
+      }
       return (device) => typeof device.avdName === 'string' && names.includes(device.avdName);
     }
     const booted = new Set(

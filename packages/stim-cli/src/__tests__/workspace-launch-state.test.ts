@@ -132,6 +132,7 @@ test('a sibling whose device state cannot be read counts as running, so it can n
 test.each([
   ['cannot be read', '', ['second']],
   ['names another AVD', 'stim-other\nOK', []],
+  ['names the sibling', 'stim-second\nOK', ['second']],
 ])('an Android sibling is judged from the running emulators when an AVD name %s', (_case, avdName, siblings) => {
   upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
   setExecutor({
