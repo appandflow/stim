@@ -368,7 +368,7 @@ test('status counts a device-only noise storm as zero errors', async () => {
   }
 });
 
-test('status drops a supervisor record whose process is gone', async () => {
+test('status drops a supervisor record whose process is gone and reports it vanished', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
@@ -382,10 +382,16 @@ test('status drops a supervisor record whose process is gone', async () => {
     );
 
     const logs = await runStatus();
-    expect(logs.some((l) => /supervisor/.test(l))).toBe(false);
+    expect(logs.some((l) => /^\s*supervisor:/.test(l))).toBe(false);
+    expect(logs.some((l) => /not running; supervisor pid 999999 exited without recording a cause/.test(l))).toBe(true);
 
     const payload = await runStatusJson();
-    expect(payload.environments[0]).toMatchObject({ supervisor: null, warnings: [], issues: [] });
+    expect(payload.environments[0]).toMatchObject({
+      supervisor: null,
+      metro: { running: false, lastStop: { reason: 'vanished', pid: 999999, startedAt: null } },
+      warnings: [],
+      issues: [],
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -3,6 +3,7 @@ import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists, signalProcessTree } from '../metro.ts';
+import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../supervisor/stop-cause.ts';
 import {
   teardownOwnedBrowser,
   teardownOwnedIosSim,
@@ -315,6 +316,7 @@ type ReclaimOptions = {
   releaseLeases?: (root: string) => ReleasedLease[];
   verifyCollector?: typeof verifyCollectorOwnership;
   teardownBrowser?: typeof teardownOwnedBrowser;
+  stopRequester?: StopRequester;
 };
 
 export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
@@ -360,6 +362,7 @@ async function reclaimIdleProject(
     releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
     teardownBrowser = teardownOwnedBrowser,
+    stopRequester = { by: 'stim gc --delete' },
   }: ReclaimOptions,
 ): Promise<ReclaimResult> {
   await clearNamedPorts(path, { stop: true });
@@ -389,7 +392,10 @@ async function reclaimIdleProject(
       ? inspectProcessIdentity(orphanServer)
       : null;
   if (supervisor.status === 'ours') {
-    if (killMetroTree(supervisor.pid, supervisor.processToken) && (await waitForProcessExit(supervisor, 10_000))) {
+    requestDevServerStop(path, supervisor.processToken, stopRequester);
+    const signalled = killMetroTree(supervisor.pid, supervisor.processToken);
+    if (!signalled) withdrawDevServerStopRequest(path, supervisor.processToken);
+    if (signalled && (await waitForProcessExit(supervisor, 10_000))) {
       killedPid = supervisor.pid!;
     } else {
       skippedMetro = `could not confirm supervisor pid ${supervisor.pid} exited`;

@@ -18,6 +18,7 @@ import { getExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
 import { listeningPids, listeningPidsByPort, processCwd, processCwds, resolveProjectMetro } from '../metro.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { describeMetroLastStop, metroLastStop } from '../supervisor/stop-cause.ts';
 import type { MetroResolution } from '../metro.ts';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
@@ -220,6 +221,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
             logs: logs[i],
             remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
             idleStop: readIdleStop(saved),
+            lastStop: metroLastStop(saved, supervisor),
             launches,
             leasedIds: new Set(
               deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
@@ -335,7 +337,11 @@ function renderStatus(
           ? chalk.dim(
               `stopped (idle) after ${state.metro.idleStop.idleMinutes}m; \`stim start\`, \`ios\` or \`android\` restarts it`,
             )
-          : chalk.dim('not running');
+          : state.metro.lastStop
+            ? chalk.dim(
+                `not running; ${describeMetroLastStop(state.metro.lastStop)}${state.metro.lastStop.reason === 'vanished' ? '' : ` at ${state.metro.lastStop.at}`}`,
+              )
+            : chalk.dim('not running');
       out.push(`  metro: port ${state.metro.port} ${label}`);
     }
     if (state.supervisor) {

@@ -245,6 +245,28 @@ test('nothing running anywhere is a clean success', async () => {
   expect(calls.collectorSignals).toEqual([]);
 });
 
+test.each([true, false])(
+  'stim stop names itself before it signals, and withdraws that when the signal fails (signalled: %s)',
+  async (signalled) => {
+    const root = tmpRoot;
+    const { opts } = seams({
+      root,
+      state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+      isAlive: (pid: number) => pid === 4242,
+      killGroup: () => {
+        expect(readWorkspaceState(root)?.devServerStopRequest).toMatchObject({
+          processToken: 'upid1.supervisor',
+          by: 'stim stop',
+          pid: process.pid,
+        });
+        return signalled;
+      },
+    });
+    await runStop(opts);
+    expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+  },
+);
+
 test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083, mode: 'expo-child' },

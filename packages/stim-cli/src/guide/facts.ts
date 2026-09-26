@@ -820,6 +820,15 @@ RULES
   An environment's metro carries idleStop { reason: "idle", at, idleMinutes }
   when its supervisor stopped the dev server for idleness and nothing serves
   the port since; plain \`status\` prints "stopped (idle)" (\`guide metro\`).
+  Whenever nothing serves the port, metro also carries lastStop when the cause
+  is known, one of:
+    { reason: "idle", at, idleMinutes }
+    { reason: "requested", at, by, byPid, byWorkspace? }  a Stim command
+    { reason: "signal", at, signal }        a signal no Stim command sent
+    { reason: "server-exited", at, mode, code, signal }
+    { reason: "vanished", pid, startedAt }   the recorded supervisor is gone
+                                             and recorded no cause
+  (\`guide metro\`, WHY IT STOPPED).
 
   Each entry of environments also carries build: null, or the ios or android
   run that holds this workspace's native-run.lock:

@@ -42,6 +42,80 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
   return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
 }
 
+export const DEV_SERVER_STOP_REQUEST_KEY = 'devServerStopRequest';
+
+/** A Stim component's intent to stop the supervisor with `processToken`, written before it signals. */
+export interface DevServerStopRequest {
+  processToken: string;
+  by: string;
+  pid: number;
+  at: string;
+  workspace?: string;
+}
+
+export function readDevServerStopRequest(state: WorkspaceState | null | undefined): DevServerStopRequest | null {
+  const record = state?.[DEV_SERVER_STOP_REQUEST_KEY] as Partial<DevServerStopRequest> | undefined;
+  if (
+    typeof record?.processToken !== 'string' ||
+    typeof record.by !== 'string' ||
+    typeof record.pid !== 'number' ||
+    typeof record.at !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    processToken: record.processToken,
+    by: record.by,
+    pid: record.pid,
+    at: record.at,
+    ...(typeof record.workspace === 'string' ? { workspace: record.workspace } : {}),
+  };
+}
+
+/**
+ * Why the dev server last stopped, stored under `IDLE_STOP_KEY`. `requested` names the Stim component that
+ * asked; `signal` is a SIGTERM or SIGINT no Stim component asked for; `server-exited` is the dev server
+ * process exiting on its own.
+ */
+export type DevServerStopRecord =
+  | IdleStopRecord
+  | { reason: 'requested'; at: string; by: string; byPid: number; byWorkspace?: string }
+  | { reason: 'signal'; at: string; signal: string }
+  | { reason: 'server-exited'; at: string; mode: string; code: number | null; signal: string | null };
+
+/** A stopped dev server's last cause in status; `vanished` is a supervisor proven gone that recorded none. */
+export type MetroLastStop = DevServerStopRecord | { reason: 'vanished'; pid: number; startedAt: string | null };
+
+export function readDevServerStop(state: WorkspaceState | null | undefined): DevServerStopRecord | null {
+  const idle = readIdleStop(state);
+  if (idle) return idle;
+  const record = state?.[IDLE_STOP_KEY] as Record<string, unknown> | undefined;
+  if (typeof record?.at !== 'string') return null;
+  const at = record.at;
+  if (record.reason === 'requested' && typeof record.by === 'string' && typeof record.byPid === 'number') {
+    return {
+      reason: 'requested',
+      at,
+      by: record.by,
+      byPid: record.byPid,
+      ...(typeof record.byWorkspace === 'string' ? { byWorkspace: record.byWorkspace } : {}),
+    };
+  }
+  if (record.reason === 'signal' && typeof record.signal === 'string') {
+    return { reason: 'signal', at, signal: record.signal };
+  }
+  if (record.reason === 'server-exited') {
+    return {
+      reason: 'server-exited',
+      at,
+      mode: typeof record.mode === 'string' ? record.mode : 'dev',
+      code: typeof record.code === 'number' ? record.code : null,
+      signal: typeof record.signal === 'string' ? record.signal : null,
+    };
+  }
+  return null;
+}
+
 /** Each platform's latest run; `lastBuild` holds whichever platform ran last. */
 export const LAST_BUILD_KEYS: Readonly<Record<StatsPlatform, string>> = {
   ios: 'lastIosBuild',
