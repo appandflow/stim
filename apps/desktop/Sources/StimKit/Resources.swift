@@ -289,16 +289,30 @@ public struct GcReport: Decodable, Sendable {
     public var note: String?
     public var willEmpty: Bool?
 
-    /// Whether `stim gc --cache <name>` selects this cache alone. The CLI matches the argument as a
-    /// case-insensitive substring of every cache's name and directory, and reserves `all` and `workspaces`.
-    public func selectedAlone(among caches: [Cache]) -> Bool {
-      let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
-      guard !wanted.isEmpty, wanted != "all", wanted != "workspaces" else { return false }
-      return caches.filter { $0.name.lowercased().contains(wanted) || $0.dir.lowercased().contains(wanted) }.count == 1
+    /// The `stim gc --cache` argument that selects this cache alone: its name, else its directory, or nil
+    /// when neither does. The CLI matches the argument as a case-insensitive substring of every cache's name
+    /// and directory, and reserves `all` and `workspaces`.
+    public func selector(among caches: [Cache]) -> String? {
+      [name, dir].first { candidate in
+        let wanted = candidate.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !wanted.isEmpty, wanted != "all", wanted != "workspaces" else { return false }
+        return caches.filter { $0.name.lowercased().contains(wanted) || $0.dir.lowercased().contains(wanted) }.count == 1
+      }
+    }
+
+    /// The cache's name, followed by its directory's last component when another cache has the same name.
+    public func title(among caches: [Cache]) -> String {
+      guard caches.contains(where: { $0.dir != dir && $0.name == name }) else { return name }
+      return "\(name): \((dir as NSString).lastPathComponent)"
     }
   }
 
+  public struct Path: Decodable, Hashable, Sendable {
+    public var path: String
+  }
+
   public struct Sections: Decodable, Sendable {
+    public var deadProjects: [Path]?
     public var orphanedWorkspaces: [Sized]?
     public var linkedWorktrees: [LinkedWorktree]?
     public var parkedSimulators: [Device]?

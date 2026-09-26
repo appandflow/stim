@@ -1,16 +1,20 @@
-import Foundation
+import AppKit
 import StimKit
 
-/// Disk sizes Stim Desktop measures itself with `du`, and open pull requests from `gh`. Both run in the
-/// background at low priority and are kept for `maxAge`, so opening the Storage view never waits on them.
+/// Disk sizes Stim Desktop measures itself with `du`, and open pull requests from `gh`. Each path is sized by
+/// its own `du` and published as it finishes, so one slow tree delays only its own row. Results are kept for
+/// `maxAge`, so opening the Storage view never waits on them.
 @MainActor
 final class StorageStore: ObservableObject {
   static let maxAge: TimeInterval = 15 * 60
   nonisolated static let toolTimeout: TimeInterval = 30
+  nonisolated static let duTimeout: TimeInterval = 180
+  nonisolated static let duConcurrency = 3
+  nonisolated private static let running = RunningProcesses()
 
-  @Published private(set) var sizes: [String: Int64] = [:]
+  @Published private(set) var disk = DiskMeasurements()
   @Published private(set) var measuredAt: Date?
-  @Published private(set) var measuring = false
+  @Published private(set) var loadingPulls = false
   /// Open pull requests by repository, then by head branch.
   @Published private(set) var pulls: [String: [String: PullRequest]] = [:]
   /// False when no `gh` is on the login shell's PATH.
@@ -20,54 +24,85 @@ final class StorageStore: ObservableObject {
   private let status: StatusStore
   private let cli: Task<StimCLI, Never>
 
+  var measuring: Bool { !disk.pending.isEmpty || loadingPulls }
+
   init(status: StatusStore, cli: Task<StimCLI, Never>) {
     self.status = status
     self.cli = cli
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+    ) { _ in Self.running.terminateAll() }
   }
 
   func refresh(force: Bool = false) {
     guard !measuring else { return }
     if !force, let at = measuredAt, Date().timeIntervalSince(at) < Self.maxAge { return }
-    measuring = true
     let environments = status.payload?.environments ?? []
-    let repositories = Set(environments.compactMap { $0.worktree?.repository })
+    let unprovisioned = status.payload?.unprovisionedWorktrees ?? []
+    let repositories = Set(environments.compactMap { $0.worktree?.repository } + unprovisioned.compactMap(\.repository))
+    let modules = Set(
+      environments.map { "\($0.worktree?.path ?? $0.path)/node_modules" } + unprovisioned.map { "\($0.path)/node_modules" })
+    loadingPulls = true
+    disk = DiskMeasurements(pending: Set(modules))
     let cli = cli
-    Task.detached(priority: .background) {
+    Task {
       let environment = await cli.value.environment
       let paths = StoragePaths(home: NSHomeDirectory(), environment: environment)
-      let modules = Set(environments.map { "\($0.worktree?.path ?? $0.path)/node_modules" })
-      let sizes = Self.du(["-k", "-d", "1"], paths.deviceSets).merging(
-        Self.du(["-k", "-s"], modules.sorted() + paths.unmanaged.map(\.path)), uniquingKeysWith: { first, _ in first })
+      self.paths = paths
+      let jobs =
+        paths.deviceSets.map { (path: $0, options: ["-k", "-d", "1"]) }
+        + (modules.sorted() + paths.unmanaged.map(\.path)).map { (path: $0, options: ["-k", "-s"]) }
+      let absent = await Task.detached { Set(jobs.map(\.path).filter { !FileManager.default.fileExists(atPath: $0) }) }.value
+      disk = DiskMeasurements(pending: Set(jobs.map(\.path)).subtracting(absent), absent: absent)
+      async let sized: Void = measure(jobs.filter { !absent.contains($0.path) })
+      async let pulled: Void = loadPulls(repositories: repositories, environment: environment)
+      _ = await (sized, pulled)
+      measuredAt = Date()
+    }
+  }
+
+  private func measure(_ jobs: [(path: String, options: [String])]) async {
+    await withTaskGroup(of: (String, [String: Int64]).self) { group in
+      var queue = jobs[...]
+      func next() {
+        guard let job = queue.popFirst() else { return }
+        group.addTask {
+          let result = await Self.offThread {
+            Self.run("/usr/bin/du", job.options + [job.path], cwd: NSHomeDirectory(), environment: nil, timeout: Self.duTimeout)
+          }
+          return (job.path, DiskSizes.parse(String(decoding: result?.output ?? Data(), as: UTF8.self)))
+        }
+      }
+      for _ in 0..<Self.duConcurrency { next() }
+      for await (path, sizes) in group {
+        disk.sizes.merge(sizes, uniquingKeysWith: { _, new in new })
+        disk.pending.remove(path)
+        if sizes[path] == nil { disk.failed.insert(path) }
+        next()
+      }
+    }
+  }
+
+  private func loadPulls(repositories: Set<String>, environment: [String: String]) async {
+    let (gh, pulls) = await Self.offThread {
       let gh = Self.executable("gh", in: environment)
       let pulls = Dictionary(
         uniqueKeysWithValues: repositories.compactMap { repository -> (String, [String: PullRequest])? in
           guard let gh,
             let byBranch = Self.run(gh, PullRequest.listArguments, cwd: repository, environment: environment)
-              .flatMap(PullRequest.byBranch)
+              .flatMap({ $0.timedOut ? nil : PullRequest.byBranch($0.output) })
           else { return nil }
           return (repository, byBranch)
         })
-      await MainActor.run {
-        self.paths = paths
-        self.sizes = sizes
-        self.pulls = pulls
-        self.hasGitHubCLI = gh != nil
-        self.measuredAt = Date()
-        self.measuring = false
-      }
+      return (gh, pulls)
     }
+    self.pulls = pulls
+    hasGitHubCLI = gh != nil
+    loadingPulls = false
   }
 
   func pulls(for workspace: WorkspaceStorage) -> [String: PullRequest]? {
     workspace.repository.flatMap { pulls[$0] }
-  }
-
-  nonisolated private static func du(_ options: [String], _ paths: [String]) -> [String: Int64] {
-    let existing = paths.filter { FileManager.default.fileExists(atPath: $0) }
-    guard !existing.isEmpty,
-      let output = run("/usr/bin/du", options + existing, cwd: NSHomeDirectory(), environment: nil, timeout: 600)
-    else { return [:] }
-    return DiskSizes.parse(String(decoding: output, as: UTF8.self))
   }
 
   nonisolated private static func executable(_ name: String, in environment: [String: String]) -> String? {
@@ -75,36 +110,60 @@ final class StorageStore: ObservableObject {
       .first { FileManager.default.isExecutableFile(atPath: $0) }
   }
 
-  /// Stdout of a finished run, or nil when it could not start or ran past `timeout`. `du` exits 1 after
-  /// an unreadable entry but still prints the rest, so the status is not checked.
+  nonisolated private static func offThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .default).async { continuation.resume(returning: work()) }
+    }
+  }
+
+  /// Stdout of a run and whether it ran past `timeout` and was terminated, or nil when it could not start. A
+  /// terminated `du -d 1` has already printed the entries it finished, and `du` exits 1 after an unreadable
+  /// entry but still prints the rest, so neither case discards the output. The child runs at default QoS: macOS
+  /// throttles the disk I/O of utility and background children, which made `du` over a 9 GB node_modules take
+  /// 165 to 390 seconds instead of 8 to 11.
   nonisolated private static func run(
     _ executable: String, _ arguments: [String], cwd: String, environment: [String: String]?,
     timeout: TimeInterval = toolTimeout
-  ) -> Data? {
+  ) -> (output: Data, timedOut: Bool)? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
     if let environment { process.environment = environment }
-    process.qualityOfService = .background
+    process.qualityOfService = .default
     let out = Pipe()
     process.standardOutput = out
     process.standardError = FileHandle.nullDevice
     process.standardInput = FileHandle.nullDevice
     guard (try? process.run()) != nil else { return nil }
+    running.insert(process)
+    defer { running.remove(process) }
     let box = DataBox()
     let read = DispatchSemaphore(value: 0)
-    DispatchQueue.global(qos: .background).async {
+    DispatchQueue.global(qos: .default).async {
       box.value = out.fileHandleForReading.readDataToEndOfFile()
       read.signal()
     }
-    if read.wait(timeout: .now() + timeout) == .timedOut {
-      process.terminate()
-      return nil
+    guard read.wait(timeout: .now() + timeout) == .timedOut else {
+      process.waitUntilExit()
+      return (box.value, false)
     }
-    process.waitUntilExit()
-    return box.value
+    process.terminate()
+    if read.wait(timeout: .now() + 5) == .timedOut {
+      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+      guard read.wait(timeout: .now() + 5) == .success else { return (Data(), true) }
+    }
+    return (box.value, true)
   }
+}
+
+private final class RunningProcesses: @unchecked Sendable {
+  private let lock = NSLock()
+  private var processes: Set<Process> = []
+
+  func insert(_ process: Process) { lock.withLock { _ = processes.insert(process) } }
+  func remove(_ process: Process) { lock.withLock { _ = processes.remove(process) } }
+  func terminateAll() { lock.withLock { processes.forEach { $0.terminate() } } }
 }
 
 private final class DataBox: @unchecked Sendable {

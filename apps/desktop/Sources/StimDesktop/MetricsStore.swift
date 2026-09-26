@@ -133,8 +133,15 @@ func formatMemory(_ bytes: Int64) -> String {
   ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
 }
 
+private let diskFormatter: ByteCountFormatter = {
+  let formatter = ByteCountFormatter()
+  formatter.countStyle = .file
+  formatter.allowsNonnumericFormatting = false
+  return formatter
+}()
+
 func formatDisk(_ bytes: Int64) -> String {
-  ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+  diskFormatter.string(fromByteCount: bytes)
 }
 
 func formatPercent(_ percent: Double) -> String {

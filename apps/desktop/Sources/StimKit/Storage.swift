@@ -49,23 +49,106 @@ public enum DiskSizes {
   }
 }
 
-/// One workspace's disk use by category. A nil category was not measured.
+/// One size on the Storage page, or why it has none.
+public enum DiskSize: Hashable, Sendable {
+  case size(Int64)
+  /// Nothing is there to size.
+  case absent
+  case measuring
+  /// The tool that sizes it did not finish or could not read it.
+  case failed
+  case notMeasured
+
+  /// The bytes it takes, zero when absent, nil when unknown.
+  public var bytes: Int64? {
+    switch self {
+    case .size(let bytes): return bytes
+    case .absent: return 0
+    case .measuring, .failed, .notMeasured: return nil
+    }
+  }
+
+  /// A size from several parts: unknown while any part is measuring or failed.
+  static func sum(_ parts: [DiskSize]) -> DiskSize {
+    if parts.isEmpty { return .absent }
+    if parts.contains(.measuring) { return .measuring }
+    if parts.contains(.failed) { return .failed }
+    if parts.contains(.notMeasured) { return .notMeasured }
+    return .size(parts.compactMap(\.bytes).reduce(0, +))
+  }
+}
+
+/// What `du` has reported so far for the paths Stim Desktop asked it to size.
+public struct DiskMeasurements: Sendable {
+  /// Bytes by path, including each entry `du -d 1` reports inside a device set.
+  public var sizes: [String: Int64]
+  public var pending: Set<String>
+  public var failed: Set<String>
+  /// Paths that did not exist when sizing started.
+  public var absent: Set<String>
+
+  public init(
+    sizes: [String: Int64] = [:], pending: Set<String> = [], failed: Set<String> = [], absent: Set<String> = []
+  ) {
+    self.sizes = sizes
+    self.pending = pending
+    self.failed = failed
+    self.absent = absent
+  }
+
+  public func measure(_ path: String) -> DiskSize {
+    if let bytes = sizes[path] { return .size(bytes) }
+    if absent.contains(path) { return .absent }
+    if pending.contains(path) { return .measuring }
+    if failed.contains(path) { return .failed }
+    return .notMeasured
+  }
+
+  /// An entry inside `set`, sized by a `du -d 1` of the set. A finished set without the entry means it is not on disk.
+  func measure(_ path: String, in set: String) -> DiskSize {
+    if let bytes = sizes[path] { return .size(bytes) }
+    switch measure(set) {
+    case .size, .absent: return .absent
+    case let other: return other
+    }
+  }
+}
+
+/// One workspace, or one linked worktree without a workspace, and its disk use by category.
 public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   public var path: String
   public var worktreePath: String
   public var repository: String?
   public var branch: String?
-  public var buildOutputs: Int64?
+  public var buildOutputs: DiskSize
   /// Why `stim gc --delete` keeps the build outputs, or nil when it clears them.
   public var buildOutputsKept: String?
-  public var nodeModules: Int64?
-  public var devices: Int64?
+  public var nodeModules: DiskSize
+  public var devices: DiskSize
   public var deviceCount: Int
   public var worktree: GcReport.LinkedWorktree?
+  /// A registered project whose folder is gone; `stim gc --delete` drops its record and devices.
+  public var missing = false
+  /// A linked worktree `stim worktree warm` has not set up, listed by `stim status` apart from workspaces.
+  public var unprovisioned = false
 
   public var id: String { path }
 
-  public var total: Int64 { [buildOutputs, nodeModules, devices].compactMap { $0 }.reduce(0, +) }
+  /// The sum of the categories that have a size: a lower bound while `totalComplete` is false, and nil
+  /// while no category has anything measured on disk.
+  public var total: Int64? {
+    let parts = [buildOutputs, nodeModules, devices]
+    guard totalComplete || parts.contains(where: { if case .size(let bytes) = $0 { return bytes > 0 } else { return false } }) else {
+      return nil
+    }
+    return parts.compactMap(\.bytes).reduce(0, +)
+  }
+
+  /// Whether every category has a size, so `total` is not a lower bound.
+  public var totalComplete: Bool { [buildOutputs, nodeModules, devices].allSatisfy { $0.bytes != nil } }
+
+  /// The repository folder's name, such as `tlon-apps`.
+  public var repositoryName: String? { repository.map { ($0 as NSString).lastPathComponent } }
 }
 
 /// A location shown with its size: Stim-managed and reclaimable through the CLI, or outside Stim and shown
@@ -73,64 +156,86 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
 public struct StorageLocation: Identifiable, Hashable, Sendable {
   public var title: String
   public var path: String?
-  public var bytes: Int64?
+  public var size: DiskSize
   public var detail: String?
 
   public var id: String { title + (path ?? "") }
 
-  public init(title: String, path: String?, bytes: Int64?, detail: String?) {
+  public init(title: String, path: String?, size: DiskSize, detail: String?) {
     self.title = title
     self.path = path
-    self.bytes = bytes
+    self.size = size
     self.detail = detail
   }
 }
 
 public struct StorageReport: Sendable {
+  /// Largest first; rows with no size yet last.
   public var workspaces: [WorkspaceStorage]
-  /// Stim's shared caches, from `stim gc --json`.
+  /// Stim's shared caches from `stim gc --json` that hold something, largest first.
   public var caches: [GcReport.Cache]
+  /// Every cache `stim gc --json` reports, for `--cache` selection and titles.
+  public var allCaches: [GcReport.Cache]
+  /// Caches `stim gc --json` sized at zero bytes.
+  public var emptyCaches: [GcReport.Cache]
   /// Owned devices `stim gc --delete` deletes: parked, orphaned and stale.
   public var reclaimableDevices: StorageLocation?
+  /// Largest first.
   public var unmanaged: [StorageLocation]
 
   public static func make(
-    environments: [Workspace], gc: GcReport?, sizes: [String: Int64], paths: StoragePaths
+    environments: [Workspace], unprovisioned: [UnprovisionedWorktree] = [], gc: GcReport?,
+    disk: DiskMeasurements, paths: StoragePaths
   ) -> StorageReport {
     let outputs = Dictionary(
       (gc?.sections.workspaceBuildOutputs ?? []).compactMap { entry in entry.projectRoot.map { ($0, entry) } },
       uniquingKeysWith: { first, _ in first })
     let worktrees = Dictionary(
       (gc?.sections.linkedWorktrees ?? []).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+    let dead = Set((gc?.sections.deadProjects ?? []).map(\.path))
     var stimSimulators = Set((gc?.deletableDevices ?? []).compactMap(\.udid).map { $0.uppercased() })
 
-    let workspaces = environments.map { env -> WorkspaceStorage in
+    var workspaces = environments.map { env -> WorkspaceStorage in
       let root = env.worktree?.path ?? env.path
-      var deviceBytes: Int64?
-      var count = 0
+      var devices: [DiskSize] = []
       for device in env.devices {
-        let path: String
         switch device {
         case .ios(_, let sim) where sim.owned:
           stimSimulators.insert(sim.udid.uppercased())
-          path = paths.simulator(sim.udid.uppercased())
+          devices.append(disk.measure(paths.simulator(sim.udid.uppercased()), in: paths.simulatorDevices))
         case .android(_, let avd) where avd.owned && !avd.physical:
-          path = paths.avd(avd.name)
+          devices.append(disk.measure(paths.avd(avd.name), in: paths.avds))
         default:
           continue
         }
-        count += 1
-        if let bytes = sizes[path] { deviceBytes = (deviceBytes ?? 0) + bytes }
       }
       let output = outputs[env.path]
+      let buildOutputs: DiskSize =
+        gc == nil ? .notMeasured : output.map { $0.bytes.map(DiskSize.size) ?? .failed } ?? .absent
+      let missing = dead.contains(env.path)
       return WorkspaceStorage(
         path: env.path, worktreePath: root, repository: env.worktree?.repository, branch: env.worktree?.branch,
-        buildOutputs: output?.bytes,
+        buildOutputs: buildOutputs,
         buildOutputsKept: output.flatMap { $0.willClear == true ? nil : ($0.detail ?? "kept") },
-        nodeModules: sizes["\(root)/node_modules"], devices: deviceBytes, deviceCount: count,
-        worktree: worktrees[root])
+        nodeModules: missing ? .absent : disk.measure("\(root)/node_modules"), devices: .sum(devices),
+        deviceCount: devices.count, worktree: worktrees[root], missing: missing)
     }
-    .sorted { ($0.total, $1.path) > ($1.total, $0.path) }
+    let listed = Set(workspaces.map(\.worktreePath))
+    for tree in unprovisioned where !listed.contains(tree.path) {
+      workspaces.append(
+        WorkspaceStorage(
+          path: tree.path, worktreePath: tree.path, repository: tree.repository, branch: tree.branch,
+          buildOutputs: .absent, nodeModules: disk.measure("\(tree.path)/node_modules"), devices: .absent,
+          deviceCount: 0, worktree: worktrees[tree.path], unprovisioned: true))
+    }
+    workspaces.sort { a, b in
+      switch (a.total, b.total) {
+      case let (x?, y?) where x != y: return x > y
+      case (.some, nil): return true
+      case (nil, .some): return false
+      default: return a.path < b.path
+      }
+    }
 
     let devices = gc?.deletableDevices ?? []
     let reclaimableDevices =
@@ -138,33 +243,39 @@ public struct StorageReport: Sendable {
       ? nil
       : StorageLocation(
         title: devices.count == 1 ? "1 parked, orphaned or stale device" : "\(devices.count) parked, orphaned or stale devices",
-        path: nil, bytes: devices.contains { $0.bytes != nil } ? devices.compactMap(\.bytes).reduce(0, +) : nil,
+        path: nil, size: devices.contains { $0.bytes != nil } ? .size(devices.compactMap(\.bytes).reduce(0, +)) : .failed,
         detail: devices.compactMap(\.name).joined(separator: ", "))
 
-    let caches = gc?.sections.caches ?? []
+    let allCaches = gc?.sections.caches ?? []
     var unmanaged: [StorageLocation] = []
-    let simulatorEntries = sizes.filter { path, _ in
+    let simulatorEntries = disk.sizes.filter { path, _ in
       (path as NSString).deletingLastPathComponent == paths.simulatorDevices
         && UUID(uuidString: (path as NSString).lastPathComponent) != nil
     }
-    if !simulatorEntries.isEmpty {
-      let other = simulatorEntries.filter { !stimSimulators.contains(($0.key as NSString).lastPathComponent.uppercased()) }
-      unmanaged.append(
-        StorageLocation(
-          title: "Simulators Stim does not own", path: paths.simulatorDevices, bytes: other.values.reduce(0, +),
-          detail: "\(other.count) of \(simulatorEntries.count) CoreSimulator devices"))
-    }
+    let other = simulatorEntries.filter { !stimSimulators.contains(($0.key as NSString).lastPathComponent.uppercased()) }
+    let simulatorSet = disk.measure(paths.simulatorDevices)
+    unmanaged.append(
+      StorageLocation(
+        title: "Simulators Stim does not own", path: paths.simulatorDevices,
+        size: simulatorSet.bytes == nil ? simulatorSet : .size(other.values.reduce(0, +)),
+        detail: simulatorEntries.isEmpty
+          ? "Created in Xcode or with simctl" : "\(other.count) of \(simulatorEntries.count) CoreSimulator devices"))
     for location in paths.unmanaged {
-      guard let measured = sizes[location.path] else { continue }
-      let inside = caches.filter { $0.dir.hasPrefix(location.path + "/") }
+      let inside = allCaches.filter { $0.dir.hasPrefix(location.path + "/") }
       let stimBytes = inside.compactMap(\.bytes).reduce(0, +)
+      let measured = disk.measure(location.path)
       unmanaged.append(
         StorageLocation(
-          title: location.title, path: location.path, bytes: max(0, measured - stimBytes),
-          detail: inside.isEmpty ? nil : "Excludes \(inside.map(\.name).joined(separator: ", ")), listed under Stim"))
+          title: location.title, path: location.path,
+          size: measured.bytes.map { .size(max(0, $0 - stimBytes)) } ?? measured,
+          detail: inside.isEmpty ? nil : "Excludes \(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), listed under Stim"))
     }
     return StorageReport(
-      workspaces: workspaces, caches: caches, reclaimableDevices: reclaimableDevices, unmanaged: unmanaged)
+      workspaces: workspaces,
+      caches: allCaches.filter { $0.bytes != 0 }.sorted { ($0.bytes ?? -1) > ($1.bytes ?? -1) },
+      allCaches: allCaches, emptyCaches: allCaches.filter { $0.bytes == 0 },
+      reclaimableDevices: reclaimableDevices,
+      unmanaged: unmanaged.sorted { ($0.size.bytes ?? -1) > ($1.size.bytes ?? -1) })
   }
 }
 
