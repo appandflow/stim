@@ -53,8 +53,10 @@ export const text = {
 
 export type TextVariant = keyof typeof text;
 
+type MacosTextStyle = Pick<TextStyleToken, 'fontSize' | 'lineHeight'> & Partial<TextStyleToken>;
+
 /** Stim Desktop's sizes for the same text styles. macOS body text is 13 pt. */
-export const macosText: Partial<Record<TextVariant, Partial<TextStyleToken>>> = {
+export const macosText: Record<TextVariant, MacosTextStyle> = {
   caption2: { fontSize: 10.5, lineHeight: 13 },
   caption: { fontSize: 11, lineHeight: 14 },
   footnote: { fontSize: 11.5, lineHeight: 15 },

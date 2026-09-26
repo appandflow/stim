@@ -425,7 +425,7 @@ private struct RemotePreview: NSViewRepresentable {
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.navigationDelegate = context.coordinator
     view.setValue(false, forKey: "drawsBackground")
-    view.underPageBackgroundColor = NSColor(rgba: 0x0C0A11FF)
+    view.underPageBackgroundColor = NSColor(Media.screen)
     return view
   }
 

@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-// Usage: node scripts/generate-tokens.mjs [--check]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +5,11 @@ import { fileURLToPath } from 'node:url';
 const desktop = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = join(desktop, '../mobile/src/design/tokens.ts');
 const output = join(desktop, 'Sources/StimDesktop/Design/Tokens.swift');
-// Node warns that apps/mobile/package.json declares no module type before loading the ES module anyway.
+// Node warns that apps/mobile/package.json declares no module type, then loads the ES module anyway.
 process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.code !== 'MODULE_TYPELESS_PACKAGE_JSON') console.warn(warning);
+});
 const tokens = await import(source);
 
 const weights = { regular: '.regular', medium: '.medium', semibold: '.semibold', bold: '.bold' };
