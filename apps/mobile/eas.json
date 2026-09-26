@@ -9,19 +9,29 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "APP_VARIANT": "development"
+        "APP_VARIANT": "development",
+        "EAS_USE_CACHE": "1",
+        "EAS_GRADLE_CACHE": "1"
       },
       "channel": "development"
     },
     "preview": {
       "pnpm": "12.0.0",
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EAS_USE_CACHE": "1",
+        "EAS_GRADLE_CACHE": "1"
+      }
     },
     "production": {
       "pnpm": "12.0.0",
       "distribution": "store",
       "autoIncrement": true,
-      "channel": "production"
+      "channel": "production",
+      "env": {
+        "EAS_USE_CACHE": "1",
+        "EAS_GRADLE_CACHE": "1"
+      }
     }
   },
   "submit": {
