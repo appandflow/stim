@@ -403,7 +403,8 @@ reports `launched`, the page URL, the Chrome `pid`, the `profile` directory and
 the reserved `cdpEndpoint`. A second run with the same options navigates the
 same Chrome again.
 
-`stim stop` closes the browser and keeps its profile. `worktree remove` and
+`stim stop` closes the browser and keeps its profile; `stim stop --slot web`
+closes only the browser. `worktree remove` and
 `gc --delete` also delete the profile. See [Web in an owned Chrome](./web.md).
 
 ## `reload`
@@ -520,7 +521,12 @@ releases its leases. Metro, the reserved port, and sibling slots keep running.
 Use `--slot default` to stop only the workspace's default device -- the one
 `ios`/`android` address with no `--slot` and `status` reports with no `[slot]`
 label -- while a named slot stays up. `--slot` never ends an owned remote
-session, even `--slot default`; use plain `stop` for that.
+session, even `--slot default`; use plain `stop` for that. `--slot web` closes
+only the owned Chrome from `stim web` and keeps its profile; Metro and every
+device keep running, so no device slot can be named `web`. A slot the
+workspace has not recorded is refused with `STIM_BAD_ARG` and the list of its
+slots, and nothing is stopped. A slot whose first build is still running
+counts as recorded, and that build is interrupted.
 
 ### Stopping during a build
 

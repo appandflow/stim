@@ -1279,14 +1279,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   A BUILD).
   Named slots support local devices; remote sessions use the default slot.
   Names use 1-64 letters, digits, underscores or hyphens, starting with a letter
-  or digit. Reserved object-property names are refused.
+  or digit. Reserved object-property names and web are refused.
 
   stop --slot shuts down that slot's owned devices and releases its leases,
   retaining Metro and sibling slots. stop --slot default targets only the
   workspace's default device, the same one ios/android address with no
   --slot and status reports with no [slot] label; it never touches a remote
-  session even though remote sessions use the default slot. Plain stop
-  handles the whole workspace.
+  session even though remote sessions use the default slot. stop --slot web
+  closes only the owned Chrome from stim web. A slot the workspace has not
+  recorded is refused with STIM_BAD_ARG and the list of its slots; nothing is
+  stopped. A slot whose first build is still running counts as recorded, and
+  that build is interrupted. Plain stop handles the whole workspace.
   status reports named devices under slots and counts their memory. Device
   caps count every slot. Recycling uses the same model/runtime-matched pool
   for every slot, with one shared cap per platform and oldest-first eviction.

@@ -140,8 +140,8 @@ among connected iPhones. Android supports the same pattern with
 `stim android --slot phone`, `stim android --slot fold --device-profile pixel_fold`
 or `stim android --slot hardware --device <serial>`.
 Slot names are case-sensitive, 1–64 letters, digits, underscores or hyphens,
-and must begin with a letter or digit; prototype-related reserved names are
-rejected. A name is scoped to its platform within the workspace.
+and must begin with a letter or digit; prototype-related reserved names and
+`web`, which `stim stop --slot web` uses for the owned Chrome, are rejected. A name is scoped to its platform within the workspace.
 
 Slots share one Metro server and compatible native build caches. Native runs
 serialize changes to shared build output; the devices can remain running
