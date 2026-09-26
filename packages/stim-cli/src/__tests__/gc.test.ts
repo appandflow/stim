@@ -392,7 +392,7 @@ test('findOrphanedDevices proposes only Stim devices absent from config', () => 
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
 });
 
-test('gc deletes only unreferenced devices Stim recorded or named exactly, and lists other stim-* devices', () => {
+test('gc deletes only unreferenced devices this home recorded, and lists other stim-* devices', () => {
   recordCreatedDevice('ios', 'RECORDED');
   const avdRoot = join(tmpHome, 'avd');
   const avd = (name: string, config: string) => {
@@ -403,21 +403,23 @@ test('gc deletes only unreferenced devices Stim recorded or named exactly, and l
   const saved = process.env.ANDROID_AVD_HOME;
   process.env.ANDROID_AVD_HOME = avdRoot;
   try {
-    avd('stim-legacy', 'disk.dataPartition.size=8589934592\n');
+    avd('stim-other-home', 'disk.dataPartition.size=8589934592\n');
     avd('stim-studio', 'disk.dataPartition.size=6G\n');
     const result = findOrphanedDevices({
       sims: [
         makeIosSim({ udid: 'RECORDED', name: 'stim-app' }),
-        makeIosSim({ udid: 'LEGACY', name: 'stim-app (iPhone 17 Pro 26.5) 1a2b3c-1' }),
+        makeIosSim({ udid: 'OTHER-HOME', name: 'stim-1362-mobile (iPhone 18 Pro 27.0)' }),
         makeIosSim({ udid: 'HANDMADE', name: 'stim-desktop-duo-test' }),
       ],
-      avds: ['stim-legacy', 'stim-studio'],
+      avds: ['stim-other-home', 'stim-studio'],
       config: makeConfig(),
       isMounted: () => true,
     });
-    expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['LEGACY', 'RECORDED', 'stim-legacy']);
+    expect(result.orphaned.map((o) => o.id)).toEqual(['RECORDED']);
     expect(result.unverified).toEqual([
+      { kind: 'ios', id: 'OTHER-HOME', name: 'stim-1362-mobile (iPhone 18 Pro 27.0)' },
       { kind: 'ios', id: 'HANDMADE', name: 'stim-desktop-duo-test' },
+      { kind: 'android', id: 'stim-other-home', name: 'stim-other-home' },
       { kind: 'android', id: 'stim-studio', name: 'stim-studio' },
     ]);
   } finally {

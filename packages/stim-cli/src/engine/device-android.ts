@@ -149,7 +149,7 @@ export async function ensureOwnedAndroidDevice({
       if (resolved.notOwned) {
         note(
           chalk.yellow(
-            `Note: recorded AVD ${record.avdName} is not Stim-owned by name -- creating a fresh owned AVD instead of reusing it.`,
+            `Note: recorded AVD ${record.avdName} is not Stim-owned -- creating a fresh owned AVD instead of reusing it.`,
           ),
         );
       } else if (resolved.serial) {
@@ -548,7 +548,7 @@ export async function ensureAndroidBooted({
     };
   }
   if (resolved.notOwned) {
-    return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned by name; refusing to boot it.` };
+    return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned; refusing to boot it.` };
   }
   const avdName = device.avdName;
   const booted = (result: BootResult): BootResult => {

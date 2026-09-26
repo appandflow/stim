@@ -17,7 +17,7 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when
                             parking is disabled or their setup cannot be verified
-  stim gc --delete        sweeps devices Stim created that no project
+  stim gc --delete        sweeps devices this Stim home created that no project
                             references (\`guide cleanup gc\`), clears
                             verified parked simulators and emulators, and
                             runs \`stim worktree remove\` on every clean,
@@ -237,15 +237,16 @@ it. A record is what makes the device findable again, so it outlives a failed
 teardown rather than turning it into an orphan.
 
 WHICH stim-* DEVICES gc DELETES
-  A \`stim-\` prefix alone is not proof that Stim made a device. gc deletes an
-  unreferenced device only when Stim created it: the device is listed in
+  A \`stim-\` name is not proof that this Stim home made a device: every
+  STIM_HOME names its devices the same way. gc deletes an unreferenced device
+  only when this home created it: the device is listed in
   $STIM_HOME/created-devices.json, where Stim records every simulator and AVD
-  it creates, or it predates that ledger and matches Stim's own format
-  exactly -- an iOS name \`stim-<label> (<model> <runtime>)\`, or an AVD
-  named \`stim-<label>\` whose config.ini holds the byte-valued
-  disk.dataPartition.size Stim writes. gc lists any other stim-* device under
+  it creates, or it predates that ledger and this home's config records it in
+  the device pool or in a project as owned. gc lists any other stim-* device,
+  including those another STIM_HOME created, under
   "Unrecognized stim-* devices" with the command that deletes it
-  (\`xcrun simctl delete <udid>\` or \`avdmanager delete avd -n <name>\`), and
+  (\`xcrun simctl delete <udid>\`, \`avdmanager delete avd -n <name>\`, or
+  \`rm -rf <dir>\` for AVD data with no registration), and
   never runs it. Boot, shutdown and teardown re-check ownership by the same
   rule, so a device that stops matching is left alone.
 

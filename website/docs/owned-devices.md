@@ -19,12 +19,13 @@ with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
 A `stim-` name alone does not make a device Stim's. Stim lists every device it
-creates in `~/.stim/created-devices.json`. For devices created before that
-ledger, it also accepts an iOS name in its exact `stim-<label> (<model> <runtime>)`
-format, or an AVD whose `config.ini` holds the data partition size Stim writes.
-`stim gc --delete` removes only those devices when no workspace references them.
-It lists any other `stim-*` device with the command that deletes it, and leaves
-it for you to run.
+creates in `~/.stim/created-devices.json`, or in `$STIM_HOME/created-devices.json`
+when `STIM_HOME` points somewhere else. For devices created before that ledger,
+it also accepts a device its config records in the device pool or in a
+workspace as owned. `stim gc --delete` removes only those devices when no
+workspace references them. It lists any other `stim-*` device, including one
+another `STIM_HOME` created, with the command that deletes it (`rm -rf <dir>`
+for AVD data with no registration), and leaves it for you to run.
 
 `stim android --device [serial]` and `stim ios --device [udid]` install, launch,
 and read available logs on connected physical devices. An iPhone can be cabled

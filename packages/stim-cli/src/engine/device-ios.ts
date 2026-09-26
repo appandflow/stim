@@ -86,7 +86,7 @@ export async function ensureOwnedIosDevice({
       if (resolved.notOwned) {
         note(
           chalk.yellow(
-            `Note: recorded sim is now named "${resolved.notOwned}", not Stim-owned by name -- creating a fresh owned sim instead of booting it.`,
+            `Note: recorded sim is now named "${resolved.notOwned}", not Stim-owned -- creating a fresh owned sim instead of booting it.`,
           ),
         );
       } else if (resolved.missing) {

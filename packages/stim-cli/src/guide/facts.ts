@@ -541,9 +541,10 @@ RULES
     parkedEmulators         { name, systemImage, deviceProfile, parkedAt, bytes, listed }
                               likewise
     orphanedDevices         { kind, id, name, bytes, directory }
-    unverifiedDevices       { kind, id, name, command }  stim-* devices Stim
-                              has no record of creating; never deleted, run
-                              command yourself
+    unverifiedDevices       { kind, id, name, command }  stim-* devices this
+                              Stim home has no record of creating; never
+                              deleted, run command yourself (rm -rf <dir>
+                              for AVD data with no registration)
     staleDevices            { kind, id, name, project, slot, idleDays,
                               bytes }  only with --older-than
     staleDeviceRecords      { kind, id, project, slot }  --delete clears

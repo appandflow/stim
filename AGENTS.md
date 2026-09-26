@@ -250,10 +250,11 @@ Stim can create, boot, shut down, or delete only devices it created. Owned iOS
 simulators are named `stim-<label> (<model> <runtime>)`; owned Android AVDs
 remain `stim-<label>`. Both are recorded with `owned: true`, and every device
 Stim creates is also listed in the locked `$STIM_HOME/created-devices.json`
-ledger. A `stim-` name alone never proves ownership: a device is Stim's when
-the ledger lists it or, for devices created before the ledger, when its name
-matches the iOS format exactly or the AVD's `config.ini` carries the
-byte-valued `disk.dataPartition.size` Stim writes. The ownership re-check
+ledger. Ownership is per Stim home. A device is this home's only when its
+ledger lists it, or, for devices created before the ledger, when its config
+records it in the device pool or in a project with `owned: true`. A name or an
+AVD `config.ini` never proves ownership: every Stim home writes the same ones,
+and a home cannot enumerate other homes. The ownership re-check
 before boot and teardown applies that rule, and `gc` only lists other `stim-*`
 devices with a manual delete command. Never do any of those actions to a
 user-created emulator or simulator. Keep a device record

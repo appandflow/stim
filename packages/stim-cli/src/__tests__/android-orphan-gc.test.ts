@@ -17,6 +17,7 @@ import * as gcDevices from '../commands/gc/devices.ts';
 import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { listOrphanedAvdDirectories } from '../devices/android.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { writeAvdProcessLock } from './_factories.ts';
@@ -120,6 +121,7 @@ function orphan(name = 'stim-orphan', root = avdRoot): string {
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, 'userdata.img'), Buffer.alloc(8192, 1));
   writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
+  if (name.startsWith('stim-')) recordCreatedDevice('android', name);
   return directory;
 }
 
@@ -295,8 +297,21 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     chmodSync(join(leftovers[0]!.directory, 'blocked'), 0o700);
     await runGc({ delete: true }, deps);
     expect(listOrphanedAvdDirectories()).toEqual([]);
+    expect([...readCreatedDevices().android]).toEqual([]);
   },
 );
+
+test('AVD data this home did not record is listed with a command that removes the directory', async () => {
+  const directory = join(avdRoot, 'stim-other-home.avd');
+  mkdirSync(directory);
+  writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const report = await collectGcReport({}, deps);
+  expect(report.orphanedDevices).toEqual([]);
+  expect(report.unverifiedDevices.map((device) => gcDevices.unverifiedDeviceCommand(device))).toEqual([
+    `rm -rf ${JSON.stringify(directory)}`,
+  ]);
+});
 
 test('an unreadable or symlinked orphan prevents stale device records from being cleared', async () => {
   const outside = join(home, 'outside');

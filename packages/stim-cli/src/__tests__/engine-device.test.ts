@@ -262,7 +262,7 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).toMatch(/CoreLocationMigrator failed/);
   });
 
-  test('refuses to boot a sim that is no longer Stim-owned by name', async () => {
+  test("refuses to boot a sim that is no longer this Stim home's", async () => {
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', isAvailable: true }]),
       runQuiet: () => '',
@@ -836,7 +836,7 @@ describe('ensureBooted: android', () => {
     expect(existsSync(logFile)).toBe(true);
   });
 
-  test('refuses an AVD that is not Stim-owned by name', async () => {
+  test('refuses an AVD that this Stim home did not record', async () => {
     setExecutor({
       runFileQuiet: () => null,
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
@@ -1488,7 +1488,7 @@ describe('ensureOwnedDevice: ios', () => {
       expect(result.deviceUdid).toBe('NEW-UDID');
       expect(result.owned).toBe(true);
       expect(result.created).toBe(true);
-      expect(notes.some((n) => /not Stim-owned by name/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /not Stim-owned/i.test(n))).toBeTruthy();
       await result.booting?.done;
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -12,8 +12,7 @@ import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { isStimOwnedAvdName, listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
-import { isStimOwnedSim } from '../devices/device-ownership.ts';
+import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
@@ -259,6 +258,7 @@ export async function collectGcReport(
         deviceSweepNotices.push(`android data sweep skipped: ${(error as Error).message}`);
       }
     }
+    const registeredAvds = new Set(avds);
     avds = [...new Set([...avds, ...orphanedAvdDirectories.map((entry) => entry.name)])];
     const isMounted = (path: string) => isOnMountedVolume(path, mountedVolumes);
     const found = findOrphanedDevices({
@@ -267,17 +267,16 @@ export async function collectGcReport(
       config: cfg,
       isMounted,
       deadProjects,
-      isOwned: (device) =>
-        device.kind === 'ios'
-          ? isStimOwnedSim({ udid: device.id, name: device.name })
-          : isStimOwnedAvdName(
-              device.id,
-              ownedAvdDirectory(device.id) ??
-                orphanedAvdDirectories.find((entry) => entry.name === device.id)?.directory ??
-                null,
-            ),
     });
-    unverifiedDevices = found.unverified;
+    unverifiedDevices = found.unverified.flatMap((device) => {
+      const directories =
+        device.kind === 'android' && !registeredAvds.has(device.id)
+          ? orphanedAvdDirectories.filter((entry) => entry.name === device.id)
+          : [];
+      return directories.length
+        ? directories.map(({ directory }) => Object.assign({}, device, { directory }))
+        : [device];
+    });
     orphanedDevices = withAndroidAvdSizes(
       found.orphaned.flatMap((device) => {
         const directories =
