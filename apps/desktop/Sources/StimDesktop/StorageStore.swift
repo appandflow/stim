@@ -109,14 +109,15 @@ final class StorageStore: ObservableObject {
   /// Runs blocking work on a dispatch queue, so waiting on a child process never holds a Swift concurrency thread.
   nonisolated private static func offThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
     await withCheckedContinuation { continuation in
-      DispatchQueue.global(qos: .utility).async { continuation.resume(returning: work()) }
+      DispatchQueue.global(qos: .default).async { continuation.resume(returning: work()) }
     }
   }
 
   /// Stdout of a run and whether it ran past `timeout` and was terminated, or nil when it could not start. A
   /// terminated `du -d 1` has already printed the entries it finished, and `du` exits 1 after an unreadable
-  /// entry but still prints the rest, so neither case discards the output. The child runs at utility QoS: at
-  /// background QoS macOS throttles its disk I/O, which made `du` over a large node_modules about 16 times slower.
+  /// entry but still prints the rest, so neither case discards the output. The child runs at default QoS: macOS
+  /// throttles the disk I/O of utility and background children, which made `du` over a 9 GB node_modules take
+  /// 165 to 390 seconds instead of 8 to 11.
   nonisolated private static func run(
     _ executable: String, _ arguments: [String], cwd: String, environment: [String: String]?,
     timeout: TimeInterval = toolTimeout
@@ -126,7 +127,7 @@ final class StorageStore: ObservableObject {
     process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
     if let environment { process.environment = environment }
-    process.qualityOfService = .utility
+    process.qualityOfService = .default
     let out = Pipe()
     process.standardOutput = out
     process.standardError = FileHandle.nullDevice
@@ -134,7 +135,7 @@ final class StorageStore: ObservableObject {
     guard (try? process.run()) != nil else { return nil }
     let box = DataBox()
     let read = DispatchSemaphore(value: 0)
-    DispatchQueue.global(qos: .utility).async {
+    DispatchQueue.global(qos: .default).async {
       box.value = out.fileHandleForReading.readDataToEndOfFile()
       read.signal()
     }

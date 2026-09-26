@@ -122,8 +122,8 @@ version with `gc --json`.
 ## Storage
 
 **Storage** at the top of the sidebar shows what uses disk space. It never
-blocks on a measurement: each path is sized by its own `du` at utility
-priority, three at a time, and shows as soon as it finishes. A path that takes
+blocks on a measurement: each path is sized by its own `du`, three at a
+time, and shows as soon as it finishes. A path that takes
 more than three minutes reads **Unknown**. Sizes are kept for 15 minutes, and
 **Refresh** measures again. Every size cell shows a size, **None** when nothing
 is on disk, an ellipsis while it is measured, **Unknown** when it could not be sized, or
