@@ -1,5 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -15,6 +16,7 @@ import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { useAction, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
+import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import {
   deviceWarnings,
@@ -46,6 +48,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const inCheckout = env ? pathInCheckout(env, roots) : null;
   const actions = useAction(path);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [bannerHeight, setBannerHeight] = useState(0);
   const dismissToast = useCallback(() => setToast(null), []);
   const { touch } = useRecents();
   useEffect(() => {
@@ -156,11 +159,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
   if (!status) {
     return (
       <>
-        <ScrollView contentInsetAdjustmentBehavior="automatic">
+        <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingTop: bannerHeight }}>
           {header}
-          <ConnectionBanner state={state} />
           <ActivityIndicator style={styles.loading} color={colors.primary} />
         </ScrollView>
+        <PinnedBanner state={state} onHeight={setBannerHeight} />
         <ActionToast toast={toast} onDismiss={dismissToast} />
       </>
     );
@@ -183,9 +186,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const metroHealthy = Boolean(env.metro?.running) && env.supervisor?.healthy !== false;
   return (
     <>
-      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.container, { paddingTop: styles.container.padding + bannerHeight }]}
+      >
         {header}
-        <ConnectionBanner state={state} />
         <Card>
           <View style={styles.card}>
             {env.worktree?.branch || inCheckout ? (
@@ -236,8 +241,22 @@ export function WorkspaceDetail({ path }: { path: string }) {
           <Text style={[styles.none, { color: colors.tertiary }]}>No device in this workspace yet.</Text>
         ) : null}
       </ScrollView>
+      <PinnedBanner state={state} onHeight={setBannerHeight} />
       <ActionToast toast={toast} onDismiss={dismissToast} />
     </>
+  );
+}
+
+function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (height: number) => void }) {
+  const headerHeight = useHeaderHeight();
+  return (
+    <View
+      pointerEvents="box-none"
+      onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
+      style={[styles.pinned, { top: Platform.OS === 'ios' ? headerHeight : 0 }]}
+    >
+      <ConnectionBanner state={state} />
+    </View>
   );
 }
 
@@ -267,6 +286,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 17, fontWeight: '600' },
   subtitle: { fontSize: 12, marginTop: 1 },
   loading: { marginTop: 48 },
+  pinned: { position: 'absolute', left: 0, right: 0 },
   container: { padding: 16, gap: 14, paddingBottom: 40 },
   card: { padding: 12, gap: 8 },
   where: { fontSize: 12, fontFamily: mono },
