@@ -132,7 +132,7 @@ struct MachineView: View {
 
   private func headline(_ report: StorageReport) -> some View {
     let lowest = metrics.volumes.min { $0.freeBytes < $1.freeBytes } ?? autopilot.lowestVolume
-    let budget = autopilot.budget.map { Int64($0.minFree * 1_000_000_000) }
+    let budget = autopilot.budget.flatMap { $0.minFree > 0 ? Int64($0.minFree * 1_000_000_000) : nil }
     let categories: [(DiskCategory, CategoryTotal)] = DiskCategory.allCases.map { ($0, report.total($0)) }
     let total = max(1, categories.map { $0.1.bytes }.reduce(0, +))
     let under = lowest.flatMap { volume in budget.map { volume.freeBytes < $0 } } ?? false
@@ -146,7 +146,7 @@ struct MachineView: View {
             .foregroundStyle(Theme.secondary)
           Text(
             budget.map { under ? "Under the \(formatDisk($0)) Stim budget" : "Stim budget \(formatDisk($0)) free" }
-              ?? "No Stim budget read yet"
+              ?? "No Stim disk budget set"
           )
           .font(Theme.body(11.5))
           .foregroundStyle(under ? Theme.warn : Theme.tertiary)
@@ -313,11 +313,15 @@ struct MachineView: View {
             if !compact { columnHeader }
             ForEach(Array(report.repositories.enumerated()), id: \.element.id) { index, repository in
               if index > 0 || !compact { Rectangle().fill(Theme.border).frame(height: 1) }
-              repositoryRow(repository)
-              if expanded.contains(repository.id) || repository.worktrees.count == 1 {
-                ForEach(repository.worktrees) { workspace in
-                  Rectangle().fill(Theme.border.opacity(0.6)).frame(height: 1).padding(.leading, 36)
-                  workspaceRow(workspace)
+              if repository.worktrees.count == 1, let workspace = repository.worktrees.first {
+                workspaceRow(workspace, nested: false)
+              } else {
+                repositoryRow(repository)
+                if expanded.contains(repository.id) {
+                  ForEach(repository.worktrees) { workspace in
+                    Rectangle().fill(Theme.border.opacity(0.6)).frame(height: 1).padding(.leading, 36)
+                    workspaceRow(workspace, nested: true)
+                  }
                 }
               }
             }
@@ -345,19 +349,17 @@ struct MachineView: View {
   }
 
   private func repositoryRow(_ repository: RepositoryStorage) -> some View {
-    let single = repository.worktrees.count == 1
     let open = expanded.contains(repository.id)
     return Button {
-      guard !single else { return }
       if open { expanded.remove(repository.id) } else { expanded.insert(repository.id) }
     } label: {
       HStack(spacing: 12) {
-        Image(systemName: single ? "folder" : (open ? "chevron.down" : "chevron.right"))
+        Image(systemName: open ? "chevron.down" : "chevron.right")
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(Theme.tertiary)
           .frame(width: 12)
         Text(repository.name).font(Theme.body(13, weight: .semibold)).lineLimit(1)
-        Text(single ? "" : "\(repository.worktrees.count) worktrees").foregroundStyle(Theme.tertiary)
+        Text("\(repository.worktrees.count) worktrees").foregroundStyle(Theme.tertiary)
         Spacer()
         totalText(repository.total, complete: repository.totalComplete)
         Color.clear.frame(width: 28)
@@ -370,7 +372,7 @@ struct MachineView: View {
     .padding(.vertical, 10)
   }
 
-  private func workspaceRow(_ workspace: WorkspaceStorage) -> some View {
+  private func workspaceRow(_ workspace: WorkspaceStorage, nested: Bool) -> some View {
     let names = status.names(ofPath: workspace.path)
     let lifecycle = WorktreeLifecycle(
       worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
@@ -388,7 +390,7 @@ struct MachineView: View {
       }
       .help(abbreviatingHome(workspace.path))
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.leading, 24)
+      .padding(.leading, nested ? 24 : 0)
       if !compact {
         lifecycleChip(lifecycle, workspace: workspace).frame(width: 130, alignment: .leading)
         size(workspace.nodeModules)
@@ -480,6 +482,9 @@ struct MachineView: View {
       Text("Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.")
         .font(Theme.body(11.5))
         .foregroundStyle(Theme.tertiary)
+      ForEach(report.inventoryNotices, id: \.self) { notice in
+        Label(notice, systemImage: "exclamationmark.triangle").font(Theme.body(11.5)).foregroundStyle(Theme.warn)
+      }
       if !report.hasInventory {
         inventoryMissing
       } else {
@@ -514,7 +519,7 @@ struct MachineView: View {
 
   private func deviceRow(_ entry: DeviceStorage) -> some View {
     let device = entry.device
-    let subtitle = [device.model, entry.runtimeTitle, compact ? entry.lastUsed.map { "used \(lastUsed($0))" } : nil]
+    let subtitle = [entry.isStim || device.owner == .otherStimHome ? device.model : nil, entry.runtimeTitle, compact ? entry.lastUsed.map { "used \(lastUsed($0))" } : nil]
       .compactMap { $0 }.joined(separator: " \u{00B7} ")
     return HStack(spacing: 12) {
       Image(systemName: device.kind == "ios" ? "iphone" : "smartphone")

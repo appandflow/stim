@@ -338,6 +338,8 @@ public struct StorageReport: Sendable {
   public var runtimes: [RuntimeStorage]
   /// Whether `stim gc --json` reported an inventory; false with a CLI that predates it.
   public var hasInventory: Bool
+  /// Why part of the inventory is missing, as the CLI reported it.
+  public var inventoryNotices: [String]
   /// Largest first.
   public var unmanaged: [StorageLocation]
   public var categories: [DiskCategory: CategoryTotal]
@@ -497,7 +499,7 @@ public struct StorageReport: Sendable {
 
     return StorageReport(
       workspaces: workspaces, repositories: repositories, allCaches: allCaches, free: free, devices: devices,
-      runtimes: runtimes, hasInventory: inventory != nil, unmanaged: unmanaged, categories: categories)
+      runtimes: runtimes, hasInventory: inventory != nil, inventoryNotices: inventory?.notices ?? [], unmanaged: unmanaged, categories: categories)
   }
 
   private static func largestFirst<T>(_ size: KeyPath<T, Int64?>, _ name: KeyPath<T, String>) -> (T, T) -> Bool {
@@ -536,7 +538,7 @@ public struct StorageReport: Sendable {
       items.append(
         FreeItem(
           id: "project:\(project.path)", title: "Record of a deleted folder", path: nil,
-          detail: "\(project.path); its owned devices are listed apart", bytes: nil, action: .gc))
+          detail: "\(project.path) is gone; stim gc drops its record and the devices it owned", bytes: nil, action: .gc))
     }
     for log in gc.trimmableLogs {
       items.append(
@@ -548,7 +550,8 @@ public struct StorageReport: Sendable {
       items.append(
         FreeItem(
           id: "outputs:\(output.projectRoot ?? output.dir ?? "?")", title: "Build outputs", path: output.projectRoot,
-          detail: output.idleDays.map { "Not used for \($0) days; rebuilt on the next run" } ?? "Not in use; rebuilt on the next run",
+          detail: output.idleDays.flatMap { $0 > 0 ? "Not used for \($0) days; rebuilt on the next run" : nil }
+            ?? "Not in use; rebuilt on the next run",
           bytes: output.bytes, action: .workspaceOutputs))
     }
     for worktree in gc.mergedWorktrees {

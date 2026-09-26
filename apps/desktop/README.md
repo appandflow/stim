@@ -45,7 +45,7 @@ in the workspace directory:
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
 
-**All devices**, **Needs attention** and **Storage** stay pinned at the top of
+**All devices**, **Needs attention** and **Machine** stay pinned at the top of
 the sidebar; only the list below them scrolls. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
@@ -148,59 +148,78 @@ supervisor and Metro process trees plus the `launchd_sim` tree of each of its
 simulators (matched by UDID) and the qemu process of each emulator (matched by
 AVD name or console port). Memory is the sum of resident sizes, so memory
 shared between processes counts more than once. The toolbar shows free space,
-without purgeable space and with the same figure as Storage, on the fullest
+without purgeable space and with the same figure as Machine, on the fullest
 volume holding the repositories, `$STIM_HOME`, and CoreSimulator, and
 what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
 version with `gc --json`.
 
-## Storage
+## Machine
 
-**Storage** at the top of the sidebar shows what uses disk space. It never
-blocks on a measurement: each path is sized by its own `du`, three at a
-time, and shows as soon as it finishes. A path that takes
-more than three minutes reads **Unknown**. Sizes are kept for 15 minutes, and
-**Refresh** measures again. Every size cell shows a size, **None** when nothing
-is on disk, an ellipsis while it is measured, **Unknown** when it could not be sized, or
-a dash before the first measurement.
+**Machine** at the top of the sidebar shows what uses disk space, largest first,
+and what Stim can free. It never blocks on a measurement: the device, runtime
+and cache sizes come from `stim gc --json`, and the app sizes only folders
+outside `$STIM_HOME` with `du`, each path on its own, three at a time. A path
+that takes more than three minutes reads **Unknown**. Sizes are kept for 15
+minutes, and **Refresh** measures again. Every size cell shows a size, **None**
+when nothing is on disk, an ellipsis while it is measured, **Unknown** when it
+could not be sized, or a dash before the first measurement, with the reason in
+its help tag.
 
-- **Workspaces**: largest first, each workspace and each linked worktree that
-  `stim worktree warm` has not set up (**Not warmed**), named with its
-  repository and branch. The table shows each one's build outputs and logs,
-  from `stim gc --json`, and its `node_modules` and owned simulators and
-  emulators, which the app sizes with `du`
-  (`~/Library/Developer/CoreSimulator/Devices/<UDID>` and
-  `~/.android/avd/<name>.avd`, or `ANDROID_AVD_HOME`). Total counts them all.
-  A trash icon marks build outputs `stim gc --delete` clears; a lock marks ones
-  it keeps, with the reason. Scissors mark logs `stim gc --delete` trims to
-  their newest 8 MiB, with the bytes it cuts; a lock marks logs over the cap it
-  keeps, with the reason. A `stim` that predates the logs report leaves the
-  Logs cells at a dash.
-  The lifecycle column reads **Merged into main** from `stim gc --json`, **PR #n
-  open** from `gh pr list` in the repository when the GitHub CLI is on the login
-  shell's `PATH` and signed in, **Stale Nd** after 7 days without recorded use,
-  or **Active**. A source checkout reads **Checkout**, and a registered project
-  whose folder is gone reads **Folder gone** until `stim gc --delete` drops it.
-  Without `gh` the column still shows merged and stale.
-  **Remove merged worktrees** runs `stim worktree remove <path>` for each
-  worktree gc reports as merged, after a confirmation. A row's menu reveals the
-  worktree in Finder or runs `stim worktree remove` in it.
-- **Stim caches and devices**: build outputs of idle workspaces, workspace
-  logs `stim gc --delete` trims, each shared cache largest first, and parked,
-  orphaned or stale owned devices, from `stim gc --json`. **Reclaimable now**
-  counts the trimmed log bytes too.
-  Caches that share a name, such as each project's Metro transform cache, are
-  titled with their directory, and empty caches are folded into one row.
-  Each row previews a scoped dry run (`stim gc --json --cache workspaces`,
-  `stim gc --json --cache <name or directory>`, or `stim gc --json`) in the activity sheet,
-  whose **Delete** runs the same scope with `--delete`.
-- **Outside Stim**: space other tools use on the Mac, shown so the page
-  accounts for what else fills the disk: simulators Stim does not own, Xcode DerivedData, Gradle
-  caches and `~/Library/Caches`, measured with `du` and shown for information
-  with **Reveal in Finder**. A Stim cache inside one of them is subtracted and
-  listed under Stim instead.
-- **Reclaim everything safe** previews `stim gc --json` and runs `stim gc
---json --delete` after a confirmation. The preview stays open until you
-  confirm or close it.
+- **Headline**: free space on the fullest volume against the Stim disk budget
+  (`budget.minFreeDiskGb`), and one bar split into Stim devices (owned by a
+  workspace, parked or orphaned), Stim caches and outputs (shared caches,
+  workspace build outputs, logs and orphaned workspace directories),
+  `node_modules`, other simulators and AVDs, runtimes and system images, and
+  other tools. A category that is not fully measured shows its total as a lower
+  bound (≥).
+- **Safe to free now**: one list, largest first, built from `stim gc --json`:
+  parked, orphaned and stale owned devices, orphaned workspace directories,
+  records of deleted folders, logs over the cap, build outputs of idle
+  workspaces, merged worktrees and non-empty shared caches. Each row carries a
+  checkbox and the command that frees it. Rows marked **stim gc** are one unit,
+  `stim gc --delete`, which also removes merged worktrees and clears idle build
+  outputs; while it is checked, those rows are checked and locked. With it
+  unchecked, a worktree row runs `stim worktree remove <path>` in its
+  repository and a build-outputs row runs `stim gc --delete --cache
+workspaces`. A cache row runs `stim gc --delete --cache <name or directory>`
+  and starts unchecked. **Free** previews a selection that is one gc run (`stim
+gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
+  runs the same scope with `--delete`. A selection of several commands lists
+  them in a confirmation first and then runs them in order.
+- **Projects**: workspaces and linked worktrees that `stim worktree warm` has
+  not set up (**Not warmed**), grouped by repository and ranked by total. A
+  repository with several worktrees expands into them. Each worktree shows its
+  `node_modules` (sized with `du`), owned devices (from the inventory), and
+  build outputs and logs (from `stim gc --json`). A trash icon marks build
+  outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
+  reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
+  lock marks logs over the cap it keeps. The lifecycle reads **Merged into
+  main** from `stim gc --json`, **PR #n open** from `gh pr list` in the
+  repository when the GitHub CLI is signed in, **Stale Nd** after 7 days without
+  recorded use, **Active**, **Checkout** for a source checkout, or **Folder
+  gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
+remove` in it, with the bytes that frees. In a narrow window the category
+  columns fold into one line under the name.
+- **Simulators and emulators**: every simulator and AVD from the `inventory`
+  of `stim gc --json`, largest first, with its model, runtime or system image,
+  last use and owner: **Stim · <workspace>** (with a named slot),
+  **Stim · parked**, **Stim · no workspace**, **Another Stim home** for a
+  `stim-*` device this home did not create, or **Yours**. Simulator sizes come
+  from simctl; AVD sizes from `du -d 1` of the AVD folder (`~/.android/avd`,
+  `ANDROID_AVD_HOME` or `ANDROID_USER_HOME/avd`). The app offers no action on a
+  device; the largest 12 show until **Show all**. The CLI's inventory notices,
+  such as a listing that timed out, show above the list.
+- **Runtimes and system images**: iOS simulator runtimes with the size simctl
+  reports, and Android system images sized with `du` of the SDK's
+  `system-images`, each with the number of devices that use it. Unused ones
+  come first and are marked. **Copy** copies the `xcrun simctl runtime delete`
+  or `sdkmanager --uninstall` command the CLI reports; Stim never runs it.
+- **Other tools**: Xcode DerivedData, Gradle caches and `~/Library/Caches`,
+  measured with `du` for information, with **Reveal**. A Stim cache inside one
+  of them is subtracted and counted under Stim instead.
+
+With a `stim` that reports no inventory, the device and runtime sections say to
+update `stim`, and each workspace's devices read a dash.
 
 ## Autopilot
 
@@ -254,11 +273,11 @@ status under **Autopilot activity**.
   merged PRs". Without `gh`, or signed out, nothing is removed by this option;
   the nightly cleanup still removes worktrees git shows as merged.
 
-While free disk is under the budget, the Storage view shows the plan, such as
+While free disk is under the budget, the Machine page shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
 free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and
-the sidebar marks Storage. **Do it** in a notification runs only while disk
-is still under the budget, and otherwise opens Storage; the app removes its
+the sidebar marks Machine. **Do it** in a notification runs only while disk
+is still under the budget, and otherwise opens Machine; the app removes its
 delivered pressure notifications once free disk is back above the budget. With
 autopilot reclaiming, the app posts a
 notification after each run. Without it, the app posts the plan once per
@@ -470,7 +489,7 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Storage report and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Machine report, free plan and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
