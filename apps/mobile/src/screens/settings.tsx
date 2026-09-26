@@ -128,7 +128,7 @@ function LinkRow({ label, onPress }: { label: string; onPress: () => void }) {
 }
 
 // @expo/ui on Android composes only Compose children of a FieldGroup.Section, so a React Native
-// row needs an RNHostView there. matchContents sizes the host to the row's content.
+// row needs an RNHostView there.
 function HostedRow({ children }: { children: ReactElement }) {
   if (Platform.OS !== 'android') return children;
   return <RNHostView matchContents>{children}</RNHostView>;
