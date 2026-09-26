@@ -393,9 +393,10 @@ struct Inspector: View {
   }
 
   @ViewBuilder private func usageCards(_ usage: UsageHistory) -> some View {
-    usageCard("CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
+    usageCard("cpu", "CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
     usageCard(
-      "Resident memory", formatMemory(usage.latest.residentBytes), values: usage.resident, minimumPeak: 1_073_741_824)
+      "memorychip", "Resident memory", formatMemory(usage.latest.residentBytes), values: usage.resident,
+      minimumPeak: 1_073_741_824)
   }
 
   @ViewBuilder private func statCards(_ project: ProjectStats.Scope) -> some View {
@@ -403,9 +404,11 @@ struct Inspector: View {
     if let android = project.android { statCard("Android", android) }
   }
 
-  private func usageCard(_ title: String, _ value: String, values: [Double], minimumPeak: Double) -> some View {
+  private func usageCard(_ icon: String, _ title: String, _ value: String, values: [Double], minimumPeak: Double)
+    -> some View
+  {
     VStack(alignment: .leading, spacing: 6) {
-      Text(title).foregroundStyle(Theme.secondary)
+      Label(title, systemImage: icon).foregroundStyle(Theme.secondary)
       Text(value).font(Theme.heading(22))
       Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 32)
     }
