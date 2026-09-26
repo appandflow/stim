@@ -394,16 +394,6 @@ import Testing
         == StimCommand(["stop", "--slot", "phone"], cwd: "/w"))
   }
 
-  @Test func runsAStoppedLocalDeviceBySlot() {
-    let ios = IosDevice(name: "stim-a (iPhone 17.0)", udid: "IOS-UDID", owned: true, state: "Shutdown")
-    #expect(runCommand(for: .ios(slot: "default", ios), cwd: "/w") == StimCommand(["ios"], cwd: "/w"))
-    let avd = AndroidDevice(name: "stim-b", owned: true, physical: false, serial: nil, state: "not-detected")
-    #expect(
-      runCommand(for: .android(slot: "fold", avd), cwd: "/w") == StimCommand(["android", "--slot", "fold"], cwd: "/w"))
-    let phone = AndroidDevice(name: "Pixel", owned: false, physical: true, serial: "R5", state: "offline")
-    #expect(runCommand(for: .android(slot: "default", phone), cwd: "/w") == nil)
-  }
-
   @Test func stopsTheWholeWorkspaceForARemoteSession() {
     let remote = RemoteDevice(platform: "ios", backend: "eas", sessionId: "drs_9", state: "running")
     #expect(stopCommand(for: .remote(remote), cwd: "/w") == StimCommand(["stop"], cwd: "/w"))

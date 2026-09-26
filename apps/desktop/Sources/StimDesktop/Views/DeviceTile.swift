@@ -36,7 +36,7 @@ struct DeviceTile: View {
         }
         Rectangle().fill(Theme.border).frame(height: 1)
         if let workspace, showsStoppedBar {
-          stoppedBar(runCommand(for: device, cwd: workspace))
+          stoppedBar(canBoot ? runCommand(for: device, cwd: workspace) : nil)
         } else {
           screen
             .frame(height: screenHeight)
@@ -134,6 +134,11 @@ struct DeviceTile: View {
           .help("Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
       }
     }
+  }
+
+  private var canBoot: Bool {
+    if case .android(_, let avd) = device { return !avd.physical }
+    return true
   }
 
   private var showsStoppedBar: Bool {
