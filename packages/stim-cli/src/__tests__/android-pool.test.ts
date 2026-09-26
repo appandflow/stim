@@ -10,7 +10,7 @@ import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
-import { goneClaimOwner, makeExitingChild, plantClaim, writeAvdProcessLock } from './_factories.ts';
+import { IMPOSSIBLE_PID, goneClaimOwner, makeExitingChild, plantClaim, writeAvdProcessLock } from './_factories.ts';
 
 let home: string;
 let saved: Record<string, string | undefined>;
@@ -98,7 +98,7 @@ beforeEach(() => {
         return makeExitingChild();
       }
       running = args[args.indexOf('-avd') + 1]!;
-      return { pid: 9999, unref() {} };
+      return { pid: IMPOSSIBLE_PID, unref() {} };
     },
   });
 });
