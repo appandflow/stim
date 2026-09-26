@@ -154,6 +154,8 @@ claim for its lifetime; Chrome is the claim's child. Stim signals the
 supervisor or Chrome only after verifying the process identity it recorded.
   stim stop               closes Chrome and keeps the profile, so cookies and
                           storage survive the next stim web
+  stim stop --slot web    closes only Chrome, keeping the profile, Metro and
+                          every device
   stim worktree remove    closes Chrome and deletes the profile
   stim gc --delete        does the same for a workspace whose path is gone,
                           and forgets ledger entries of deleted profiles

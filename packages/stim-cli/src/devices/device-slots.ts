@@ -18,8 +18,14 @@ export function validateDeviceSlot(slot: string = 'default'): string {
   return slot;
 }
 
+export const WEB_SLOT = 'web';
+
 export function parseDeviceSlotOption(slot: string): string {
   if (!isDeviceSlot(slot)) throw new InvalidArgumentError(DEVICE_SLOT_RULE);
+  if (slot === WEB_SLOT)
+    throw new InvalidArgumentError(
+      `${WEB_SLOT} names this workspace's owned Chrome (stim stop --slot ${WEB_SLOT}); choose another device slot name.`,
+    );
   return slot;
 }
 
