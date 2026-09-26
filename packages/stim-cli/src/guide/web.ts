@@ -113,8 +113,12 @@ platform "web":
                as CSP violations; the browser's own lifecycle
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).
-stim web writes no launch marker, so logs --errors still lists page errors
-from earlier stim web runs; add --since 2m to see only the latest load.
+Each load of the page's top-level document is a page-load marker: stim web,
+stim reload, and a reload or navigation the page makes itself. logs --errors
+and the status error count report the page's records (platform web) from the
+latest load only, the way Chrome DevTools clears its console when the page
+navigates. A page load does not hide the native app's errors, and an ios or
+android launch does not hide the page's.
 
 AGENTS AND OTHER TOOLS ON THE SAME BROWSER
 

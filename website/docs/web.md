@@ -174,8 +174,12 @@ Page records carry `platform: "web"`:
 Expo also prints web console calls on Metro, so they can appear twice: once
 from the page and once from Metro.
 
-`stim web` writes no launch marker, so `stim logs --errors` still lists page
-errors from earlier runs. Add `--since 2m` to see only the latest load.
+Each load of the page's top-level document starts a new error window: `stim
+web`, `stim reload`, and a reload or navigation the page makes itself.
+`stim logs --errors` and the `status` error count report the page's errors from
+the latest load only, the way Chrome DevTools clears its console when the page
+navigates. A page load does not hide the native app's errors, and a `stim ios`
+or `stim android` launch does not hide the page's.
 
 ## Attach Playwright MCP or agent-browser
 

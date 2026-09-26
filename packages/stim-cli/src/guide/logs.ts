@@ -98,8 +98,15 @@ FLAGS
       errors are reported -- and nothing else. A failed attempt's own summary
       and details land at or after its marker, so they stay reported.
     a LAUNCH marker (src build, written before \`ios\` / \`android\` attempts
-      launch) resets EVERYTHING. It precedes the tool call so an immediate
-      native crash is not hidden by a marker written after the process died.
+      launch) resets EVERYTHING except the web page's records. It precedes the
+      tool call so an immediate native crash is not hidden by a marker written
+      after the process died.
+    a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
+      load of the page's top-level document) resets only the page's records,
+      those with platform web. It is written when the load starts, so a
+      failure logged in the same millisecond belongs to that load, and so does
+      anything the old page logs before it is replaced. Until the first page
+      load is logged, the page's records follow the launch windows.
   A finished bundle is not evidence that the app which loaded it is fine.
   In the field case the app threw at 16:03:54 and Metro wrote its marker at
   16:03:55, one second later, because the bundler finishes accounting for a

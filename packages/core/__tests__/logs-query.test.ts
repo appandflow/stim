@@ -79,7 +79,7 @@ describe('markerWindow', () => {
       { ts: 11, src: 'metro', level: 'info', msg: 'bundle build done', marker: true },
       { ts: 5, src: 'client', level: 'error', msg: 'boom' },
     ];
-    expect(markerWindow(records)).toEqual({ launchTs: 9, bundleTs: 11 });
+    expect(markerWindow(records)).toEqual({ launchTs: 9, bundleTs: 11, pageLoadTs: null });
   });
 
   test('each one is the highest of its own kind, not the last seen', () => {
@@ -89,22 +89,27 @@ describe('markerWindow', () => {
         { ts: 10, src: 'metro', level: 'info', msg: 'b1', marker: true },
         { ts: 20, src: 'build', level: 'info', msg: 'launch', marker: true },
       ]),
-    ).toEqual({ launchTs: 20, bundleTs: 30 });
+    ).toEqual({ launchTs: 20, bundleTs: 30, pageLoadTs: null });
   });
 
   test('returns nulls when nothing is marked', () => {
-    expect(markerWindow([{ ts: 1, msg: 'a' }])).toEqual({ launchTs: null, bundleTs: null });
-    expect(markerWindow([])).toEqual({ launchTs: null, bundleTs: null });
+    expect(markerWindow([{ ts: 1, msg: 'a' }])).toEqual({ launchTs: null, bundleTs: null, pageLoadTs: null });
+    expect(markerWindow([])).toEqual({ launchTs: null, bundleTs: null, pageLoadTs: null });
   });
 
   test('ignores a marker with no usable ts', () => {
-    expect(markerWindow([{ src: 'metro', msg: 'a', marker: true }])).toEqual({ launchTs: null, bundleTs: null });
+    expect(markerWindow([{ src: 'metro', msg: 'a', marker: true }])).toEqual({
+      launchTs: null,
+      bundleTs: null,
+      pageLoadTs: null,
+    });
   });
 
   test('a marker from any source other than metro counts as a launch', () => {
     expect(markerWindow([{ ts: 4, src: 'device', level: 'info', msg: 'x', marker: true }])).toEqual({
       launchTs: 4,
       bundleTs: null,
+      pageLoadTs: null,
     });
   });
 });
@@ -682,6 +687,34 @@ describe('incremental tailing', () => {
     expect(r.state.partial).toBe('abc');
     expect(r.state.offset).toBe(7);
   });
+});
+
+test('a page load windows the web page records, and a native launch windows everything else', () => {
+  writeLog('build-ios.ndjson', [{ ts: 1, src: 'build', level: 'info', marker: true, platform: 'ios' }]);
+  writeLog('client.ndjson', [{ ts: 2, src: 'client', level: 'error', msg: 'app threw' }]);
+  writeLog('device.ndjson', [{ ts: 2, src: 'device', level: 'fatal', event: 'native_crash', msg: 'app crashed' }]);
+  writeLog('web.ndjson', [
+    { ts: 3, src: 'device', platform: 'web', level: 'info', event: 'web_navigation', marker: true },
+    { ts: 4, src: 'device', platform: 'web', level: 'error', msg: 'earlier load failed' },
+    { ts: 4, src: 'client', platform: 'web', level: 'error', msg: 'earlier page threw' },
+    { ts: 6, src: 'device', platform: 'web', level: 'info', event: 'web_navigation', marker: true },
+    { ts: 6, src: 'device', platform: 'web', level: 'error', msg: 'load failed in the same millisecond' },
+    { ts: 7, src: 'client', platform: 'web', level: 'error', msg: 'page threw' },
+  ]);
+  const errors = () => queryLogs({ dir, errorsOnly: true }).map((record) => record.msg);
+  expect(errors()).toEqual(['app threw', 'app crashed', 'load failed in the same millisecond', 'page threw']);
+
+  writeLog('build-ios.ndjson', [{ ts: 8, src: 'build', level: 'info', marker: true, platform: 'ios' }]);
+  expect(errors()).toEqual(['load failed in the same millisecond', 'page threw']);
+});
+
+test('page records follow the launch windows until a page load is logged', () => {
+  writeLog('web.ndjson', [
+    { ts: 1, src: 'device', platform: 'web', level: 'error', msg: 'failed before any launch' },
+    { ts: 3, src: 'client', platform: 'web', level: 'error', msg: 'page threw after the launch' },
+  ]);
+  writeLog('build-ios.ndjson', [{ ts: 2, src: 'build', level: 'info', marker: true, platform: 'ios' }]);
+  expect(queryLogs({ dir, errorsOnly: true }).map((record) => record.msg)).toEqual(['page threw after the launch']);
 });
 
 test('a sibling launch marker does not hide errors from the selected slot', () => {

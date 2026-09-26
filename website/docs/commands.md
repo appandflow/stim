@@ -476,7 +476,8 @@ result.
 - `--errors` selects errors and fatals from Metro, client, and build logs, plus
   confirmed native app-crash reports and the `stim web` page's failed requests
   and browser errors,
-  since the last launch marker. A completed
+  since the last launch marker. The page's records start again at each page
+  load instead, and a launch does not reset them. A completed
   bundle attempt resets only older Metro errors. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.

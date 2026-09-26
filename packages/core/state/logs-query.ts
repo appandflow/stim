@@ -20,6 +20,7 @@ interface GrepResult {
 interface MarkerWindow {
   launchTs: number | null;
   bundleTs: number | null;
+  pageLoadTs: number | null;
 }
 
 export interface QueryCriteria {
@@ -65,17 +66,24 @@ export const ERROR_SOURCES: string[] = ['metro', 'client', 'build'];
 export function markerWindow(records: NdjsonRecord[]): MarkerWindow {
   let launchTs: number | null = null;
   let bundleTs: number | null = null;
+  let pageLoadTs: number | null = null;
   for (const r of records) {
     if (r?.marker !== true) continue;
     const ts = tsOf(r);
     if (ts === null) continue;
     if (r.src === 'metro') {
       if (bundleTs === null || ts > bundleTs) bundleTs = ts;
+    } else if (isWebPageRecord(r)) {
+      if (pageLoadTs === null || ts > pageLoadTs) pageLoadTs = ts;
     } else if (launchTs === null || ts > launchTs) {
       launchTs = ts;
     }
   }
-  return { launchTs, bundleTs };
+  return { launchTs, bundleTs, pageLoadTs };
+}
+
+function isWebPageRecord(record: NdjsonRecord): boolean {
+  return record.platform === 'web' && record.src !== 'metro';
 }
 
 function isAppDeviceRecord(record: NdjsonRecord): boolean {
@@ -328,7 +336,7 @@ function includeBareErrorContext(
 function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
   const markers = new Map<unknown, number>();
   for (const record of records) {
-    if (record.marker !== true || record.src === 'metro') continue;
+    if (record.marker !== true || record.src === 'metro' || isWebPageRecord(record)) continue;
     const ts = tsOf(record);
     const slot = record.slot ?? 'default';
     if (ts !== null && ts > (markers.get(slot) ?? -Infinity)) markers.set(slot, ts);
@@ -366,7 +374,9 @@ export function queryLogs({
   );
   if (all.length === 0) return [];
 
-  const { launchTs, bundleTs } = errorsOnly ? markerWindow(all) : { launchTs: null, bundleTs: null };
+  const { launchTs, bundleTs, pageLoadTs } = errorsOnly
+    ? markerWindow(all)
+    : { launchTs: null, bundleTs: null, pageLoadTs: null };
   const criteria = buildCriteria({
     slot,
     sources,
@@ -380,15 +390,12 @@ export function queryLogs({
   });
 
   const slotMarkers = launchMarkersBySlot(all);
-  let matched = all.filter((record) =>
-    recordMatches(record, {
-      ...criteria,
-      markerTs:
-        record.src === 'metro' || record.src === 'client'
-          ? criteria.markerTs
-          : slotMarkers.get(record.slot ?? 'default'),
-    }),
-  );
+  const windowStart = (record: NdjsonRecord): number | undefined => {
+    if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
+    if (record.src === 'metro' || record.src === 'client') return criteria.markerTs;
+    return slotMarkers.get(record.slot ?? 'default');
+  };
+  let matched = all.filter((record) => recordMatches(record, { ...criteria, markerTs: windowStart(record) }));
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }
