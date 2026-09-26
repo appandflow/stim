@@ -318,7 +318,7 @@ function leaseGarbageLines({ expired, kept }: DeviceLeaseGarbage): string[] {
 }
 
 function deviceSizeSuffix(device: { kind: 'ios' | 'android'; bytes?: number }): string {
-  return device.kind === 'android' && device.bytes !== undefined ? ` - ${formatBytes(device.bytes)} on disk` : '';
+  return device.bytes !== undefined ? ` - ${formatBytes(device.bytes)} on disk` : '';
 }
 
 function namedPortLines(ports: NonNullable<GcReport['orphanedPorts']> = []): string[] {

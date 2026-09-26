@@ -134,7 +134,7 @@ export function findOrphanedDevices({
     if (!ref && !isStimCreated(device)) {
       unverified.push(device);
     } else if (!ref) {
-      orphaned.push(device);
+      orphaned.push({ ...device, ...simBytes(sim) });
     } else {
       kept.push({ kind: 'ios', id: sim.udid, name: sim.name, reason: describeKept(ref) });
     }
@@ -154,6 +154,10 @@ export function findOrphanedDevices({
   }
 
   return { orphaned, kept, unverified };
+}
+
+function simBytes(sim: IosSimRecord): { bytes?: number } {
+  return typeof sim.dataPathSize === 'number' ? { bytes: sim.dataPathSize } : {};
 }
 
 export interface UnverifiedDevice {
@@ -195,9 +199,7 @@ export function findStaleProjectDevices({
   const cutoff = now - (olderThanDays as number) * DAY_MS;
   const dead = new Set(deadProjects);
 
-  const liveSims = new Map<string, string>(
-    sims.filter((s) => s?.name?.startsWith('stim-')).map((s) => [s.udid, s.name] as [string, string]),
-  );
+  const liveSims = new Map(sims.filter((s) => s?.name?.startsWith('stim-')).map((s) => [s.udid, s]));
   const liveAvds = new Set(avds.filter((a) => typeof a === 'string' && a.startsWith('stim-')));
 
   const stale: StaleProjectDevice[] = [];
@@ -209,14 +211,16 @@ export function findStaleProjectDevices({
 
     for (const { slot, platforms } of projectDeviceSlots(proj)) {
       const ios = platforms.ios;
-      if (ios?.owned && ios.deviceUdid && liveSims.has(ios.deviceUdid)) {
+      const sim = ios?.owned && ios.deviceUdid ? liveSims.get(ios.deviceUdid) : undefined;
+      if (sim) {
         stale.push({
           kind: 'ios',
-          id: ios.deviceUdid,
-          name: liveSims.get(ios.deviceUdid) as string,
+          id: sim.udid,
+          name: sim.name,
           project: path,
           ...(slot === 'default' ? {} : { slot }),
           idleDays,
+          ...simBytes(sim),
         });
       }
       const android = platforms.android;
