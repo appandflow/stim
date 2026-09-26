@@ -95,7 +95,8 @@ function PlatformBuild({
       )}
       {last ? (
         <Disclosure
-          label={last.missReason ? `Why the last ${name} build missed the cache` : null}
+          label={`Last ${name} build: ${lastBuildSummary(last, now)}`}
+          hint={last.missReason ? 'Shows why it missed the cache' : null}
           onPress={() => openReason(false)}
         >
           <Text style={[styles.line, { color: last.status === 'failed' ? colors.error : colors.secondary }]}>
@@ -114,13 +115,30 @@ function PlatformBuild({
   );
 }
 
-function Disclosure({ label, onPress, children }: { label: string | null; onPress: () => void; children: ReactNode }) {
+function Disclosure({
+  label,
+  hint,
+  onPress,
+  children,
+}: {
+  label: string;
+  hint: string | null;
+  onPress: () => void;
+  children: ReactNode;
+}) {
   const colors = useColors();
-  if (!label) return <>{children}</>;
+  if (!hint) return <>{children}</>;
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} hitSlop={6} style={styles.row}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      hitSlop={6}
+      style={styles.row}
+    >
       <View style={styles.grow}>{children}</View>
-      <Text style={[styles.line, { color: colors.tertiary }]}>{'›'}</Text>
+      <Text style={[styles.line, { color: colors.tertiary }]}>{'\u203A'}</Text>
     </Pressable>
   );
 }
@@ -131,7 +149,7 @@ function NextBuild({ plan, name, openReason }: { plan: PlanState | undefined; na
     return (
       <View style={styles.row}>
         <ActivityIndicator size="small" color={colors.tertiary} />
-        <Text style={[styles.line, { color: colors.tertiary }]}>{'Checking next build…'}</Text>
+        <Text style={[styles.line, { color: colors.tertiary }]}>{'Checking next build\u2026'}</Text>
       </View>
     );
   }
@@ -153,7 +171,11 @@ function NextBuild({ plan, name, openReason }: { plan: PlanState | undefined; na
         {`Next build: ${nextBuild(plan.plan)}`}
       </Text>
       {miss ? (
-        <Disclosure label={`Why the next ${name} build would miss the cache`} onPress={openReason}>
+        <Disclosure
+          label={`Why the next ${name} build would miss the cache: ${miss.summary}`}
+          hint="Shows the changed sources"
+          onPress={openReason}
+        >
           <Text style={[styles.line, { color: colors.warn }]} numberOfLines={2}>
             {`Why: ${miss.summary}`}
           </Text>
