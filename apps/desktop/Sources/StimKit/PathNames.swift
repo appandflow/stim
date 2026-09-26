@@ -2,10 +2,9 @@ import Foundation
 
 /// Display names for a workspace, the same as the phone app's.
 ///
-/// The title is the worktree's branch, else the worktree's folder, else the project for a main checkout.
-/// `stim status` reports worktree facts only for linked worktrees, so a main checkout is named after its
-/// project, and after its own folder until the project is known. `inCheckout` is where the workspace sits
-/// inside its checkout, such as `apps/mobile`, or nil at the checkout root.
+/// The title is the worktree's branch, else the worktree's folder, else the project for a main checkout, else
+/// the folder. `inCheckout` is where the workspace sits inside its checkout, such as `apps/mobile`, or nil at
+/// the checkout root.
 public struct PathNames: Hashable, Sendable {
   public var title: String
   public var inCheckout: String?

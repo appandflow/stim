@@ -158,6 +158,12 @@ final class StatusStore: ObservableObject {
     project(ofPath: env.path)
   }
 
+  func names(ofPath path: String) -> PathNames {
+    if let env = payload?.environments.first(where: { $0.path == path }) { return env.names }
+    if let worktree = payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) { return worktree.names }
+    return PathNames(path: path, project: projects[path])
+  }
+
   func project(ofPath path: String) -> Project {
     projects[path] ?? Project(fallbackFor: path)
   }

@@ -161,7 +161,7 @@ struct StorageView: View {
             Button("Run stim worktree remove", role: .destructive) { removeMerged(merged, report: report) }
           } message: {
             Text(
-              merged.map { PathNames(path: $0.path).title }.joined(separator: ", ")
+              merged.map { status.names(ofPath: $0.path).title }.joined(separator: ", ")
                 + ". stim gc reports each branch as merged into the default branch, or its pull request as merged or closed. stim worktree remove refuses a worktree with uncommitted or unpushed work."
             )
           }
@@ -186,7 +186,7 @@ struct StorageView: View {
       titleVisibility: .visible, presenting: removing
     ) { workspace in
       Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(PathNames(path: workspace.path).title)", StimCommand(["worktree", "remove"], cwd: workspace.path))
+        actions.run("Remove \(status.names(ofPath: workspace.path).title)", StimCommand(["worktree", "remove"], cwd: workspace.path))
       }
     } message: { workspace in
       Text(
@@ -212,15 +212,14 @@ struct StorageView: View {
   }
 
   private func workspaceRow(_ workspace: WorkspaceStorage) -> some View {
-    let names = PathNames(
-      path: workspace.path, branch: workspace.branch,
-      worktree: workspace.repository == nil ? nil : workspace.worktreePath)
+    let names = status.names(ofPath: workspace.path)
+    let project = status.project(ofPath: workspace.path).name
     let lifecycle = WorktreeLifecycle(
       worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
     return HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
         Text(names.title).lineLimit(1).truncationMode(.middle)
-        Text([workspace.repositoryName, names.inCheckout].compactMap { $0 }.joined(separator: " \u{00B7} "))
+        Text([project == names.title ? nil : project, names.inCheckout].compactMap { $0 }.joined(separator: " \u{00B7} "))
           .font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
       }
       .help(abbreviatingHome(workspace.path))

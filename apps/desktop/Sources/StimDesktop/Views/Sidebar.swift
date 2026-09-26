@@ -255,7 +255,7 @@ struct WorkspaceRow: View {
           }
         }
         HStack(spacing: 6) {
-          SidebarSubtitle(parts: [subtitle, env.names.inCheckout])
+          SidebarSubtitle(title: env.names.title, parts: [subtitle, env.names.inCheckout])
           Spacer(minLength: 0)
           if let metro = env.metro {
             Text(":\(String(metro.port))").font(Theme.mono(10.5)).foregroundStyle(Theme.tertiary).fixedSize()
@@ -308,15 +308,14 @@ struct WorkspaceRow: View {
   }
 }
 
-/// A row's second line, such as `stim \u{00B7} apps/mobile`; nothing when every part is nil.
 private struct SidebarSubtitle: View {
+  var title: String
   var parts: [String?]
 
   var body: some View {
-    let text = parts.compactMap { $0 }.joined(separator: " \u{00B7} ")
-    if !text.isEmpty {
-      Text(text).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
-    }
+    let text = parts.compactMap { $0 }.filter { $0 != title }.joined(separator: " \u{00B7} ")
+    Text(text.isEmpty ? " " : text).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+      .truncationMode(.middle)
   }
 }
 
@@ -334,7 +333,7 @@ struct NoEnvironmentRow: View {
       StatusDot(color: Theme.tertiary, filled: false)
       VStack(alignment: .leading, spacing: 1) {
         Text(names.title).lineLimit(1).truncationMode(.middle)
-        SidebarSubtitle(parts: [subtitle, names.inCheckout])
+        SidebarSubtitle(title: names.title, parts: [subtitle, names.inCheckout])
       }
       .layoutPriority(1)
       Spacer()

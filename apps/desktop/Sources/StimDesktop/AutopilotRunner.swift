@@ -302,7 +302,7 @@ final class AutopilotRunner: ObservableObject {
       if !removed.isEmpty {
         Notifier.postWorktreesRemoved(
           title: PullRequestCleanup.summary(removed),
-          body: removed.map { PathNames(path: $0.path).title }.joined(separator: ", "))
+          body: removed.map { self.status.names(ofPath: $0.path).title }.joined(separator: ", "))
       }
     }
     if started == nil { pullRequestVerdict = nil }
