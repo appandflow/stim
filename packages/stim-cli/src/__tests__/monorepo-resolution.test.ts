@@ -249,6 +249,12 @@ describe('the workspace a monorepo web server belongs to', () => {
     expect(findServerWorkspace(app)).toEqual({ root: app, from: null });
   });
 
+  test('a web package that already holds ports keeps them', () => {
+    upsertProject(web, { ports: { web: 8900 } });
+    upsertProject(app, {});
+    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
+  });
+
   test('keeps the nearest package when the app is unregistered or ambiguous', () => {
     expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
     const second = join(ws, 'packages', 'second');

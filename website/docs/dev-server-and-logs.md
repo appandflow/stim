@@ -321,15 +321,20 @@ Allocations belong to the nearest directory with a `package.json`, resolved
 through symlinks. In a monorepo whose web app lives in its own package, a
 package that depends on neither `react-native` nor `expo` uses the one Stim app
 registered in the same Git worktree, and stderr names it. Register the app
-first with `stim start` or `stim ios`, then run `ports` from the web package:
+first with `stim start`, `stim ios` or `stim android`, then run `ports` from
+the web package:
 
 <StimTabs
 code={`cd apps/web
 VITE_PORT="$(stim ports get web)" pnpm dev`}
 />
 
-With no registered app in the worktree, or more than one, the nearest package
-keeps the allocation; run `ports` from the app directory instead. Shared services are not modeled: pass a shared service's port through the
+Every `ports` command there acts on the app's ports. A package that already
+holds ports keeps them until you release them. With no registered app in the
+worktree, or more than one, the nearest package keeps the allocation; run
+`ports` from the app directory instead.
+
+Shared services are not modeled: pass a shared service's port through the
 environment instead of allocating one per worktree.
 
 Copy this prompt into your agent:

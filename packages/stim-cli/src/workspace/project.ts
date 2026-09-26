@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from 'fs';
-import { basename, join, dirname, isAbsolute, relative, resolve } from 'path';
-import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject } from './config.ts';
+import { basename, join, dirname, resolve } from 'path';
+import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject, isPathPrefix } from './config.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import { repoRoot } from './worktree.ts';
 
 interface PackageJson {
@@ -122,37 +123,20 @@ export function findProjectRoot(startDir: string): string | null {
   }
 }
 
-/**
- * The workspace a server started from `startDir` belongs to. It is the nearest package.json directory, unless
- * that package is not a React Native or Expo app and exactly one registered app project shares its git
- * worktree; then it is that app, and `from` names the package the lookup started in.
- */
 export function findServerWorkspace(startDir: string): { root: string; from: string | null } | null {
   const nearest = findProjectRoot(startDir);
   if (!nearest) return null;
   if (appProjectProblem(nearest)?.kind !== 'not-an-app') return { root: nearest, from: null };
+  if (Object.keys(getProject(nearest)?.ports ?? {}).length) return { root: nearest, from: null };
   const top = repoRoot(nearest);
   if (!top) return { root: nearest, from: null };
-  const worktree = canonical(top);
+  const worktree = canonicalPath(top);
   const apps = Object.keys(loadConfig()?.projects ?? {}).filter((path) => {
-    if (path === nearest || !isInside(worktree, path) || appProjectProblem(path) !== null) return false;
+    if (path === nearest || !isPathPrefix(worktree, path) || appProjectProblem(path) !== null) return false;
     const owner = repoRoot(path);
-    return owner !== null && canonical(owner) === worktree;
+    return owner !== null && canonicalPath(owner) === worktree;
   });
   return apps.length === 1 ? { root: apps[0]!, from: nearest } : { root: nearest, from: null };
-}
-
-function canonical(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
-  }
-}
-
-function isInside(dir: string, path: string): boolean {
-  const rel = relative(dir, path);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 function loadPackageJson(projectRoot: string): { pkg: PackageJson | null; parseError: string | null } {
