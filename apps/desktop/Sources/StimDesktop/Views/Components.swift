@@ -77,6 +77,24 @@ struct MemoryEstimatePill: View {
   }
 }
 
+/// One pill naming everything driving a workspace's devices, so the device tiles only mark which ones are driven.
+struct DriversPill: View {
+  var activities: [DeviceActivity?]
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 30)) { context in
+      if let summary = ActivityBadge.driversSummary(activities, now: context.date) {
+        Pill(tone: .accent) {
+          StatusDot(color: Palette.primary)
+          Text("Driven by \(summary)")
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Driven by \(summary.replacingOccurrences(of: " \u{00B7} ", with: " for "))")
+      }
+    }
+  }
+}
+
 /// Lays out subviews left to right, wrapping to a new line when a subview would not fit
 /// in the remaining width of the proposed size.
 struct FlowLayout: Layout {

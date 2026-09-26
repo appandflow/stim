@@ -41,7 +41,7 @@ struct WallView: View {
                     Button { selection = .environment(env.path) } label: {
                       DeviceTile(
                         device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                        workspaceTitle: env.names.title, build: env.runningBuild(for: device))
+                        workspaceTitle: env.names.title, build: env.runningBuild(for: device), namesDriver: false)
                     }
                     .buttonStyle(.plain)
                   }
@@ -106,6 +106,9 @@ struct WorkspaceHeader: View {
           Text("Metro")
           Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
         }
+      }
+      if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
+        DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
       }
       if let supervisor = env.supervisor, supervisor.healthy != true {
         Pill(tone: .warning) { Text("supervisor unhealthy") }

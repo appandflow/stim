@@ -13,6 +13,8 @@ struct DeviceTile: View {
   var build: Build? = nil
   var takenOver = false
   var onToggleTakeOver: (() -> Void)? = nil
+  /// False where the workspace header already names the drivers, so a driven tile only says "Driven".
+  var namesDriver = true
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -203,15 +205,22 @@ struct DeviceTile: View {
     }
   }
 
-  private func activityChip(_ badge: ActivityBadge) -> some View {
-    let tone: PillTone
+  @ViewBuilder private func activityChip(_ badge: ActivityBadge) -> some View {
+    let basis = device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? ""
     switch badge {
-    case .driven: tone = .accent
-    case .idle: tone = .neutral
-    case .unknown: tone = .warning
+    case .driven:
+      Pill(tone: .accent) {
+        StatusDot(color: Palette.primary)
+        Text(namesDriver ? badge.text : "Driven")
+      }
+      .help([badge.text, basis].joined(separator: "\n"))
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(badge.text)
+    case .idle:
+      Pill(tone: .neutral) { Text(badge.text) }.help(basis)
+    case .unknown:
+      Pill(tone: .warning) { Text(badge.text) }.help(basis)
     }
-    return Pill(tone: tone) { Text(badge.text) }
-      .help(device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? "")
   }
 
   private func rotateButton(clockwise: Bool) -> some View {

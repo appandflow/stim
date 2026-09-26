@@ -147,7 +147,8 @@ says **App stopped**. Reload app is disabled when every running local device has
 
 Each device tile shows the `activity` that `stim status` reports: "Driven by
 <tool> · 12m" while agent-device, a Stim device lock, or a test runner drives
-it, "Idle 3h" when nothing has used it for 10 minutes or more, and "Activity
+it (on the wall, where the workspace header names every driver once as "Driven
+by <tools> · 12m", a driven tile only says "Driven"), "Idle 3h" when nothing has used it for 10 minutes or more, and "Activity
 unknown" when Stim could not read a claim. The app adds one signal the CLI
 cannot see: a simulator's screen damage or an emulator's new frame. A screen
 that changed in the last 10 minutes clears the idle badge, and an older change
