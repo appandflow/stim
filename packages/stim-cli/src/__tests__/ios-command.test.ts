@@ -2612,7 +2612,7 @@ describe('Contract 4: the state file', () => {
   test('writeLastBuild survives a workspace it cannot write', () => {
     const record = lastBuildRecord({ startedAt: 'T', status: 'ok' });
     const written = writeLastBuild(root, record, {
-      write: () => {
+      record: () => {
         throw new Error('EROFS');
       },
     });

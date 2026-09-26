@@ -63,6 +63,7 @@ export interface FailExtra {
 }
 
 export interface AndroidRecord {
+  configuration?: string | null;
   missReason?: BuildMissReason | null;
   fingerprint?: string | null;
   cacheKey?: string | null;

@@ -51,6 +51,25 @@ export interface LastBuildReport {
   diagnostics?: BuildDiagnostic[];
 }
 
+/** How a recorded build ended. `interrupted` is a run whose process ended without recording a result. */
+export const BUILD_RESULTS = ['succeeded', 'failed', 'cancelled', 'interrupted'] as const;
+
+export type BuildResult = (typeof BUILD_RESULTS)[number];
+
+/**
+ * One run in a workspace's recent build history. `configuration` is the iOS configuration or the Android
+ * variant the run built, `Debug` or `debug` by default, and null when the run ended before resolving it.
+ * `phases` holds the milliseconds spent in each phase the run entered. An interrupted run has null
+ * `durationMs` and `finishedAt`, no cache facts, and 0 for the phase it stopped in.
+ */
+export interface BuildHistoryEntry extends LastBuildReport {
+  result: BuildResult;
+  slot: string;
+  configuration: string | null;
+  cacheKey: string | null;
+  phases: Partial<Record<BuildPhase, number>>;
+}
+
 /** One compiler error from a failed build: where it is, when the tool said, and its message. */
 export interface BuildDiagnostic {
   file: string | null;
@@ -259,6 +278,8 @@ export interface EnvironmentState {
   remoteDevices?: RemoteDeviceState[];
   build?: BuildReport | null;
   lastBuilds?: Partial<Record<StatsPlatform, LastBuildReport>>;
+  /** Each platform's recent runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
+  builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
 }
 
 export interface StatusCapacity {

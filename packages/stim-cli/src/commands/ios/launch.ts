@@ -845,7 +845,6 @@ export async function finishIosRun({
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
-    d,
     root,
     slot,
     json,

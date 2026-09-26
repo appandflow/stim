@@ -2803,7 +2803,7 @@ describe('Contract 4: state.json.lastBuild', () => {
 
   test('a state file that cannot be written is a warning, not a failed run', async () => {
     const h = harness({
-      writeState: () => {
+      recordBuild: () => {
         throw new Error('read-only volume');
       },
     });
@@ -3113,6 +3113,7 @@ describe('the pure parts', () => {
       'bundleId',
       'startedAt',
       'status',
+      'configuration',
     ]);
     expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });

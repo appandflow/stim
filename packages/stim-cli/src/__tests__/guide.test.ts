@@ -1,5 +1,11 @@
 import { Command } from 'commander';
-import { APP_PROCESS_STATES, SETTINGS, STATUS_ISSUE_CODES } from '@stim-cli/core/state';
+import {
+  APP_PROCESS_STATES,
+  BUILD_HISTORY_LIMIT,
+  BUILD_RESULTS,
+  SETTINGS,
+  STATUS_ISSUE_CODES,
+} from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
@@ -640,6 +646,13 @@ test('the facts topic documents every app process state', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const state of APP_PROCESS_STATES) expect(body).toMatch(new RegExp(`^ +(state +)?"${state}" `, 'm'));
+});
+
+test('the facts topic documents every build result and the history length status can report', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const result of BUILD_RESULTS) expect(body).toContain(`"${result}"`);
+  expect(body).toContain(`last ${BUILD_HISTORY_LIMIT} runs`);
 });
 
 test('the facts topic documents every build phase and state status can report', () => {

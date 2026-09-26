@@ -963,7 +963,10 @@ THE BUILD CACHE HAS THREE LEVELS
   records the reason as lastBuilds.<platform>.missReason in status --json
   (see \`guide facts status\`), and writes the changed sources (capped at 20
   names) to the build log as a fingerprint_diff record. With no baseline the
-  line says there was nothing to compare with.
+  line says there was nothing to compare with. status --json also lists each
+  platform's last 10 runs in builds.<platform>, with their result, cache
+  outcome, miss reason, phase timings and diagnostics, so a hit that turned
+  into a miss shows which run changed what.
 
   THE KEY CAN MOVE MID-RUN, and the run says so in two facts rather than two
   explanations. \`expo prebuild\` and \`pod install\` rewrite fingerprinted
