@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, realpathSync } from 'fs';
-import { createRequire } from 'module';
 import { basename, join, dirname, resolve } from 'path';
 import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject } from './config.ts';
 import { repoRoot } from './worktree.ts';
@@ -23,22 +22,16 @@ export interface ResolveResult {
   error?: string;
 }
 
-const requireFromHere = createRequire(import.meta.url);
-
+/**
+ * The realpath of `name`'s package.json in the nearest `node_modules` at or above `projectRoot`.
+ * Unlike `require.resolve`, it ignores `NODE_PATH`, which pnpm's bin shims point at the workspace's
+ * hidden hoist directory holding every member's dependencies.
+ */
 export function resolvePackageJson(projectRoot: string, name: string): string | null {
-  try {
-    return requireFromHere.resolve(`${name}/package.json`, { paths: [projectRoot] });
-  } catch {
-    try {
-      const main = requireFromHere.resolve(name, { paths: [projectRoot] });
-      const marker = `/node_modules/${name}/`;
-      const at = main.lastIndexOf(marker);
-      if (at === -1) return null;
-      const candidate = join(main.slice(0, at + marker.length), 'package.json');
-      return existsSync(candidate) ? candidate : null;
-    } catch {
-      return null;
-    }
+  for (let dir = resolve(projectRoot); ; dir = dirname(dir)) {
+    const candidate = join(dir, 'node_modules', name, 'package.json');
+    if (existsSync(candidate)) return realpathSync(candidate);
+    if (dirname(dir) === dir) return null;
   }
 }
 
