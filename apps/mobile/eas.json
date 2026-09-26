@@ -9,7 +9,9 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "APP_VARIANT": "development"
+        "APP_VARIANT": "development",
+        "EAS_USE_CACHE": "1",
+        "EAS_GRADLE_CACHE": "1"
       },
       "channel": "development"
     },
