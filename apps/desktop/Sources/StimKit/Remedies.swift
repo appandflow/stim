@@ -137,9 +137,15 @@ public func shellQuote(_ s: String) -> String {
   "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
-/// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one local
-/// device, naming its slot unless it is the default one.
-public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand {
+/// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one
+/// Stim-owned simulator or emulator, naming its slot unless it is the default one. Nil for a physical device or
+/// one Stim does not own, which that command does not target.
+public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
+  switch device {
+  case .ios(_, let sim) where sim.owned: break
+  case .android(_, let avd) where avd.owned && !avd.physical: break
+  default: return nil
+  }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
   return StimCommand([device.platform] + slot, cwd: cwd)
 }

@@ -71,14 +71,27 @@ import Testing
     let device = try #require(stopped.devices.first)
     #expect(device.appStopped)
     #expect(!stopped.canReload)
-    #expect(runCommand(for: device, cwd: "/w").arguments == ["ios", "--slot", "duo"])
+    #expect(runCommand(for: device, cwd: "/w")?.arguments == ["ios", "--slot", "duo"])
     let unknown = try workspace(
       #","metro":{"port":8081,"running":true,"pid":1},"android":{"name":"stim-w","owned":true,"physical":false,"serial":"emulator-5554","state":"detected","app":{"id":"com.example.app","state":"unknown"}}"#
     )
     let emulator = try #require(unknown.devices.first)
     #expect(!emulator.appStopped)
     #expect(unknown.canReload)
-    #expect(runCommand(for: emulator, cwd: "/w").arguments == ["android"])
+    #expect(runCommand(for: emulator, cwd: "/w")?.arguments == ["android"])
+  }
+
+  @Test func offersNoRunForAPhysicalOrUnownedDevice() throws {
+    let phone = try workspace(
+      #","android":{"name":"Pixel 9","owned":false,"physical":true,"serial":"4B1C0012","state":"detected","app":{"id":"com.example.app","state":"stopped"}}"#
+    )
+    let iphone = try workspace(
+      #","ios":{"name":"Janic's iPhone","udid":"00008120-001","owned":false,"state":"Booted","app":{"id":"com.example.app","state":"stopped"}}"#
+    )
+    for device in [try #require(phone.devices.first), try #require(iphone.devices.first)] {
+      #expect(device.appStopped)
+      #expect(runCommand(for: device, cwd: "/w") == nil)
+    }
   }
 }
 
