@@ -22,7 +22,7 @@ import type { MetroResolution } from '../metro.ts';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
-import { findServerWorkspace, projectShortcut } from '../workspace/project.ts';
+import { detectIsExpo, findServerWorkspace, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync, parseSimctlList } from '../devices/ios.ts';
 import { ownedAvdDeviceProfile, ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
@@ -325,7 +325,7 @@ function renderStatus(
     out.push(
       labelOnlyRoots[i]
         ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
-        : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${proj.isExpo ? 'expo' : 'bare'})`),
+        : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${(proj.isExpo ?? detectIsExpo(path)) ? 'expo' : 'bare'})`),
     );
 
     if (state.metro) {

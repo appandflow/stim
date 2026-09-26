@@ -135,6 +135,18 @@ test('status says nothing extra for a project that has only a Metro port', async
   expect(logs.some((l) => /!/.test(l))).toBe(false);
 });
 
+test('status detects the framework of an app registered only through a named port', async () => {
+  const app = join(tmpHome, 'expo-app');
+  mkdirSync(app);
+  writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+  saveConfig(makeConfig({ version: 2, projects: { [app]: { metroPort: null, platforms: {}, ports: { web: 8900 } } } }));
+
+  const logs = await runStatus();
+
+  expect(logs).toContainEqual(expect.stringMatching(/app: \? \(expo\)/));
+});
+
 test('status reports simctl as unreadable instead of warning that every sim is gone', async () => {
   setExecutor({
     runFile(_file, args = []) {
