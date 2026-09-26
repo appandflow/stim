@@ -6,7 +6,8 @@ import { terminate } from './stim-command.ts';
 export type JsonObject = Record<string, unknown>;
 
 export interface FeedListener {
-  item: (value: JsonObject) => void;
+  /** `text` is the line the child printed for `value`, so a listener can forward it without serializing again. */
+  item: (value: JsonObject, text: string) => void;
   failed: (message: string) => void;
 }
 
@@ -21,7 +22,7 @@ const STDERR_TAIL = 2000;
 
 class Feed {
   private readonly listeners = new Set<FeedListener>();
-  private readonly kept: JsonObject[] = [];
+  private readonly kept: { value: JsonObject; text: string }[] = [];
   private child: ChildProcess | null;
 
   private readonly ended: () => void;
@@ -48,9 +49,9 @@ class Feed {
         return;
       }
       if (!isJsonObject(value)) return;
-      this.kept.push(value);
+      this.kept.push({ value, text: line });
       if (this.kept.length > spec.keep) this.kept.shift();
-      for (const listener of this.listeners) listener.item(value);
+      for (const listener of this.listeners) listener.item(value, line);
     });
     const exited = (reason: string) => {
       if (this.child !== child) return;
@@ -67,7 +68,7 @@ class Feed {
 
   add(listener: FeedListener): () => void {
     this.listeners.add(listener);
-    for (const value of this.kept) listener.item(value);
+    for (const { value, text } of this.kept) listener.item(value, text);
     return () => {
       if (this.listeners.delete(listener) && this.listeners.size === 0) void this.stop();
     };

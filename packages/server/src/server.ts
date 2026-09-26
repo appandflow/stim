@@ -516,9 +516,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function subscribeStatus(id: RequestId): void {
       const subscription = openSubscription(id);
       if (!subscription) return;
+      const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
       const unsubscribe = feeds.subscribe(STATUS_FEED, {
-        item: (payload) =>
-          send(socket, { event: 'status', subscription, payload: payload as unknown as StatusPayload }),
+        item: (_payload, text) => {
+          if (socket.readyState === socket.OPEN) socket.send(`${envelope}${text}}`);
+        },
         failed: (message) => {
           subscriptions.delete(subscription);
           send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
