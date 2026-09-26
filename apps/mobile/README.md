@@ -139,7 +139,11 @@ is the workspace's name, with the device's model and slot under it. The close
 button at the top left, Android's back button, or dragging the screen down
 while Control is off shrinks it back into the thumbnail; a short drag springs
 back. The route is a transparent modal, so the list stays underneath, and the
-thumbnail hides while the viewer covers it. The viewer lays the screen out itself, animating its position and
+thumbnail hides while the viewer covers it. With Control off, pinching zooms into the
+picture up to 5 times, one finger pans it while zoomed, and a double-tap zooms
+in to 2.5 times where you tap, or back to fit. Dragging down closes the viewer
+only at fit. Turning Control on puts the picture back at fit and turns these
+gestures off, so touches go to the device. The viewer lays the screen out itself, animating its position and
 size rather than a transform, so Android's `SurfaceView` follows it and the
 stream stays live through both animations. With reduced motion on, the viewer
 opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to

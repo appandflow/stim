@@ -200,6 +200,7 @@ export function useDeviceZoom(
 
   const pan = usePanGesture({
     enabled: dragEnabled,
+    maxPointers: 1,
     activeOffsetY: 12,
     failOffsetX: [-24, 24],
     onUpdate: (event) => {

@@ -27,6 +27,7 @@ import { Icon } from '@/components/icon';
 import { Toggle } from '@/components/toggle';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
+import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
@@ -93,11 +94,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const insets = useSafeAreaInsets();
   const root = useRef<ViewInstance>(null);
   const stage = useRef<ViewInstance>(null);
+  const screenZoom = useScreenZoom(!controlling && streams);
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
     aspectOf(source),
     platform === 'ios' ? 0.46 : 0.45,
-    !controlling && !(landscape && readOnly),
+    !controlling && !(landscape && readOnly) && !screenZoom.zoomed,
     root,
     stage,
   );
@@ -415,28 +417,34 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           </Animated.View>
           {streams ? (
             <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
-              <DeviceScreen
-                stream={stream}
-                label={model}
-                style={StyleSheet.absoluteFill}
-                requested={{ fps: preset.fps, maxEdge }}
-              >
-                {snapshot ? (
-                  <Image
-                    source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
-                    style={StyleSheet.absoluteFill}
-                    contentFit="contain"
-                    transition={0}
-                  />
-                ) : null}
-                {source ? (
-                  <View
-                    style={[styles.overlay, controlling && { borderColor: colors.primary }]}
-                    pointerEvents={controlling ? 'auto' : 'none'}
-                    {...(controlling ? touchHandlers : {})}
-                  />
-                ) : null}
-              </DeviceScreen>
+              <GestureDetector gesture={screenZoom.gesture}>
+                <Animated.View style={StyleSheet.absoluteFill} onLayout={screenZoom.onLayout}>
+                  <Animated.View style={screenZoom.style}>
+                    <DeviceScreen
+                      stream={stream}
+                      label={model}
+                      style={StyleSheet.absoluteFill}
+                      requested={{ fps: preset.fps, maxEdge }}
+                    >
+                      {snapshot ? (
+                        <Image
+                          source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="contain"
+                          transition={0}
+                        />
+                      ) : null}
+                      {source ? (
+                        <View
+                          style={[styles.overlay, controlling && { borderColor: colors.primary }]}
+                          pointerEvents={controlling ? 'auto' : 'none'}
+                          {...(controlling ? touchHandlers : {})}
+                        />
+                      ) : null}
+                    </DeviceScreen>
+                  </Animated.View>
+                </Animated.View>
+              </GestureDetector>
             </Animated.View>
           ) : null}
           {rotateNote && rest ? (
