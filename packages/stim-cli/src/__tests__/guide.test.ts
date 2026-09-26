@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
+import { STIM_DESKTOP_INSTALLED } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
 import {
   topicNames,
@@ -366,6 +367,10 @@ test('the viewer override is discoverable beside the machine preference and boot
     expect(guide).toContain('--simulator-app stim-desktop');
     expect(guide).toContain('--simulator-app xcode');
   }
+});
+
+test('the settings topic names the reason stim settings prints for a Stim Desktop default', () => {
+  expect(renderTopic('settings')).toContain(`(default: ${STIM_DESKTOP_INSTALLED})`);
 });
 
 test('emulator boot guidance routes the emulator viewer preference to the settings topic', () => {

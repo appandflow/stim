@@ -376,7 +376,8 @@ STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
 displays Stim's owned local iOS simulator after boot. It is not a project
-setting. Unset or \`"xcode"\` opens the selected Xcode's Device Hub on Xcode 27,
+setting. Unset, it is \`"stim-desktop"\` while Stim Desktop is installed and
+\`"xcode"\` otherwise. \`"xcode"\` opens the selected Xcode's Device Hub on Xcode 27,
 or Simulator on older Xcode. On Xcode 27 (confirmed on 27A266a), quitting
 Device Hub by default shuts down every booted simulator on the machine,
 including ones it never opened a window for and ones other workspaces or
@@ -407,9 +408,10 @@ window behavior.
 
 THE ANDROID EMULATOR APP IS MACHINE-LEVEL
 Top-level \`androidEmulatorApp\` in ~/.stim/config.json selects how an owned
-Android emulator that Stim boots on macOS is displayed. Unset or
-\`"emulator"\` opens the emulator's own window. To boot it headlessly and show
-it in Stim Desktop instead:
+Android emulator that Stim boots on macOS is displayed. Unset, it is
+\`"stim-desktop"\` while Stim Desktop is installed and \`"emulator"\`
+otherwise. \`"emulator"\` opens the emulator's own window. To boot it
+headlessly and show it in Stim Desktop:
 
   { "androidEmulatorApp": "stim-desktop" }
 
@@ -420,6 +422,12 @@ only when Stim boots the emulator: one that is already running keeps its
 current display until it next boots, and physical devices are unaffected.
 An invalid value refuses before boot. On Linux and Windows the setting has
 no effect.
+
+Stim finds Stim Desktop by its bundle id, dev.stim.desktop, in Launch Services.
+\`stim settings\` shows that default as \`(default: Stim Desktop installed)\`,
+\`settings get\` prints it on stderr, and \`--json\` adds
+\`"defaultReason": "Stim Desktop installed"\`. A set value always wins; set
+\`"xcode"\` or \`"emulator"\` to keep the device windows.
 
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may

@@ -1023,7 +1023,7 @@ export function bootAndroidEmulator(
   { logFile, platform = process.platform }: { logFile?: string | null; platform?: NodeJS.Platform } = {},
 ): number | null {
   const exec = getExecutor();
-  const app = configuredAndroidEmulatorApp();
+  const app = configuredAndroidEmulatorApp(platform);
   const child = exec.spawn(
     androidToolPath('emulator'),
     [

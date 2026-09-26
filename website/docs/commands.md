@@ -592,7 +592,11 @@ atomically. A committed write keeps the file's other keys and indentation.
 ```
 
 `origin` is the winning layer, `env` when an environment variable overrides
-the file (`env` then names it), `default`, or `null` when unset. `unknown`
+the file (`env` then names it), `default`, or `null` when unset. A default
+that depends on the machine carries `defaultReason`: `iosSimulatorApp` and
+`androidEmulatorApp` default to `stim-desktop` with `"defaultReason": "Stim
+Desktop installed"` when Stim Desktop is installed. Plain `settings get`
+prints the value on stdout and that reason on stderr. `unknown`
 lists keys Stim does not read. `android.keystorePassword` is sensitive: it
 prints as `********`, and `committed` accepts only an `env:` or `file:`
 reference for it. `set` and `unset --json` print the layer written, its file,

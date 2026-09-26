@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 
 let base: string;
@@ -23,12 +23,20 @@ beforeEach(() => {
   writeFileSync(join(repo, 'package.json'), '{}\n');
   writeFileSync(join(app, 'package.json'), '{}\n');
   process.env.STIM_HOME = home;
+  const real = getExecutor();
+  setExecutor(
+    Object.assign(Object.create(real), {
+      runFileQuiet: (file: string, args: string[], opts: object) =>
+        file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
+    }),
+  );
   cwd = process.cwd();
   process.chdir(app);
   process.exitCode = undefined;
 });
 
 afterEach(() => {
+  resetExecutor();
   process.chdir(cwd);
   rmSync(base, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -127,6 +135,43 @@ test('a machine write keeps the project and device records in the config', async
     platforms: { ios: { deviceUdid: 'U', owned: true } },
     settings: { ios: { deviceType: 'iPhone 17 Pro' } },
   });
+});
+
+test('the viewer settings default to stim-desktop while Stim Desktop is installed on macOS, and a set value wins', async () => {
+  const stubbed = getExecutor();
+  let desktop = '/Applications/Stim.app';
+  setExecutor(
+    Object.assign(Object.create(stubbed), {
+      runFileQuiet: (file: string, args: string[], opts: object) =>
+        file === 'osascript' ? desktop : stubbed.runFileQuiet(file, args, opts),
+    }),
+  );
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    expect(await settings(['get', 'iosSimulatorApp'])).toMatchObject({
+      out: ['stim-desktop'],
+      note: ['(default: Stim Desktop installed)'],
+    });
+    const payload = JSON.parse((await settings(['--json'])).out[0]!);
+    expect(entry(payload, 'androidEmulatorApp')).toEqual({
+      key: 'androidEmulatorApp',
+      value: 'stim-desktop',
+      origin: 'default',
+      layers: {},
+      defaultReason: 'Stim Desktop installed',
+    });
+    expect((await settings([])).out).toContainEqual(
+      expect.stringMatching(/^iosSimulatorApp +stim-desktop {2}\(default: Stim Desktop installed\)$/),
+    );
+
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ iosSimulatorApp: 'xcode' }));
+    expect(await settings(['get', 'iosSimulatorApp'])).toMatchObject({ out: ['xcode'], note: [] });
+
+    desktop = '';
+    expect(await settings(['get', 'androidEmulatorApp'])).toMatchObject({ out: ['emulator'], note: [] });
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 test.each([

@@ -893,6 +893,7 @@ test('opening the Simulator app is bounded and best-effort after successful boot
     runFile: () => '',
     spawn: () => makeExitingChild(),
     runFileQuiet(file, args, options) {
+      if (file === 'osascript') return null;
       if (file === 'xcrun') return join(tmpHome, 'Xcode.app', 'Contents', 'Developer', 'usr', 'bin', 'simctl');
       expect([file, ...args]).toEqual(['open', '-a', 'Simulator']);
       expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
@@ -911,6 +912,7 @@ test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hu
     spawn: () => makeExitingChild(),
     runFileQuiet(file, args, options) {
       expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
+      if (file === 'osascript') return '';
       if (file === 'xcrun') {
         expect(args).toEqual(['--find', 'simctl']);
         return join(xcode, 'Developer', 'usr', 'bin', 'simctl');
@@ -920,6 +922,29 @@ test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hu
     },
   });
   await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
+});
+
+test.each([
+  [undefined, 'open -g -a Stim stim-desktop://open?udid=UDID-A'],
+  ['xcode', 'open -a Simulator'],
+])('with Stim Desktop installed, a %s machine preference opens %s', async (configured, command) => {
+  if (configured) writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: configured }));
+  const quiet: string[] = [];
+  setExecutor({
+    runFile: () => '',
+    spawn: () => makeExitingChild(),
+    runFileQuiet(file, args) {
+      quiet.push([file, ...args].join(' '));
+      return file === 'osascript' ? '/Applications/Stim.app' : null;
+    },
+  });
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    await bootIosSim('UDID-A');
+  } finally {
+    vi.restoreAllMocks();
+  }
+  expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
 });
 
 test('machine config opens the owned simulator in Siniulator', async () => {
