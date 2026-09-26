@@ -187,7 +187,6 @@ function androidTool(tool: AndroidTool): string {
   return resolved === tool ? tool : `"${resolved}"`;
 }
 
-/** Lists the SDK's installed system images; `onUnreadable` receives each read error other than a missing folder. */
 export function listInstalledSystemImages(onUnreadable?: (error: unknown) => void): SystemImage[] {
   const root = join(androidHome(), 'system-images');
   const images: SystemImage[] = [];

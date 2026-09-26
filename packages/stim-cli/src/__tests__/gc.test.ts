@@ -2646,57 +2646,66 @@ test('gc --json lists every device with its owner and every runtime and system i
   }
 });
 
-test('gc --json inventory reports AVD and system image folders it cannot read instead of dropping them', async () => {
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  const lockedAvdRoot = process.env.ANDROID_AVD_HOME as string;
-  mkdirSync(lockedAvdRoot, { recursive: true });
-  const userAvdRoot = join(process.env.ANDROID_USER_HOME as string, 'avd');
-  for (const name of ['Pixel_9', 'Locked']) {
-    const directory = join(userAvdRoot, `${name}.avd`);
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(join(userAvdRoot, `${name}.ini`), `path=${directory}\n`);
-    writeFileSync(join(directory, 'config.ini'), 'image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\n');
-  }
-  const sdk = join(fakeHome, 'sdk');
-  const images = join(sdk, 'system-images');
-  mkdirSync(join(images, 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
-  const savedSdk = { ANDROID_HOME: process.env.ANDROID_HOME, ANDROID_SDK_ROOT: process.env.ANDROID_SDK_ROOT };
-  process.env.ANDROID_HOME = sdk;
-  delete process.env.ANDROID_SDK_ROOT;
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  setExecutor({
-    ...getExecutor(),
-    runFile(file, args: string[] = []) {
-      const cmd = [file, ...args].join(' ');
-      if (cmd === 'xcrun simctl list devices --json') return iosListJson([]);
-      if (cmd === 'xcrun simctl runtime list -j') return '{}';
-      if (cmd === 'xcrun simctl list runtimes -j') return '{"runtimes":[]}';
-      throw new Error(`unexpected runFile: ${cmd}`);
-    },
-  });
-  chmodSync(lockedAvdRoot, 0o000);
-  chmodSync(join(userAvdRoot, 'Locked.ini'), 0o000);
-  chmodSync(images, 0o000);
-
-  try {
-    const { stdout } = await captureJson(() => runGc({ json: true }));
-    const { inventory } = JSON.parse(stdout[0] ?? '');
-    expect(inventory.devices.map((d: { id: string }) => d.id)).toEqual(['Pixel_9']);
-    expect(inventory.systemImages).toEqual([]);
-    expect(inventory.notices).toEqual([
-      expect.stringMatching(/^Android system images not listed: EACCES/),
-      expect.stringContaining(`AVDs in ${lockedAvdRoot} not listed: EACCES`),
-      expect.stringMatching(/^AVD Locked not listed: EACCES/),
-    ]);
-  } finally {
-    chmodSync(lockedAvdRoot, 0o700);
-    chmodSync(images, 0o700);
-    for (const [key, value] of Object.entries(savedSdk)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+  'gc --json inventory reports AVD and system image folders it cannot read instead of dropping them',
+  async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const lockedAvdRoot = process.env.ANDROID_AVD_HOME as string;
+    mkdirSync(lockedAvdRoot, { recursive: true });
+    const userAvdRoot = join(process.env.ANDROID_USER_HOME as string, 'avd');
+    for (const name of ['Pixel_9', 'Locked', 'Sealed']) {
+      const directory = join(userAvdRoot, `${name}.avd`);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(userAvdRoot, `${name}.ini`), `path=${directory}\n`);
+      writeFileSync(join(directory, 'config.ini'), 'image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\n');
     }
-  }
-});
+    const sdk = join(fakeHome, 'sdk');
+    const images = join(sdk, 'system-images');
+    mkdirSync(join(images, 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
+    const savedSdk = { ANDROID_HOME: process.env.ANDROID_HOME, ANDROID_SDK_ROOT: process.env.ANDROID_SDK_ROOT };
+    process.env.ANDROID_HOME = sdk;
+    delete process.env.ANDROID_SDK_ROOT;
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    setExecutor({
+      ...getExecutor(),
+      runFile(file, args: string[] = []) {
+        const cmd = [file, ...args].join(' ');
+        if (cmd === 'xcrun simctl list devices --json') return iosListJson([]);
+        if (cmd === 'xcrun simctl runtime list -j') return '{}';
+        if (cmd === 'xcrun simctl list runtimes -j') return '{"runtimes":[]}';
+        throw new Error(`unexpected runFile: ${cmd}`);
+      },
+    });
+    chmodSync(lockedAvdRoot, 0o000);
+    chmodSync(join(userAvdRoot, 'Locked.ini'), 0o000);
+    chmodSync(join(userAvdRoot, 'Sealed.avd'), 0o000);
+    chmodSync(images, 0o000);
+
+    try {
+      const { stdout } = await captureJson(() => runGc({ json: true }));
+      const { inventory } = JSON.parse(stdout[0] ?? '');
+      expect(inventory.devices.map((d: { id: string; runtime: string | null }) => [d.id, d.runtime])).toEqual([
+        ['Pixel_9', 'system-images;android-36;google_apis;arm64-v8a'],
+        ['Sealed', null],
+      ]);
+      expect(inventory.systemImages).toEqual([]);
+      expect(inventory.notices).toEqual([
+        expect.stringMatching(/^Android system images not listed: EACCES/),
+        expect.stringContaining(`AVDs in ${lockedAvdRoot} not listed: EACCES`),
+        expect.stringMatching(/^AVD Locked not listed: EACCES/),
+        expect.stringMatching(/^details of AVD Sealed not listed: EACCES/),
+      ]);
+    } finally {
+      chmodSync(lockedAvdRoot, 0o700);
+      chmodSync(join(userAvdRoot, 'Sealed.avd'), 0o700);
+      chmodSync(images, 0o700);
+      for (const [key, value] of Object.entries(savedSdk)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  },
+);
 
 test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or delete command', async () => {
   const execCalls: string[] = [];

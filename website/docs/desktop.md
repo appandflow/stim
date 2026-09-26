@@ -98,8 +98,8 @@ reports an inventory.
 When Stim cannot read a device or system image folder, the page says which
 one above the list. If macOS privacy protection blocked it, as it can for AVDs
 or an Android SDK on an external disk, allow Stim Desktop under
-System Settings > Privacy & Security > Files and Folders (Removable Volumes)
-and refresh.
+System Settings > Privacy & Security > Files and Folders (Removable Volumes),
+or give it Full Disk Access, and refresh.
 
 Try it with an agent:
 
