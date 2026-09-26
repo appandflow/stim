@@ -4387,10 +4387,15 @@ describe('re-fingerprint after Gradle', () => {
     mkdirSync(join(root, 'node_modules', 'example', 'android', 'src', 'main'), { recursive: true });
     writeFileSync(manifest, 'before');
     const configuredUploads: unknown[] = [];
-    const fingerprint = async () => ({
-      hash: readFileSync(manifest, 'utf8') === 'before' ? BEFORE_BUILD : AFTER_BUILD,
-      sources: [{ type: 'dir', filePath: 'android' }],
-    });
+    const fingerprint = async () => {
+      const contents = readFileSync(manifest, 'utf8');
+      return {
+        hash: contents === 'before' ? BEFORE_BUILD : AFTER_BUILD,
+        sources: [
+          { type: 'file', filePath: 'node_modules/example/android/src/main/AndroidManifest.xml', hash: contents },
+        ],
+      };
+    };
     const h = harness({
       fingerprint,
       build: async () => {
@@ -4463,6 +4468,46 @@ describe('re-fingerprint after Gradle', () => {
     expect(readState().lastBuild.fingerprint).toBeNull();
     expect(readState().lastBuild.cacheKey).toBeNull();
     expect(h.stderr.some((line) => /installed but not cached/.test(line))).toBe(true);
+  });
+
+  test('an app config edited during Gradle stores nothing and installs what was built', async () => {
+    const config = join(root, 'app.config.ts');
+    writeFileSync(config, 'portrait');
+    const configuredUploads: unknown[] = [];
+    const apk = fakeApk();
+    const h = harness({
+      planPrebuildFor: () => 'generate',
+      fingerprint: async () => {
+        const contents = readFileSync(config, 'utf8');
+        return {
+          hash: contents === 'portrait' ? BEFORE_BUILD : AFTER_BUILD,
+          sources: [{ type: 'contents', id: 'expoConfig', contents: '', hash: contents, reasons: ['expoConfig'] }],
+        };
+      },
+      build: async () => {
+        writeFileSync(config, 'landscape');
+        return makeAndroidBuildSuccess({ apkPath: apk, durationMs: 161000, lastLines: [] });
+      },
+      resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProviderModule: async () => ({
+        name: './cache.cjs',
+        provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
+      }),
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.storeCached).toEqual([]);
+    expect(configuredUploads).toEqual([]);
+    expect(h.calls.uploadRemoteBuild).toEqual([]);
+    expect(result.facts?.fingerprint).toBeNull();
+    expect(result.facts?.cacheKey).toBeNull();
+    expect(readState().lastBuild.cacheKey).toBeNull();
+    expect(readState().prebuild).toEqual({ android: null });
+    expect(h.calls.install[0]?.apkPath).toBe(apk);
+    expect(h.stderr.some((line) => /expoConfig changed while the build ran/.test(line))).toBe(true);
   });
 });
 

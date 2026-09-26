@@ -662,7 +662,7 @@ describe('the simulator boot gate', () => {
           return { ok: true, udid: UDID };
         },
         fingerprintProject: async () => {
-          fingerprintStartedAt = clock;
+          fingerprintStartedAt ||= clock;
           events.push('fingerprint start');
           await tick();
           clock += 3_000;
@@ -672,7 +672,8 @@ describe('the simulator boot gate', () => {
       },
     );
     expect(exitCode).toBe(null);
-    expect(events).toEqual(['boot start', 'fingerprint start', 'fingerprint end', 'boot end']);
+    expect(events.slice(0, 3)).toEqual(['boot start', 'fingerprint start', 'fingerprint end']);
+    expect(events).toContain('boot end');
     expect(bootStartedAt).toBe(fingerprintStartedAt);
     const out = errs.join('\n');
     expect(out).toMatch(/fingerprint a3f9b1\.\. miss \(3s\)/);
@@ -1250,6 +1251,7 @@ describe('the cache', () => {
       'runPodInstall',
       'fingerprintProject',
       'buildIos',
+      'fingerprintProject',
       'storeBuild',
       'installIosApp',
       'launchIosApp',
@@ -2859,11 +2861,9 @@ test('ios fingerprints with platforms scoped to ios', async () => {
       },
     },
   );
-  expect(seen.length).toBe(1);
-  const seenEntry = seen[0];
-  assert(seenEntry);
-  expect(seenEntry.path).toBe(root);
-  expect(seenEntry.options?.platform).toBe('ios');
+  expect(seen).toHaveLength(2);
+  expect(seen.every((call) => call.path === root)).toBe(true);
+  expect(seen.every((call) => call.options?.platform === 'ios')).toBe(true);
 });
 
 test('--json says so when a build failed with no recognizable diagnostic', async () => {
@@ -4195,10 +4195,77 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect(calls.order.filter((c) => c === 'resolveBuild').length).toBe(1);
   });
 
-  test('a warm tree runs no mutating step, so the fingerprint is computed exactly once', async () => {
+  test('a warm tree runs no mutating step, so the fingerprint is computed once before the build and once after it', async () => {
     reserve();
     const { calls } = await run();
-    expect(calls.order.filter((c) => c === 'fingerprintProject').length).toBe(1);
+    expect(calls.order.filter((c) => c === 'fingerprintProject' || c === 'buildIos')).toEqual([
+      'fingerprintProject',
+      'buildIos',
+      'fingerprintProject',
+    ]);
+  });
+
+  describe('an input edited while the build runs', () => {
+    function configFingerprint(file: string) {
+      return async () => {
+        const config = readFileSync(file, 'utf8');
+        return {
+          hash: config === 'portrait' ? COLD : WARM,
+          sources: [{ type: 'contents', id: 'expoConfig', contents: '', hash: config, reasons: ['expoConfig'] }],
+        };
+      };
+    }
+
+    test.each([
+      ['pod install', 'runPodInstall'],
+      ['xcodebuild', 'buildIos'],
+    ])('an app config edit during %s stores nothing and installs what was built', async (_label, step) => {
+      reserve();
+      const config = join(root, 'app.config.ts');
+      writeFileSync(config, 'portrait');
+      const configuredUploads: unknown[] = [];
+      const { logs, calls, exitCode, stderr, appPath } = await run(
+        { json: true },
+        {
+          detectIsExpo: () => true,
+          planPrebuild: () => 'generate',
+          readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+          fingerprintProject: configFingerprint(config),
+          runPodInstall: async () => {
+            if (step === 'runPodInstall') writeFileSync(config, 'landscape');
+            return { ok: true, durationMs: 18000 };
+          },
+          buildIos: async () => {
+            if (step === 'buildIos') writeFileSync(config, 'landscape');
+            return makeIosBuildSuccess({
+              appPath: join(root, 'build', 'Fixture.app'),
+              bundleId: 'com.example.app',
+              durationMs: 161000,
+              scheme: 'Fixture',
+            });
+          },
+          resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+          loadCacheProvider: async () => ({
+            name: './cache.cjs',
+            provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
+          }),
+          loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+        },
+      );
+
+      expect(exitCode).toBeNull();
+      expect(calls.args.installIosApp.appPath).toBe(appPath);
+      expect(calls.order.includes('storeBuild')).toBe(false);
+      expect(configuredUploads).toEqual([]);
+      expect(calls.order.includes('uploadRemote')).toBe(false);
+      const facts = parseFirst(logs);
+      expect(facts.fingerprint).toBeNull();
+      expect(facts.cacheKey).toBeNull();
+      const state = readWorkspaceState(root) as WorkspaceState;
+      expect(state.lastBuild?.cacheKey).toBeNull();
+      expect(state.prebuild).toEqual({ ios: null });
+      expect(stderr).toContain('expoConfig changed while the build ran');
+    });
   });
 });
 

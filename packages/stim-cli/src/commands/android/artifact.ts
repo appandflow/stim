@@ -10,8 +10,10 @@ import {
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
+  changedDuringBuildLine,
   filesystemBuildCapability,
   fingerprintDiffRecord,
+  inputsChangedDuringBuild,
   prepareProviderDownloadDir,
   providerDownloadPath,
   refingerprintAfterMutation,
@@ -666,10 +668,23 @@ export async function acquireAndroidArtifact(
             previousHash: beforeBuildHash,
             fingerprint,
           });
+          const changedDuringBuild = afterBuild
+            ? inputsChangedDuringBuild({
+                platform: PLATFORM,
+                lookup: fingerprintSources,
+                compiled: storeSources,
+                current: afterBuild.sources,
+              })
+            : [];
           if (!afterBuild) {
             record.fingerprint = null;
             record.cacheKey = null;
             phase('fingerprint', chalk.yellow('unavailable after Gradle; the build will be installed but not cached'));
+          } else if (changedDuringBuild.length) {
+            record.fingerprint = null;
+            record.cacheKey = null;
+            if (prebuildPlan === 'generate' || prebuildPlan === 'regenerate') recordPrebuild(root, PLATFORM, null);
+            phase('fingerprint', chalk.yellow(changedDuringBuildLine(changedDuringBuild)));
           } else {
             if (afterBuild.moved) {
               storeHash = afterBuild.hash;

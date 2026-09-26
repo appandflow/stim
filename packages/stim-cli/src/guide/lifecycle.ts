@@ -1000,11 +1000,24 @@ THE BUILD CACHE HAS THREE LEVELS
   \`expo prebuild --clean\` yourself or delete the directory so the next build
   regenerates it.
 
-  If the iOS fingerprint after prebuild or pod install is unavailable, Stim
-  installs the build but skips local storage and remote uploads. fingerprint
-  and cacheKey are null in the result and lastBuild; the old key is not reused.
-  Android does the same if its post-Gradle fingerprint cannot be computed.
-  These null fields mean unavailable cache information, not an install failure.
+  Both platforms fingerprint once more after the compile. A change the build
+  itself makes to a fingerprinted file under node_modules/ or the native
+  directory moves the key the same way, printed as \`(after Gradle)\` or
+  \`(after xcodebuild)\`. Any other input that changed while the build ran
+  -- the app config or a config plugin at any point after the first lookup,
+  or any other source during the compile -- means the artifact may not match
+  the key, so Stim installs what it built and stores nothing:
+
+    fingerprint expoConfig changed while the build ran, so the artifact may not match its key; the build will be installed but not cached
+
+  The prebuild record is cleared as well, so the next run regenerates a CNG
+  directory from the edited config and compiles it instead of reusing the
+  stale one. Stim also skips storing when the fingerprint after prebuild, pod
+  install or the compile cannot be computed. In every skipped case nothing
+  goes to the local cache, the cache provider or a remote upload, fingerprint
+  and cacheKey are null in the result and lastBuild, and the old key is not
+  reused. These null fields mean unavailable cache information, not an install
+  failure.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an

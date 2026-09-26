@@ -55,6 +55,25 @@ Stim only knows about prebuilds it ran. If you run `expo prebuild` yourself with
 a different config, delete the native directory or run
 `expo prebuild --clean` before the next `stim ios` or `stim android`.
 
+### Inputs edited during a build
+
+Stim fingerprints the project again after the compile, so it never stores an
+artifact under a key its inputs no longer match. Changes the build makes to
+files under `node_modules/` or the native directory, such as a Gradle plugin
+rewriting a library manifest, move the key and the artifact is stored under
+the new one. An edit to the app config or a config plugin at any point during
+the run, or to any other input during the compile, means the artifact may not
+match. Stim installs it
+for the current run, and skips the local cache, the cache provider, and remote
+uploads:
+
+```text
+  fingerprint expoConfig changed while the build ran, so the artifact may not match its key; the build will be installed but not cached
+```
+
+The next run regenerates a gitignored native directory from the edited config
+and builds it.
+
 Release configurations use separate keys. On a cache hit for an iOS simulator
 or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. If that swap fails, it builds fresh. iOS

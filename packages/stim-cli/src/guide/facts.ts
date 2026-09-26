@@ -116,13 +116,17 @@ per session, with the preview URL.`,
                   hit 6564e2.. (post-prebuild key)\`), so a cold tree -- a
                   fresh worktree or clone of a CNG app -- installs an entry
                   another workspace already built instead of compiling
-                  beside it. Android also fingerprints after Gradle because
-                  Gradle plugins can rewrite native inputs while they build;
-                  its artifact is stored only under that post-build hash. A
-                  stable second fingerprint prints no shift line. If the iOS
-                  fingerprint after prebuild or pod install, or the Android
-                  fingerprint after Gradle, cannot be computed, the build is
-                  installed but not cached, and fingerprint and cacheKey are null
+                  beside it. Both platforms fingerprint again after the
+                  compile because Gradle plugins can rewrite native inputs
+                  while they build; a change under node_modules/ or the
+                  native directory stores the artifact only under that
+                  post-build hash. A stable fingerprint prints no shift line.
+                  If any other input changed while the build ran (the app
+                  config or a config plugin since the first lookup, or any
+                  other source during the compile), or a fingerprint after
+                  prebuild, pod install or the compile cannot be computed,
+                  the build is installed but not cached, and fingerprint and
+                  cacheKey are null
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug

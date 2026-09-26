@@ -10,8 +10,10 @@ import {
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
+  changedDuringBuildLine,
   filesystemBuildCapability,
   fingerprintDiffRecord,
+  inputsChangedDuringBuild,
   prepareProviderDownloadDir,
   providerDownloadPath,
   providerUploadOutcome,
@@ -172,6 +174,12 @@ export async function acquireIosArtifact(
 ): Promise<IosArtifactResult> {
   const { phase, note, logWriter, estimates, stats, step } = progress;
   const physical = device !== null;
+  const keyOptions = {
+    scheme: buildScheme,
+    ...(configuration ? { configuration } : {}),
+    isSimulator: !physical,
+    ...(buildProfile ? { buildProfile } : {}),
+  };
   const lanAddress = device?.lanAddress ?? null;
   const metroPort = device?.metroPort ?? null;
   const release = isReleaseConfiguration(configuration);
@@ -290,12 +298,7 @@ export async function acquireIosArtifact(
       });
     }
     fingerprint = computedFingerprint;
-    cacheKey = buildCacheKey(PLATFORM, fingerprint, {
-      scheme: buildScheme,
-      ...(configuration ? { configuration } : {}),
-      isSimulator: !physical,
-      ...(buildProfile ? { buildProfile } : {}),
-    });
+    cacheKey = buildCacheKey(PLATFORM, fingerprint, keyOptions);
     stats.setCacheKey(cacheKey);
     storeHash = fingerprint;
     storeKey = cacheKey;
@@ -671,12 +674,7 @@ export async function acquireIosArtifact(
           rekeyedBy.push(...mutatingSteps.map((mutation) => (mutation === 'prebuild' ? mutation : 'pod install')));
           storeHash = after.hash;
           storeSources = after.sources;
-          storeKey = buildCacheKey(PLATFORM, after.hash, {
-            scheme: buildScheme,
-            ...(configuration ? { configuration } : {}),
-            isSimulator: !physical,
-            ...(buildProfile ? { buildProfile } : {}),
-          });
+          storeKey = buildCacheKey(PLATFORM, after.hash, keyOptions);
           buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
           note(
             chalk.dim(
@@ -739,6 +737,50 @@ export async function acquireIosArtifact(
         phase('build', `ok (${formatDuration(result.durationMs)})`);
         appPath = result.appPath;
         bundleId = result.bundleId;
+
+        if (storeHash && storeKey) {
+          const afterBuild = await refingerprintAfterMutation({
+            projectRoot: root,
+            platform: PLATFORM,
+            previousHash: storeHash,
+            fingerprint: d.fingerprintProject,
+          });
+          const changedDuringBuild = afterBuild
+            ? inputsChangedDuringBuild({
+                platform: PLATFORM,
+                lookup: fingerprintSources,
+                compiled: storeSources,
+                current: afterBuild.sources,
+              })
+            : [];
+          if (!afterBuild || changedDuringBuild.length) {
+            storeHash = null;
+            storeKey = null;
+            buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
+            if (mutatingSteps.includes('prebuild')) recordPrebuild(root, PLATFORM, null);
+            note(
+              chalk.yellow(
+                phaseLine(
+                  'fingerprint',
+                  afterBuild
+                    ? changedDuringBuildLine(changedDuringBuild)
+                    : 'unavailable after xcodebuild; the build will be installed but not cached',
+                ),
+              ),
+            );
+          } else if (afterBuild.moved) {
+            const beforeBuildHash = storeHash;
+            storeHash = afterBuild.hash;
+            storeSources = afterBuild.sources;
+            storeKey = buildCacheKey(PLATFORM, afterBuild.hash, keyOptions);
+            buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
+            note(
+              chalk.dim(
+                phaseLine('fingerprint', `${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} (after xcodebuild)`),
+              ),
+            );
+          }
+        }
 
         if (storeKey && cachePolicy.write) {
           try {

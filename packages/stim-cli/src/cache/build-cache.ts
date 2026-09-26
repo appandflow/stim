@@ -331,6 +331,47 @@ export async function refingerprintAfterMutation({
   return { hash: computed.hash, sources: computed.sources, moved: computed.hash !== previousHash };
 }
 
+const CONFIG_INPUT_REASONS = new Set(['expoConfig', 'expoConfigPlugins', 'expoConfigExternalFile']);
+
+function writtenByBuild(name: string, platform: string): boolean {
+  return (
+    name === platform ||
+    name.startsWith(`${platform}/`) ||
+    name.startsWith('node_modules/') ||
+    name.includes('/node_modules/')
+  );
+}
+
+export function inputsChangedDuringBuild({
+  platform,
+  lookup,
+  compiled,
+  current,
+}: {
+  platform: string;
+  lookup: FingerprintSource[];
+  compiled: FingerprintSource[];
+  current: FingerprintSource[];
+}): string[] {
+  const names = new Set<string>();
+  for (const change of compareSourceLists(lookup, current)) {
+    if (change.reasons.some((reason) => CONFIG_INPUT_REASONS.has(reason))) names.add(change.name);
+  }
+  for (const change of compareSourceLists(compiled, current)) {
+    if (!writtenByBuild(change.name, platform)) names.add(change.name);
+  }
+  return [...names];
+}
+
+export function changedDuringBuildLine(changed: string[]): string {
+  const shown = changed.slice(0, UNTRACKED_MISS_CAP);
+  const more = changed.length > shown.length ? `, and ${changed.length - shown.length} more` : '';
+  return (
+    `${shown.join(', ')}${more} changed while the build ran, so the artifact may not match its key; ` +
+    'the build will be installed but not cached'
+  );
+}
+
 export const UNTRACKED_MISS_CAP = 3;
 
 export function untrackedNativeFiles({
