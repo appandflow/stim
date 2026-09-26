@@ -558,6 +558,7 @@ test('resolveOwnedAvdSerial asks healthy emulators first and bounds every consol
 test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', () => {
   expect(() =>
     assertOwnedAvdStopped('stim-app', {
+      listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
       readProcessId: () => 123,
       processAlive: () => true,
@@ -566,6 +567,7 @@ test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', ()
 
   expect(() =>
     assertOwnedAvdStopped('stim-app', {
+      listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
       readProcessId: () => 123,
       processAlive: () => false,
@@ -609,6 +611,7 @@ test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to dis
   const calls: string[] = [];
 
   waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => calls.push(`shutdown:${timeoutMs}`), {
+    listProcesses: () => [],
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: () => 123,
     processAlive: () => locked,
@@ -635,6 +638,7 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
   const queried: number[] = [];
 
   waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    listProcesses: () => [],
     platform: 'win32',
     pollMs: 1000,
     resolveDirectory: () => 'C:\\avds\\stim-app.avd',
@@ -664,6 +668,7 @@ test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains ali
   let clock = 0;
   expect(() =>
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      listProcesses: () => [],
       platform: 'win32',
       pollMs: 1000,
       resolveDirectory: () => 'C:\\avds\\stim-app.avd',
@@ -683,6 +688,7 @@ test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains ali
 test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', () => {
   let queried = false;
   waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: () => 123,
@@ -709,6 +715,7 @@ test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadli
       },
       {
         timeoutMs: 250,
+        listProcesses: () => [],
         resolveDirectory: () => '/avds/stim-app.avd',
         readProcessId: () => 123,
         processAlive: () => true,
@@ -735,6 +742,7 @@ test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix an
     let observedPid: number | null = null;
 
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      listProcesses: () => [],
       platform,
       resolveDirectory: () => avdDirectory,
       processAlive: (pid) => {
@@ -753,7 +761,7 @@ test.each(['darwin', 'win32'] as const)(
     const avdDirectory = join(tmpHome, 'stim-app.avd');
     const lockPath = join(avdDirectory, 'hardware-qemu.ini.lock', ...(platform === 'win32' ? ['pid'] : []));
     mkdirSync(join(lockPath, '..'), { recursive: true });
-    const options = { platform, resolveDirectory: () => avdDirectory };
+    const options = { platform, resolveDirectory: () => avdDirectory, listProcesses: () => [] };
 
     for (const content of ['', 'invalid', '123garbage']) {
       writeFileSync(lockPath, content);
@@ -770,6 +778,7 @@ test('waitForAndroidEmulatorShutdown prefers the active process lock over the le
   let observedPid: number | null = null;
 
   waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: (path) => {
@@ -792,6 +801,7 @@ test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () 
   let observedPid: number | null = null;
 
   waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: (path) => {
@@ -817,6 +827,7 @@ test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock 
 
   expect(() =>
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      listProcesses: () => [],
       timeoutMs: 250,
       pollMs: 100,
       resolveDirectory: () => '/avds/stim-app.avd',
@@ -836,6 +847,7 @@ test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD 
 
   expect(() =>
     waitForAndroidEmulatorShutdown('stim-app', shutdown, {
+      listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
       readProcessId: () => null,
       processAlive: () => false,
@@ -893,6 +905,7 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     const signals: string[] = [];
     const options = {
       timeoutMs: 60_000,
+      platform: 'darwin' as const,
       resolveDirectory: () => '/avds/stim-app.avd',
       readProcessId: () => pids[0] ?? null,
       processAlive: (pid: number) => alive.has(pid),
@@ -969,6 +982,7 @@ test('waitForAndroidEmulatorShutdown verifies the AVD directory remains availabl
 
   expect(() =>
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
       readProcessId: () => 123,
       processAlive: () => {
