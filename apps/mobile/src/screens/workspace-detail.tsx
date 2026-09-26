@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
-import { BuildCard } from '@/components/build-card';
+import { BuildCards } from '@/components/build-card';
 import { Card } from '@/components/card';
 import { Chip } from '@/components/chip';
 import { ConnectionBanner } from '@/components/connection-banner';
@@ -215,7 +215,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
             </View>
           </View>
         </Card>
-        <BuildCard env={env} />
+        <BuildCards env={env} />
         {general.map((warning) => (
           <Text key={warning} style={[styles.warning, { color: colors.warn, backgroundColor: `${colors.warn}1A` }]}>
             {tildeHome(warning, home)}

@@ -86,7 +86,7 @@ reload and stop a workspace:
   Keystore on Android) and never shown.
 - **Workspace**: a status card with the branch and the app's folder inside
   its checkout, Metro's port and health, the git state as chips, memory, and the error count, which
-  opens the errors; a Build card with one section per platform: the running
+  opens the errors; a Build card for each platform the workspace uses: the running
   build's progress with its cache outcome ("Cache hit" or "Cold build",
   "Likely ..." before the run reaches a phase that decides it) in place of the
   platform's name; the last build (local cache, remote cache, compiled, or

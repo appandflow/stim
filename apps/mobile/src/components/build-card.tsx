@@ -26,8 +26,7 @@ function usedPlatforms(env: EnvironmentState, build: BuildReport | null): Platfo
   );
 }
 
-export function BuildCard({ env }: { env: EnvironmentState }) {
-  const colors = useColors();
+export function BuildCards({ env }: { env: EnvironmentState }) {
   const build = runningBuild(env);
   const used = usedPlatforms(env, build);
   const { plan, recheck } = useBuildPlans(
@@ -35,18 +34,13 @@ export function BuildCard({ env }: { env: EnvironmentState }) {
     Object.fromEntries(used.map((platform) => [platform, planKey(env.lastBuilds?.[platform])])),
     build !== null,
   );
-  return (
-    <Card>
-      {(used.length ? used : PLATFORMS).map((platform, index) => (
-        <View
-          key={platform}
-          style={[styles.platform, index > 0 && [styles.divided, { borderTopColor: colors.border }]]}
-        >
-          <PlatformBuild env={env} platform={platform} plan={plan(platform)} build={build} recheck={recheck} />
-        </View>
-      ))}
+  return (used.length ? used : PLATFORMS).map((platform) => (
+    <Card key={platform}>
+      <View style={styles.platform}>
+        <PlatformBuild env={env} platform={platform} plan={plan(platform)} build={build} recheck={recheck} />
+      </View>
     </Card>
-  );
+  ));
 }
 
 function PlatformBuild({
@@ -193,7 +187,6 @@ function NextBuild({ plan, name, openReason }: { plan: PlanState | undefined; na
 
 const styles = StyleSheet.create({
   platform: { padding: 12, gap: 4 },
-  divided: { borderTopWidth: StyleSheet.hairlineWidth },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   name: { fontSize: 14, fontWeight: '600' },
   line: { fontSize: 13, lineHeight: 18 },
