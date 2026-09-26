@@ -201,6 +201,7 @@ struct StorageView: View {
       Text("Lifecycle").frame(width: 150, alignment: .leading)
       Text("Build outputs").frame(width: Self.sizeWidth, alignment: .trailing)
       Text("node_modules").frame(width: Self.sizeWidth, alignment: .trailing)
+      Text("Logs").frame(width: Self.sizeWidth, alignment: .trailing)
       Text("Devices").frame(width: Self.sizeWidth, alignment: .trailing)
       Text("Total").frame(width: Self.sizeWidth, alignment: .trailing)
       Color.clear.frame(width: 28)
@@ -235,6 +236,16 @@ struct StorageView: View {
           }
         }
       size(workspace.nodeModules)
+      size(workspace.logs)
+        .overlay(alignment: .leading) {
+          if let trimmed = workspace.logsTrimmed {
+            Image(systemName: "scissors").font(.system(size: 9)).foregroundStyle(Theme.warn)
+              .help("stim gc --delete trims \(formatDisk(trimmed)) from logs over twice the 8 MiB cap")
+          } else if let kept = workspace.logsKept {
+            Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(Theme.tertiary)
+              .help("Logs over the cap, kept by stim gc --delete: \(abbreviatingHome(kept))")
+          }
+        }
       size(workspace.devices)
         .help(workspace.deviceCount == 0 ? "No owned simulator or emulator" : "\(workspace.deviceCount) owned devices")
       Text(workspace.total.map { (workspace.totalComplete ? "" : "\u{2265} ") + formatDisk($0) } ?? "\u{2014}")
@@ -334,6 +345,18 @@ struct StorageView: View {
             icon: "hammer"
           ) {
             previewButton("Clear\u{2026}", ["gc", "--json", "--cache", "workspaces"]).disabled(outputs.isEmpty)
+          }
+          if let logs = metrics.gcReport?.trimmableLogs, !logs.isEmpty {
+            Rectangle().fill(Theme.border).frame(height: 1)
+            locationRow(
+              StorageLocation(
+                title: "Workspace logs over the cap", path: nil,
+                size: .size(logs.map(\.trimBytes).reduce(0, +)),
+                detail: "\(logs.count == 1 ? "1 workspace" : "\(logs.count) workspaces"); each log keeps its newest 8 MiB"),
+              icon: "doc.plaintext"
+            ) {
+              previewButton("Reclaim everything safe\u{2026}", ["gc", "--json"])
+            }
           }
           ForEach(report.caches, id: \.dir) { cache in
             Rectangle().fill(Theme.border).frame(height: 1)

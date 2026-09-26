@@ -165,11 +165,16 @@ a dash before the first measurement.
 
 - **Workspaces**: largest first, each workspace and each linked worktree that
   `stim worktree warm` has not set up (**Not warmed**), named with its
-  repository and branch. The table shows each one's build outputs, from `stim gc --json`, and its
-  `node_modules` and owned simulators and emulators, which the app sizes with
-  `du` (`~/Library/Developer/CoreSimulator/Devices/<UDID>` and
-  `~/.android/avd/<name>.avd`, or `ANDROID_AVD_HOME`). A trash icon marks build
-  outputs `stim gc --delete` clears; a lock marks ones it keeps, with the reason.
+  repository and branch. The table shows each one's build outputs and logs,
+  from `stim gc --json`, and its `node_modules` and owned simulators and
+  emulators, which the app sizes with `du`
+  (`~/Library/Developer/CoreSimulator/Devices/<UDID>` and
+  `~/.android/avd/<name>.avd`, or `ANDROID_AVD_HOME`). Total counts them all.
+  A trash icon marks build outputs `stim gc --delete` clears; a lock marks ones
+  it keeps, with the reason. Scissors mark logs `stim gc --delete` trims to
+  their newest 8 MiB, with the bytes it cuts; a lock marks logs over the cap it
+  keeps, with the reason. A `stim` that predates the logs report leaves the
+  Logs cells at a dash.
   The lifecycle column reads **Merged into main** from `stim gc --json`, **PR #n
   open** from `gh pr list` in the repository when the GitHub CLI is on the login
   shell's `PATH` and signed in, **Stale Nd** after 7 days without recorded use,
@@ -179,8 +184,10 @@ a dash before the first measurement.
   **Remove merged worktrees** runs `stim worktree remove <path>` for each
   worktree gc reports as merged, after a confirmation. A row's menu reveals the
   worktree in Finder or runs `stim worktree remove` in it.
-- **Stim caches and devices**: build outputs of idle workspaces, each shared
-  cache largest first, and parked, orphaned or stale owned devices, from `stim gc --json`.
+- **Stim caches and devices**: build outputs of idle workspaces, workspace
+  logs `stim gc --delete` trims, each shared cache largest first, and parked,
+  orphaned or stale owned devices, from `stim gc --json`. **Reclaimable now**
+  counts the trimmed log bytes too.
   Caches that share a name, such as each project's Metro transform cache, are
   titled with their directory, and empty caches are folded into one row.
   Each row previews a scoped dry run (`stim gc --json --cache workspaces`,
