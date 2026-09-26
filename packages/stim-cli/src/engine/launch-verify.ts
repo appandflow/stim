@@ -549,7 +549,7 @@ export function unattributedLaunchLines({
   const others = siblings.length === 1 ? `Slot ${siblings[0]} also runs` : `Slots ${siblings.join(', ')} also run`;
   return [
     `UNVERIFIED: Metro delivered ${platform === 'ios' ? 'an iOS' : 'an Android'} bundle on port ${metroPort}, but not provably to this device`,
-    `${others} ${platform} on this workspace's Metro, and this bundle request carried nothing that names the device that sent it.`,
+    `${others} ${platform} on this workspace's Metro, and this bundle delivery could not be matched to this device.`,
     `Check this device directly: its screen through your device tool, or \`stim logs --slot ${slot} --source device\`. A slot stops counting as a sibling after \`stim stop --slot <name>\`.`,
   ];
 }
