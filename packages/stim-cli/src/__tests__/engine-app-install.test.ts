@@ -948,6 +948,22 @@ describe('verifyLaunch', () => {
     expect(probes.every((at) => at >= since + VERIFY_TIMEOUT_MS)).toBe(true);
   });
 
+  test('an app that requested its bundle and then died is fatal, not bundling', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      metroPort: 8082,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_started' }],
+      readDeviceRecords: () => [],
+      processAlive: () => false,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
+    expect(result.requested).toBeUndefined();
+  });
+
   test.each([
     { alive: true, requested: true },
     { alive: null, requested: true },
