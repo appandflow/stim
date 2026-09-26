@@ -164,7 +164,7 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
       expect.stringMatching(/^iosSimulatorApp +stim-desktop {2}\(default: Stim Desktop installed\)$/),
     );
 
-    await settings(['set', 'iosSimulatorApp', 'xcode']);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ iosSimulatorApp: 'xcode' }));
     expect(await settings(['get', 'iosSimulatorApp'])).toMatchObject({ out: ['xcode'], note: [] });
 
     desktop = '';

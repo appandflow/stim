@@ -938,7 +938,12 @@ test.each([
       return file === 'osascript' ? '/Applications/Stim.app' : null;
     },
   });
-  await bootIosSim('UDID-A');
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    await bootIosSim('UDID-A');
+  } finally {
+    vi.restoreAllMocks();
+  }
   expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
 });
 
