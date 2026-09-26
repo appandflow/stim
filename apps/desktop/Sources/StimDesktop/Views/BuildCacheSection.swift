@@ -278,7 +278,7 @@ private struct MissReasonButton: View {
                 Text(change.change == "added" ? "+" : change.change == "removed" ? "\u{2212}" : "~")
                   .foregroundStyle(
                     change.change == "added" ? Palette.success : change.change == "removed" ? Palette.error : Palette.warning)
-                Text(change.source).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                Text(change.source).font(.stim(.caption, mono: true)).textSelection(.enabled)
               }
             }
           }

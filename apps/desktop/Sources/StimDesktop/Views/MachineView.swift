@@ -35,7 +35,7 @@ struct MachineView: View {
         runtimes(report)
         otherTools(report)
       }
-      .padding(compact ? 20 : 28)
+      .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
@@ -307,7 +307,7 @@ struct MachineView: View {
                 repositoryRow(repository)
                 if expanded.contains(repository.id) {
                   ForEach(repository.worktrees) { workspace in
-                    Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1).padding(.leading, Space.huge)
+                    Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1).padding(.leading, Space.xl + Space.xxxl)
                     workspaceRow(workspace, nested: true)
                   }
                 }
@@ -378,7 +378,7 @@ struct MachineView: View {
       }
       .help(abbreviatingHome(workspace.path))
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.leading, nested ? 24 : 0)
+      .padding(.leading, nested ? Space.xxxl : 0)
       if !compact {
         lifecycleChip(lifecycle, workspace: workspace).frame(width: 130, alignment: .leading)
         size(workspace.nodeModules)
