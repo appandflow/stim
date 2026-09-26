@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -20,7 +20,6 @@ import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValu
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
-import { ActionToast, type Toast } from '@/components/action-toast';
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
 import { Toggle } from '@/components/toggle';
@@ -43,6 +42,8 @@ const DATA_SAVER_FPS = 10;
 const DATA_SAVER_MAX_EDGE = 640;
 const TYPING_BAR_HEIGHT = 56;
 const ROTATE_WAIT_MS = 2500;
+const ROTATE_NOTE_MS = 4000;
+const NOTE_INSET = 64;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -99,9 +100,14 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
+  const [tookOver, setTookOver] = useState(false);
   const [rootHeight, setRootHeight] = useState(0);
   const [barBottom, setBarBottom] = useState(0);
-  const keyboardHeight = useKeyboardHeight();
+  const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
+  const typingBarShown = typing && keyboardShown;
+  useEffect(() => {
+    if (!keyboardShown) keyboard.current?.blur();
+  }, [keyboardShown]);
   const rest = zoom.screenRect;
   const lift = useAnimatedStyle(() => {
     const covered = keyboardHeight.get();
@@ -110,20 +116,24 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     return { transform: [{ translateY: -shift }] };
   });
   const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
-  const [toast, setToast] = useState<Toast | null>(null);
-  const clearToast = useCallback(() => setToast(null), []);
+  const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
+  useEffect(() => {
+    if (!rotateNote) return;
+    const timer = setTimeout(() => setRotateNote(null), ROTATE_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [rotateNote]);
   const orientation = orientationOf(source);
   const [rotating, setRotating] = useState<'landscape' | 'portrait' | null>(null);
   if (rotating && orientation && orientation !== rotating) {
     setRotating(null);
-    setToast({ kind: 'success', message: `Rotated to ${orientation}.` });
+    setRotateNote({ text: `Rotated to ${orientation}`, turned: true });
   }
   useEffect(() => {
     if (!rotating) return;
     const timer = setTimeout(() => {
-      setToast({
-        kind: 'error',
-        message: `The screen stayed in ${rotating}. The app in front may not support rotating.`,
+      setRotateNote({
+        text: `The screen stayed in ${rotating}. The app in front may not support rotating.`,
+        turned: false,
       });
       setRotating(null);
     }, ROTATE_WAIT_MS);
@@ -131,6 +141,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   }, [rotating]);
   const rotate = (direction: RotateDirection) => {
     control.rotate(direction);
+    setRotateNote(null);
     setRotating(orientation);
   };
 
@@ -175,13 +186,21 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       `${driver ?? 'Another client'} is driving it. Your touches and keys can interfere with its work.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Take over', style: 'destructive', onPress: () => control.begin(true) },
+        {
+          text: 'Take over',
+          style: 'destructive',
+          onPress: () => {
+            setTookOver(true);
+            control.begin(true);
+          },
+        },
       ],
     );
   const toggle = () => {
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
     setTyped('');
+    setTookOver(false);
     control.begin(false);
   };
   const press = (button: InputButton) => control.button(button);
@@ -220,7 +239,15 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                     setBarBottom(insets.top + y + height);
                   }}
                 >
-                  <Pressable onPress={zoom.close} accessibilityRole="button" accessibilityLabel="Back" hitSlop={10}>
+                  <Pressable
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      zoom.close();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                    hitSlop={10}
+                  >
                     <Text style={styles.back}>{'‹'}</Text>
                   </Pressable>
                   <View style={styles.titles}>
@@ -271,6 +298,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   colors={colors}
                   control={control.state}
                   driver={driver}
+                  tookOver={tookOver}
                   canTakeOver={control.allowed === true}
                   readOnly={readOnly}
                   onTakeOver={takeOver}
@@ -347,9 +375,22 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               </DeviceScreen>
             </Animated.View>
           ) : null}
+          {rotateNote && rest ? (
+            <View pointerEvents="none" style={[styles.noteRow, { top: rest[1] + rest[3] - NOTE_INSET }]}>
+              <Text
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={[styles.note, { color: rotateNote.turned ? colors.live : colors.warn }]}
+              >
+                {rotateNote.text}
+              </Text>
+            </View>
+          ) : null}
           <Animated.View
-            style={[styles.typingBar, typingBar, !typing && styles.hidden]}
-            pointerEvents={typing ? 'auto' : 'none'}
+            style={[styles.typingBar, typingBar, !typingBarShown && styles.hidden]}
+            pointerEvents={typingBarShown ? 'auto' : 'none'}
+            accessibilityElementsHidden={!typingBarShown}
+            importantForAccessibility={typingBarShown ? 'auto' : 'no-hide-descendants'}
           >
             <TextInput
               ref={keyboard}
@@ -382,7 +423,6 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               <Text style={[styles.bannerAction, { color: colors.primary }]}>Done</Text>
             </Pressable>
           </Animated.View>
-          <ActionToast toast={toast} onDismiss={clearToast} />
         </View>
       </GestureDetector>
     </GestureHandlerRootView>
@@ -393,6 +433,7 @@ function Banner({
   colors,
   control,
   driver,
+  tookOver,
   canTakeOver,
   readOnly,
   onTakeOver,
@@ -400,6 +441,7 @@ function Banner({
   colors: Colors;
   control: ReturnType<typeof useDeviceControl>['state'];
   driver: string | null;
+  tookOver: boolean;
   canTakeOver: boolean;
   readOnly: boolean;
   onTakeOver: () => void;
@@ -414,7 +456,9 @@ function Banner({
           : control.kind === 'starting'
             ? 'Starting control...'
             : control.kind === 'on' && driver
-              ? `You took over from ${driver}. It can still send input to this device.`
+              ? tookOver
+                ? `You took over from ${driver}. It can still send input to this device.`
+                : `${driver} is also driving this device. Its input and yours can interfere.`
               : driver
                 ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
                 : null;
@@ -465,6 +509,18 @@ const styles = StyleSheet.create({
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12 },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
+  noteRow: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
+  note: {
+    overflow: 'hidden',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#000000D9',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   flying: { position: 'absolute', overflow: 'hidden' },
   overlay: {
@@ -531,9 +587,9 @@ const styles = StyleSheet.create({
   },
 });
 
-/** The phone keyboard's height, animated along with it, and 0 while it is hidden. */
-function useKeyboardHeight(): SharedValue<number> {
+function useKeyboardHeight(): { height: SharedValue<number>; shown: boolean } {
   const height = useSharedValue(0);
+  const [shown, setShown] = useState(false);
   // React Native's Android keyboard events report the IME inset minus the system bars' bottom inset.
   const { bottom } = useSafeAreaInsets();
   const barInset = OS.OS === 'android' ? bottom : 0;
@@ -541,12 +597,16 @@ function useKeyboardHeight(): SharedValue<number> {
     const show = OS.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hide = OS.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const subscriptions = [
-      Keyboard.addListener(show, (event) =>
-        height.set(withTiming(event.endCoordinates.height + barInset, { duration: event.duration || 250 })),
-      ),
-      Keyboard.addListener(hide, (event) => height.set(withTiming(0, { duration: event.duration || 250 }))),
+      Keyboard.addListener(show, (event) => {
+        setShown(true);
+        height.set(withTiming(event.endCoordinates.height + barInset, { duration: event.duration || 250 }));
+      }),
+      Keyboard.addListener(hide, (event) => {
+        setShown(false);
+        height.set(withTiming(0, { duration: event.duration || 250 }));
+      }),
     ];
     return () => subscriptions.forEach((subscription) => subscription.remove());
   }, [height, barInset]);
-  return height;
+  return { height, shown };
 }
