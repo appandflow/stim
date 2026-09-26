@@ -186,10 +186,12 @@ requesting JPEG frames.
 `modules/stim-video` is native code: pull it, then rebuild the app with
 `stim ios` or `stim android`. Fast Refresh does not load it. Its Swift and
 Kotlin files are an [inline module](https://docs.expo.dev/modules/inline-modules-reference/):
-prebuild compiles every file in `ios/` and `android/` into the app, as
-`experiments.inlineModules` in `app.config.ts` lists them. For each file that
-defines a module, it registers the class named after the file, so the module
-class in `StimVideo.swift` and `StimVideo.kt` must be named `StimVideo`. `fingerprint.config.js` adds those
+`experiments.inlineModules` in `app.config.ts` lists `ios/` and `android/`, and
+prebuild adds their Swift files to the iOS app target and their Kotlin files to
+the Android app. A Swift file that defines a module registers the class named
+after the file; a Kotlin one registers its `package` plus the file name. So the
+module class in `StimVideo.swift` and `StimVideo.kt` must be named `StimVideo`,
+and `StimVideo.kt` needs its `package` line. `fingerprint.config.js` adds both
 directories to the fingerprint, which does not hash inline modules on its own.
 
 ## Protocol types
