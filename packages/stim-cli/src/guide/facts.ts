@@ -595,7 +595,7 @@ RULES
     },
     status: {
       summary:
-        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, and who drives each device",
+        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, and whether the app runs on it",
       body: () => `  stim status --json
 
   Each environment carries issues, the things in that workspace that need
@@ -667,6 +667,25 @@ RULES
   agent-device for 12m", "active", "idle 3h", or "activity unknown (...)".
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
+
+  An owned booted simulator or detected emulator also carries app, whether
+  the workspace's app process is alive on it now:
+
+  app  { id, state }
+
+  id     the bundle identifier or package checked: the one launched on this
+         device, else the project's
+  state  "running"  a process of that app runs on the device
+         "stopped"  no such process: it crashed, was killed or never launched
+         "unknown"  the process listing could not be read; never "stopped"
+
+  This is current process state, read from one host ps (simulator apps are
+  host processes) and the same adb shell ps as activity, so a status --watch
+  refresh notices an exit within its 30-second fallback. It is not launch
+  evidence: launched in an ios or android result keeps its own meaning. For
+  "stopped", run \`stim ios\` or \`stim android\` to launch it again. Plain
+  status appends "<id> running", "<id> not running" or "<id> process
+  unknown" to the device line.
 
   An environment's metro carries idleStop { reason: "idle", at, idleMinutes }
   when its supervisor stopped the dev server for idleness and nothing serves

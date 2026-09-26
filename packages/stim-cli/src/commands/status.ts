@@ -1,4 +1,4 @@
-import { projectDeviceSlots } from '../devices/device-slots.ts';
+import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { createRefreshScheduler, WATCH_DEBOUNCE_MS, WATCH_FALLBACK_MS, watchStatusSources } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
@@ -37,8 +37,20 @@ import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
-import { readIdleStop, readLastBuilds, type LastBuildReport, type StatusPayload } from '@stim-cli/core/state';
-import { createActivityReader, type ActivityTarget, type DeviceActivity } from '../devices/activity.ts';
+import {
+  readIdleStop,
+  readLastBuilds,
+  type DeviceAppProcess,
+  type LastBuildReport,
+  type StatusPayload,
+} from '@stim-cli/core/state';
+import {
+  createActivityReader,
+  createDeviceProcessTables,
+  type ActivityTarget,
+  type DeviceActivity,
+} from '../devices/activity.ts';
+import { createAppProcessReader } from '../devices/app-process.ts';
 import {
   activityLabel,
   capacity,
@@ -153,6 +165,7 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
   const labelOnlyRoots: boolean[] = [];
+  const launchesByState: ReturnType<typeof readWorkspaceLaunches>[] = [];
   const easLedger = readEasSessionLedger();
   const leaseNow = Date.now();
   const leaseFiles = listLeaseFiles();
@@ -161,6 +174,8 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
     const { metro, supervisor } = running[i]!;
     const saved = readWorkspaceState(path);
     const builds = workspaceBuilds(path, saved, history);
+    const launches = readWorkspaceLaunches(path);
+    launchesByState.push(launches);
     states.push(
       environmentState(
         { ...proj, __path: path },
@@ -174,7 +189,7 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
           logs: logs[i],
           remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
           idleStop: readIdleStop(saved),
-          launches: readWorkspaceLaunches(path),
+          launches,
           leasedIds: new Set(
             deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
               lease.mine && !lease.expired && lease.id ? [lease.id] : [],
@@ -191,18 +206,7 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
     );
   }
 
-  const readActivity = createActivityReader();
-  for (const state of states) {
-    for (const device of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
-      const base: Omit<ActivityTarget, 'platform' | 'id'> = { slot: device.slot, workspace: state.path };
-      if (device.ios?.state === 'Booted') {
-        device.ios.activity = readActivity({ ...base, platform: 'ios', id: device.ios.udid });
-      }
-      if (device.android && !device.android.physical && device.android.serial) {
-        device.android.activity = readActivity({ ...base, platform: 'android', id: device.android.serial });
-      }
-    }
-  }
+  readDeviceProcesses(states, projects, launchesByState);
 
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
   const cap = capacity(states, totalMemoryMb);
@@ -284,7 +288,7 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
           deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
         const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
         out.push(
-          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}`,
+          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}`,
         );
       }
       if (deviceState.android) {
@@ -293,7 +297,7 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
           ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
           : '';
         out.push(
-          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}`,
+          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}`,
         );
       }
     }
@@ -409,6 +413,50 @@ function lastBuildText(report: LastBuildReport): string {
 function activitySuffix(activity: DeviceActivity | undefined): string {
   const label = activityLabel(activity, Date.now());
   return label ? ` -- ${activity?.state === 'driven' ? chalk.magenta(label) : chalk.dim(label)}` : '';
+}
+
+function readDeviceProcesses(
+  states: EnvironmentState[],
+  projects: [string, ProjectRecord][],
+  launchesByState: ReturnType<typeof readWorkspaceLaunches>[],
+): void {
+  const tables = createDeviceProcessTables();
+  const readActivity = createActivityReader({ tables });
+  const readAppProcess = createAppProcessReader(tables);
+  for (const [i, state] of states.entries()) {
+    const project = projects[i]![1];
+    const launches = launchesByState[i]!;
+    const appIdOn = (platform: 'ios' | 'android', slot: string, deviceId: string) => {
+      const launch = launches[deviceSlotKey(platform, slot)];
+      return launch?.deviceId === deviceId
+        ? launch.appId
+        : platform === 'ios'
+          ? project.bundleId
+          : project.androidPackage;
+    };
+    for (const device of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
+      const base: Omit<ActivityTarget, 'platform' | 'id'> = { slot: device.slot, workspace: state.path };
+      if (device.ios?.state === 'Booted') {
+        const id = device.ios.udid;
+        device.ios.activity = readActivity({ ...base, platform: 'ios', id });
+        const appId = device.ios.owned ? appIdOn('ios', device.slot, id) : undefined;
+        if (appId) device.ios.app = readAppProcess({ platform: 'ios', id, appId });
+      }
+      if (device.android && !device.android.physical && device.android.serial) {
+        const id = device.android.serial;
+        device.android.activity = readActivity({ ...base, platform: 'android', id });
+        const appId = device.android.owned ? appIdOn('android', device.slot, id) : undefined;
+        if (appId) device.android.app = readAppProcess({ platform: 'android', id, appId });
+      }
+    }
+  }
+}
+
+function appSuffix(app: DeviceAppProcess | undefined): string {
+  if (!app) return '';
+  if (app.state === 'running') return chalk.dim(` -- ${app.id} running`);
+  if (app.state === 'stopped') return ` -- ${chalk.yellow(`${app.id} not running`)}`;
+  return chalk.dim(` -- ${app.id} process unknown`);
 }
 
 function linkedWorktrees(paths: string[]): WorktreeFacts[] {

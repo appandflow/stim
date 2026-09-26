@@ -269,11 +269,41 @@ export interface ActivityTarget extends LogRecordTarget {
   workspace: string | null;
 }
 
+export interface DeviceProcessTables {
+  host(): HostProcess[] | null;
+  android(serial: string): string | null;
+}
+
+export function createDeviceProcessTables(): DeviceProcessTables {
+  const exec = getExecutor();
+  let host: HostProcess[] | null | undefined;
+  const android = new Map<string, string | null>();
+  return {
+    host() {
+      if (host === undefined) {
+        const output = exec.runFileQuiet('ps', ['-axww', '-o', 'pid=,lstart=,command='], { timeoutMs: 5000 });
+        host = output === null ? null : parseProcessTable(output);
+      }
+      return host;
+    },
+    android(serial) {
+      if (!android.has(serial)) {
+        android.set(
+          serial,
+          exec.runFileQuiet('adb', ['-s', serial, 'shell', 'ps', '-A', '-o', 'PID,ARGS'], { timeoutMs: 5000 }),
+        );
+      }
+      return android.get(serial) ?? null;
+    },
+  };
+}
+
 export interface ActivityReaderOptions {
   now?: number;
   home?: string;
   startOf?: (pid: number) => ProcessStart;
   leaseFiles?: () => LeaseFileEntry[];
+  tables?: DeviceProcessTables;
 }
 
 export function createActivityReader({
@@ -281,11 +311,10 @@ export function createActivityReader({
   home = homedir(),
   startOf = inspectProcessStart,
   leaseFiles = listLeaseFiles,
+  tables = createDeviceProcessTables(),
 }: ActivityReaderOptions = {}): (target: ActivityTarget) => DeviceActivity {
-  const exec = getExecutor();
   let agentDevice: { record: AgentDeviceRecord; liveness: Liveness }[] | undefined;
   let stimLeases: LeaseFileEntry[] | undefined;
-  let processes: HostProcess[] | null | undefined;
   const logs = new Map<string, string[] | null>();
   const log = (path: string) => {
     if (!logs.has(path)) logs.set(path, tailLines(path));
@@ -332,10 +361,7 @@ export function createActivityReader({
         });
     }
 
-    if (processes === undefined) {
-      const output = exec.runFileQuiet('ps', ['-axww', '-o', 'pid=,lstart=,command='], { timeoutMs: 5000 });
-      processes = output === null ? null : parseProcessTable(output);
-    }
+    const processes = tables.host();
     if (processes === null) evidence.unknown.push('driver-process');
     for (const row of processes ?? []) {
       const tool = driverTool(row.command, target.id);
@@ -343,9 +369,7 @@ export function createActivityReader({
     }
 
     if (target.platform === 'android') {
-      const output = exec.runFileQuiet('adb', ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'], {
-        timeoutMs: 5000,
-      });
+      const output = tables.android(target.id);
       if (output === null) evidence.unknown.push('instrumentation');
       for (const { pid, tool } of parseAndroidInstrumentation(output ?? '')) {
         evidence.drivers.push({ basis: 'instrumentation', tool, pid, since: null });
