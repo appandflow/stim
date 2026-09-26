@@ -122,7 +122,7 @@ export function historyDetail(entry: BuildHistoryEntry, now: number): string {
           : entry.cacheSkipped
             ? 'cache reads off'
             : null;
-  const at = Date.parse(entry.startedAt);
+  const at = Date.parse(entry.finishedAt ?? entry.startedAt);
   return [
     cache,
     Number.isNaN(at) ? null : `${shortDuration(Math.max(0, now - at))} ago`,

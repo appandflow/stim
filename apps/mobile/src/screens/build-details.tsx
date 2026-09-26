@@ -250,11 +250,11 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
 
 function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
   const colors = useColors();
-  const phases = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined)
+  const entered = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined);
+  const stoppedIn = entry.result === 'interrupted' ? entered.at(-1) : undefined;
+  const phases = entered
     .map((phase) =>
-      entry.result === 'interrupted' && entry.phases[phase] === 0
-        ? `stopped in ${phase}`
-        : `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`,
+      phase === stoppedIn ? `stopped in ${phase}` : `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`,
     )
     .join(' \u00B7 ');
   const facts = [
