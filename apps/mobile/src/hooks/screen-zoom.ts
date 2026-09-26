@@ -19,7 +19,8 @@ export function useScreenZoom(enabled: boolean) {
   const scale = useSharedValue(1);
   const x = useSharedValue(0);
   const y = useSharedValue(0);
-  const start = useSharedValue({ scale: 1, x: 0, y: 0 });
+  const pinchStart = useSharedValue({ scale: 1, x: 0, y: 0, focalX: 0, focalY: 0 });
+  const panStart = useSharedValue({ x: 0, y: 0 });
   const [zoomed, setZoomed] = useState(false);
   const size = useSharedValue({ width: 0, height: 0 });
   const onLayout = (event: LayoutChangeEvent) => {
@@ -29,9 +30,9 @@ export function useScreenZoom(enabled: boolean) {
 
   useEffect(() => {
     if (enabled) return;
-    scale.set(withTiming(1, { duration: RESET_MS }));
-    x.set(withTiming(0, { duration: RESET_MS }));
-    y.set(withTiming(0, { duration: RESET_MS }));
+    scale.set(1);
+    x.set(0);
+    y.set(0);
   }, [enabled, scale, x, y]);
   if (!enabled && zoomed) setZoomed(false);
 
@@ -48,18 +49,18 @@ export function useScreenZoom(enabled: boolean) {
 
   const pinch = usePinchGesture({
     enabled,
-    onBegin: () => {
+    onActivate: (event) => {
       'worklet';
-      start.set({ scale: scale.get(), x: x.get(), y: y.get() });
+      pinchStart.set({ scale: scale.get(), x: x.get(), y: y.get(), focalX: event.focalX, focalY: event.focalY });
     },
     onUpdate: (event) => {
       'worklet';
       const { width, height } = size.get();
       if (width <= 0 || height <= 0) return;
-      const from = start.get();
+      const from = pinchStart.get();
       const next = Math.min(Math.max(from.scale * event.scale, 1), MAX_SCALE);
-      x.set(zoomOffset(from.scale, from.x, next, event.focalX / width));
-      y.set(zoomOffset(from.scale, from.y, next, event.focalY / height));
+      x.set(zoomOffset(from.scale, from.x, next, from.focalX / width, event.focalX / width));
+      y.set(zoomOffset(from.scale, from.y, next, from.focalY / height, event.focalY / height));
       scale.set(next);
     },
     onDeactivate: settle,
@@ -70,13 +71,13 @@ export function useScreenZoom(enabled: boolean) {
     maxPointers: 1,
     onBegin: () => {
       'worklet';
-      start.set({ scale: scale.get(), x: x.get(), y: y.get() });
+      panStart.set({ x: x.get(), y: y.get() });
     },
     onUpdate: (event) => {
       'worklet';
       const { width, height } = size.get();
       if (width <= 0 || height <= 0) return;
-      const from = start.get();
+      const from = panStart.get();
       x.set(clampOffset(from.x + event.translationX / width, scale.get()));
       y.set(clampOffset(from.y + event.translationY / height, scale.get()));
     },

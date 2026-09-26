@@ -50,14 +50,20 @@ export function clampOffset(offset: number, scale: number): number {
 }
 
 /**
- * The offset along one axis after zooming a picture from `scale` and `offset` to `nextScale` about `focal`, all as
- * fractions of the view, so the point under `focal` stays under it. A picture at `scale` and `offset` starts at
+ * The offset along one axis after zooming a picture from `scale` and `offset` to `nextScale`, as fractions of the
+ * view, so the point that was under `focal` is under `nextFocal`. A picture at `scale` and `offset` starts at
  * `(1 - scale) / 2 + offset`.
  */
-export function zoomOffset(scale: number, offset: number, nextScale: number, focal: number): number {
+export function zoomOffset(
+  scale: number,
+  offset: number,
+  nextScale: number,
+  focal: number,
+  nextFocal: number = focal,
+): number {
   'worklet';
   const start = (1 - scale) / 2 + offset;
   const point = (focal - start) / scale;
-  const nextStart = focal - point * nextScale;
+  const nextStart = nextFocal - point * nextScale;
   return clampOffset(nextStart - (1 - nextScale) / 2, nextScale);
 }
