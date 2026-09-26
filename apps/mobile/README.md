@@ -123,7 +123,8 @@ the mock server.
 
 ## Device view
 
-Tapping a running device's screen, on the workspace screen or in the devices
+The viewer is titled with the workspace's name, with the device's model and
+slot under it. Tapping a running device's screen, on the workspace screen or in the devices
 grid, grows it into the full-screen viewer: the thumbnail expands into the
 screen's place while the backdrop, title and toolbars fade in, showing the
 thumbnail's frame until the stream's first frame arrives. Back, Android's
@@ -148,8 +149,13 @@ and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
 finger: a tap, a drag or swipe, or a long press. The toolbar has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
-Return and Delete included), **Home**, **Lock**, and on Android **Back** and
-**Apps**. A second row has **Rotate left** and **Rotate right**, and, when the
+Return and Delete included). A bar above the keyboard shows what you typed
+since the last Return, with **Done** to close it, and the screen keeps its size
+and moves up until its bottom meets that bar, without passing the title. **Home**, **Lock**, and on Android **Back** and
+**Apps**. A second row has **Rotate left** and **Rotate right**, which say
+"Rotated to landscape" (or portrait) once the picture turns, or, when it has
+not turned after 2.5 seconds, that the screen stayed as it was and the app in
+front may not support rotating, and, when the
 device has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
 whichever its latest frame or video shows it is not,
 and **Fold**, **Half open** and **Unfold** on a foldable emulator. The session ends when you turn Control off, leave the view, lose the
@@ -159,7 +165,8 @@ When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a banner names it and
 Control is refused with the server's reason. **Take over** asks for
 confirmation, then starts control anyway; the Mac records the takeover in its
-action log.
+action log. The banner then says you took over from that driver and that it
+can still send input to the device.
 
 ## Actions
 
