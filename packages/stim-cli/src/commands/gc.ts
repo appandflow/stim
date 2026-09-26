@@ -374,7 +374,7 @@ export async function collectGcReport(
     caches,
     workspaceOutputs: collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
-    worktreeSweep: collectWorktreeSweep({ idle: worktrees, olderThan, now }),
+    worktreeSweep: await collectWorktreeSweep({ idle: worktrees, olderThan, now }),
     cacheScope: null,
     olderThan,
     all,

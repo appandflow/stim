@@ -86,6 +86,22 @@ function firstLine(error: unknown): string {
   return text.split('\n')[0] ?? text;
 }
 
+function ghFailure(error: unknown, command: string): { unavailable: string; sticky: boolean } {
+  if ((error as { status?: number }).status === SIGNED_OUT_EXIT) {
+    return { unavailable: 'gh is not signed in; run `gh auth login`', sticky: true };
+  }
+  if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+    return { unavailable: `${command} did not answer within ${GH_TIMEOUT_MS / 1000}s`, sticky: true };
+  }
+  return { unavailable: `${command} failed: ${firstLine(error)}`, sticky: false };
+}
+
+function ancestry(cwd: string): (ancestor: string, descendant: string) => boolean {
+  const exec = getExecutor();
+  return (ancestor, descendant) =>
+    exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;
+}
+
 /**
  * Asks GitHub, through `gh`, which pull requests have `branch` as their head, run from `cwd` so `gh` picks the
  * repository from its remotes. Each call is one fixed `gh pr list` invocation. Once `gh` is missing, signed out or
@@ -97,8 +113,6 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
     const exec = getExecutor();
     if (unavailable === undefined) unavailable = exec.findExecutable('gh') ? null : 'gh is not installed';
     if (unavailable) return { unavailable };
-    const isAncestor = (ancestor: string, descendant: string) =>
-      exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;
     let out: string;
     try {
       out = exec.runFile(
@@ -107,15 +121,9 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
         { cwd, timeoutMs: GH_TIMEOUT_MS, env: GH_ENV },
       );
     } catch (error) {
-      if ((error as { status?: number }).status === SIGNED_OUT_EXIT) {
-        unavailable = 'gh is not signed in; run `gh auth login`';
-        return { unavailable };
-      }
-      if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
-        unavailable = `gh pr list did not answer within ${GH_TIMEOUT_MS / 1000}s`;
-        return { unavailable };
-      }
-      return { unavailable: `gh pr list failed: ${firstLine(error)}` };
+      const failure = ghFailure(error, 'gh pr list');
+      if (failure.sticky) unavailable = failure.unavailable;
+      return { unavailable: failure.unavailable };
     }
     let pulls: GhPullRequest[];
     try {
@@ -123,7 +131,70 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
     } catch {
       return { unavailable: 'gh pr list printed no JSON' };
     }
-    return { pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls, head, isAncestor) : null };
+    return { pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls, head, ancestry(cwd)) : null };
+  };
+}
+
+/** A worktree whose pull request {@link pullRequestLookups} looks up: its path, branch and HEAD commit. */
+export interface PullRequestQuery {
+  cwd: string;
+  branch: string;
+  head: string;
+}
+
+function branchesQuery(count: number): string {
+  const variables = Array.from({ length: count }, (_, i) => `, $b${i}: String!`).join('');
+  const fields = Array.from(
+    { length: count },
+    (_, i) =>
+      ` b${i}: pullRequests(headRefName: $b${i}, states: [OPEN, CLOSED, MERGED], first: 20,` +
+      ` orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${GH_FIELDS.replaceAll(',', ' ')} } }`,
+  ).join('');
+  return `query($owner: String!, $repo: String!${variables}) { repository(owner: $owner, name: $repo) {${fields} } }`;
+}
+
+/**
+ * {@link pullRequestLookup} for every branch of one repository in one fixed `gh api graphql` call run from `repo`,
+ * which asks for the same 20 newest pull requests of each head branch that `gh pr list --head` returns. `gh` fills
+ * `{owner}` and `{repo}` from the remotes of `repo`; branch names travel as variables. Once `gh` is missing, signed
+ * out or times out, every later call through the same function answers `unavailable` without running it again.
+ */
+export function pullRequestLookups(): (
+  repo: string,
+  queries: readonly PullRequestQuery[],
+) => Promise<PullRequestLookup[]> {
+  let unavailable: string | null | undefined;
+  return async (repo, queries) => {
+    const exec = getExecutor();
+    if (unavailable === undefined) unavailable = exec.findExecutable('gh') ? null : 'gh is not installed';
+    const all = (lookup: PullRequestLookup) => queries.map(() => lookup);
+    if (unavailable) return all({ unavailable });
+    if (!queries.length) return [];
+    const args = ['api', 'graphql', '-F', 'owner={owner}', '-F', 'repo={repo}'];
+    queries.forEach(({ branch }, i) => args.push('-f', `b${i}=${branch}`));
+    args.push('-f', `query=${branchesQuery(queries.length)}`);
+    let out: string;
+    try {
+      out = await exec.runFileAsync('gh', args, { cwd: repo, timeoutMs: GH_TIMEOUT_MS, env: GH_ENV });
+    } catch (error) {
+      const failure = ghFailure(error, 'gh api graphql');
+      if (failure.sticky) unavailable = failure.unavailable;
+      return all({ unavailable: failure.unavailable });
+    }
+    let found: Record<string, { nodes?: unknown } | null> | undefined;
+    try {
+      found = (JSON.parse(out) as { data?: { repository?: Record<string, { nodes?: unknown } | null> } }).data
+        ?.repository;
+    } catch {
+      return all({ unavailable: 'gh api graphql printed no JSON' });
+    }
+    if (!found) return all({ unavailable: 'gh api graphql printed no repository' });
+    return queries.map(({ cwd, head }, i) => {
+      const pulls = found[`b${i}`]?.nodes;
+      return {
+        pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls as GhPullRequest[], head, ancestry(cwd)) : null,
+      };
+    });
   };
 }
 

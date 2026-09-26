@@ -17,8 +17,9 @@ import { fetchDefaultBranch, mergeState, type MergeState } from '../../workspace
 import {
   describePullRequest,
   endedPullRequest,
-  pullRequestLookup,
+  pullRequestLookups,
   type PullRequestLookup,
+  type PullRequestQuery,
 } from '../../workspace/pull-request.ts';
 import {
   dirtyPaths,
@@ -213,14 +214,40 @@ function idleDaysOf(keys: readonly string[], now: number): number | null {
   return Number.isFinite(last) ? Math.max(0, Math.floor((now - last) / DAY_MS)) : null;
 }
 
-function inUseOf(keys: readonly string[], checks: { managedLocks: boolean }): string[] {
-  return [...new Set([...keys.flatMap((key) => workspaceInUse(key, checks)), ...deviceUseOf(keys)])];
+interface DeviceReads {
+  sims: () => IosSimRecord[] | null;
+  avdSerial: ReturnType<typeof ownedAvdSerialResolver>;
 }
 
-function deviceUseOf(keys: readonly string[]): string[] {
-  const reasons: string[] = [];
+/** One simulator list and one AVD resolver, each read on first use and then shared by every later check. */
+function deviceReads(): DeviceReads {
   let sims: IosSimRecord[] | null | undefined;
-  let avdSerial: ReturnType<typeof ownedAvdSerialResolver> | undefined;
+  let resolver: ReturnType<typeof ownedAvdSerialResolver> | undefined;
+  return {
+    sims: () => {
+      if (sims === undefined) {
+        try {
+          sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+        } catch {
+          sims = null;
+        }
+      }
+      return sims;
+    },
+    avdSerial: (avdName) => (resolver ??= ownedAvdSerialResolver({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }))(avdName),
+  };
+}
+
+function inUseOf(
+  keys: readonly string[],
+  checks: { managedLocks: boolean },
+  devices: DeviceReads = deviceReads(),
+): string[] {
+  return [...new Set([...keys.flatMap((key) => workspaceInUse(key, checks)), ...deviceUseOf(keys, devices)])];
+}
+
+function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
+  const reasons: string[] = [];
   for (const key of keys) {
     let slots: ReturnType<typeof projectDeviceSlots>;
     try {
@@ -232,13 +259,7 @@ function deviceUseOf(keys: readonly string[]): string[] {
     for (const { platforms } of slots) {
       const ios = platforms.ios;
       if (ios?.owned && ios.deviceUdid) {
-        if (sims === undefined) {
-          try {
-            sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
-          } catch {
-            sims = null;
-          }
-        }
+        const sims = devices.sims();
         const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
         if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
         else if (sim && sim.state !== 'Shutdown') {
@@ -247,9 +268,8 @@ function deviceUseOf(keys: readonly string[]): string[] {
       }
       const android = platforms.android;
       if (android?.owned && android.avdName) {
-        avdSerial ??= ownedAvdSerialResolver({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
         try {
-          if (avdSerial(android.avdName).serial) {
+          if (devices.avdSerial(android.avdName).serial) {
             reasons.push(`its owned emulator ${android.avdName} is running; \`stim stop\` in ${key} shuts it down`);
           }
         } catch {
@@ -361,11 +381,20 @@ function checkMergeStates(pending: PendingMerge[], idle: number | null, grace: W
   }
 }
 
+interface Inspected {
+  candidate: WorktreeCandidate;
+  facts: WorktreeFacts;
+  repo: string | null;
+  branch: string | null;
+}
+
 /**
  * Classifies each Stim-managed linked worktree. A merged one is removable; with `idle`, so is one unused for
- * `olderThan` days. Merge state is checked only where it decides the verdict, after one fetch per repository.
+ * `olderThan` days. Device use is read after the git facts, against one simulator list and one AVD resolver, so
+ * the resolver's time budget covers only device reads. Pull requests are asked once per repository, all
+ * repositories at once. Merge state is checked only where it decides the verdict, after one fetch per repository.
  */
-export function collectWorktreeSweep({
+export async function collectWorktreeSweep({
   idle,
   olderThan,
   now,
@@ -373,7 +402,7 @@ export function collectWorktreeSweep({
   idle: boolean;
   olderThan: number | null;
   now: number;
-}): WorktreeSweep {
+}): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMsSetting(), now };
   const groups = new Map<string, string[]>();
@@ -396,9 +425,7 @@ export function collectWorktreeSweep({
     }
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
-  const worktrees: WorktreeCandidate[] = [];
-  const pending: PendingMerge[] = [];
-  const lookup = pullRequestLookup();
+  const inspected: Inspected[] = [];
   for (const [path, roots] of groups) {
     const entries = listWorktrees(path);
     const entry = matchWorktreeEntry(entries, path);
@@ -416,27 +443,45 @@ export function collectWorktreeSweep({
       porcelain: porcelainOf(path, gitAnswered),
       unpushed: linked ? unpushedCommits(path) : null,
       submodules: linked && hasPopulatedSubmodules(path),
-      inUse: linked ? inUseOf(keys, { managedLocks: true }) : [],
+      inUse: [],
       idleDays,
       merge: null,
-      pullRequest: head && entry?.branch ? lookup(path, entry.branch, head) : null,
+      pullRequest: null,
       activity,
     };
+    inspected.push({
+      candidate: {
+        path,
+        keys,
+        idleDays,
+        merge: null,
+        head,
+        pullRequest: null,
+        skipCode: null,
+        skipped: null,
+        eligibleAt: null,
+      },
+      facts,
+      repo: 'refusal' in source ? null : source.path,
+      branch: head && entry?.branch ? entry.branch : null,
+    });
+  }
+  const devices = deviceReads();
+  for (const { candidate, facts } of inspected) {
+    if (facts.source === 'linked') facts.inUse = inUseOf(candidate.keys, { managedLocks: true }, devices);
+  }
+  await lookUpPullRequests(inspected);
+  const worktrees: WorktreeCandidate[] = [];
+  const pending: PendingMerge[] = [];
+  for (const { candidate, facts, repo } of inspected) {
     const verdict = worktreeSkipReason(facts, days, grace);
-    const candidate: WorktreeCandidate = {
-      path,
-      keys,
-      idleDays,
-      merge: null,
-      head,
+    Object.assign(candidate, {
       pullRequest: facts.pullRequest,
       skipCode: verdict?.code ?? null,
       skipped: verdict?.text ?? null,
       eligibleAt: verdict?.eligibleAt ?? null,
-    };
-    if (verdict && MERGE_DECIDES.has(verdict.code) && !('refusal' in source)) {
-      pending.push({ candidate, facts, repo: source.path });
-    }
+    });
+    if (verdict && MERGE_DECIDES.has(verdict.code) && repo !== null) pending.push({ candidate, facts, repo });
     worktrees.push(candidate);
   }
   checkMergeStates(pending, days, grace);
@@ -448,6 +493,25 @@ export function collectWorktreeSweep({
     graceMs: grace.ms,
     worktrees: listed,
   };
+}
+
+async function lookUpPullRequests(inspected: readonly Inspected[]): Promise<void> {
+  const repos = new Map<string, { facts: WorktreeFacts; query: PullRequestQuery }[]>();
+  for (const { candidate, facts, repo, branch } of inspected) {
+    if (repo === null || branch === null || candidate.head === null) continue;
+    const query = { cwd: candidate.path, branch, head: candidate.head };
+    repos.set(repo, [...(repos.get(repo) ?? []), { facts, query }]);
+  }
+  const lookup = pullRequestLookups();
+  await Promise.all(
+    [...repos].map(async ([repo, entries]) => {
+      const answers = await lookup(
+        repo,
+        entries.map(({ query }) => query),
+      );
+      entries.forEach(({ facts }, i) => (facts.pullRequest = answers[i] ?? null));
+    }),
+  );
 }
 
 export async function removeWorktrees(

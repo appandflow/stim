@@ -274,8 +274,9 @@ squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
 
-gc also asks GitHub. For each worktree on a branch it runs
-`gh pr list --head <branch> --state all` in the worktree and takes the pull
+gc also asks GitHub, with one `gh api graphql` query per repository that
+looks up the 20 newest pull requests of each worktree's branch, as
+`gh pr list --head <branch> --state all` would. For each worktree it takes the pull
 request whose head is the worktree's HEAD, or contains it. A pull request from
 an older use of the same branch name, or one HEAD has moved past, does not
 count, and an open one never finishes a worktree. A merged or closed pull
