@@ -19,7 +19,7 @@ export function useScreenZoom(enabled: boolean) {
   const scale = useSharedValue(1);
   const x = useSharedValue(0);
   const y = useSharedValue(0);
-  const pinchStart = useSharedValue({ scale: 1, x: 0, y: 0, focalX: 0, focalY: 0 });
+  const pinchStart = useSharedValue({ scale: 1, pinch: 1, x: 0, y: 0, focalX: 0, focalY: 0 });
   const panStart = useSharedValue({ x: 0, y: 0 });
   const [zoomed, setZoomed] = useState(false);
   const size = useSharedValue({ width: 0, height: 0 });
@@ -51,14 +51,21 @@ export function useScreenZoom(enabled: boolean) {
     enabled,
     onActivate: (event) => {
       'worklet';
-      pinchStart.set({ scale: scale.get(), x: x.get(), y: y.get(), focalX: event.focalX, focalY: event.focalY });
+      pinchStart.set({
+        scale: scale.get(),
+        pinch: event.scale || 1,
+        x: x.get(),
+        y: y.get(),
+        focalX: event.focalX,
+        focalY: event.focalY,
+      });
     },
     onUpdate: (event) => {
       'worklet';
       const { width, height } = size.get();
       if (width <= 0 || height <= 0) return;
       const from = pinchStart.get();
-      const next = Math.min(Math.max(from.scale * event.scale, 1), MAX_SCALE);
+      const next = Math.min(Math.max((from.scale * event.scale) / from.pinch, 1), MAX_SCALE);
       x.set(zoomOffset(from.scale, from.x, next, from.focalX / width, event.focalX / width));
       y.set(zoomOffset(from.scale, from.y, next, from.focalY / height, event.focalY / height));
       scale.set(next);
