@@ -4,9 +4,7 @@ import { clockTime, formatElapsed, formatLongDuration, plural } from './command-
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 import type { RemoteSessionRecord } from './supervisor/state.ts';
-import { inspectProcessIdentity } from './process-identity.ts';
-import { chromeProcessState } from './web/profile.ts';
-import { cdpEndpoint, type WebRecord } from './web/state.ts';
+import { cdpEndpoint, type WebFacts } from './web/state.ts';
 import type {
   AndroidRuntimeFacts,
   DeviceActivity,
@@ -289,21 +287,6 @@ export function environmentState(
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
   };
-}
-
-/** The workspace's browser record and whether its supervisor and Chrome are verified live. */
-export interface WebFacts {
-  record: WebRecord;
-  status: 'running' | 'orphaned' | 'stopped' | 'unverified';
-}
-
-export function webFacts(record: WebRecord | null): WebFacts | null {
-  if (!record) return null;
-  const supervisor = inspectProcessIdentity(record);
-  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess) : 'gone';
-  if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
-  if (chrome === 'gone') return { record, status: 'stopped' };
-  return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };
 }
 
 /** Adds the workspace's owned Chrome to its status: the web entry, its memory, and an unverifiable browser. */

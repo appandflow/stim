@@ -15,13 +15,15 @@ import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devi
 import { teardownOwnedBrowser } from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
-import { environmentState, webFacts, withWebFacts } from '../status.ts';
+import { environmentState, withWebFacts } from '../status.ts';
 import { resolveWebUrl } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import { webLaunchVerdict } from '../web/launch.ts';
-import { readWebRecord, webProfileDir, writeWebRecord, type WebRecord } from '../web/state.ts';
+import { readWebRecord, webFacts, webProfileDir, writeWebRecord, type WebRecord } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
+import { workspaceInUse } from '../workspace/in-use.ts';
+import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
 
 let home: string;
 let root: string;
@@ -84,6 +86,27 @@ describe('Chrome launch', () => {
     expect(findChrome({ host: 'linux', exists: () => false, findExecutable: () => null })).toBeNull();
   });
 });
+
+test('gc names a ledgered browser profile whose directory is gone, never one on a missing volume', () => {
+  const gone = '/stim/workspaces/a/web/profile';
+  const kept = '/stim/workspaces/b/web/profile';
+  const unmounted = '/Volumes/Off/stim/workspaces/c/web/profile';
+  const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([gone, kept, unmounted]) };
+  const present = new Set(['/stim/workspaces', kept]);
+  expect(staleBrowserProfiles(ledger, (path) => present.has(path))).toEqual([{ kind: 'web', id: gone }]);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'gc keeps the ledger entry of a workspace linked to a missing volume (symlink creation needs privileges on win32)',
+  () => {
+    const workspaces = join(home, 'workspaces');
+    mkdirSync(workspaces);
+    symlinkSync(join(home, 'unmounted', 'ws'), join(workspaces, 'ws'));
+    const profile = join(workspaces, 'ws', 'web', 'profile');
+    const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([profile]) };
+    expect(staleBrowserProfiles(ledger)).toEqual([]);
+  },
+);
 
 describe('web.url', () => {
   test('fills named ports and the Metro port, and refuses {port:metro} without a reservation', async () => {
@@ -303,6 +326,14 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     expect(await teardownOwnedBrowser(workspace)).toMatchObject({ status: 'skipped', kind: 'not-verified' });
     expect(inspectProcessIdentity(chromeProcess)).toBe('same');
     expect(readWebRecord(workspace)).not.toBeNull();
+  });
+
+  test('a running owned Chrome keeps gc from treating the workspace as idle', async () => {
+    const workspace = realpathSync(root);
+    const record = await ownedBrowser();
+    expect(workspaceInUse(workspace)).toContain(`its owned Chrome (pid ${record.chromeProcess!.pid}) is running`);
+    await teardownOwnedBrowser(workspace);
+    expect(workspaceInUse(workspace)).toEqual([]);
   });
 
   test('status reports the running browser with its DevTools endpoint and counts the workspace live', async () => {

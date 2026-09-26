@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { WEB_VIEWPORTS, type WebViewport } from '@stim-cli/core/state';
-import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
+import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
+import { chromeProcessState } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import {
   clearWorkspaceStateKey,
@@ -124,4 +125,19 @@ export function clearWebRecord(root: string, owner: ProcessRecord): boolean {
 
 export function cdpEndpoint(port: number): string {
   return `http://127.0.0.1:${port}`;
+}
+
+/** The workspace's browser record and whether its supervisor and Chrome are verified live. */
+export interface WebFacts {
+  record: WebRecord;
+  status: 'running' | 'orphaned' | 'stopped' | 'unverified';
+}
+
+export function webFacts(record: WebRecord | null): WebFacts | null {
+  if (!record) return null;
+  const supervisor = inspectProcessIdentity(record);
+  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess) : 'gone';
+  if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
+  if (chrome === 'gone') return { record, status: 'stopped' };
+  return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };
 }

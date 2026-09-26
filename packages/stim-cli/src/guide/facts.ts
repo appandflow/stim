@@ -300,18 +300,20 @@ per session, with the preview URL.`,
                   reason is "not running" or "stopped (idle)" when the
                   supervisor had stopped it after metro.idleStopMinutes
 
-  stim reload [ios|android] --json
+  stim reload [ios|android|web] --json
 
   Exit 0 and this payload confirm that the reload request was sent. They do
   not prove that new JavaScript loaded or that the screen recovered. The
   command does not observe completion. Verify the expected UI on deviceId
   and inspect stim logs --errors before claiming recovery.
 
-  platform        "ios" | "android"
-  deviceId        the exact owned simulator UDID or emulator serial targeted
-  deviceName      the owned simulator or AVD name
-  appId           the live bundle id or Android package
-  metroPort       the workspace's verified Metro port
+  platform        "ios" | "android" | "web"
+  deviceId        the exact owned simulator UDID or emulator serial targeted;
+                  for web, the owned Chrome's DevTools endpoint
+  deviceName      the owned simulator or AVD name; for web, the Chrome version
+  appId           the live bundle id or Android package; for web, the page URL
+  metroPort       the workspace's verified Metro port; for web, the reserved
+                  Metro port or null
   strategy        how the reload was addressed.
                   "metro-websocket" -- Metro named its clients and Stim
                   addressed every peer matching this platform. A workspace
@@ -321,6 +323,8 @@ per session, with the preview URL.`,
                   the reload went to all of them and Stim cannot confirm appId
                   was among them. Verify the UI on deviceId; if it did not
                   change, reload from the app's own error screen or dev menu
+                  "cdp" -- web: Page.reload on the owned Chrome page, sent
+                  over a DevTools connection verified to reach that Chrome
   targets         how many peers the reload was addressed to, or null when
                   broadcast. Greater than 1 means several devices are running
                   this app on that Metro and the request addressed all of
@@ -586,10 +590,11 @@ RULES
                               bytes }  only with --older-than
     staleDeviceRecords      { kind, id, project, slot }  --delete clears
                               the record only
-    staleLedgerEntries      { kind: "ios", id }  simulators this Stim home
-                              created that a complete simctl listing no
-                              longer shows; --delete forgets the ledger
-                              entry only
+    staleLedgerEntries      { kind: "ios" | "web", id }  simulators this Stim
+                              home created that a complete simctl listing
+                              no longer shows, and browser profile paths
+                              whose directory is gone; --delete forgets
+                              the ledger entry only
     idleDevices             { kind, id, name, project, slot, lastActivityAt,
                               idleForMs, buildInProgress }  booted owned
                               devices whose status activity is "idle";

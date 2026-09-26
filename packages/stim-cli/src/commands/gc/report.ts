@@ -249,7 +249,7 @@ export function formatGcReport(
 
   if (staleLedgerEntries.length) {
     lines.push(
-      `Stale device ledger entries (${staleLedgerEntries.length}) - Stim created these devices; they are gone:`,
+      `Stale device ledger entries (${staleLedgerEntries.length}) - Stim created these devices or browser profiles; they are gone:`,
     );
     for (const entry of staleLedgerEntries) lines.push(`  ${entry.kind} ${entry.id} is not on this machine`);
     lines.push('              --delete forgets the LEDGER ENTRY only; there is no device left to touch.');
@@ -514,7 +514,7 @@ export interface GcJsonSections {
     bytes: number | null;
   }[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
-  staleLedgerEntries: { kind: 'ios'; id: string }[];
+  staleLedgerEntries: { kind: 'ios' | 'web'; id: string }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;

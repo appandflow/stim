@@ -3,7 +3,13 @@ import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, pidExists, signalProcessTree } from '../metro.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
+import {
+  teardownOwnedBrowser,
+  teardownOwnedIosSim,
+  teardownOwnedAvd,
+  type ParkedDevice,
+  type ParkRequest,
+} from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
@@ -16,6 +22,7 @@ import {
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -307,6 +314,7 @@ type ReclaimOptions = {
   stopMetroTunnel?: StopMetroTunnelFn;
   releaseLeases?: (root: string) => ReleasedLease[];
   verifyCollector?: typeof verifyCollectorOwnership;
+  teardownBrowser?: typeof teardownOwnedBrowser;
 };
 
 export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
@@ -351,6 +359,7 @@ async function reclaimIdleProject(
     stopMetroTunnel = defaultStopMetroTunnel,
     releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
+    teardownBrowser = teardownOwnedBrowser,
   }: ReclaimOptions,
 ): Promise<ReclaimResult> {
   await clearNamedPorts(path, { stop: true });
@@ -415,6 +424,12 @@ async function reclaimIdleProject(
     verify: verifyCollector,
     collectors: initialState?.collectors ?? {},
   });
+  const browser = await teardownBrowser(path, { deleteProfile: true });
+  if (browser.status === 'failed' || browser.status === 'skipped') {
+    const entry: SkippedDevice = { name: 'owned Chrome', reason: browser.reason ?? 'it could not be closed' };
+    skippedCollectors.push(entry);
+    failedCollectors.push(entry);
+  }
 
   function retainReplacementProcesses() {
     const currentState = readWorkspaceState(path);
@@ -422,6 +437,7 @@ async function reclaimIdleProject(
     const replacement = Boolean(
       (currentState?.supervisor && !sameProcessRecord(currentState.supervisor, initialState?.supervisor)) ||
       (currentProject?.supervisor && !sameProcessRecord(currentProject.supervisor, project?.supervisor)) ||
+      readWebRecord(path) !== null ||
       Object.entries(currentState?.collectors ?? {}).some(
         ([platform, record]) =>
           !sameProcessRecord(

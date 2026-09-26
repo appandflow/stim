@@ -12,6 +12,7 @@ import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
+import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let tmpHome: string;
@@ -78,6 +79,49 @@ test('reclaimProject keeps the workspace, its devices and its entry while a nati
   expect(building.failedDevices[0]?.reason).toMatch(/live build lock/);
   expect(existsSync(workspaceDir('/proj'))).toBe(true);
   expect(getProject('/proj')).not.toBe(null);
+});
+
+test('reclaimProject keeps the workspace and its entry when the owned Chrome cannot be closed', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  ensureWorkspaceStorage('/proj');
+  const calls: unknown[] = [];
+  const result = await reclaimProject('/proj', {
+    teardownBrowser: async (root, options) => {
+      calls.push([root, options]);
+      return { status: 'failed', reason: 'Chrome pid 5 did not exit' };
+    },
+  });
+  expect(calls).toEqual([['/proj', { deleteProfile: true }]]);
+  expect(result.keptEntry).toBe(true);
+  expect(result.failedDevices).toContainEqual({ name: 'owned Chrome', reason: 'Chrome pid 5 did not exit' });
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')).not.toBeNull();
+});
+
+test('reclaimProject keeps the workspace when a browser supervisor appears after its teardown', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  ensureWorkspaceStorage('/proj');
+  const result = await reclaimProject('/proj', {
+    teardownBrowser: async (root) => {
+      writeWebRecord(root, {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid)!,
+        chrome: '/Chrome',
+        headless: true,
+        viewport: 'desktop',
+        ignoreCertificateErrors: false,
+        cdpPort: 8950,
+        profile: join(workspaceDir(root), 'web', 'profile'),
+        url: 'http://localhost:8900/',
+        startedAt: new Date().toISOString(),
+      });
+      return { status: 'missing' };
+    },
+  });
+  expect(result.keptEntry).toBe(true);
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
 });
 
 test('reclaimProject leaves no workspace directory behind for a project that never had one', async () => {

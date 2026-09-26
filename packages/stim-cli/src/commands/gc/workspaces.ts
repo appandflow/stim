@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySize } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
+import { teardownOwnedBrowser } from '../../devices/teardown.ts';
 import { emptyWorkspaceDir, workspaceInUse, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
@@ -320,8 +321,12 @@ export async function deleteOrphanedWorkspaces(orphaned: readonly OrphanedWorksp
     try {
       run = await withIdleWorkspace(
         entry.projectRoot,
-        () => {
+        async () => {
           if (!stillOrphaned(entry)) return false;
+          const browser = await teardownOwnedBrowser(entry.projectRoot, { deleteProfile: true });
+          if (browser.status === 'failed' || browser.status === 'skipped') {
+            throw new Error(`its owned Chrome profile was kept: ${browser.reason}`);
+          }
           emptyWorkspaceDir(entry.dir);
           return true;
         },
