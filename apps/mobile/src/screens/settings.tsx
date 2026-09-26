@@ -1,10 +1,11 @@
-import { FieldGroup, Host, Switch } from '@expo/ui';
-import { SegmentedControl } from '@expo/ui/community/segmented-control';
+import { FieldGroup, Host, RNHostView, Switch } from '@expo/ui';
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import type { ReactElement } from 'react';
+import { Platform, Pressable, StyleSheet, Text } from 'react-native';
 
 import { Icon } from '@/components/icon';
 import { explainReadOnly } from '@/components/read-only';
+import { SegmentedChoice } from '@/components/segmented-choice';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
@@ -57,24 +58,25 @@ export function Settings() {
             {connections.map(({ mac, state, connection }) => {
               const scope = pairingScope(state);
               return (
-                <Pressable
-                  key={mac.id}
-                  onPress={scope === 'read' ? () => explainReadOnly(mac.name, state, connection) : undefined}
-                  disabled={scope !== 'read'}
-                  accessibilityRole={scope === 'read' ? 'button' : 'text'}
-                  style={styles.pairing}
-                >
-                  <Text style={[styles.rowLabel, { color: colors.text }]} numberOfLines={1}>
-                    {mac.name}
-                  </Text>
-                  <Text style={[styles.pairingScope, { color: scope === 'read' ? colors.warn : colors.secondary }]}>
-                    {scope === 'control'
-                      ? 'Control'
-                      : scope === 'read'
-                        ? 'Read-only. Tap to see how to allow control.'
-                        : 'Not connected'}
-                  </Text>
-                </Pressable>
+                <HostedRow key={mac.id}>
+                  <Pressable
+                    onPress={scope === 'read' ? () => explainReadOnly(mac.name, state, connection) : undefined}
+                    disabled={scope !== 'read'}
+                    accessibilityRole={scope === 'read' ? 'button' : 'text'}
+                    style={styles.pairing}
+                  >
+                    <Text style={[styles.rowLabel, { color: colors.text }]} numberOfLines={1}>
+                      {mac.name}
+                    </Text>
+                    <Text style={[styles.pairingScope, { color: scope === 'read' ? colors.warn : colors.secondary }]}>
+                      {scope === 'control'
+                        ? 'Control'
+                        : scope === 'read'
+                          ? 'Read-only. Tap to see how to allow control.'
+                          : 'Not connected'}
+                    </Text>
+                  </Pressable>
+                </HostedRow>
               );
             })}
           </FieldGroup.Section>
@@ -101,7 +103,7 @@ function ChoiceRow<T extends string>({
     options.findIndex((option) => option.value === value),
   );
   return (
-    <SegmentedControl
+    <SegmentedChoice
       values={options.map((option) => option.label)}
       selectedIndex={selectedIndex}
       onValueChange={(selectedLabel) => {
@@ -116,11 +118,20 @@ function ChoiceRow<T extends string>({
 function LinkRow({ label, onPress }: { label: string; onPress: () => void }) {
   const colors = useColors();
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={styles.row}>
-      <Text style={[styles.rowLabel, { color: colors.text }]}>{label}</Text>
-      <Icon name="chevron.right" size={15} color={colors.tertiary} />
-    </Pressable>
+    <HostedRow>
+      <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={styles.row}>
+        <Text style={[styles.rowLabel, { color: colors.text }]}>{label}</Text>
+        <Icon name="chevron.right" size={15} color={colors.tertiary} />
+      </Pressable>
+    </HostedRow>
   );
+}
+
+// @expo/ui on Android composes only Compose children of a FieldGroup.Section, so a React Native
+// row needs an RNHostView there. matchContents sizes the host to the row's content.
+function HostedRow({ children }: { children: ReactElement }) {
+  if (Platform.OS !== 'android') return children;
+  return <RNHostView matchContents>{children}</RNHostView>;
 }
 
 const styles = StyleSheet.create({
