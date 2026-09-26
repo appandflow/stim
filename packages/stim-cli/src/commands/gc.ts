@@ -273,7 +273,9 @@ export async function collectGcReport(
         device.kind === 'android' && !registeredAvds.has(device.id)
           ? orphanedAvdDirectories.filter((entry) => entry.name === device.id)
           : [];
-      return directories.length ? directories.map(({ directory }) => Object.assign({}, device, { directory })) : [device];
+      return directories.length
+        ? directories.map(({ directory }) => Object.assign({}, device, { directory }))
+        : [device];
     });
     orphanedDevices = withAndroidAvdSizes(
       found.orphaned.flatMap((device) => {
