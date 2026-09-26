@@ -2,8 +2,8 @@ import { deviceShellArg } from './app-install.ts';
 import { fileLeaseIo } from './device-lease.ts';
 import { getProject } from '../workspace/config.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
-import { resolveOwnedAvdSerial } from '../devices/android.ts';
-import { listBootedIosSims } from '../devices/ios.ts';
+import { ownedAvdSerialResolver } from '../devices/android.ts';
+import { listAllIosSims } from '../devices/ios.ts';
 import type { DeviceRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -16,13 +16,30 @@ export function launchSlotScope(root: string, slot = 'default'): string | undefi
   return undefined;
 }
 
+const DEVICE_LISTING_TIMEOUT_MS = 5000;
+
 function ownedDeviceRunning(platform: 'ios' | 'android'): (device: DeviceRecord) => boolean {
-  if (platform === 'android')
-    return (device) => typeof device.avdName === 'string' && Boolean(resolveOwnedAvdSerial(device.avdName).serial);
-  let booted: Set<string> | null = null;
+  let listing: ((device: DeviceRecord) => boolean) | null = null;
+  const list = (): ((device: DeviceRecord) => boolean) => {
+    if (platform === 'android') {
+      const resolve = ownedAvdSerialResolver({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
+      return (device) => typeof device.avdName === 'string' && Boolean(resolve(device.avdName).serial);
+    }
+    const booted = new Set(
+      listAllIosSims({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS })
+        .filter((sim) => sim.state === 'Booted')
+        .map((sim) => sim.udid),
+    );
+    return (device) => typeof device.deviceUdid === 'string' && booted.has(device.deviceUdid);
+  };
   return (device) => {
-    booted ??= new Set(listBootedIosSims().map((sim) => sim.udid));
-    return typeof device.deviceUdid === 'string' && booted.has(device.deviceUdid);
+    try {
+      listing ??= list();
+      return listing(device);
+    } catch {
+      listing = () => true;
+      return true;
+    }
   };
 }
 

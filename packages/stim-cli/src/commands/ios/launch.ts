@@ -166,7 +166,7 @@ async function verifyIosRun({
     return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
   }
 
-  const siblings = siblingPlatformSlots(root, 'ios', slot);
+  const siblings = metroCheck ? siblingPlatformSlots(root, 'ios', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({
         requireBundleResponse: true,

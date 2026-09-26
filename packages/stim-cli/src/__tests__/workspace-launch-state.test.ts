@@ -5,6 +5,7 @@ import { clearSupervisorState } from '../commands/stop.ts';
 import { readWorkspaceLaunches, writeWorkspaceLaunch, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import type { DeviceRecord } from '@stim-cli/core/state';
 import { siblingPlatformSlots } from '../engine/slot-launch.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -112,4 +113,18 @@ test('a sibling slot shares Metro while its collector, lease or owned device is 
   expect(siblingPlatformSlots(root, 'android', 'default', { deviceRunning })).toEqual(['booted', 'hardware', 'second']);
   expect(siblingPlatformSlots(root, 'android', 'second', { deviceRunning })).toEqual(['booted', 'default', 'hardware']);
   expect(siblingPlatformSlots(root, 'ios', 'tablet', { deviceRunning })).toEqual([]);
+});
+
+test('a sibling whose device state cannot be read counts as running, so it can never lend its bundle', () => {
+  upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
+  setExecutor({
+    runFile: () => {
+      throw new Error('simctl timed out');
+    },
+  });
+  try {
+    expect(siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
+  } finally {
+    resetExecutor();
+  }
 });
