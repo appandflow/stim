@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useEffect, useState, type ReactNode } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View, type ViewProps } from 'react-native';
 
 import type { DeviceStream } from '@/hooks/device-stream';
 import type { Platform } from '@/protocol/types';
@@ -23,7 +23,7 @@ export function DeviceScreen({
   stream: DeviceStream;
   platform: Platform;
   label: string;
-  style?: StyleProp<ViewStyle>;
+  style?: ViewProps['style'];
   children?: ReactNode;
   /** The fps and max edge asked of the server, shown in the dev-only stats overlay next to the measured rate. */
   requested?: { fps: number; maxEdge: number };

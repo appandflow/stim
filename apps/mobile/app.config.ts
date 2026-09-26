@@ -56,14 +56,6 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
-    [
-      'expo-build-properties',
-      {
-        ios: {
-          enableSceneSupport: true,
-        },
-      },
-    ],
   ],
   experiments: {
     typedRoutes: true,
