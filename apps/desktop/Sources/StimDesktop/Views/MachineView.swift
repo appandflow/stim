@@ -27,6 +27,7 @@ struct MachineView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
+        NowBand(status: status, metrics: metrics)
         if let plan = autopilot.pressure { pressureBanner(plan) }
         headline(report)
         safeToFree(report)
@@ -77,7 +78,7 @@ struct MachineView: View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machine").font(.stim(.title))
-        Text("What uses this Mac's disk, largest first, and what Stim can free.")
+        Text("What uses this Mac's CPU and memory now, what uses its disk, and what Stim can free.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
