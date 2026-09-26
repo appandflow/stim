@@ -31,7 +31,9 @@ reload and stop a workspace:
   capture loop runs only briefly.
 - **Machines**: the third destination on home, alongside Workspaces and
   Devices, lists every paired machine with its connection state and endpoint,
-  with **Rename** and **Forget** on each row and **Pair** in the header.
+  with **Rename** and **Forget** on each row and **Pair** in the header. A
+  connected machine's row shows the pairing's scope, **Control** or
+  **Read-only** (see [Read-only pairings](#read-only-pairings)).
   Tapping a machine opens that machine's status. Whichever of the three
   destinations is open is saved on the phone and is what home shows next
   launch.
@@ -44,6 +46,8 @@ reload and stop a workspace:
   startup-volume free space over the last hour, load average, memory used and
   pressure, free disk per volume, Stim budgets, running devices and
   device leases, **Needs attention**, and its server and `stim` versions.
+  The title shows the pairing's scope; a read-only pairing also says what it
+  cannot do, with **Allow control**.
   Needs attention groups status issues by workspace, live workspaces first,
   then those with an error, shows three workspaces until you expand it, and
   shows each issue's remedy with **Copy**, which copies it as
@@ -102,8 +106,12 @@ Tapping a running device's frame on the workspace screen opens it full
 screen. It renders `DeviceScreen` (see Device video): H.264 video at up to
 60 frames a second when the server offers it, JPEG frames at up to 30
 otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
-and fitted to the device's shape. It is view-only until you turn on **Control**, which appears only when
-the Mac granted this phone control.
+and fitted to the device's shape. It is view-only until you turn on **Control**. On a read-only pairing,
+Control, the toolbar buttons and **Take over** show disabled, and a banner
+says the phone is read-only and how to allow control, with **Copy command**
+and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
+banner appears when the server refuses `control.begin` with `forbidden`, or
+ends a session because the Mac took control away.
 
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
@@ -135,13 +143,26 @@ the workspace **...** menu shows **Reload** and **Stop**:
 A toast shows the action while it runs, then its result or the server's error
 message. The workspace updates through the status stream.
 
-A read-only pairing shows one **Reload and Stop** entry instead, which
-explains the grant: on the Mac, `stim-server devices grant <id> --control`,
-with the id `stim-server devices` lists. A connection learns its actions only
-from `hello`, so its **Reconnect** button opens a new connection to pick up the
-grant. When control is taken away while connected, the server refuses the
-action and the toast shows why. A server that predates actions shows neither
-entry.
+A read-only pairing shows **Reload** and **Stop** disabled, with the reason,
+and **Allow control...**, which explains the grant (see
+[Read-only pairings](#read-only-pairings)). When control is taken away while
+connected, the server refuses the action and the toast shows why. A server
+that predates actions shows neither entry.
+
+## Read-only pairings
+
+`hello` returns the pairing's `capabilities` and the phone's device id. A
+pairing without `control` is read-only: Stim Desktop's **Pair a phone** makes
+read-only pairings. The machine row, the machine sheet and a **Pairings**
+line per machine in Settings show the scope while connected. Wherever the app
+would offer a control action, a read-only pairing shows it disabled with a
+short reason, and **Allow control** explains the upgrade: in Stim Desktop on
+the Mac, **Settings**, **Phones**, turn on **Allow control** for this phone,
+or run `stim-server devices grant <id> --control` with this phone's id. A
+connection learns its scope only from `hello`, so **Reconnect** opens a new
+connection to pick up the grant. When the server refuses control or an action
+with `forbidden`, or ends a control session for that reason, the app
+reconnects on its own, so a revoked grant shows as read-only everywhere.
 
 ## Device video
 

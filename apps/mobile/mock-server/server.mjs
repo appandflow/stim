@@ -139,7 +139,7 @@ server.on('connection', (socket) => {
           return { error: ['unauthorized', 'This Mac does not recognize this phone.'] };
         }
         authed = true;
-        return { result: hello() };
+        return { result: hello(auth.deviceToken, 'Phone') };
       }
       if (auth.pairingToken !== pairing.token || Date.now() > pairing.expiresAt) {
         return { error: ['pairing-expired', 'This pairing code was used or expired. Show a new one in Stim Desktop.'] };
@@ -151,7 +151,7 @@ server.on('connection', (socket) => {
       console.log(`Paired ${auth.deviceName ?? 'a phone'}. Next pairing code:`);
       console.log(pairing.code);
       authed = true;
-      return { result: { ...hello(), deviceToken } };
+      return { result: { ...hello(deviceToken, auth.deviceName ?? 'Phone'), deviceToken } };
     },
     'status.subscribe'() {
       const subscription = every(5000, (id) => send({ event: 'status', subscription: id, payload: status() }));
@@ -270,11 +270,12 @@ function runsBothPlatforms(env) {
   return slots.some((slot) => slot.ios?.state === 'Booted') && slots.some((slot) => slot.android?.state === 'detected');
 }
 
-function hello() {
+function hello(deviceToken, deviceName) {
   return {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
     actions: values.read ? [] : ACTIONS,
+    device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
   };
 }

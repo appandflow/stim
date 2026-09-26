@@ -12,6 +12,7 @@ import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
 import { GitIndicator } from '@/components/git-indicator';
+import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { useAction, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
@@ -77,16 +78,6 @@ export function WorkspaceDetail({ path }: { path: string }) {
       { text: 'Stop', style: 'destructive', onPress: () => void perform('stop') },
     ]);
 
-  const explainReadOnly = () =>
-    Alert.alert(
-      'This phone can only read',
-      `To let it reload and stop workspaces, run this on ${mac?.name ?? 'the machine'}:\n\nstim-server devices grant <id> --control\n\nstim-server devices lists this phone's id. Then reconnect.`,
-      [
-        { text: 'Reconnect', onPress: () => connection?.reconnect() },
-        { text: 'OK', style: 'cancel' },
-      ],
-    );
-
   const openLogs = (errors: boolean) =>
     router.push({ pathname: '/mac/[id]/logs', params: { id: macId, path, ...(errors ? { errors: '1' } : {}) } });
 
@@ -127,8 +118,14 @@ export function WorkspaceDetail({ path }: { path: string }) {
             </Stack.Toolbar.Menu>
           ) : env && actions.available ? (
             <Stack.Toolbar.Menu inline>
-              <Stack.Toolbar.MenuAction icon="lock" subtitle="This phone can only read" onPress={explainReadOnly}>
-                Reload and Stop
+              <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled subtitle={READ_ONLY_REASON}>
+                Reload
+              </Stack.Toolbar.MenuAction>
+              <Stack.Toolbar.MenuAction icon="stop.circle" disabled subtitle={READ_ONLY_REASON}>
+                Stop
+              </Stack.Toolbar.MenuAction>
+              <Stack.Toolbar.MenuAction icon="lock.open" onPress={() => explainReadOnly(mac?.name, state, connection)}>
+                Allow control...
               </Stack.Toolbar.MenuAction>
             </Stack.Toolbar.Menu>
           ) : null}

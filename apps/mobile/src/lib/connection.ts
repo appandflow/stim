@@ -18,10 +18,18 @@ export type ConnectionState =
       server: Methods['hello']['result']['server'];
       actions: ActionName[] | null;
       capabilities: string[];
+      /** This phone's id on the Mac, as `stim-server devices` lists it; null from a server that predates it. */
+      deviceId: string | null;
     }
   | { kind: 'waiting'; retryInMs: number; reason: string }
   | { kind: 'refused'; code: string; reason: string }
   | { kind: 'closed' };
+
+/** What the Mac lets this phone do, from the last `hello`: null while not connected, since only `hello` says. */
+export function pairingScope(state: ConnectionState): 'control' | 'read' | null {
+  if (state.kind !== 'open') return null;
+  return state.capabilities.includes('control') ? 'control' : 'read';
+}
 
 type SubscribeMethod = 'status.subscribe' | 'logs.subscribe' | 'frames.subscribe';
 
@@ -189,6 +197,7 @@ export class StimConnection {
             server: hello.server,
             actions: hello.actions ?? null,
             capabilities: hello.capabilities,
+            deviceId: hello.device?.id ?? null,
           });
           for (const sub of this.subscriptions) this.sendSubscribe(socket, sub);
         },

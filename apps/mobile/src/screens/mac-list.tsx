@@ -4,6 +4,7 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native
 import { Card } from '@/components/card';
 import { StatusDot } from '@/components/chip';
 import { connectionColor, describeState } from '@/components/mac-chip';
+import { ScopeChip } from '@/components/read-only';
 import { useMacs } from '@/hooks/mac-connection';
 import { forgetMac, type PairedMac } from '@/lib/macs';
 import { mono, useColors } from '@/theme';
@@ -31,7 +32,12 @@ export function MacList() {
               <View style={styles.row}>
                 <StatusDot color={connectionColor(state, missing, colors)} />
                 <View style={styles.rowText}>
-                  <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
+                  <View style={styles.nameRow}>
+                    <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <ScopeChip state={state} />
+                  </View>
                   <Text style={[styles.state, { color: colors.secondary }]} numberOfLines={1}>
                     {describeState(state, missing)}
                   </Text>
@@ -65,7 +71,8 @@ const styles = StyleSheet.create({
   list: { padding: 16, gap: 12 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14 },
   rowText: { flex: 1, gap: 4 },
-  name: { fontSize: 17, fontWeight: '600' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  name: { fontSize: 17, fontWeight: '600', flexShrink: 1 },
   state: { fontSize: 13 },
   endpoint: { fontSize: 12, fontFamily: mono },
   rowAction: { fontSize: 14, fontWeight: '500' },

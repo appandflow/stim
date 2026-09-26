@@ -285,6 +285,7 @@ export function useAction(workspace: string): WorkspaceActions {
         await connection.request('action', params);
         return null;
       } catch (cause) {
+        if (cause instanceof RequestError && cause.error.code === 'forbidden') connection.reconnect();
         return (cause as Error).message;
       } finally {
         setPending(null);
@@ -447,7 +448,9 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
   useEffect(() => {
     if (!connection || !session) return;
     const stop = connection.onControlEnded((event) => {
-      if (event.session === session) setHeld({ kind: 'off', ended: event.message });
+      if (event.session !== session) return;
+      setHeld({ kind: 'off', ended: event.message });
+      if (event.reason === 'forbidden') connection.reconnect();
     });
     return () => {
       stop();
@@ -468,12 +471,13 @@ export function useDeviceControl(workspace: string, platform: Platform, slot: st
             postures: result.postures,
             link,
           }),
-        (cause: Error) =>
-          setHeld(
-            cause instanceof RequestError && cause.error.code === 'device-busy'
-              ? { kind: 'busy', message: cause.message }
-              : { kind: 'failed', message: cause.message },
-          ),
+        (cause: Error) => {
+          const code = cause instanceof RequestError ? cause.error.code : null;
+          if (code === 'device-busy') return setHeld({ kind: 'busy', message: cause.message });
+          if (code !== 'forbidden') return setHeld({ kind: 'failed', message: cause.message });
+          setHeld({ kind: 'off' });
+          connection.reconnect();
+        },
       );
     },
     [connection, link, workspace, platform, slot],

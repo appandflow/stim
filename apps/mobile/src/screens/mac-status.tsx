@@ -6,8 +6,10 @@ import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { MachineStatsRow } from '@/components/machine-stats';
+import { explainReadOnly, ScopeChip } from '@/components/read-only';
 import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
 import { useMacById } from '@/hooks/mac-connection';
+import { pairingScope } from '@/lib/connection';
 import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
 import { attentionGroups, devicesOf, workspaceNames, type AttentionGroup } from '@/lib/workspaces';
@@ -71,11 +73,26 @@ export function MacStatus({ id }: { id: string }) {
             {open ? `stim ${state.server.stim} \u00B7 server ${state.server.version}` : describeState(state, missing)}
           </Text>
         </View>
+        <ScopeChip state={state} />
       </View>
       <Text style={[styles.endpoint, { color: colors.tertiary }]} selectable>
         {mac.endpoint}
       </Text>
       <ConnectionBanner state={state} />
+      {pairingScope(state) === 'read' ? (
+        <View style={styles.readOnly}>
+          <Text style={[styles.readOnlyText, { color: colors.secondary }]}>
+            This phone is read-only: it cannot reload or stop workspaces, or control devices.
+          </Text>
+          <Pressable
+            onPress={() => explainReadOnly(mac.name, state, connection)}
+            accessibilityRole="button"
+            hitSlop={6}
+          >
+            <Text style={[styles.readOnlyAction, { color: colors.primary }]}>Allow control</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {usage ? <MachineStatsRow usage={usage} large /> : null}
 
       {capacity ? (
@@ -269,6 +286,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '700' },
   subtitle: { fontSize: 14, marginTop: 2 },
   endpoint: { fontSize: 12, fontFamily: mono },
+  readOnly: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  readOnlyText: { flex: 1, fontSize: 13, lineHeight: 18 },
+  readOnlyAction: { fontSize: 14, fontWeight: '600' },
   section: { gap: 6 },
   sectionTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 },
   card: { borderRadius: 14, borderCurve: 'continuous', borderWidth: 1, padding: 14, gap: 10 },
