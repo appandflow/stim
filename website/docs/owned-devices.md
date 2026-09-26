@@ -288,10 +288,15 @@ names the session: rerun the command to reuse it, or run `stim stop` to end it.
 
 Before shutting down, parking or deleting an owned simulator or emulator, Stim
 attempts to close local `agent-device` sessions on that exact iOS UDID or live
-Android serial. It rechecks ownership and asks agent-device to reject a close if
-the session now targets another device. Sessions on other devices and physical
-devices stay open. The integration is optional: a missing binary skips cleanup;
-failures print a warning and device teardown continues. Agent-device calls have
+Android serial. An Android session must also name the owned AVD, because the
+next emulator on a console port reuses the serial. `stim stop` (including
+`stop --slot`) closes a session only when agent-device's claim on the device
+names that session and was taken inside the workspace being stopped. Stim
+rechecks ownership and asks agent-device to reject a close if the session now
+targets another device. Sessions from another workspace or claim, sessions on
+other devices, and physical devices stay open. The integration is optional: a
+missing binary skips cleanup; failures print a warning and device teardown
+continues. Agent-device calls have
 a combined 15-second budget per device and require local socket transport and
 support for `--session-lock reject`. Remote daemons are never used.
 

@@ -46,8 +46,12 @@ boot rather than a create, a provision and a reinstall.
 
 Before shutting down, parking or deleting an owned device, Stim best-effort
 closes local agent-device sessions bound to its exact iOS UDID or live Android
-serial. It rechecks device ownership and uses agent-device's rejecting session
-target guard; sessions on other devices stay open. Physical devices are outside
+serial. An Android session must also name the owned AVD, because the next
+emulator on a console port reuses its serial. \`stop\` closes a session only
+when agent-device's claim on the device names it and was taken inside this
+workspace; sessions from another workspace or claim stay open. Stim rechecks
+device ownership and uses agent-device's rejecting session target guard;
+sessions on other devices stay open. Physical devices are outside
 this cleanup. agent-device is optional: a missing binary skips this step, and a
 failed or timed-out list/close prints a device line on stderr while teardown
 continues. Cleanup allows at most 15 seconds of agent-device calls per device.
