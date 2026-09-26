@@ -1,4 +1,4 @@
-import { Host, Picker, Switch } from '@expo/ui';
+import { Host, Picker } from '@expo/ui';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { FlatList, ScrollView } from '@/components/lists';
+import { Switch } from '@/components/switch';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';

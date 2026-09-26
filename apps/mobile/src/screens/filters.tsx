@@ -1,4 +1,4 @@
-import { Host, Switch } from '@expo/ui';
+import { Host } from '@expo/ui';
 import { useMemo, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Button } from '@/components/button';
 import { SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
+import { Switch } from '@/components/switch';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { useHomeFilters } from '@/hooks/home-filters';
