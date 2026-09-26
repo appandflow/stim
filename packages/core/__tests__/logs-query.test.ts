@@ -587,7 +587,6 @@ describe('incremental tailing', () => {
       vi.advanceTimersByTime(100);
       expect(seen).toEqual([]);
       vi.advanceTimersByTime(100);
-      stop();
       expect(seen.map((record) => [record.msg, record.context])).toEqual([
         [
           ' ERROR  SyntaxError: App.js: Unexpected token',
@@ -595,6 +594,7 @@ describe('incremental tailing', () => {
         ],
         ['ios bundle response failed', undefined],
       ]);
+      stop();
     } finally {
       vi.useRealTimers();
     }
