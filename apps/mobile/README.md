@@ -459,9 +459,45 @@ or prefix each command with `npx`).
 
 ### Each release
 
+`.github/workflows/mobile-release.yml` releases from `main`. It runs in the
+`release` environment and signs in to Expo with the `EXPO_TOKEN` secret.
+
+- **Actions**, **Mobile release**, **Run workflow**, with a `mode`:
+  - `auto`, the default: computes the iOS fingerprint of the checked-out
+    project (`npx expo-updates fingerprint:generate --platform ios`) and
+    compares it with the runtime of the latest finished `production` build.
+    The same runtime publishes an update; a different one, or no build with a
+    runtime, builds and submits.
+  - `update`: `eas update --channel production --platform ios` with the
+    commit subject as the message. Use it only when you know the change is
+    JS-only; an update for a runtime no build has reaches no one.
+  - `build`: `eas build --platform ios --profile production
+--non-interactive --auto-submit`.
+- A `mobile-v<version>` tag on `main` always builds and submits. The version
+  must equal `version` in `app.config.ts`, so raise it first.
+
+The runner computes the fingerprint on Linux and EAS Build computes the
+build's runtime on macOS. When they disagree, `auto` builds even for a
+JS-only change: it costs a build, never a broken update.
+
+`--auto-submit` and `eas submit` read the App Store Connect API key from EAS
+credentials, not from GitHub. Store it once, from `apps/mobile`:
+
 ```bash
-eas build --platform ios --profile production
-eas submit --platform ios --latest
+eas credentials --platform ios
+```
+
+Choose the `production` profile, then **App Store Connect: Manage your API
+Key**, **Set up your project to use an API Key for EAS Submit**, and use an
+existing key: give the path to its `.p8` file, its key ID and issuer ID.
+EAS keeps the key on expo.dev for the Expo account; the `.p8` stays out of
+the repository.
+
+To release by hand instead:
+
+```bash
+eas build --platform ios --profile production --auto-submit
+eas update --channel production --platform ios --message "<what changed>"
 ```
 
 The build appears in TestFlight after Apple finishes processing it, usually
