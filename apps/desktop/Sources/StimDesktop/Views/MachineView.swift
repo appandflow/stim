@@ -96,26 +96,20 @@ struct MachineView: View {
   }
 
   private func pressureBanner(_ plan: PressurePlan) -> some View {
-    HStack(alignment: .top, spacing: 14) {
-      Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning).font(.system(size: 18))
-      VStack(alignment: .leading, spacing: 4) {
-        Text(plan.headline).font(Theme.body(13, weight: .semibold))
-        Text(plan.proposal).foregroundStyle(Palette.secondary)
-        if plan.belowHardFloor {
-          Text("Below the hard floor, stim start, ios and android refuse with STIM_LOW_DISK.")
-            .foregroundStyle(Palette.warning)
-        }
+    Banner(tone: .warning, icon: "exclamationmark.triangle.fill") {
+      Text(plan.headline).font(Theme.body(13, weight: .semibold))
+      Text(plan.proposal).foregroundStyle(Palette.secondary)
+      if plan.belowHardFloor {
+        Text("Below the hard floor, stim start, ios and android refuse with STIM_LOW_DISK.")
+          .foregroundStyle(Palette.warning)
       }
-      Spacer()
+    } trailing: {
       if !plan.isEmpty {
         Button("Do it") { autopilot.runPressurePlan(trigger: .manual, present: true) }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }
     }
-    .padding(16)
-    .background(RoundedRectangle(cornerRadius: 12).fill(Palette.warning.opacity(0.12)))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.warning.opacity(0.35)))
   }
 
   // MARK: Headline
@@ -221,14 +215,7 @@ struct MachineView: View {
       } else if report.free.isEmpty {
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
-        Card {
-          VStack(spacing: 0) {
-            ForEach(Array(report.free.enumerated()), id: \.element.id) { index, item in
-              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-              freeRow(item, selected: selected)
-            }
-          }
-        }
+        ListSection(report.free) { item in freeRow(item, selected: selected) }
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
@@ -258,7 +245,7 @@ struct MachineView: View {
       VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 6) {
           Text(freeTitle(item)).lineLimit(1).truncationMode(.middle)
-          Chip(tint: nil) { Text(actionLabel(item.action)) }
+          Pill(tone: .neutral) { Text(actionLabel(item.action)) }
         }
         Text(abbreviatingHome(item.detail)).font(Theme.body(11.5)).foregroundStyle(Palette.secondary).lineLimit(1)
           .truncationMode(.middle)
@@ -447,20 +434,20 @@ struct MachineView: View {
   @ViewBuilder
   private func lifecycleChip(_ lifecycle: WorktreeLifecycle?, workspace: WorkspaceStorage) -> some View {
     if workspace.missing {
-      Chip(tint: Palette.warning) { Text("Folder gone") }
+      Pill(tone: .warning) { Text("Folder gone") }
         .help("stim gc --delete drops this project's record and deletes its owned devices")
     } else {
       switch lifecycle {
       case .merged:
-        Chip(tint: Palette.success) { Text(lifecycle!.title) }.help(abbreviatingHome(workspace.worktree?.detail ?? ""))
+        Pill(tone: .success) { Text(lifecycle!.title) }.help(abbreviatingHome(workspace.worktree?.detail ?? ""))
       case .pullRequest(_, let url):
         Button { URL(string: url).map { _ = NSWorkspace.shared.open($0) } } label: {
-          Chip(tint: Palette.info) { Text(lifecycle!.title) }
+          Pill(tone: .info) { Text(lifecycle!.title) }
         }
         .buttonStyle(.plain)
         .help(url)
       case .stale:
-        Chip(tint: Palette.warning) { Text(lifecycle!.title) }.help("No recorded use for that long")
+        Pill(tone: .warning) { Text(lifecycle!.title) }.help("No recorded use for that long")
       case .active:
         Text(workspace.unprovisioned ? "Not warmed" : "Active").foregroundStyle(Palette.tertiary)
       case nil:
@@ -559,22 +546,22 @@ struct MachineView: View {
     switch device.owner {
     case .workspace:
       let name = device.project.map { status.names(ofPath: $0).title } ?? "a workspace"
-      Chip(tint: Palette.primary) {
+      Pill(tone: .accent) {
         Text("Stim \u{00B7} \(name)" + (device.slot.map { $0 == "default" ? "" : " (\($0))" } ?? ""))
           .lineLimit(1).truncationMode(.middle)
       }
       .help(device.project.map { abbreviatingHome($0) } ?? "")
     case .parked:
-      Chip(tint: Palette.primary) { Text("Stim \u{00B7} parked") }
+      Pill(tone: .accent) { Text("Stim \u{00B7} parked") }
         .help("Kept for reuse by the next workspace; stim gc --delete deletes it")
     case .orphaned:
-      Chip(tint: Palette.warning) { Text("Stim \u{00B7} no workspace") }
+      Pill(tone: .warning) { Text("Stim \u{00B7} no workspace") }
         .help("This Stim home created it and no workspace uses it; stim gc --delete deletes it")
     case .otherStimHome:
-      Chip(tint: nil) { Text("Another Stim home") }
+      Pill(tone: .neutral) { Text("Another Stim home") }
         .help("A stim- device this Stim home has no record of creating. Stim lists it and never acts on it.")
     case .user:
-      Chip(tint: nil) { Text("Yours") }
+      Pill(tone: .neutral) { Text("Yours") }
         .help("Not created by Stim. Stim never changes it; manage it in Xcode or Android Studio.")
     }
   }
@@ -591,7 +578,7 @@ struct MachineView: View {
       HStack(spacing: 8) {
         Text("Runtimes and system images").font(Theme.heading(15))
         if !unused.isEmpty {
-          Chip(tint: Palette.warning) {
+          Pill(tone: .warning) {
             Text("\(unused.count) unused \u{00B7} \(formatDisk(unused.compactMap(\.size.bytes).reduce(0, +)))")
           }
         }
@@ -627,7 +614,7 @@ struct MachineView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       if runtime.unused {
-        Chip(tint: Palette.warning) { Text("Unused") }
+        Pill(tone: .warning) { Text("Unused") }
       } else {
         Text(runtime.deviceCount == 1 ? "1 device" : "\(runtime.deviceCount) devices").foregroundStyle(Palette.secondary)
       }

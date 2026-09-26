@@ -101,25 +101,25 @@ struct WorkspaceHeader: View {
   private var chips: some View {
     FlowLayout(spacing: 8, lineSpacing: 6) {
       if let metro = env.metro {
-        Chip(tint: metro.running ? nil : Palette.error) {
+        Pill(tone: metro.running ? .neutral : .error) {
           StatusDot(color: metro.running ? Palette.success : Palette.error)
           Text("Metro")
           Text(":\(String(metro.port))").font(Theme.mono())
         }
       }
       if let supervisor = env.supervisor, supervisor.healthy != true {
-        Chip(tint: Palette.warning) { Text("supervisor unhealthy") }
+        Pill(tone: .warning) { Text("supervisor unhealthy") }
       }
       if let usage {
         if let cpu = usage.latest.cpuPercent {
-          Chip {
+          Pill {
             Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
             Text("CPU")
             Text(formatPercent(cpu)).font(Theme.mono())
           }
           .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
         }
-        Chip {
+        Pill {
           Sparkline(values: usage.resident, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
           Text("RAM")
           Text(formatMemory(usage.latest.residentBytes)).font(Theme.mono())
@@ -127,12 +127,12 @@ struct WorkspaceHeader: View {
         .help("Resident memory of the workspace's processes, simulators and emulators")
       }
       if let mb = env.memoryMb, mb > 0 {
-        Chip { Text(formatGigabytes(mb: mb)) }
+        Pill { Text(formatGigabytes(mb: mb)) }
           .help("Committed memory estimate from stim status")
       }
       if let errors = env.logs?.errorsSinceMarker {
         Button(action: openLogs) {
-          Chip(tint: errors > 0 ? Palette.error : nil) { Text(countLabel(errors, "error")) }
+          Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
         }
         .buttonStyle(.plain)
         .help("Open logs")

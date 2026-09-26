@@ -12,7 +12,7 @@ struct NoEnvironmentDetail: View {
         VStack(alignment: .leading, spacing: 6) {
           HStack(spacing: 10) {
             Text(names.title).font(Theme.heading(22))
-            Chip(tint: nil) { Text("no environment") }
+            Pill(tone: .neutral) { Text("no environment") }
           }
           Text(abbreviatingHome(worktree.path)).font(Theme.mono()).foregroundStyle(Palette.secondary).textSelection(.enabled)
           if let branch = worktree.branch {

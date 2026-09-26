@@ -23,9 +23,9 @@ struct GitIndicator: View {
   var body: some View {
     if let git, git.isNotable {
       if chips {
-        if git.uncommitted > 0 { Chip(tint: Palette.warning) { Text("\(git.uncommitted) uncommitted") } }
-        if let arrows = git.arrows { Chip { Text(arrows).monospacedDigit() } }
-        if git.mergedInto != nil { Chip(tint: Palette.primary) { Text("merged") } }
+        if git.uncommitted > 0 { Pill(tone: .warning) { Text("\(git.uncommitted) uncommitted") } }
+        if let arrows = git.arrows { Pill { Text(arrows).monospacedDigit() } }
+        if git.mergedInto != nil { Pill(tone: .accent) { Text("merged") } }
       } else {
         HStack(spacing: 4) {
           if git.uncommitted > 0 {
@@ -35,8 +35,8 @@ struct GitIndicator: View {
           if git.mergedInto != nil {
             Text("merged")
               .foregroundStyle(Palette.primary)
-              .padding(.horizontal, 4)
-              .background(RoundedRectangle(cornerRadius: 4).fill(Palette.primary.opacity(0.14)))
+              .padding(.horizontal, Space.xs)
+              .background(RoundedRectangle(cornerRadius: Radius.small).fill(Palette.primary.opacity(Opacity.tint)))
           }
         }
         .font(Theme.body(10.5, weight: .semibold))
@@ -47,21 +47,6 @@ struct GitIndicator: View {
         .accessibilityLabel(git.summary)
       }
     }
-  }
-}
-
-struct Chip<Content: View>: View {
-  var tint: Color?
-  @ViewBuilder var content: Content
-
-  var body: some View {
-    HStack(spacing: 6) { content }
-      .font(Theme.body(11.5))
-      .foregroundStyle(tint ?? Palette.secondary)
-      .padding(.horizontal, 9)
-      .padding(.vertical, 4)
-      .background(RoundedRectangle(cornerRadius: 7).fill(tint?.opacity(0.16) ?? Palette.surface))
-      .fixedSize()
   }
 }
 
@@ -129,28 +114,6 @@ struct FlowLayout: Layout {
   }
 }
 
-struct SectionLabel: View {
-  var title: String
-
-  var body: some View {
-    Text(title.uppercased())
-      .font(Theme.body(10.5, weight: .semibold))
-      .tracking(0.6)
-      .foregroundStyle(Palette.tertiary)
-  }
-}
-
-struct Card<Content: View>: View {
-  @ViewBuilder var content: Content
-
-  var body: some View {
-    content
-      .background(RoundedRectangle(cornerRadius: 12).fill(Palette.surface))
-      .clipShape(RoundedRectangle(cornerRadius: 12))
-      .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Palette.border))
-  }
-}
-
 struct EmptyState: View {
   var title: String
   var message: String
@@ -214,82 +177,6 @@ struct Sparkline: View {
             .stroke(color, style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
         }
       }
-    }
-  }
-}
-
-enum StimButtonVariant {
-  case primary
-  case secondary
-  case destructive
-}
-
-enum StimButtonSizing {
-  case small
-  case regular
-
-  fileprivate var height: CGFloat { self == .small ? 24 : 28 }
-  fileprivate var horizontalPadding: CGFloat { self == .small ? 10 : 13 }
-  fileprivate var font: Font { self == .small ? Theme.body(11.5, weight: .semibold) : Theme.body(12.5, weight: .semibold) }
-}
-
-/// The small rounded pill used for card and inline actions across Desktop: an accent-tinted fill
-/// for `secondary`, a solid accent fill for `primary`, and a red tint for `destructive`.
-struct StimButtonStyle: ButtonStyle {
-  var variant: StimButtonVariant = .secondary
-  var sizing: StimButtonSizing = .small
-
-  func makeBody(configuration: Configuration) -> some View {
-    StimButtonBody(configuration: configuration, variant: variant, sizing: sizing)
-  }
-}
-
-extension ButtonStyle where Self == StimButtonStyle {
-  static func stim(_ variant: StimButtonVariant = .secondary, _ sizing: StimButtonSizing = .small) -> StimButtonStyle {
-    StimButtonStyle(variant: variant, sizing: sizing)
-  }
-}
-
-private struct StimButtonBody: View {
-  var configuration: ButtonStyleConfiguration
-  var variant: StimButtonVariant
-  var sizing: StimButtonSizing
-  @Environment(\.isEnabled) private var isEnabled
-  @Environment(\.isFocused) private var isFocused
-  @State private var hovering = false
-
-  var body: some View {
-    configuration.label
-      .font(sizing.font)
-      .foregroundStyle(foreground)
-      .padding(.horizontal, sizing.horizontalPadding)
-      .frame(height: sizing.height)
-      .background(Capsule().fill(fill))
-      .overlay(Capsule().strokeBorder(Palette.accent.opacity(isFocused ? 0.8 : 0), lineWidth: 2))
-      .contentShape(Capsule())
-      .opacity(isEnabled ? 1 : 0.45)
-      .scaleEffect(configuration.isPressed ? 0.97 : 1)
-      .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-      .animation(.easeOut(duration: 0.1), value: hovering)
-      .onHover { hovering = $0 }
-  }
-
-  private var accent: Color {
-    switch variant {
-    case .primary: return Palette.brand
-    case .secondary: return Palette.accent
-    case .destructive: return Palette.error
-    }
-  }
-
-  private var foreground: Color { variant == .primary ? .white : accent }
-
-  private var fill: Color {
-    switch variant {
-    case .primary:
-      return accent.opacity(configuration.isPressed ? 0.8 : hovering ? 1 : 0.92)
-    case .secondary, .destructive:
-      return accent.opacity(configuration.isPressed ? 0.22 : hovering ? 0.17 : 0.11)
     }
   }
 }

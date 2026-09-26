@@ -38,7 +38,6 @@ struct SidebarPreferences: DynamicProperty {
 struct ViewOptionsButton: View {
   var projects: [Project]
   @State private var isPresented = false
-  @State private var hovering = false
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -48,19 +47,14 @@ struct ViewOptionsButton: View {
     } label: {
       Image(systemName: "slider.horizontal.3")
         .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(differs ? Palette.primary : Palette.secondary)
         .frame(width: 28, height: 24)
-        .background(
-          RoundedRectangle(cornerRadius: 6).fill(hovering || isPresented ? Palette.raised : Color.clear))
         .overlay(alignment: .topTrailing) {
           if differs {
             Circle().fill(Palette.primary).frame(width: 6, height: 6).offset(x: -2, y: 2)
           }
         }
-        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
+    .buttonStyle(.icon(tint: differs ? Palette.primary : Palette.secondary, active: isPresented))
     .accessibilityLabel("View options")
     .help(differs ? "View options (filtered)" : "View options")
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {

@@ -208,29 +208,23 @@ struct Inspector: View {
           }
         }
 
-        VStack(alignment: .leading, spacing: 8) {
-          SectionLabel(title: "Devices")
-          ForEach(env.orderedDevices) { device in
-            HStack(spacing: 8) {
-              StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
-              Text(device.label(among: env.devices)).font(Theme.body(12, weight: .semibold)).lineLimit(1)
-                .layoutPriority(1)
-              if let detail = device.detail {
-                Text(detail).foregroundStyle(Palette.secondary).lineLimit(1)
-              }
-              Spacer()
-              if device.appStopped {
-                Text("App stopped").foregroundStyle(Palette.warning).lineLimit(1).layoutPriority(1)
-              } else {
-                Text(device.state).foregroundStyle(Palette.tertiary).lineLimit(1)
-              }
-              if device.isRunning {
-                deviceStopButton(device)
-              }
+        ListSection("Devices", env.orderedDevices, style: .separated) { device in
+          ListRow(compact: true) {
+            StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
+            Text(device.label(among: env.devices)).font(Theme.body(12, weight: .semibold)).lineLimit(1)
+              .layoutPriority(1)
+            if let detail = device.detail {
+              Text(detail).foregroundStyle(Palette.secondary).lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
+            Spacer()
+            if device.appStopped {
+              Text("App stopped").foregroundStyle(Palette.warning).lineLimit(1).layoutPriority(1)
+            } else {
+              Text(device.state).foregroundStyle(Palette.tertiary).lineLimit(1)
+            }
+            if device.isRunning {
+              deviceStopButton(device)
+            }
           }
         }
 
@@ -313,18 +307,18 @@ struct Inspector: View {
       }
       FlowLayout(spacing: 6) {
         if let metro = env.metro {
-          Chip(tint: metroHealthy ? Palette.success : Palette.error) {
+          Pill(tone: metroHealthy ? .success : .error) {
             Text("Metro :\(String(metro.port)) \u{00B7} \(metro.running ? (metroHealthy ? "healthy" : "unhealthy") : "stopped")")
           }
           .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "")
         }
         GitIndicator(git: env.worktree?.git, chips: true).help(env.worktree?.git?.summary ?? "")
         if let mb = env.memoryMb, mb > 0 {
-          Chip { Text(formatGigabytes(mb: mb)) }.help("Committed memory estimate from stim status")
+          Pill { Text(formatGigabytes(mb: mb)) }.help("Committed memory estimate from stim status")
         }
         if env.logs != nil {
           Button(action: openLogs) {
-            Chip(tint: errors > 0 ? Palette.error : nil) { Text(countLabel(errors, "error")) }
+            Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
           }
           .buttonStyle(.plain)
           .help("Open the logs filtered to errors")

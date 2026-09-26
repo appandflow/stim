@@ -48,7 +48,7 @@ struct OnboardingBanner: View {
   private func stimPopup(_ report: Onboarding.Report) -> some View {
     let missing = report.stim == .missing
     let minimum = StimCLI.minimumVersion.description
-    return popupCard(kind: .stim, icon: missing ? "shippingbox" : "arrow.up.circle", tint: Palette.accent) {
+    return popupCard(kind: .stim, icon: missing ? "shippingbox" : "arrow.up.circle", tone: .accent) {
       Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(Theme.heading(14))
       Text("Stim Desktop needs stim \(minimum) or later to show and drive your workspaces.")
         .foregroundStyle(Palette.secondary)
@@ -60,7 +60,7 @@ struct OnboardingBanner: View {
   }
 
   private func relaunchPopup(_ report: Onboarding.Report) -> some View {
-    popupCard(kind: .relaunch, icon: "arrow.clockwise", tint: Palette.accent) {
+    popupCard(kind: .relaunch, icon: "arrow.clockwise", tone: .accent) {
       Text("Restart Stim Desktop to use the new stim").font(Theme.heading(14))
       Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
         .foregroundStyle(Palette.secondary)
@@ -76,7 +76,7 @@ struct OnboardingBanner: View {
     guard let server = report.server else { return AnyView(EmptyView()) }
     let missing = server == .missing
     return AnyView(
-      popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tint: Palette.warning) {
+      popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tone: .warning) {
         Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
           .font(Theme.heading(14))
         Text("stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later.")
@@ -91,7 +91,7 @@ struct OnboardingBanner: View {
   }
 
   private func viewerPopup(_ keys: [String]) -> some View {
-    popupCard(kind: .viewer, icon: "macwindow", tint: Palette.accent) {
+    popupCard(kind: .viewer, icon: "macwindow", tone: .accent) {
       Text("Show Stim's devices in Stim Desktop").font(Theme.heading(14))
       Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
         .foregroundStyle(Palette.secondary)
@@ -141,7 +141,7 @@ struct OnboardingBanner: View {
 
   @ViewBuilder
   private func runButton(
-    _ title: String, variant: StimButtonVariant = .secondary, key: Onboarding.PopupKind, action: @escaping () -> Void
+    _ title: String, variant: ButtonVariant = .secondary, key: Onboarding.PopupKind, action: @escaping () -> Void
   ) -> some View {
     if let active = actions.active(for: Onboarding.actionKey) {
       Button {
@@ -159,26 +159,14 @@ struct OnboardingBanner: View {
   }
 
   private func popupCard<Body: View, Buttons: View>(
-    kind: Onboarding.PopupKind, icon: String, tint: Color, @ViewBuilder text: () -> Body,
+    kind: Onboarding.PopupKind, icon: String, tone: BannerTone, @ViewBuilder text: () -> Body,
     @ViewBuilder buttons: () -> Buttons
   ) -> some View {
-    HStack(alignment: .top, spacing: 12) {
-      Image(systemName: icon).font(.system(size: 18)).foregroundStyle(tint).frame(width: 22)
-      VStack(alignment: .leading, spacing: 6) {
-        text()
-        HStack(spacing: 8) { buttons() }.padding(.top, 2)
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      Button { onboarding.dismissPopup(kind) } label: {
-        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.tertiary)
-      }
-      .buttonStyle(.plain)
+    Banner(tone: tone, icon: icon, style: .floating, onDismiss: { onboarding.dismissPopup(kind) }) {
+      text()
+      HStack(spacing: Space.md) { buttons() }.padding(.top, Space.xxs)
     }
-    .padding(14)
     .frame(minWidth: 420, maxWidth: 520)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.border))
-    .shadow(color: .black.opacity(0.28), radius: 20, y: 6)
-    .padding(.bottom, 20)
+    .padding(.bottom, Space.xxl)
   }
 }

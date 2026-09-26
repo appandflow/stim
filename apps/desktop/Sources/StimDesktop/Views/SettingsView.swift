@@ -173,7 +173,7 @@ private struct SettingRow: View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         Text(field.key).font(Theme.mono(12)).foregroundStyle(Palette.text)
-        if field.sensitive { Chip(tint: Palette.warning) { Text("sensitive") } }
+        if field.sensitive { Pill(tone: .warning) { Text("sensitive") } }
         Spacer()
         if model.writing.contains(id) { ProgressView().controlSize(.small) }
         if layerValue != nil {
