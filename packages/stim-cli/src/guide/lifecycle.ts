@@ -1292,12 +1292,14 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   for every slot, with one shared cap per platform and oldest-first eviction.
 
   When slots coexist, a Debug launch counts a Metro bundle delivery as proof
-  only when it is attributable to that launch's device. An iOS simulator
-  delivery names the process that requested it, so each simulator slot proves
-  its own launch. Any other delivery (Android, a physical iPhone) proves the
-  launch only while no other slot of the same platform holds a device in the
-  workspace. Otherwise the launch reports unverified with "not provably to this
-  device": check the reported device directly. Release verification still
+  only when it is attributable to that launch's device. On macOS, Metro records
+  which simulator app process requested an iOS bundle (through lsof), so each
+  simulator slot proves its own launch. Any other delivery (Android, a physical
+  iPhone, or a simulator request lsof could not resolve) proves the launch only
+  while no other slot of the same platform has a running log collector or a
+  device lease; stop --slot <name> releases both. Otherwise the launch reports
+  unverified with "not provably to this device": check the reported device
+  directly. Release verification still
   checks its process. reload ios/android addresses matching Metro peers across
   slots; it is not a single-slot reload.
 
