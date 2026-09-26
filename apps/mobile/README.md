@@ -70,11 +70,12 @@ reload and stop a workspace:
   Keystore on Android) and never shown.
 - **Workspace**: a status card with the branch and the app's folder inside
   its checkout, Metro's port and health, the git state as chips, memory, and the error count, which
-  opens the errors; build progress with its cache outcome ("Cache hit" or
-  "Cold build", "Likely ..." before the run reaches a phase that decides it);
-  each platform's last build (local cache, remote cache, compiled, or failed,
-  with its duration and age), with why a compiled build missed the cache,
-  which opens a sheet listing the changed fingerprint sources, and what the next build would find and how long it
+  opens the errors; a Build card with one section per platform: the running
+  build's progress with its cache outcome ("Cache hit" or "Cold build",
+  "Likely ..." before the run reaches a phase that decides it) in place of the
+  platform's name; the last build (local cache, remote cache, compiled, or
+  failed, with its duration and age), which, when it missed the cache, opens a
+  sheet listing the changed fingerprint sources; and what the next build would find and how long it
   should take ("Next build: cache hit (local)" or "cold build, ~5:40"), from the server's read-only `build.plan`, with
   why a predicted cold build would miss the cache, which opens the same sheet. The
   screen asks for each platform with a last build or a device when it opens, one plan at a time, reuses a result for
