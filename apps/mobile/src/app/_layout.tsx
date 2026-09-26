@@ -1,6 +1,7 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
@@ -8,7 +9,6 @@ import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { MacsProvider } from '@/hooks/mac-connection';
 import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
-import { useColors, useEffectiveScheme } from '@/theme';
 
 /** On iPad every screen keeps the orientations the system allows, as iPad multitasking requires. */
 function phoneOrientation(orientation: 'portrait_up' | 'default') {
@@ -24,8 +24,9 @@ export default function RootLayout() {
 }
 
 function RootLayoutContent() {
-  const scheme = useEffectiveScheme();
-  const colors = useColors();
+  const { theme: current, rt } = useUnistyles();
+  const scheme = rt.themeName === 'dark' ? 'dark' : 'light';
+  const colors = current.colors;
   const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
   const theme = {
     ...base,

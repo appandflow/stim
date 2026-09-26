@@ -5,8 +5,6 @@ import {
   Keyboard,
   PixelRatio,
   Platform as OS,
-  StyleSheet,
-  Text,
   TextInput,
   useWindowDimensions,
   View,
@@ -22,16 +20,20 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
-import { Chip } from '@/components/chip';
+import { Button } from '@/components/button';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
+import { Pill } from '@/components/pill';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
+import { withAlpha } from '@/design/color';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
@@ -42,7 +44,6 @@ import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/dev
 import { aspectOf, liftAbove } from '@/lib/zoom';
 import { devicesOf, workspaceTitleAt } from '@/lib/workspaces';
 import type { DevicePosture, InputButton, Platform, RotateDirection } from '@/protocol/types';
-import { useColors, type Colors } from '@/theme';
 
 const LIVE_FPS = 60;
 const MAX_EDGE = 1600;
@@ -71,7 +72,7 @@ const POSTURE_LABELS: Record<DevicePosture, string> = {
 };
 
 export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const window = useWindowDimensions();
   const landscape = window.width > window.height;
   const { videoQuality } = useSettings();
@@ -236,22 +237,24 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       .finally(() => setMoving(null));
   };
   const readOnlyBanner = readOnly ? (
-    <View style={[styles.banner, { borderColor: colors.warn }]}>
+    <View style={styles.banner(true)}>
       <View style={styles.bannerBody}>
-        <Text style={styles.bannerTitle}>{READ_ONLY_REASON}</Text>
-        <Text style={styles.bannerSteps}>{allowControlSteps(mac?.name, deviceId)}</Text>
+        <Text weight="semibold" style={styles.mediaText}>
+          {READ_ONLY_REASON}
+        </Text>
+        <Text variant="footnote" style={styles.mediaText}>
+          {allowControlSteps(mac?.name, deviceId)}
+        </Text>
         <View style={styles.bannerActions}>
           {deviceId ? (
-            <Touch
+            <Button
+              title={copied ? 'Copied' : 'Copy command'}
+              variant="plain"
+              size="small"
               onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
-              hitSlop={6}
-            >
-              <Text style={[styles.bannerAction, { color: colors.primary }]}>{copied ? 'Copied' : 'Copy command'}</Text>
-            </Touch>
+            />
           ) : null}
-          <Touch onPress={() => connection?.reconnect()} hitSlop={6}>
-            <Text style={[styles.bannerAction, { color: colors.primary }]}>Reconnect</Text>
-          </Touch>
+          <Button title="Reconnect" variant="plain" size="small" onPress={() => connection?.reconnect()} />
         </View>
       </View>
     </View>
@@ -310,10 +313,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           collapsable={false}
           onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
         >
-          <Animated.View
-            style={[StyleSheet.absoluteFill, { backgroundColor: colors.screen }, zoom.fadeStyle]}
-            pointerEvents="none"
-          />
+          <Animated.View style={[styles.backdrop, zoom.fadeStyle]} pointerEvents="none" />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
             <View
               style={[
@@ -330,7 +330,6 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 <View style={{ height: barBottom }} />
                 {landscape ? null : readOnlyBanner}
                 <Banner
-                  colors={colors}
                   control={control.state}
                   canTakeOver={control.allowed === true}
                   readOnly={readOnly}
@@ -338,7 +337,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 />
                 {stream.delayed ? (
                   <View style={styles.chips}>
-                    <Chip tint={colors.warn}>Screen updates delayed</Chip>
+                    <Pill tone="warning">Screen updates delayed</Pill>
                   </View>
                 ) : null}
                 <View style={landscape ? styles.row : styles.root}>
@@ -386,7 +385,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                     ) : null}
                     {source ? (
                       <View
-                        style={[styles.overlay, controlling && { borderColor: colors.primary }]}
+                        style={[styles.overlay, controlling && styles.overlayActive]}
                         pointerEvents={controlling ? 'auto' : 'none'}
                         {...(controlling ? touchHandlers : {})}
                       />
@@ -418,7 +417,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 accessibilityLabel="Close"
                 hitSlop={10}
               >
-                <Icon name="xmark" size={22} color="#FFFFFF" />
+                <Icon name="xmark" size={22} color={theme.media.text} />
               </Touch>
               <View
                 style={[
@@ -429,12 +428,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   },
                 ]}
               >
-                <Text style={styles.title} numberOfLines={1}>
+                <Text variant="body" weight="semibold" style={styles.mediaText} numberOfLines={1}>
                   {title}
                 </Text>
                 <View style={styles.subtitleRow}>
-                  <Text style={styles.subtitle} numberOfLines={1}>
-                    {`${model} · ${slot}`}
+                  <Text variant="caption" style={styles.subtitle} numberOfLines={1}>
+                    {`${model} \u00B7 ${slot}`}
                   </Text>
                   {driver ? (
                     <View
@@ -442,8 +441,8 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                       accessible
                       accessibilityLabel={controlling ? `Also driven by ${driver}` : `Driven by ${driver}`}
                     >
-                      <View style={[styles.driverDot, { backgroundColor: colors.accent }]} />
-                      <Text style={styles.driverText} numberOfLines={1}>
+                      <View style={styles.driverDot} />
+                      <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
                         {driver}
                       </Text>
                     </View>
@@ -457,7 +456,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 }}
               >
                 {control.allowed !== null ? (
-                  <ControlButton colors={colors} on={controlling} disabled={readOnly} onPress={toggle} />
+                  <ControlButton on={controlling} disabled={readOnly} onPress={toggle} />
                 ) : null}
               </View>
             </View>
@@ -473,9 +472,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               ]}
             >
               <Text
+                variant="footnote"
+                weight="semibold"
+                tone={rotateNote.turned ? 'success' : 'warning'}
                 accessibilityLiveRegion="polite"
                 accessibilityRole="alert"
-                style={[styles.note, { color: rotateNote.turned ? colors.live : colors.warn }]}
+                style={styles.note}
               >
                 {rotateNote.text}
               </Text>
@@ -484,7 +486,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           <Animated.View
             style={[
               styles.typingBar,
-              { paddingLeft: 16 + insets.left, paddingRight: 16 + insets.right },
+              { paddingLeft: theme.space.xl + insets.left, paddingRight: theme.space.xl + insets.right },
               typingBar,
               !typingBarShown && styles.hidden,
             ]}
@@ -496,7 +498,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               ref={keyboard}
               style={styles.typed}
               placeholder="Type on the device"
-              placeholderTextColor="#FFFFFF66"
+              placeholderTextColor={withAlpha(theme.media.text, theme.opacity.disabled)}
               value={typed}
               autoCapitalize="none"
               autoCorrect={false}
@@ -521,7 +523,9 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               accessibilityLabel="Type on the device"
             />
             <Touch onPress={() => keyboard.current?.blur()} hitSlop={8}>
-              <Text style={[styles.bannerAction, { color: colors.primary }]}>Done</Text>
+              <Text weight="semibold" tone="brand">
+                Done
+              </Text>
             </Touch>
           </Animated.View>
         </View>
@@ -531,13 +535,11 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
 }
 
 function Banner({
-  colors,
   control,
   canTakeOver,
   readOnly,
   onTakeOver,
 }: {
-  colors: Colors;
   control: ReturnType<typeof useDeviceControl>['state'];
   canTakeOver: boolean;
   readOnly: boolean;
@@ -556,8 +558,10 @@ function Banner({
   if (!message) return null;
   const offer = (canTakeOver || readOnly) && control.kind === 'busy';
   return (
-    <View style={[styles.banner, { borderColor: control.kind === 'failed' ? colors.warn : colors.border }]}>
-      <Text style={styles.bannerText}>{message}</Text>
+    <View style={styles.banner(control.kind === 'failed')}>
+      <Text variant="footnote" style={[styles.mediaText, styles.bannerText]}>
+        {message}
+      </Text>
       {offer ? (
         <Touch
           onPress={onTakeOver}
@@ -567,37 +571,32 @@ function Banner({
           style={styles.bannerButton}
           hitSlop={6}
         >
-          <Text style={[styles.bannerAction, { color: readOnly ? '#FFFFFF99' : colors.primary }]}>Take over</Text>
+          <Text weight="semibold" tone="brand" style={readOnly && styles.mutedAction}>
+            Take over
+          </Text>
         </Touch>
       ) : null}
     </View>
   );
 }
 
-function ControlButton({
-  colors,
-  on,
-  disabled,
-  onPress,
-}: {
-  colors: Colors;
-  on: boolean;
-  disabled: boolean;
-  onPress: () => void;
-}) {
+function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boolean; onPress: () => void }) {
+  const { theme } = useUnistyles();
   return (
     <Touch
       onPress={onPress}
       disabled={disabled}
-      defaultOpacity={disabled ? 0.4 : 1}
+      defaultOpacity={disabled ? theme.opacity.disabled : 1}
       accessibilityRole="switch"
       accessibilityLabel="Control"
       accessibilityState={{ checked: on, disabled }}
       hitSlop={7}
-      style={[styles.control, { backgroundColor: on ? colors.primary : '#FFFFFF1F' }]}
+      style={styles.control(on)}
     >
-      {on ? <Icon name="checkmark" size={13} color={colors.onPrimary} /> : null}
-      <Text style={[styles.controlText, { color: on ? colors.onPrimary : '#FFFFFF' }]}>Control</Text>
+      {on ? <Icon name="checkmark" size={13} color={theme.colors.onPrimary} /> : null}
+      <Text weight="semibold" style={styles.controlText(on)}>
+        Control
+      </Text>
     </Touch>
   );
 }
@@ -612,46 +611,55 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
       style={styles.tool}
       hitSlop={4}
     >
-      <Text style={styles.toolText}>{label}</Text>
+      <Text weight="medium" style={styles.mediaText}>
+        {label}
+      </Text>
     </Touch>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   root: { flex: 1 },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: theme.media.screen,
+  },
   header: { position: 'absolute', top: 0, left: 0, right: 0 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 4 },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.xl,
+    paddingVertical: theme.space.xs,
+  },
   titles: { flex: 1, alignItems: 'center' },
-  title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
-  subtitle: { color: '#FFFFFF99', fontSize: 12, flexShrink: 1 },
-  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '100%' },
+  mediaText: { color: theme.media.text },
+  subtitle: { color: theme.media.textTertiary, flexShrink: 1 },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, maxWidth: '100%' },
   driver: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
+    gap: theme.space.xs,
+    paddingHorizontal: theme.space.sm,
     paddingVertical: 1,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF1F',
+    borderRadius: theme.radius.chip,
+    backgroundColor: theme.media.fill,
   },
-  driverDot: { width: 6, height: 6, borderRadius: 3 },
-  driverText: { color: '#FFFFFFCC', fontSize: 11, fontWeight: '500' },
-  chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
-  noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: 16 },
+  driverDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.accent },
+  driverText: { color: theme.media.textSecondary },
+  chips: { flexDirection: 'row', paddingHorizontal: theme.space.xl, paddingBottom: theme.space.sm },
+  noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
   note: {
     overflow: 'hidden',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#000000D9',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    borderRadius: theme.radius.control,
+    backgroundColor: theme.media.note,
     textAlign: 'center',
   },
   row: { flex: 1, flexDirection: 'row' },
   side: { width: SIDE_WIDTH, flexGrow: 0 },
-  sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: 8 },
+  sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: theme.space.md },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   flying: { position: 'absolute', overflow: 'hidden' },
   overlay: {
@@ -664,46 +672,57 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
-  placeholder: { color: '#FFFFFF99', fontSize: 14, textAlign: 'center', paddingHorizontal: 24 },
-  banner: {
+  overlayActive: { borderColor: theme.colors.primary },
+  placeholder: { color: theme.media.textTertiary, textAlign: 'center', paddingHorizontal: theme.space.xxxl },
+  banner: (warning: boolean) => ({
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginHorizontal: 16,
-    marginBottom: 6,
-    padding: 10,
-    borderRadius: 10,
+    gap: theme.space.lg,
+    marginHorizontal: theme.space.xl,
+    marginBottom: theme.space.sm,
+    padding: theme.space.md,
+    borderRadius: theme.radius.control,
     borderWidth: 1,
-    backgroundColor: '#FFFFFF14',
-  },
-  bannerText: { flex: 1, color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
-  bannerBody: { flex: 1, gap: 4 },
-  bannerTitle: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
-  bannerSteps: { color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
-  bannerActions: { flexDirection: 'row', gap: 20, paddingTop: 4 },
-  bannerButton: { paddingHorizontal: 4 },
-  bannerAction: { fontSize: 14, fontWeight: '600' },
+    borderColor: warning ? theme.colors.warning : theme.colors.border,
+    backgroundColor: theme.media.fillSubtle,
+  }),
+  bannerText: { flex: 1 },
+  bannerBody: { flex: 1, gap: theme.space.xs },
+  bannerActions: { flexDirection: 'row', gap: theme.space.xxl, paddingTop: theme.space.xs },
+  bannerButton: { paddingHorizontal: theme.space.xs },
+  mutedAction: { color: theme.media.textTertiary },
   toolbar: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.md,
+    paddingVertical: theme.space.sm,
   },
   toolScroll: { flexGrow: 0 },
-  toolRow: { flexGrow: 1, justifyContent: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6 },
-  tool: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#FFFFFF1F' },
-  control: {
+  toolRow: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.sm,
+  },
+  tool: {
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.sm,
+    borderRadius: theme.radius.round,
+    backgroundColor: theme.media.fill,
+  },
+  control: (on: boolean) => ({
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: theme.space.xs,
     height: 30,
-    paddingHorizontal: 12,
-    borderRadius: 15,
-  },
-  controlText: { fontSize: 14, fontWeight: '600' },
-  toolText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500' },
+    paddingHorizontal: theme.space.lg,
+    borderRadius: theme.radius.round,
+    backgroundColor: on ? theme.colors.primary : theme.media.fill,
+  }),
+  controlText: (on: boolean) => ({ color: on ? theme.colors.onPrimary : theme.media.text }),
   typingBar: {
     position: 'absolute',
     left: 0,
@@ -712,20 +731,20 @@ const styles = StyleSheet.create({
     height: TYPING_BAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#1C1C1E',
+    gap: theme.space.lg,
+    backgroundColor: theme.media.bar,
   },
   hidden: { opacity: 0 },
   typed: {
     flex: 1,
     height: 40,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF1F',
-    color: '#FFFFFF',
-    fontSize: 16,
+    paddingHorizontal: theme.space.lg,
+    borderRadius: theme.radius.control,
+    backgroundColor: theme.media.fill,
+    color: theme.media.text,
+    fontSize: theme.typography.body.fontSize,
   },
-});
+}));
 
 function useKeyboardHeight(): { height: SharedValue<number>; shown: boolean } {
   const height = useSharedValue(0);

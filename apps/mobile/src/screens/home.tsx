@@ -1,15 +1,18 @@
 import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View, type ListViewToken } from 'react-native';
+import { ActivityIndicator, Platform, View, type ListViewToken } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AttentionStrip } from '@/components/attention-strip';
+import { Button } from '@/components/button';
 import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { FlatList, ScrollView, SectionList } from '@/components/lists';
 import { MacChip } from '@/components/mac-chip';
 import { StimJar } from '@/components/stim-jar';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
@@ -28,7 +31,6 @@ import {
 } from '@/lib/home';
 import { isActive } from '@/lib/workspaces';
 import { MacList } from '@/screens/mac-list';
-import { radius, useColors } from '@/theme';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
@@ -37,7 +39,7 @@ const WORDMARK = require('@/assets/images/wordmark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
 export function Home() {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const router = useRouter();
   const menu = useMenuDrawer();
   const macs = usePairedMacs();
@@ -98,22 +100,20 @@ export function Home() {
             view === 'workspaces' ? (
               <Image
                 source={WORDMARK}
-                tintColor={colors.primary}
+                tintColor={theme.colors.primary}
                 style={styles.wordmark}
                 contentFit="contain"
                 accessibilityLabel="Stim"
               />
             ) : (
-              <Text style={[styles.headerTitleText, { color: colors.text }]}>
-                {view === 'devices' ? 'Devices' : 'Machines'}
-              </Text>
+              <Text variant="headline">{view === 'devices' ? 'Devices' : 'Machines'}</Text>
             ),
         }}
       />
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
-          tintColor={colors.text}
+          tintColor={theme.colors.text}
           accessibilityLabel="Menu"
           onPress={menu.open}
         />
@@ -123,7 +123,7 @@ export function Home() {
           <Stack.Toolbar.Button
             icon={Platform.OS === 'ios' ? 'plus' : PLUS_ICON}
             iconRenderingMode="template"
-            tintColor={colors.text}
+            tintColor={theme.colors.text}
             accessibilityLabel="Pair a machine"
             onPress={() => router.push('/pair')}
           />
@@ -131,12 +131,12 @@ export function Home() {
           <Stack.Toolbar.Button
             icon={FUNNEL_ICON}
             iconRenderingMode="template"
-            tintColor={colors.text}
+            tintColor={theme.colors.text}
             accessibilityLabel="Filter"
             onPress={() => router.push('/filters')}
           >
             {filtersActive(filters, macIds, projectNames(items)) ? (
-              <Stack.Toolbar.Badge style={{ backgroundColor: colors.primary }} />
+              <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary }} />
             ) : null}
           </Stack.Toolbar.Button>
         )}
@@ -146,19 +146,13 @@ export function Home() {
 
   if (macs?.length === 0) {
     return (
-      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <View style={styles.screen}>
         {header}
         <EmptyState
           title="No machine paired"
           message="In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
         >
-          <Touch
-            feedback="card"
-            onPress={() => router.push('/pair')}
-            style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-          >
-            <Text style={[styles.primaryButtonText, { color: colors.onPrimary }]}>Pair a machine</Text>
-          </Touch>
+          <Button title="Pair a machine" onPress={() => router.push('/pair')} style={styles.primaryButton} />
         </EmptyState>
       </View>
     );
@@ -176,9 +170,11 @@ export function Home() {
   const listHeader = (
     <View>
       <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>Machines</Text>
+        <Text variant="body" weight="medium" tone="tertiary">
+          Machines
+        </Text>
         <Touch onPress={() => router.push('/pair')} accessibilityLabel="Pair a machine" hitSlop={10}>
-          <Icon name="plus" size={22} color={colors.text} />
+          <Icon name="plus" size={22} color={theme.colors.text} />
         </Touch>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
@@ -196,7 +192,7 @@ export function Home() {
 
   if (view === 'machines') {
     return (
-      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <View style={styles.screen}>
         {header}
         <MacList />
       </View>
@@ -205,7 +201,7 @@ export function Home() {
 
   if (view === 'devices') {
     return (
-      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <View style={styles.screen}>
         {header}
         <FlatList
           data={rows}
@@ -238,7 +234,7 @@ export function Home() {
   }
 
   return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+    <View style={styles.screen}>
       {header}
       <SectionList
         sections={sections}
@@ -249,7 +245,9 @@ export function Home() {
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => (
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>{section.title}</Text>
+            <Text variant="body" weight="medium" tone="tertiary">
+              {section.title}
+            </Text>
           </View>
         )}
         renderItem={({ item }) => <WorkspaceRow item={item} now={now} onOpen={openWorkspace} />}
@@ -259,9 +257,9 @@ export function Home() {
         ListFooterComponent={
           filters.activity === 'live' && hiddenByActivity > 0 ? (
             <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
-              <Text style={[styles.footerText, { color: colors.secondary }]}>
+              <Text tone="secondary">
                 {`${hiddenByActivity} idle ${hiddenByActivity === 1 ? 'workspace' : 'workspaces'} hidden. `}
-                <Text style={{ color: colors.primary }}>Show all</Text>
+                <Text tone="brand">Show all</Text>
               </Text>
             </Touch>
           ) : undefined
@@ -305,19 +303,19 @@ function HomeEmpty({
   noFilterSet: boolean;
   focused: boolean;
 }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const { macs, connections } = useMacs();
   const loading =
     macs === null ||
     (items === 0 &&
       connections.some((c) => !c.status && !c.missing && (c.state.kind === 'connecting' || c.state.kind === 'open')));
-  if (loading) return <ActivityIndicator style={styles.loading} color={colors.primary} />;
+  if (loading) return <ActivityIndicator style={styles.loading} color={theme.colors.primary} />;
   if (view === 'devices') {
     return (
       <View style={styles.empty}>
         <StimJar playing={focused} />
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>No device running</Text>
-        <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
+        <Text variant="headline">No device running</Text>
+        <Text tone="secondary" style={styles.emptyMessage}>
           Simulators and emulators appear here while they run, on every paired machine the filters keep.
         </Text>
       </View>
@@ -326,7 +324,7 @@ function HomeEmpty({
   return (
     <View style={styles.empty}>
       <StimJar playing={focused} />
-      <Text style={[styles.emptyTitle, { color: colors.text }]}>
+      <Text variant="headline">
         {items
           ? noFilterSet
             ? 'No live workspaces'
@@ -335,7 +333,7 @@ function HomeEmpty({
             ? 'Nothing running'
             : 'No machine connected'}
       </Text>
-      <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
+      <Text tone="secondary" style={styles.emptyMessage}>
         {items
           ? noFilterSet
             ? 'Start one with `stim ios` or `stim android` in a worktree.'
@@ -348,28 +346,23 @@ function HomeEmpty({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
+const styles = StyleSheet.create((theme) => ({
+  screen: { flex: 1, backgroundColor: theme.colors.background },
   wordmark: { width: 50, height: 24 },
-  headerTitleText: { fontSize: 17, fontWeight: '600' },
-  list: { paddingBottom: 32 },
+  list: { paddingBottom: theme.space.huge },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 22,
-    paddingBottom: 8,
+    paddingHorizontal: theme.space.xxl,
+    paddingTop: theme.space.xxl,
+    paddingBottom: theme.space.md,
   },
-  sectionTitle: { fontSize: 15, fontWeight: '500' },
-  chips: { gap: 10, paddingHorizontal: 20, paddingBottom: 4 },
-  gridRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 12 },
+  chips: { gap: theme.space.md, paddingHorizontal: theme.space.xxl, paddingBottom: theme.space.xs },
+  gridRow: { flexDirection: 'row', gap: theme.space.lg, paddingHorizontal: theme.space.xl, paddingTop: theme.space.lg },
   loading: { marginTop: 48 },
-  empty: { alignItems: 'center', padding: 32, gap: 8 },
-  emptyTitle: { fontSize: 17, fontWeight: '600' },
-  emptyMessage: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
-  footer: { paddingHorizontal: 20, paddingVertical: 16 },
-  footerText: { fontSize: 14 },
-  primaryButton: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: radius.card, marginTop: 8 },
-  primaryButtonText: { fontSize: 16, fontWeight: '600' },
-});
+  empty: { alignItems: 'center', padding: theme.space.huge, gap: theme.space.md },
+  emptyMessage: { textAlign: 'center' },
+  footer: { paddingHorizontal: theme.space.xxl, paddingVertical: theme.space.xl },
+  primaryButton: { marginTop: theme.space.md },
+}));

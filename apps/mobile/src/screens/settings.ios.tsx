@@ -15,6 +15,7 @@ import {
   tint,
 } from '@expo/ui/swift-ui/modifiers';
 import { router } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { describeState } from '@/components/mac-chip';
@@ -32,10 +33,11 @@ import {
   VIDEO_QUALITY_OPTIONS,
   type Option,
 } from '@/lib/settings-options';
-import { useColors, type Colors } from '@/theme';
+import type { Theme } from '@/design/theme';
+import { radius } from '@/design/tokens';
 
 export function Settings() {
-  const colors = useColors();
+  const colors = useUnistyles().theme.colors;
   const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
@@ -98,7 +100,7 @@ export function Settings() {
                   value={
                     scope === 'control' ? 'Can control' : scope === 'read' ? 'Read-only' : describeState(state, missing)
                   }
-                  valueColor={scope === 'read' ? colors.warn : undefined}
+                  valueColor={scope === 'read' ? colors.warning : undefined}
                   onPress={() =>
                     scope === 'read'
                       ? explainReadOnly(mac.name, state, connection)
@@ -126,7 +128,7 @@ export function Settings() {
 
 type RowModifiers = ReturnType<typeof listRowBackground>[];
 
-function RowLabel({ colors, title, symbol }: { colors: Colors; title: string; symbol: SFSymbol }) {
+function RowLabel({ colors, title, symbol }: { colors: Theme['colors']; title: string; symbol: SFSymbol }) {
   return (
     <Label
       title={title}
@@ -137,7 +139,7 @@ function RowLabel({ colors, title, symbol }: { colors: Colors; title: string; sy
           color={colors.onPrimary}
           modifiers={[
             frame({ width: 29, height: 29 }),
-            background(colors.primary, shapes.roundedRectangle({ cornerRadius: 7 })),
+            background(colors.primary, shapes.roundedRectangle({ cornerRadius: radius.chip })),
           ]}
         />
       }
@@ -154,7 +156,7 @@ function Choice<T extends string>({
   onChange,
   modifiers,
 }: {
-  colors: Colors;
+  colors: Theme['colors'];
   title: string;
   symbol: SFSymbol;
   options: Option<T>[];
@@ -187,7 +189,7 @@ function LinkRow({
   onPress,
   modifiers,
 }: {
-  colors: Colors;
+  colors: Theme['colors'];
   title: string;
   symbol: SFSymbol;
   value?: string;

@@ -2,34 +2,35 @@ import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
 import { BuildCards } from '@/components/build-card';
 import { Card } from '@/components/card';
-import { Chip } from '@/components/chip';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
 import { GitIndicator } from '@/components/git-indicator';
 import { ScrollView } from '@/components/lists';
+import { Pill } from '@/components/pill';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
-import { Touch } from '@/components/touch';
+import { Text } from '@/components/text';
+import { withAlpha } from '@/design/color';
 import { useAction, useHasStatus, useMacConnection, useWorkspace } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import { deviceWarnings, devicesOf, livePlatforms, orderDevices, workspaceTitleAt } from '@/lib/workspaces';
 import type { ActionName, Platform as DevicePlatform } from '@/protocol/types';
-import { mono, useColors } from '@/theme';
 
 const ELLIPSIS_ICON = require('@/assets/icons/ellipsis.png');
 
 const PLATFORM_NAMES: Record<DevicePlatform, string> = { ios: 'iOS', android: 'Android' };
 
 export function WorkspaceDetail({ path }: { path: string }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const router = useRouter();
   const { mac, state, home, connection } = useMacConnection();
   const macId = mac?.id ?? '';
@@ -91,7 +92,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
           icon={Platform.OS === 'ios' ? 'ellipsis' : ELLIPSIS_ICON}
-          tintColor={colors.text}
+          tintColor={theme.colors.text}
           accessibilityLabel="More"
         >
           {env && actions.available?.length ? (
@@ -154,7 +155,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
       <>
         <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingTop: bannerHeight }}>
           {header}
-          <ActivityIndicator style={styles.loading} color={colors.primary} />
+          <ActivityIndicator style={styles.loading} color={theme.colors.primary} />
         </ScrollView>
         <PinnedBanner state={state} onHeight={setBannerHeight} />
         <ActionToast toast={toast} onDismiss={dismissToast} />
@@ -181,15 +182,17 @@ export function WorkspaceDetail({ path }: { path: string }) {
     <>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={[styles.container, { paddingTop: styles.container.padding + bannerHeight }]}
+        contentContainerStyle={[styles.container, { paddingTop: theme.space.xl + bannerHeight }]}
       >
         {header}
         <Card>
           <View style={styles.card}>
             {env.worktree?.branch || inCheckout ? (
-              <Text style={[styles.where, { color: colors.secondary }]} numberOfLines={1}>
+              <Text variant="caption" tone="secondary" mono numberOfLines={1}>
                 {env.worktree?.branch ? (
-                  <Text style={[styles.branch, { color: colors.text }]}>{env.worktree.branch}</Text>
+                  <Text variant="footnote" weight="semibold">
+                    {env.worktree.branch}
+                  </Text>
                 ) : null}
                 {env.worktree?.branch && inCheckout ? '  ' : ''}
                 {inCheckout ?? ''}
@@ -197,25 +200,23 @@ export function WorkspaceDetail({ path }: { path: string }) {
             ) : null}
             <View style={styles.chips}>
               {env.metro ? (
-                <Chip tint={metroHealthy ? colors.live : env.metro.running ? colors.error : colors.tertiary}>
+                <Pill tone={metroHealthy ? 'success' : env.metro.running ? 'error' : 'neutral'}>
                   {`Metro :${env.metro.port} \u00B7 ${env.metro.running ? (metroHealthy ? 'healthy' : 'unhealthy') : 'stopped'}`}
-                </Chip>
+                </Pill>
               ) : null}
               <GitIndicator git={env.worktree?.git} chips />
-              {env.memoryMb > 0 ? <Chip>{`${(env.memoryMb / 1024).toFixed(1)} GB`}</Chip> : null}
+              {env.memoryMb > 0 ? <Pill>{`${(env.memoryMb / 1024).toFixed(1)} GB`}</Pill> : null}
               {env.logs ? (
-                <Touch onPress={() => openLogs(true)} hitSlop={6}>
-                  <Chip tint={errors > 0 ? colors.error : undefined}>
-                    {errors === 1 ? '1 error' : `${errors} errors`}
-                  </Chip>
-                </Touch>
+                <Pill tone={errors > 0 ? 'error' : 'neutral'} onPress={() => openLogs(true)}>
+                  {errors === 1 ? '1 error' : `${errors} errors`}
+                </Pill>
               ) : null}
             </View>
           </View>
         </Card>
         <BuildCards env={env} />
         {general.map((warning) => (
-          <Text key={warning} style={[styles.warning, { color: colors.warn, backgroundColor: `${colors.warn}1A` }]}>
+          <Text key={warning} variant="footnote" tone="warning" style={styles.warning}>
             {tildeHome(warning, home)}
           </Text>
         ))}
@@ -231,7 +232,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
           />
         ))}
         {devices.length === 0 && !env.remoteDevices?.length ? (
-          <Text style={[styles.none, { color: colors.tertiary }]}>No device in this workspace yet.</Text>
+          <Text tone="tertiary" style={styles.none}>
+            No device in this workspace yet.
+          </Text>
         ) : null}
       </ScrollView>
       <PinnedBanner state={state} onHeight={setBannerHeight} />
@@ -254,19 +257,13 @@ function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (
 }
 
 function HeaderTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  const colors = useColors();
   return (
     <View style={styles.headerTitle}>
-      <Text
-        style={[styles.title, { color: colors.text }]}
-        numberOfLines={1}
-        ellipsizeMode="middle"
-        maxFontSizeMultiplier={1.3}
-      >
+      <Text variant="headline" numberOfLines={1} ellipsizeMode="middle" maxFontSizeMultiplier={1.3}>
         {title}
       </Text>
       {subtitle ? (
-        <Text style={[styles.subtitle, { color: colors.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+        <Text variant="caption" tone="secondary" style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
           {subtitle}
         </Text>
       ) : null}
@@ -274,17 +271,19 @@ function HeaderTitle({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   headerTitle: { alignItems: 'center', maxWidth: 240 },
-  title: { fontSize: 17, fontWeight: '600' },
-  subtitle: { fontSize: 12, marginTop: 1 },
+  subtitle: { marginTop: 1 },
   loading: { marginTop: 48 },
   pinned: { position: 'absolute', left: 0, right: 0 },
-  container: { padding: 16, gap: 14, paddingBottom: 40 },
-  card: { padding: 12, gap: 8 },
-  where: { fontSize: 12, fontFamily: mono },
-  branch: { fontSize: 13, fontWeight: '600' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  warning: { fontSize: 13, lineHeight: 18, padding: 10, borderRadius: 8, overflow: 'hidden' },
-  none: { fontSize: 14, textAlign: 'center', paddingVertical: 24 },
-});
+  container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
+  card: { padding: theme.space.lg, gap: theme.space.md },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
+  warning: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.control,
+    overflow: 'hidden',
+    backgroundColor: withAlpha(theme.colors.warning, theme.opacity.subtle),
+  },
+  none: { textAlign: 'center', paddingVertical: theme.space.xxxl },
+}));

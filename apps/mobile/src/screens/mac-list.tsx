@@ -1,19 +1,18 @@
 import { useRouter } from 'expo-router';
-import { Alert, StyleSheet, Text, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { Alert, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Button } from '@/components/button';
 import { Card } from '@/components/card';
-import { StatusDot } from '@/components/chip';
 import { FlatList } from '@/components/lists';
 import { connectionColor, describeState } from '@/components/mac-chip';
+import { StatusDot } from '@/components/pill';
 import { ScopeChip } from '@/components/read-only';
-import { Touch } from '@/components/touch';
+import { Text } from '@/components/text';
 import { useMacs } from '@/hooks/mac-connection';
 import { forgetMac, type PairedMac } from '@/lib/macs';
-import { mono, useColors } from '@/theme';
 
 export function MacList() {
-  const colors = useColors();
   const { theme } = useUnistyles();
   const router = useRouter();
   const { reload, connections } = useMacs();
@@ -36,28 +35,32 @@ export function MacList() {
             <StatusDot color={connectionColor(state, missing, theme.colors)} />
             <View style={styles.rowText}>
               <View style={styles.nameRow}>
-                <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
+                <Text variant="headline" style={styles.shrink} numberOfLines={1}>
                   {item.name}
                 </Text>
                 <ScopeChip state={state} />
               </View>
-              <Text style={[styles.state, { color: colors.secondary }]} numberOfLines={1}>
+              <Text variant="footnote" tone="secondary" numberOfLines={1}>
                 {describeState(state, missing)}
               </Text>
-              <Text style={[styles.endpoint, { color: colors.secondary }]} numberOfLines={1}>
+              <Text variant="caption" tone="secondary" mono numberOfLines={1}>
                 {item.endpoint}
               </Text>
             </View>
-            <Touch
-              onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
-              hitSlop={8}
+            <Button
+              title="Rename"
+              variant="plain"
+              size="small"
               accessibilityLabel={`Rename ${item.name}`}
-            >
-              <Text style={[styles.rowAction, { color: colors.primary }]}>Rename</Text>
-            </Touch>
-            <Touch onPress={() => forget(item)} hitSlop={8} accessibilityLabel={`Forget ${item.name}`}>
-              <Text style={[styles.rowAction, { color: colors.error }]}>Forget</Text>
-            </Touch>
+              onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
+            />
+            <Button
+              title="Forget"
+              variant="destructive"
+              size="small"
+              accessibilityLabel={`Forget ${item.name}`}
+              onPress={() => forget(item)}
+            />
           </View>
         </Card>
       )}
@@ -65,13 +68,10 @@ export function MacList() {
   );
 }
 
-const styles = StyleSheet.create({
-  list: { padding: 16, gap: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14 },
-  rowText: { flex: 1, gap: 4 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  name: { fontSize: 17, fontWeight: '600', flexShrink: 1 },
-  state: { fontSize: 13 },
-  endpoint: { fontSize: 12, fontFamily: mono },
-  rowAction: { fontSize: 14, fontWeight: '500' },
-});
+const styles = StyleSheet.create((theme) => ({
+  list: { padding: theme.space.xl, gap: theme.space.lg },
+  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.lg, padding: theme.space.lg },
+  rowText: { flex: 1, gap: theme.space.xs },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
+  shrink: { flexShrink: 1 },
+}));

@@ -1,6 +1,5 @@
 import type { HomeView } from '@/hooks/home-filters';
-import type { VideoQuality } from '@/hooks/settings';
-import type { Appearance } from '@/theme';
+import type { Appearance, VideoQuality } from '@/hooks/settings';
 
 export interface Option<T extends string> {
   value: T;

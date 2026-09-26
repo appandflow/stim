@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Appearance as SystemAppearance } from 'react-native';
 
-import type { Appearance } from '@/theme';
+export type Appearance = 'system' | 'light' | 'dark';
 
 const applyAppearance = (value: Appearance) =>
   SystemAppearance.setColorScheme(value === 'system' ? 'unspecified' : value);
