@@ -6,7 +6,7 @@ struct NoEnvironmentDetail: View {
   var worktree: UnprovisionedWorktree
 
   var body: some View {
-    let names = PathNames(path: worktree.path)
+    let names = worktree.names
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         VStack(alignment: .leading, spacing: 6) {

@@ -212,13 +212,15 @@ struct StorageView: View {
   }
 
   private func workspaceRow(_ workspace: WorkspaceStorage) -> some View {
-    let names = PathNames(path: workspace.path)
+    let names = PathNames(
+      path: workspace.path, branch: workspace.branch,
+      worktree: workspace.repository == nil ? nil : workspace.worktreePath)
     let lifecycle = WorktreeLifecycle(
       worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
     return HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
-        Text(names.title).lineLimit(1)
-        Text([workspace.repositoryName, workspace.branch ?? names.subtitle].compactMap { $0 }.joined(separator: " \u{00B7} "))
+        Text(names.title).lineLimit(1).truncationMode(.middle)
+        Text([workspace.repositoryName, names.inCheckout].compactMap { $0 }.joined(separator: " \u{00B7} "))
           .font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
       }
       .help(abbreviatingHome(workspace.path))

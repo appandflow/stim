@@ -213,8 +213,9 @@ struct Inspector: View {
             HStack(spacing: 8) {
               StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
               Text(device.label(among: env.devices)).font(Theme.body(12, weight: .semibold)).lineLimit(1)
+                .layoutPriority(1)
               if let detail = device.detail {
-                Text(detail).foregroundStyle(Theme.secondary).lineLimit(1).layoutPriority(1)
+                Text(detail).foregroundStyle(Theme.secondary).lineLimit(1)
               }
               Spacer()
               if device.appStopped {

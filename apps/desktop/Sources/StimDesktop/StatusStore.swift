@@ -143,6 +143,10 @@ final class StatusStore: ObservableObject {
         self.projects.merge(resolved) { old, _ in old }
         guard sequence > self.shown else { return }
         self.shown = sequence
+        var payload = payload
+        for i in payload.environments.indices {
+          payload.environments[i].project = self.project(ofPath: payload.environments[i].path)
+        }
         self.payload = payload
         self.error = nil
         self.updatedAt = Date()

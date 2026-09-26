@@ -237,9 +237,10 @@ struct WorkspaceRow: View {
     HStack(spacing: 10) {
       StatusDot(color: env.live ? Theme.live : Theme.tertiary, filled: env.live)
       VStack(alignment: .leading, spacing: 1) {
-        Text(env.names.title).lineLimit(1)
-        Text(subtitle ?? env.names.subtitle).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+        Text(env.names.title).lineLimit(1).truncationMode(.middle)
+        SidebarSubtitle(parts: [subtitle, env.names.inCheckout])
       }
+      .layoutPriority(1)
       Spacer()
       if showsGit { GitIndicator(git: env.worktree?.git) }
       if let errors = env.logs?.errorsSinceMarker, errors > 0 {
@@ -303,6 +304,18 @@ struct WorkspaceRow: View {
   }
 }
 
+/// A row's second line, such as `stim \u{00B7} apps/mobile`; nothing when every part is nil.
+private struct SidebarSubtitle: View {
+  var parts: [String?]
+
+  var body: some View {
+    let text = parts.compactMap { $0 }.joined(separator: " \u{00B7} ")
+    if !text.isEmpty {
+      Text(text).font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+    }
+  }
+}
+
 struct NoEnvironmentRow: View {
   var worktree: UnprovisionedWorktree
   var subtitle: String?
@@ -312,14 +325,14 @@ struct NoEnvironmentRow: View {
   @State private var removal: WorktreeRemoval?
 
   var body: some View {
-    let names = PathNames(path: worktree.path)
+    let names = worktree.names
     HStack(spacing: 10) {
       StatusDot(color: Theme.tertiary, filled: false)
       VStack(alignment: .leading, spacing: 1) {
-        Text(names.title).lineLimit(1)
-        Text(subtitle ?? worktree.branch ?? names.subtitle)
-          .font(Theme.body(11)).foregroundStyle(Theme.secondary).lineLimit(1)
+        Text(names.title).lineLimit(1).truncationMode(.middle)
+        SidebarSubtitle(parts: [subtitle, names.inCheckout])
       }
+      .layoutPriority(1)
       Spacer()
       if showsGit, worktree.git?.isNotable == true {
         GitIndicator(git: worktree.git)
