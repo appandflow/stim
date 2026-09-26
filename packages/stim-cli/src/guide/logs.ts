@@ -119,8 +119,9 @@ FLAGS
   lines Expo printed after it. Stim's own Metro records that land between
   those lines, such as bundle responses, do not cut the stack short. Bare
   React Native symbolication is shown as separate context because Metro does
-  not provide an error correlation identifier. Context does not change the error count or the raw error records
-  returned by --json. --json is never capped, and neither is an explicit --tail.
+  not provide an error correlation identifier. Context does not change the
+  error count or the raw error records returned by --json. --json is never
+  capped, and neither is an explicit --tail.
 
   In --follow mode the marker window is dropped -- every error arriving from
   then on is by definition after the last marker seen.
