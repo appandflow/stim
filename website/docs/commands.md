@@ -110,6 +110,13 @@ New allocations skip reserved and occupied ports; retry notices go to stderr.
 Labels start with a letter and contain up to 64 letters, digits, underscores,
 or hyphens. `metro` is reserved for `stim start` and `stim stop`.
 
+The workspace is the nearest `package.json` directory. In a monorepo, a package
+that is not a React Native or Expo app, such as a Vite web app in `apps/web`,
+uses the one Stim app registered in the same Git worktree instead, and stderr
+names it. `status`, `worktree remove` and `gc` then treat the port as that
+app's. With no registered app, or more than one, run `ports` from the app
+directory.
+
 `stop` terminates listeners on the selected named ports, including processes
 outside the workspace, and prints their PIDs and commands. It sends SIGTERM,
 then SIGKILL after two seconds if needed. `--dry-run` previews without killing

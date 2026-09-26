@@ -24,7 +24,11 @@ their owning workspaces.
 
 The machine registry, under STIM_HOME, serializes allocation and cleanup.
 The workspace is the nearest package.json directory, resolved through
-symlinks. Use the same package directory for every command in a monorepo.
+symlinks. In a monorepo, a package that depends on neither react-native nor
+expo, such as a Vite web app, uses the one Stim app registered in the same
+git worktree instead, and says so on stderr. Register the app first with
+stim start or stim ios. With no registered app, or more than one, the
+nearest package.json stays the workspace; run ports from the app directory.
 The allocation reserves a number, not a listening socket. Another process
 can bind it before your server does. Use strict-port behavior when supported
 and verify the server bound the number supplied. Stim does not start,

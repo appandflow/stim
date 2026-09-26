@@ -5,7 +5,9 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runDoctor } from '../diagnostics/doctor.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
-import { detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
+import { execFileSync } from 'node:child_process';
+import { upsertProject } from '../workspace/config.ts';
+import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 
@@ -229,3 +231,41 @@ describe('detectIsExpo is the single source', () => {
 function readState() {
   return readFileSync(workspaceStateFile(app), 'utf-8');
 }
+
+describe('the workspace a monorepo web server belongs to', () => {
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' });
+  let web: string;
+
+  beforeEach(() => {
+    web = join(ws, 'packages', 'web');
+    write(join(web, 'package.json'), JSON.stringify({ name: '@ws/web', devDependencies: { vite: '^5.0.0' } }));
+    git(ws, 'init', '-q', '-b', 'main');
+    git(ws, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  });
+
+  test("a web package resolves to the worktree's one registered app", () => {
+    upsertProject(app, {});
+    expect(findServerWorkspace(web)).toEqual({ root: app, from: web });
+    expect(findServerWorkspace(app)).toEqual({ root: app, from: null });
+  });
+
+  test('keeps the nearest package when the app is unregistered or ambiguous', () => {
+    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
+    const second = join(ws, 'packages', 'second');
+    write(join(second, 'package.json'), JSON.stringify({ name: '@ws/second', dependencies: { expo: '^57.0.8' } }));
+    upsertProject(app, {});
+    upsertProject(second, {});
+    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
+  });
+
+  test('ignores an app registered in another worktree nested under this one', () => {
+    const nested = join(ws, '.worktrees', 'feature');
+    git(ws, 'worktree', 'add', '-q', '--detach', nested);
+    const nestedApp = join(nested, 'packages', 'app');
+    write(join(nestedApp, 'package.json'), JSON.stringify({ name: '@ws/app', dependencies: { expo: '^57.0.8' } }));
+    upsertProject(nestedApp, {});
+    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
+    upsertProject(app, {});
+    expect(findServerWorkspace(web)).toEqual({ root: app, from: web });
+  });
+});
