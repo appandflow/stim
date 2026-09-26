@@ -97,11 +97,6 @@ export function poolLine({ platform, parked, max }: PoolFacts): string | null {
 
 export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;
 
-/**
- * Whether a workspace expects its owned AVD in `slot` to be running: it holds an unexpired lease on the AVD's
- * serial, or it launched onto the AVD and has not stopped that slot since, while its dev server runs or within
- * RECENT_LAUNCH_MS of the launch.
- */
 function avdExpected({
   slot,
   serial,
