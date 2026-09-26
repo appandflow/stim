@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { SETTINGS } from '@stim-cli/core/state';
+import { SETTINGS, STATUS_ISSUE_CODES } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
@@ -606,6 +606,12 @@ test('guide prints the status block before the index and the agent topic, and ne
   expect(logs[1]).toMatch(/^STATUS\n/);
   expect(logs[1]).toContain('AGENT WORKFLOW');
   expect(logs[2]).not.toContain('STATUS');
+});
+
+test('the facts topic documents every status issue code', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const code of STATUS_ISSUE_CODES) expect(body).toMatch(new RegExp(`^ +(code +)?${code} `, 'm'));
 });
 
 test('the facts topic documents every build phase and state status can report', () => {

@@ -37,7 +37,7 @@ export function makeCacheDescriptor(overrides: Partial<CacheDescriptor> = {}): C
 }
 
 export function makeEnvironmentState(overrides: Partial<EnvironmentState> = {}): EnvironmentState {
-  return { path: '/w/project', live: true, memoryMb: 0, warnings: [], ...overrides };
+  return { path: '/w/project', live: true, memoryMb: 0, warnings: [], issues: [], ...overrides };
 }
 
 export function makeIosSim(overrides: Partial<IosSimRecord> = {}): IosSimRecord {

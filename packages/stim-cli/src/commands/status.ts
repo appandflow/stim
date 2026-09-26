@@ -36,7 +36,7 @@ import { volumeRootFor } from '../fs-util.ts';
 import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
-import { readRemoteSession } from '../supervisor/state.ts';
+import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import { readIdleStop, readLastBuilds, type LastBuildReport, type StatusPayload } from '@stim-cli/core/state';
 import { createActivityReader, type ActivityTarget, type DeviceActivity } from '../devices/activity.ts';
 import {
@@ -140,9 +140,13 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
   const states: EnvironmentState[] = [];
   const labelOnlyRoots: boolean[] = [];
   const easLedger = readEasSessionLedger();
+  const leaseNow = Date.now();
+  const leaseFiles = listLeaseFiles();
+  const leases = deviceLeaseStates(leaseFiles, { root: cwdRoot, now: leaseNow });
   for (const [i, [path, proj]] of projects.entries()) {
     const { metro, supervisor } = running[i]!;
     const saved = readWorkspaceState(path);
+    const builds = workspaceBuilds(path, saved, history);
     states.push(
       environmentState(
         { ...proj, __path: path },
@@ -156,11 +160,18 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
           logs: logs[i],
           remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
           idleStop: readIdleStop(saved),
+          launches: readWorkspaceLaunches(path),
+          leasedIds: new Set(
+            deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
+              lease.mine && !lease.expired && lease.id ? [lease.id] : [],
+            ),
+          ),
+          now: leaseNow,
         },
       ),
     );
     const state = states[states.length - 1];
-    if (state) Object.assign(state, workspaceBuilds(path, saved, history));
+    if (state) Object.assign(state, builds);
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
     );
@@ -178,9 +189,6 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
       }
     }
   }
-
-  const leaseNow = Date.now();
-  const leases = deviceLeaseStates(listLeaseFiles(), { root: cwdRoot, now: leaseNow });
 
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
   const cap = capacity(states, totalMemoryMb);
@@ -484,7 +492,8 @@ interface SupervisorFacts {
   pid: number;
   mode: string | null;
   startedAt: string | null;
-  alive: boolean;
+  status: 'ours' | 'stale' | 'unverified';
+  reason?: string;
   healthy: boolean;
 }
 
@@ -499,9 +508,10 @@ async function supervisorFacts(
   const pid = state?.pid ?? record?.pid ?? null;
   if (!pid) return null;
   const port = state?.port ?? record?.port ?? null;
-  const alive = resolveSupervisorTarget({ state, record, reservedPort: proj?.metroPort }).status === 'ours';
+  const target = resolveSupervisorTarget({ state, record, reservedPort: proj?.metroPort });
+  const status = target.status === 'ours' ? 'ours' : target.status === 'unverified' ? 'unverified' : 'stale';
   let healthy = false;
-  if (alive && port) {
+  if (status === 'ours' && port) {
     const resolution =
       port === proj?.metroPort && metroResolution ? metroResolution : await resolveOnPort(port, path, lookup);
     healthy = Boolean(resolution?.metro);
@@ -510,7 +520,8 @@ async function supervisorFacts(
     pid,
     mode: state?.mode ?? record?.mode ?? null,
     startedAt: state?.startedAt ?? record?.startedAt ?? null,
-    alive,
+    status,
+    ...(target.reason ? { reason: target.reason } : {}),
     healthy,
   };
 }

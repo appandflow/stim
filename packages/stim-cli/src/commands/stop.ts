@@ -32,6 +32,7 @@ import {
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSession,
+  clearWorkspaceLaunches,
   clearWorkspaceSupervisor,
 } from '../supervisor/state.ts';
 import {
@@ -289,7 +290,10 @@ export async function runStop(options: StopArgs & { slot?: string }): ReturnType
         clearCollectorState(projectRoot, expected);
         return !Object.keys(readCollectorState(projectRoot)).some((key) => parseDeviceSlotKey(key)?.slot === slot);
       }),
-    clearState: () => true,
+    clearState: (projectRoot) => {
+      clearWorkspaceLaunches(projectRoot, slot);
+      return true;
+    },
     clearRegistration: async () => true,
     releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
   });

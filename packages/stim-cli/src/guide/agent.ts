@@ -169,7 +169,8 @@ RULES DURING THE LOOP
   them. Use stim doctor when a build is unexpectedly slow or the environment
   looks incomplete. If status reports a changed Android serial, rerun stim
   android with the same build options to restore forwarding, then reopen your automation
-  session on the reported serial (guide lifecycle).
+  session on the reported serial (guide lifecycle). Each status issue names a
+  remedy to run from its workspace (guide facts status).
 
 OWNERSHIP AND DELETION
 

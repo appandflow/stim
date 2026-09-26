@@ -151,12 +151,40 @@ export interface RemoteDeviceState {
   webPreviewUrl: string | null;
 }
 
+/** Every code a status issue can carry. */
+export const STATUS_ISSUE_CODES = [
+  'port-not-ours',
+  'sim-missing',
+  'sim-without-metro',
+  'avd-serial-changed',
+  'avd-missing',
+  'avd-not-detected',
+  'avd-unchecked',
+  'supervisor-unverified',
+] as const;
+
+export type StatusIssueCode = (typeof STATUS_ISSUE_CODES)[number];
+
+/**
+ * One thing in a workspace that needs the user. `remedy` is a command to run from `workspace`; `slot` is absent
+ * for the default device slot. `warnings` carries the same issues as text.
+ */
+export interface StatusIssue {
+  code: StatusIssueCode;
+  severity: 'error' | 'warning';
+  message: string;
+  remedy: string;
+  workspace: string;
+  slot?: string;
+}
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
   live: boolean;
   memoryMb: number;
   warnings: string[];
+  issues: StatusIssue[];
   ios?: { name: string | null; udid: string; owned: boolean; state: string; activity?: DeviceActivity } | null;
   android?: {
     name: string | undefined;
