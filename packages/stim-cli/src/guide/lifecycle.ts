@@ -232,8 +232,10 @@ WAITING FOR A CHANGE
   status payload per line: one at once, then one each time the payload
   changes, never two identical ones in a row. It reacts to Stim state files,
   the EAS session ledger, adb device arrivals and departures, and simulator
-  state, and recomputes every 30 seconds as a fallback. Ctrl+C, SIGTERM or
-  closing its stdout ends it with exit 0. Without --json it reprints the human view on change.`,
+  state, and recomputes every 30 seconds as a fallback. A log append updates
+  only the log error count and device activity, no sooner than 15 seconds
+  after the previous refresh. Ctrl+C, SIGTERM or closing its stdout ends it
+  with exit 0. Without --json it reprints the human view on change.`,
   sections: {
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',

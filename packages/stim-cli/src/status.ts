@@ -365,6 +365,16 @@ function issueText(issue: StatusIssue): string {
   return `${issue.slot ? `${issue.slot}: ` : ''}${issue.message}; run \`${issue.remedy}\``;
 }
 
+/**
+ * Activity as status reports it: `lastActivityAt` rounded down to the minute, the precision its readers show, so a
+ * new log record within the same minute does not change the payload.
+ */
+export function statusActivity(activity: DeviceActivity): DeviceActivity {
+  const at = Date.parse(activity.lastActivityAt ?? '');
+  if (!Number.isFinite(at)) return activity;
+  return { ...activity, lastActivityAt: new Date(at - (at % 60_000)).toISOString() };
+}
+
 export function activityLabel(activity: DeviceActivity | undefined, now: number): string | null {
   if (!activity) return null;
   if (activity.state === 'driven') {

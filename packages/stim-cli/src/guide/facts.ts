@@ -771,7 +771,8 @@ RULES
                    the claim does not record them
   lastActivityAt   the newest of this device's app log records, this
                    platform's Metro bundle requests and the workspace's last
-                   Stim run; absent when none is recorded
+                   Stim run, rounded down to the minute; absent when none is
+                   recorded
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive

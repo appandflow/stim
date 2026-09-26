@@ -1,5 +1,11 @@
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
-import { createRefreshScheduler, WATCH_DEBOUNCE_MS, WATCH_FALLBACK_MS, watchStatusSources } from '../status-watch.ts';
+import {
+  createRefreshScheduler,
+  WATCH_DEBOUNCE_MS,
+  WATCH_FALLBACK_MS,
+  WATCH_LOGS_INTERVAL_MS,
+  watchStatusSources,
+} from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
@@ -51,6 +57,7 @@ import {
   createDeviceProcessTables,
   type ActivityTarget,
   type DeviceActivity,
+  type DeviceProcessTables,
 } from '../devices/activity.ts';
 import { createAppProcessReader } from '../devices/app-process.ts';
 import {
@@ -65,6 +72,7 @@ import {
   poolLine,
   remoteDeviceLine,
   remoteDeviceState,
+  statusActivity,
   tightVolumes,
   unprovisionedWorktrees,
   withWebFacts,
@@ -96,16 +104,29 @@ export default function statusCommand(program: Command): void {
     .option('--watch', 'keep running and print the state again each time it changes')
     .action(async (opts: StatusOptions) => {
       if (opts.watch) return watchStatus(Boolean(opts.json));
-      for (const line of await statusLines(Boolean(opts.json), 0)) console.log(line);
+      const json = Boolean(opts.json);
+      for (const line of renderStatus(await readStatus(0), json)) console.log(line);
     });
 }
 
-function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]> {
-  return withStateReadCache(() => readStatusLines(json, gitMaxAgeMs));
+interface StatusSnapshot {
+  projects: [string, ProjectRecord][];
+  states: EnvironmentState[];
+  labelOnlyRoots: boolean[];
+  leases: ReturnType<typeof deviceLeaseStates>;
+  leaseNow: number;
+  orphanWorktrees: WorktreeFacts[];
+  simsAvailable: boolean;
+  simctlError: string | null;
+  cwdRoot: string | null;
+  tables: DeviceProcessTables;
 }
 
-async function readStatusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]> {
-  const out: string[] = [];
+function readStatus(gitMaxAgeMs: number): Promise<StatusSnapshot> {
+  return withStateReadCache(() => readStatusFacts(gitMaxAgeMs));
+}
+
+async function readStatusFacts(gitMaxAgeMs: number): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
@@ -217,8 +238,48 @@ async function readStatusLines(json: boolean, gitMaxAgeMs: number): Promise<stri
     );
   }
 
-  readDeviceProcesses(states, projects, launchesByState);
+  const tables = createDeviceProcessTables();
+  readDeviceProcesses(states, tables, { projects, launchesByState });
+  return {
+    projects,
+    states,
+    labelOnlyRoots,
+    leases,
+    leaseNow,
+    orphanWorktrees,
+    simsAvailable,
+    simctlError,
+    cwdRoot,
+    tables,
+  };
+}
 
+/**
+ * Rereads only what log appends can change, the error counts and device activity, and reuses the process tables of
+ * the snapshot's full read, so it runs no subprocess.
+ */
+function refreshLogFacts(snapshot: StatusSnapshot): void {
+  withStateReadCache(() => {
+    for (const state of snapshot.states) state.logs = logFacts(state.path);
+    readDeviceProcesses(snapshot.states, snapshot.tables, null);
+  });
+}
+
+function renderStatus(
+  {
+    projects,
+    states,
+    labelOnlyRoots,
+    leases,
+    leaseNow,
+    orphanWorktrees,
+    simsAvailable,
+    simctlError,
+    cwdRoot,
+  }: StatusSnapshot,
+  json: boolean,
+): string[] {
+  const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
   const cap = capacity(states, totalMemoryMb);
   const pools = (['ios', 'android'] as const).map((platform) => {
@@ -370,13 +431,17 @@ async function readStatusLines(json: boolean, gitMaxAgeMs: number): Promise<stri
 
 async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
+  let snapshot: StatusSnapshot | null = null;
   let sources: StatusSources | null = null;
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
-    run: async () => {
+    logsIntervalMs: WATCH_LOGS_INTERVAL_MS,
+    run: async (kind) => {
       let text: string;
       try {
-        text = (await statusLines(json, WATCH_GIT_MAX_AGE_MS)).join('\n');
+        if (kind === 'logs' && snapshot) refreshLogFacts(snapshot);
+        else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS);
+        text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));
         return;
@@ -388,7 +453,7 @@ async function watchStatus(json: boolean): Promise<void> {
       process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`);
     },
   });
-  const fallback = setInterval(() => scheduler.trigger(), WATCH_FALLBACK_MS);
+  const fallback = setInterval(() => scheduler.trigger('full'), WATCH_FALLBACK_MS);
   const finish = () => {
     clearInterval(fallback);
     scheduler.stop();
@@ -398,8 +463,8 @@ async function watchStatus(json: boolean): Promise<void> {
   process.on('SIGINT', finish);
   process.on('SIGTERM', finish);
   process.stdout.on('error', finish);
-  sources = watchStatusSources({ home: getConfigDir(), onChange: () => scheduler.trigger() });
-  scheduler.trigger(0);
+  sources = watchStatusSources({ home: getConfigDir(), onChange: (kind) => scheduler.trigger(kind) });
+  scheduler.trigger('full', 0);
   await new Promise<never>(() => {});
 }
 
@@ -434,17 +499,16 @@ function activitySuffix(activity: DeviceActivity | undefined): string {
 
 function readDeviceProcesses(
   states: EnvironmentState[],
-  projects: [string, ProjectRecord][],
-  launchesByState: ReturnType<typeof readWorkspaceLaunches>[],
+  tables: DeviceProcessTables,
+  apps: { projects: [string, ProjectRecord][]; launchesByState: ReturnType<typeof readWorkspaceLaunches>[] } | null,
 ): void {
-  const tables = createDeviceProcessTables();
   const readActivity = createActivityReader({ tables });
   const readAppProcess = createAppProcessReader(tables);
   for (const [i, state] of states.entries()) {
-    const project = projects[i]![1];
-    const launches = launchesByState[i]!;
     const appIdOn = (platform: 'ios' | 'android', slot: string, deviceId: string) => {
-      const launch = launches[deviceSlotKey(platform, slot)];
+      if (!apps) return undefined;
+      const project = apps.projects[i]![1];
+      const launch = apps.launchesByState[i]![deviceSlotKey(platform, slot)];
       return launch?.deviceId === deviceId
         ? launch.appId
         : platform === 'ios'
@@ -455,13 +519,13 @@ function readDeviceProcesses(
       const base: Omit<ActivityTarget, 'platform' | 'id'> = { slot: device.slot, workspace: state.path };
       if (device.ios?.state === 'Booted') {
         const id = device.ios.udid;
-        device.ios.activity = readActivity({ ...base, platform: 'ios', id });
+        device.ios.activity = statusActivity(readActivity({ ...base, platform: 'ios', id }));
         const appId = device.ios.owned ? appIdOn('ios', device.slot, id) : undefined;
         if (appId) device.ios.app = readAppProcess({ platform: 'ios', id, appId });
       }
       if (device.android && !device.android.physical && device.android.serial) {
         const id = device.android.serial;
-        device.android.activity = readActivity({ ...base, platform: 'android', id });
+        device.android.activity = statusActivity(readActivity({ ...base, platform: 'android', id }));
         const appId = device.android.owned ? appIdOn('android', device.slot, id) : undefined;
         if (appId) device.android.app = readAppProcess({ platform: 'android', id, appId });
       }

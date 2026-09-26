@@ -1,10 +1,11 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
-import { changeAffectsStatus, createRefreshScheduler } from '../status-watch.ts';
+import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
+import { createRefreshScheduler, statusChange, type RefreshKind } from '../status-watch.ts';
 
 describe('createRefreshScheduler', () => {
   beforeEach(() => {
@@ -43,7 +44,7 @@ describe('createRefreshScheduler', () => {
         active--;
       },
     });
-    scheduler.trigger(0);
+    scheduler.trigger('full', 0);
     await vi.advanceTimersByTimeAsync(0);
     expect(runs).toBe(1);
     scheduler.trigger();
@@ -59,19 +60,80 @@ describe('createRefreshScheduler', () => {
     expect(maxActive).toBe(1);
     scheduler.stop();
   });
+
+  test('a trigger during a run queues one more run: full at the debounce, log-only after the log interval', async () => {
+    const runs: RefreshKind[] = [];
+    let release: (() => void) | null = null;
+    const scheduler = createRefreshScheduler({
+      debounceMs: 250,
+      logsIntervalMs: 15_000,
+      run: async (kind) => {
+        runs.push(kind);
+        await new Promise<void>((resolve) => (release = resolve));
+      },
+    });
+    scheduler.trigger('full', 0);
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.trigger('logs');
+    scheduler.trigger('full');
+    scheduler.trigger('logs');
+    release!();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(runs).toEqual(['full', 'full']);
+
+    scheduler.trigger('logs');
+    release!();
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(runs).toEqual(['full', 'full']);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runs).toEqual(['full', 'full', 'logs']);
+    release!();
+    scheduler.stop();
+  });
+
+  test('a log trigger runs promptly after quiet, then at most once per interval, and a full trigger overrides it', async () => {
+    const runs: RefreshKind[] = [];
+    const scheduler = createRefreshScheduler({
+      debounceMs: 250,
+      logsIntervalMs: 15_000,
+      run: async (kind) => void runs.push(kind),
+    });
+    scheduler.trigger('logs');
+    await vi.advanceTimersByTimeAsync(250);
+    expect(runs).toEqual(['logs']);
+
+    for (let i = 0; i < 20; i++) {
+      scheduler.trigger('logs');
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    expect(runs).toEqual(['logs']);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(runs).toEqual(['logs', 'logs']);
+
+    scheduler.trigger('logs');
+    await vi.advanceTimersByTimeAsync(1000);
+    scheduler.trigger('full');
+    await vi.advanceTimersByTimeAsync(250);
+    expect(runs).toEqual(['logs', 'logs', 'full']);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(runs).toEqual(['logs', 'logs', 'full']);
+    scheduler.stop();
+  });
 });
 
-test('changes that cannot alter the status payload do not trigger a refresh', () => {
-  expect(changeAffectsStatus('home', 'config.json')).toBe(true);
-  expect(changeAffectsStatus('home', 'build-cache')).toBe(false);
-  expect(changeAffectsStatus('workspace', 'state.json')).toBe(true);
-  expect(changeAffectsStatus('workspace', 'derived-data')).toBe(false);
-  expect(changeAffectsStatus('workspace', 'state.lock')).toBe(false);
-  expect(changeAffectsStatus('logs', 'device.ndjson')).toBe(true);
-  expect(changeAffectsStatus('logs', 'device.ndjson.lock.claims')).toBe(false);
-  expect(changeAffectsStatus('leases', null)).toBe(true);
-  expect(changeAffectsStatus('eas', 'sessions.json')).toBe(true);
-  expect(changeAffectsStatus('eas', 'ledger.lock')).toBe(false);
+test('a log append needs only a log refresh; other state changes need a full one, and locks none', () => {
+  expect(statusChange('home', 'config.json')).toBe('full');
+  expect(statusChange('home', 'build-cache')).toBe(null);
+  expect(statusChange('workspace', 'state.json')).toBe('full');
+  expect(statusChange('workspace', 'logs')).toBe('full');
+  expect(statusChange('workspace', 'derived-data')).toBe(null);
+  expect(statusChange('workspace', 'state.lock')).toBe(null);
+  expect(statusChange('logs', 'device.ndjson')).toBe('logs');
+  expect(statusChange('logs', null)).toBe('logs');
+  expect(statusChange('logs', 'device.ndjson.lock.claims')).toBe(null);
+  expect(statusChange('leases', null)).toBe('full');
+  expect(statusChange('eas', 'sessions.json')).toBe('full');
+  expect(statusChange('eas', 'ledger.lock')).toBe(null);
 });
 
 describe('stim status --watch --json', () => {
@@ -155,6 +217,27 @@ describe('stim status --watch --json', () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(lines).toHaveLength(2);
   }, 30_000);
+
+  test('a log append waits for the log interval, then refreshes the error count', async () => {
+    const app = join(root, 'app');
+    saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
+    ensureWorkspaceStorage(app);
+    mkdirSync(workspaceLogsDir(app), { recursive: true });
+    const log = join(workspaceLogsDir(app), 'metro.ndjson');
+    const record = (ts: number, level: string) => `${JSON.stringify({ ts, src: 'metro', level, msg: 'm' })}\n`;
+    writeFileSync(log, record(1, 'info'));
+    const errors = (line: string) => JSON.parse(line).environments[0].logs.errorsSinceMarker;
+    const { lines } = startWatch();
+    await until(() => lines.length === 1);
+    expect(errors(lines[0]!)).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    appendFileSync(log, record(2, 'error'));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(lines).toHaveLength(1);
+    await until(() => lines.length === 2, 20_000);
+    expect(errors(lines[1]!)).toBe(1);
+  }, 40_000);
 
   test.skipIf(process.platform === 'win32')(
     'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',
