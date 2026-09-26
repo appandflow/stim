@@ -134,6 +134,14 @@ ready only after that fresh review is clear. Merge only after all required CI
 checks pass; if CI fails, fix the branch, repeat the review when behavior
 changes, and wait for the new checks.
 
+Small UI-only polish in `apps/desktop` or `apps/mobile` may take a lighter lane.
+A polish change touches only views, styles, copy, icons or animation, and no
+CLI, server, protocol, state, native module or build configuration. Collect
+several polish changes under one tracking issue and one branch, with one commit
+each, and open a single pull request that lists them. It still gets one fresh
+review, screenshots of each change, and green CI before it merges. Anything
+outside that definition follows the full workflow above.
+
 ## Architecture rules
 
 - **Single exec wrapper.** Route all child processes through
