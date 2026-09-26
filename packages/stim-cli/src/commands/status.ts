@@ -44,7 +44,6 @@ import {
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
-  devicesInUse,
   diskLine,
   environmentState,
   gitSummaryText,
@@ -161,12 +160,13 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
           logs: logs[i],
           remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
           idleStop: readIdleStop(saved),
-          inUse: devicesInUse({
-            build: builds.build,
-            leases: deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }),
-            launches: readWorkspaceLaunches(path),
-            now: leaseNow,
-          }),
+          launches: readWorkspaceLaunches(path),
+          leasedIds: new Set(
+            deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
+              lease.mine && !lease.expired && lease.id ? [lease.id] : [],
+            ),
+          ),
+          now: leaseNow,
         },
       ),
     );
@@ -509,7 +509,7 @@ async function supervisorFacts(
   if (!pid) return null;
   const port = state?.port ?? record?.port ?? null;
   const target = resolveSupervisorTarget({ state, record, reservedPort: proj?.metroPort });
-  const status = target.status === 'ours' || target.status === 'stale' ? target.status : 'unverified';
+  const status = target.status === 'ours' ? 'ours' : target.status === 'unverified' ? 'unverified' : 'stale';
   let healthy = false;
   if (status === 'ours' && port) {
     const resolution =

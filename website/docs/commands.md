@@ -593,8 +593,9 @@ In `--json`, each environment's `issues` array holds
 `{ code, severity, message, remedy, workspace, slot? }`, and `warnings` holds
 the same issues as text. Run `remedy` from `workspace`. An idle workspace's
 shut-down emulator is not an issue: Stim warns that adb does not see an owned
-emulator only while the workspace's dev server runs, a build runs, it holds a
-lease on the device, or it launched on that device in the last 30 minutes. A
+emulator only when the workspace holds a lease on it, or launched onto it and
+has not stopped it since while its dev server runs or within the last 30
+minutes. `stim stop --slot <name>` counts as stopping that slot's device. A
 supervisor record whose process is gone is not an issue either; the next
 `stim stop` or `stim start` clears it. `stim guide facts status` lists every
 issue code.

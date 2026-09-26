@@ -613,13 +613,14 @@ RULES
                                     serial, so Metro forwarding is lost
              avd-missing            the recorded AVD no longer exists
              avd-not-detected       adb does not see the owned emulator while
-                                    the workspace expects it: its supervisor
-                                    or Metro runs, a build runs, it holds a
-                                    lease on that device, or it launched on
-                                    that platform and slot in the last
-                                    ${RECENT_LAUNCH_MS / 60_000} minutes. An idle workspace's shut-down
-                                    emulator is android.state "not-detected"
-                                    with no issue.
+                                    the workspace expects it: it holds an
+                                    unexpired lease on its serial, or it
+                                    launched onto it and has not stopped
+                                    that slot since, and its dev server runs
+                                    or the launch was in the last
+                                    ${RECENT_LAUNCH_MS / 60_000} minutes. An idle workspace's
+                                    shut-down emulator is android.state
+                                    "not-detected" with no issue.
              avd-unchecked          the emulator listing could not be read
              supervisor-unverified  a supervisor record whose process status
                                     cannot prove gone or ours; stop refuses to
@@ -632,6 +633,8 @@ RULES
 
   A supervisor record whose pid is gone or reused is not an issue: status
   reports supervisor null, and the next stop or start clears the record.
+  \`stop --slot <name>\` forgets that slot's launch, so a device stopped on
+  purpose is not reported while the shared dev server keeps running.
 
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:

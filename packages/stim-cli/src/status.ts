@@ -1,12 +1,11 @@
 import { sep } from 'path';
-import { parseDeviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
+import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 import type { RemoteSessionRecord } from './supervisor/state.ts';
 import type {
   AndroidRuntimeFacts,
-  BuildReport,
   DeviceActivity,
   DeviceLeaseState,
   EnvironmentState,
@@ -99,31 +98,29 @@ export function poolLine({ platform, parked, max }: PoolFacts): string | null {
 export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;
 
 /**
- * The `platform:slot` devices a workspace is using right now: a running build, an unexpired lease it holds, or a
- * launch recorded in the last RECENT_LAUNCH_MS.
+ * Whether a workspace expects its owned AVD in `slot` to be running: it holds an unexpired lease on the AVD's
+ * serial, or it launched onto the AVD and has not stopped that slot since, while its dev server runs or within
+ * RECENT_LAUNCH_MS of the launch.
  */
-export function devicesInUse({
-  build,
-  leases,
+function avdExpected({
+  slot,
+  serial,
   launches,
+  leasedIds,
+  running,
   now,
 }: {
-  build?: BuildReport | null;
-  leases: readonly DeviceLeaseState[];
+  slot: string;
+  serial: string | null | undefined;
   launches: Readonly<Record<string, { launchedAt: string }>>;
+  leasedIds: ReadonlySet<string>;
+  running: boolean;
   now: number;
-}): Set<string> {
-  const keys = new Set<string>();
-  if (build?.state === 'running') keys.add(`${build.platform}:${build.slot}`);
-  for (const lease of leases) {
-    if (lease.mine && !lease.expired) keys.add(`${lease.platform}:${lease.slot ?? 'default'}`);
-  }
-  for (const [key, launch] of Object.entries(launches)) {
-    const device = parseDeviceSlotKey(key);
-    const at = Date.parse(launch.launchedAt);
-    if (device && now - at < RECENT_LAUNCH_MS) keys.add(`${device.platform}:${device.slot}`);
-  }
-  return keys;
+}): boolean {
+  if (serial && leasedIds.has(serial)) return true;
+  const launch = launches[deviceSlotKey('android', slot)];
+  if (!launch) return false;
+  return running || now - Date.parse(launch.launchedAt) < RECENT_LAUNCH_MS;
 }
 
 export function environmentState(
@@ -139,7 +136,9 @@ export function environmentState(
     logs = null,
     remote = null,
     idleStop = null,
-    inUse = new Set(),
+    launches = {},
+    leasedIds = new Set(),
+    now = Date.now(),
     slot = 'default',
     workspaceRunning = false,
   }: {
@@ -153,7 +152,9 @@ export function environmentState(
     logs?: LogsFacts | null;
     remote?: RemoteDeviceState | null;
     idleStop?: IdleStopRecord | null;
-    inUse?: ReadonlySet<string>;
+    launches?: Readonly<Record<string, { launchedAt: string }>>;
+    leasedIds?: ReadonlySet<string>;
+    now?: number;
     slot?: string;
     workspaceRunning?: boolean;
   } = {},
@@ -194,7 +195,9 @@ export function environmentState(
     add('sim-without-metro', 'simulator is booted with no Metro serving it', 'stim start');
   }
   if (androidRuntime && android?.avdName) {
-    for (const [code, message] of androidIssues(android, androidRuntime, running || inUse.has(`android:${slot}`))) {
+    const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
+    const expected = avdExpected({ slot, serial: recordedSerial, launches, leasedIds, running, now });
+    for (const [code, message] of androidIssues(android, recordedSerial, androidRuntime, expected)) {
       add(code, message, code === 'avd-unchecked' ? 'stim doctor' : `stim android${slotFlag}`);
     }
   }
@@ -216,7 +219,9 @@ export function environmentState(
         simsAvailable,
         metro,
         androidRuntime: androidRuntimes[name],
-        inUse,
+        launches,
+        leasedIds,
+        now,
         slot: name,
         workspaceRunning: running,
       },
@@ -275,15 +280,15 @@ export function environmentState(
 
 function androidIssues(
   android: NonNullable<NonNullable<ProjectRecord['platforms']>['android']>,
+  recordedSerial: string | undefined,
   runtime: AndroidRuntimeFacts,
   expected: boolean,
 ): [StatusIssueCode, string][] {
   const issues: [StatusIssueCode, string][] = [];
-  const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
   if (runtime.serial && recordedSerial && runtime.serial !== recordedSerial) {
     issues.push([
       'avd-serial-changed',
-      `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${runtime.serial}), so Metro forwarding is lost; after the remedy, reopen agent-device on ${runtime.serial}`,
+      `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${runtime.serial}), so Metro forwarding is lost; rerun with the same build options, then reopen agent-device on ${runtime.serial}`,
     ]);
   }
   if (runtime.state === 'missing') issues.push(['avd-missing', `recorded AVD ${android.avdName} no longer exists`]);

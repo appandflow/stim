@@ -114,6 +114,16 @@ export function writeWorkspaceLaunch(
   });
 }
 
+export function clearWorkspaceLaunches(root: string, slot: string): void {
+  updateWorkspaceState(root, (state) => {
+    if (!state.launches || typeof state.launches !== 'object') return state;
+    const launches: Record<string, unknown> = { ...state.launches };
+    delete launches[deviceSlotKey('ios', slot)];
+    delete launches[deviceSlotKey('android', slot)];
+    return { ...state, launches };
+  });
+}
+
 export function readRemoteSession(root: string): RemoteSessionRecord | null {
   const record = readWorkspaceState(root)?.remoteDevice;
   if (!record || typeof record !== 'object') return null;

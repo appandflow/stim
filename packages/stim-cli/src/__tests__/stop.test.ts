@@ -22,6 +22,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { captureProcessToken } from '../process-identity.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -1378,15 +1379,17 @@ test.each([
   ['phone', 'ios:phone', 'PHONE'],
   ['default', 'ios', 'DEFAULT'],
 ] as const)(
-  "stopping slot '%s' preserves sibling collectors, leases and the shared server",
+  "stopping slot '%s' drops its launch record and preserves sibling collectors, leases and the shared server",
   async (slot, stoppedCollectorKey, stoppedUdid) => {
     const stopped = { pid: 111, processToken: slot };
     const tablet = { pid: 222, processToken: 'tablet' };
+    const launch = { appId: 'com.app', deviceId: 'D', metroPort: 8083, release: false, launchedAt: 'now' };
     writeFileSync(
       workspaceStateFile(tmpRoot),
       JSON.stringify({
         collectors: { [stoppedCollectorKey]: stopped, 'ios:tablet': tablet },
         supervisor: { pid: 333, processToken: 'metro' },
+        launches: { [stoppedCollectorKey]: launch, 'ios:tablet': launch },
       }),
     );
     takeLease({ root: tmpRoot, platform: 'ios', slot, id: 'STOPPED-HW', kind: 'declared', durationMs: 60000 });
@@ -1411,6 +1414,7 @@ test.each([
     expect(calls.signals).toEqual([]);
     expect(calls.freed).toEqual([]);
     expect(readCollectorState(tmpRoot)).toEqual({ 'ios:tablet': tablet });
+    expect(readWorkspaceState(tmpRoot)?.launches).toEqual({ 'ios:tablet': launch });
     expect(readSupervisorState(tmpRoot)?.pid).toBe(333);
     expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['TABLET-HW']);
     expect(result.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
