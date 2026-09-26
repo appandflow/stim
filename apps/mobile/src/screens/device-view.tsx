@@ -5,7 +5,6 @@ import {
   Keyboard,
   PixelRatio,
   Platform as OS,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -30,6 +29,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Chip } from '@/components/chip';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
+import { ScrollView } from '@/components/lists';
 import { Touch } from '@/components/touch';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { useDeviceStream } from '@/hooks/device-stream';

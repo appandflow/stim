@@ -1,9 +1,10 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
+import { ScrollView } from '@/components/lists';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { MachineStatsRow } from '@/components/machine-stats';
 import { explainReadOnly, ScopeChip } from '@/components/read-only';
