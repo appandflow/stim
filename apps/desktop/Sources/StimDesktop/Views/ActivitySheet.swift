@@ -1,17 +1,16 @@
 import StimKit
 import SwiftUI
 
-/// Shows one `ActionRun`: a human title and subtitle, the command tucked behind a
-/// disclosure, a step list parsed from the CLI's phase lines, a result summary that
-/// auto-closes on success, and the raw output tucked under "Show details".
+/// Shows one `ActionRun`: a spinner and one line while it runs, then a short summary of what it did. Items it
+/// left alone and failures are listed apart from what it did, and the command and raw output sit under Details.
 struct ActivitySheet: View {
   @ObservedObject var run: ActionRun
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.dismiss) private var dismiss
   @State private var confirmingDelete = false
   @State private var idleDuration: String?
-  @State private var showsCommand = false
   @State private var showsDetails = false
+  @State private var showsKept = false
 
   private var steps: [ProgressStep] { ActivityProgress.parse(run.lines.map(\.text)) }
 
@@ -24,29 +23,24 @@ struct ActivitySheet: View {
     return Result { try GcPreview(json: run.stdout) }
   }
 
+  private var outcome: Result<GcOutcome, Error>? {
+    guard run.exitStatus != nil else { return nil }
+    return run.gcOutcome
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       header
-      commandDisclosure
-
-      if case .success(let report) = report {
-        GcPreviewView(report: report)
-        DisclosureGroup("Show details", isExpanded: $showsDetails) { output.frame(height: 140) }
-      } else if let failure = run.launchError ?? failureMessage {
-        Label(abbreviatingHome(failure), systemImage: "xmark.octagon.fill").foregroundStyle(Theme.error)
-        progressBody
-      } else {
-        progressBody
-      }
-
+      content
+      if !run.isRunning { details }
       footer
     }
     .font(Theme.body(12))
     .padding(22)
-    .frame(width: 640, height: 500)
+    .frame(width: 560)
     .background(Theme.background)
     .onChange(of: run.exitStatus) { _, status in
-      guard status == 0 else { return }
+      guard status == 0, closesOnSuccess else { return }
       Task {
         try? await Task.sleep(for: .seconds(2))
         if actions.presented?.id == run.id { dismiss() }
@@ -54,137 +48,207 @@ struct ActivitySheet: View {
     }
   }
 
-  private var failureMessage: String? {
-    guard let status = run.exitStatus, status != 0 else { return nil }
-    return steps.last { $0.state == .failed }.map { "\($0.fact.isEmpty ? $0.label : $0.fact)" }
-      ?? run.summary
-      ?? "Exited \(status)"
+  /// A plain successful action closes itself after showing that it finished. A preview and a cleanup
+  /// summary stay open to be read.
+  private var closesOnSuccess: Bool { deleteArguments == nil && outcome == nil }
+
+  @ViewBuilder private var content: some View {
+    if run.isRunning {
+      runningView
+    } else if let failure = failureMessage {
+      failureView(failure)
+    } else if case .success(let report) = report {
+      GcPreviewView(report: report).frame(height: report.sections.isEmpty ? nil : 360)
+    } else if case .success(let outcome) = outcome {
+      outcomeView(outcome)
+    } else {
+      Label(Self.pastTense(run.title), systemImage: "checkmark.circle.fill")
+        .font(Theme.body(13, weight: .medium))
+        .foregroundStyle(Theme.live)
+    }
   }
 
   @ViewBuilder private var header: some View {
     HStack(alignment: .top) {
       VStack(alignment: .leading, spacing: 2) {
-        Text(headerTitle).font(Theme.heading(17))
-        Text(abbreviatingHome(run.command.cwd)).foregroundStyle(Theme.tertiary)
+        Text(run.isRunning ? Self.gerund(run.title) : run.title).font(Theme.heading(17))
+        if abbreviatingHome(run.command.cwd) != "~" {
+          Text(abbreviatingHome(run.command.cwd)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.middle)
+        }
       }
       Spacer()
       status
     }
   }
 
-  private var headerTitle: String {
-    guard run.isRunning else { return run.title }
-    return Self.gerund(run.title)
+  private var runningView: some View {
+    TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 10) {
+          ProgressView().controlSize(.small)
+          Text(currentStep)
+            .foregroundStyle(Theme.text)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          Spacer()
+          Text(formatDuration(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
+            .font(Theme.mono())
+            .foregroundStyle(Theme.tertiary)
+        }
+        if let waiting = ActivityProgress.waitingStep(steps) {
+          Label(abbreviatingHome(waiting.fact), systemImage: "hourglass")
+            .foregroundStyle(Theme.warn)
+            .lineLimit(2)
+        }
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
+    }
+  }
+
+  /// The latest progress fact the CLI printed, or a plain "Working" when it prints none.
+  private var currentStep: String {
+    guard let step = steps.last(where: { $0.state != .failed }) else { return "Working\u{2026}" }
+    return abbreviatingHome(step.fact.isEmpty ? step.label : step.fact)
+  }
+
+  private var failureMessage: String? {
+    if let launchError = run.launchError { return launchError }
+    if case .failure(let error) = report { return error.localizedDescription }
+    if case .failure(let error as GcPreview.Failure) = outcome, case .refused = error { return error.localizedDescription }
+    if case .success = outcome { return nil }
+    guard let status = run.exitStatus, status != 0 else { return nil }
+    return steps.last { $0.state == .failed }.map { $0.fact.isEmpty ? $0.label : $0.fact }
+      ?? run.summary
+      ?? "Exited \(status)"
+  }
+
+  private func failureView(_ message: String) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label(abbreviatingHome(message), systemImage: "xmark.octagon.fill")
+        .foregroundStyle(Theme.error)
+        .textSelection(.enabled)
+      ForEach(steps.filter { $0.label == "remedy" }) { remedy in
+        Text(abbreviatingHome(remedy.fact)).foregroundStyle(Theme.secondary).textSelection(.enabled)
+      }
+    }
+  }
+
+  private func outcomeView(_ outcome: GcOutcome) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label(outcome.headline, systemImage: outcome.failures > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+        .font(Theme.body(13, weight: .medium))
+        .foregroundStyle(outcome.failures > 0 ? Theme.warn : Theme.live)
+      if !outcome.done.isEmpty, outcome.done.count <= 6 {
+        VStack(alignment: .leading, spacing: 4) {
+          ForEach(outcome.done, id: \.self) { item in itemRow(item, icon: "checkmark", tint: Theme.tertiary) }
+        }
+      }
+      if !outcome.failed.isEmpty {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(outcome.failed.count == 1 ? "1 failed" : "\(outcome.failed.count) failed")
+            .font(Theme.heading(13))
+            .foregroundStyle(Theme.error)
+          ForEach(outcome.failed, id: \.self) { item in itemRow(item, icon: "xmark.octagon.fill", tint: Theme.error) }
+        }
+      } else if outcome.failures > 0 {
+        Text("\(outcome.failures) could not be cleaned up. Open Details for the reason, then run it again.")
+          .foregroundStyle(Theme.error)
+      }
+      if !outcome.kept.isEmpty {
+        DisclosureGroup(isExpanded: $showsKept) {
+          let rows = VStack(alignment: .leading, spacing: 6) {
+            ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Theme.tertiary) }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          if outcome.kept.count > 5 {
+            ScrollView { rows }.frame(height: 200)
+          } else {
+            rows
+          }
+        } label: {
+          Text("\(outcome.kept.count) left alone").foregroundStyle(Theme.secondary)
+        }
+      }
+    }
+  }
+
+  private func itemRow(_ item: GcOutcome.Item, icon: String, tint: Color) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Image(systemName: icon).foregroundStyle(tint).frame(width: 14)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(abbreviatingHome(item.label)).lineLimit(2).truncationMode(.middle)
+        if let detail = item.detail {
+          Text(abbreviatingHome(detail)).foregroundStyle(Theme.tertiary).lineLimit(3)
+        }
+      }
+      Spacer()
+      if let bytes = item.bytes, bytes > 0 {
+        Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+          .font(Theme.mono())
+          .foregroundStyle(Theme.tertiary)
+      }
+    }
+    .textSelection(.enabled)
+  }
+
+  private var details: some View {
+    DisclosureGroup("Details", isExpanded: $showsDetails) {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
+          CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
+          Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(run.steps.map { $0.shellLine }.joined(separator: "\n"), forType: .string)
+          } label: {
+            Image(systemName: "doc.on.doc")
+          }
+          .buttonStyle(.stim())
+          .help("Copy the command")
+        }
+        output.frame(height: 160)
+      }
+    }
+    .font(Theme.body(11.5))
+    .foregroundStyle(Theme.tertiary)
   }
 
   /// A present-tense header for common action verbs, falling back to the plain title.
   private static func gerund(_ title: String) -> String {
-    let mapping: [(String, String)] = [
+    rewrite(title, [
       ("Shut down idle devices", "Shutting down idle devices"),
       ("Preview cleanup", "Previewing cleanup"),
+      ("Reclaim disk space", "Reclaiming disk space"),
+      ("Nightly cleanup", "Cleaning up"),
       ("Clean up", "Cleaning up"),
       ("Stop ", "Stopping "),
       ("Reload ", "Reloading "),
       ("Start ", "Starting "),
       ("Remove ", "Removing "),
       ("Warm ", "Warming "),
-    ]
+    ])
+  }
+
+  /// The sentence a finished action confirms itself with.
+  private static func pastTense(_ title: String) -> String {
+    rewrite(title, [
+      ("Shut down idle devices", "Shut down idle devices"),
+      ("Clean up", "Cleaned up"),
+      ("Stop ", "Stopped "),
+      ("Reload ", "Reloaded "),
+      ("Start ", "Started "),
+      ("Remove ", "Removed "),
+      ("Warm ", "Warmed "),
+    ], fallback: "Done")
+  }
+
+  private static func rewrite(_ title: String, _ mapping: [(String, String)], fallback: String? = nil) -> String {
     for (prefix, replacement) in mapping {
       if title == prefix.trimmingCharacters(in: .whitespaces) { return replacement.trimmingCharacters(in: .whitespaces) }
       if title.hasPrefix(prefix) { return replacement + title.dropFirst(prefix.count) }
     }
-    return title
-  }
-
-  private var commandDisclosure: some View {
-    DisclosureGroup("Show command", isExpanded: $showsCommand) {
-      HStack(alignment: .top, spacing: 8) {
-        CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
-        Button {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(run.steps.map { $0.shellLine }.joined(separator: "\n"), forType: .string)
-        } label: {
-          Image(systemName: "doc.on.doc")
-        }
-        .buttonStyle(.stim())
-        .help("Copy the command")
-      }
-    }
-    .font(Theme.body(11.5))
-    .foregroundStyle(Theme.secondary)
-  }
-
-  @ViewBuilder private var progressBody: some View {
-    if let waiting = ActivityProgress.waitingStep(steps) {
-      Label(waiting.fact, systemImage: "hourglass").foregroundStyle(Theme.warn)
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.warn.opacity(0.12)))
-    }
-    if steps.isEmpty, run.isRunning {
-      workingRow
-    } else if !steps.isEmpty {
-      stepList
-    }
-    if let status = run.exitStatus, status == 0 {
-      resultSummary
-    }
-    DisclosureGroup("Show details", isExpanded: $showsDetails) { output.frame(height: 140) }
-  }
-
-  private var workingRow: some View {
-    TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
-      HStack(spacing: 8) {
-        ProgressView().controlSize(.small)
-        Text("Working\u{2026}")
-        Text(formatDuration(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
-          .font(Theme.mono())
-          .foregroundStyle(Theme.tertiary)
-      }
-      .foregroundStyle(Theme.secondary)
-    }
-  }
-
-  private var stepList: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      ForEach(steps) { step in
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-          Image(systemName: icon(for: step.state))
-            .foregroundStyle(color(for: step.state))
-            .frame(width: 14)
-          Text(step.fact.isEmpty ? step.label : step.fact)
-            .foregroundStyle(step.state == .failed ? Theme.error : Theme.text)
-          if let duration = step.duration {
-            Text(duration).font(Theme.mono()).foregroundStyle(Theme.tertiary)
-          }
-        }
-      }
-    }
-  }
-
-  private func icon(for state: ProgressStep.State) -> String {
-    switch state {
-    case .running: return "arrow.triangle.2.circlepath"
-    case .waiting: return "hourglass"
-    case .done: return "checkmark.circle.fill"
-    case .failed: return "xmark.octagon.fill"
-    }
-  }
-
-  private func color(for state: ProgressStep.State) -> Color {
-    switch state {
-    case .running: return Theme.lavender
-    case .waiting: return Theme.warn
-    case .done: return Theme.live
-    case .failed: return Theme.error
-    }
-  }
-
-  private var resultSummary: some View {
-    let facts = steps.filter { $0.state == .done }.map { $0.fact.isEmpty ? $0.label : $0.fact }
-    let summary = facts.isEmpty ? run.summary ?? "Done" : facts.joined(separator: ", ")
-    return Label(summary, systemImage: "checkmark.circle.fill")
-      .foregroundStyle(Theme.live)
+    return fallback ?? title
   }
 
   @ViewBuilder private var footer: some View {
@@ -202,7 +266,7 @@ struct ActivitySheet: View {
           .confirmationDialog(
             "Delete what stim gc reported?", isPresented: $confirmingDelete, titleVisibility: .visible
           ) {
-            Button("Run stim \(deleteArguments.joined(separator: " "))", role: .destructive) {
+            Button("Run stim \(deleteArguments.filter { $0 != "--json" }.joined(separator: " "))", role: .destructive) {
               actions.run("Clean up", StimCommand(deleteArguments, cwd: run.command.cwd), key: ActionCenter.machineKey)
             }
           } message: {
@@ -235,7 +299,7 @@ struct ActivitySheet: View {
       if let duration = idleDuration {
         Button("Run stim gc --idle \(duration)") {
           actions.run(
-            "Shut down idle devices", StimCommand(["gc", "--idle", duration], cwd: run.command.cwd),
+            "Shut down idle devices", StimCommand(["gc", "--idle", duration, "--json"], cwd: run.command.cwd),
             key: ActionCenter.machineKey)
         }
       }
@@ -274,7 +338,7 @@ struct ActivitySheet: View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 1) {
-          ForEach(Array(run.lines.enumerated()), id: \.offset) { index, line in
+          ForEach(Array(run.logLines.enumerated()), id: \.offset) { index, line in
             Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
               .foregroundStyle(line.channel == .stderr ? Theme.secondary : Theme.text)
               .frame(maxWidth: .infinity, alignment: .leading)
@@ -287,8 +351,8 @@ struct ActivitySheet: View {
       }
       .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
       .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
-      .onChange(of: run.lines.count) { _, count in
-        if count > 0 { proxy.scrollTo(count - 1, anchor: .bottom) }
+      .onAppear {
+        if !run.logLines.isEmpty { proxy.scrollTo(run.logLines.count - 1, anchor: .bottom) }
       }
     }
   }

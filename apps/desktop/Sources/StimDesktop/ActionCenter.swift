@@ -28,9 +28,22 @@ final class ActionRun: ObservableObject, Identifiable {
     Data(lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n").utf8)
   }
 
-  /// The last line the command printed, for the autopilot log.
+  /// What a finished `gc --delete --json` or `gc --idle --json` run did, or nil for any other command.
+  var gcOutcome: Result<GcOutcome, Error>? {
+    guard steps.count == 1, exitStatus != nil, GcOutcome.describes(command.arguments) else { return nil }
+    return Result { try GcOutcome(json: stdout) }
+  }
+
+  /// The output to show as text: everything but the JSON payload of a `--json` command.
+  var logLines: [OutputLine] {
+    command.arguments.contains("--json") ? lines.filter { $0.channel != .stdout } : lines
+  }
+
+  /// One line for the autopilot log: the cleanup summary, or the last line the command printed.
   var summary: String? {
-    launchError ?? lines.last { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty && !$0.text.hasPrefix("$ ") }?.text
+    if let launchError { return launchError }
+    if case .success(let outcome) = gcOutcome { return outcome.headline }
+    return logLines.last { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty && !$0.text.hasPrefix("$ ") }?.text
   }
 
   fileprivate func start(cli: StimCLI, onFinish: @escaping @MainActor () -> Void) {

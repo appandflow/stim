@@ -8,6 +8,7 @@ import { teardownOwnedAvd, teardownOwnedIosSim } from '../../devices/teardown.ts
 import { ACTIVE_BUILD_KEY, activeBuildState, parseActiveBuild } from '../../engine/build-progress.ts';
 import type { Config } from '../../workspace/config.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
+import { recordGcResult } from './results.ts';
 
 export interface IdleDevice {
   kind: 'ios' | 'android';
@@ -187,6 +188,10 @@ export function shutDownIdleDevices(
     );
     if (!current) {
       console.log(chalk.dim(`Kept ${what}: it is no longer idle for ${formatLongDuration(idleMs)}.`));
+      recordGcResult('idleDevice', 'kept', device.name, {
+        id: device.id,
+        detail: `it is no longer idle for ${formatLongDuration(idleMs)}`,
+      });
       continue;
     }
     const outcome =
@@ -196,13 +201,19 @@ export function shutDownIdleDevices(
     if (outcome.status === 'torn-down') {
       shutDown.push(device);
       console.log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));
+      recordGcResult('idleDevice', 'done', device.name, {
+        id: device.id,
+        detail: `idle ${formatLongDuration(current.idleForMs)}`,
+      });
     } else if (outcome.status === 'missing') {
       console.log(chalk.dim(`${what} is already gone; nothing to shut down.`));
     } else if (outcome.status === 'skipped') {
       console.log(chalk.yellow(`Skipped ${what}: ${outcome.reason}`));
+      recordGcResult('idleDevice', 'kept', device.name, { id: device.id, detail: outcome.reason });
     } else {
       failures++;
       console.log(chalk.red(`Failed to shut down ${what}: ${outcome.reason}`));
+      recordGcResult('idleDevice', 'failed', device.name, { id: device.id, detail: outcome.reason });
     }
   }
   return { failures, shutDown };

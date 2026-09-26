@@ -181,9 +181,10 @@ import Testing
   }
 
   @Test func boundsTheNightlyCleanupByAgeAndLeavesPressureRunsUnbounded() {
-    #expect(AutopilotSchedule.nightlyArguments(olderThanDays: 7) == ["gc", "--delete", "--worktrees", "--older-than", "7"])
-    #expect(AutopilotSchedule.nightlyArguments(olderThanDays: 14).suffix(2) == ["--older-than", "14"])
-    #expect(PressurePlan.arguments == ["gc", "--delete"])
+    #expect(
+      AutopilotSchedule.nightlyArguments(olderThanDays: 7) == ["gc", "--delete", "--worktrees", "--older-than", "7", "--json"])
+    #expect(AutopilotSchedule.nightlyArguments(olderThanDays: 14).contains("14"))
+    #expect(PressurePlan.arguments == ["gc", "--delete", "--json"])
   }
 
   func device(idleSince: Date, screen: Date? = nil) -> AutopilotSchedule.Device {
@@ -255,9 +256,10 @@ import Testing
   }
 
   @Test func aScopedPreviewDeletesOnlyThatScope() {
-    #expect(GcPreview.deleteArguments(after: ["gc", "--json"]) == ["gc", "--delete"])
+    #expect(GcPreview.deleteArguments(after: ["gc", "--json"]) == ["gc", "--json", "--delete"])
     #expect(
-      GcPreview.deleteArguments(after: ["gc", "--json", "--cache", "Xcode CAS"]) == ["gc", "--cache", "Xcode CAS", "--delete"])
+      GcPreview.deleteArguments(after: ["gc", "--json", "--cache", "Xcode CAS"])
+        == ["gc", "--json", "--cache", "Xcode CAS", "--delete"])
     #expect(GcPreview.deleteArguments(after: ["gc", "--idle", "1h"]) == nil)
     #expect(GcPreview.deleteArguments(after: ["gc", "--delete"]) == nil)
   }

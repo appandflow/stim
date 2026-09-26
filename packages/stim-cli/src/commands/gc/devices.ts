@@ -18,6 +18,7 @@ import {
 } from '../../devices/teardown.ts';
 import type { Config } from '@stim-cli/core/state';
 import type { OrphanedDevice } from './types.ts';
+import { recordGcResult } from './results.ts';
 
 export interface StaleProjectDevice {
   kind: 'ios' | 'android';
@@ -425,14 +426,20 @@ export function deleteParkedAvds(avds: readonly ParkedAvdReport[]): number {
     if (avd.listed === null) {
       failures++;
       console.log(chalk.red(`Could not verify parked android emulator ${avd.name}; its pool record was kept.`));
+      recordGcResult('parkedDevice', 'failed', avd.name, {
+        id: avd.name,
+        detail: 'Stim could not list emulators to verify it; its pool record was kept. Retry stim gc --delete.',
+      });
       continue;
     }
     const result = teardownParkedAvd(avd.name);
     if (result.status === 'failed') {
       failures++;
       console.log(chalk.red(`Failed to delete parked android emulator ${avd.name}: ${result.reason}`));
+      recordGcResult('parkedDevice', 'failed', avd.name, { id: avd.name, detail: result.reason });
     } else if (result.status === 'torn-down') {
       console.log(chalk.green(`Deleted parked android emulator ${avd.name}`));
+      recordGcResult('parkedDevice', 'done', avd.name, { id: avd.name, bytes: avd.bytes });
     } else {
       console.log(chalk.dim(`Skipped ${avd.name}; it is no longer parked.`));
     }
@@ -447,6 +454,10 @@ export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: G
     if (sim.listed === null) {
       failures++;
       console.log(chalk.red(`Could not verify parked ios sim ${sim.name} (${sim.udid}); its pool record was kept.`));
+      recordGcResult('parkedDevice', 'failed', sim.name, {
+        id: sim.udid,
+        detail: 'Stim could not list simulators to verify it; its pool record was kept. Retry stim gc --delete.',
+      });
       continue;
     }
     try {
@@ -458,12 +469,14 @@ export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: G
         if (teardown?.status === 'failed') {
           failures++;
           console.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${teardown.reason}`));
+          recordGcResult('parkedDevice', 'failed', sim.name, { id: sim.udid, detail: teardown.reason });
         } else {
           console.log(chalk.dim(`Skipped ${sim.name} (${sim.udid}); it is no longer parked.`));
         }
         continue;
       }
       emptied++;
+      recordGcResult('parkedDevice', 'done', sim.name, { id: sim.udid, bytes: sim.listed ? sim.bytes : null });
       console.log(
         chalk.green(
           sim.listed
@@ -474,6 +487,10 @@ export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: G
     } catch (err) {
       failures++;
       console.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${(err as Error)?.message || err}`));
+      recordGcResult('parkedDevice', 'failed', sim.name, {
+        id: sim.udid,
+        detail: (err as Error)?.message || String(err),
+      });
     }
   }
   if (emptied) console.log(chalk.dim(`  emptied ${plural(emptied, 'parked simulator')} from the pool`));
@@ -537,15 +554,19 @@ export function deleteProjectDevices(
             ...('orphanedDirectory' in d ? { orphanedDirectory: d.orphanedDirectory } : {}),
           });
     const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
+    const result = { id: d.id, bytes: d.bytes ?? null };
     if (r.status === 'torn-down') {
       console.log(chalk.green(`Deleted ${what}`));
+      recordGcResult('device', 'done', d.name, result);
     } else if (r.status === 'missing') {
       console.log(chalk.dim(`${what} is already gone; nothing to delete.`));
     } else if (r.status === 'skipped') {
       console.log(chalk.yellow(`Skipped ${what}: ${r.reason} -- left for a later gc`));
+      recordGcResult('device', 'kept', d.name, { ...result, detail: `${r.reason}; left for a later gc` });
     } else {
       deleteFailures++;
       console.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${r.reason}`));
+      recordGcResult('device', 'failed', d.name, { ...result, detail: r.reason });
     }
     return r.status;
   }
@@ -568,8 +589,10 @@ export function deleteProjectDevices(
         if (r.kind === 'android' && deviceSlotPlatforms(getProject(r.project), r.slot)?.android?.owned) return false;
         return clearDevice(r.project, r.kind, r.slot, r.id);
       });
-      if (removed)
+      if (removed) {
         console.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
+        recordGcResult('deviceRecord', 'done', r.project, { id: r.id });
+      }
     }
   }
 

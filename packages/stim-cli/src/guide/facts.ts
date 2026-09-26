@@ -490,13 +490,13 @@ RULES
   full commands.`,
     },
     gc: {
-      summary: 'the gc report payload: mode, sections, reasons, failures, and the gc refusals',
+      summary: 'the gc report payload: mode, sections, reasons, failures, results, and the gc refusals',
       body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
           [--worktrees] [--idle <duration>] --json
 
   The report the text prints, as one payload. Show the user its sections
   before you run \`gc --delete\`. Under --delete it is the report that run
-  acted on: each entry's outcome is a stderr line, \`failures\` counts the
+  acted on: \`results\` lists each entry's outcome, \`failures\` counts the
   entries it could not delete, and a nonzero count exits 1. Run
   \`stim gc --json\` again to see what is left.
 
@@ -513,6 +513,15 @@ RULES
   actionable      true when --delete with the same flags reclaims something
   failures        null on a dry run without --idle; otherwise the entries it
                   could not delete or shut down
+  results         what --delete or --idle did, one { kind, status, label,
+                  id, bytes, detail } per entry it acted on; empty on a dry
+                  run. status is "done", "kept" (left alone, detail says
+                  why) or "failed" (detail says why and what to retry).
+                  kind: device, parkedDevice, idleDevice, deviceRecord,
+                  workspaceOutputs, workspaceDirectory, project, buildLock,
+                  buildSlot, deviceLease, easSession, worktree, cache.
+                  label is a device, path or cache name; id is the UDID,
+                  AVD name or path behind it, or null
   sections        one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }

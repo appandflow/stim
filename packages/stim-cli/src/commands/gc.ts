@@ -16,6 +16,7 @@ import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devi
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
+import { recordGcResult, takeGcResults, type GcResult } from './gc/results.ts';
 import { emptyCaches, includesWorkspaceOutputs, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
 import {
   collectDeviceLeases,
@@ -102,6 +103,7 @@ type GcPayload =
       actionable: boolean;
       failures: number | null;
       sections: GcJsonSections;
+      results: GcResult[];
     }
   | GcRefusal;
 
@@ -111,6 +113,7 @@ function removeInvalidProjectEntries(invalidProjects: string[]): void {
   for (const path of invalidProjects) {
     removeProject(path);
     console.log(chalk.green(`Removed the invalid registry entry ${path}`));
+    recordGcResult('project', 'done', path);
   }
 }
 
@@ -466,7 +469,58 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
   return runGcCore(opts, { ...deps, precollectedEasSessionSweep: easSessionSweep });
 }
 
+async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
+  let deleteFailures = 0;
+  for (const path of deadProjects) {
+    if (existsSync(path) || !isOnMountedVolume(path)) {
+      console.log(chalk.yellow(`Kept ${path}: its absence can no longer be confirmed.`));
+      recordGcResult('project', 'kept', path, { detail: 'its absence can no longer be confirmed' });
+      continue;
+    }
+    const result = await reclaimProject(path).catch((error: unknown) => {
+      deleteFailures++;
+      console.log(chalk.red(`Could not prune ${path}; its registry entry was kept: ${(error as Error).message}`));
+      recordGcResult('project', 'failed', path, { detail: `its registry entry was kept: ${(error as Error).message}` });
+      return null;
+    });
+    if (!result) continue;
+    if (result.keptEntry) {
+      console.log(chalk.yellow(`Could not fully prune ${path}; its registry entry was kept.`));
+      recordGcResult('project', 'kept', path, { detail: 'it could not be fully pruned; its registry entry was kept' });
+    } else {
+      console.log(chalk.green(`Pruned ${path}`));
+      recordGcResult('project', 'done', path);
+    }
+    for (const dir of result.removedWorkspaceDirs) console.log(chalk.dim(`  removed workspace output ${dir}`));
+    for (const dir of result.failedWorkspaceDirs) {
+      console.log(chalk.red(`  could not remove workspace output ${dir}`));
+      recordGcResult('workspaceDirectory', 'failed', dir, { detail: `could not remove it while pruning ${path}` });
+      deleteFailures += 1;
+    }
+    if (result.killedPid) {
+      console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
+    }
+    if (result.stoppedSession) {
+      console.log(chalk.dim(`  stopped remote session ${result.stoppedSession}`));
+    }
+    if (result.stoppedTunnel) {
+      console.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
+    }
+    for (const name of result.deletedDevices) recordGcResult('device', 'done', name);
+    for (const s of result.skippedDevices) {
+      console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
+      recordGcResult('device', result.failedDevices.includes(s) ? 'failed' : 'kept', s.name, {
+        id: s.udid ?? null,
+        detail: s.reason,
+      });
+    }
+    deleteFailures += result.failedDevices.length;
+  }
+  return deleteFailures;
+}
+
 async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
+  takeGcResults();
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
   const report = await collectGcReport(
@@ -540,6 +594,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     actionable,
     failures,
     sections: gcReportSections(report),
+    results: takeGcResults(),
   });
 
   if (!opts.delete) {
@@ -563,38 +618,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
 
   removeInvalidProjectEntries(invalidProjects);
 
-  for (const path of deadProjects) {
-    if (existsSync(path) || !isOnMountedVolume(path)) {
-      console.log(chalk.yellow(`Kept ${path}: its absence can no longer be confirmed.`));
-      continue;
-    }
-    const result = await reclaimProject(path).catch((error: unknown) => {
-      deleteFailures++;
-      console.log(chalk.red(`Could not prune ${path}; its registry entry was kept: ${(error as Error).message}`));
-      return null;
-    });
-    if (!result) continue;
-    if (result.keptEntry) console.log(chalk.yellow(`Could not fully prune ${path}; its registry entry was kept.`));
-    else console.log(chalk.green(`Pruned ${path}`));
-    for (const dir of result.removedWorkspaceDirs) console.log(chalk.dim(`  removed workspace output ${dir}`));
-    for (const dir of result.failedWorkspaceDirs) {
-      console.log(chalk.red(`  could not remove workspace output ${dir}`));
-      deleteFailures += 1;
-    }
-    if (result.killedPid) {
-      console.log(chalk.dim(`  killed orphaned Metro pid ${result.killedPid}`));
-    }
-    if (result.stoppedSession) {
-      console.log(chalk.dim(`  stopped remote session ${result.stoppedSession}`));
-    }
-    if (result.stoppedTunnel) {
-      console.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
-    }
-    for (const s of result.skippedDevices) {
-      console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
-    }
-    deleteFailures += result.failedDevices.length;
-  }
+  deleteFailures += await pruneDeadProjects(deadProjects);
 
   deleteFailures += await deleteOrphanedWorkspaces(report.orphanedWorkspaces);
 
@@ -605,13 +629,16 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     if (cleared.status === 'held') continue;
     if (cleared.status === 'refused') {
       console.log(chalk.yellow(`Left the build lock at ${lock.path} alone: ${cleared.reason}`));
+      recordGcResult('buildLock', 'kept', `${lock.platform} build lock`, { id: lock.path, detail: cleared.reason });
       continue;
     }
     if (cleared.status === 'failed') {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the build lock at ${lock.path}: ${cleared.reason}`));
+      recordGcResult('buildLock', 'failed', `${lock.platform} build lock`, { id: lock.path, detail: cleared.reason });
       continue;
     }
+    recordGcResult('buildLock', 'done', `${lock.platform} build lock`, { id: lock.path });
     console.log(
       chalk.green(
         `Cleared the ${lock.platform} build lock left by pid ${lock.pid ?? '?'} (${lock.projectRoot || 'unrecorded workspace'})`,
@@ -624,13 +651,19 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     if (cleared.status === 'held') continue;
     if (cleared.status === 'refused') {
       console.log(chalk.yellow(`Left the build slot at ${slot.path} alone: ${cleared.reason}`));
+      recordGcResult('buildSlot', 'kept', `build slot ${slot.index ?? '?'}`, { id: slot.path, detail: cleared.reason });
       continue;
     }
     if (cleared.status === 'failed') {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the build slot at ${slot.path}: ${cleared.reason}`));
+      recordGcResult('buildSlot', 'failed', `build slot ${slot.index ?? '?'}`, {
+        id: slot.path,
+        detail: cleared.reason,
+      });
       continue;
     }
+    recordGcResult('buildSlot', 'done', `build slot ${slot.index ?? '?'}`, { id: slot.path });
     console.log(
       chalk.green(
         `Cleared build slot ${slot.index ?? '?'} left by pid ${slot.pid ?? '?'} (${slot.projectRoot || 'unrecorded workspace'})`,
@@ -641,6 +674,9 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   for (const entry of deviceLeases.expired) {
     try {
       if (removeExpiredLease(entry)) {
+        recordGcResult('deviceLease', 'done', `${entry.platform} lease on ${entry.id ?? entry.name}`, {
+          id: entry.path,
+        });
         console.log(
           chalk.green(
             `Cleared the expired ${entry.platform} device lease on ${entry.id ?? entry.name} (held by ${entry.lease?.holder ?? 'an unrecorded workspace'})`,
@@ -652,6 +688,10 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     } catch (err) {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the device lease at ${entry.path}: ${(err as Error)?.message || err}`));
+      recordGcResult('deviceLease', 'failed', `${entry.platform} lease on ${entry.id ?? entry.name}`, {
+        id: entry.path,
+        detail: (err as Error)?.message || String(err),
+      });
     }
   }
   deleteFailures += await deleteEasSessions(easSessionSweep, deps);

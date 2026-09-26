@@ -33,6 +33,7 @@ import { excludePodChurn, matchWorktreeEntry, reclaimKeys, removeWorktreeTarget 
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
+import { recordGcResult } from './results.ts';
 
 const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 
@@ -494,6 +495,7 @@ export async function removeWorktrees(
       return reasons;
     };
     let removed = false;
+    let error: string | null = null;
     try {
       const ended = endedPullRequest(candidate.pullRequest);
       const mergedHead =
@@ -503,16 +505,22 @@ export async function removeWorktrees(
             ? (candidate.head ?? undefined)
             : undefined;
       removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard, mergedHead });
-    } catch (error) {
-      console.error(chalk.red(`Could not remove ${candidate.path}: ${(error as Error)?.message || String(error)}`));
+    } catch (thrown) {
+      error = (thrown as Error)?.message || String(thrown);
+      console.error(chalk.red(`Could not remove ${candidate.path}: ${error}`));
     }
     if (removed) {
       console.log(chalk.green(`Removed the worktree ${candidate.path} (${worktreeRemovalReason(candidate)})`));
+      recordGcResult('worktree', 'done', candidate.path, { detail: worktreeRemovalReason(candidate) });
     } else if (kept.length) {
       console.log(chalk.yellow(`Kept the worktree ${candidate.path}: ${kept.join('; ')}`));
+      recordGcResult('worktree', 'kept', candidate.path, { detail: kept.join('; ') });
     } else {
       failures++;
       console.error(chalk.yellow(`Kept the worktree ${candidate.path}; see the lines above for why.`));
+      recordGcResult('worktree', 'failed', candidate.path, {
+        detail: error ?? 'stim worktree remove did not remove it; see the details',
+      });
     }
   }
   return failures;

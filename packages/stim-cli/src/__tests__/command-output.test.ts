@@ -77,6 +77,16 @@ test('the label set is closed, sorted, and free of duplicates', () => {
   expect(isOutputLabel('wired')).toBe(false);
 });
 
+test('Stim Desktop reads progress lines with the same label set', () => {
+  const swift = readFileSync(
+    new URL('../../../../apps/desktop/Sources/StimKit/ActivityProgress.swift', import.meta.url),
+    'utf-8',
+  );
+  const block = /labels: Set<String> = \[([^\]]*)\]/.exec(swift)?.[1] ?? '';
+  const desktop = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  expect(desktop).toEqual(OUTPUT_LABELS.filter((label) => /^\S+$/.test(label)));
+});
+
 test('every label the run, lifecycle, and doctor commands print comes from that one set', () => {
   for (const command of ['ios', 'android', 'worktree', 'start', 'stop', 'doctor']) {
     const files = [`${command}.ts`];

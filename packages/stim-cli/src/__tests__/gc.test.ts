@@ -2377,6 +2377,37 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-1'))).toBe(false);
 });
 
+test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's orphan and never another home's", async () => {
+  const otherHome = mkdtempSync(join(tmpdir(), 'stim-other-home-'));
+  process.env.STIM_HOME = otherHome;
+  recordCreatedDevice('ios', 'FOREIGN-UDID');
+  process.env.STIM_HOME = tmpHome;
+  const execCalls: string[] = [];
+  installDeviceExecutor({
+    devices: [
+      { udid: 'UDID-2', name: 'stim-orphan-2' },
+      { udid: 'FOREIGN-UDID', name: 'stim-1362-mobile (iPhone 18 Pro 27.0)', state: 'Booted' },
+    ],
+    execCalls,
+  });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+
+  try {
+    const { stdout } = await captureJson(() => sweepingGc({ delete: true, json: true }));
+    const payload = JSON.parse(stdout[0] ?? '');
+    expect(payload.results).toEqual([
+      expect.objectContaining({ kind: 'device', status: 'done', label: 'stim-orphan-2', id: 'UDID-2' }),
+    ]);
+    expect(payload.sections.unverifiedDevices).toEqual([
+      expect.objectContaining({ id: 'FOREIGN-UDID', command: 'xcrun simctl delete FOREIGN-UDID' }),
+    ]);
+  } finally {
+    rmSync(otherHome, { recursive: true, force: true });
+  }
+  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-2'))).toBe(true);
+  expect(execCalls.some((c) => c.includes('FOREIGN-UDID') && !c.includes('list'))).toBe(false);
+});
+
 test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or delete command', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({

@@ -32,6 +32,16 @@ public struct ProgressStep: Hashable, Sendable, Identifiable {
 public enum ActivityProgress {
   private static let phaseLine = try! NSRegularExpression(pattern: "^  (\\S+)\\s+(\\S.*)$")
 
+  /// The CLI's closed set of progress labels (`OUTPUT_LABELS` in packages/stim-cli/src/command-output.ts).
+  /// Other indented lines, such as the rows of a `gc` report, are not progress.
+  public static let labels: Set<String> = [
+    "app", "branch", "budget", "build", "cache", "caches", "carry", "checkout", "deps", "device", "devices", "error",
+    "failed", "findings", "fingerprint", "gems", "install", "installs", "ip.txt", "lan", "launch", "lease", "lock",
+    "log", "logs", "meaning", "metro", "pods", "port", "prebuild", "project", "readiness", "ready", "remedy",
+    "removed", "resolved", "result", "services", "setting", "settings", "setup", "state", "stats", "stop", "storage",
+    "swap", "verify", "version", "workspace",
+  ]
+
   /// Parses `lines` in order into step rows. A line whose label repeats the previous row's
   /// label replaces it in place while that row is still running or waiting -- that is how a
   /// build's 30-second heartbeats collapse into one updating row that ends on its final fact.
@@ -67,6 +77,7 @@ public enum ActivityProgress {
       let restRange = Range(match.range(at: 2), in: line)
     else { return nil }
     let label = String(line[labelRange])
+    guard labels.contains(label) else { return nil }
     let rest = String(line[restRange])
     let (fact, duration) = splitTrailingParenthetical(rest)
     let state: ProgressStep.State

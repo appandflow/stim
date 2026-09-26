@@ -105,7 +105,7 @@ public struct GcPreview: Sendable {
   public static func deleteArguments(after preview: [String]) -> [String]? {
     guard preview.first == "gc", preview.contains("--json"), !preview.contains("--delete"), !preview.contains("--idle")
     else { return nil }
-    return preview.filter { $0 != "--json" } + ["--delete"]
+    return preview + ["--delete"]
   }
 
   /// Durations offered for `stim gc --idle`.
@@ -145,7 +145,7 @@ public struct GcPreview: Sendable {
       let idle = (item["idleForMs"] as? NSNumber).map { "idle \(ActivityBadge.duration($0.doubleValue / 1000))" }
       kept = [idle ?? "idle", "stim gc --idle shuts it down"].joined(separator: "; ")
     } else if key == "unverifiedDevices" {
-      kept = "Stim has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
+      kept = "This Stim home has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
     } else if reportOnly {
       kept = item["detail"] as? String ?? "reported only"
     } else if acted == false {
