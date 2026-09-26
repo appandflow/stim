@@ -514,7 +514,7 @@ export interface GcJsonSections {
     bytes: number | null;
   }[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
-  staleLedgerEntries: { kind: 'ios' | 'web'; id: string }[];
+  staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;
