@@ -12,7 +12,7 @@ import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../e
 import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS, type BuildMissReason } from '@stim-cli/core/state';
+import { LAST_BUILD_KEYS, buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
@@ -30,8 +30,10 @@ export function lastBuildRecord({
   status,
   errorCode = null,
   missReason = null,
+  diagnostics = null,
 }: {
   missReason?: BuildMissReason | null;
+  diagnostics?: readonly unknown[] | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;
@@ -57,6 +59,8 @@ export function lastBuildRecord({
   };
   if (errorCode) record.errorCode = errorCode;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
+  const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
+  if (recorded.length) record.diagnostics = recorded;
   return record;
 }
 

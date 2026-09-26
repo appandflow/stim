@@ -360,7 +360,7 @@ import Testing
         #"{"path":"/ok","live":true,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":0},"lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-26T00:00:00Z"}}}"#
       ),
       try workspace(
-        #"{"path":"/broken","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":1},"lastBuilds":{"android":{"platform":"android","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_BUILD_FAILED"}}}"#
+        #"{"path":"/broken","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":1},"lastBuilds":{"android":{"platform":"android","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_BUILD_FAILED","diagnostics":[{"file":"/broken/android/app/Main.kt","line":23,"column":9,"message":"Unresolved reference 'Foo'."},{"file":null,"line":null,"column":null,"message":"Task failed"}]}}}"#
       ),
       try workspace(
         #"{"path":"/metro","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":2},"lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_CANCELLED"}}}"#
@@ -375,7 +375,8 @@ import Testing
       groups[0].items == [
         AttentionItem(
           text: "Android run failed (STIM_BUILD_FAILED)", isError: true,
-          command: StimCommand(["android"], cwd: "/broken"), runnable: true, opensLogs: true)
+          command: StimCommand(["android"], cwd: "/broken"), runnable: true, opensLogs: true,
+          detail: "android/app/Main.kt:23:9: Unresolved reference 'Foo'.")
       ])
   }
 

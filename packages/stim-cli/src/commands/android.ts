@@ -716,7 +716,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     code: string | undefined,
     message?: string | null,
     remedy?: string | null,
-    { lastBuildStatus = false, diagnostics = [], lines = [], logPath = null, lease }: FailExtra = {},
+    {
+      lastBuildStatus = false,
+      diagnostics = [],
+      buildDiagnostics: rawDiagnostics = [],
+      lines = [],
+      logPath = null,
+      lease,
+    }: FailExtra = {},
   ): RunAndroidResult => {
     const cancellation = cancelledFailure(PLATFORM, { code, message });
     if (cancellation) ({ code, message, remedy, lines } = cancellation);
@@ -729,6 +736,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         durationMs: now() - started,
         status: 'failed',
         errorCode: code,
+        diagnostics: rawDiagnostics,
         out,
       });
     }

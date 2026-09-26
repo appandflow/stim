@@ -28,6 +28,8 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var finishedAt: String?
   public var errorCode: String?
   public var missReason: BuildMissReason?
+  /// The first compiler errors of a failed run; absent from an older `stim`.
+  public var diagnostics: [BuildDiagnostic]?
 
   public var summary: String {
     let took = durationMs.map { " in \(formatDuration(ms: $0))" } ?? ""
@@ -40,6 +42,22 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   }
 
   public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }
+}
+
+/// One compiler error of a failed build, from `lastBuilds.<platform>.diagnostics`.
+public struct BuildDiagnostic: Decodable, Hashable, Sendable {
+  public var file: String?
+  public var line: Int?
+  public var column: Int?
+  public var message: String
+
+  /// `ios/App/AppDelegate.swift:71:24: message`, with `file` written relative to `workspace` when inside it.
+  public func text(workspace: String) -> String {
+    guard let file else { return message }
+    let shown = file.hasPrefix(workspace + "/") ? String(file.dropFirst(workspace.count + 1)) : abbreviatingHome(file)
+    let position = line.map { ":\($0)" + (column.map { ":\($0)" } ?? "") } ?? ""
+    return "\(shown)\(position): \(message)"
+  }
 }
 
 /// Why a run compiled instead of installing a cached app, from `lastBuilds.<platform>.missReason`, or why

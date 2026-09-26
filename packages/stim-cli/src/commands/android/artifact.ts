@@ -647,6 +647,7 @@ export async function acquireAndroidArtifact(
               {
                 lastBuildStatus: true,
                 diagnostics: extracted,
+                buildDiagnostics: diagnostics,
                 lines: extracted.length ? [] : tail(built.lastLines),
                 logPath: displayPath(root, buildLog),
               },

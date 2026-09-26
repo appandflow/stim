@@ -46,6 +46,16 @@ export interface LastBuildReport {
   finishedAt: string | null;
   errorCode?: string;
   missReason?: BuildMissReason;
+  /** The first compiler diagnostics of a failed build, when the build tool reported any. */
+  diagnostics?: BuildDiagnostic[];
+}
+
+/** One compiler error from a failed build: where it is, when the tool said, and its message. */
+export interface BuildDiagnostic {
+  file: string | null;
+  line: number | null;
+  column: number | null;
+  message: string;
 }
 
 /** What kind of native input a changed fingerprint source is. */

@@ -2158,8 +2158,9 @@ describe('failure output', () => {
     expect(errs.join('\n')).toMatch(/something inscrutable/);
   });
 
-  test('a failed build writes a Contract-4 record with the error code', async () => {
+  test('a failed build writes a Contract-4 record with the error code and its first diagnostic', async () => {
     reserve();
+    const diagnostic = { file: 'ios/App/AppDelegate.swift', line: 71, column: 24, message: 'cannot convert value' };
     await run(
       {},
       {
@@ -2167,7 +2168,7 @@ describe('failure output', () => {
           makeIosBuildFailure({
             code: 'STIM_BUILD_FAILED',
             durationMs: 5000,
-            diagnostics: [],
+            diagnostics: [{ ...diagnostic, remedy: 'Fix the Swift error.' }],
             tail: [],
           }),
       },
@@ -2177,6 +2178,7 @@ describe('failure output', () => {
     const { lastBuild } = stateAfterFail;
     expect(lastBuild.status).toBe('failed');
     expect(lastBuild.errorCode).toBe('STIM_BUILD_FAILED');
+    expect(lastBuild.diagnostics).toEqual([diagnostic]);
     expect(lastBuild.platform).toBe('ios');
     expect(lastBuild.fingerprint).toBe(FINGERPRINT);
     expect(lastBuild.cacheHit).toBe(false);

@@ -88,6 +88,7 @@ export interface FailArgs {
 
 export interface BuildFailureFields {
   missReason?: BuildMissReason | null;
+  diagnostics?: readonly unknown[] | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;

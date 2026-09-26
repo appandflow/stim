@@ -116,6 +116,9 @@ struct AttentionView: View {
         .foregroundStyle(item.isError ? Theme.error : Theme.warn)
       VStack(alignment: .leading, spacing: 3) {
         Text(abbreviatingHome(item.text)).lineLimit(2)
+        if let detail = item.detail {
+          Text(detail).font(Theme.mono(11.5)).foregroundStyle(Theme.error).lineLimit(3).textSelection(.enabled)
+        }
         if let command = item.command {
           Text("stim \(command.arguments.joined(separator: " "))").font(Theme.mono(11.5)).foregroundStyle(
             Theme.secondary)
