@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { usePanGesture, usePinchGesture, useSimultaneousGestures, useTapGesture } from 'react-native-gesture-handler';
+import {
+  usePanGesture,
+  usePinchGesture,
+  useSimultaneousGestures,
+  useTapGesture,
+  type PinchGestureActiveEvent,
+} from 'react-native-gesture-handler';
 import { useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -29,8 +35,9 @@ export function useScreenZoom(enabled: boolean) {
   const scale = useSharedValue(1);
   const x = useSharedValue(0);
   const y = useSharedValue(0);
-  const pinchStart = useSharedValue({ scale: 1, pinch: 1, x: 0, y: 0, focalX: 0, focalY: 0 });
-  const panStart = useSharedValue({ x: 0, y: 0 });
+  const pinchStart = useSharedValue({ scale: 1, pinch: 1, x: 0, y: 0, focalX: 0, focalY: 0, pointers: 2 });
+  const panLast = useSharedValue({ x: 0, y: 0 });
+  const pinching = useSharedValue(false);
   const [zoomed, setZoomed] = useState(false);
   const box = useSharedValue<Rect>([0, 0, 0, 0]);
 
@@ -53,30 +60,45 @@ export function useScreenZoom(enabled: boolean) {
     scheduleOnRN(setZoomed, !fitted);
   };
 
+  const anchor = (event: PinchGestureActiveEvent) => {
+    'worklet';
+    pinchStart.set({
+      scale: scale.get(),
+      pinch: event.scale || 1,
+      x: x.get(),
+      y: y.get(),
+      focalX: event.focalX,
+      focalY: event.focalY,
+      pointers: event.numberOfPointers,
+    });
+  };
+
   const pinch = usePinchGesture({
     enabled,
     onActivate: (event) => {
       'worklet';
-      pinchStart.set({
-        scale: scale.get(),
-        pinch: event.scale || 1,
-        x: x.get(),
-        y: y.get(),
-        focalX: event.focalX,
-        focalY: event.focalY,
-      });
+      pinching.set(true);
+      anchor(event);
     },
     onUpdate: (event) => {
       'worklet';
       const [left, top, width, height] = box.get();
       if (width <= 0 || height <= 0) return;
       const from = pinchStart.get();
+      if (event.numberOfPointers !== from.pointers) {
+        anchor(event);
+        return;
+      }
       const next = Math.min(Math.max((from.scale * event.scale) / from.pinch, 1), MAX_SCALE);
       x.set(zoomOffset(from.scale, from.x, next, (from.focalX - left) / width, (event.focalX - left) / width));
       y.set(zoomOffset(from.scale, from.y, next, (from.focalY - top) / height, (event.focalY - top) / height));
       scale.set(next);
     },
-    onDeactivate: settle,
+    onDeactivate: () => {
+      'worklet';
+      pinching.set(false);
+      settle();
+    },
   });
 
   const pan = usePanGesture({
@@ -84,15 +106,16 @@ export function useScreenZoom(enabled: boolean) {
     maxPointers: 1,
     onBegin: () => {
       'worklet';
-      panStart.set({ x: x.get(), y: y.get() });
+      panLast.set({ x: 0, y: 0 });
     },
     onUpdate: (event) => {
       'worklet';
       const [, , width, height] = box.get();
-      if (width <= 0 || height <= 0) return;
-      const from = panStart.get();
-      x.set(clampOffset(from.x + event.translationX / width, scale.get()));
-      y.set(clampOffset(from.y + event.translationY / height, scale.get()));
+      const last = panLast.get();
+      panLast.set({ x: event.translationX, y: event.translationY });
+      if (width <= 0 || height <= 0 || pinching.get()) return;
+      x.set(clampOffset(x.get() + (event.translationX - last.x) / width, scale.get()));
+      y.set(clampOffset(y.get() + (event.translationY - last.y) / height, scale.get()));
     },
   });
 
