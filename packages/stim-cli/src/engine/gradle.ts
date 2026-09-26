@@ -488,9 +488,10 @@ export async function buildAndroid(
   }
 
   const sdk = androidHome(env);
+  const sdkExists = existsSync(sdk);
   const refusal = androidSdkRefusal({
     sdkPath: sdk,
-    sdkExists: existsSync(sdk),
+    sdkExists,
     hasLocalProperties: existsSync(join(project.androidDir, 'local.properties')),
   });
   if (refusal) return { ok: false, ...refusal, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
@@ -583,7 +584,7 @@ export async function buildAndroid(
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...env,
-          ...(env.ANDROID_HOME || env.ANDROID_SDK_ROOT ? {} : { ANDROID_HOME: sdk }),
+          ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
           ...ccache?.env,
           ...cas?.env,
           ...nativeEnv,

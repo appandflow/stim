@@ -852,7 +852,7 @@ describe('buildAndroid', () => {
     const result = await buildAndroid(
       { root },
       {
-        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/old/ccache' },
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/old/ccache', ANDROID_HOME: sdk },
         cas: {
           id: 'apple-cas-test',
           dir: join(root, 'cas'),
@@ -1149,7 +1149,7 @@ test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gra
       {
         pch,
         compilerCacheDisabled: true,
-        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache' },
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache', ANDROID_HOME: sdk },
         spawnFn: (_cmd, _args, opts) => {
           const env = opts.env as NodeJS.ProcessEnv;
           expect(env.CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
