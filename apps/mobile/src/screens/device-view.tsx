@@ -104,7 +104,6 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
-  const [tookOver, setTookOver] = useState(false);
   const [rootHeight, setRootHeight] = useState(0);
   const [barBottom, setBarBottom] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
@@ -194,10 +193,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
         {
           text: 'Take over',
           style: 'destructive',
-          onPress: () => {
-            setTookOver(true);
-            control.begin(true);
-          },
+          onPress: () => control.begin(true),
         },
       ],
     );
@@ -205,7 +201,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
     setTyped('');
-    setTookOver(false);
+    if (driver) return takeOver();
     control.begin(false);
   };
   const press = (button: InputButton) => control.button(button);
@@ -338,9 +334,23 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                     <Text style={styles.title} numberOfLines={1}>
                       {title}
                     </Text>
-                    <Text style={styles.subtitle} numberOfLines={1}>
-                      {`${model} · ${slot}`}
-                    </Text>
+                    <View style={styles.subtitleRow}>
+                      <Text style={styles.subtitle} numberOfLines={1}>
+                        {`${model} · ${slot}`}
+                      </Text>
+                      {driver ? (
+                        <View
+                          style={styles.driver}
+                          accessible
+                          accessibilityLabel={controlling ? `Also driven by ${driver}` : `Driven by ${driver}`}
+                        >
+                          <View style={[styles.driverDot, { backgroundColor: colors.accent }]} />
+                          <Text style={styles.driverText} numberOfLines={1}>
+                            {driver}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
                   </View>
                   <View
                     onLayout={(event) => {
@@ -363,8 +373,6 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 <Banner
                   colors={colors}
                   control={control.state}
-                  driver={driver}
-                  tookOver={tookOver}
                   canTakeOver={control.allowed === true}
                   readOnly={readOnly}
                   onTakeOver={takeOver}
@@ -491,16 +499,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
 function Banner({
   colors,
   control,
-  driver,
-  tookOver,
   canTakeOver,
   readOnly,
   onTakeOver,
 }: {
   colors: Colors;
   control: ReturnType<typeof useDeviceControl>['state'];
-  driver: string | null;
-  tookOver: boolean;
   canTakeOver: boolean;
   readOnly: boolean;
   onTakeOver: () => void;
@@ -514,17 +518,9 @@ function Banner({
           ? `Control ended. ${control.ended}`
           : control.kind === 'starting'
             ? 'Starting control...'
-            : control.kind === 'on' && driver
-              ? tookOver
-                ? `You took over from ${driver}. It can still send input to this device.`
-                : `${driver} is also driving this device. Its input and yours can interfere.`
-              : driver
-                ? `Driven by ${driver}. Controlling it from here can interfere with that work.`
-                : null;
+            : null;
   if (!message) return null;
-  const offer =
-    (canTakeOver || readOnly) &&
-    (control.kind === 'busy' || (driver !== null && control.kind !== 'starting' && control.kind !== 'on'));
+  const offer = (canTakeOver || readOnly) && control.kind === 'busy';
   return (
     <View style={[styles.banner, { borderColor: control.kind === 'failed' ? colors.warn : colors.border }]}>
       <Text style={styles.bannerText}>{message}</Text>
@@ -565,7 +561,19 @@ const styles = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
   titles: { flex: 1, alignItems: 'center' },
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
-  subtitle: { color: '#FFFFFF99', fontSize: 12 },
+  subtitle: { color: '#FFFFFF99', fontSize: 12, flexShrink: 1 },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '100%' },
+  driver: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF1F',
+  },
+  driverDot: { width: 6, height: 6, borderRadius: 3 },
+  driverText: { color: '#FFFFFFCC', fontSize: 11, fontWeight: '500' },
   chips: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 6 },
   noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: 16 },
   note: {

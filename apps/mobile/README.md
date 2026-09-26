@@ -182,12 +182,13 @@ support rotating; the phone cannot tell that apart from a rotate the device
 did not apply.
 
 When status reports the device driven by something else, such as
-agent-device, a `stim device lock`, or another phone, a banner names it and
-Control is refused with the server's reason. **Take over** asks for
-confirmation, then starts control anyway; the Mac records the takeover in its
-action log. The banner then says you took over from that driver and that it
-can still send input to the device. A driver that starts while you have
-control is named as also driving the device.
+agent-device, a `stim device lock`, or another phone, a small chip with a dot
+next to the model names it. **Control** then asks for confirmation before it
+takes over, and starts control anyway; the Mac records the takeover in its
+action log. The chip stays while you have control, because that driver can
+still send input to the device. When the server refuses
+Control because of a driver status did not show yet, a banner gives its reason
+with **Take over**, which asks the same confirmation.
 
 ## Actions
 
