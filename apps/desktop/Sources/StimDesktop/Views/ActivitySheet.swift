@@ -320,14 +320,14 @@ struct ActivitySheet: View {
 
   @ViewBuilder private var status: some View {
     if run.launchError != nil {
-      Chip(tint: Palette.error) { Text("Failed") }
+      Pill(tone: .error) { Text("Failed") }
     } else if let code = run.exitStatus {
-      Chip(tint: code == 0 ? Palette.success : Palette.error) {
+      Pill(tone: code == 0 ? .success : .error) {
         Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
         Text(code == 0 ? "Done" : "Failed")
       }
     } else {
-      Chip(tint: Palette.accent) {
+      Pill(tone: .accent) {
         ProgressView().controlSize(.mini)
         Text("Running")
       }

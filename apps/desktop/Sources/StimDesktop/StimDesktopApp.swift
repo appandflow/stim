@@ -115,7 +115,14 @@ struct StimDesktopApp: App {
       UpdateCommands()
       SidebarCommands()
       InspectorCommands()
+      #if DEBUG
+        GalleryCommands()
+      #endif
     }
+
+    #if DEBUG
+      Window("Component Gallery", id: ComponentGallery.windowID) { ComponentGallery() }
+    #endif
 
     Settings {
       SettingsView(cli: cli, store: store).environmentObject(autopilot)

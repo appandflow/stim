@@ -101,7 +101,7 @@ struct DeviceTile: View {
           }
         }
         if device.appStopped {
-          Chip(tint: Palette.warning) { Text("App not running") }
+          Pill(tone: .warning) { Text("App not running") }
             .fixedSize()
             .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
           if let workspace, let run = runCommand(for: device, cwd: workspace) {
@@ -116,7 +116,7 @@ struct DeviceTile: View {
         }
         Text(source).font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
-          Chip { Text(posture) }.fixedSize()
+          Pill { Text(posture) }.fixedSize()
         }
       }
     }
@@ -183,7 +183,7 @@ struct DeviceTile: View {
   }
 
   @ViewBuilder private var remoteControls: some View {
-    Chip(tint: Palette.warning) { Text("billable") }
+    Pill(tone: .warning) { Text("billable") }
       .fixedSize()
       .help("This remote session is billed while it runs.")
     if let workspace {
@@ -206,13 +206,13 @@ struct DeviceTile: View {
   }
 
   private func activityChip(_ badge: ActivityBadge) -> some View {
-    let tint: Color
+    let tone: PillTone
     switch badge {
-    case .driven: tint = Palette.accent
-    case .idle: tint = Palette.tertiary
-    case .unknown: tint = Palette.warning
+    case .driven: tone = .accent
+    case .idle: tone = .neutral
+    case .unknown: tone = .warning
     }
-    return Chip(tint: tint) { Text(badge.text) }
+    return Pill(tone: tone) { Text(badge.text) }
       .fixedSize()
       .help(device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? "")
   }

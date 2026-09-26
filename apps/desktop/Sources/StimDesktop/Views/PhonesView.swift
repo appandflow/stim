@@ -273,13 +273,7 @@ private struct ScopeBadge: View {
   var canControl: Bool
 
   var body: some View {
-    Text(canControl ? "Can control" : "Read-only")
-      .font(Theme.body(10.5, weight: .semibold))
-      .foregroundStyle(canControl ? Palette.success : Palette.secondary)
-      .padding(.horizontal, 6)
-      .padding(.vertical, 2)
-      .background(Capsule().fill((canControl ? Palette.success : Palette.secondary).opacity(0.14)))
-      .lineLimit(1)
+    Pill(canControl ? "Can control" : "Read-only", tone: canControl ? .success : .neutral, size: .small)
   }
 }
 

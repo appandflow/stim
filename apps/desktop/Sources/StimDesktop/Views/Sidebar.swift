@@ -67,13 +67,7 @@ struct Sidebar: View {
         Spacer()
         let count = store.attentionCount + autopilot.finishedPullRequests.count
         if count > 0 {
-          Text("\(count)")
-            .font(Theme.body(11, weight: .medium))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(Palette.warning.opacity(0.18)))
-            .foregroundStyle(Palette.warning)
-            .fixedSize()
+          Pill("\(count)", tone: .warning, size: .small)
         }
       }
       PinnedRow(item: .machine, selection: $selection) {
@@ -460,7 +454,7 @@ struct SidebarFooter: View {
   }
 
   private var agentsButton: some View {
-    FooterIconButton(
+    IconButton(
       systemImage: "cursorarrow.rays", tint: Palette.accent, badge: "\(drivenDevices.count)", help: agentsTooltip
     ) {
       selection = .wall
@@ -473,7 +467,7 @@ struct SidebarFooter: View {
   }
 
   private var phonesButton: some View {
-    FooterIconButton(systemImage: "iphone.gen3.radiowaves.left.and.right", help: phonesTooltip) {
+    IconButton(systemImage: "iphone.gen3.radiowaves.left.and.right", help: phonesTooltip) {
       OpenRequests.shared.pairsPhone = true
       settingsTab = "phones"
       openSettings()
@@ -487,34 +481,7 @@ struct SidebarFooter: View {
   }
 
   private var settingsButton: some View {
-    FooterIconButton(systemImage: "gearshape", help: "Settings") { openSettings() }
-  }
-}
-
-private struct FooterIconButton: View {
-  var systemImage: String
-  var tint = Palette.secondary
-  /// A short count shown next to the icon, such as an agent-driven device count.
-  var badge: String?
-  var help: String
-  var action: () -> Void
-  @State private var hovering = false
-
-  var body: some View {
-    Button(action: action) {
-      HStack(spacing: 3) {
-        Image(systemName: systemImage).font(.system(size: 12, weight: .medium))
-        if let badge { Text(badge).font(Theme.body(10.5, weight: .medium)) }
-      }
-      .foregroundStyle(tint)
-      .padding(.horizontal, badge == nil ? 0 : 6)
-      .frame(minWidth: 26, minHeight: 24)
-      .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Palette.raised : Color.clear))
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
-    .help(help)
+    IconButton(systemImage: "gearshape", help: "Settings") { openSettings() }
   }
 }
 

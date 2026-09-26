@@ -300,13 +300,7 @@ struct BuildOutcomeBadge: View {
 
   var body: some View {
     if let label = build.outcomeLabel {
-      Text(label)
-        .font(Theme.body(10.5, weight: .semibold))
-        .foregroundStyle(build.outcome == "hit" ? Palette.success : Palette.warning)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Capsule().fill((build.outcome == "hit" ? Palette.success : Palette.warning).opacity(0.14)))
-        .lineLimit(1)
+      Pill(label, tone: build.outcome == "hit" ? .success : .warning, size: .small)
     }
   }
 }

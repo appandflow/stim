@@ -74,7 +74,7 @@ struct LogsView: View {
             query.sources.insert(source)
           }
         } label: {
-          ToggleChip(on: on, tint: Palette.accent) { Text(Self.title(source)) }
+          ToggleChip(on: on, tone: .accent) { Text(Self.title(source)) }
         }
         .buttonStyle(.plain)
         .help(Self.help(source))
@@ -98,7 +98,7 @@ struct LogsView: View {
       Button {
         query.errorsOnly.toggle()
       } label: {
-        ToggleChip(on: query.errorsOnly, tint: Palette.error) {
+        ToggleChip(on: query.errorsOnly, tone: .error) {
           Image(systemName: "xmark.octagon")
           Text("Errors only")
         }
@@ -127,12 +127,8 @@ struct LogsView: View {
     } else if !model.pinnedToLatest {
       Button { model.jumpToLatest() } label: {
         Label("Jump to latest", systemImage: "arrow.down.to.line")
-          .padding(.horizontal, 10)
-          .padding(.vertical, 6)
-          .background(Capsule().fill(Palette.brand))
-          .foregroundStyle(Palette.text)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.stim(.primary, .regular))
       .padding(16)
     }
   }
@@ -199,17 +195,11 @@ struct LogsView: View {
 
 private struct ToggleChip<Content: View>: View {
   var on: Bool
-  var tint: Color
+  var tone: PillTone
   @ViewBuilder var content: Content
 
   var body: some View {
-    HStack(spacing: 6) { content }
-      .font(Theme.body(11.5))
-      .foregroundStyle(on ? tint : Palette.tertiary)
-      .padding(.horizontal, 9)
-      .padding(.vertical, 4)
-      .background(RoundedRectangle(cornerRadius: 7).fill(on ? tint.opacity(0.16) : .clear))
-      .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(on ? .clear : Palette.border))
+    Pill(tone: tone, outlined: !on) { content }
       .contentShape(Rectangle())
   }
 }
