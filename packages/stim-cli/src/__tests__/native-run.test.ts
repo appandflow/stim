@@ -269,6 +269,27 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     expect(holder.child.exitCode).toBe(null);
   });
 
+  test.skipIf(process.platform === 'win32')(
+    'a slot no record names yet is known while its own first build holds the lock, and that build is interrupted',
+    async () => {
+      const holder = await startHolder('ios', 'phone', 'tool');
+      const calls: { slot?: string }[] = [];
+      const result = await stopWorkspaceNow({
+        root,
+        slot: 'phone',
+        deviceSlots: () => [],
+        stop: async (options) => {
+          calls.push(options);
+          return stopped();
+        },
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(calls).toEqual([{ root, slot: 'phone' }]);
+      const [code] = await holder.exited;
+      expect(code).toBe(0);
+    },
+  );
+
   test('stop --slot web closes the browser without waiting on or interrupting a build', async () => {
     const holder = await startHolder('ios', 'default', 'sleep');
     const lines: string[] = [];

@@ -330,8 +330,8 @@ async function stopBrowserOnly({
     releasedLeases: [],
   };
   outcomes.device.web = await closeBrowser(root, teardownBrowser, report);
-  if (!outcomes.device.web) report(chalk.dim(phaseLine('device', 'no owned Chrome is running')));
-  const ok = !outcomes.device.web || outcomes.device.web.status === 'shut-down';
+  if (!outcomes.device.web) return { ok: true, outcomes, summary: `Stopped: no owned Chrome was running (${root})` };
+  const ok = outcomes.device.web.status === 'shut-down';
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
 }
 
@@ -1049,19 +1049,14 @@ export async function stopWorkspaceNow({
   stop?: (options: { root: string; slot?: string }) => ReturnType<typeof runStop>;
 }): Promise<Awaited<ReturnType<typeof runStop>> | { refusal: StopRefusal; remote: DeviceOutcomeEntry | null }> {
   if (slot === WEB_SLOT) return stop({ root, slot });
-  if (slot !== undefined) {
-    const known = recordedSlots(root);
-    if (!known.includes(slot)) {
-      return {
-        refusal: {
-          code: 'STIM_BAD_ARG',
-          message: `This workspace has no device slot named ${slot}. Its slots are ${known.join(', ')}.`,
-          remedy: `Run \`stim stop --slot <name>\` with one of those slots, \`stim stop --slot ${WEB_SLOT}\` to close only the owned Chrome, or \`stim stop\` for the whole workspace.`,
-        },
-        remote: null,
-      };
-    }
-  }
+  const known = slot === undefined ? [] : recordedSlots(root);
+  let unknownSlot = slot !== undefined && !known.includes(slot);
+  const unknownSlotRefusal = () =>
+    new StopBlocked({
+      code: 'STIM_BAD_ARG',
+      message: `This workspace has no device slot named ${slot}. Its slots are ${known.join(', ')}.`,
+      remedy: `Run \`stim stop --slot <name>\` with one of those slots, \`stim stop --slot ${WEB_SLOT}\` to close only the owned Chrome, or \`stim stop\` for the whole workspace.`,
+    });
   let remote: DeviceOutcomeEntry | null = null;
   let remoteHandled = slot !== undefined;
   const endRemoteNow = () => {
@@ -1089,6 +1084,10 @@ export async function stopWorkspaceNow({
     }
     endRemoteNow();
     const target = nativeRunHolder(holder);
+    if (unknownSlot) {
+      if (target.slot !== slot) throw unknownSlotRefusal();
+      unknownSlot = false;
+    }
     const { action } = decideStopAction({
       stopSlot: slot,
       holder: target,
@@ -1130,14 +1129,22 @@ export async function stopWorkspaceNow({
 
   try {
     return withRemote(
-      await withWorkspaceProcessLock(workspaceDir(root), NATIVE_RUN_LOCK, () => stop({ root, slot }), {
-        external: true,
-        waitMs,
-        now,
-        ...(sleep ? { sleep } : {}),
-        details: { command: 'stop', ...(slot === undefined ? {} : { slot }) },
-        onHeld,
-      }),
+      await withWorkspaceProcessLock(
+        workspaceDir(root),
+        NATIVE_RUN_LOCK,
+        () => {
+          if (unknownSlot) throw unknownSlotRefusal();
+          return stop({ root, slot });
+        },
+        {
+          external: true,
+          waitMs,
+          now,
+          ...(sleep ? { sleep } : {}),
+          details: { command: 'stop', ...(slot === undefined ? {} : { slot }) },
+          onHeld,
+        },
+      ),
     );
   } catch (error) {
     if (error instanceof LeaveBuildRunning) return withRemote(await stop({ root, slot }));

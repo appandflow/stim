@@ -1465,6 +1465,13 @@ test('stop --slot web closes only the owned Chrome, leaving the server, collecto
   expect(result.summary).toMatch(/^Stopped: web Chrome shut down, port 8083 kept/);
 });
 
+test('stop --slot web says so when no owned Chrome was running', async () => {
+  const { opts } = seams({ teardownBrowser: async () => ({ status: 'missing' as const }) });
+  const result = await runStop({ ...opts, slot: 'web' });
+  expect(result).toMatchObject({ ok: true, outcomes: { device: { web: null } } });
+  expect(result.summary).toMatch(/^Stopped: no owned Chrome was running/);
+});
+
 test('stop --slot default never ends the workspace remote session', async () => {
   let remoteTeardownCalled = false;
   const { opts } = seams({
