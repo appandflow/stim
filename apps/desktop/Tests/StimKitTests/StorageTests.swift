@@ -94,15 +94,22 @@ import Testing
       ).workspaces.first)
     #expect(unsized.total == nil)
 
-    let noOutputs = try JSONDecoder().decode(GcReport.self, from: Data(#"{"sections":{}}"#.utf8))
+    #expect(unsized.logs == .notMeasured)
+
+    let noOutputs = try JSONDecoder().decode(
+      GcReport.self,
+      from: Data(
+        #"{"sections":{"workspaceLogs":[{"projectRoot":"/r/.worktrees/a/app","bytes":30000000,"trimBytes":21600000,"willTrim":true}]}}"#
+          .utf8))
     let finished = DiskMeasurements(
       sizes: ["\(paths.simulatorDevices)/\(owned)": 10_240, paths.simulatorDevices: 20_480, paths.avds: 0],
       failed: [modules])
     row = try #require(
       StorageReport.make(environments: [try workspace()], gc: noOutputs, disk: finished, paths: paths).workspaces.first)
-    #expect(row.buildOutputs == .absent && row.logs == .absent)
+    #expect(row.buildOutputs == .absent && row.logs == .size(Int64(30_000_000)))
+    #expect(row.logsTrimmed == Int64(21_600_000) && row.logsKept == nil)
     #expect(row.nodeModules == .failed && row.devices == .size(Int64(10_240)))
-    #expect(row.total == Int64(10_240) && !row.totalComplete)
+    #expect(row.total == Int64(30_010_240) && !row.totalComplete)
   }
 
   @Test func ranksRowsBySizeWithUnsizedRowsLast() throws {

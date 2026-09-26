@@ -225,7 +225,7 @@ public struct StorageReport: Sendable {
         buildOutputs: buildOutputs,
         buildOutputsKept: output.flatMap { $0.willClear == true ? nil : ($0.detail ?? "kept") },
         nodeModules: missing ? .absent : disk.measure("\(root)/node_modules"),
-        logs: gc == nil ? .notMeasured : log.map { .size($0.bytes) } ?? .absent,
+        logs: gc?.sections.workspaceLogs == nil ? .notMeasured : log.map { .size($0.bytes) } ?? .absent,
         logsTrimmed: log.flatMap { $0.willTrim ? $0.trimBytes : nil },
         logsKept: log.flatMap { $0.trimBytes > 0 && !$0.willTrim ? ($0.detail ?? "kept") : nil },
         devices: .sum(devices),

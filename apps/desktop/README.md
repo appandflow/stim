@@ -173,7 +173,8 @@ a dash before the first measurement.
   A trash icon marks build outputs `stim gc --delete` clears; a lock marks ones
   it keeps, with the reason. Scissors mark logs `stim gc --delete` trims to
   their newest 8 MiB, with the bytes it cuts; a lock marks logs over the cap it
-  keeps, with the reason.
+  keeps, with the reason. A `stim` that predates the logs report leaves the
+  Logs cells at a dash.
   The lifecycle column reads **Merged into main** from `stim gc --json`, **PR #n
   open** from `gh pr list` in the repository when the GitHub CLI is on the login
   shell's `PATH` and signed in, **Stale Nd** after 7 days without recorded use,
