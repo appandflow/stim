@@ -125,8 +125,8 @@ export interface StatusSources {
   /** Re-reads the workspace list and watches the directories that exist now. */
   reconcile(): void;
   /**
-   * The output of the simulator poller's last readable listing, or null when it started more than two poll intervals
-   * ago or Stim state changed since, since Stim creates, boots and shuts down simulators as it writes its state.
+   * The output of the simulator poller's last readable listing, or null when that poll started more than two poll
+   * intervals ago or before the last Stim state write: Stim creates, boots and shuts down simulators as it writes state.
    */
   simulatorListing(): string | null;
   stop(): void;

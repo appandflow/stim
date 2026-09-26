@@ -173,10 +173,9 @@ test('the simulator poller shares its last readable listing until it ages out or
     await vi.advanceTimersByTimeAsync(5000);
     expect(sources.simulatorListing()).toBe(listing('Booted'));
 
-    vi.setSystemTime(Date.now() + 1);
-    writeFileSync(join(home, 'config.json'), '{}');
     const deadline = performance.now() + 5000;
     while (sources.simulatorListing() !== null && performance.now() < deadline) {
+      writeFileSync(join(home, 'config.json'), '{}');
       await new Promise((resolve) => setImmediate(resolve));
     }
     expect(sources.simulatorListing()).toBe(null);
