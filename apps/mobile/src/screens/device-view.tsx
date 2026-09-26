@@ -86,7 +86,10 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
-  const driver = otherDriver(device?.activity, control.state.kind === 'on' ? control.state.leaseSince : null);
+  const [ownLease, setOwnLease] = useState<string | null>(null);
+  const leaseSince = control.state.kind === 'on' ? control.state.leaseSince : null;
+  if (leaseSince && leaseSince !== ownLease) setOwnLease(leaseSince);
+  const driver = otherDriver(device?.activity, leaseSince ?? ownLease);
   const insets = useSafeAreaInsets();
   const root = useRef<ViewInstance>(null);
   const stage = useRef<ViewInstance>(null);
@@ -94,7 +97,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
     aspectOf(source),
     platform === 'ios' ? 0.46 : 0.45,
-    !controlling,
+    !controlling && !(landscape && readOnly),
     root,
     stage,
   );
@@ -116,7 +119,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const lift = useAnimatedStyle(() => {
     const covered = keyboardHeight.get();
     if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
-    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - TYPING_BAR_HEIGHT, barBottom);
+    const shift = liftAbove(rest[1], rest[3], rootHeight - covered - TYPING_BAR_HEIGHT, insets.top + barBottom);
     return { transform: [{ translateY: -shift }] };
   });
   const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
@@ -303,7 +306,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   style={styles.bar}
                   onLayout={(event) => {
                     const { y, height } = event.nativeEvent.layout;
-                    setBarBottom(insets.top + y + height);
+                    setBarBottom(y + height);
                   }}
                 >
                   <Pressable
