@@ -233,6 +233,7 @@ final class SimulatorSource {
   private func watch() {
     queue.asyncAfter(deadline: .now() + 2) {
       guard CoreSimulator.device(udid: self.udid)?.value(forKey: "state") as? Int != 3 else {
+        if self.displays.count > 1 { self.pacer.changed() }
         return self.watch()
       }
       for display in self.displays {
@@ -247,12 +248,14 @@ final class SimulatorSource {
     }
   }
 
-  // CoreSimulator keeps the display an iPhone Duo's posture turned off, the
-  // cover or the inner one, all black, and sends damage when the other lights up.
+  // CoreSimulator keeps the built-in display an iPhone Duo's posture turned
+  // off, the cover or the inner one, all black, and sends no damage when it
+  // turns off, so watch() also re-renders a device with several displays.
   private func litDisplay() -> SimDisplay? {
-    guard displays.count > 1 else { return displays.first }
+    let panels = displays.indices.filter { displays[$0].screenProperties?.screenType == 0 }
+    guard panels.count > 1 else { return displays.first }
     let lit = { (index: Int) in self.displays[index].framebufferSurface.map { !isBlack($0) } ?? false }
-    guard let index = lit(displayIndex) ? displayIndex : displays.indices.first(where: lit) else {
+    guard let index = lit(displayIndex) ? displayIndex : panels.first(where: lit) else {
       return displays[displayIndex]
     }
     displayIndex = index
