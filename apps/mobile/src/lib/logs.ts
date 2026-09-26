@@ -74,8 +74,15 @@ export function agentFeedFilter(workspace: string, slot: string): LogFilter {
   return { workspace, sources: ['agent'], slot, tail: 200 };
 }
 
-export function agentActions(existing: LogRecord[], incoming: LogRecord[], deviceId: string): LogRecord[] {
-  const mine = incoming.filter((record) => record.src === 'agent' && record.deviceId === deviceId).reverse();
+export interface AgentAction {
+  key: number;
+  record: LogRecord;
+}
+
+export function agentActions(existing: AgentAction[], incoming: LogRecord[], deviceId: string): AgentAction[] {
+  const mine = incoming.filter((record) => record.src === 'agent' && record.deviceId === deviceId);
   if (mine.length === 0) return existing;
-  return mine.concat(existing).slice(0, AGENT_FEED_SIZE);
+  const base = existing[0]?.key ?? 0;
+  const added = mine.map((record, i) => ({ key: base + i + 1, record })).reverse();
+  return added.concat(existing).slice(0, AGENT_FEED_SIZE);
 }
