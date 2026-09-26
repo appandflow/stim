@@ -155,8 +155,8 @@ crash logcat buffer, including reports emitted outside the dead app's PID. Java
 exceptions retain their stack; C/C++ frames use matching local ELF build IDs and
 NDK tools where available. Unavailable symbols remain explicitly unresolved.
 Android can keep a crashed Java process alive behind its system crash dialog.
-Stim treats the crash report as failure even when the PID exists. Follow the
-printed app-scoped force-stop command after fixing the error, then rerun `stim android`.
+Stim treats the crash report as failure even when the PID exists. Fix the error,
+then rerun `stim android`, which force-stops that process before launching.
 
 Confirmed app-crash reports are included in default `stim logs --errors` without
 including general OS error noise. Use `stim logs --source device --json` for full

@@ -438,6 +438,7 @@ describe('ios', () => {
     });
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
+    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
   });
 
   test('an unreadable process list neither terminates nor claims a restart', () => {
