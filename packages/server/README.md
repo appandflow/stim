@@ -256,6 +256,12 @@ Events are `{ "event", "subscription", ... }`.
   critical) and `diskFreeBytes` of the startup volume; a field is null when it
   cannot be read. `sinceMs` returns only the samples taken after it.
 - `unsubscribe` ends a subscription.
+- `push.register` takes `token`, an Expo push token, `events`, one or more
+  [push notifications](#push-notifications) the phone wants (`build-failed`,
+  `log-errors`, `disk`, `app-stopped`, `slow-build`), an optional
+  `agentOnly`, and `ref`, an opaque string of up to 128 characters that every
+  push carries back as `data.ref`. It needs only `read`. Registering again
+  replaces the device's registration; `push.unregister` removes it.
 - `action` runs an [action](#actions) and returns
   `{ "action", "workspace", "output" }`.
 - An `error` event ends a subscription whose source failed, or whose client
@@ -272,6 +278,53 @@ it is the exit status and the end of stderr. A `stim` child that
 ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
+
+## Push notifications
+
+A paired phone that sends `push.register` gets attention notifications while
+its app is in the background or closed. The server keeps the registration
+with the pairing in `devices.json`, so revoking the device drops it. A token
+belongs to one pairing: registering it from a new pairing of the same phone
+removes it from the old one.
+
+While at least one device is registered, the server keeps its own
+`stim status --watch --json` child running, even with no client connected,
+and reads the free space of Stim's volumes every minute. It pushes, per
+device and only for the events the device chose:
+
+- `build-failed`: a workspace's last iOS or Android build failed, in an
+  active workspace or within the last day;
+- `log-errors`: new errors in an active workspace's logs, once the count has
+  held for 10 seconds (at most a minute after the first), then at most every
+  5 minutes;
+- `disk`: a volume holding Stim state has less than 5 GB free;
+- `app-stopped`: the app is not running on a booted device of a live
+  workspace;
+- `slow-build`: a build has run more than twice its usual duration.
+
+These are the rules of the phone app's home attention strip
+(`apps/mobile/src/lib/attention.ts`), copied into `src/attention.ts`. Each problem pushes once; a later failed build or a
+problem that clears for two minutes and returns pushes again. What is already
+wrong when the server starts or a device registers does not push. With
+`agentOnly`, workspace events push only while a device of the workspace is
+driven by an agent, so a workspace whose devices are gone, such as after a
+failed first build, does not push.
+
+A device gets at most 20 pushes an hour. More than three at once become one
+summary push that opens the phone's home screen.
+
+Pushes go to the Expo push service, `https://exp.host/--/api/v2/push/send`,
+which forwards them to Apple. No APNs key or other secret lives on the Mac.
+A workspace push carries the workspace title, a short reason such as `iOS
+build failed (STIM_BUILD_FAILED)` and the Mac's name as the subtitle; a disk
+or summary push has the Mac's name as its title. In `data` it carries the
+`ref`, the screen to open (`home`, `machine`, `workspace` or `logs`) and, for
+a workspace, its absolute path, which the phone needs to open that workspace
+before it has reconnected. It carries no logs and no other paths. The
+server checks the push receipts 15 minutes later and drops a token that Expo
+reports as `DeviceNotRegistered`, and prints any other refusal, such as
+missing APNs credentials, on stderr. Pushes are not retried, and nothing is
+pushed while the server is not running.
 
 ## Actions
 

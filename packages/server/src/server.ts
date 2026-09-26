@@ -19,13 +19,15 @@ import {
   type FrameLimits,
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
-import { readMachineUsage, UsageSampler } from './machine.ts';
+import { readDiskVolumes, readMachineUsage, UsageSampler } from './machine.ts';
 import {
   ACTIONS,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
   PROTOCOL_VERSION,
+  PUSH_EVENTS,
+  PUSH_TOKEN_PATTERN,
   type BuildPlanResult,
   type ErrorCode,
   type FrameTarget,
@@ -36,9 +38,12 @@ import {
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
+import { EXPO_PUSH_API, PushNotifier, type PushLimits } from './push.ts';
 import {
   authenticateDevice,
+  dropPushToken,
   readDevices,
+  setDevicePush,
   serverDir,
   spendPairingToken,
   type AuthOutcome,
@@ -74,6 +79,9 @@ export interface ServerOptions {
   /** The `sim-fold` helper that folds an iPhone Duo. Without it, the server builds one on the first fold. */
   foldHelper?: string;
   controlLimits?: Partial<ControlLimits>;
+  /** The Expo push API base URL; tests point it at a local server. */
+  pushEndpoint?: string;
+  pushLimits?: Partial<PushLimits>;
 }
 
 interface ControlLimits {
@@ -140,6 +148,8 @@ const CONTROL_LIMITS: ControlLimits = {
   foldTimeoutMs: 40_000,
 };
 const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
+const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
+
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
@@ -311,6 +321,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     foldTimeoutMs: controlLimits.foldTimeoutMs,
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
+  const push = new PushNotifier({
+    name: options.name,
+    endpoint: options.pushEndpoint ?? EXPO_PUSH_API,
+    subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+    readVolumes: readDiskVolumes,
+    devices: readDevices,
+    dropToken: dropPushToken,
+    limits: options.pushLimits,
+  });
 
   mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
   let revocationCheck: NodeJS.Timeout | null = null;
@@ -318,6 +337,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     revocationCheck ??= setTimeout(() => {
       revocationCheck = null;
       const paired = new Map(readDevices().map((device) => [device.id, device]));
+      push.refresh();
       for (const [socket, device] of sessions) {
         if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
       }
@@ -890,6 +910,41 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function registerPush(id: RequestId, params: unknown, session: PairedDevice): void {
+      const token = isJsonObject(params) ? params.token : undefined;
+      const events = isJsonObject(params) ? params.events : undefined;
+      const agentOnly = isJsonObject(params) ? (params.agentOnly === undefined ? false : params.agentOnly) : undefined;
+      const ref = isJsonObject(params) ? params.ref : undefined;
+      if (
+        typeof token !== 'string' ||
+        !pushToken.test(token) ||
+        !Array.isArray(events) ||
+        events.length === 0 ||
+        !events.every((event) => (PUSH_EVENTS as readonly unknown[]).includes(event)) ||
+        typeof agentOnly !== 'boolean' ||
+        typeof ref !== 'string' ||
+        ref.length === 0 ||
+        ref.length > 128
+      ) {
+        return error(
+          id,
+          'bad-request',
+          'push.register takes an Expo push token, one or more events from ' +
+            `${PUSH_EVENTS.join(', ')}, an optional boolean agentOnly and a ref of 1 to 128 characters.`,
+        );
+      }
+      const registered = setDevicePush(session.id, {
+        token,
+        events: PUSH_EVENTS.filter((event) => events.includes(event)),
+        agentOnly,
+        ref,
+        registeredAt: new Date().toISOString(),
+      });
+      if (!registered) return error(id, 'unauthorized', 'This device is no longer paired.');
+      push.refresh();
+      send(socket, { id, result: {} });
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -958,6 +1013,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         void input(id, method, message.params, device);
         return;
       }
+      if (message.method === 'push.register') return registerPush(id, message.params, device);
+      if (message.method === 'push.unregister') {
+        setDevicePush(device.id, null);
+        push.refresh();
+        return send(socket, { id, result: {} });
+      }
       if (message.method === 'unsubscribe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
         const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
@@ -1023,7 +1084,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const servers: Server[] = [];
   const addresses: RunningServer['addresses'] = [];
+  push.refresh();
   const close = async () => {
+    push.close();
     watcher.close();
     helperAbort.abort();
     sampler.stop();

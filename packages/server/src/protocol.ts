@@ -30,9 +30,13 @@ export const METHODS = [
   'input.button',
   'input.rotate',
   'input.posture',
+  'push.register',
+  'push.unregister',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
+
+export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\\]$';
 
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
@@ -384,6 +388,23 @@ export interface MachineHistory {
   samples: UsageSample[];
 }
 
+/** The attention events stim-server can push, named like the phone's notification settings. */
+export const PUSH_EVENTS = ['build-failed', 'log-errors', 'disk', 'app-stopped', 'slow-build'] as const;
+
+export type PushEvent = (typeof PUSH_EVENTS)[number];
+
+/**
+ * Asks the server to push this device's attention notifications through the Expo push service to `token`, an
+ * Expo push token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as `data.ref` in every
+ * push, so the phone can tell which Mac sent it.
+ */
+export interface PushRegisterParams {
+  token: string;
+  events: PushEvent[];
+  agentOnly?: boolean;
+  ref: string;
+}
+
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -405,6 +426,8 @@ export interface Methods {
   'input.button': { params: InputButtonParams; result: Record<string, never> };
   'input.rotate': { params: InputRotateParams; result: Record<string, never> };
   'input.posture': { params: InputPostureParams; result: Record<string, never> };
+  'push.register': { params: PushRegisterParams; result: Record<string, never> };
+  'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
 }
 
 export type ClientRequest = {
@@ -865,6 +888,18 @@ export function protocolJsonSchema(): JsonSchema {
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
+          request('push.register', {
+            type: 'object',
+            required: ['token', 'events', 'ref'],
+            additionalProperties: false,
+            properties: {
+              token: { type: 'string', pattern: PUSH_TOKEN_PATTERN, description: 'An Expo push token.' },
+              events: { type: 'array', minItems: 1, uniqueItems: true, items: { enum: [...PUSH_EVENTS] } },
+              agentOnly: { type: 'boolean', default: false },
+              ref: { type: 'string', minLength: 1, maxLength: 128 },
+            },
+          }),
+          request('push.unregister'),
         ],
       },
       ServerResponse: {

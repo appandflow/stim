@@ -131,6 +131,11 @@ function readCpuUsage(): { usage: number | null; cores: number } {
   return { usage, cores: availableParallelism() };
 }
 
+/** The volumes `machine.get` reports, without its CPU and memory readings. */
+export function readDiskVolumes(): MachineVolume[] {
+  return readVolumes(stimDiskLocations());
+}
+
 export async function readMachineUsage(): Promise<MachineUsage> {
   const [avg1 = 0, avg5 = 0, avg15 = 0] = loadavg();
   const [pressure, usedBytes] = await Promise.all([readMemoryPressure(), readMemoryUsed()]);
