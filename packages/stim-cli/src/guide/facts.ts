@@ -677,7 +677,11 @@ RULES
          device, else the project's
   state  "running"  a process of that app runs on the device
          "stopped"  no such process: it crashed, was killed or never launched
-         "unknown"  the process listing could not be read; never "stopped"
+         "unknown"  the process listing or the app's Info.plist could not be
+                    read; never "stopped"
+
+  app is absent when the device is not owned or no app id is known: the
+  process was not checked.
 
   This is current process state, read from one host ps (simulator apps are
   host processes) and the same adb shell ps as activity, so a status --watch

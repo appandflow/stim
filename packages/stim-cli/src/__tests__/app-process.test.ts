@@ -35,6 +35,7 @@ describe('app process state', () => {
         `${bundle(OTHER, 'My App.app')}/My App`,
         `${bundle(UDID, 'My App.app')}/PlugIns/Share.appex/Share`,
         `/usr/bin/lldb ${bundle(UDID, 'My App.app')}/My App`,
+        `/usr/bin/tool --path=${bundle(UDID, 'My App.app')}/My App`,
       ]),
       readId,
     );

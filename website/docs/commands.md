@@ -744,7 +744,8 @@ workspace's app is running on it now:
 In `--json`, those devices carry `app: { id, state }`. `id` is the bundle
 identifier or package Stim checked, and `state` is `running`, `stopped` (the
 app crashed, was killed, or never launched), or `unknown` when the process list
-could not be read. This is the app's current process state, not a record of
+or the app's `Info.plist` could not be read. `app` is absent when the device is
+not owned or Stim knows no app id for it. This is the app's current process state, not a record of
 the last launch. Stim reads it from one host `ps` for every simulator and the
 same `adb shell ps` it reads for activity, so `status --watch` notices an app
 that exits within 30 seconds. Run `stim ios` or `stim android` to launch it

@@ -16,7 +16,7 @@ function simAppPaths(commands: readonly string[], udid: string): string[] {
   const paths = new Set<string>();
   for (const command of commands) {
     const at = command.indexOf(marker);
-    if (!command.startsWith('/') || at < 0 || /\s\//.test(command.slice(0, at))) continue;
+    if (!command.startsWith('/') || at < 0 || /[\s=]\//.test(command.slice(0, at))) continue;
     const rest = command.slice(at + marker.length);
     const app = /^[^/]+\/[^/]+\.app\//.exec(rest)?.[0];
     if (!app || /^[^/\s]*\//.test(rest.slice(app.length))) continue;
