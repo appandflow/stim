@@ -470,6 +470,7 @@ export class ControlHub {
       const helper = await this.options.foldHelper();
       if (session.ended) return null;
       await runQuietly(this.options.env, 'xcrun', ['simctl', 'spawn', udid, helper], 'sim-fold', FOLD_TIMEOUT_MS);
+      this.options.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');
       return null;
     } catch (cause) {
       return { code: 'action-failed', message: (cause as Error).message };

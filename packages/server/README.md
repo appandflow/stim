@@ -308,7 +308,7 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
 
 - `control.begin` takes `workspace`, `platform`, `slot` (`default` when
   absent) and `takeOver`, and returns `{ "session", "platform", "lease",
-  "postures" }`. `postures` lists what `input.posture` takes for the device:
+"postures" }`. `postures` lists what `input.posture` takes for the device:
   `folded` and `unfolded` for an iPhone Duo, `folded`, `half-open` and
   `unfolded` for an emulator with a hinge, such as a `pixel_fold` AVD, and
   none otherwise.

@@ -713,6 +713,11 @@ export class FramePool {
     return lit ? POSTURES[lit] : null;
   }
 
+  /** Records the panel a finished fold lit, so a request before the next frame sees the new posture. */
+  folded(udid: string, posture: Posture): void {
+    this.litPanels.set(udid, posture === 'folded' ? 'primary' : 'primary-1');
+  }
+
   /** Makes the next video frame of `device` a keyframe, for a subscriber whose decoder lost its state. */
   keyframe(device: Device): void {
     this.helperSource(device)?.keyframe();

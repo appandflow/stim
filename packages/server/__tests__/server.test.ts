@@ -1756,6 +1756,8 @@ describe('frames.subscribe', () => {
       expect(spawns()).toEqual([]);
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
       expect(spawns()).toEqual([{ tool: 'xcrun', args: ['simctl', 'spawn', 'SIM-1', join(root, 'sim-fold')] }]);
+      expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
+      expect(spawns()).toHaveLength(1);
     },
     10_000,
   );
