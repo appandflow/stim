@@ -96,6 +96,28 @@ test('counts what logs --errors counts across marker boundaries', () => {
   expect(count()).toBe(8);
 });
 
+test('a page load resets only the web page records, and a native launch leaves them', () => {
+  write('build-ios.ndjson', [{ ts: 10, src: 'build', level: 'info', marker: true, platform: 'ios' }]);
+  write('client.ndjson', [{ ts: 11, src: 'client', level: 'error', msg: 'app threw' }]);
+  write('web.ndjson', [
+    { ts: 12, src: 'device', platform: 'web', level: 'info', event: 'web_navigation', marker: true },
+    { ts: 13, src: 'device', platform: 'web', level: 'error', event: 'web_document_failed', msg: 'ERR_CERT' },
+    { ts: 13, src: 'client', platform: 'web', level: 'error', event: 'web_exception', msg: 'page threw' },
+  ]);
+  expect(count()).toBe(3);
+
+  append('web.ndjson', [
+    { ts: 14, src: 'device', platform: 'web', level: 'info', event: 'web_navigation', marker: true },
+  ]);
+  expect(count()).toBe(1);
+
+  append('build-ios.ndjson', [{ ts: 15, src: 'build', level: 'info', marker: true, platform: 'ios' }]);
+  append('web.ndjson', [
+    { ts: 14, src: 'device', platform: 'web', level: 'error', event: 'web_document_failed', msg: 'ERR_CERT' },
+  ]);
+  expect(count()).toBe(1);
+});
+
 test('a later marker in any generation raises the boundary for records already read', () => {
   write('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'boom' }]);
   expect(count()).toBe(1);

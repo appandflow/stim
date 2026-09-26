@@ -4,7 +4,7 @@ import { join } from 'path';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
 import { ERROR_SOURCES, logFiles, queryLogs, recordMatches } from '@stim-cli/core/state';
 
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 const HEAD_BYTES = 1024;
 const TAIL_BYTES = 256;
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -140,10 +140,15 @@ function collect(record: NdjsonRecord, markers: Record<string, NdjsonRecord>, er
   const ts = typeof record.ts === 'number' && Number.isFinite(record.ts) ? record.ts : null;
   if (record.marker === true && ts !== null) {
     const metro = record.src === 'metro';
+    const web = !metro && record.platform === 'web';
     const slot = record.slot ?? 'default';
-    const key = metro ? 'metro' : JSON.stringify(['launch', slot]);
+    const key = metro ? 'metro' : web ? 'web' : JSON.stringify(['launch', slot]);
     if ((markers[key]?.ts ?? -Infinity) < ts) {
-      markers[key] = metro ? { src: 'metro', marker: true, ts } : { marker: true, ts, slot };
+      markers[key] = metro
+        ? { src: 'metro', marker: true, ts }
+        : web
+          ? { platform: 'web', marker: true, ts }
+          : { marker: true, ts, slot };
     }
   }
   if (recordMatches(record, ERROR_CRITERIA)) {

@@ -319,7 +319,8 @@ export async function runWebSupervisor(
           const request = params.request as { url: string; method: string };
           const document = params.type === 'Document' && params.frameId === targetId;
           requests.set(String(params.requestId), { url: request.url, method: request.method, document });
-          if (document) log('info', 'web_navigation', `navigating to ${request.url}`, { url: request.url });
+          if (document)
+            log('info', 'web_navigation', `navigating to ${request.url}`, { url: request.url, marker: true });
           return;
         }
         case 'Network.responseReceived': {
