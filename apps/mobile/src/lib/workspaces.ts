@@ -5,6 +5,7 @@ import type {
   EnvironmentState,
   Platform,
   SimState,
+  StatusIssue,
   StatusPayload,
 } from '@/protocol/types';
 
@@ -189,4 +190,40 @@ export function deviceWarnings(
     else general.push(warning);
   }
   return { byDevice, general };
+}
+
+export interface AttentionItem {
+  message: string;
+  severity: StatusIssue['severity'];
+  remedy: string | null;
+  /** `remedy` as a line to paste in a terminal, `cd` into the workspace included. */
+  command: string | null;
+}
+
+export interface AttentionGroup {
+  path: string;
+  live: boolean;
+  items: AttentionItem[];
+}
+
+const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+
+/**
+ * The workspaces with something to fix: live ones first, then those with an error, each in status order. Items come
+ * from `issues`, or from the `warnings` text when the Mac's `stim` reports no issues.
+ */
+export function attentionGroups(environments: EnvironmentState[]): AttentionGroup[] {
+  const groups = environments.flatMap((env): AttentionGroup[] => {
+    const items: AttentionItem[] = env.issues
+      ? env.issues.map((issue) => ({
+          message: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
+          severity: issue.severity,
+          remedy: issue.remedy,
+          command: `cd ${shellQuote(issue.workspace)} && ${issue.remedy}`,
+        }))
+      : env.warnings.map((message) => ({ message, severity: 'warning', remedy: null, command: null }));
+    return items.length ? [{ path: env.path, live: env.live, items }] : [];
+  });
+  const rank = (g: AttentionGroup) => (g.live ? 0 : 2) + (g.items.some((i) => i.severity === 'error') ? 0 : 1);
+  return groups.sort((a, b) => rank(a) - rank(b));
 }

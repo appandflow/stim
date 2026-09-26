@@ -29,7 +29,7 @@ public struct StimCommand: Hashable, Sendable {
   }
 }
 
-/// The command that addresses a `stim status` warning, run from the workspace.
+/// The command that addresses a `stim status` warning from a `stim` that reports no `issues`, run from the workspace.
 public func remedyCommand(forWarning warning: String, workspace: String) -> StimCommand? {
   if warning.contains("stale supervisor record") {
     return StimCommand(["stop"], cwd: workspace)
@@ -38,6 +38,51 @@ public func remedyCommand(forWarning warning: String, workspace: String) -> Stim
     return StimCommand(["android"], cwd: workspace)
   }
   return nil
+}
+
+public struct AttentionItem: Hashable, Sendable {
+  public var text: String
+  public var isError: Bool
+  /// The remedy, run from the workspace; nil when none is known.
+  public var command: StimCommand?
+  /// False for a remedy that only explains, such as a `stim guide` topic.
+  public var runnable: Bool
+}
+
+public struct AttentionGroup: Hashable, Sendable {
+  public var workspace: Workspace
+  public var items: [AttentionItem]
+}
+
+/// The workspaces with something to fix: live ones first, then those with an error, each in status order. Items
+/// come from `issues`, or from the `warnings` text when `stim` reports no issues.
+public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
+  let groups = workspaces.compactMap { env -> AttentionGroup? in
+    let items: [AttentionItem]
+    if let issues = env.issues {
+      items = issues.map { issue in
+        let words = issue.remedy.split(separator: " ").map(String.init)
+        let command = words.first == "stim" ? StimCommand(Array(words.dropFirst()), cwd: issue.workspace) : nil
+        return AttentionItem(
+          text: issue.slot.map { "\($0): \(issue.message)" } ?? issue.message,
+          isError: issue.severity == "error",
+          command: command,
+          runnable: command != nil && words.dropFirst().first != "guide")
+      }
+    } else {
+      items = env.warnings.map { warning in
+        let command = remedyCommand(forWarning: warning, workspace: env.path)
+        return AttentionItem(text: warning, isError: false, command: command, runnable: command != nil)
+      }
+    }
+    return items.isEmpty ? nil : AttentionGroup(workspace: env, items: items)
+  }
+  func rank(_ group: AttentionGroup) -> Int {
+    (group.workspace.live ? 0 : 2) + (group.items.contains(where: \.isError) ? 0 : 1)
+  }
+  return groups.enumerated().sorted { a, b in
+    rank(a.element) != rank(b.element) ? rank(a.element) < rank(b.element) : a.offset < b.offset
+  }.map(\.element)
 }
 
 /// The commands that create an environment for a worktree Stim has not registered.

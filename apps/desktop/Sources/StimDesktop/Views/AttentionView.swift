@@ -5,10 +5,13 @@ import SwiftUI
 struct AttentionView: View {
   @ObservedObject var store: StatusStore
   @EnvironmentObject private var actions: ActionCenter
+  @State private var expanded = false
+
+  private static let collapsedGroups = 3
 
   var body: some View {
-    let envs = store.payload?.environments ?? []
-    let warnings = envs.flatMap { env in env.warnings.map { (env: env, text: $0) } }
+    let groups = attentionGroups(store.payload?.environments ?? [])
+    let shown = expanded ? groups : Array(groups.prefix(Self.collapsedGroups))
     ScrollView {
       VStack(alignment: .leading, spacing: 28) {
         VStack(alignment: .leading, spacing: 4) {
@@ -16,14 +19,25 @@ struct AttentionView: View {
           Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Theme.secondary)
         }
         cleanup
-        group("Warnings", count: warnings.count) {
-          ForEach(Array(warnings.enumerated()), id: \.offset) { index, item in
+        group("Warnings", count: groups.reduce(0) { $0 + $1.items.count }) {
+          ForEach(Array(shown.enumerated()), id: \.element.workspace.path) { index, group in
             if index > 0 { divider }
-            row(
-              title: item.text,
-              detail: "\(item.env.names.title) \u{00B7} \(store.project(of: item.env).name)",
-              command: remedyCommand(forWarning: item.text, workspace: item.env.path),
-              runTitle: "Fix \(item.env.names.title)")
+            workspaceHeader(group.workspace)
+            ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
+              row(item, workspace: group.workspace)
+            }
+          }
+          if groups.count > Self.collapsedGroups {
+            divider
+            Button(
+              expanded
+                ? "Show fewer"
+                : "Show \(groups.count - shown.count) more \(groups.count - shown.count == 1 ? "workspace" : "workspaces")"
+            ) { expanded.toggle() }
+            .buttonStyle(.link)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
       }
@@ -74,25 +88,43 @@ struct AttentionView: View {
     }
   }
 
-  private func row(title: String, detail: String, command: StimCommand?, runTitle: String) -> some View {
+  private func workspaceHeader(_ env: Workspace) -> some View {
+    HStack(spacing: 8) {
+      Text(env.names.title).font(Theme.heading(13))
+      Text(store.project(of: env).name).font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
+      Spacer()
+      Text(env.live ? "live" : "idle").font(Theme.body(11.5)).foregroundStyle(env.live ? Theme.live : Theme.tertiary)
+    }
+    .padding(.horizontal, 16)
+    .padding(.top, 12)
+    .padding(.bottom, 2)
+  }
+
+  private func row(_ item: AttentionItem, workspace: Workspace) -> some View {
     HStack(spacing: 14) {
-      Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.warn)
+      Image(systemName: item.isError ? "xmark.octagon" : "exclamationmark.triangle")
+        .foregroundStyle(item.isError ? Theme.error : Theme.warn)
       VStack(alignment: .leading, spacing: 3) {
-        Text(abbreviatingHome(title)).lineLimit(2)
-        Text(detail).font(Theme.body(11.5)).foregroundStyle(Theme.secondary)
+        Text(abbreviatingHome(item.text)).lineLimit(2)
+        if let command = item.command {
+          Text("stim \(command.arguments.joined(separator: " "))").font(Theme.mono(11.5)).foregroundStyle(
+            Theme.secondary)
+        }
       }
       Spacer()
-      if let command {
+      if let command = item.command {
         Button("Copy command") {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(command.shellLine, forType: .string)
         }
         .help(command.displayLine())
-        runButton("Run stim \(command.arguments.joined(separator: " "))", command, runTitle: runTitle)
+        if item.runnable {
+          runButton("Run", command, runTitle: "Fix \(workspace.names.title)")
+        }
       }
     }
     .padding(.horizontal, 16)
-    .padding(.vertical, 12)
+    .padding(.vertical, 10)
   }
 
   private func group<Content: View>(_ title: String, count: Int, @ViewBuilder _ content: () -> Content) -> some View {
