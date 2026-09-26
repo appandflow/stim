@@ -93,6 +93,10 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var identity: Identity
   public var pairedAt: Date
   public var lastSeenAt: Date?
+  public var capabilities: [String]
+
+  /// Whether the device may run actions and drive devices, not only read.
+  public var canControl: Bool { capabilities.contains("control") }
 
   /// The tailnet node the device paired from, or this Mac for a loopback pairing.
   public var node: String {
@@ -153,12 +157,17 @@ public struct StimServerCLI: Sendable {
     (try? run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
   }
 
-  public func pair(port: Int = defaultPort) throws -> PairingCode {
-    try Self.decoder.decode(PairingCode.self, from: run(["pair", "--json", "--port", String(port)]))
+  public func pair(port: Int = defaultPort, control: Bool) throws -> PairingCode {
+    try Self.decoder.decode(
+      PairingCode.self, from: run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])))
   }
 
   public func devices() throws -> [PairedDevice] {
     try Self.decoder.decode(PairedDeviceList.self, from: run(["devices", "--json"])).devices
+  }
+
+  public func grant(_ id: String, control: Bool) throws {
+    _ = try run(["devices", "grant", id, control ? "--control" : "--read"])
   }
 
   public func revoke(_ id: String) throws {
