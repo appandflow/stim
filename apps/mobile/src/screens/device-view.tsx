@@ -106,8 +106,8 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
   const typingBarShown = typing && keyboardShown;
   useEffect(() => {
-    if (!keyboardShown) keyboard.current?.blur();
-  }, [keyboardShown]);
+    if (!keyboardShown || !controlling) keyboard.current?.blur();
+  }, [keyboardShown, controlling]);
   const rest = zoom.screenRect;
   const lift = useAnimatedStyle(() => {
     const covered = keyboardHeight.get();
@@ -242,6 +242,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   <Pressable
                     onPress={() => {
                       Keyboard.dismiss();
+                      keyboardHeight.set(withTiming(0, { duration: 200 }));
                       zoom.close();
                     }}
                     accessibilityRole="button"
@@ -376,7 +377,10 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             </Animated.View>
           ) : null}
           {rotateNote && rest ? (
-            <View pointerEvents="none" style={[styles.noteRow, { top: rest[1] + rest[3] - NOTE_INSET }]}>
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.noteRow, { top: rest[1] + rest[3] - NOTE_INSET }, zoom.fadeStyle, lift]}
+            >
               <Text
                 accessibilityLiveRegion="polite"
                 accessibilityRole="alert"
@@ -384,7 +388,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               >
                 {rotateNote.text}
               </Text>
-            </View>
+            </Animated.View>
           ) : null}
           <Animated.View
             style={[styles.typingBar, typingBar, !typingBarShown && styles.hidden]}
