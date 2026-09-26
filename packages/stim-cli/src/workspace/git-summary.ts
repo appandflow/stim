@@ -131,27 +131,28 @@ function mergedInto(
 
 const mergeTimeouts = new Map<string, { key: string; at: number }>();
 const recent = new Map<string, { at: number; files: string | null; git: WorktreeGit | null }>();
-const gitDirs = new Map<string, { gitDir: string; commonDir: string } | null>();
+const gitDirs = new Map<string, { gitDir: string; commonDir: string }>();
 
 function gitDirsOf(worktree: string): { gitDir: string; commonDir: string } | null {
-  if (gitDirs.has(worktree)) return gitDirs.get(worktree) ?? null;
-  let dirs: { gitDir: string; commonDir: string } | null = null;
+  const known = gitDirs.get(worktree);
+  if (known) return known;
   try {
     const dotGit = join(worktree, '.git');
     const pointer = statSync(dotGit).isDirectory()
       ? null
       : /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf-8'))?.[1]?.trim();
     const gitDir = pointer ? resolve(worktree, pointer) : pointer === null ? dotGit : null;
-    if (gitDir) {
-      let commonDir = gitDir;
-      try {
-        commonDir = resolve(gitDir, readFileSync(join(gitDir, 'commondir'), 'utf-8').trim());
-      } catch {}
-      dirs = { gitDir, commonDir };
-    }
-  } catch {}
-  gitDirs.set(worktree, dirs);
-  return dirs;
+    if (!gitDir) return null;
+    let commonDir = gitDir;
+    try {
+      commonDir = resolve(gitDir, readFileSync(join(gitDir, 'commondir'), 'utf-8').trim());
+    } catch {}
+    const dirs = { gitDir, commonDir };
+    gitDirs.set(worktree, dirs);
+    return dirs;
+  } catch {
+    return null;
+  }
 }
 
 function fileStamp(path: string): string {
@@ -165,13 +166,13 @@ function fileStamp(path: string): string {
 
 /**
  * Stamps of the git files a summary depends on: the worktree's index, HEAD and reflog, and the common dir's packed
- * refs, last fetch, default-branch ref, branch ref and upstream ref. Null when the git dir cannot be found. Git
- * replaces each of these files by rename, so a new inode shows a write even within one mtime tick. Edits to tracked
- * files touch none of them.
+ * refs, last fetch, default-branch ref, branch ref and upstream ref. Git replaces each of these files by rename, so a
+ * new inode shows a write even within one mtime tick. Edits to tracked files touch none of them. A worktree whose git
+ * dir cannot be found, such as a deleted one git still lists, is stamped by its `.git` entry alone.
  */
-function gitFilesStamp(worktree: WorktreeFacts, upstream: string | null): string | null {
+function gitFilesStamp(worktree: WorktreeFacts, upstream: string | null): string {
   const dirs = gitDirsOf(worktree.path);
-  if (!dirs) return null;
+  if (!dirs) return `no git dir ${fileStamp(join(worktree.path, '.git'))}`;
   const { gitDir, commonDir } = dirs;
   const files = [
     join(gitDir, 'index'),
@@ -191,7 +192,7 @@ function gitFilesStamp(worktree: WorktreeFacts, upstream: string | null): string
  * one git cannot answer in time, maps to null. After every read, merge verdicts missing from the cache are judged one
  * at a time; no new judgement starts 250 ms after the first, and a verdict for the same HEAD judged at an older
  * default-branch commit stands in, because a merged branch stays merged. A judgement that timed out is not retried
- * for the same HEAD and target for five minutes. With `maxAgeMs`, a summary read that recently in this process is
+ * for the same HEAD and target for five minutes. With `maxAgeMs`, a summary or failed read made that recently in this process is
  * reused while the git files it depends on are unchanged, so an edit to a tracked file can take up to `maxAgeMs` to
  * show.
  */
@@ -207,7 +208,7 @@ export async function readWorktreeGit(
       const memo = maxAgeMs > 0 ? recent.get(worktree.path) : undefined;
       const upstream = memo?.git?.upstream ?? null;
       const files = maxAgeMs > 0 ? gitFilesStamp(worktree, upstream) : null;
-      if (memo && files !== null && memo.files === files && now - memo.at < maxAgeMs) {
+      if (memo && memo.files !== null && memo.files === files && now - memo.at < maxAgeMs) {
         return { path: worktree.path, memo: memo.git };
       }
       const repository = worktree.repository;
@@ -222,8 +223,13 @@ export async function readWorktreeGit(
   const budget: { deadline?: number } = {};
   const summaries = new Map<string, WorktreeGit | null>();
   for (const read of reads) {
-    if ('memo' in read || !read.status) {
-      summaries.set(read.path, 'memo' in read ? (read.memo ?? null) : null);
+    if ('memo' in read) {
+      summaries.set(read.path, read.memo ?? null);
+      continue;
+    }
+    if (!read.status) {
+      recent.set(read.path, { at: now, files: read.files, git: null });
+      summaries.set(read.path, null);
       continue;
     }
     const { head, ...counts } = read.status;

@@ -146,6 +146,21 @@ describe('readWorktreeGit', () => {
     expect(statusReads).toBe(reads + 3);
   });
 
+  test('a worktree git still lists after its directory was deleted is not reread until it comes back', async () => {
+    const worktree = linkedWorktree();
+    const read = async () =>
+      (await readWorktreeGit([worktree], { skip: () => false, maxAgeMs: 60_000 })).get(worktree.path);
+    rmSync(worktree.path, { recursive: true, force: true });
+    expect(await read()).toBe(null);
+    expect(await read()).toBe(null);
+    expect(statusReads).toBe(1);
+
+    git(worktree.repository, 'worktree', 'prune');
+    git(worktree.repository, 'worktree', 'add', '-q', worktree.path, 'feature');
+    expect(await read()).toMatchObject({ changed: 0 });
+    expect(statusReads).toBe(2);
+  });
+
   test('a merge judgement that timed out is not retried for the same HEAD for five minutes', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const worktree = linkedWorktree();
