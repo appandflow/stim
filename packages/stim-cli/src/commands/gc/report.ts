@@ -205,7 +205,7 @@ export function formatGcReport(
 
   if (unverifiedDevices.length) {
     lines.push(
-      `Unrecognized stim-* devices (${unverifiedDevices.length}) - NOT deleted, because Stim has no record of creating them:`,
+      `Unrecognized stim-* devices (${unverifiedDevices.length}) - NOT deleted, because this Stim home has no record of creating them:`,
     );
     for (const d of unverifiedDevices) {
       lines.push(`  ${d.kind} ${d.name} (${d.id})`);

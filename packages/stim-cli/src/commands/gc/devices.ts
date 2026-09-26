@@ -160,6 +160,7 @@ export interface UnverifiedDevice {
   kind: 'ios' | 'android';
   id: string;
   name: string;
+  directory?: string;
 }
 
 function isStimCreated(device: UnverifiedDevice): boolean {
@@ -167,8 +168,9 @@ function isStimCreated(device: UnverifiedDevice): boolean {
 }
 
 export function unverifiedDeviceCommand(device: UnverifiedDevice): string {
-  return device.kind === 'ios'
-    ? `xcrun simctl delete ${device.id}`
+  if (device.kind === 'ios') return `xcrun simctl delete ${device.id}`;
+  return device.directory
+    ? `rm -rf ${JSON.stringify(device.directory)}`
     : `avdmanager delete avd -n ${JSON.stringify(device.id)}`;
 }
 

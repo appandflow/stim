@@ -659,7 +659,7 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
   );
 });
 
-test('teardownOwnedAvd refuses an AVD that is not Stim-owned by name', () => {
+test('teardownOwnedAvd refuses an AVD that this Stim home did not record', () => {
   const exec = androidExecutor({ avds: ['Pixel_6_API_34'], adb: 'List of devices attached\n' });
   setExecutor(exec);
   const r = teardownOwnedAvd('Pixel_6_API_34', { del: true });

@@ -17,7 +17,7 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when
                             parking is disabled or their setup cannot be verified
-  stim gc --delete        sweeps devices Stim created that no project
+  stim gc --delete        sweeps devices this Stim home created that no project
                             references (\`guide cleanup gc\`), clears
                             verified parked simulators and emulators, and
                             runs \`stim worktree remove\` on every clean,

@@ -258,6 +258,7 @@ export async function collectGcReport(
         deviceSweepNotices.push(`android data sweep skipped: ${(error as Error).message}`);
       }
     }
+    const registeredAvds = new Set(avds);
     avds = [...new Set([...avds, ...orphanedAvdDirectories.map((entry) => entry.name)])];
     const isMounted = (path: string) => isOnMountedVolume(path, mountedVolumes);
     const found = findOrphanedDevices({
@@ -267,7 +268,13 @@ export async function collectGcReport(
       isMounted,
       deadProjects,
     });
-    unverifiedDevices = found.unverified;
+    unverifiedDevices = found.unverified.flatMap((device) => {
+      const directories =
+        device.kind === 'android' && !registeredAvds.has(device.id)
+          ? orphanedAvdDirectories.filter((entry) => entry.name === device.id)
+          : [];
+      return directories.length ? directories.map(({ directory }) => Object.assign({}, device, { directory })) : [device];
+    });
     orphanedDevices = withAndroidAvdSizes(
       found.orphaned.flatMap((device) => {
         const directories =

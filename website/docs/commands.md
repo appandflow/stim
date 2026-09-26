@@ -834,7 +834,7 @@ stale locks, and shared cache sizes. It does not change anything without
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)
 for how gc decides that a branch is merged.
 
-An orphaned device is one Stim created that no workspace references. Other
+An orphaned device is one this Stim home created that no workspace references. Other
 devices whose names start with `stim-` appear under "Unrecognized stim-\*
 devices" with the command that deletes them; `gc` never deletes them. See
 [owned devices](./owned-devices.md).

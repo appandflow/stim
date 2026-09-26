@@ -301,6 +301,18 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
   },
 );
 
+test('AVD data this home did not record is listed with a command that removes the directory', async () => {
+  const directory = join(avdRoot, 'stim-other-home.avd');
+  mkdirSync(directory);
+  writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const report = await collectGcReport({}, deps);
+  expect(report.orphanedDevices).toEqual([]);
+  expect(report.unverifiedDevices.map((device) => gcDevices.unverifiedDeviceCommand(device))).toEqual([
+    `rm -rf ${JSON.stringify(directory)}`,
+  ]);
+});
+
 test('an unreadable or symlinked orphan prevents stale device records from being cleared', async () => {
   const outside = join(home, 'outside');
   mkdirSync(outside);
