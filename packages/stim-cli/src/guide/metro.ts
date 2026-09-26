@@ -151,8 +151,9 @@ WHAT THE SUPERVISOR IS
                    the Expo process
     idle           metro.idleStopMinutes, above
   A supervisor killed with SIGKILL, or one that crashed, cannot write
-  anything; neither can one whose state file was not writable. The next supervisor logs supervisor_vanished (level warn) for it,
-  and until then \`status\` reports metro.lastStop.reason "vanished".
+  anything; neither can one whose state file was not writable. The next
+  supervisor logs supervisor_vanished (level warn) for it, and until then
+  \`status\` reports metro.lastStop.reason "vanished".
 
   ENVIRONMENT: the supervisor -- and through it the dev server, including a
   metro.config.js evaluated inside the expo child -- inherits the environment
