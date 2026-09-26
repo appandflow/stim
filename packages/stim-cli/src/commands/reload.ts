@@ -312,6 +312,16 @@ export async function runReload({
     };
   }
   if (browser && inspected.length === 0) return reloadBrowser(browser, project.metroPort ?? null, d);
+  if (read === 'unverified' && inspected.length === 0) {
+    return {
+      ok: false,
+      error: failure(
+        'STIM_RELOAD_PROBE_FAILED',
+        "Stim could not verify the owned Chrome's supervisor or Chrome process.",
+        'Run `stim status`, then follow `stim guide errors teardown`.',
+      ),
+    };
+  }
   if (live.length === 0) {
     const nativeFailure = inspected.find(isTargetFailure)?.error;
     const firstFailure =

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import chalk from 'chalk';
 import type { CreatedDevices } from '@stim-cli/core/state';
@@ -18,7 +18,8 @@ export function findStaleLedgerEntries(ledger: CreatedDevices, sims: readonly Io
 
 /**
  * Browser profiles the ledger lists whose directory is gone while the workspaces directory that held it is
- * present, so a missing volume or STIM_HOME never reads as a deleted profile.
+ * present and the workspace is not a link to a missing volume, so an unmounted volume never reads as a deleted
+ * profile.
  */
 export function staleBrowserProfiles(
   ledger: CreatedDevices,
@@ -28,7 +29,16 @@ export function staleBrowserProfiles(
 }
 
 function isStaleProfile(path: string, exists: (path: string) => boolean): boolean {
-  return !exists(path) && exists(dirname(dirname(dirname(path))));
+  const workspace = dirname(dirname(path));
+  return !exists(path) && exists(dirname(workspace)) && !isDanglingLink(workspace);
+}
+
+function isDanglingLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink() && !existsSync(path);
+  } catch {
+    return false;
+  }
 }
 
 export function forgetStaleLedgerEntries(entries: readonly StaleLedgerEntry[]): number {
