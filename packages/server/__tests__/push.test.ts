@@ -96,9 +96,9 @@ const env = (extra: JsonObject = {}): JsonObject => ({
 
 const status = (...environments: JsonObject[]): JsonObject => ({ environments, unprovisionedWorktrees: [] });
 
-function setup(options: { devices?: PairedDevice[] } = {}) {
+function setup(options: { devices?: PairedDevice[]; replay?: JsonObject; freeGb?: number } = {}) {
   let listener: FeedListener | null = null;
-  let freeGb = 200;
+  let freeGb = options.freeGb ?? 200;
   let now = T0;
   let devices = options.devices ?? [device(registration())];
   const dropped: string[] = [];
@@ -109,6 +109,7 @@ function setup(options: { devices?: PairedDevice[] } = {}) {
     subscribeStatus: (next) => {
       listener = next;
       subscriptions.opened++;
+      if (options.replay) next.item(options.replay, JSON.stringify(options.replay));
       return () => {
         listener = null;
         subscriptions.closed++;
@@ -281,6 +282,27 @@ describe('PushNotifier', () => {
     for (let i = 0; i < 500 && t.dropped.length < 2; i++) await tick();
     expect(expo.receiptQueries).toEqual([['t1']]);
     expect(t.dropped).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
+  });
+
+  it('stays quiet about low disk that a replayed status found at registration', async () => {
+    const t = (current = setup({ replay: status(env()), freeGb: 3 }));
+    t.at(90_000);
+    t.emit(status(env()));
+    await settle();
+    expect(expo.sent).toEqual([]);
+  });
+
+  it('pushes a failure that arrives right after another device registers', async () => {
+    const t = (current = setup());
+    t.emit(status(env()));
+    t.at(1000);
+    t.setDevices([
+      device(registration()),
+      { ...device(registration({ token: 'ExponentPushToken[phone-b]' })), id: 'd2' },
+    ]);
+    t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:01Z') })));
+    await settle(2);
+    expect(expo.sent.flat().map((m) => m.to)).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
   });
 
   it('holds a status subscription only while a device is registered', () => {

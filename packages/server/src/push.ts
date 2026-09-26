@@ -91,13 +91,19 @@ export class PushNotifier {
     if (this.closed) return;
     const current = new Map(this.options.devices().flatMap((d) => (d.push ? [[d.id, d.push] as const] : [])));
     for (const id of this.registered.keys()) if (!current.has(id)) this.registered.delete(id);
+    let added = false;
     for (const [id, push] of current) {
       const known = this.registered.get(id);
-      if (known && known.push.token === push.token) known.push = push;
-      else this.registered.set(id, { push, entries: null, bucket: { tokens: this.limits.perHour, at: this.now() } });
+      if (known && known.push.token === push.token) {
+        known.push = push;
+        continue;
+      }
+      this.registered.set(id, { push, entries: null, bucket: { tokens: this.limits.perHour, at: this.now() } });
+      added = true;
     }
     if (this.registered.size > 0) this.watch();
     else this.unwatch();
+    if (added) this.evaluate();
   }
 
   close(): void {
@@ -108,8 +114,6 @@ export class PushNotifier {
   }
 
   private watch(): void {
-    if (!this.unsubscribe && !this.resubscribe) this.subscribe();
-    if (!this.tick) this.tick = setInterval(() => this.evaluate(), this.limits.tickMs);
     if (!this.disk) {
       this.readDisk();
       this.disk = setInterval(() => {
@@ -117,6 +121,8 @@ export class PushNotifier {
         this.evaluate();
       }, this.limits.diskMs);
     }
+    if (!this.tick) this.tick = setInterval(() => this.evaluate(), this.limits.tickMs);
+    if (!this.unsubscribe && !this.resubscribe) this.subscribe();
   }
 
   private unwatch(): void {
@@ -216,9 +222,10 @@ export class PushNotifier {
   }
 
   private later(fn: () => void, ms: number): void {
+    if (this.closed) return;
     const timer = setTimeout(() => {
       this.timers.delete(timer);
-      fn();
+      if (!this.closed) fn();
     }, ms);
     timer.unref();
     this.timers.add(timer);
@@ -243,13 +250,13 @@ export class PushNotifier {
       console.error(`stim-server: could not send ${messages.length} push notifications: ${(cause as Error).message}`);
       return;
     }
-    if (!Array.isArray(tickets)) return;
+    if (!Array.isArray(tickets) || this.closed) return;
     const receipts = new Map<string, string>();
-    tickets.forEach((ticket: Ticket, index) => {
+    tickets.forEach((ticket: Ticket | null, index) => {
       const to = messages[index]?.to;
       if (!to) return;
-      if (ticket.status === 'ok' && typeof ticket.id === 'string') receipts.set(ticket.id, to);
-      else if (ticket.details?.error === 'DeviceNotRegistered') this.drop(to);
+      if (ticket?.status === 'ok' && typeof ticket.id === 'string') receipts.set(ticket.id, to);
+      else if (ticket?.details?.error === 'DeviceNotRegistered') this.drop(to);
     });
     if (receipts.size > 0) this.later(() => void this.checkReceipts(receipts), this.limits.receiptDelayMs);
   }
@@ -269,10 +276,10 @@ export class PushNotifier {
     } catch {
       return;
     }
-    if (!data || typeof data !== 'object') return;
-    for (const [id, receipt] of Object.entries(data as Record<string, Ticket>)) {
+    if (!data || typeof data !== 'object' || this.closed) return;
+    for (const [id, receipt] of Object.entries(data as Record<string, Ticket | null>)) {
       const to = receipts.get(id);
-      if (to && receipt.details?.error === 'DeviceNotRegistered') this.drop(to);
+      if (to && receipt?.details?.error === 'DeviceNotRegistered') this.drop(to);
     }
   }
 }

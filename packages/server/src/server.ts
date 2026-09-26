@@ -913,7 +913,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function registerPush(id: RequestId, params: unknown, session: PairedDevice): void {
       const token = isJsonObject(params) ? params.token : undefined;
       const events = isJsonObject(params) ? params.events : undefined;
-      const agentOnly = isJsonObject(params) ? (params.agentOnly ?? false) : undefined;
+      const agentOnly = isJsonObject(params) ? (params.agentOnly === undefined ? false : params.agentOnly) : undefined;
       const ref = isJsonObject(params) ? params.ref : undefined;
       if (
         typeof token !== 'string' ||
