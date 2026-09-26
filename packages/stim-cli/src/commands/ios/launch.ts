@@ -3,7 +3,7 @@ import { launchSlotScope, nativeRunCommand } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase } from '../../engine/build-progress.ts';
-import { DEFAULT_METRO_PORT, devClientUrl, iosAppProcess } from '../../engine/app-install.ts';
+import { DEFAULT_METRO_PORT, devClientUrl, iosAppProcess, restartedAppNote } from '../../engine/app-install.ts';
 import {
   LAUNCH_BUNDLING,
   LAUNCH_FATAL,
@@ -580,7 +580,7 @@ export async function finishIosRun({
   const appExecutable = readRunExecutable(d, appPath, note);
   const dropSwapDir = artifact.release;
   let installSkipped = false;
-  let launched: ReturnType<IosDeps['launchIosApp']> | null = null;
+  let launched: ReturnType<IosDeps['launchIosApp']>;
   let launchedAt = d.now();
 
   if (physical) {
@@ -753,7 +753,7 @@ export async function finishIosRun({
         Boolean(remoteDevice),
       ),
     });
-    if (launched?.failed) {
+    if (launched.failed) {
       printNativeCrashReport(
         { root, slot, platform: 'ios', deviceId: udid, appId: bundleId!, since: launchedAt, appPath },
         logsDir,
@@ -767,7 +767,7 @@ export async function finishIosRun({
         build: { ...buildFailure, appPath, bundleId },
       });
     }
-    phase('launch', `${bundleId!} ${launchTimer()}`);
+    phase('launch', `${bundleId!}${restartedAppNote(launched.restartedPid)} ${launchTimer()}`);
   }
 
   recordIosReloadTarget({
@@ -791,7 +791,8 @@ export async function finishIosRun({
     msg: release
       ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
       : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
-        (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
+        (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : '') +
+        restartedAppNote(launched.restartedPid, '; '),
   });
 
   if (remoteDevice) {

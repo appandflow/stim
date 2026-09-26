@@ -90,6 +90,14 @@ window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. Release runs check process
 liveness without Metro.
 
+When the app is already running, from an earlier run or because the install
+was skipped, Stim restarts it the way Xcode's Run does: `simctl terminate` on
+a simulator, `am force-stop` on an emulator or an Android phone, then a fresh
+launch. The launch line reads `restarted running app (was pid <n>)`, and state
+held in the running app is lost. An iPhone run already restarts the app through
+devicectl, and remote targets relaunch it through Agent Device. If the running
+app cannot be stopped, the run fails instead of reusing the old process.
+
 For an unverified debug launch, follow the printed remedy. An Expo development
 client may need its server picker; a bare app on a local simulator or emulator
 gets a process restart command.

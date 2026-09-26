@@ -581,6 +581,14 @@ test('temporary storage guidance names the override and Git visibility boundary'
   expect(renderSection('lifecycle', 'options')).toContain('STIM_TMPDIR');
 });
 
+test('the restart guidance names the stop command each platform runs before launching', () => {
+  const builds = renderSection('lifecycle', 'builds') ?? '';
+  expect(builds).toContain('simctl terminate');
+  expect(builds).toContain('am force-stop');
+  expect(builds).toContain('--terminate-existing');
+  expect(builds).toContain('open --relaunch');
+});
+
 test('build guidance names the experimental Android compiler opt-in', () => {
   expect(renderSection('lifecycle', 'builds')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
 });

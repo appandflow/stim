@@ -27,6 +27,7 @@ import {
   ADB_INSTALL_TIMEOUT_MS,
   installConflictKind,
   deviceShellArg,
+  restartedAppNote,
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
@@ -646,11 +647,13 @@ export async function finishAndroidRun({
     src: 'build',
     level: 'info',
     event: 'app_launched',
-    msg: release
-      ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
-      : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
+    msg:
+      (release
+        ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
+        : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`) +
+      restartedAppNote(launched.restartedPid, '; '),
   });
-  phase('launch', `${androidPackage} ${launchTimer()}`);
+  phase('launch', `${androidPackage}${restartedAppNote(launched.restartedPid)} ${launchTimer()}`);
 
   if (!physical && !remoteDevice) {
     try {

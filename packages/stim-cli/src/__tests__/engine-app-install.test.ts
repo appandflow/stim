@@ -370,11 +370,71 @@ describe('ios', () => {
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('launch');
     expect(exec.calls).toEqual([
-      ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
       ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
+      ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
       ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
     ]);
-    expect(exec.options).toEqual([{ timeoutMs: 60000 }, { timeoutMs: 2000 }, { timeoutMs: 60000 }]);
+    expect(exec.options).toEqual([{ timeoutMs: 2000 }, { timeoutMs: 60000 }, { timeoutMs: 60000 }]);
+    expect(result.restartedPid).toBeUndefined();
+  });
+
+  test('a running app is terminated before the Metro wiring and launched fresh', () => {
+    const exec = recordingExec({
+      outputs: {
+        'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
+        'simctl launch': 'com.example.app: 5151',
+      },
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result).toEqual({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242, jsLocation: 'localhost:8082' });
+    expect(exec.calls).toEqual([
+      ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
+      ['xcrun', 'simctl', 'terminate', 'U1', 'com.example.app'],
+      ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
+      ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
+    ]);
+    expect(exec.options[1]?.timeoutMs).toBeGreaterThan(0);
+  });
+
+  test('a running Expo dev client restarts with its project URL instead of an openurl into the old process', () => {
+    const exec = recordingExec({
+      outputs: {
+        'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
+        'simctl launch': 'com.example.app: 5151',
+      },
+    });
+    const result = launchIosApp(
+      {
+        udid: 'U1',
+        bundleId: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'myapp',
+        consolePaths: { stdout: '/container/trace.out', stderr: '/container/trace.err' },
+      },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242 });
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'terminate', 'spawn', 'launch']);
+    expect(exec.calls.at(-1)).toContain('--initialUrl');
+  });
+
+  test('a failed terminate refuses the launch instead of reusing the old process', () => {
+    const exec = recordingExec({
+      fail: 'simctl terminate',
+      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(result.reason).toMatch(/simctl terminate com\.example\.app failed.*pid 4242/);
+    expect(exec.calls.some((call) => call.includes('launch'))).toBe(false);
+  });
+
+  test('an unreadable process list neither terminates nor claims a restart', () => {
+    const exec = recordingExec({ fail: 'launchctl list' });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.ok).toBe(true);
+    expect(result.restartedPid).toBeUndefined();
+    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(false);
   });
 
   test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
@@ -385,6 +445,7 @@ describe('ios', () => {
     );
     expect(result.mode).toBe('openurl');
     expect(exec.calls).toEqual([
+      ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
       [
         'xcrun',
@@ -394,7 +455,7 @@ describe('ios', () => {
         'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
       ],
     ]);
-    expect(exec.options).toEqual([{ timeoutMs: 60000 }, { timeoutMs: 60000 }]);
+    expect(exec.options).toEqual([{ timeoutMs: 2000 }, { timeoutMs: 60000 }, { timeoutMs: 60000 }]);
   });
 
   test('a failed defaults write stops the launch rather than launching unwired', () => {
@@ -402,7 +463,7 @@ describe('ios', () => {
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/RCT_jsLocation/);
-    expect(exec.calls.length).toBe(1);
+    expect(exec.calls.length).toBe(2);
     expect(result.reason).not.toContain('Activity Monitor');
   });
 
@@ -504,14 +565,13 @@ describe('ios', () => {
     expect(result.reason).toMatch(/did not return a process handle/);
   });
 
-  test('a no-process-handle error does not count a pre-existing app process as a new launch', () => {
+  test('a no-process-handle error is not recovered when the process list could not be read', () => {
     const exec = recordingExec({
-      fail: 'simctl launch',
+      fail: 'simctl',
       failStderr:
         "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
-      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(exec.calls.filter((call) => call.includes('launchctl'))).toHaveLength(1);
   });
@@ -523,7 +583,7 @@ describe('ios', () => {
     });
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
-    expect(exec.calls).toHaveLength(3);
+    expect(exec.calls).toHaveLength(4);
   });
 
   test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', () => {
@@ -668,11 +728,15 @@ describe('android: install and launch', () => {
     launchAndroidReleaseApp({ serial: 'emulator-5554', packageName: 'com.example.app' }, { exec });
     androidAppProcess('emulator-5554', 'com.example.app', { exec });
     expect(exec.calls.map((call) => call.slice(3, 5).join(' '))).toEqual([
+      'shell pidof',
+      'shell ps',
       'reverse tcp:8082',
       'shell run-as',
       'shell am',
       'shell cmd',
       'shell am',
+      'shell pidof',
+      'shell ps',
       'shell cmd',
       'shell monkey',
       'shell pidof',
@@ -712,9 +776,12 @@ describe('android: install and launch', () => {
       { exec },
     );
     expect(result.mode).toBe('am-start');
+    expect(result.restartedPid).toBeUndefined();
     expect(exec.calls).toEqual([
+      ['adb', '-s', 'emulator-5554', 'shell', 'pidof', 'com.example.app'],
+      ['adb', '-s', 'emulator-5554', 'shell', 'ps', '-A'],
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082'],
-      exec.calls[1],
+      exec.calls[3],
       [
         'adb',
         '-s',
@@ -730,7 +797,7 @@ describe('android: install and launch', () => {
       ],
       ['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity'],
     ]);
-    const httpHostCall = exec.calls[1];
+    const httpHostCall = exec.calls[3];
     assert(httpHostCall);
     expect(httpHostCall.slice(0, 6)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
     expect(httpHostCall.at(-1)).toMatch(/debug_http_host.*127\.0\.0\.1:8082/);
@@ -754,7 +821,46 @@ describe('android: install and launch', () => {
     );
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/adb reverse/);
-    expect(exec.calls.length).toBe(1);
+    expect(exec.calls.at(-1)?.[3]).toBe('reverse');
+  });
+
+  test('a running app is force-stopped before the Metro wiring and launched fresh', () => {
+    const exec = recordingExec({
+      outputs: { pidof: '4242\n', 'resolve-activity': 'com.example.app/.MainActivity\n' },
+    });
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'am-start', restartedPid: 4242 });
+    expect(exec.calls.slice(0, 3)).toEqual([
+      ['adb', '-s', 'emulator-5554', 'shell', 'pidof', 'com.example.app'],
+      ['adb', '-s', 'emulator-5554', 'shell', 'am', 'force-stop', 'com.example.app'],
+      ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082'],
+    ]);
+  });
+
+  test('a running release app is force-stopped before its launcher activity starts', () => {
+    const exec = recordingExec({
+      outputs: { pidof: '4242\n', 'resolve-activity': 'com.example.app/.MainActivity\n' },
+    });
+    const result: LaunchResult = launchAndroidReleaseApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app' },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'am-start', restartedPid: 4242 });
+    expect(exec.calls[1]).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'am', 'force-stop', 'com.example.app']);
+  });
+
+  test('a failed force-stop refuses the launch instead of foregrounding the old process', () => {
+    const exec = recordingExec({ fail: 'force-stop', outputs: { pidof: '4242\n' } });
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(result.reason).toMatch(/am force-stop com\.example\.app failed.*pid 4242/);
+    expect(exec.calls.some((call) => call.includes('start'))).toBe(false);
   });
 
   test('an am start failure is reported, not thrown', () => {
