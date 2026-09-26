@@ -104,7 +104,9 @@ reload and stop a workspace:
   the frame opens the [device view](#device-view). Under a running simulator or
   emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
   (taps, typing, app opens, screenshots, failed commands), from
-  `logs.subscribe` with `sources: ["agent"]`. The **...** menu opens the logs, copies the
+  `logs.subscribe` with `sources: ["agent"]`. **All** opens the logs on the Agent
+  source and that slot; an action opens them with that action expanded, which for a
+  failed command shows its error code, diagnostic id and duration. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status. With control, it
   also runs **Reload** and **Stop** (see [Actions](#actions)).
 - **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native,

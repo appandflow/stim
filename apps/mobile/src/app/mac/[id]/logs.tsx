@@ -3,6 +3,12 @@ import { useLocalSearchParams } from 'expo-router';
 import { Logs } from '@/screens/logs';
 
 export default function LogsRoute() {
-  const { path, errors } = useLocalSearchParams<{ path: string; errors?: string }>();
-  return <Logs path={path} errorsOnly={errors === '1'} />;
+  const { path, ...params } = useLocalSearchParams<{
+    path: string;
+    errors?: string;
+    source?: string;
+    slot?: string;
+    at?: string;
+  }>();
+  return <Logs path={path} params={params} />;
 }

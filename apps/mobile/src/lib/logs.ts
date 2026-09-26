@@ -29,6 +29,17 @@ export const DEFAULT_FILTER: LogFilterState = {
   slot: null,
 };
 
+/** The filter the Logs screen opens with, from its route params. */
+export function initialFilter(params: { errors?: string; source?: string; slot?: string }): LogFilterState {
+  const source = SOURCES.find((s) => s.source === params.source)?.source;
+  return {
+    ...DEFAULT_FILTER,
+    errors: params.errors === '1',
+    ...(source ? { sources: [source] } : {}),
+    slot: params.slot || null,
+  };
+}
+
 /**
  * The same arguments apps/desktop passes to `stim logs`: every source selected sends no
  * `sources`, so "errors only" keeps the CLI's default scope.
@@ -260,7 +271,15 @@ export function viewEntry(entry: LogEntry, root: string, home: string | null | u
     else if (line.trim() !== '') details.push(clean(line));
   }
   details.push(...stackLines(entry.lead.stack).map(clean));
+  if (entry.lead.src === 'agent') details.push(...agentDetails(entry.lead.details));
   return { title, location, codeFrame, details };
+}
+
+function agentDetails(details: unknown): string[] {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return [];
+  return Object.entries(details).map(
+    ([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+  );
 }
 
 /** What Copy puts on the clipboard: the message and where it happened. */
