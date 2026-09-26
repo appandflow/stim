@@ -34,38 +34,22 @@ export function runStim(
   const child = spawn(process.execPath, [stimCli, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const label = `stim ${args[0]}`;
   let cancelled = false;
+  let failure: string | null = null;
   const chunks: Buffer[] = [];
   let size = 0;
   let stderr = '';
-  let resolveOutcome!: (result: CommandOutcome) => void;
-  const outcome = new Promise<CommandOutcome>((resolve) => (resolveOutcome = resolve));
-  const settle = (result: CommandOutcome) => {
-    clearTimeout(timer);
-    if (!cancelled) resolveOutcome(result);
-  };
-  const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-    if (code === 0) return settle({ ok: true, stdout: Buffer.concat(chunks).toString('utf8') });
-    const detail = stderr.trim();
-    settle({
-      ok: false,
-      message: `${label} exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}`,
-      stdout: Buffer.concat(chunks).toString('utf8'),
-    });
-  };
   const release = () => {
     child.stdout.destroy();
     child.stderr.destroy();
   };
   const fail = (message: string) => {
+    if (failure) return;
+    failure = message;
     release();
-    settle({ ok: false, message });
     void terminate(child);
   };
   const timer = setTimeout(() => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      release();
-      return finish(child.exitCode, child.signalCode);
-    }
+    if (child.exitCode !== null || child.signalCode !== null) return release();
     fail(`${label} did not finish within ${limits.timeoutMs / 1000} s.`);
   }, limits.timeoutMs);
   child.stdout.on('data', (chunk: Buffer) => {
@@ -77,8 +61,23 @@ export function runStim(
   child.stderr.on('data', (chunk: string) => {
     stderr = (stderr + chunk).slice(-STDERR_TAIL);
   });
-  child.on('error', (error) => settle({ ok: false, message: `${label} could not start (${error.message}).` }));
-  child.on('close', finish);
+  const outcome = new Promise<CommandOutcome>((resolve) => {
+    const settle = (result: CommandOutcome) => {
+      clearTimeout(timer);
+      if (!cancelled) resolve(result);
+    };
+    child.on('error', (error) => settle({ ok: false, message: `${label} could not start (${error.message}).` }));
+    child.on('close', (code, signal) => {
+      if (failure) return settle({ ok: false, message: failure });
+      if (code === 0) return settle({ ok: true, stdout: Buffer.concat(chunks).toString('utf8') });
+      const detail = stderr.trim();
+      settle({
+        ok: false,
+        message: `${label} exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}`,
+        stdout: Buffer.concat(chunks).toString('utf8'),
+      });
+    });
+  });
   return {
     outcome,
     cancel: () => {

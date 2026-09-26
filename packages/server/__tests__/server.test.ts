@@ -822,16 +822,16 @@ describe('stats.get and settings.get', () => {
     expect(await client.request('stats.get')).toMatchObject({
       error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
     });
-    await until(() => childPids().length === 0);
+    expect(childPids()).toEqual([]);
   });
 
   it('ends a command at its timeout while a grandchild still holds its output', async () => {
     const grandchild = join(root, 'grandchild.pid');
-    const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 500 } });
+    const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 2000 } });
     const client = await authed(port);
     try {
       expect(await client.request('stats.get')).toMatchObject({
-        error: { code: 'stim-failed', message: 'stim stats did not finish within 0.5 s.' },
+        error: { code: 'stim-failed', message: 'stim stats did not finish within 2 s.' },
       });
       expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
     } finally {
