@@ -69,7 +69,7 @@ describe('createRefreshScheduler', () => {
     let release: (() => void) | null = null;
     const scheduler = createRefreshScheduler({
       debounceMs: 250,
-      logsIntervalMs: 15_000,
+      lightIntervalMs: 15_000,
       run: async (kind) => {
         runs.push(kind);
         await new Promise<void>((resolve) => (release = resolve));
@@ -77,19 +77,19 @@ describe('createRefreshScheduler', () => {
     });
     scheduler.trigger('full', 0);
     await vi.advanceTimersByTimeAsync(0);
-    scheduler.trigger('logs');
+    scheduler.trigger('light');
     scheduler.trigger('full');
-    scheduler.trigger('logs');
+    scheduler.trigger('light');
     release!();
     await vi.advanceTimersByTimeAsync(250);
     expect(runs).toEqual(['full', 'full']);
 
-    scheduler.trigger('logs');
+    scheduler.trigger('light');
     release!();
     await vi.advanceTimersByTimeAsync(14_000);
     expect(runs).toEqual(['full', 'full']);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(runs).toEqual(['full', 'full', 'logs']);
+    expect(runs).toEqual(['full', 'full', 'light']);
     release!();
     scheduler.stop();
   });
@@ -98,28 +98,28 @@ describe('createRefreshScheduler', () => {
     const runs: RefreshKind[] = [];
     const scheduler = createRefreshScheduler({
       debounceMs: 250,
-      logsIntervalMs: 15_000,
+      lightIntervalMs: 15_000,
       run: async (kind) => void runs.push(kind),
     });
-    scheduler.trigger('logs');
+    scheduler.trigger('light');
     await vi.advanceTimersByTimeAsync(250);
-    expect(runs).toEqual(['logs']);
+    expect(runs).toEqual(['light']);
 
     for (let i = 0; i < 20; i++) {
-      scheduler.trigger('logs');
+      scheduler.trigger('light');
       await vi.advanceTimersByTimeAsync(500);
     }
-    expect(runs).toEqual(['logs']);
+    expect(runs).toEqual(['light']);
     await vi.advanceTimersByTimeAsync(5000);
-    expect(runs).toEqual(['logs', 'logs']);
+    expect(runs).toEqual(['light', 'light']);
 
-    scheduler.trigger('logs');
+    scheduler.trigger('light');
     await vi.advanceTimersByTimeAsync(1000);
     scheduler.trigger('full');
     await vi.advanceTimersByTimeAsync(250);
-    expect(runs).toEqual(['logs', 'logs', 'full']);
+    expect(runs).toEqual(['light', 'light', 'full']);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(runs).toEqual(['logs', 'logs', 'full']);
+    expect(runs).toEqual(['light', 'light', 'full']);
     scheduler.stop();
   });
 });
@@ -131,8 +131,8 @@ test('a log append needs only a log refresh; other state changes need a full one
   expect(statusChange('workspace', 'logs')).toBe('full');
   expect(statusChange('workspace', 'derived-data')).toBe(null);
   expect(statusChange('workspace', 'state.lock')).toBe(null);
-  expect(statusChange('logs', 'device.ndjson')).toBe('logs');
-  expect(statusChange('logs', null)).toBe('logs');
+  expect(statusChange('logs', 'device.ndjson')).toBe('light');
+  expect(statusChange('logs', null)).toBe('light');
   expect(statusChange('logs', 'device.ndjson.lock.claims')).toBe(null);
   expect(statusChange('leases', null)).toBe('full');
   expect(statusChange('eas', 'sessions.json')).toBe('full');
@@ -295,6 +295,54 @@ describe('stim status --watch --json', () => {
     await until(() => lines.length === 2, 20_000);
     expect(errors(lines[1]!)).toBe(1);
   }, 40_000);
+
+  test.skipIf(process.platform !== 'darwin')(
+    'machine usage refreshes on the light interval with no state change; skipped off macOS, where no simulator runs',
+    async () => {
+      const udid = 'AAAAAAAA-0000-4000-8000-000000000001';
+      saveConfig(
+        makeConfig({
+          projects: {
+            [join(root, 'app')]: { label: 'watched', platforms: { ios: { deviceUdid: udid, owned: true } } },
+          },
+        }),
+      );
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      const list = JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            { udid, name: 'stim-watched', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
+          ],
+        },
+      });
+      writeFileSync(join(bin, 'xcrun'), `#!/bin/sh\nprintf '%s' '${list}'\n`);
+      const count = join(root, 'ps.count');
+      writeFileSync(
+        join(bin, 'ps'),
+        [
+          '#!/bin/sh',
+          `n=0; [ -f '${count}' ] && read n < '${count}'; n=$((n + 1)); echo $n > '${count}'`,
+          `echo "100 1 1024 $n.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
+        ].join('\n'),
+      );
+      chmodSync(join(bin, 'xcrun'), 0o755);
+      chmodSync(join(bin, 'ps'), 0o755);
+      const cpu = (line: string) => JSON.parse(line).machine.owners[0].cpuPercent;
+      const startedAt = Date.now();
+      const { lines } = startWatch();
+      await until(() => lines.length > 0);
+      let seen = 0;
+      while (seen !== lines.length) {
+        seen = lines.length;
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+      }
+      const before = cpu(lines.at(-1)!);
+      await until(() => lines.length > seen, 28_000 - (Date.now() - startedAt));
+      expect(cpu(lines.at(-1)!)).toBeGreaterThan(before);
+    },
+    40_000,
+  );
 
   test.skipIf(process.platform === 'win32')(
     'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',

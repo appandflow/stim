@@ -8,13 +8,13 @@ import { parseSimctlList } from './devices/ios.ts';
 
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
-export const WATCH_LOGS_INTERVAL_MS = 15_000;
+export const WATCH_LIGHT_INTERVAL_MS = 15_000;
 const WATCH_SIMCTL_INTERVAL_MS = 5_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
 
-export type RefreshKind = 'full' | 'logs';
+export type RefreshKind = 'full' | 'light';
 
 export interface RefreshScheduler {
   trigger(kind?: RefreshKind, delayMs?: number): void;
@@ -24,16 +24,16 @@ export interface RefreshScheduler {
 /**
  * Coalesces change signals into refreshes: a burst of full triggers runs `run('full')` once after `debounceMs` of
  * quiet, at most one run is in flight, and a trigger that arrives during a run causes exactly one more run after it.
- * A `logs` trigger runs `run('logs')` no sooner than `debounceMs` from the trigger and `logsIntervalMs` from the start
- * of the previous run, unless a queued full run covers it; later log triggers do not postpone it.
+ * A `light` trigger runs `run('light')` no sooner than `debounceMs` from the trigger and `lightIntervalMs` from the
+ * start of the previous run, unless a queued full run covers it; later light triggers do not postpone it.
  */
 export function createRefreshScheduler({
   debounceMs,
-  logsIntervalMs = 0,
+  lightIntervalMs = 0,
   run,
 }: {
   debounceMs: number;
-  logsIntervalMs?: number;
+  lightIntervalMs?: number;
   run: (kind: RefreshKind) => Promise<void>;
 }): RefreshScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -65,10 +65,10 @@ export function createRefreshScheduler({
       pending = pending === 'full' ? 'full' : kind;
       return;
     }
-    if (kind === 'logs') {
+    if (kind === 'light') {
       if (timer) return;
-      queued = 'logs';
-      timer = setTimeout(() => void fire(), Math.max(delayMs, lastRunAt + logsIntervalMs - Date.now()));
+      queued = 'light';
+      timer = setTimeout(() => void fire(), Math.max(delayMs, lastRunAt + lightIntervalMs - Date.now()));
       return;
     }
     if (timer) clearTimeout(timer);
@@ -89,13 +89,13 @@ export function createRefreshScheduler({
 type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas';
 
 /**
- * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `logs` for a log append, which can
+ * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append, which can
  * change only the log-derived fields, `full` for anything else that can change the payload, null for none. A null
  * name means the platform did not report one.
  */
 export function statusChange(dir: WatchedDir, name: string | null): RefreshKind | null {
   if (name?.includes('.lock')) return null;
-  if (dir === 'logs') return 'logs';
+  if (dir === 'logs') return 'light';
   if (name === null) return 'full';
   switch (dir) {
     case 'home':

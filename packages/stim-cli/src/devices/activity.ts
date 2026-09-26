@@ -131,20 +131,31 @@ export function agentDeviceLiveness(record: AgentDeviceRecord, startOf: (pid: nu
 
 export interface HostProcess {
   pid: number;
+  ppid: number;
+  rssKb: number;
+  cpuPercent: number;
   startedAt: string | null;
   command: string;
 }
 
+const HOST_PROCESS_COLUMNS = 'pid=,ppid=,rss=,%cpu=,lstart=,command=';
+
 export function parseProcessTable(output: string): HostProcess[] {
   const rows: HostProcess[] = [];
   for (const line of output.split('\n')) {
-    const match = /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
+    const match =
+      /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+(?:[.,]\d+)?)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(
+        line,
+      );
     if (!match) continue;
-    const at = Date.parse(match[2]!);
+    const at = Date.parse(match[5]!);
     rows.push({
       pid: Number(match[1]),
+      ppid: Number(match[2]),
+      rssKb: Number(match[3]),
+      cpuPercent: Number(match[4]!.replace(',', '.')),
       startedAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
-      command: match[3]!,
+      command: match[6]!,
     });
   }
   return rows;
@@ -281,7 +292,7 @@ export function createDeviceProcessTables(): DeviceProcessTables {
   return {
     host() {
       if (host === undefined) {
-        const output = exec.runFileQuiet('ps', ['-axww', '-o', 'pid=,lstart=,command='], { timeoutMs: 5000 });
+        const output = exec.runFileQuiet('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 5000 });
         host = output === null ? null : parseProcessTable(output);
       }
       return host;

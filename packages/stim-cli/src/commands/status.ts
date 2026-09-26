@@ -3,7 +3,7 @@ import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
   WATCH_FALLBACK_MS,
-  WATCH_LOGS_INTERVAL_MS,
+  WATCH_LIGHT_INTERVAL_MS,
   watchStatusSources,
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
@@ -50,6 +50,7 @@ import {
   withStateReadCache,
   type DeviceAppProcess,
   type LastBuildReport,
+  type MachineUsageState,
   type StatusPayload,
 } from '@stim-cli/core/state';
 import {
@@ -77,7 +78,8 @@ import {
   unprovisionedWorktrees,
   withWebFacts,
 } from '../status.ts';
-import { readWebRecord, webFacts } from '../web/state.ts';
+import { readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
+import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 
@@ -120,6 +122,9 @@ interface StatusSnapshot {
   simctlError: string | null;
   cwdRoot: string | null;
   tables: DeviceProcessTables;
+  machine: MachineUsageState | null;
+  roots: WorkspaceProcessRoots[];
+  simNames: Record<string, string>;
 }
 
 function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): Promise<StatusSnapshot> {
@@ -200,10 +205,22 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
   const leaseNow = Date.now();
   const leaseFiles = listLeaseFiles();
   const leases = deviceLeaseStates(leaseFiles, { root: cwdRoot, now: leaseNow });
+  const roots: WorkspaceProcessRoots[] = [];
   for (const [i, [path, proj]] of projects.entries()) {
     const { metro, supervisor } = running[i]!;
     const saved = readWorkspaceState(path);
     const builds = workspaceBuilds(path, saved, history);
+    const web = webFacts(readWebRecord(path));
+    const activeBuild = parseActiveBuild(saved?.[ACTIVE_BUILD_KEY]);
+    roots.push({
+      path,
+      supervisorPid: supervisor?.status === 'ours' ? supervisor.pid : null,
+      build:
+        activeBuild && builds.build?.state === 'running'
+          ? { platform: activeBuild.platform, pid: activeBuild.claim.pid }
+          : null,
+      browserPids: browserPids(web),
+    });
     const launches = readWorkspaceLaunches(path);
     launchesByState.push(launches);
     states.push(
@@ -229,7 +246,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
             now: leaseNow,
           },
         ),
-        webFacts(readWebRecord(path)),
+        web,
       ),
     );
     const state = states[states.length - 1];
@@ -241,6 +258,10 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
 
   const tables = createDeviceProcessTables();
   readDeviceProcesses(states, tables, { projects, launchesByState });
+  const sims = Object.values(simsByUdid);
+  const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
+  const busy = sims.some((sim) => sim.state === 'Booted');
+  const machine = readMachineUsage({ states, roots, simNames, tables, busy });
   return {
     projects,
     states,
@@ -252,18 +273,57 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     simctlError,
     cwdRoot,
     tables,
+    machine,
+    roots,
+    simNames,
   };
 }
 
+function browserPids(web: WebFacts | null): number[] {
+  if (!web) return [];
+  const chrome = web.record.chromeProcess?.pid;
+  if (web.status === 'running') return [web.record.pid, ...(chrome ? [chrome] : [])];
+  return web.status === 'orphaned' && chrome ? [chrome] : [];
+}
+
 /**
- * Rereads only what log appends can change, the error counts and device activity, and reuses the process tables of
- * the snapshot's full read, so it runs no subprocess.
+ * Attributes the host process table to its owners. Reads the table only when a simulator is booted, a workspace is
+ * live or a build runs, so an idle machine runs no `ps`.
  */
-function refreshLogFacts(snapshot: StatusSnapshot): void {
+function readMachineUsage({
+  states,
+  roots,
+  simNames,
+  tables,
+  busy,
+}: {
+  states: EnvironmentState[];
+  roots: WorkspaceProcessRoots[];
+  simNames: Record<string, string>;
+  tables: DeviceProcessTables;
+  busy: boolean;
+}): MachineUsageState | null {
+  const needed = busy || states.some((state) => state.live || state.build?.state === 'running');
+  const processes = needed ? tables.host() : null;
+  return processes ? attributeMachineUsage({ processes, environments: states, roots, simNames }) : null;
+}
+
+/**
+ * Rereads only the error counts, device activity and machine usage. With `machine`, and when the snapshot measured
+ * machine usage, it reads the host process table again; it reuses every other subprocess fact of the full read.
+ */
+function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): void {
+  if (machine && snapshot.machine) {
+    const fresh = createDeviceProcessTables();
+    snapshot.tables = { host: fresh.host, android: snapshot.tables.android };
+  }
   withStateReadCache(() => {
     for (const state of snapshot.states) state.logs = logFacts(state.path);
     readDeviceProcesses(snapshot.states, snapshot.tables, null);
   });
+  if (machine && snapshot.machine) {
+    snapshot.machine = readMachineUsage({ ...snapshot, busy: true });
+  }
 }
 
 function renderStatus(
@@ -277,6 +337,7 @@ function renderStatus(
     simsAvailable,
     simctlError,
     cwdRoot,
+    machine,
   }: StatusSnapshot,
   json: boolean,
 ): string[] {
@@ -296,6 +357,7 @@ function renderStatus(
         deviceLeases: leases,
         unprovisionedWorktrees: orphanWorktrees,
         simctlAvailable: simsAvailable,
+        machine,
       } satisfies StatusPayload),
     );
     return out;
@@ -436,11 +498,11 @@ async function watchStatus(json: boolean): Promise<void> {
   let sources: StatusSources | null = null;
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
-    logsIntervalMs: WATCH_LOGS_INTERVAL_MS,
+    lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
     run: async (kind) => {
       let text: string;
       try {
-        if (kind === 'logs' && snapshot) refreshLogFacts(snapshot);
+        if (kind === 'light' && snapshot) refreshLightFacts(snapshot, json);
         else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
@@ -455,8 +517,10 @@ async function watchStatus(json: boolean): Promise<void> {
     },
   });
   const fallback = setInterval(() => scheduler.trigger('full'), WATCH_FALLBACK_MS);
+  const machine = setInterval(() => json && snapshot?.machine && scheduler.trigger('light'), WATCH_LIGHT_INTERVAL_MS);
   const finish = () => {
     clearInterval(fallback);
+    clearInterval(machine);
     scheduler.stop();
     sources?.stop();
     process.exit(0);

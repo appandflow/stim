@@ -249,6 +249,10 @@ export interface EnvironmentState {
   slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
   live: boolean;
+  /**
+   * A fixed estimate, not a measurement: a set amount per booted simulator, detected emulator, running Metro and
+   * running Chrome. `capacity.committedMb` sums it. What the workspace's processes use now is in `machine`.
+   */
   memoryMb: number;
   warnings: string[];
   issues: StatusIssue[];
@@ -282,6 +286,7 @@ export interface EnvironmentState {
   builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
 }
 
+/** `committedMb` sums the environments' estimated `memoryMb`; `overCapacity` is that sum over 60% of `totalMemoryMb`. */
 export interface StatusCapacity {
   liveCount: number;
   committedMb: number;
@@ -303,6 +308,38 @@ export interface DeviceLeaseState {
   parsed: boolean;
 }
 
+/** Every kind of process owner the status machine section reports. */
+export const MACHINE_OWNER_KINDS = ['simulator', 'emulator', 'metro', 'build', 'browser', 'server', 'shared'] as const;
+
+export type MachineOwnerKind = (typeof MACHINE_OWNER_KINDS)[number];
+
+/**
+ * One thing using this Mac's CPU and memory now. Each process is counted in exactly one owner: the one whose root
+ * process is its nearest ancestor. `workspace` and `slot` (absent for the default slot) name the workspace a
+ * simulator, emulator, Metro, build or Chrome belongs to; a device no workspace records has a null workspace, and
+ * machine-wide processes are `shared`. `id` is the simulator's UDID, the emulator's AVD name, Metro's port as text,
+ * the build's platform, or null. `owned` is true only for what Stim started and stops: a workspace's owned device,
+ * Metro, build or Chrome. `cpuPercent` is `ps` %CPU summed over the owner's processes, where 100 is one core.
+ * `residentMb` sums their resident set sizes; pages shared between processes count once per process, so a
+ * simulator, whose processes all map the runtime's shared libraries, reports well above its physical footprint.
+ */
+export interface MachineOwner {
+  kind: MachineOwnerKind;
+  name: string;
+  workspace: string | null;
+  slot?: string;
+  id: string | null;
+  owned: boolean;
+  cpuPercent: number;
+  residentMb: number;
+  processes: number;
+}
+
+/** Where this machine's CPU and resident memory go, from one pass over the host process table. */
+export interface MachineUsageState {
+  owners: MachineOwner[];
+}
+
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
   environments: (EnvironmentState & { labelOnly?: true })[];
@@ -310,4 +347,6 @@ export interface StatusPayload {
   deviceLeases: DeviceLeaseState[];
   unprovisionedWorktrees: WorktreeFacts[];
   simctlAvailable: boolean;
+  /** Null when nothing runs that status attributes, so it read no process table, or when the table was unreadable. */
+  machine: MachineUsageState | null;
 }
