@@ -75,8 +75,9 @@ other apps or other workspaces' devices.
   stim ios                             # or: stim android, or: stim web
 
 For the web target, stim web opens the page in a Stim-owned headless Chrome
-and captures its console and errors in stim logs. Expo web needs no setup;
-any other web server needs web.url. Read stim guide web first.
+and captures its console and errors in stim logs. Expo web needs the
+react-dom, react-native-web and @expo/metro-runtime dependencies; any other
+web server needs web.url. Read stim guide web first.
 
 For a project using EAS development builds, read stim guide lifecycle eas to
 select a profile from eas.json for the requested target, then run

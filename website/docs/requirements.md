@@ -74,6 +74,14 @@ Install the host tools and JavaScript dependencies before building. Stim runs
 the project pins CocoaPods and Bundler is available, it installs missing bundled
 gems and runs `bundle exec pod install`. Run `stim doctor` to check the setup.
 
+## Web
+
+`stim web` needs Google Chrome or Chromium. On macOS Stim looks in
+`/Applications` and `~/Applications`; elsewhere it looks for `google-chrome`,
+`google-chrome-stable`, `chromium` or `chromium-browser` on `PATH`, and on
+Windows in Program Files. Stim never installs a browser. Expo web also needs
+`react-dom`, `react-native-web` and `@expo/metro-runtime`.
+
 ## Optional remote devices
 
 - The `proxy` backend needs an Agent Device daemon URL and token.

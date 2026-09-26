@@ -29,7 +29,7 @@ with stim ports get, start it with strict-port behavior, and point web.url at
 it. {port:<label>} in web.url becomes that named port, {port:metro} the Metro
 port:
 
-  VITE_PORT="$(stim ports get web)" pnpm dev
+  pnpm exec vite --port "$(stim ports get web)" --strictPort
   stim settings set web.url 'http://localhost:{port:web}/'
   stim web
 
@@ -68,8 +68,9 @@ Records go to web.ndjson in the workspace log directory, all with
 platform "web":
   src client   console calls at their level (console.error is error) and
                uncaught errors and rejections, with stack frames
-  src device   failed requests: a failed page document is error, an HTTP 5xx
-               or network failure error, a 4xx warn; browser messages such
+  src device   failed requests: a failed page document is error whatever its
+               status; another request's network failure or HTTP 5xx is
+               error, a 4xx warn, a canceled request debug; browser messages such
                as CSP violations; the browser's own lifecycle
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).

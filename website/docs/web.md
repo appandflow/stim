@@ -51,15 +51,16 @@ Start the server yourself on a named port and point `web.url` at it. In
 `{port:metro}` its Metro port.
 
 <StimTabs
-code={`VITE_PORT="$(stim ports get web)" pnpm dev
+code={`pnpm exec vite --port "$(stim ports get web)" --strictPort
 stim settings set web.url 'http://localhost:{port:web}/'
 stim web`}
 />
 
 In a monorepo where the web app is its own package, such as `apps/web` beside
-`apps/mobile`, run the commands from the web package. `stim ports` and
-`stim web` resolve to the one Stim app registered in the same Git worktree, so
-the port and the browser belong to that app's workspace. Register the app
+`apps/mobile`, run the commands from the web package. When that package depends
+on neither `react-native` nor `expo` and holds no named ports of its own,
+`stim ports` and `stim web` resolve to the one Stim app registered in the same
+Git worktree, so the port and the browser belong to that app's workspace. Register the app
 first with `stim start`, `stim ios` or `stim android`. Other commands keep the
 nearest package, so put `web.url` in the app's `.stim.json`, and run
 `stim settings`, `logs`, `reload` and `stop` from the app directory.
@@ -91,9 +92,10 @@ Page records carry `platform: "web"`:
 
 - `client`: console calls at their level, and uncaught errors with stack
   frames.
-- `device`: failed requests (a failed document or network error is an error,
-  an HTTP 4xx a warning), browser messages such as CSP violations, and the
-  browser's own lifecycle.
+- `device`: failed requests, browser messages such as CSP violations, and the
+  browser's own lifecycle. A failed page document is an error, whatever its
+  status. For other requests, a network failure or an HTTP 5xx is an error, a
+  4xx a warning, and a canceled request debug.
 
 Expo also prints web console calls on Metro, so they can appear twice: once
 from the page and once from Metro.

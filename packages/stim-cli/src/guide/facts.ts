@@ -334,15 +334,16 @@ per session, with the preview URL.`,
 
   platform        "web"
   browser         "chrome"
-  version         the Chrome product, such as "Chrome/153.0.8010.49"
+  version         the Chrome product, such as "Chrome/153.0.8010.49", or null
   running         true: the owned Chrome answered and holds the page
-  pid             the owned Chrome's browser process
-  supervisorPid   the Stim process holding its DevTools session
+  pid             the owned Chrome's browser process; null when not running
+  supervisorPid   the Stim process holding its DevTools session, or null
   url             the page opened, web.url with its ports filled in
   headless        false only with --headed
   viewport        "desktop" | "phone" (web.viewport)
   profile         the Stim-owned Chrome user data directory
-  cdpEndpoint     http://127.0.0.1:<port>, the reserved DevTools endpoint
+  cdpEndpoint     http://127.0.0.1:<port>, the reserved DevTools endpoint, or
+                  null when not running
   reused          true when the running Chrome navigated again instead of
                   starting: same --headed, viewport and certificate options
   launched        true | "bundling" | "unverified" (see \`guide web\`)
@@ -375,7 +376,7 @@ per session, with the preview URL.`,
                   costs-time finding with a PATH or installation remedy
 
 ON FAILURE
-  \`start\`, \`ios\` and \`android\` all print the error contract instead,
+  \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
   still one line on stdout, and exit 1:
 
     { "code": "STIM_METRO_TIMEOUT", "message": "...", "remedy": "..." }
@@ -401,7 +402,8 @@ ON FAILURE
     { "root": "...", "ok": false, "code": "STIM_STOP_BLOCKED", "message": "...", "remedy": "..." }
 
   device.web is present when the workspace had an owned Chrome:
-  { status, label: "Chrome", kind?, reason?, remedy? }. status is "shut-down"
+  { status, label: "Chrome", kind?, reason?, remedy? }; kind is null when no
+  kind applies. status is "shut-down"
   when Chrome closed (its profile is kept), else "skipped" (its identity could
   not be verified) or "failed", and ok is then false.
 

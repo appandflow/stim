@@ -8,7 +8,8 @@ import { teardownOwnedBrowser } from '../devices/teardown.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { findChrome } from '../web/chrome.ts';
-import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
+import { runReload } from '../commands/reload.ts';
+import { liveWebRecord } from '../web/page.ts';
 import { readWebRecord, webLogFile } from '../web/state.ts';
 import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 
@@ -78,7 +79,7 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
   );
 
   const loads = records().filter((entry) => entry.event === 'web_page_loaded').length;
-  await sendToOwnedPage(record, 'Page.reload');
+  expect(await runReload({ root, platform: 'web' })).toMatchObject({ ok: true, facts: { strategy: 'cdp' } });
   const reloadDeadline = Date.now() + 5000;
   while (records().filter((entry) => entry.event === 'web_page_loaded').length === loads) {
     assert(Date.now() < reloadDeadline, 'Page.reload produced no load event');
