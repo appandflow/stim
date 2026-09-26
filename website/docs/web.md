@@ -88,6 +88,60 @@ An `https://` URL on a plain HTTP server fails with `net::ERR_SSL_PROTOCOL_ERROR
 and an `http://` URL on an HTTPS server with `net::ERR_EMPTY_RESPONSE`. The
 remedy line names the scheme to use.
 
+### Monorepo recipe: a Vite package with a base path and HTTPS
+
+In this layout, `apps/web` runs Vite through its `dev` script, serves the app
+under `/apps/groups/`, and uses `@vitejs/plugin-basic-ssl`. `apps/mobile` is
+the Stim app. Set the page once per repository. The `repo` layer is shared by
+every worktree, so a new worktree only registers the app and starts the server:
+
+<StimTabs
+code={`cd apps/mobile
+stim ports get web
+cd ../web
+stim settings set web.url 'https://localhost:{port:web}/apps/groups/' --scope repo
+stim settings set web.ignoreCertificateErrors true --scope repo
+pnpm dev --port "$(stim ports get web)" --strictPort`}
+/>
+
+Keep the dev server running in its own terminal, then work from `apps/web`:
+
+<StimTabs
+code={`stim web
+stim logs --errors
+stim reload web
+stim stop`}
+/>
+
+- `stim ports get web` from the app directory registers the app without
+  starting Metro. Run it before any `ports` or `web` command in the web package.
+  A reservation made there first keeps the web package as its own workspace
+  until you release it and run `stim stop`.
+- Pass `--port` and `--strictPort` through the dev script. Otherwise Vite binds
+  its configured port and moves to the next free one when that is taken.
+- Put the base path in `web.url`. A path outside it can reach the dev server's
+  proxy instead of the app.
+- The certificate and scheme remedies print `--scope workspace`, which
+  overrides the `repo` value for one worktree only.
+- API calls that the dev server proxies to a backend that is not running show
+  up as device errors in `stim logs --errors`. The page still loads.
+- `stim stop` closes Chrome but leaves the dev server running. Use
+  `stim ports stop web` to stop it. In a linked worktree, `stim worktree remove`
+  stops both and deletes the profile.
+
+Try it with an agent:
+
+```text
+Read stim guide web. Our web app is apps/web (Vite, served under
+/apps/groups/, HTTPS with a self-signed certificate) and our Stim app is
+apps/mobile. Run stim ports get web in apps/mobile. From apps/web, set web.url
+to https://localhost:{port:web}/apps/groups/ and web.ignoreCertificateErrors
+to true at --scope repo if stim settings shows them unset. Start
+pnpm dev --port "$(stim ports get web)" --strictPort in the background, then
+run stim web and stim logs --errors. Tell me whether the page loaded and which
+errors it logged, and follow any printed remedy.
+```
+
 ## What `launched` means
 
 `stim web --json` reports `launched` from evidence inside the owned page, not

@@ -36,9 +36,10 @@ port:
 In a monorepo whose web app is its own package (apps/web beside apps/mobile),
 stim ports, web, settings, logs, reload, stop and status run from the web
 package resolve to the one Stim app registered in the same Git worktree; each
-names the app on stderr, and status stars it. The port, the browser, web.url and the logs all belong to
-that app's workspace, so every command can run from the web package. Register
-the app first, from its directory. See stim guide ports for the exact rule.
+names the app on stderr, and status stars it. The port, the browser, web.url
+and the logs all belong to that app's workspace, so every command can run from
+the web package. Register the app first, from its directory. See stim guide
+ports for the exact rule.
 
 HTTPS dev servers with a self-signed certificate, such as Vite with
 @vitejs/plugin-basic-ssl, fail with net::ERR_CERT_AUTHORITY_INVALID until
@@ -48,9 +49,37 @@ owned profile only:
   stim settings set web.ignoreCertificateErrors true --scope workspace
 An https:// URL on a plain HTTP server fails with ERR_SSL_PROTOCOL_ERROR, and
 an http:// URL on an HTTPS server with ERR_EMPTY_RESPONSE; the remedy line
-prints the settings command that switches the scheme. web.viewport phone gives the page a
-390x844 touch screen at 3x instead of the 1280x800 desktop window. See stim
-guide settings.
+prints the settings command that switches the scheme. web.viewport phone
+gives the page a 390x844 touch screen at 3x instead of the 1280x800 desktop
+window. See stim guide settings.
+
+MONOREPO RECIPE: A VITE PACKAGE WITH A BASE PATH AND HTTPS
+
+apps/web runs Vite through its dev script, serves the app under /apps/groups/,
+and uses @vitejs/plugin-basic-ssl; apps/mobile is the Stim app.
+
+  cd apps/mobile && stim ports get web     # registers the app; no Metro
+  cd ../web
+  stim settings set web.url 'https://localhost:{port:web}/apps/groups/' --scope repo
+  stim settings set web.ignoreCertificateErrors true --scope repo
+  pnpm dev --port "$(stim ports get web)" --strictPort   # keep it running
+  stim web
+  stim logs --errors
+  stim reload web
+  stim stop               # closes Chrome; stim ports stop web stops Vite
+  stim worktree remove    # in a linked worktree: Chrome, Vite and profile
+
+The repo layer is shared by every worktree of the repository, so a new
+worktree skips the two settings lines; the certificate and scheme remedies
+print --scope workspace, which overrides it for one worktree only. Run ports
+get from the app directory before any ports or web command in the web
+package: a reservation made there first keeps the web package as its own
+workspace until you release it and stop. Pass --port and --strictPort
+through the dev script: Vite otherwise binds its config default and moves to
+the next free port when that one is taken. Put the base path in web.url: a
+path outside it can reach the dev server's proxy instead of the app. API
+calls the dev server proxies to a backend that is not running fail as device
+errors in stim logs --errors; the page still loads.
 
 LAUNCHED
 
