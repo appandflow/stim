@@ -10,7 +10,8 @@ import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
 import { useMacById } from '@/hooks/mac-connection';
 import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
-import { attentionGroups, devicesOf, workspaceNames, type AttentionGroup } from '@/lib/workspaces';
+import { attentionGroups, devicesOf, workspaceTitleAt, type AttentionGroup } from '@/lib/workspaces';
+import type { StatusPayload } from '@/protocol/types';
 import { mono, useColors } from '@/theme';
 
 export function MacStatus({ id }: { id: string }) {
@@ -152,28 +153,36 @@ export function MacStatus({ id }: { id: string }) {
             <Line
               key={`${env.path}\n${device.platform}\n${device.slot}`}
               label={`${device.platform === 'ios' ? 'iOS' : 'Android'} \u00B7 ${device.model}`}
-              value={workspaceNames(env.path).title}
+              value={workspaceTitleAt(env.path, status)}
             />
           ))}
           {status.deviceLeases.map((lease) => (
             <Line
               key={`${lease.platform}\n${lease.id ?? lease.path}`}
               label={`${lease.deviceName ?? lease.id ?? 'Device'} \u00B7 leased`}
-              value={workspaceNames(lease.path).title}
+              value={workspaceTitleAt(lease.path, status)}
               warn={lease.expired}
             />
           ))}
         </Section>
       ) : null}
 
-      {attention.length > 0 ? <NeedsAttention groups={attention} home={home} /> : null}
+      {attention.length > 0 ? <NeedsAttention groups={attention} home={home} status={status} /> : null}
     </ScrollView>
   );
 }
 
 const COLLAPSED_GROUPS = 3;
 
-function NeedsAttention({ groups, home }: { groups: AttentionGroup[]; home: string | null | undefined }) {
+function NeedsAttention({
+  groups,
+  home,
+  status,
+}: {
+  groups: AttentionGroup[];
+  home: string | null | undefined;
+  status: StatusPayload | null;
+}) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? groups : groups.slice(0, COLLAPSED_GROUPS);
@@ -183,8 +192,8 @@ function NeedsAttention({ groups, home }: { groups: AttentionGroup[]; home: stri
       {shown.map((group) => (
         <View key={group.path} style={styles.group}>
           <View style={styles.groupHeader}>
-            <Text style={[styles.groupTitle, { color: colors.text }]} numberOfLines={1}>
-              {workspaceNames(group.path).title}
+            <Text style={[styles.groupTitle, { color: colors.text }]} numberOfLines={1} ellipsizeMode="middle">
+              {workspaceTitleAt(group.path, status)}
             </Text>
             <Text style={{ color: group.live ? colors.live : colors.tertiary, fontSize: 12 }}>
               {group.live ? 'live' : 'idle'}

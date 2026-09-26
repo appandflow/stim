@@ -4,7 +4,7 @@ import {
   pathInCheckout,
   projectOf,
   repositoryRoots,
-  workspaceNames,
+  workspaceTitle,
   type DeviceRef,
 } from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
@@ -39,7 +39,7 @@ export function mergeWorkspaces(macs: MacSnapshot[]): HomeItem[] {
         macId: mac.id,
         macName: mac.name,
         project: projectOf(env, roots).name,
-        title: workspaceNames(env.path).title,
+        title: workspaceTitle(env, roots),
         inCheckout: pathInCheckout(env, roots),
         env,
       });

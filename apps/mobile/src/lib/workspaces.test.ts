@@ -10,6 +10,8 @@ import {
   projectOf,
   repositoryRoots,
   runningBuild,
+  workspaceTitle,
+  workspaceTitleAt,
 } from '@/lib/workspaces';
 import type { EnvironmentState, StatusIssue, StatusPayload } from '@/protocol/types';
 
@@ -45,6 +47,33 @@ describe('pathInCheckout', () => {
     expect(pathInCheckout(env('/u/tlon-apps/apps/tlon-mobile'), roots)).toBe('apps/tlon-mobile');
     expect(pathInCheckout(env('/u/tlon-apps/.worktrees/chat'), roots)).toBeNull();
     expect(pathInCheckout(env('/u/stim'), roots)).toBeNull();
+  });
+});
+
+describe('workspaceTitle', () => {
+  const roots = ['/u/stim', '/u/tlon-apps'];
+  const linked = (path: string, checkout: string, branch?: string) =>
+    env(path, { worktree: { path: checkout, repository: '/u/stim', ...(branch ? { branch } : {}) } });
+
+  it('names a linked worktree by its branch, else by its folder', () => {
+    expect(workspaceTitle(linked('/u/stim-1373/apps/mobile', '/u/stim-1373', 'feat/1373-zoom'), roots)).toBe(
+      'feat/1373-zoom',
+    );
+    expect(workspaceTitle(linked('/u/wt-roadmap/apps/mobile', '/u/wt-roadmap'), roots)).toBe('wt-roadmap');
+    expect(workspaceTitle(env('/u/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile'), roots)).toBe('chat-perf');
+    expect(workspaceTitle(env('/u/stim/.claude/worktrees/1123/apps/mobile', { worktree: null }), roots)).toBe('1123');
+  });
+
+  it('names a main checkout, nested app or not, by its project', () => {
+    expect(workspaceTitle(env('/u/stim/apps/mobile', { worktree: null }), roots)).toBe('stim');
+    expect(workspaceTitle(env('/u/tlon-apps'), roots)).toBe('tlon-apps');
+  });
+
+  it('falls back to the path when status does not list the workspace', () => {
+    const status = { environments: [linked('/u/stim-1373/apps/mobile', '/u/stim-1373', 'feat/1373-zoom')] };
+    expect(workspaceTitleAt('/u/stim-1373/apps/mobile', status)).toBe('feat/1373-zoom');
+    expect(workspaceTitleAt('/u/tlon-apps/.worktrees/gone/apps/tlon-mobile', status)).toBe('gone');
+    expect(workspaceTitleAt('/u/stim-1373/apps/mobile', null)).toBe('mobile');
   });
 });
 

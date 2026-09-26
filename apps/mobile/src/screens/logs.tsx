@@ -25,7 +25,7 @@ import {
   stackLines,
   type LogFilterState,
 } from '@/lib/logs';
-import { workspaceNames } from '@/lib/workspaces';
+import { workspaceTitleAt } from '@/lib/workspaces';
 import type { LogLevel, LogRecord } from '@/protocol/types';
 import { mono, useColors, type Colors } from '@/theme';
 
@@ -82,7 +82,7 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <Stack.Screen options={{ title: `Logs \u00B7 ${workspaceNames(path).title}` }} />
+      <Stack.Screen options={{ title: `Logs \u00B7 ${workspaceTitleAt(path, status)}` }} />
       <ConnectionBanner state={state} />
       <View style={[styles.filters, { borderBottomColor: colors.border }]}>
         <View style={styles.row}>
