@@ -140,6 +140,11 @@ struct DeviceTile: View {
     }
   }
 
+  private var isPhysical: Bool {
+    if case .android(_, let avd) = device { return avd.physical }
+    return false
+  }
+
   private var showsStoppedBar: Bool {
     if case .remote = device { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
@@ -149,7 +154,7 @@ struct DeviceTile: View {
     HStack(spacing: 10) {
       Text(
         run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
-          ?? "Not connected."
+          ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
       )
       .font(Theme.body(12))
       .foregroundStyle(Theme.secondary)

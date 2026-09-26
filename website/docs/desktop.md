@@ -58,7 +58,7 @@ after a failed build, and a **Check** button that predicts the next build with
 
 When a device is up but the app is not running on it, because it crashed, was
 closed or was never launched there, the device shows **App not running**. On a
-Stim-owned simulator or emulator it also has a **Run** button; a physical device
+Stim-owned simulator or emulator it also has a **Run** button; any other device
 has none.
 
 ## Show devices in the app
