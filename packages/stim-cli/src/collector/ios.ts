@@ -54,6 +54,12 @@ export const NOISE_RULES: NoiseRule[] = [
     messageEquals:
       'RCTScrollViewComponentView implements focusItemsInRect: - caching for linear focus movement is limited as long as this view is on screen.',
   },
+  {
+    id: 'cfnetwork-performance-diagnostic',
+    exactSubsystem: 'com.apple.runtime-issues',
+    category: 'CFNetwork Performance Diagnostic',
+    level: 'warn',
+  },
 ];
 
 interface NoiseRule {
@@ -64,6 +70,7 @@ interface NoiseRule {
   messageEquals?: string;
   messagePrefix?: string[];
   messageIncludes?: string[];
+  level?: 'warn';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -82,20 +89,22 @@ function ruleMatches(
   return true;
 }
 
-export function noiseRuleId(event: LogStreamEvent): string | null {
+function matchingNoiseRule(event: LogStreamEvent): NoiseRule | undefined {
   const subsystem = typeof event?.subsystem === 'string' ? event.subsystem : '';
   const category = typeof event?.category === 'string' ? event.category : '';
   const message = typeof event?.eventMessage === 'string' ? event.eventMessage : '';
-  for (const rule of NOISE_RULES) {
-    if (ruleMatches(rule, { subsystem, category, message })) return rule.id;
-  }
-  return null;
+  return NOISE_RULES.find((rule) => ruleMatches(rule, { subsystem, category, message }));
+}
+
+export function noiseRuleId(event: LogStreamEvent): string | null {
+  return matchingNoiseRule(event)?.id ?? null;
 }
 
 export function levelForEvent(event: LogStreamEvent): string {
   const level = levelFromMessageType(event?.messageType);
   if (level !== 'error' && level !== 'fatal') return level;
-  return noiseRuleId(event) ? 'info' : level;
+  const rule = matchingNoiseRule(event);
+  return rule ? (rule.level ?? 'info') : level;
 }
 
 export function procFromImagePath(path: unknown): string | null {
