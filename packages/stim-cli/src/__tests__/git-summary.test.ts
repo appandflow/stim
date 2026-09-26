@@ -135,33 +135,40 @@ describe('readWorktreeGit', () => {
     expect(statusReads).toBe(reads + 1);
 
     git(worktree.path, 'push', '-q');
-    expect(await read()).toMatchObject({ ahead: 0 });
+    expect(await read()).toMatchObject({ ahead: 0, mergedInto: null });
     expect(statusReads).toBe(reads + 2);
+
+    git(worktree.repository, 'merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
+    git(worktree.repository, 'push', '-q', 'origin', 'main');
+    expect(await read()).toMatchObject({ mergedInto: 'origin/main' });
+    expect(statusReads).toBe(reads + 3);
 
     writeFileSync(join(worktree.path, 'b.txt'), 'edited\n');
     expect(await read()).toMatchObject({ changed: 1 });
-    expect(statusReads).toBe(reads + 2);
+    expect(statusReads).toBe(reads + 3);
     vi.setSystemTime(Date.now() + 60_000);
     expect(await read()).toMatchObject({ changed: 2 });
-    expect(statusReads).toBe(reads + 3);
+    expect(statusReads).toBe(reads + 4);
   });
 
   test('a worktree git still lists after its directory was deleted is not reread until it comes back', async () => {
     const worktree = linkedWorktree();
     const read = async () =>
       (await readWorktreeGit([worktree], { skip: () => false, maxAgeMs: 60_000 })).get(worktree.path);
+    await read();
+    const reads = statusReads;
     rmSync(worktree.path, { recursive: true, force: true });
     expect(await read()).toBe(null);
     expect(await read()).toBe(null);
-    expect(statusReads).toBe(1);
+    expect(statusReads).toBe(reads + 1);
 
     git(worktree.repository, 'worktree', 'prune');
     git(worktree.repository, 'worktree', 'add', '-q', worktree.path, 'feature');
     expect(await read()).toMatchObject({ changed: 0 });
-    expect(statusReads).toBe(2);
+    expect(statusReads).toBe(reads + 2);
   });
 
-  test('a merge judgement that timed out is not retried for the same HEAD for five minutes', async () => {
+  test('a merge judgement that timed out is not retried for the same HEAD for five minutes, but is for a new HEAD', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const worktree = linkedWorktree();
     commit(worktree.path, 'b.txt', 'local');
@@ -174,8 +181,15 @@ describe('readWorktreeGit', () => {
     await read();
     expect(mergeCalls).toBe(judged);
 
+    commit(worktree.path, 'c.txt', 'next');
+    await read();
+    const rejudged = mergeCalls;
+    expect(rejudged).toBeGreaterThan(judged);
+    await read();
+    expect(mergeCalls).toBe(rejudged);
+
     vi.setSystemTime(Date.now() + 5 * 60_000);
     await read();
-    expect(mergeCalls).toBeGreaterThan(judged);
+    expect(mergeCalls).toBeGreaterThan(rejudged);
   });
 });

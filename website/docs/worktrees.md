@@ -182,7 +182,8 @@ status never fetches. `git` is `null` when git fails or does not answer within
 3 seconds.
 `stim status --watch` rereads a worktree's git state when a commit, checkout,
 staging change, push or fetch touches its git files, and at least once a
-minute, so an edit that is not staged can take up to a minute to show.
+minute, so a file edit, creation or deletion that is not staged can take up
+to a minute to show.
 
 Status reads the worktree list from git's records in the repository. It runs
 `git status` only in worktrees outside macOS-protected folders, or in ones with

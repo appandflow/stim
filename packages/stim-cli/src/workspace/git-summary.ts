@@ -99,7 +99,6 @@ function writeMergeCache(entry: MergeCacheEntry): void {
   }
 }
 
-/** `deferred` when the judgement was left for a later read because this read's budget was spent. */
 function mergedInto(
   path: string,
   head: string,
@@ -110,32 +109,33 @@ function mergedInto(
   const cached = readMergeCache(path);
   const known = cached?.head === head ? cached : null;
   if (known?.target === targetKey) return { into: known.mergedInto, deferred: false };
-  if (budget.deadline !== undefined && Date.now() > budget.deadline) {
-    return { into: known?.target.startsWith(`${target.ref} `) ? known.mergedInto : null, deferred: true };
-  }
+  const standIn = known?.target.startsWith(`${target.ref} `) ? known.mergedInto : null;
   const timeoutKey = `${head} ${targetKey}`;
   const timedOut = mergeTimeouts.get(path);
   if (timedOut?.key === timeoutKey && Date.now() - timedOut.at < MERGE_TIMEOUT_BACKOFF_MS) {
-    return { into: null, deferred: false };
+    return { into: standIn, deferred: false };
   }
+  if (budget.deadline !== undefined && Date.now() > budget.deadline) return { into: standIn, deferred: true };
   budget.deadline ??= Date.now() + MERGE_BUDGET_MS;
   const state = mergeState(path, target, { timeoutMs: GIT_TIMEOUT_MS });
   if (!state.merged && state.timedOut) {
     mergeTimeouts.set(path, { key: timeoutKey, at: Date.now() });
-    return { into: null, deferred: false };
+    return { into: standIn, deferred: false };
   }
   const verdict = state.merged ? state.into : null;
   writeMergeCache({ path, head, target: targetKey, mergedInto: verdict });
   return { into: verdict, deferred: false };
 }
 
+interface StampedRefs {
+  upstream: string | null;
+  target: string | null;
+}
+
 const mergeTimeouts = new Map<string, { key: string; at: number }>();
-const recent = new Map<string, { at: number; files: string | null; git: WorktreeGit | null }>();
-const gitDirs = new Map<string, { gitDir: string; commonDir: string }>();
+const recent = new Map<string, { at: number; files: string | null; refs: StampedRefs; git: WorktreeGit | null }>();
 
 function gitDirsOf(worktree: string): { gitDir: string; commonDir: string } | null {
-  const known = gitDirs.get(worktree);
-  if (known) return known;
   try {
     const dotGit = join(worktree, '.git');
     const pointer = statSync(dotGit).isDirectory()
@@ -143,13 +143,11 @@ function gitDirsOf(worktree: string): { gitDir: string; commonDir: string } | nu
       : /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf-8'))?.[1]?.trim();
     const gitDir = pointer ? resolve(worktree, pointer) : pointer === null ? dotGit : null;
     if (!gitDir) return null;
-    let commonDir = gitDir;
     try {
-      commonDir = resolve(gitDir, readFileSync(join(gitDir, 'commondir'), 'utf-8').trim());
-    } catch {}
-    const dirs = { gitDir, commonDir };
-    gitDirs.set(worktree, dirs);
-    return dirs;
+      return { gitDir, commonDir: resolve(gitDir, readFileSync(join(gitDir, 'commondir'), 'utf-8').trim()) };
+    } catch {
+      return { gitDir, commonDir: gitDir };
+    }
   } catch {
     return null;
   }
@@ -157,22 +155,22 @@ function gitDirsOf(worktree: string): { gitDir: string; commonDir: string } | nu
 
 function fileStamp(path: string): string {
   try {
-    const stat = statSync(path);
-    return `${stat.ino}:${stat.mtimeMs}:${stat.size}`;
+    const stat = statSync(path, { bigint: true });
+    return `${stat.ino}:${stat.mtimeNs}:${stat.size}`;
   } catch {
     return '-';
   }
 }
 
 /**
- * Stamps of the git files a summary depends on: the worktree's index, HEAD and reflog, and the common dir's packed
- * refs, last fetch, default-branch ref, branch ref and upstream ref. Git replaces each of these files by rename, so a
- * new inode shows a write even within one mtime tick. Edits to tracked files touch none of them. A worktree whose git
- * dir cannot be found, such as a deleted one git still lists, is stamped by its `.git` entry alone.
+ * Stamps the git files a summary depends on: the worktree's index, HEAD and reflog, and the common dir's packed refs,
+ * last fetch, origin/HEAD, default-branch ref, branch ref and upstream ref. Edits, creations and deletions of files
+ * that are not staged touch none of them. `missing` when the worktree has no git dir, such as a deleted worktree git
+ * still lists; it is then stamped by its `.git` entry alone.
  */
-function gitFilesStamp(worktree: WorktreeFacts, upstream: string | null): string {
+function gitFilesStamp(worktree: WorktreeFacts, refs: StampedRefs): { stamp: string; missing: boolean } {
   const dirs = gitDirsOf(worktree.path);
-  if (!dirs) return `no git dir ${fileStamp(join(worktree.path, '.git'))}`;
+  if (!dirs) return { stamp: fileStamp(join(worktree.path, '.git')), missing: true };
   const { gitDir, commonDir } = dirs;
   const files = [
     join(gitDir, 'index'),
@@ -181,10 +179,13 @@ function gitFilesStamp(worktree: WorktreeFacts, upstream: string | null): string
     join(commonDir, 'packed-refs'),
     join(commonDir, 'FETCH_HEAD'),
     join(commonDir, 'refs', 'remotes', 'origin', 'HEAD'),
+    ...(refs.target ? [join(commonDir, refs.target)] : []),
     ...(worktree.branch ? [join(commonDir, 'refs', 'heads', worktree.branch)] : []),
-    ...(upstream ? [join(commonDir, 'refs', 'remotes', upstream)] : []),
+    ...(refs.upstream
+      ? [join(commonDir, 'refs', 'remotes', refs.upstream), join(commonDir, 'refs', 'heads', refs.upstream)]
+      : []),
   ];
-  return files.map(fileStamp).join(' ');
+  return { stamp: files.map(fileStamp).join(' '), missing: false };
 }
 
 /**
@@ -192,9 +193,9 @@ function gitFilesStamp(worktree: WorktreeFacts, upstream: string | null): string
  * one git cannot answer in time, maps to null. After every read, merge verdicts missing from the cache are judged one
  * at a time; no new judgement starts 250 ms after the first, and a verdict for the same HEAD judged at an older
  * default-branch commit stands in, because a merged branch stays merged. A judgement that timed out is not retried
- * for the same HEAD and target for five minutes. With `maxAgeMs`, a summary or failed read made that recently in this process is
- * reused while the git files it depends on are unchanged, so an edit to a tracked file can take up to `maxAgeMs` to
- * show.
+ * for the same HEAD and target for five minutes. With `maxAgeMs`, a summary made that recently in this process is
+ * reused while the git files it depends on are unchanged, so a change that is not staged can take up to `maxAgeMs`
+ * to show; so is the null of a worktree whose directory is gone.
  */
 export async function readWorktreeGit(
   worktrees: readonly WorktreeFacts[],
@@ -206,9 +207,9 @@ export async function readWorktreeGit(
     worktrees.map(async (worktree) => {
       if (skip(worktree)) return { path: worktree.path, memo: null };
       const memo = maxAgeMs > 0 ? recent.get(worktree.path) : undefined;
-      const upstream = memo?.git?.upstream ?? null;
-      const files = maxAgeMs > 0 ? gitFilesStamp(worktree, upstream) : null;
-      if (memo && memo.files !== null && memo.files === files && now - memo.at < maxAgeMs) {
+      const refs = memo?.refs ?? { upstream: null, target: null };
+      const files = maxAgeMs > 0 ? gitFilesStamp(worktree, refs) : null;
+      if (memo && memo.files !== null && memo.files === files?.stamp && now - memo.at < maxAgeMs) {
         return { path: worktree.path, memo: memo.git };
       }
       const repository = worktree.repository;
@@ -217,7 +218,7 @@ export async function readWorktreeGit(
         git(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal']),
         repository ? targets.get(repository) : null,
       ]);
-      return { path: worktree.path, status: out === null ? null : parseGitStatus(out), target, files, upstream };
+      return { path: worktree.path, status: out === null ? null : parseGitStatus(out), target, files, refs };
     }),
   );
   const budget: { deadline?: number } = {};
@@ -228,15 +229,16 @@ export async function readWorktreeGit(
       continue;
     }
     if (!read.status) {
-      recent.set(read.path, { at: now, files: read.files, git: null });
+      if (read.files?.missing) recent.set(read.path, { at: now, files: read.files.stamp, refs: read.refs, git: null });
       summaries.set(read.path, null);
       continue;
     }
     const { head, ...counts } = read.status;
     const merge = head && read.target ? mergedInto(read.path, head, read.target, budget) : null;
     const summary = { ...counts, mergedInto: merge?.into ?? null };
-    const settled = !merge?.deferred && counts.upstream === read.upstream;
-    recent.set(read.path, { at: now, files: settled ? read.files : null, git: summary });
+    const refs = { upstream: counts.upstream, target: read.target?.ref ?? null };
+    const settled = !merge?.deferred && refs.upstream === read.refs.upstream && refs.target === read.refs.target;
+    recent.set(read.path, { at: now, files: settled ? (read.files?.stamp ?? null) : null, refs, git: summary });
     summaries.set(read.path, summary);
   }
   return summaries;
