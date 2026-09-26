@@ -35,8 +35,8 @@ struct DeviceTile: View {
           BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
         }
         Rectangle().fill(Theme.border).frame(height: 1)
-        if let workspace, let run = runCommand(for: device, cwd: workspace), !device.isRunning {
-          stoppedBar(run)
+        if let workspace, showsStoppedBar {
+          stoppedBar(runCommand(for: device, cwd: workspace))
         } else {
           screen
             .frame(height: screenHeight)
@@ -136,18 +136,28 @@ struct DeviceTile: View {
     }
   }
 
-  private func stoppedBar(_ run: StimCommand) -> some View {
+  private var showsStoppedBar: Bool {
+    if case .remote = device { return false }
+    return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
+  }
+
+  private func stoppedBar(_ run: StimCommand?) -> some View {
     HStack(spacing: 10) {
-      Text("\(device.state). Run stim \(run.arguments.joined(separator: " ")) to boot it and install the app.")
-        .font(Theme.body(12))
-        .foregroundStyle(Theme.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+      Text(
+        run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+          ?? "Not connected."
+      )
+      .font(Theme.body(12))
+      .foregroundStyle(Theme.secondary)
+      .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
-      Button("Run") { actions.run("Run \(device.slot)", run) }
-        .buttonStyle(.stim())
-        .fixedSize()
-        .disabled(actions.active(for: run.cwd) != nil)
-        .help(run.displayLine())
+      if let run {
+        Button("Run") { actions.run("Run \(device.slot)", run) }
+          .buttonStyle(.stim())
+          .fixedSize()
+          .disabled(actions.active(for: run.cwd) != nil)
+          .help(run.displayLine())
+      }
     }
     .padding(12)
   }
