@@ -39,7 +39,6 @@ const ICONS = {
   video: require('@/assets/icons/videocam.xml'),
   machine: require('@/assets/icons/laptop-mac.xml'),
   about: require('@/assets/icons/info.xml'),
-  check: require('@/assets/icons/check.xml'),
 } satisfies Record<string, ImageSourcePropType>;
 
 /** The Android screen, in Jetpack Compose; `settings.ios.tsx` is the SwiftUI one. */
@@ -257,11 +256,6 @@ function Choice<T extends string>({
             <DropdownMenuItem.Text>
               <Text>{option.label}</Text>
             </DropdownMenuItem.Text>
-            {option.value === value ? (
-              <DropdownMenuItem.TrailingIcon>
-                <Icon source={ICONS.check} size={20} tint={colors.primary} />
-              </DropdownMenuItem.TrailingIcon>
-            ) : null}
           </DropdownMenuItem>
         ))}
       </DropdownMenu.Items>
