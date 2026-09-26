@@ -55,8 +55,6 @@ final class MetricsStore: ObservableObject {
     return values.isEmpty ? nil : values.reduce(0, +)
   }
 
-  /// `totalCpu` as a fraction of the Mac's total CPU capacity, comparable to the phone's
-  /// machine-wide CPU fraction for severity purposes.
   var totalCpuFraction: Double {
     guard let cpu = totalCpu else { return 0 }
     return cpu / (100 * Double(max(1, ProcessInfo.processInfo.activeProcessorCount)))

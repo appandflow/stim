@@ -239,7 +239,7 @@ struct MachineSummary: View {
     ProposedWidth(width: max(0, width)) {
       ViewThatFits(in: .horizontal) {
         row(showsMemory: true, showsBar: true, showsReclaimable: true)
-        row(showsMemory: true, showsBar: false, showsReclaimable: true)
+        row(showsMemory: true, showsBar: true, showsReclaimable: false)
         row(showsMemory: true, showsBar: false, showsReclaimable: false)
         row(showsMemory: false, showsBar: false, showsReclaimable: false)
       }
@@ -318,14 +318,12 @@ struct MachineSummary: View {
   }
 }
 
-/// "38.8/48 GB", the compact pairing of used and total memory for the toolbar stat.
 private func formatMemoryPair(_ memory: MachineMemory) -> String {
   let used = formatGigabytes(mb: Int(memory.usedBytes >> 20)).replacingOccurrences(of: " GB", with: "")
   let totalGb = Int((Double(memory.totalBytes >> 20) / 1024).rounded())
   return "\(used)/\(totalGb) GB"
 }
 
-/// "47 GB free", rounded to the whole gigabyte like the phone's compact disk stat.
 private func formatDiskFree(_ bytes: Int64) -> String {
   "\(Int((Double(bytes) / 1e9).rounded())) GB free"
 }
@@ -360,7 +358,7 @@ struct DiskPopover: View {
               .foregroundStyle(Theme.secondary)
           }
           ProgressView(value: 1 - Double(volume.availableBytes) / Double(max(1, volume.totalBytes)))
-            .tint(volume.availableBytes < 20_000_000_000 ? Theme.warn : Theme.lavender)
+            .tint(volume.availableBytes < UsageThresholds.lowDiskBytes ? Theme.warn : Theme.lavender)
           Text(volume.holds.joined(separator: ", ")).foregroundStyle(Theme.tertiary)
         }
       }
