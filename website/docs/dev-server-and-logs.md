@@ -326,7 +326,7 @@ the web package:
 
 <StimTabs
 code={`cd apps/web
-VITE_PORT="$(stim ports get web)" pnpm dev`}
+pnpm exec vite --port "$(stim ports get web)" --strictPort`}
 />
 
 Every `ports` command there acts on the app's ports. A package that already
