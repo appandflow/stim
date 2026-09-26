@@ -144,7 +144,7 @@ change, claimed and worked like any other issue; when an open issue already
 describes a change, link it from the list and close it with the pull request.
 Keep one commit per change. The pull request shows a screenshot or recording of
 each change on each platform it affects, and gets the same fresh review and
-green CI as any pull request; a commit added after the review needs a new one.
+green CI as any pull request; a commit added after the review needs a new review.
 The reviewer checks each commit against this definition, and one that falls
 outside it moves to its own issue and pull request.
 
