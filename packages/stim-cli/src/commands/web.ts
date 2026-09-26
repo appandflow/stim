@@ -15,7 +15,7 @@ import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
-import { webLaunchVerdict, type WebLaunched } from '../web/launch.ts';
+import { webLaunchRemedy, webLaunchVerdict, type WebLaunched } from '../web/launch.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import {
   cdpEndpoint,
@@ -52,7 +52,6 @@ export interface WebFacts extends WebBrowserState {
 
 const PORT_PLACEHOLDER = /\{port:([^}]*)\}/g;
 const REGISTER_WAIT_MS = 30_000;
-const VERIFY_WAIT_MS = 20_000;
 const POLL_MS = 250;
 
 const printNote = (line: string) => console.error(line);
@@ -146,15 +145,14 @@ async function waitForSupervisor(root: string, child: ChildProcess, launchId: st
 }
 
 async function verifyLaunch(root: string, since: number, expectBundle: boolean) {
-  const deadline = Date.now() + VERIFY_WAIT_MS;
+  const startedAt = Date.now();
   for (;;) {
-    const final = Date.now() >= deadline;
     const verdict = webLaunchVerdict({
       records: readNdjsonGenerations(webLogFile(root)),
       metroRecords: expectBundle ? readMetroRecords(workspaceLogsDir(root)) : [],
       since,
       expectBundle,
-      final,
+      elapsedMs: Date.now() - startedAt,
     });
     if (verdict) return verdict;
     await sleep(POLL_MS);
@@ -187,7 +185,7 @@ export async function runWeb({
     return failure(
       'STIM_WEB_NO_URL',
       'This is not an Expo app, so Stim does not know which page to open.',
-      "Start your web dev server on a named port, then set the page: `stim settings set web.url 'http://localhost:{port:web}/'`. See `stim guide web`.",
+      "Start your web dev server on a named port, then set the page: `stim settings set web.url 'http://localhost:{port:web}/' --scope workspace`. See `stim guide web`.",
     );
   }
   if (web.url === null && !isPackageResolvable(root, 'react-native-web')) {
@@ -272,14 +270,7 @@ export async function runWeb({
   const verdict = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const remedy =
-    verdict.launched === true
-      ? null
-      : verdict.launched === 'bundling'
-        ? 'Metro is still building the web bundle. Run `stim logs --errors` in a moment to confirm the page rendered.'
-        : usesMetro
-          ? `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`
-          : `Nothing served ${url}. Start the web dev server on that port, for example \`pnpm exec vite --port "$(stim ports get web)" --strictPort\`, then run \`stim web\` again.`;
+  const remedy = webLaunchRemedy(verdict, { url, usesMetro });
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,

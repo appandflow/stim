@@ -88,8 +88,12 @@ test('counts what logs --errors counts across marker boundaries', () => {
     join(dir, 'device.ndjson.1'),
     lines([{ ts: 26, src: 'device', level: 'error', event: 'native_crash' }]),
   );
+  write('web.ndjson', [
+    { ts: 27, src: 'device', platform: 'web', level: 'error', event: 'web_document_failed', msg: 'ERR_CERT' },
+    { ts: 28, src: 'device', platform: 'web', level: 'info', event: 'web_page_loaded' },
+  ]);
 
-  expect(count()).toBe(7);
+  expect(count()).toBe(8);
 });
 
 test('a later marker in any generation raises the boundary for records already read', () => {

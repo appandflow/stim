@@ -24,7 +24,7 @@ interface MarkerWindow {
 
 export interface QueryCriteria {
   slot?: string;
-  includeNativeCrashes?: boolean;
+  includeAppDeviceErrors?: boolean;
   sources?: string[];
   minLevel?: string;
   grep?: RegExp;
@@ -78,6 +78,10 @@ export function markerWindow(records: NdjsonRecord[]): MarkerWindow {
   return { launchTs, bundleTs };
 }
 
+function isAppDeviceRecord(record: NdjsonRecord): boolean {
+  return record.src === 'device' && (record.event === 'native_crash' || record.platform === 'web');
+}
+
 export function recordMatches(record: NdjsonRecord | null | undefined, criteria: QueryCriteria = {}): boolean {
   if (!record) return false;
   if (criteria.slot !== undefined && (record.slot ?? 'default') !== criteria.slot) return false;
@@ -87,7 +91,7 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
     sources &&
     sources.length > 0 &&
     !sources.includes(record.src as string) &&
-    !(criteria.includeNativeCrashes && record.src === 'device' && record.event === 'native_crash')
+    !(criteria.includeAppDeviceErrors && isAppDeviceRecord(record))
   )
     return false;
   if (minLevel && levelRank(record.level) < levelRank(minLevel)) return false;
@@ -141,7 +145,7 @@ export function buildCriteria({
   const criteria: QueryCriteria = {
     ...(slot === undefined ? {} : { slot }),
     errorsOnly: Boolean(errorsOnly),
-    includeNativeCrashes: Boolean(errorsOnly && !sources?.length),
+    includeAppDeviceErrors: Boolean(errorsOnly && !sources?.length),
   };
   if (sources && sources.length > 0) criteria.sources = sources;
   else if (criteria.errorsOnly) criteria.sources = ERROR_SOURCES;

@@ -873,7 +873,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Stim never starts the web dev server. Start it on a named port and point
   web.url at it:
     pnpm exec vite --port "$(stim ports get web)" --strictPort
-    stim settings set web.url 'http://localhost:{port:web}/'
+    stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
   See stim guide web.`,
     },
     STIM_WEB_DEPS_MISSING: {

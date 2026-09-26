@@ -19,7 +19,8 @@ import { environmentState, withWebFacts } from '../status.ts';
 import { resolveWebUrl } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
-import { webLaunchVerdict } from '../web/launch.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
+import { webLaunchRemedy, webLaunchVerdict } from '../web/launch.ts';
 import { readWebRecord, webFacts, webProfileDir, writeWebRecord, type WebRecord } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -190,32 +191,56 @@ describe('page logs', () => {
 
 describe('launched', () => {
   const at = (event: string, ts: number, extra = {}) => ({ src: 'device', platform: 'web', event, ts, ...extra });
+  const verdict = (
+    records: NdjsonRecord[],
+    opts: { since?: number; expectBundle?: boolean; elapsedMs?: number } = {},
+  ) => webLaunchVerdict({ records, since: 10, expectBundle: false, elapsedMs: 0, ...opts });
 
   test('is true after a loaded document and, on Metro, a web bundle; evidence before the run is ignored', () => {
     const loaded = [at('web_document_response', 20, { status: 200 }), at('web_page_loaded', 30)];
-    expect(webLaunchVerdict({ records: loaded, since: 10, expectBundle: false, final: false })?.launched).toBe(true);
-    expect(webLaunchVerdict({ records: loaded, since: 25, expectBundle: false, final: true })?.launched).toBe(
-      'unverified',
-    );
-    expect(webLaunchVerdict({ records: loaded, since: 10, expectBundle: true, final: false })?.launched).toBe(
-      'unverified',
-    );
+    expect(verdict(loaded)?.launched).toBe(true);
+    expect(verdict(loaded, { since: 25, elapsedMs: 20_000 })?.launched).toBe('unverified');
+    expect(verdict(loaded, { expectBundle: true })?.launched).toBe('unverified');
     const bundled = [...loaded, at('web_bundle_response', 25, { status: 200 })];
-    expect(webLaunchVerdict({ records: bundled, since: 10, expectBundle: true, final: false })?.launched).toBe(true);
+    expect(verdict(bundled, { expectBundle: true })?.launched).toBe(true);
   });
 
   test('a failed document decides unverified at once; otherwise it waits, then reports Metro bundling', () => {
     const refused = [at('web_document_failed', 20, { msg: 'GET http://localhost:8900/ failed' })];
-    expect(webLaunchVerdict({ records: refused, since: 10, expectBundle: false, final: false })).toEqual({
+    expect(verdict(refused)).toEqual({
       launched: 'unverified',
+      kind: 'document-failed',
       reason: 'GET http://localhost:8900/ failed',
     });
     const started = [at('web_document_response', 20, { status: 200 })];
-    expect(webLaunchVerdict({ records: started, since: 10, expectBundle: true, final: false })).toBeNull();
+    expect(verdict(started, { expectBundle: true, elapsedMs: 19_999 })).toBeNull();
     const metroRecords = [{ src: 'metro', msg: 'Web Bundling index.ts 40%', ts: 15 }];
     expect(
-      webLaunchVerdict({ records: started, metroRecords, since: 10, expectBundle: true, final: true })?.launched,
+      webLaunchVerdict({ records: started, metroRecords, since: 10, expectBundle: true, elapsedMs: 20_000 })?.launched,
     ).toBe('bundling');
+  });
+
+  test('a dev server that answered gets 60 seconds to fire load; one that never answered gets 20', () => {
+    const answered = [at('web_document_response', 20, { status: 200 })];
+    expect(verdict(answered, { elapsedMs: 59_999 })).toBeNull();
+    expect(verdict(answered, { elapsedMs: 60_000 })).toMatchObject({ launched: 'unverified', kind: 'loading' });
+    expect(verdict([], { elapsedMs: 20_000 })).toMatchObject({ launched: 'unverified', kind: 'no-response' });
+  });
+
+  test('the remedy follows what the page reported instead of assuming nothing listens', () => {
+    const failed = (msg: string) => verdict([at('web_document_failed', 20, { msg })])!;
+    const https = { url: 'https://localhost:8900/apps/groups/', usesMetro: false };
+    expect(webLaunchRemedy(failed('GET x failed: net::ERR_CERT_AUTHORITY_INVALID'), https)).toContain(
+      '`stim settings set web.ignoreCertificateErrors true --scope workspace`',
+    );
+    expect(webLaunchRemedy(failed('GET x failed: net::ERR_SSL_PROTOCOL_ERROR'), https)).toContain('http://');
+    expect(
+      webLaunchRemedy(failed('GET x failed: net::ERR_EMPTY_RESPONSE'), { ...https, url: 'http://localhost:8900/' }),
+    ).toContain('https://');
+    expect(webLaunchRemedy(failed('GET x failed: HTTP 404'), https)).toContain('base path');
+    expect(webLaunchRemedy(failed('GET x failed: net::ERR_CONNECTION_REFUSED'), https)).toMatch(/^Nothing served/);
+    const loading = verdict([at('web_document_response', 20, { status: 200 })], { elapsedMs: 60_000 })!;
+    expect(webLaunchRemedy(loading, https)).toContain('cold dev server');
   });
 });
 
