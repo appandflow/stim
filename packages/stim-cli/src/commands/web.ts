@@ -222,7 +222,7 @@ export async function runWeb({
   try {
     url = await resolveWebUrl(web.url ?? 'http://localhost:{port:metro}/', {
       metroPort,
-      namedPort: (label) => getNamedPort(root, label, { log: note }),
+      namedPort: (label) => getNamedPort(root, label),
     });
   } catch (error) {
     return failure('STIM_BAD_ARG', `web.url: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
@@ -260,7 +260,7 @@ export async function runWeb({
           'Run `stim status` and `stim guide errors teardown`.',
         );
       }
-      const port = await reserveBrowserPort(root, { log: note });
+      const port = await reserveBrowserPort(root);
       const since = Date.now();
       note(
         chalk.dim(phaseLine('device', `starting ${config.headless ? 'headless ' : ''}Chrome on DevTools port ${port}`)),

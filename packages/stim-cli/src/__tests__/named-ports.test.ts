@@ -9,7 +9,7 @@ import * as identity from '../process-identity.ts';
 
 let home: string;
 let root: string;
-const free = { isFree: async () => true, log: () => {} };
+const free = { isFree: async () => true };
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-named-ports-')));
@@ -48,17 +48,15 @@ test('concurrent labels and workspaces get unique ports, while repeated and syml
   expect(getProject(alias)).toBeNull();
 });
 
-test('skips occupied ports with diagnostics and honors Metro reservations in the band', async () => {
+test('skips occupied ports and honors Metro reservations in the band', async () => {
   upsertProject(root, { metroPort: 8900 });
-  const log = vi.fn<(line: string) => void>();
-  expect(await getNamedPort(root, 'web', { isFree: async (port) => port !== 8901, log })).toBe(8902);
-  expect(log).toHaveBeenCalledWith('Port 8901 already in use, trying next...');
+  expect(await getNamedPort(root, 'web', { isFree: async (port) => port !== 8901 })).toBe(8902);
   expect(claimMetroPort(root, 8902)).toBeNull();
 });
 
 test('refuses exhaustion without allocating outside the band', async () => {
   const isFree = vi.fn<(port: number) => Promise<boolean>>(async () => false);
-  await expect(getNamedPort(root, 'web', { isFree, log: () => {} })).rejects.toThrow('8900 and 8999');
+  await expect(getNamedPort(root, 'web', { isFree })).rejects.toThrow('8900 and 8999');
   expect(isFree).toHaveBeenCalledTimes(100);
   expect(getProject(root)).toBeNull();
 });

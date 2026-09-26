@@ -54,7 +54,6 @@ function withPortsLock<T>(fn: () => Promise<T>): Promise<T> {
 
 interface AllocateOptions {
   isFree?: (port: number) => Promise<boolean>;
-  log?: (line: string) => void;
 }
 
 export async function getNamedPort(projectPath: string, label: string, options: AllocateOptions = {}): Promise<number> {
@@ -84,7 +83,6 @@ async function allocateNamedPort(
   label: string,
   {
     isFree = async (port: number) => (await isPortFree(port)) && portListeners(port, process.platform).length === 0,
-    log = console.error,
   }: AllocateOptions,
 ): Promise<number> {
   const root = realpathSync(projectPath);
@@ -95,10 +93,7 @@ async function allocateNamedPort(
       const projects = Object.values(loadConfig()?.projects ?? {});
       if (projects.some((project) => project.metroPort === port || Object.values(project.ports ?? {}).includes(port)))
         continue;
-      if (!(await isFree(port))) {
-        log(`Port ${port} already in use, trying next...`);
-        continue;
-      }
+      if (!(await isFree(port))) continue;
       const claimed = withConfigLock(() => {
         const cfg = ensureConfig();
         if (

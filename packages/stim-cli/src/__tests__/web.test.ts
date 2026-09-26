@@ -127,7 +127,7 @@ describe('web.url', () => {
 
 describe('browser port', () => {
   test('is a managed allocation users cannot take, stop or release', async () => {
-    const free = { isFree: async () => true, log: () => {} };
+    const free = { isFree: async () => true };
     await expect(getNamedPort(root, 'web-cdp', free)).rejects.toThrow(/managed by stim web/);
     const cdp = await reserveBrowserPort(root, free);
     const web = await getNamedPort(root, 'web', free);
