@@ -64,6 +64,7 @@ struct RootView: View {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        .toolbarBackdrop(showsWorkspace ? .clear : Theme.background)
         .overlay(alignment: .bottom) { onboardingPopup }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
