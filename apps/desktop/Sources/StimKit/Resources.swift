@@ -321,6 +321,16 @@ public struct GcReport: Decodable, Sendable {
     public var detail: String?
   }
 
+  /// A workspace's `logs/`. `trimBytes` is what `stim gc --delete` would cut from logs over twice the rotation
+  /// cap; `detail` says why it keeps them when `willTrim` is false.
+  public struct WorkspaceLogs: Decodable, Hashable, Sendable {
+    public var projectRoot: String?
+    public var bytes: Int64
+    public var trimBytes: Int64
+    public var willTrim: Bool
+    public var detail: String?
+  }
+
   public struct Cache: Decodable, Hashable, Sendable {
     public var name: String
     public var dir: String
@@ -358,6 +368,7 @@ public struct GcReport: Decodable, Sendable {
     public var parkedEmulators: [Device]?
     public var orphanedDevices: [Device]?
     public var staleDevices: [Device]?
+    public var workspaceLogs: [WorkspaceLogs]?
     public var workspaceBuildOutputs: [BuildOutputs]?
     public var caches: [Cache]?
   }
@@ -382,6 +393,11 @@ public struct GcReport: Decodable, Sendable {
     (sections.workspaceBuildOutputs ?? []).filter { $0.willClear == true }
   }
 
+  /// Workspace logs `stim gc --delete` trims.
+  public var trimmableLogs: [WorkspaceLogs] {
+    (sections.workspaceLogs ?? []).filter(\.willTrim)
+  }
+
   /// Linked worktrees `stim gc --delete` removes because their branch or pull request is merged, or their pull
   /// request was closed.
   public var mergedWorktrees: [LinkedWorktree] {
@@ -394,6 +410,7 @@ public struct GcReport: Decodable, Sendable {
     var removed: [Int64?] = (sections.orphanedWorkspaces ?? []).map(\.bytes)
     removed += deletableDevices.map(\.bytes)
     removed += clearableOutputs.map(\.bytes)
+    removed += trimmableLogs.map(\.trimBytes)
     removed += (sections.caches ?? []).filter { $0.willEmpty == true }.map(\.bytes)
     return Reclaimable(
       bytes: removed.reduce(0) { $0 + ($1 ?? 0) },

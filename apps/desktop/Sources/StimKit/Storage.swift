@@ -124,6 +124,11 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// Why `stim gc --delete` keeps the build outputs, or nil when it clears them.
   public var buildOutputsKept: String?
   public var nodeModules: DiskSize
+  public var logs: DiskSize
+  /// What `stim gc --delete` would trim from the logs, or nil when it trims nothing.
+  public var logsTrimmed: Int64?
+  /// Why `stim gc --delete` keeps logs it would otherwise trim.
+  public var logsKept: String?
   public var devices: DiskSize
   public var deviceCount: Int
   public var worktree: GcReport.LinkedWorktree?
@@ -137,7 +142,7 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// The sum of the categories that have a size: a lower bound while `totalComplete` is false, and nil
   /// while no category has anything measured on disk.
   public var total: Int64? {
-    let parts = [buildOutputs, nodeModules, devices]
+    let parts = [buildOutputs, nodeModules, logs, devices]
     guard totalComplete || parts.contains(where: { if case .size(let bytes) = $0 { return bytes > 0 } else { return false } }) else {
       return nil
     }
@@ -145,7 +150,7 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   }
 
   /// Whether every category has a size, so `total` is not a lower bound.
-  public var totalComplete: Bool { [buildOutputs, nodeModules, devices].allSatisfy { $0.bytes != nil } }
+  public var totalComplete: Bool { [buildOutputs, nodeModules, logs, devices].allSatisfy { $0.bytes != nil } }
 
 }
 
@@ -188,6 +193,9 @@ public struct StorageReport: Sendable {
     let outputs = Dictionary(
       (gc?.sections.workspaceBuildOutputs ?? []).compactMap { entry in entry.projectRoot.map { ($0, entry) } },
       uniquingKeysWith: { first, _ in first })
+    let logs = Dictionary(
+      (gc?.sections.workspaceLogs ?? []).compactMap { entry in entry.projectRoot.map { ($0, entry) } },
+      uniquingKeysWith: { first, _ in first })
     let worktrees = Dictionary(
       (gc?.sections.linkedWorktrees ?? []).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
     let dead = Set((gc?.sections.deadProjects ?? []).map(\.path))
@@ -210,12 +218,17 @@ public struct StorageReport: Sendable {
       let output = outputs[env.path]
       let buildOutputs: DiskSize =
         gc == nil ? .notMeasured : output.map { $0.bytes.map(DiskSize.size) ?? .failed } ?? .absent
+      let log = logs[env.path]
       let missing = dead.contains(env.path)
       return WorkspaceStorage(
         path: env.path, worktreePath: root, repository: env.worktree?.repository, branch: env.worktree?.branch,
         buildOutputs: buildOutputs,
         buildOutputsKept: output.flatMap { $0.willClear == true ? nil : ($0.detail ?? "kept") },
-        nodeModules: missing ? .absent : disk.measure("\(root)/node_modules"), devices: .sum(devices),
+        nodeModules: missing ? .absent : disk.measure("\(root)/node_modules"),
+        logs: gc == nil ? .notMeasured : log.map { .size($0.bytes) } ?? .absent,
+        logsTrimmed: log.flatMap { $0.willTrim ? $0.trimBytes : nil },
+        logsKept: log.flatMap { $0.trimBytes > 0 && !$0.willTrim ? ($0.detail ?? "kept") : nil },
+        devices: .sum(devices),
         deviceCount: devices.count, worktree: worktrees[root], missing: missing)
     }
     let listed = Set(workspaces.map(\.worktreePath))
@@ -223,7 +236,8 @@ public struct StorageReport: Sendable {
       workspaces.append(
         WorkspaceStorage(
           path: tree.path, worktreePath: tree.path, repository: tree.repository, branch: tree.branch,
-          buildOutputs: .absent, nodeModules: disk.measure("\(tree.path)/node_modules"), devices: .absent,
+          buildOutputs: .absent, nodeModules: disk.measure("\(tree.path)/node_modules"), logs: .absent,
+          devices: .absent,
           deviceCount: 0, worktree: worktrees[tree.path], unprovisioned: true))
     }
     workspaces.sort { a, b in

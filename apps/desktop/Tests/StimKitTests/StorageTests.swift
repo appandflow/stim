@@ -27,6 +27,8 @@ import Testing
         "parkedSimulators":[{"udid":"\(parked)","name":"stim-parked","bytes":3072}],
         "workspaceBuildOutputs":[{"dir":"/h/w/a","projectRoot":"/r/.worktrees/a/app","bytes":8192,"willClear":false,
           "detail":"in use: dev server running"}],
+        "workspaceLogs":[{"dir":"/h/w/a","projectRoot":"/r/.worktrees/a/app","bytes":40000000,"trimBytes":31600000,
+          "willTrim":false,"reason":"in-use","detail":"in use: dev server running"}],
         "caches":[{"name":"Gradle build cache","dir":"/Users/me/.gradle/caches/build-cache-1","bytes":2048}]}}
       """
     return try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
@@ -54,7 +56,11 @@ import Testing
     #expect(row.buildOutputs == .size(Int64(8192)))
     #expect(row.buildOutputsKept == "in use: dev server running")
     #expect(row.nodeModules == .size(Int64(4096)))
+    #expect(row.logs == .size(Int64(40_000_000)))
+    #expect(row.logsTrimmed == nil && row.logsKept == "in use: dev server running")
     #expect(row.devices == .size(Int64((10 + 5) * 1024)))
+    let expectedTotal: Int64 = 8192 + 4096 + 40_000_000 + 15 * 1024
+    #expect(row.total == expectedTotal)
     #expect(row.deviceCount == 2)
     #expect(row.worktree?.mergedInto == "origin/main")
 
@@ -76,7 +82,8 @@ import Testing
       pending: [modules, paths.avds])
     var row = try #require(
       StorageReport.make(environments: [try workspace()], gc: nil, disk: measuring, paths: paths).workspaces.first)
-    #expect(row.buildOutputs == .notMeasured && row.nodeModules == .measuring && row.devices == .measuring)
+    #expect(row.buildOutputs == .notMeasured && row.logs == .notMeasured)
+    #expect(row.nodeModules == .measuring && row.devices == .measuring)
     #expect(row.total == nil)
 
     let gcLoaded = try JSONDecoder().decode(GcReport.self, from: Data(#"{"sections":{}}"#.utf8))
@@ -93,7 +100,8 @@ import Testing
       failed: [modules])
     row = try #require(
       StorageReport.make(environments: [try workspace()], gc: noOutputs, disk: finished, paths: paths).workspaces.first)
-    #expect(row.buildOutputs == .absent && row.nodeModules == .failed && row.devices == .size(Int64(10_240)))
+    #expect(row.buildOutputs == .absent && row.logs == .absent)
+    #expect(row.nodeModules == .failed && row.devices == .size(Int64(10_240)))
     #expect(row.total == Int64(10_240) && !row.totalComplete)
   }
 

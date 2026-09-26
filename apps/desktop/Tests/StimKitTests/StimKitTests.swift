@@ -724,11 +724,14 @@ import Testing
         "orphanedDevices":[{"kind":"ios","id":"X","name":"n","bytes":null,"directory":null}],
         "parkedSimulators":[{"udid":"Y","bytes":1000}],
         "workspaceBuildOutputs":[{"dir":"/b","bytes":9000000000,"willClear":false},{"dir":"/c","bytes":500,"willClear":true}],
+        "workspaceLogs":[
+          {"dir":"/e","projectRoot":"/pe","bytes":90000,"trimBytes":80000,"willTrim":true,"reason":null,"detail":null},
+          {"dir":"/f","projectRoot":"/pf","bytes":70000,"trimBytes":60000,"willTrim":false,"reason":"in-use","detail":"in use"}],
         "caches":[{"name":"c","dir":"/d","bytes":7000,"willEmpty":false}],
         "staleBuildLocks":[{"path":"/l"}]}}
       """
     let reclaimable = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8)).reclaimable
-    #expect(reclaimable == GcReport.Reclaimable(bytes: 4096 + 1000 + 500, entries: 4, unsized: 1))
+    #expect(reclaimable == GcReport.Reclaimable(bytes: 4096 + 1000 + 500 + 80000, entries: 5, unsized: 1))
   }
 
   @Test func mergesLocationsOnTheSameVolume() {
