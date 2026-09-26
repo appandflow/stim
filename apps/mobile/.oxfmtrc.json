@@ -2,5 +2,5 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "singleQuote": true,
   "printWidth": 120,
-  "ignorePatterns": ["node_modules/**", "ios/**", "android/**", ".expo/**", "package-lock.json", "assets/animations/**"]
+  "ignorePatterns": ["node_modules/**", "ios/**", "android/**", ".expo/**", "assets/animations/**"]
 }

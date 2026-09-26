@@ -59,10 +59,11 @@ output and runs Stim commands through the CLI, never by reading or writing
 `$STIM_HOME`. Build and test it with `swift build` and `swift test` from that
 directory.
 
-The read-only phone app lives in `apps/mobile`, an Expo app outside the pnpm
-workspace that uses npm; see its README. Run `npm run format:check`, `npm run
-lint`, `npm run typecheck` and `npm test` from that directory. Develop it with
-Stim and its mock server, which replays captured Stim payloads.
+The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
+workspace named `stim-mobile`; see its README. The root checks above do not
+cover it. Run `pnpm run format:check`, `pnpm run lint`, `pnpm run typecheck` and
+`pnpm test` from that directory. Develop it with Stim and its mock server,
+which replays captured Stim payloads.
 
 Native tool compatibility runs separately with `pnpm run test:compat`. Follow
 [the test-stage prerequisites and evidence rules](./docs/testing.md) when changing

@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - website
+  - apps/mobile
 
 # Defence in depth: the packages declare each other with `workspace:` ranges,
 # which link regardless. This keeps a plain semver internal dep linking to the
@@ -17,10 +18,30 @@ minimumReleaseAgeExclude:
   - stim
   - '@stim-cli/*'
   - unique-pid@0.1.1
+  - '@expo/cli@58.0.7'
+  - '@expo/log-box@58.0.5'
+  - '@expo/metro-runtime@58.0.7'
+  - '@expo/prebuild-config@58.0.4'
+  - '@expo/ui@58.0.7'
+  - expo-asset@58.0.7
+  - expo-constants@58.0.7
+  - expo-dev-client@58.0.7
+  - expo-dev-launcher@58.0.7
+  - expo-dev-menu@58.0.7
+  - expo-file-system@58.0.2
+  - expo-image@58.0.6
+  - expo-linking@58.0.7
+  - expo-modules-autolinking@58.0.4
+  - expo-modules-core@58.0.7
+  - expo-modules-jsi@58.0.4
+  - expo-router@58.0.8
+  - expo-updates@58.0.9
+  - expo@58.0.0-preview.7
 allowBuilds:
   '@swc/core': false
   core-js: false
   esbuild: false
+  unrs-resolver: false
 
 # Docusaurus uses image-size only while building repository-owned content, and
 # image-size has no patched release (facebook/docusaurus#12231).
