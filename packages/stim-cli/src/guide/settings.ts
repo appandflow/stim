@@ -392,6 +392,10 @@ To show the booted simulator in Stim Desktop and open no simulator window:
 
 Stim Desktop selects the workspace that owns the simulator and focuses that
 device. It only displays the simulator; it never boots or shuts it down.
+When Stim Desktop is not running, Stim starts it without the command's
+\`STIM_HOME\`, so it reads the same Stim home as when you open it yourself.
+It shows only devices from that home: under another \`STIM_HOME\`, pick
+\`--simulator-app xcode\` to see the simulator.
 
 Override the preference for one local launch with
 \`stim ios --simulator-app siniulator\`, \`stim ios --simulator-app stim-desktop\`,
@@ -420,8 +424,9 @@ Stim then starts the emulator with \`-no-window -gpu host\` and opens
 frames and sends input over the emulator's gRPC endpoint. The setting applies
 only when Stim boots the emulator: one that is already running keeps its
 current display until it next boots, and physical devices are unaffected.
-An invalid value refuses before boot. On Linux and Windows the setting has
-no effect.
+Like the iOS viewer, it starts Stim Desktop without the command's
+\`STIM_HOME\`. An invalid value refuses before boot. On Linux and Windows the
+setting has no effect.
 
 Stim finds Stim Desktop by its bundle id, dev.stim.desktop, in Launch Services.
 \`stim settings\` shows that default as \`(default: Stim Desktop installed)\`,

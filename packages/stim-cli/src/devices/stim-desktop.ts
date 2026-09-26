@@ -7,6 +7,16 @@ const LAUNCH_SERVICES_LOOKUP = `ObjC.import('AppKit'); const url = $.NSWorkspace
 
 export const STIM_DESKTOP_INSTALLED = 'Stim Desktop installed';
 
+/**
+ * macOS `open` passes its environment to an app it launches, so Stim Desktop
+ * started by a command run under a scoped `STIM_HOME` would serve that home.
+ */
+export const STIM_DESKTOP_OPEN_OPTIONS = {
+  timeoutMs: 5000,
+  killSignal: 'SIGKILL',
+  omitEnv: ['STIM_HOME'],
+} as const;
+
 export function stimDesktopInstalled(platform: NodeJS.Platform = process.platform): boolean {
   if (platform !== 'darwin') return false;
   const found = getExecutor().runFileQuiet('osascript', ['-l', 'JavaScript', '-e', LAUNCH_SERVICES_LOOKUP], {

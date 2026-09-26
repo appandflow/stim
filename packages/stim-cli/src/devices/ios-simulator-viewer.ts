@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { settingDefault } from './stim-desktop.ts';
+import { STIM_DESKTOP_OPEN_OPTIONS, settingDefault } from './stim-desktop.ts';
 import { IOS_SIMULATOR_APPS, settingDefinition } from '@stim-cli/core/state';
 
 export type IosSimulatorApp = (typeof IOS_SIMULATOR_APPS)[number];
@@ -32,7 +32,7 @@ export function configuredIosSimulatorViewer(override?: IosSimulatorApp): IosSim
 function openSimulator(app: IosSimulatorApp, udid: string): void {
   const exec = getExecutor();
   if (app === 'stim-desktop') {
-    exec.runFileQuiet('open', ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`], OPEN_OPTIONS);
+    exec.runFileQuiet('open', ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`], STIM_DESKTOP_OPEN_OPTIONS);
     return;
   }
   if (app === 'siniulator') {
