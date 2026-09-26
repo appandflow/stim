@@ -1,12 +1,12 @@
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View, type ViewInstance } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { AgentFeed } from '@/components/agent-feed';
 import { Card } from '@/components/card';
 import { Chip, StatusDot } from '@/components/chip';
+import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { tildeHome } from '@/lib/paths';
 import type { DeviceRef } from '@/lib/workspaces';
@@ -29,6 +29,9 @@ export function DeviceTile({
   const [screenWidth, setScreenWidth] = useState(0);
   const streams = device.running && device.owned && !device.physical;
   const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
+  const thumbnail = useRef<ViewInstance>(null);
+  const target = { macId: mac?.id ?? '', workspace, platform: device.platform, slot: device.slot };
+  const zoomedAway = useZoomedAway(zoomKey(target));
   const notes = warnings.map((warning) => (
     <Text key={warning} style={[styles.note, { color: colors.warn }]}>
       {tildeHome(warning, home)}
@@ -84,15 +87,11 @@ export function DeviceTile({
       >
         {streams && frame ? (
           <Pressable
-            onPress={() =>
-              mac &&
-              router.push({
-                pathname: '/mac/[id]/device',
-                params: { id: mac.id, path: workspace, platform: device.platform, slot: device.slot },
-              })
-            }
+            ref={thumbnail}
+            onPress={() => mac && openDeviceViewer(thumbnail.current, target, frame)}
             accessibilityRole="button"
             accessibilityLabel={`Open the live screen of ${device.name}`}
+            style={zoomedAway && styles.away}
           >
             <Image
               source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
@@ -137,4 +136,5 @@ const styles = StyleSheet.create({
   },
   screenOff: { height: 64 },
   placeholder: { fontSize: 13, textAlign: 'center' },
+  away: { opacity: 0 },
 });
