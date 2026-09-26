@@ -21,8 +21,9 @@ WHAT RECLAIMS AN OWNED DEVICE
                             references (\`guide cleanup gc\`), clears
                             verified parked simulators and emulators, and
                             runs \`stim worktree remove\` on every clean,
-                            Stim-managed linked worktree whose branch is merged
-                            and that shows no activity within
+                            Stim-managed linked worktree whose branch is merged,
+                            or whose pull request was merged or closed, and
+                            that shows no activity within
                             gc.worktreeGraceMinutes
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
@@ -99,7 +100,8 @@ SWEEPING FINISHED WORKTREES
   Every \`gc\` without --cache looks at every registered project root and
   every workspace.json root, grouped by git worktree, and reports each linked
   worktree with the reason it is removed or kept. A worktree is finished when
-  its branch is merged into the default branch. \`--worktrees\` also removes
+  its branch is merged into the default branch, or its pull request was
+  merged or closed (PULL REQUESTS below). \`--worktrees\` also removes
   one that is idle: no recorded use for --older-than days, 7 without it; a
   worktree whose last use is unknown is kept. Both need the same clean state;
   a worktree is kept when it is the source checkout, bare, locked, in use,
@@ -121,7 +123,8 @@ SWEEPING FINISHED WORKTREES
   gc.worktreeGraceMinutes (120 by default, \`guide settings\`) have passed
   since the latest of: a write to its git index, HEAD or HEAD reflog, a write
   to its Stim workspace state or log files, and, for a merged branch, the
-  committer date of the commit that brought it into the default branch. That
+  committer date of the commit that brought it into the default branch, or
+  the time its pull request was merged or closed. That
   window is when an agent that just merged runs \`stim stop\` and \`stim
   worktree remove\` itself. The reason is recent-activity, and the report
   and the JSON eligibleAt field say when it becomes removable. When that
@@ -140,16 +143,32 @@ SWEEPING FINISHED WORKTREES
     commit on the default branch (a rebase merge), or its whole diff since the
     merge base has the same verbatim patch id as a commit there, compared on
     the files the branch changes (a squash merge).
-  Merge state comes from git alone, not from a hosting service. A squash
-  merge whose content changed during the merge (a conflict resolution, a
-  suggested edit, even whitespace) does not match and is kept, and so is a
-  fast-forwarded branch. When origin/HEAD is not set, the fetch fails, or git
+  From git alone, a squash merge whose content changed during the merge (a
+  conflict resolution, a suggested edit, even whitespace) does not match, and
+  neither does a fast-forwarded branch or a stacked pull request merged after
+  the one below it; the pull request check covers those. When origin/HEAD is not set, the fetch fails, or git
   cannot answer, the state is unknown and never counts as merged (reason
   merge-unknown, with the remedy); with --worktrees an idle worktree is still
   removed. A squash- or rebase-merged branch whose upstream is gone (deleted
   after the merge and pruned locally) has commits only it reaches; they do
   not block removal, because their change is on the default branch, and the
   branch is kept.
+
+  PULL REQUESTS: for each linked worktree on a branch, gc runs
+  \`gh pr list --head <branch> --state all --json ...\` in the worktree and
+  takes the pull request whose head is HEAD, else one whose head contains
+  HEAD. A pull request whose head HEAD is past ("PR #12 merged, and HEAD has
+  commits it does not"), one unrelated to HEAD (an older use of the branch
+  name), and one from a fork do not count. A merged or closed one makes the worktree finished
+  under the same clean state. Merged, its commits are kept on GitHub, so local
+  commits whose remote branch was deleted do not block removal. Closed, they
+  do: a closed pull request whose remote branch is gone keeps the worktree as
+  unpushed. An open pull request never makes a worktree finished. When gh is
+  not installed, not signed in, or fails, the JSON pullRequestUnknown field
+  and the report say why, and gc judges from git alone. A detached HEAD is
+  not looked up. \`stim worktree remove\` makes the same check when
+  local-only commits alone would refuse the removal, and accepts a merged
+  pull request whose head is or contains HEAD.
     stim gc                                        # report merged worktrees
     stim gc --delete                               # remove them
     stim gc --delete --worktrees --older-than 3    # also the clean idle ones

@@ -12,13 +12,19 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
 import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
 import { mergeState, type MergeState } from '../workspace/merge-state.ts';
+import {
+  selectPullRequest,
+  type GhPullRequest,
+  type PullRequestFact,
+  type PullRequestLookup,
+} from '../workspace/pull-request.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -44,6 +50,7 @@ beforeEach(() => {
     runQuiet: () => null,
     runFile: (file, args, opts) => (file === 'du' || file === 'git' ? real.runFile(file, args, opts) : ''),
     runFileQuiet: (file, args, opts) => (file === 'git' ? real.runFileQuiet(file, args, opts) : null),
+    findExecutable: (name) => (name === 'gh' ? null : real.findExecutable(name)),
     spawn: () => {
       throw new Error('unexpected spawn');
     },
@@ -462,6 +469,7 @@ describe('linked worktree sweep classification', () => {
     inUse: [],
     idleDays: 10,
     merge: null,
+    pullRequest: null,
     activity: null,
     ...overrides,
   });
@@ -538,6 +546,66 @@ describe('linked worktree sweep classification', () => {
     expect(skip?.text).toMatch(text);
   });
 
+  describe('the pull request of its branch', () => {
+    const pr = (state: PullRequestFact['state'], overrides: Partial<PullRequestFact> = {}): PullRequestLookup => ({
+      pullRequest: {
+        number: 12,
+        state,
+        url: 'https://github.com/o/r/pull/12',
+        head: 'abc',
+        containsHead: true,
+        endedAt: 0,
+        ...overrides,
+      },
+    });
+    const notMerged: MergeState = { merged: false, unknown: false, detail: 'not merged into origin/main' };
+
+    test('a merged pull request makes a clean worktree removable, even with its remote branch deleted', () => {
+      expect(worktreeSkipReason(linked({ idleDays: 0, pullRequest: pr('merged'), merge: notMerged }), null)).toBe(null);
+      expect(worktreeSkipReason(linked({ unpushed: ['abc wip'], pullRequest: pr('merged') }), null)).toBe(null);
+    });
+
+    test('a closed pull request makes a clean, pushed worktree removable but keeps unpushed commits', () => {
+      expect(worktreeSkipReason(linked({ idleDays: 0, pullRequest: pr('closed') }), null)).toBe(null);
+      expect(worktreeSkipReason(linked({ unpushed: ['abc wip'], pullRequest: pr('closed') }), null)?.code).toBe(
+        'unpushed',
+      );
+    });
+
+    test('a merged pull request never overrides uncommitted work, and the reason counts the files', () => {
+      const skip = worktreeSkipReason(linked({ porcelain: [' M a.ts', '?? b.ts'], pullRequest: pr('merged') }), null);
+      expect(skip).toEqual({ code: 'dirty', text: 'dirty: 2 uncommitted or untracked files' });
+    });
+
+    test('an open pull request, or HEAD past a merged one, is not merged', () => {
+      expect(worktreeSkipReason(linked({ pullRequest: pr('open'), merge: notMerged }), null)).toEqual({
+        code: 'not-merged',
+        text: 'not merged into origin/main; PR #12 open',
+      });
+      expect(worktreeSkipReason(linked({ pullRequest: pr('merged', { containsHead: false }) }), null)).toEqual({
+        code: 'not-merged',
+        text: 'PR #12 merged, and HEAD has commits it does not',
+      });
+    });
+
+    test('an unknown pull request state falls back to the git verdict', () => {
+      const unknown = { unavailable: 'gh is not installed' };
+      expect(worktreeSkipReason(linked({ pullRequest: unknown, merge: notMerged }), null)?.code).toBe('not-merged');
+      expect(worktreeSkipReason(linked({ pullRequest: unknown, merge: merged() }), null)).toBe(null);
+    });
+
+    test('the grace period runs from when the pull request was merged or closed', () => {
+      const now = Date.parse('2026-09-25T12:00:00Z');
+      const facts = linked({
+        pullRequest: pr('closed', { endedAt: now - 10 * 60_000 }),
+        activity: { at: now - 600 * 60_000, basis: 'a git index write' },
+      });
+      const skip = worktreeSkipReason(facts, null, { ms: 120 * 60_000, now });
+      expect(skip?.code).toBe('recent-activity');
+      expect(skip?.text).toMatch(/^recent activity: PR #12 closed 10m ago/);
+    });
+  });
+
   describe('the grace period', () => {
     const now = Date.parse('2026-09-25T12:00:00Z');
     const grace = { ms: 120 * 60_000, now };
@@ -581,6 +649,39 @@ describe('linked worktree sweep classification', () => {
       expect(worktreeSkipReason(linked({ porcelain: ['?? x'], activity: activity(1) }), 7, grace)?.code).toBe('dirty');
       expect(worktreeSkipReason(linked({ merge: merged(false, ago(1)) }), null, { ms: 0, now })).toBe(null);
     });
+  });
+});
+
+describe('choosing the pull request of a worktree', () => {
+  const gh = (number: number, state: string, headRefOid: string): GhPullRequest => ({
+    number,
+    state,
+    url: `https://github.com/o/r/pull/${number}`,
+    headRefOid,
+    mergedAt: state === 'MERGED' ? '2026-09-24T10:00:00Z' : null,
+    closedAt: state === 'OPEN' ? null : '2026-09-24T10:00:00Z',
+  });
+  const history: Record<string, string[]> = { head: ['base'], later: ['head', 'base'] };
+  const isAncestor = (ancestor: string, descendant: string) => (history[descendant] ?? []).includes(ancestor);
+
+  test('picks the pull request whose head is HEAD over an older one that reused the branch name', () => {
+    const chosen = selectPullRequest([gh(6536, 'MERGED', 'other'), gh(6540, 'CLOSED', 'head')], 'head', isAncestor);
+    expect(chosen).toMatchObject({ number: 6540, state: 'closed', containsHead: true });
+    expect(chosen?.endedAt).toBe(Date.parse('2026-09-24T10:00:00Z'));
+  });
+
+  test('an open pull request on the same head wins over a closed one', () => {
+    expect(selectPullRequest([gh(2, 'CLOSED', 'head'), gh(1, 'OPEN', 'head')], 'head', isAncestor)?.state).toBe('open');
+  });
+
+  test('a pull request whose head contains HEAD contains its commits; one HEAD is past does not', () => {
+    expect(selectPullRequest([gh(3, 'MERGED', 'later')], 'head', isAncestor)).toMatchObject({ containsHead: true });
+    expect(selectPullRequest([gh(3, 'MERGED', 'base')], 'head', isAncestor)).toMatchObject({ containsHead: false });
+  });
+
+  test('a pull request unrelated to HEAD, or from a fork that reuses the branch name, is ignored', () => {
+    expect(selectPullRequest([gh(4, 'MERGED', 'unrelated')], 'head', isAncestor)).toBe(null);
+    expect(selectPullRequest([{ ...gh(5, 'MERGED', 'head'), isCrossRepository: true }], 'head', isAncestor)).toBe(null);
   });
 });
 
@@ -671,6 +772,8 @@ test('gc --worktrees --json reports each worktree verdict with its idle threshol
     path: expect.any(String),
     idleDays: 10,
     mergedInto: null,
+    pullRequest: null,
+    pullRequestUnknown: 'gh is not installed',
     willRemove: true,
     reason: null,
     detail: 'idle 10d',
@@ -689,6 +792,186 @@ test('gc --worktrees --json reports each worktree verdict with its idle threshol
     defaulted: false,
   });
 }, 30_000);
+
+test('gc --delete removes a worktree whose pull request merged or closed only when nothing would be lost', async () => {
+  const names = ['shipped', 'abandoned', 'unsaved', 'wip', 'gone', 'noPr'];
+  const { worktrees } = gitRepoWithWorktrees(names);
+  const git = (args: string, cwd: string) =>
+    execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
+  const heads: Record<string, string> = {};
+  for (const name of names) {
+    const path = worktrees[name]!;
+    writeFileSync(join(path, `${name}.txt`), name);
+    git(`add ${name}.txt`, path);
+    git(`commit -q -m ${name}`, path);
+    if (name !== 'shipped') git(`push -q origin ${name}`, path);
+    heads[name] = git('rev-parse HEAD', path);
+    upsertProject(path, { metroPort: null });
+  }
+  writeFileSync(join(worktrees.unsaved!, 'notes.txt'), 'x');
+  git('commit -q --allow-empty -m local', worktrees.wip!);
+  git('push -q origin --delete gone', worktrees.gone!);
+  git('fetch -q --prune origin', worktrees.gone!);
+  const pulls: Record<string, object[]> = {
+    shipped: [
+      {
+        number: 1,
+        url: 'https://github.com/o/r/pull/1',
+        state: 'MERGED',
+        headRefOid: heads.shipped,
+        mergedAt: '2026-09-01T00:00:00Z',
+      },
+    ],
+    abandoned: [
+      {
+        number: 2,
+        url: 'https://github.com/o/r/pull/2',
+        state: 'CLOSED',
+        headRefOid: heads.abandoned,
+        closedAt: '2026-09-01T00:00:00Z',
+      },
+    ],
+    unsaved: [
+      {
+        number: 3,
+        url: 'https://github.com/o/r/pull/3',
+        state: 'MERGED',
+        headRefOid: heads.unsaved,
+        mergedAt: '2026-09-01T00:00:00Z',
+      },
+    ],
+    wip: [
+      {
+        number: 4,
+        url: 'https://github.com/o/r/pull/4',
+        state: 'CLOSED',
+        headRefOid: heads.wip,
+        closedAt: '2026-09-01T00:00:00Z',
+      },
+    ],
+    gone: [
+      {
+        number: 5,
+        url: 'https://github.com/o/r/pull/5',
+        state: 'CLOSED',
+        headRefOid: heads.gone,
+        closedAt: '2026-09-01T00:00:00Z',
+      },
+    ],
+    noPr: [],
+  };
+  const current = getExecutor();
+  const ghCalls: string[][] = [];
+  setExecutor({
+    ...current,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
+    runFile: (file, args: string[], opts) => {
+      if (file !== 'gh') return current.runFile(file, args, opts);
+      ghCalls.push(args);
+      const branch = args[args.indexOf('--head') + 1]!;
+      return JSON.stringify(pulls[branch] ?? []);
+    },
+  });
+
+  const { payload } = await gcJson({});
+  const byName = Object.fromEntries(
+    payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
+  );
+  expect(byName.shipped).toMatchObject({
+    willRemove: true,
+    detail: 'PR #1 merged',
+    pullRequest: { number: 1, state: 'merged' },
+  });
+  expect(byName.abandoned).toMatchObject({ willRemove: true, detail: 'PR #2 closed' });
+  expect(byName.unsaved).toMatchObject({ willRemove: false, reason: 'dirty', pullRequest: { state: 'merged' } });
+  expect(byName.wip).toMatchObject({
+    willRemove: false,
+    reason: 'unpushed',
+    pullRequest: { state: 'closed', containsHead: false },
+  });
+  expect(byName.gone).toMatchObject({
+    willRemove: false,
+    reason: 'unpushed',
+    pullRequest: { state: 'closed', containsHead: true },
+  });
+  expect(byName.noPr).toMatchObject({ willRemove: false, pullRequest: null, pullRequestUnknown: null });
+  expect(ghCalls).toContainEqual([
+    'pr',
+    'list',
+    '--head',
+    'shipped',
+    '--state',
+    'all',
+    '--limit',
+    '20',
+    '--json',
+    'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository',
+  ]);
+
+  await captureLog(() => runGc({ delete: true }));
+  expect(existsSync(worktrees.shipped!)).toBe(false);
+  expect(existsSync(worktrees.abandoned!)).toBe(false);
+  for (const name of ['unsaved', 'wip', 'gone', 'noPr']) expect(existsSync(worktrees[name]!)).toBe(true);
+}, 120_000);
+
+test('a signed-out or unresponsive gh is asked once per gc run, and every worktree says why', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['one', 'two']);
+  for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
+  const current = getExecutor();
+  for (const [failure, reason] of [
+    [{ status: 4 }, 'gh is not signed in; run `gh auth login`'],
+    [{ code: 'ETIMEDOUT' }, 'gh pr list did not answer within 20s'],
+  ] as const) {
+    let calls = 0;
+    setExecutor({
+      ...current,
+      findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
+      runFile: (file, args, opts) => {
+        if (file !== 'gh') return current.runFile(file, args, opts);
+        calls++;
+        throw Object.assign(new Error('gh failed'), failure);
+      },
+    });
+    const { payload } = await gcJson({});
+    expect(calls).toBe(1);
+    expect(payload.sections.linkedWorktrees.map((w: { pullRequestUnknown: string }) => w.pullRequestUnknown)).toEqual([
+      reason,
+      reason,
+    ]);
+  }
+}, 60_000);
+
+test('worktree remove accepts local-only commits that a merged pull request holds, not a closed one', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['squashed', 'closed']);
+  const git = (args: string, cwd: string) =>
+    execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
+  const heads: Record<string, string> = {};
+  for (const name of ['squashed', 'closed']) {
+    writeFileSync(join(worktrees[name]!, 'change.txt'), name);
+    git('add change.txt', worktrees[name]!);
+    git(`commit -q -m ${name}`, worktrees[name]!);
+    heads[name] = git('rev-parse HEAD', worktrees[name]!);
+  }
+  const state: Record<string, string> = { squashed: 'MERGED', closed: 'CLOSED' };
+  const current = getExecutor();
+  setExecutor({
+    ...current,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : current.findExecutable(name)),
+    runFile: (file, args: string[], opts) => {
+      if (file !== 'gh') return current.runFile(file, args, opts);
+      const branch = args[args.indexOf('--head') + 1]!;
+      const pull = { number: 7, url: 'https://github.com/o/r/pull/7', state: state[branch], headRefOid: heads[branch] };
+      return JSON.stringify([{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }]);
+    },
+  });
+
+  await captureLog(async () => {
+    expect(await removeWorktreeTarget(worktrees.squashed)).toBe(true);
+    expect(await removeWorktreeTarget(worktrees.closed)).toBe(false);
+  });
+  expect(existsSync(worktrees.squashed!)).toBe(false);
+  expect(existsSync(worktrees.closed!)).toBe(true);
+}, 60_000);
 
 test('a worktree gc --delete --worktrees keeps because it was used after the report is not a failure', async () => {
   const { worktrees } = gitRepoWithWorktrees(['reused']);

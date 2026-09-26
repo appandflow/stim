@@ -162,7 +162,7 @@ struct StorageView: View {
           } message: {
             Text(
               merged.map { PathNames(path: $0.path).title }.joined(separator: ", ")
-                + ". stim gc reports each branch as merged into the default branch. stim worktree remove refuses a worktree with uncommitted or unpushed work."
+                + ". stim gc reports each branch as merged into the default branch, or its pull request as merged or closed. stim worktree remove refuses a worktree with uncommitted or unpushed work."
             )
           }
       }

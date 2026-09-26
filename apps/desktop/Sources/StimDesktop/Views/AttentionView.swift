@@ -4,6 +4,7 @@ import SwiftUI
 
 struct AttentionView: View {
   @ObservedObject var store: StatusStore
+  @ObservedObject var autopilot: AutopilotRunner
   @EnvironmentObject private var actions: ActionCenter
   @State private var expanded = false
 
@@ -19,6 +20,14 @@ struct AttentionView: View {
           Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Theme.secondary)
         }
         cleanup
+        if !autopilot.finishedPullRequests.isEmpty {
+          group("Finished pull requests", count: autopilot.finishedPullRequests.count) {
+            ForEach(Array(autopilot.finishedPullRequests.enumerated()), id: \.element.path) { index, flag in
+              if index > 0 { divider }
+              finishedRow(flag)
+            }
+          }
+        }
         group("Warnings", count: groups.reduce(0) { $0 + $1.items.count }) {
           ForEach(Array(shown.enumerated()), id: \.element.workspace.path) { index, group in
             if index > 0 { divider }
@@ -122,6 +131,27 @@ struct AttentionView: View {
           runButton("Run", command, runTitle: "Fix \(workspace.names.title)")
         }
       }
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+  }
+
+  private func finishedRow(_ flag: PullRequestCleanup.Flag) -> some View {
+    HStack(spacing: 14) {
+      Image(systemName: "arrow.triangle.pull").foregroundStyle(Theme.warn)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(PathNames(path: flag.path).title)
+        Text(flag.text).font(Theme.body(11.5)).foregroundStyle(Theme.secondary).lineLimit(2)
+        Text(abbreviatingHome(flag.path)).font(Theme.mono(11.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
+      }
+      Spacer()
+      if let url = URL(string: flag.pullRequest.url) {
+        Button("Open PR") { NSWorkspace.shared.open(url) }
+      }
+      Button("Show in Finder") {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: flag.path)])
+      }
+      .help("The autopilot keeps this worktree. Review it, then run stim worktree remove yourself.")
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 10)

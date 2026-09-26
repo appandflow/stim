@@ -232,7 +232,8 @@ stim gc --delete --worktrees --older-than 3`}
 
 `gc` lists every linked worktree that has a Stim workspace and says why each
 one is removed or kept. A worktree is finished when its branch is merged into
-the default branch, and plain `gc --delete` removes it. `--worktrees` also
+the default branch, or when its pull request was merged or closed, and plain
+`gc --delete` removes it. `--worktrees` also
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
 worktree that is the source checkout, bare, locked, in use, dirty (untracked
@@ -264,19 +265,33 @@ minutes. The branch counts as merged when:
 - its whole diff has the same verbatim patch id as a commit on the default
   branch, compared on the files the branch changes, as after a squash merge.
 
-gc asks git only, not GitHub. A squash merge whose content changed while
-merging, such as a conflict resolution or even a whitespace edit, does not
-match, and gc keeps that worktree; so does a branch that was fast-forwarded
-into the default branch. When `origin/HEAD` is not set, the fetch fails, or git
+From git alone, a squash merge whose content changed while merging, such as a
+conflict resolution or even a whitespace edit, does not match; neither does a
+branch that was fast-forwarded, or a stacked pull request merged after the one
+below it. The pull request check covers those. When `origin/HEAD` is not set, the fetch fails, or git
 cannot answer, gc does not treat the branch as merged and reports why. After a
 squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
 
+gc also asks GitHub. For each worktree on a branch it runs
+`gh pr list --head <branch> --state all` in the worktree and takes the pull
+request whose head is the worktree's HEAD, or contains it. A pull request from
+an older use of the same branch name, or one HEAD has moved past, does not
+count, and an open one never finishes a worktree. A merged or closed pull
+request finishes it, with the same clean-state rules. After a merge, commits
+whose remote branch was deleted do not keep the worktree, because GitHub keeps
+them in the pull request. After a close they do: gc reports the worktree as
+unpushed. When `gh` is not installed, not signed in, or fails, gc says so
+(`pullRequestUnknown` in `--json`) and decides from git alone.
+`stim worktree remove` makes the same check when local-only commits would
+refuse the removal, so a worktree whose pull request was squash-merged and
+whose branch was deleted is removed without `--force`.
+
 gc also waits out a grace period, 2 hours by default, before it removes a
 finished worktree. The period starts at the worktree's latest activity: a
 change to its git index, HEAD or reflog, a Stim state or log write, or the
-merge of its branch into the default branch. An agent that just merged its
+merge of its branch into the default branch or of its pull request. An agent that just merged its
 pull request still has time to run `stim stop` and `stim worktree remove`
 itself. gc reports such a worktree as kept with the reason `recent-activity`
 and the time it becomes removable (`eligibleAt` in `--json`). When gc cannot

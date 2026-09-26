@@ -190,6 +190,27 @@ status under **Autopilot activity**.
   the parked device pool. It still keeps a merged worktree in use or active
   within the CLI's `gc.worktreeGraceMinutes`, 2 hours by default, so an agent
   that just merged can finish `stim stop` and `stim worktree remove`.
+- **Remove worktrees whose pull request was merged or closed** checks every 5
+  minutes and when the app becomes active, at most once a minute. It runs
+  `gh pr list --state closed --limit 100 --json headRefName` (the 100 newest
+  closed pull requests) in each repository
+  with a Stim environment. Only when a linked worktree's branch is among those
+  pull requests does it run `stim gc --json`, and it runs it again only when
+  that set of worktrees changes, a kept one becomes eligible, or 30 minutes
+  pass. It then runs `stim worktree remove <path>` on each worktree gc reports
+  as removable because its pull request, whose head is or contains HEAD, was
+  merged or closed: clean, with no commit that exists only locally except
+  those a merged pull request holds, no live Metro, build or device, and past
+  `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
+  `stim status` shows live, building or on another branch; a `stim start` in the seconds
+  between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
+  keeps for another reason is listed under **Finished pull requests** in Needs
+  attention, as "PR #123 merged, 2 uncommitted or untracked files", with
+  **Open PR** and **Show in Finder**; the autopilot never forces a removal.
+  Each run is logged, and the **Autopilot removes worktrees of finished pull
+  requests** notification, on by default, reads "Removed 3 worktrees for
+  merged PRs". Without `gh`, or signed out, nothing is removed by this option;
+  the nightly cleanup still removes worktrees git shows as merged.
 
 While free disk is under the budget, the Storage view shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to

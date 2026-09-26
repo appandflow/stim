@@ -463,7 +463,8 @@ THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
 a merged or idle linked worktree. The clock starts at the worktree's latest
 activity: a write to its git index, HEAD or HEAD reflog, its Stim workspace
-state or logs, or the merge of its branch into the default branch.
+state or logs, the merge of its branch into the default branch, or when its
+pull request was merged or closed.
 
   {
     "gc": { "worktreeGraceMinutes": 120 }

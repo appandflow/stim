@@ -45,6 +45,7 @@ import {
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
+import { endedPullRequest, pullRequestLookup } from '../workspace/pull-request.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -835,7 +836,26 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   const branch = entry.branch;
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
   const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
-  const inspection = inspectRemoval(path, opts.mergedHead);
+  let mergedHead = opts.mergedHead;
+  let inspection = inspectRemoval(path, mergedHead);
+  if (
+    inspection.blockers.length &&
+    !opts.force &&
+    !mergedHead &&
+    branch &&
+    inspection.unpushed?.length &&
+    !inspection.dirtyLines.length
+  ) {
+    const head = resolveFullRef(path, 'HEAD');
+    const pr = head ? endedPullRequest(pullRequestLookup()(path, branch, head)) : null;
+    if (head && pr?.state === 'merged') {
+      mergedHead = head;
+      inspection = inspectRemoval(path, mergedHead);
+      console.error(
+        chalk.dim(`HEAD is in the merged PR #${pr.number} (${pr.url}); its local-only commits stay on GitHub.`),
+      );
+    }
+  }
   if (inspection.blockers.length && !opts.force) {
     printRemovalRefusal(path, inspection);
     return;
@@ -857,7 +877,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     withReclaimLocks(path, async (lockedKeys) => {
       if (opts.guard?.(lockedKeys).length) return;
       const inspectedHead = resolveFullRef(path, 'HEAD');
-      const current = inspectRemoval(path, opts.mergedHead);
+      const current = inspectRemoval(path, mergedHead);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);
         return;

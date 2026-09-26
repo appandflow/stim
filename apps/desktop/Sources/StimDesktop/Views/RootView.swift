@@ -221,7 +221,7 @@ struct RootView: View {
         EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
       }
     case .attention:
-      AttentionView(store: store)
+      AttentionView(store: store, autopilot: autopilot)
     case .storage:
       StorageView(status: store, metrics: metrics, storage: storage, autopilot: autopilot)
     default:

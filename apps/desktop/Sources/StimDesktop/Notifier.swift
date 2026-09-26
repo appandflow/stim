@@ -48,6 +48,16 @@ final class Notifier: ObservableObject {
     UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
   }
 
+  /// Posts that the autopilot removed worktrees whose pull request was merged or closed.
+  static func postWorktreesRemoved(title: String, body: String) {
+    guard isAvailable, UserDefaults.standard.bool(forKey: AppPreferences.Key.notifiesWorktreeRemoval) else { return }
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    UNUserNotificationCenter.current().add(
+      UNNotificationRequest(identifier: "worktrees-\(Date().timeIntervalSince1970)", content: content, trigger: nil))
+  }
+
   func start() {
     guard subscription == nil else { return }
     subscription = store.$payload.compactMap { $0 }.sink { [weak self] payload in
