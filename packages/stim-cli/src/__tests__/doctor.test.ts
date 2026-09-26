@@ -35,6 +35,7 @@ import {
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
+  checkAndroidSdk,
 } from '../diagnostics/doctor.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -1851,12 +1852,40 @@ test('doctor success output groups iOS checks and optional capabilities', () => 
   expect(output).not.toContain('Nothing to flag means');
 });
 
+test('doctor reports a missing Android SDK for an Android project, which stim android refuses before Gradle', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-android-sdk-'));
+  const saved = { ANDROID_HOME: process.env.ANDROID_HOME, ANDROID_SDK_ROOT: process.env.ANDROID_SDK_ROOT };
+  try {
+    process.env.ANDROID_HOME = join(project, 'no-such-sdk');
+    delete process.env.ANDROID_SDK_ROOT;
+    expect(checkAndroidSdk(project, undefined)).toBeNull();
+    expect(checkAndroidSdk(project, 'ios')).toBeNull();
+    const finding = checkAndroidSdk(project, 'android');
+    expect(finding?.code).toBe('android-sdk-missing');
+    expect(finding?.level).toBe('cost');
+    expect(finding?.detail).toContain(join(project, 'no-such-sdk'));
+    expect(finding?.detail).toContain('STIM_BUILD_FAILED');
+    expect(finding?.fix).toContain('ANDROID_HOME');
+
+    mkdirSync(join(project, 'android'));
+    expect(checkAndroidSdk(project, undefined)?.code).toBe('android-sdk-missing');
+    mkdirSync(join(project, 'no-such-sdk'));
+    expect(checkAndroidSdk(project, undefined)).toBeNull();
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('doctor success output scopes native checks to Android', () => {
   const output = doctorSuccessLines('android', testStimVersions).join('\n');
 
   expect(output).toContain('Doctor (Android)');
   expect(output).toContain('Android');
-  expect(output).toContain('setup       warm state');
+  expect(output).toContain('setup       Android SDK, warm state');
   expect(output).toContain('caches      Metro, Gradle, ccache, build provider');
   expect(output).not.toContain('Xcode compilation');
   expect(output).not.toContain('SimSlim');

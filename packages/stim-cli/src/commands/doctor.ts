@@ -84,7 +84,7 @@ export function doctorSuccessLines(
   }
   if (platform !== 'ios') {
     lines.push('', 'Android');
-    lines.push(phaseLine('setup', 'warm state'));
+    lines.push(phaseLine('setup', 'Android SDK, warm state'));
     lines.push(phaseLine('caches', 'Metro, Gradle, ccache, build provider'));
     lines.push(phaseLine('devices', 'remote device'));
   }

@@ -487,10 +487,11 @@ export async function buildAndroid(
     };
   }
 
-  const sdk = androidHome();
+  const sdk = androidHome(env);
+  const sdkExists = existsSync(sdk);
   const refusal = androidSdkRefusal({
     sdkPath: sdk,
-    sdkExists: existsSync(sdk),
+    sdkExists,
     hasLocalProperties: existsSync(join(project.androidDir, 'local.properties')),
   });
   if (refusal) return { ok: false, ...refusal, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
@@ -581,7 +582,15 @@ export async function buildAndroid(
       spawn(project.gradlew, args, {
         cwd: project.androidDir,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...env, ...ccache?.env, ...cas?.env, ...nativeEnv, TERM: 'dumb', FORCE_COLOR: '0' },
+        env: {
+          ...env,
+          ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
+          ...ccache?.env,
+          ...cas?.env,
+          ...nativeEnv,
+          TERM: 'dumb',
+          FORCE_COLOR: '0',
+        },
       }),
     );
   } catch (err) {

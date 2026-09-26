@@ -76,11 +76,11 @@ export interface ResolvedAvdSerial {
   notRunning?: true;
 }
 
-export function androidHome(): string {
-  const configured = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+export function androidHome(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
   if (configured) return configured;
   if (process.platform === 'win32') {
-    return join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Android', 'Sdk');
+    return join(env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Android', 'Sdk');
   }
   return join(homedir(), 'Library', 'Android', 'sdk');
 }

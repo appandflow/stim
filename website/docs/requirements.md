@@ -30,7 +30,14 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 ## Android
 
-- macOS, Linux or Windows with the Android SDK.
+- macOS, Linux or Windows with the Android SDK. Stim reads its location from
+  `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk` (the
+  macOS Android Studio default) or `%LOCALAPPDATA%\Android\Sdk` on Windows, and
+  passes that path to Gradle as `ANDROID_HOME` when neither variable is set.
+  On Linux, set `ANDROID_HOME`.
+  With no SDK there and no `android/local.properties`, `stim doctor --platform
+android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
+  before Gradle runs.
 - For an emulator, an installed Android system image matching the host:
   `arm64-v8a` on ARM64 or `x86_64` on x64.
 - A working Java and Gradle setup for the project.

@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { androidHome } from '../devices/android.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   ASSEMBLE_TASK,
@@ -711,6 +712,44 @@ describe('buildAndroid', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  test('Gradle gets the SDK path Stim resolved when the caller set no SDK variable, and an explicit one untouched', async () => {
+    makeAndroidProject();
+    const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = root;
+    process.env.USERPROFILE = root;
+    try {
+      const unset = { PATH: process.env.PATH, LOCALAPPDATA: join(root, 'local') };
+      const defaultSdk = androidHome(unset);
+      mkdirSync(defaultSdk, { recursive: true });
+      const gradleEnv = async (env: NodeJS.ProcessEnv) => {
+        let seen: NodeJS.ProcessEnv | undefined;
+        const result = await buildAndroid(
+          { root, logWriter: recordingWriter() },
+          {
+            env,
+            spawnFn: (_cmd, _args, opts) => {
+              seen = opts.env as NodeJS.ProcessEnv;
+              return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+            },
+          },
+        );
+        assert(result.ok);
+        assert(seen);
+        return seen;
+      };
+      expect((await gradleEnv(unset)).ANDROID_HOME).toBe(defaultSdk);
+      expect((await gradleEnv({ ...unset, ANDROID_HOME: sdk })).ANDROID_HOME).toBe(sdk);
+      const sdkRoot = await gradleEnv({ ...unset, ANDROID_SDK_ROOT: sdk });
+      expect(sdkRoot.ANDROID_HOME).toBe(undefined);
+      expect(sdkRoot.ANDROID_SDK_ROOT).toBe(sdk);
+    } finally {
+      for (const [key, value] of Object.entries(savedHome)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   test('a missing Android SDK is reported before anything is spawned', async () => {
     makeAndroidProject();
     process.env.ANDROID_HOME = join(root, 'no-such-sdk');
@@ -813,7 +852,7 @@ describe('buildAndroid', () => {
     const result = await buildAndroid(
       { root },
       {
-        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/old/ccache' },
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/old/ccache', ANDROID_HOME: sdk },
         cas: {
           id: 'apple-cas-test',
           dir: join(root, 'cas'),
@@ -1110,7 +1149,7 @@ test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gra
       {
         pch,
         compilerCacheDisabled: true,
-        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache' },
+        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache', ANDROID_HOME: sdk },
         spawnFn: (_cmd, _args, opts) => {
           const env = opts.env as NodeJS.ProcessEnv;
           expect(env.CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
