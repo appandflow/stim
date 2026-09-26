@@ -181,8 +181,10 @@ architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. Set `.stim.json`
 defaults or use `ios --device-type`, `ios --runtime`, `android --system-image`,
 and `android --device-profile` for a specific target. These flags choose the
 device Stim creates. When the workspace already owns a device of another model
-or version, an explicit flag refuses instead of booting it; pass `--slot <name>`
-to create the requested device beside it. Android AVDs use the
+or version, `stim ios` and `stim android` refuse rather than boot it. The one
+exception is `--system-image`, which replaces an emulator that never finished
+booting. Pass `--slot <name>` to create the requested device beside the current
+one. Android AVDs use the
 `pixel_6` hardware profile unless `android.deviceProfile` or
 `--device-profile` names another one, such as `pixel_tablet` or `pixel_fold`.
 

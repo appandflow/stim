@@ -2580,6 +2580,16 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
     }
   });
 
+  test.each(['26.2', 'iOS 26.2'])('--runtime %s naming the version the sim runs reuses it', async (runtime) => {
+    const { root, run, ensured } = ensureOnSim26({ runtime, runtimeFlag: runtime });
+    try {
+      await expect(ensured).resolves.toMatchObject({ deviceUdid: 'U1', runtime: '26.2' });
+      expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('an ios.runtime setting alone keeps the sim on the version it was created with', async () => {
     const { root, run, ensured } = ensureOnSim26({ runtime: '18.6' });
     try {
