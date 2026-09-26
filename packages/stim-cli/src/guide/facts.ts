@@ -211,6 +211,12 @@ per session, with the preview URL.`,
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
+                  Neither "bundling" nor "unverified" is reported for an app
+                  whose process is gone when the bundle timeout closes: the
+                  run fails as FATAL, "the app process exited", with the
+                  device log's errors. An iOS crash report can land a minute
+                  after the crash, so \`logs --errors\` may show the native
+                  stack only later
                   See \`guide facts devmenu\` for the dev menu and its button.
   metroPort       the port the app was wired to; NULL on a non-Debug
                   configuration, whose JS is embedded and which is launched

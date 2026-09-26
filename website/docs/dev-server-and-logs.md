@@ -64,8 +64,10 @@ read when the supervisor is launched.
 `stim ios` and `stim android` open the installed app, then check launch
 evidence. Debug runs observe Metro; when bundling finishes within the wait
 window, Stim also observes three seconds of launch logs. The summary can report
-that bundling is still in progress or that launch is unverified. Release runs
-check process liveness without Metro.
+that bundling is still in progress or that launch is unverified. If the wait
+window closes and the app process is gone, the run fails with `the app process
+exited` and the device log's errors instead. Release runs check process
+liveness without Metro.
 
 For an unverified debug launch, follow the printed remedy. An Expo development
 client may need its server picker; a bare app on a local simulator or emulator

@@ -383,19 +383,14 @@ export async function verifyLaunch({
     }
 
     if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
-      const requested = findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity;
-      const waitedMs = now() - startedAt;
-      if (requested) {
-        return {
-          verified: false,
-          timedOut: true,
-          requested: true,
-          record: requested,
-          mode,
-          waitedMs,
-        };
-      }
-      return { verified: false, timedOut: true, mode, waitedMs };
+      return bundleTimeoutOutcome({
+        requested: findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity,
+        processAlive,
+        deviceRecords,
+        platform,
+        mode,
+        waitedMs: now() - startedAt,
+      });
     }
     const deadline = runtimeWaiting
       ? bundleDeadline
@@ -404,6 +399,35 @@ export async function verifyLaunch({
         : (stabilityDeadline ?? bundleDeadline);
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }
+}
+
+function bundleTimeoutOutcome({
+  requested,
+  processAlive,
+  deviceRecords,
+  platform,
+  mode,
+  waitedMs,
+}: {
+  requested: NdjsonRecord | null;
+  processAlive: (() => boolean | null) | null;
+  deviceRecords: NdjsonRecord[];
+  platform: 'ios' | 'android' | null;
+  mode: string | null;
+  waitedMs: number;
+}): VerifyLaunchResult {
+  if (processAlive?.() === false) {
+    const errors = deviceRecords.filter(
+      (record) =>
+        recordCouldBelongToPlatform(record, platform) &&
+        isLaunchError(record, platform) &&
+        !isIosConnectionRefusal(record, platform),
+    );
+    return { verified: false, fatal: true, errors, processAlive: false, mode, waitedMs };
+  }
+  return requested
+    ? { verified: false, timedOut: true, requested: true, record: requested, mode, waitedMs }
+    : { verified: false, timedOut: true, mode, waitedMs };
 }
 
 function after(record: NdjsonRecord, since: number | string | undefined): boolean {

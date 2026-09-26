@@ -384,7 +384,7 @@ test('a native crash before any Metro request ends verification without calling 
   expect(result.waitedMs).toBeLessThan(2000);
 });
 
-test('an unavailable process probe or unrelated crash does not invent a native launch failure', async () => {
+test('an unrelated crash does not invent a native launch failure; a gone process fails for its exit', async () => {
   for (const alive of [null, false]) {
     let time = 1000;
     const result = await verifyLaunch({
@@ -401,8 +401,9 @@ test('an unavailable process probe or unrelated crash does not invent a native l
         time += ms;
       },
     });
-    expect(result.fatal).not.toBe(true);
     expect(result.verified).toBe(false);
+    expect(result.errors?.some((record) => record.event === 'native_crash') ?? false).toBe(false);
+    expect(result.fatal === true).toBe(alive === false);
   }
 });
 
