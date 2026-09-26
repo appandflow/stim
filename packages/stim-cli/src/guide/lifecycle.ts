@@ -235,10 +235,10 @@ WAITING FOR A CHANGE
   state, and recomputes every 30 seconds as a fallback. A log append updates
   only the log error count and device activity, no sooner than 15 seconds
   after the previous refresh. Ctrl+C, SIGTERM or closing its stdout ends it
-  with exit 0, as does the exit of the process that started it when its
-  stdout is a pipe. It notices within a few seconds even when nothing
-  changes, except a closed stdout on Linux, which it notices at the next
-  change. Without --json it reprints the human view on change.`,
+  with exit 0. On Linux, so does the exit of the process that started it
+  when its stdout is a pipe. It notices within a few seconds even when
+  nothing changes, except a closed stdout pipe on Linux whose starter is
+  still running, which it notices at the next change. Without --json it reprints the human view on change.`,
   sections: {
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',

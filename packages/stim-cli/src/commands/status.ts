@@ -527,11 +527,11 @@ async function watchStatus(json: boolean): Promise<void> {
   const machine = setInterval(() => json && snapshot?.machine && scheduler.trigger('light'), WATCH_LIGHT_INTERVAL_MS);
   const parent = process.ppid;
   const stdout = fstatSync(1);
-  const piped = process.platform !== 'win32' && (stdout.isFIFO() || stdout.isSocket());
-  // macOS fails a zero-length write to a pipe or socket whose reader is gone with EPIPE; Linux
-  // returns 0 without checking the reader, so there only the parent's exit is detectable.
+  const linuxPipe = process.platform === 'linux' && (stdout.isFIFO() || stdout.isSocket());
+  // A zero-length write to a pipe or socket whose reader is gone fails with EPIPE, except to a
+  // Linux pipe(2), which returns 0 without checking the reader; there the parent's exit stands in.
   const reader = setInterval(() => {
-    if (piped && process.ppid !== parent) finish();
+    if (linuxPipe && process.ppid !== parent) finish();
     else process.stdout.write('');
   }, WATCH_READER_CHECK_MS);
   const finish = () => {

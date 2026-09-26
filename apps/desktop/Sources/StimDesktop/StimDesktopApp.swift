@@ -35,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     signal(SIGTERM, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     source.setEventHandler {
-      MainActor.assumeIsolated { NSApp.terminate(nil) }
+      MainActor.assumeIsolated {
+        NSApp.terminate(nil)
+        ServerController.shared.stopForQuit()
+      }
+      exit(0)
     }
     source.resume()
     terminationSource = source
