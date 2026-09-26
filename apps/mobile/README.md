@@ -33,9 +33,9 @@ reload and stop a workspace:
   status issues, a running build at more than twice its median, and a live
   simulator or emulator whose app is not running. A workspace that is not live,
   building or holding a remote session adds only its error issues and a build
-  that failed in the last day; the machine status sheet lists every issue. A disconnected machine shows
-  only its offline item, because its status is stale. It shows three items
-  until you expand it. A machine item opens the machine's status, log errors
+  that failed in the last day; the machine status sheet lists every issue. A
+  disconnected machine shows only its offline item, because its status is
+  stale. It shows three items until you expand it. A machine item opens the machine's status, log errors
   open the workspace's errors, and every other item opens the workspace.
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
   the list to a grid of every running simulator and emulator on every paired
