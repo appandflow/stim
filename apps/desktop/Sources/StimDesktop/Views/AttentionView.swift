@@ -148,7 +148,7 @@ struct AttentionView: View {
     HStack(spacing: 14) {
       Image(systemName: "arrow.triangle.pull").foregroundStyle(Theme.warn)
       VStack(alignment: .leading, spacing: 3) {
-        Text(PathNames(path: flag.path).title)
+        Text(store.names(ofPath: flag.path).title)
         Text(flag.text).font(Theme.body(11.5)).foregroundStyle(Theme.secondary).lineLimit(2)
         Text(abbreviatingHome(flag.path)).font(Theme.mono(11.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
       }

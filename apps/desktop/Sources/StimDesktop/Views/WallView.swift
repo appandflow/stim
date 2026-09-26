@@ -89,8 +89,12 @@ struct WorkspaceHeader: View {
   private var titleGroup: some View {
     HStack(spacing: 12) {
       Text(env.names.title).font(Theme.heading(16)).lineLimit(1).truncationMode(.middle)
-      Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary).lineLimit(1).fixedSize()
-      Text(env.names.subtitle).font(Theme.body(12)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
+      if project.name != env.names.title {
+        Text(project.name).font(Theme.body(12)).foregroundStyle(Theme.primary).lineLimit(1).fixedSize()
+      }
+      if let inCheckout = env.names.inCheckout {
+        Text(inCheckout).font(Theme.body(12)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
+      }
     }
   }
 

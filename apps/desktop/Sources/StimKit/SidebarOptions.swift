@@ -81,7 +81,12 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     return nil
   }
 
-  var sortName: String { PathNames(path: path).title.lowercased() }
+  var sortName: String {
+    switch self {
+    case .workspace(let env): return env.names.title.lowercased()
+    case .worktree(let worktree): return worktree.names.title.lowercased()
+    }
+  }
 }
 
 extension Workspace {

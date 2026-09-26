@@ -108,7 +108,7 @@ import Testing
       environments: [try env("/unknown"), try env("/small"), try env("/big")], unprovisioned: [fresh], gc: nil,
       disk: disk, paths: paths)
     #expect(report.workspaces.map(\.path) == ["/big", "/w/new", "/small", "/unknown"])
-    #expect(report.workspaces[1].unprovisioned && report.workspaces[1].repositoryName == "repo")
+    #expect(report.workspaces[1].unprovisioned && report.workspaces[1].repository == "/w/repo")
   }
 
   /// Catches per-project Metro stores reading as identical rows whose Empty button can never select one.

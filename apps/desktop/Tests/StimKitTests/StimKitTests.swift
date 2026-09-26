@@ -138,16 +138,23 @@ import Testing
 }
 
 @Suite struct NamingTests {
-  @Test func titlesAPackageInsideAWorktree() {
-    let names = PathNames(path: "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
-    #expect(names.title == "wide-insets")
-    #expect(names.subtitle == "mobile")
+  @Test func titlesAWorktreeByItsBranchThenItsFolder() {
+    let nested = PathNames(
+      path: "/Users/dev/app/.worktrees/wide-insets/apps/mobile", branch: "fix/insets",
+      worktree: "/Users/dev/app/.worktrees/wide-insets")
+    #expect(nested.title == "fix/insets")
+    #expect(nested.inCheckout == "apps/mobile")
+    let detached = PathNames(path: "/Users/dev/projects/shop-feature", worktree: "/Users/dev/projects/shop-feature")
+    #expect(detached.title == "shop-feature")
+    #expect(detached.inCheckout == nil)
+    #expect(PathNames(path: "/Users/dev/app/.worktrees/sdk58").title == "sdk58")
   }
 
-  @Test func subtitlesAWorktreeRootWithItsRepository() {
-    let names = PathNames(path: "/Users/dev/app/.worktrees/sdk58")
-    #expect(names.title == "sdk58")
-    #expect(names.subtitle == "app")
+  @Test func titlesAMainCheckoutByItsProject() {
+    let names = PathNames(path: "/Users/dev/stim/apps/mobile", project: Project(root: "/Users/dev/stim"))
+    #expect(names.title == "stim")
+    #expect(names.inCheckout == "apps/mobile")
+    #expect(PathNames(path: "/Users/dev/stim/apps/mobile").title == "mobile")
   }
 
   @Test func abbreviatesOnlyPathsThatStartAtHome() {
@@ -273,7 +280,7 @@ import Testing
       } == ["app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live", "zed 0/1: /r/zed"])
     #expect(
       list { $0.sort = .memory } == [
-        "/r/app/.worktrees/live", "/r/app/.worktrees/idle", "/r/app/.worktrees/b", "/r/new/.worktrees/c", "/r/zed",
+        "/r/app/.worktrees/live", "/r/app/.worktrees/idle", "/r/new/.worktrees/c", "/r/app/.worktrees/b", "/r/zed",
       ])
     #expect(list { $0.hiddenProjects = ["/r/app"] } == ["/r/new/.worktrees/c", "/r/zed"])
   }

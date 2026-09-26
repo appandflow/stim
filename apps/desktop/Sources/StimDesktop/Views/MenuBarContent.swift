@@ -12,7 +12,9 @@ struct MenuBarContent: View {
     if !live.isEmpty {
       Divider()
       ForEach(live) { env in
-        Button("\(env.names.title) \u{2014} \(env.names.subtitle)") { open(env.path) }
+        Button(
+          ([env.names.title] + [env.project?.name, env.names.inCheckout].compactMap { $0 }.filter { $0 != env.names.title })
+            .joined(separator: " \u{2014} ")) { open(env.path) }
       }
     }
     Divider()

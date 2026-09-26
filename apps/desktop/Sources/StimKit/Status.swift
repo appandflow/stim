@@ -20,6 +20,8 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
   /// The repository's main checkout, or its git directory when it is bare.
   public var repository: String?
   public var git: WorktreeGit?
+
+  public var names: PathNames { PathNames(path: path, branch: branch, worktree: path) }
 }
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
@@ -39,6 +41,13 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var build: Build?
   public var lastBuilds: LastBuilds?
   public var worktree: WorktreeInfo?
+  /// The project Stim Desktop resolved for the workspace; not part of the payload.
+  public var project: Project?
+
+  enum CodingKeys: String, CodingKey {
+    case path, live, memoryMb, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
+    case lastBuilds, worktree
+  }
 
   public var id: String { path }
 
@@ -76,7 +85,9 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     return build
   }
 
-  public var names: PathNames { PathNames(path: path) }
+  public var names: PathNames {
+    PathNames(path: path, branch: worktree?.branch, worktree: worktree?.path, project: project)
+  }
 }
 
 /// One thing in a workspace that needs the user; `remedy` is a command to run from `workspace`.

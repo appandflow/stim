@@ -58,12 +58,16 @@ struct DeviceTile: View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
         StatusDot(color: device.isRunning ? Theme.live : Theme.tertiary, filled: device.isRunning)
-        HStack(spacing: 4) {
-          Text(device.label).font(Theme.body(12, weight: .semibold)).layoutPriority(1)
-          if let detail = device.detail {
-            Text(detail).font(Theme.body(12)).foregroundStyle(Theme.secondary)
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 4) {
+            Text(device.label).font(Theme.body(12, weight: .semibold))
+            if let detail = device.detail {
+              Text(detail).font(Theme.body(12)).foregroundStyle(Theme.secondary)
+            }
           }
+          Text(device.label).font(Theme.body(12, weight: .semibold))
         }
+        .help([device.label, device.detail].compactMap { $0 }.joined(separator: " "))
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
