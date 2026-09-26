@@ -90,6 +90,14 @@ window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. Release runs check process
 liveness without Metro.
 
+When the app is already running, from an earlier run or because the install
+was skipped, Stim restarts it the way Xcode's Run does: `simctl terminate` on
+a simulator, `am force-stop` on an emulator or an Android phone, then a fresh
+launch. The launch line reads `restarted running app (was pid <n>)`, and state
+held in the running app is lost. An iPhone run already restarts the app through
+devicectl, and remote targets relaunch it through Agent Device. If the running
+app cannot be stopped, the run fails instead of reusing the old process.
+
 For an unverified debug launch, follow the printed remedy. An Expo development
 client may need its server picker; a bare app on a local simulator or emulator
 gets a process restart command.
@@ -147,8 +155,8 @@ crash logcat buffer, including reports emitted outside the dead app's PID. Java
 exceptions retain their stack; C/C++ frames use matching local ELF build IDs and
 NDK tools where available. Unavailable symbols remain explicitly unresolved.
 Android can keep a crashed Java process alive behind its system crash dialog.
-Stim treats the crash report as failure even when the PID exists. Follow the
-printed app-scoped force-stop command after fixing the error, then rerun `stim android`.
+Stim treats the crash report as failure even when the PID exists. Fix the error,
+then rerun `stim android`, which force-stops that process before launching.
 
 Confirmed app-crash reports are included in default `stim logs --errors` without
 including general OS error noise. Use `stim logs --source device --json` for full

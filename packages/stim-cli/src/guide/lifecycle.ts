@@ -693,7 +693,7 @@ result as proof instead of requiring an unrelated screenshot.`,
     },
     builds: {
       summary:
-        'optional cache warm-up, build optimizations, fingerprints, .fingerprintignore, install unchanged, runtime state',
+        'optional cache warm-up, build optimizations, fingerprints, .fingerprintignore, install unchanged, running app restart, runtime state',
       body: () => `OPTIONAL CACHE WARM-UP FOR REPEATED NATIVE WORK
   When several native worktrees are coming, build the source checkout once to
   seed the shared caches before warming the linked worktrees. Skip this extra
@@ -795,6 +795,24 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
 
   \`--json\` carries installSkipped so a caller can tell a skipped run from an
   installed one.
+
+A RUNNING APP IS RESTARTED, LIKE XCODE'S RUN
+  Before it launches, \`ios\` and \`android\` read the device's process list.
+  When the app is already running, from an earlier run or after an install
+  that was skipped, Stim stops it and launches it fresh: \`simctl terminate\`
+  on a simulator, \`am force-stop\` on an emulator or an \`android --device\`
+  phone. The new process requests its bundle, so launch verification has real
+  evidence instead of an old process that fetched nothing. In-app state from
+  the previous session does not survive. The launch line says so:
+
+    launch      com.example.app restarted running app (was pid 4242) (0.9s)
+
+  A stop that fails refuses the launch rather than reusing the old process.
+  When the process list cannot be read, Stim launches without stopping
+  anything and verification reports what it observes. An iPhone run
+  (\`ios --device\`) needs no extra step: its collector launches with
+  devicectl's \`--terminate-existing\`. Remote targets launch through
+  \`agent-device open --relaunch\`.
 
 RUNTIME STATE AND BUILD INPUTS
 Runtime state is stored outside the project tree under

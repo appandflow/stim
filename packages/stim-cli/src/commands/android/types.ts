@@ -39,6 +39,7 @@ export interface LaunchResultLike {
   reversed?: string[];
   debugHttpHost?: string | null;
   debugHttpHostNote?: string | null;
+  restartedPid?: number;
 }
 
 export interface VerifyLaunchResultLike {

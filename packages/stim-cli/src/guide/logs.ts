@@ -254,9 +254,9 @@ WHAT WRITES WHAT
                        console-only; missing reports or symbols are not proof
                        of a healthy app. No symbol downloads are performed.
                        Android may keep a crashed Java PID alive behind its
-                       crash dialog. Follow the app-scoped force-stop remedy
-                       printed by android after fixing the crash, then rerun
-                       stim android. Metro reload alone cannot recover it.
+                       crash dialog. Fix the crash, then rerun stim android,
+                       which force-stops that process before launching. Metro
+                       reload alone cannot recover it.
 
                        The connection refusal \`TCP Conn ... Failed :
                        error 0:61 [61]\` (61 is ECONNREFUSED) is not even

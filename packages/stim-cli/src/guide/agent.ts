@@ -151,10 +151,11 @@ RULES DURING THE LOOP
   the error screen remains, follow the printed reload remedy instead of
   running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
-- ios and android install the app, launch it, and check readiness. Trust the
-  exact device, app, Metro, and launch facts in the final summary. Use the full
-  reported device ID. Never assume a simulator named booted belongs to this
-  workspace.
+- ios and android install the app, launch it, and check readiness. A running
+  copy of the app is stopped and launched fresh, so in-app state does not
+  survive the run. Trust the exact device, app, Metro, and launch facts in the
+  final summary. Use the full reported device ID. Never assume a simulator
+  named booted belongs to this workspace.
 - After each ios or android run, give the user one compact result: exact device,
   app id, launch state, cache result, total duration, and whether stim logs
   --errors passed. Include a remedy only when action remains. Do not repeat the

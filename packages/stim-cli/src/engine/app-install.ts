@@ -43,6 +43,7 @@ export type IosLaunchResult = {
   url?: string;
   jsLocation?: string;
   pid?: number | null;
+  restartedPid?: number;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -68,6 +69,7 @@ export type AndroidLaunchResult = {
   reversed?: string[];
   debugHttpHost?: string | null;
   debugHttpHostNote?: string | null;
+  restartedPid?: number;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -191,6 +193,10 @@ export function iosSchemeApprovalKeys(bundleId: string, devClientScheme: string)
   return [...new Set([bundleId, devClientScheme])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
 }
 
+export function restartedAppNote(restartedPid: number | undefined, lead = ' '): string {
+  return restartedPid ? `${lead}restarted running app (was pid ${restartedPid})` : '';
+}
+
 export function parseLaunchedPid(text: unknown): number | null {
   if (typeof text !== 'string') return null;
   const match = text.trim().match(/:\s*(\d+)\s*$/);
@@ -254,6 +260,21 @@ export function launchIosApp(
     udid,
     bundleId,
   ];
+  let runningPid = iosAppProcess(udid, bundleId, { exec: e });
+  const restart: { restartedPid?: number } = {};
+  if (runningPid) {
+    try {
+      e.runFile('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${runningPid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+    restart.restartedPid = runningPid;
+    runningPid = null;
+  }
   if (metroPort !== null) {
     try {
       e.runFile(
@@ -273,7 +294,7 @@ export function launchIosApp(
       const url = devClientUrl(devClientScheme, metroPort);
       let launchedWithInitialUrl = false;
       try {
-        if (consolePaths && iosAppProcess(udid, bundleId, { exec: e }) === null) {
+        if (consolePaths && runningPid === null) {
           // Expo's EXDevLauncherController.initialUrlFromProcessInfo loads this
           // project directly; launch-then-openurl can create two React hosts.
           const initialUrl = new URL(url).searchParams.get('url')!;
@@ -281,13 +302,14 @@ export function launchIosApp(
           const pid = parseLaunchedPid(
             e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 60000 }),
           );
-          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid };
+          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         }
         e.runFile('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
-        return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort) };
+        return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
       } catch (err) {
         const pid = launchedWithInitialUrl ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
-        if (pid) return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid };
+        if (pid && pid !== restart.restartedPid)
+          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         return {
           failed: true,
           code: LAUNCH_ERROR,
@@ -297,16 +319,15 @@ export function launchIosApp(
     }
   }
 
-  const preLaunchPid = iosAppProcess(udid, bundleId, { exec: e });
   try {
     const out = e.runFile('xcrun', launchArgs, { timeoutMs: 60000 });
-    const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out) };
+    const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out), ...restart };
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
   } catch (err) {
-    const pid = preLaunchPid === null ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
-    if (pid) {
-      const result: IosLaunchResult = { ok: true, mode: 'launch', pid };
+    const pid = runningPid === null ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+    if (pid && pid !== restart.restartedPid) {
+      const result: IosLaunchResult = { ok: true, mode: 'launch', pid, ...restart };
       if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
       return result;
     }
@@ -559,6 +580,25 @@ export function openAndroidDevClientUrl(
   return { ok: true, url };
 }
 
+function stopRunningAndroidApp(
+  serial: string,
+  packageName: string,
+  exec: Executor,
+): { restartedPid?: number; failed?: true; code?: string; reason?: string } {
+  const pid = androidAppProcess(serial, packageName, { exec });
+  if (!pid) return {};
+  try {
+    exec.runFile('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+  } catch (err) {
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `am force-stop ${packageName} failed on ${serial}, so the running app (pid ${pid}) was not restarted: ${describe(err)}`,
+    };
+  }
+  return { restartedPid: pid };
+}
+
 export function launchAndroidApp(
   {
     serial,
@@ -576,6 +616,8 @@ export function launchAndroidApp(
   { exec = null }: ExecOpt = {},
 ): AndroidLaunchResult {
   const e = exec || getExecutor();
+  const restart = stopRunningAndroidApp(serial, packageName, e);
+  if (restart.failed) return restart;
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   if (reversed.failed) return reversed;
   const prefs = writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
@@ -589,6 +631,7 @@ export function launchAndroidApp(
     reversed: reversedPairs,
     debugHttpHost: prefs.ok ? prefs.host : null,
     debugHttpHostNote: prefs.ok ? null : prefs.reason,
+    ...restart,
   };
 
   let devClientNote = null;
@@ -630,11 +673,13 @@ export function launchAndroidReleaseApp(
   { exec = null }: ExecOpt = {},
 ): AndroidLaunchResult {
   const e = exec || getExecutor();
+  const restart = stopRunningAndroidApp(serial, packageName, e);
+  if (restart.failed) return restart;
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
       e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
-      return { ok: true, mode: 'am-start', component };
+      return { ok: true, mode: 'am-start', component, ...restart };
     } catch (err) {
       return {
         failed: true,
@@ -645,7 +690,7 @@ export function launchAndroidReleaseApp(
   }
   try {
     e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
-    return { ok: true, mode: 'monkey' };
+    return { ok: true, mode: 'monkey', ...restart };
   } catch (err) {
     return {
       failed: true,
