@@ -72,7 +72,12 @@ other apps or other workspaces' devices.
   stim worktree warm
 
   stim start
-  stim ios                             # or: stim android
+  stim ios                             # or: stim android, or: stim web
+
+For the web target, stim web opens the page in a Stim-owned headless Chrome
+and captures its console and errors in stim logs. Expo web needs the
+react-dom, react-native-web and @expo/metro-runtime dependencies; any other
+web server needs web.url. Read stim guide web first.
 
 For a project using EAS development builds, read stim guide lifecycle eas to
 select a profile from eas.json for the requested target, then run
@@ -264,7 +269,8 @@ Read the matching guide before acting in these situations:
 | Refusal with a CODE                                   | stim guide errors <CODE>         |
 | Running under a sandbox                               | stim guide errors sandbox        |
 | Release configuration or ...Release variant           | stim guide lifecycle release     |
-| Web or API server ports                              | stim guide ports                 |
+| Web app in an owned Chrome (stim web)                 | stim guide web                   |
+| Web or API server ports                               | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
@@ -308,6 +314,7 @@ FULL TOPIC LIST
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide facts                # the --json payloads
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
+  stim guide web                  # stim web: owned Chrome, page logs, launched, teardown
   stim guide ports                # named ports for web and API servers
   stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
   stim guide logs                 # filters, record shape, and capture limits

@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `reload`, `ports [get|stop|release]`, `device lock|unlock`, `logs`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock`, `logs`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -283,6 +283,14 @@ settings, keeps the AVD name, clears app data and removes other third-party apps
 before launch. Skip Android installation only after verifying the APK bytes. Delete them only by eviction,
 adoption-time reconciliation of a listed unavailable simulator, or `gc
 --delete`; every route uses centralized teardown and ownership revalidation.
+
+`stim web` launches the installed Chrome only with a profile Stim created under
+`$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
+ledger, and never attaches to a browser it did not start. Its supervisor holds
+an ownership claim with Chrome as the claim's child. Teardown goes through
+`devices/teardown.ts`, signals the supervisor or Chrome only after verifying
+the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
+is gone, and deletes a profile only when the ledger lists it.
 
 A physical device reached through `android --device` or `ios --device` is
 used but not owned. Hardware cannot be created or booted, so those paths

@@ -8,6 +8,7 @@ import { OUTPUT_LABELS } from '../command-output.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { STIM_DESKTOP_INSTALLED } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
+import webCommand from '../commands/web.ts';
 import {
   topicNames,
   renderTopic,
@@ -650,4 +651,16 @@ test('the facts topic documents every build phase and state status can report', 
   const values = [...`${phases}${states}`.matchAll(/'([a-z-]+)'/g)].map((m) => m[1] as string);
   expect(values.length).toBeGreaterThan(8);
   for (const value of values) expect(body).toMatch(new RegExp(`(^|[\\s|"])${value}(?=[\\s|".,]|$)`, 'm'));
+});
+
+test('the web topic names every web setting and every stim web flag, and the agent guide routes to it', () => {
+  const body = renderTopic('web');
+  assert(body);
+  const program = new Command();
+  webCommand(program);
+  const flags = program.commands.find((command) => command.name() === 'web')?.options.map((option) => option.long);
+  assert(flags?.length);
+  const keys = SETTINGS.filter((setting) => setting.key.startsWith('web.')).map((setting) => setting.key);
+  expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
+  expect(renderTopic('agent')).toContain('stim guide web');
 });

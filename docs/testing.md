@@ -7,11 +7,14 @@ Vitest worker count and five-second unit timeout remain unchanged.
 
 `pnpm run test:compat` runs the explicit native tool compatibility stage. It
 requires macOS, Xcode with the iOS and iOS Simulator SDKs, `codesign`, `security`,
-`clang`, `openssl`, and a paired, unlocked iPhone with Developer Mode enabled.
+`clang`, `openssl`, Google Chrome or Chromium, and a paired, unlocked iPhone
+with Developer Mode enabled.
 It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
-processes through `devicectl`. It does not install an app, alter the keychain,
-create or boot a simulator, or change an Apple Developer account.
+processes through `devicectl`. It launches the installed Chrome headless with a
+temporary profile, against a local page, and closes it. It does not install an
+app, alter the keychain, create or boot a simulator, or change an Apple
+Developer account.
 
 Compatibility tests live beside the unit tests as `*.compat.test.ts`. Ordinary
 unit discovery excludes them. Missing tools, no phone, a locked or disconnected
