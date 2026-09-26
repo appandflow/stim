@@ -51,14 +51,14 @@ import Testing
       environments: [try workspace()], gc: try gc(), disk: DiskMeasurements(sizes: DiskSizes.parse(du)), paths: paths)
 
     let row = try #require(report.workspaces.first)
-    #expect(row.buildOutputs == .size(8192))
+    #expect(row.buildOutputs == .size(Int64(8192)))
     #expect(row.buildOutputsKept == "in use: dev server running")
-    #expect(row.nodeModules == .size(4096))
-    #expect(row.devices == .size((10 + 5) * 1024))
+    #expect(row.nodeModules == .size(Int64(4096)))
+    #expect(row.devices == .size(Int64((10 + 5) * 1024)))
     #expect(row.deviceCount == 2)
     #expect(row.worktree?.mergedInto == "origin/main")
 
-    #expect(report.reclaimableDevices?.size == .size(3072))
+    #expect(report.reclaimableDevices?.size == .size(Int64(3072)))
     let unmanaged: [String: Int64] = Dictionary(
       report.unmanaged.compactMap { location in location.size.bytes.map { (location.title, $0) } },
       uniquingKeysWith: { a, _ in a })
@@ -93,8 +93,8 @@ import Testing
       failed: [modules])
     row = try #require(
       StorageReport.make(environments: [try workspace()], gc: noOutputs, disk: finished, paths: paths).workspaces.first)
-    #expect(row.buildOutputs == .absent && row.nodeModules == .failed && row.devices == .size(10_240))
-    #expect(row.total == 10_240 && !row.totalComplete)
+    #expect(row.buildOutputs == .absent && row.nodeModules == .failed && row.devices == .size(Int64(10_240)))
+    #expect(row.total == Int64(10_240) && !row.totalComplete)
   }
 
   @Test func ranksRowsBySizeWithUnsizedRowsLast() throws {
