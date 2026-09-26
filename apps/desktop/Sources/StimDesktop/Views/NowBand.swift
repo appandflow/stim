@@ -5,10 +5,10 @@ import SwiftUI
 struct NowBand: View {
   @ObservedObject var status: StatusStore
   @ObservedObject var metrics: MetricsStore
-  var compact: Bool
   @EnvironmentObject private var actions: ActionCenter
 
   private static let valueWidth: CGFloat = 64
+  private static let actionWidth: CGFloat = 88
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
@@ -63,7 +63,7 @@ struct NowBand: View {
       Text("What").frame(maxWidth: .infinity, alignment: .leading)
       Text("CPU").frame(width: Self.valueWidth, alignment: .trailing)
       Text("Memory").frame(width: Self.valueWidth, alignment: .trailing)
-      Color.clear.frame(width: compact ? 0 : 76, height: 1)
+      Color.clear.frame(width: Self.actionWidth, height: 1)
     }
     .font(.stim(.caption2, weight: .semibold))
     .foregroundStyle(Palette.tertiary)
@@ -87,11 +87,14 @@ struct NowBand: View {
       Text(formatMemory(Int64(owner.residentMb) * 1_048_576))
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
-      action(owner).frame(width: compact ? nil : 76, alignment: .trailing)
+      action(owner).frame(width: Self.actionWidth, alignment: .trailing)
     }
   }
 
   @ViewBuilder private func action(_ owner: MachineOwner) -> some View {
+    if owner.stopCommand == nil {
+      Color.clear.frame(height: 1)
+    }
     if let command = owner.stopCommand, let title = owner.stopTitle, let workspace = owner.workspace {
       Button(title) {
         actions.run("\(title) \(owner.name)", command)
