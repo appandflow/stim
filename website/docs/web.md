@@ -52,7 +52,7 @@ Start the server yourself on a named port and point `web.url` at it. In
 
 <StimTabs
 code={`pnpm exec vite --port "$(stim ports get web)" --strictPort
-stim settings set web.url 'http://localhost:{port:web}/'
+stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
 stim web`}
 />
 
@@ -72,6 +72,22 @@ workspace. Register the app first by running `stim ports get web`,
 | `web.ignoreCertificateErrors` | Accept a dev server's self-signed certificate, in the owned profile only |
 | `web.viewport`                | `desktop` (1280×800, the default) or `phone` (390×844 at 3× with touch)  |
 
+### HTTPS dev servers
+
+A dev server with a self-signed certificate, such as Vite with
+`@vitejs/plugin-basic-ssl`, fails with `net::ERR_CERT_AUTHORITY_INVALID` until
+you accept the certificate in the owned profile:
+
+<StimTabs
+code={`stim settings set web.url 'https://localhost:{port:web}/' --scope workspace
+stim settings set web.ignoreCertificateErrors true --scope workspace
+stim web`}
+/>
+
+An `https://` URL on a plain HTTP server fails with `net::ERR_SSL_PROTOCOL_ERROR`,
+and an `http://` URL on an HTTPS server with `net::ERR_EMPTY_RESPONSE`. The
+remedy line names the scheme to use.
+
 ## What `launched` means
 
 `stim web --json` reports `launched` from evidence inside the owned page, not
@@ -81,8 +97,10 @@ from a port that any tab can reach:
   the page also fetched a web bundle.
 - `"bundling"`: Metro was still building the web bundle when the check ended.
 - `"unverified"`: the document failed, for example with
-  `net::ERR_CONNECTION_REFUSED` when nothing listens on the URL, or the page
-  did not finish loading in 20 seconds. The remedy line names the cause.
+  `net::ERR_CONNECTION_REFUSED` when nothing listens on the URL or
+  `net::ERR_CERT_AUTHORITY_INVALID` for a self-signed certificate, or the page
+  did not finish loading: 20 seconds with no answer, 60 once a server other
+  than Metro answered. The remedy line names the fix.
 
 A page that loads and then throws still reports `true`. Its errors are in
 `stim logs --errors`.
@@ -96,10 +114,14 @@ Page records carry `platform: "web"`:
 - `device`: failed requests, browser messages such as CSP violations, and the
   browser's own lifecycle. A failed page document is an error, whatever its
   status. For other requests, a network failure or an HTTP 5xx is an error, a
-  4xx a warning, and a canceled request debug.
+  4xx a warning, and a canceled request debug. `stim logs --errors` includes
+  these device errors.
 
 Expo also prints web console calls on Metro, so they can appear twice: once
 from the page and once from Metro.
+
+`stim web` writes no launch marker, so `stim logs --errors` still lists page
+errors from earlier runs. Add `--since 2m` to see only the latest load.
 
 ## Attach Playwright MCP or agent-browser
 

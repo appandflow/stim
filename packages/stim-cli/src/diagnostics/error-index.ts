@@ -4,13 +4,13 @@ import { join } from 'path';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
 import { ERROR_SOURCES, logFiles, queryLogs, recordMatches } from '@stim-cli/core/state';
 
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2;
 const HEAD_BYTES = 1024;
 const TAIL_BYTES = 256;
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const NEWLINE = 0x0a;
 const CANDIDATE_PATTERNS = ['"level":"error"', '"level":"fatal"', '"marker":true'].map((p) => Buffer.from(p));
-const ERROR_CRITERIA = { errorsOnly: true, sources: ERROR_SOURCES, includeNativeCrashes: true };
+const ERROR_CRITERIA = { errorsOnly: true, sources: ERROR_SOURCES, includeAppDeviceErrors: true };
 
 interface FileSummary {
   offset: number;
@@ -147,7 +147,14 @@ function collect(record: NdjsonRecord, markers: Record<string, NdjsonRecord>, er
     }
   }
   if (recordMatches(record, ERROR_CRITERIA)) {
-    errors.push({ src: record.src, level: record.level, event: record.event, ts: ts ?? undefined, slot: record.slot });
+    errors.push({
+      src: record.src,
+      level: record.level,
+      event: record.event,
+      platform: record.platform,
+      ts: ts ?? undefined,
+      slot: record.slot,
+    });
   }
 }
 

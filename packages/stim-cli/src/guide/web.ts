@@ -30,7 +30,7 @@ it. {port:<label>} in web.url becomes that named port, {port:metro} the Metro
 port:
 
   pnpm exec vite --port "$(stim ports get web)" --strictPort
-  stim settings set web.url 'http://localhost:{port:web}/'
+  stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
   stim web
 
 In a monorepo whose web app is its own package (apps/web beside apps/mobile),
@@ -40,8 +40,15 @@ names the app on stderr, and status stars it. The port, the browser, web.url and
 that app's workspace, so every command can run from the web package. Register
 the app first, from its directory. See stim guide ports for the exact rule.
 
-web.ignoreCertificateErrors true accepts a dev server's self-signed
-certificate, in the owned profile only. web.viewport phone gives the page a
+HTTPS dev servers with a self-signed certificate, such as Vite with
+@vitejs/plugin-basic-ssl, fail with net::ERR_CERT_AUTHORITY_INVALID until
+web.ignoreCertificateErrors is true, which accepts the certificate in the
+owned profile only:
+  stim settings set web.url 'https://localhost:{port:web}/' --scope workspace
+  stim settings set web.ignoreCertificateErrors true --scope workspace
+An https:// URL on a plain HTTP server fails with ERR_SSL_PROTOCOL_ERROR, and
+an http:// URL on an HTTPS server with ERR_EMPTY_RESPONSE; the remedy line
+prints the settings command that switches the scheme. web.viewport phone gives the page a
 390x844 touch screen at 3x instead of the 1280x800 desktop window. See stim
 guide settings.
 
@@ -53,8 +60,10 @@ owned page rather than a shared port:
                  Metro, the page also fetched a web bundle
   "bundling"     Metro was still building the web bundle when the check ended
   "unverified"   the document failed (for example ERR_CONNECTION_REFUSED:
-                 nothing listens on the URL), loaded without a Metro bundle,
-                 or did not finish in 20 seconds. The remedy line says which
+                 nothing listens on the URL, or ERR_CERT_AUTHORITY_INVALID: a
+                 self-signed certificate), loaded without a Metro bundle, or
+                 did not finish: 20 seconds with no answer, 60 once a server
+                 other than Metro answered. The remedy line names the fix
 false is never produced. A page that loads and then throws is still launched
 true; read stim logs --errors.
 
@@ -68,12 +77,15 @@ Records go to web.ndjson in the workspace log directory, all with
 platform "web":
   src client   console calls at their level (console.error is error) and
                uncaught errors and rejections, with stack frames
-  src device   failed requests: a failed page document is error whatever its
+  src device   failed requests, which stim logs --errors includes: a failed
+               page document is error whatever its
                status; another request's network failure or HTTP 5xx is
                error, a 4xx warn, a canceled request debug; browser messages such
                as CSP violations; the browser's own lifecycle
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).
+stim web writes no launch marker, so logs --errors still lists page errors
+from earlier stim web runs; add --since 2m to see only the latest load.
 
 AGENTS AND OTHER TOOLS ON THE SAME BROWSER
 
