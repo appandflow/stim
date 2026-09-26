@@ -246,7 +246,6 @@ interface Session {
   lease: Lease | null;
   input: DeviceInput;
   postures: DevicePosture[];
-  folding: boolean;
   startedAt: number;
   idle: NodeJS.Timeout;
   renew: NodeJS.Timeout;
@@ -290,6 +289,7 @@ export class ControlHub {
   private readonly byDevice = new Map<string, Session>();
   private readonly ownLeases = new Set<string>();
   private readonly starting = new Set<string>();
+  private readonly folding = new Set<string>();
   private closing = false;
   private next = 1;
 
@@ -320,7 +320,6 @@ export class ControlHub {
     if ('code' in status) return status;
     const device = ownedDevice(status, target, null);
     if (typeof device === 'string') return { code: 'action-failed', message: device };
-    const postures = await devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS);
     const key = deviceKey(device);
     if (this.starting.has(key)) {
       return { code: 'device-busy', message: 'Another client is starting to control this device. Try again.' };
@@ -334,8 +333,12 @@ export class ControlHub {
     }
     this.starting.add(key);
     let lease: Lease | Refusal;
+    let postures: DevicePosture[];
     try {
-      lease = await this.lock(device, target, cwd, beganAt);
+      [lease, postures] = await Promise.all([
+        this.lock(device, target, cwd, beganAt),
+        devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
+      ]);
     } finally {
       this.starting.delete(key);
     }
@@ -375,7 +378,6 @@ export class ControlHub {
       lease: granted ? { ...granted, mine: granted.mine || inherited } : null,
       input,
       postures,
-      folding: false,
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
       renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
@@ -459,13 +461,13 @@ export class ControlHub {
    * other one.
    */
   private async fold(session: Session, udid: string, posture: DevicePosture): Promise<Refusal | null> {
-    if (session.folding) return { code: 'device-busy', message: 'The device is still folding.' };
+    if (this.folding.has(udid)) return { code: 'device-busy', message: 'The device is still folding.' };
     const current = this.options.frames.litPosture(session.device);
     if (!current) {
       return { code: 'action-failed', message: 'Subscribe to frames of this device to learn its posture first.' };
     }
     if (current === posture) return null;
-    session.folding = true;
+    this.folding.add(udid);
     try {
       const helper = await this.options.foldHelper();
       if (session.ended) return null;
@@ -475,7 +477,7 @@ export class ControlHub {
     } catch (cause) {
       return { code: 'action-failed', message: (cause as Error).message };
     } finally {
-      session.folding = false;
+      this.folding.delete(udid);
     }
   }
 

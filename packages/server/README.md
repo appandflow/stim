@@ -336,7 +336,8 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   `input.posture` takes one of the session's `postures`. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
   helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
-  characters a second, with a burst of 256; more fail with `limit-exceeded`.
+  characters a second, with a burst of 256, and rotate or change posture twice a
+  second; more fail with `limit-exceeded`.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
   without input (`idle`), when another client takes the device over

@@ -82,6 +82,7 @@ interface ControlLimits {
   leaseFor: string;
   inputPerSecond: number;
   textCharsPerSecond: number;
+  shapeChangesPerSecond: number;
 }
 
 interface ServerHealth {
@@ -133,6 +134,7 @@ const CONTROL_LIMITS: ControlLimits = {
   leaseFor: '2m',
   inputPerSecond: 120,
   textCharsPerSecond: 40,
+  shapeChangesPerSecond: 2,
 };
 const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
@@ -401,6 +403,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     const inputs = { tokens: controlLimits.inputPerSecond, at: Date.now() };
     const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
+    const shapeChanges = { tokens: controlLimits.shapeChangesPerSecond, at: Date.now() };
 
     function controller(session: PairedDevice): Controller {
       let found = controllers.get(socket);
@@ -473,6 +476,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'limit-exceeded',
           `A connection can type ${controlLimits.textCharsPerSecond} characters a second. Send the rest shortly.`,
         );
+      }
+      const { shapeChangesPerSecond } = controlLimits;
+      if (
+        (sent.input === 'rotate' || sent.input === 'posture') &&
+        !take(shapeChanges, 1, shapeChangesPerSecond, shapeChangesPerSecond)
+      ) {
+        return error(id, 'limit-exceeded', `A connection can rotate or fold ${shapeChangesPerSecond} times a second.`);
       }
       const refused = await control.input(owner, parsed.value.session, parsed.value.command);
       if (refused) return error(id, refused.code, refused.message);

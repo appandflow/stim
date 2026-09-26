@@ -1650,7 +1650,7 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'sends input to the helper under a device lease and releases the lease when the session ends',
     async () => {
-      const port = await startControl();
+      const port = await startControl({}, { shapeChangesPerSecond: 1 });
       const client = await authed(port, true);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
@@ -1668,6 +1668,9 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.text', { session, text: 'Hi!\n' })).toMatchObject({ result: {} });
       expect(await client.request('input.button', { session, button: 'home' })).toMatchObject({ result: {} });
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({ result: {} });
+      expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({
+        error: { code: 'limit-exceeded', message: expect.stringContaining('rotate or fold') },
+      });
       expect(await client.request('input.button', { session, button: 'back' })).toMatchObject({
         error: { code: 'bad-request' },
       });
@@ -1735,10 +1738,13 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'folds an iPhone Duo with sim-fold only when its frames show the other posture',
     async () => {
-      const port = await startControl({
-        FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
-        FAKE_FRAMES: JSON.stringify([jpeg(1398, 2034, 'cover').toString('base64')]),
-      });
+      const port = await startControl(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-app (iPhone Duo 27.1)' } }),
+          FAKE_FRAMES: JSON.stringify([jpeg(1398, 2034, 'cover').toString('base64')]),
+        },
+        { shapeChangesPerSecond: 100 },
+      );
       const client = await authed(port, true);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
