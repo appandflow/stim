@@ -23,7 +23,7 @@ import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
 import { findServerWorkspace, projectShortcut } from '../workspace/project.ts';
-import { listAllIosSimsAsync } from '../devices/ios.ts';
+import { listAllIosSimsAsync, parseSimctlList } from '../devices/ios.ts';
 import { ownedAvdDeviceProfile, ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
@@ -122,11 +122,11 @@ interface StatusSnapshot {
   tables: DeviceProcessTables;
 }
 
-function readStatus(gitMaxAgeMs: number): Promise<StatusSnapshot> {
-  return withStateReadCache(() => readStatusFacts(gitMaxAgeMs));
+function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): Promise<StatusSnapshot> {
+  return withStateReadCache(() => readStatusFacts(gitMaxAgeMs, simctlListing));
 }
 
-async function readStatusFacts(gitMaxAgeMs: number): Promise<StatusSnapshot> {
+async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
@@ -136,7 +136,8 @@ async function readStatusFacts(gitMaxAgeMs: number): Promise<StatusSnapshot> {
     projects.map(([p]) => p),
   );
 
-  const simsRead = listAllIosSimsAsync();
+  const simsRead =
+    simctlListing === null ? listAllIosSimsAsync() : Promise.resolve().then(() => parseSimctlList(simctlListing));
   simsRead.catch(() => {});
   const ports = await portLookup(projects.flatMap(([, proj]) => (proj.metroPort ? [proj.metroPort] : [])));
   const processes = Promise.all(
@@ -440,7 +441,7 @@ async function watchStatus(json: boolean): Promise<void> {
       let text: string;
       try {
         if (kind === 'logs' && snapshot) refreshLogFacts(snapshot);
-        else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS);
+        else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));
