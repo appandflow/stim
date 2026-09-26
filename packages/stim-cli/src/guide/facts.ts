@@ -535,7 +535,8 @@ RULES
                     owner is workspace (project and slot say which),
                     parked, orphaned (this Stim home created it and no
                     workspace holds it), otherStimHome (a stim-* device this
-                    home has no record of creating) or user
+                    home has no record of creating, even when a workspace
+                    names it) or user. Off macOS no simulator is listed
     runtimes      { identifier, runtimeIdentifier, version, build, bytes,
                     lastUsedAt, deviceCount, command }  iOS simulator
                     runtimes from \`xcrun simctl runtime list -j\`, then
@@ -543,7 +544,7 @@ RULES
                     and command null. deviceCount is the simulators on
                     it; command is the \`xcrun simctl runtime delete\`
                     line for a deletable runtime, else null. Stim never
-                    runs it. Empty off macOS
+                    runs it
     systemImages  { package, directory, avdCount, command }  installed
                     Android system images; avdCount is the AVDs whose
                     image.sysdir.1 names it; command is the

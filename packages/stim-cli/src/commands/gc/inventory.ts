@@ -316,6 +316,10 @@ export function collectInventory(config: Config | null, deadProjects: readonly s
     }
     try {
       runtimes = parseSimRuntimeList(simctl(['runtime', 'list', '-j']));
+    } catch (error) {
+      notices.push(`simulator runtime images not listed: ${describeError(error)}`);
+    }
+    try {
       runtimes.push(...unlistedRuntimes(simctl(['list', 'runtimes', '-j']), runtimes));
     } catch (error) {
       notices.push(`simulator runtimes not listed: ${describeError(error)}`);
