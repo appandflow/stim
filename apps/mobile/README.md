@@ -284,6 +284,10 @@ pnpm run mock-server
 
 To install only the app, run `pnpm install --filter stim-mobile` from the root.
 
+A checkout that installed the app with npm before it joined the workspace has an
+`apps/mobile/node_modules` pnpm does not clean up. Delete it once, then run
+`pnpm install` from the root.
+
 `pnpm run mock-server` serves a Stim server on `ws://127.0.0.1:7787` that
 replays payloads captured from a real Mac in `mock-server/fixtures/`: a
 `stim status --json` payload taken while `stim ios` was installing, records
