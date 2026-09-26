@@ -708,6 +708,15 @@ test('a page load windows the web page records, and a native launch windows ever
   expect(errors()).toEqual(['load failed in the same millisecond', 'page threw']);
 });
 
+test('page records follow the launch windows until a page load is logged', () => {
+  writeLog('web.ndjson', [
+    { ts: 1, src: 'device', platform: 'web', level: 'error', msg: 'failed before any launch' },
+    { ts: 3, src: 'client', platform: 'web', level: 'error', msg: 'page threw after the launch' },
+  ]);
+  writeLog('build-ios.ndjson', [{ ts: 2, src: 'build', level: 'info', marker: true, platform: 'ios' }]);
+  expect(queryLogs({ dir, errorsOnly: true }).map((record) => record.msg)).toEqual(['page threw after the launch']);
+});
+
 test('a sibling launch marker does not hide errors from the selected slot', () => {
   writeLog('build-ios-phone.ndjson', [
     { ts: 1, src: 'build', marker: true, slot: 'phone' },

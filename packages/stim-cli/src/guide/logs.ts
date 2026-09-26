@@ -103,8 +103,10 @@ FLAGS
       after the process died.
     a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
       load of the page's top-level document) resets only the page's records,
-      those with platform web. A failure logged in the same millisecond as the
-      load belongs to that load.
+      those with platform web. It is written when the load starts, so a
+      failure logged in the same millisecond belongs to that load, and so does
+      anything the old page logs before it is replaced. Until the first page
+      load is logged, the page's records follow the launch windows.
   A finished bundle is not evidence that the app which loaded it is fine.
   In the field case the app threw at 16:03:54 and Metro wrote its marker at
   16:03:55, one second later, because the bundler finishes accounting for a

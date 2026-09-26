@@ -391,7 +391,7 @@ export function queryLogs({
 
   const slotMarkers = launchMarkersBySlot(all);
   const windowStart = (record: NdjsonRecord): number | undefined => {
-    if (isWebPageRecord(record)) return pageLoadTs === null ? undefined : pageLoadTs - 1;
+    if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
     if (record.src === 'metro' || record.src === 'client') return criteria.markerTs;
     return slotMarkers.get(record.slot ?? 'default');
   };
