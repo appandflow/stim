@@ -1,13 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
 
-type CachedRead = { text: string } | { error: unknown };
+type CachedRead = { text: string } | { missing: unknown };
 
 const readScope = new AsyncLocalStorage<Map<string, CachedRead>>();
 
 /**
  * Runs `fn` with each state file read from disk at most once: inside it, including after an `await`, `readStateFile`
- * returns the text, or throws the error, of the first read of that path. Callers still parse every time, so no two
+ * returns the text of the first read of that path, and a path found missing stays missing. Callers still parse every time, so no two
  * share a mutable object. Only for computations that write none of the files they read.
  */
 export function withStateReadCache<T>(fn: () => T): T {
@@ -17,17 +17,19 @@ export function withStateReadCache<T>(fn: () => T): T {
 export function readStateFile(path: string): string {
   const cache = readScope.getStore();
   if (!cache) return readFileSync(path, 'utf-8');
-  let entry = cache.get(path);
-  if (!entry) {
-    try {
-      entry = { text: readFileSync(path, 'utf-8') };
-    } catch (error) {
-      entry = { error };
-    }
-    cache.set(path, entry);
+  const cached = cache.get(path);
+  if (cached) {
+    if ('missing' in cached) throw cached.missing;
+    return cached.text;
   }
-  if ('error' in entry) throw entry.error;
-  return entry.text;
+  try {
+    const text = readFileSync(path, 'utf-8');
+    cache.set(path, { text });
+    return text;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') cache.set(path, { missing: error });
+    throw error;
+  }
 }
 
 export function readJsonFile(path: string): unknown {

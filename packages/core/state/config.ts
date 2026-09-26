@@ -34,7 +34,8 @@ export function loadConfig(): Config | null {
   try {
     parsed = readJsonFile(p);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
     if (!(err instanceof SyntaxError)) throw err;
     throw configCorrupt(`is not valid JSON: ${err.message}`, p);
   }

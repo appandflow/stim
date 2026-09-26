@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConcurrencyLimits, getRepoSettings, loadConfig, withConfigLock } from '../state/config.ts';
 import { withStateReadCache } from '../state/json-file.ts';
+import { readCreatedDevices } from '../state/ledgers.ts';
 
 let tmpHome: string;
 
@@ -24,7 +25,7 @@ test('loadConfig returns null when no file exists', () => {
   expect(loadConfig()).toBe(null);
 });
 
-test('withStateReadCache reads config.json once per scope, across awaits, and never shares the parsed object', async () => {
+test('withStateReadCache serves one read per scope and a fresh parse per call', async () => {
   await withStateReadCache(async () => {
     expect(loadConfig()).toBe(null);
     writeConfig({ projects: { '/a': { metroPort: 8081 } } });
@@ -37,6 +38,10 @@ test('withStateReadCache reads config.json once per scope, across awaits, and ne
     writeConfig({ projects: {} });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(Object.keys(loadConfig()!.projects)).toEqual(['/a']);
+    writeFileSync(join(tmpHome, 'created-devices.json'), JSON.stringify({ ios: ['A'] }));
+    expect([...readCreatedDevices().ios]).toEqual(['A']);
+    writeFileSync(join(tmpHome, 'created-devices.json'), JSON.stringify({ ios: ['B'] }));
+    expect([...readCreatedDevices().ios]).toEqual(['A']);
   });
   expect(loadConfig()!.projects).toEqual({});
 });
