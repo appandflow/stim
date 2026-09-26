@@ -2961,23 +2961,75 @@ test('a simulator install timeout fails before dev-client preparation and gives 
   expect(exec.calls.some((args) => args.includes('defaults'))).toBe(false);
 });
 
-test.each(['default', 'phone'])('slot %s cannot borrow a sibling or unattributed bundle success', async (slot) => {
-  const clock = fakeClock();
-  const result = await verifyLaunch({
-    slot,
-    since: clock.at(),
-    timeoutMs: 100,
-    pollMs: 25,
-    stabilityMs: 0,
-    now: clock.now,
-    sleep: clock.sleep,
-    readRecords: () => [
-      { ts: clock.at(), event: 'bundle_build_done' },
-      { ts: clock.at(), event: 'bundle_build_done', slot: 'tablet' },
-    ],
-    readDeviceRecords: () => [],
-    readClientRecords: () => [],
+describe('verifyLaunch: bundle deliveries in a workspace with device slots', () => {
+  const delivery = (at: number, fields: Record<string, unknown> = {}) => [
+    { ts: at, src: 'metro', event: 'bundle_response_started', platform: 'ios', requestId: 'r1', ...fields },
+    { ts: at, src: 'metro', event: 'bundle_response_finished', platform: 'ios', requestId: 'r1', ...fields },
+  ];
+  const verifySlot = (records: NdjsonRecord[], options: { appPid?: number; platformShared?: boolean }) => {
+    const clock = fakeClock();
+    return verifyLaunch({
+      slot: 'phone',
+      platform: 'ios',
+      requireBundleResponse: true,
+      since: clock.at(),
+      timeoutMs: 100,
+      pollMs: 25,
+      stabilityMs: 0,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => records.map((record) => ({ ...record, ts: clock.at() })),
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      ...options,
+    });
+  };
+
+  test.each([
+    ['no sibling of the platform shares Metro', delivery(0), {}],
+    ['the request came from this launch process', delivery(0, { clientPid: 41 }), { appPid: 41, platformShared: true }],
+  ])('an untagged Metro delivery proves the launch when %s', async (_case, records, options) => {
+    expect(await verifySlot(records, options)).toMatchObject({ verified: true });
   });
-  expect(result.verified).toBe(false);
-  expect(result.timedOut).toBe(true);
+
+  test("a sibling simulator's delivery is not this launch's, and is not called ambiguous", async () => {
+    const result = await verifySlot(delivery(0, { clientPid: 42 }), { appPid: 41, platformShared: true });
+    expect(result).toMatchObject({ verified: false, timedOut: true });
+    expect(result.unattributed).toBeUndefined();
+  });
+
+  test.each([
+    ['carries no requesting process', delivery(0), { appPid: 41, platformShared: true }],
+    ['was made while this launch has no process id', delivery(0, { clientPid: 42 }), { platformShared: true }],
+  ])('a delivery that %s is unattributed while a sibling shares Metro', async (_case, records, options) => {
+    expect(await verifySlot(records, options)).toMatchObject({
+      verified: false,
+      timedOut: true,
+      unattributed: true,
+      record: { event: 'bundle_response_finished' },
+    });
+  });
+
+  test("this device's own logged request still reports bundling beside an unattributed delivery", async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      slot: 'phone',
+      platform: 'ios',
+      requireBundleResponse: true,
+      platformShared: true,
+      metroPort: 8083,
+      since: clock.at(),
+      timeoutMs: 100,
+      pollMs: 25,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => delivery(clock.at()),
+      readDeviceRecords: () => [
+        { ts: clock.at(), src: 'device', slot: 'phone', msg: 'GET http://localhost:8083/index.bundle?platform=ios' },
+      ],
+      readClientRecords: () => [],
+    });
+    expect(result).toMatchObject({ verified: false, requested: true });
+    expect(result.unattributed).toBeUndefined();
+  });
 });
