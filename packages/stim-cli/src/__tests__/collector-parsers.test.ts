@@ -33,6 +33,7 @@ import {
   FATAL_MARKERS,
   TOOL_ERROR_PREFIX,
 } from '../collector/ios-device.ts';
+import { isAppLaunchError } from '../command-output.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import { makeExecutor } from './_factories.ts';
 
@@ -477,8 +478,33 @@ describe('ios: demoting device noise', () => {
       'network',
       'network-default-subsystem',
       'uiscene-deprecation',
+      'cfnetwork-performance-diagnostic',
     ]);
     expect(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id))).toEqual([]);
+  });
+
+  test('a main-thread Synchronous URL loading diagnostic is a warning, not an app error', () => {
+    const diagnostic = event({
+      messageType: 'Fault',
+      subsystem: 'com.apple.runtime-issues',
+      category: 'CFNetwork Performance Diagnostic',
+      eventMessage:
+        "__delegate_identifier__:Performance Diagnostics__:::____message__:Synchronous URL loading of http://localhost:8082/assets/?unstable_path=.%2Fassets%2Ficons/funnel@3x.png?platform=ios&hash=6ed4750c84365e18d3ddfa92a54167c7 should not occur on this application's main thread as it may lead to UI unresponsiveness. Please switch to an asynchronous networking API such as URLSession.",
+    });
+    const record = parseLogStreamLine(JSON.stringify(diagnostic));
+    assert(record);
+    expect(record.level).toBe('warn');
+    expect(isAppLaunchError({ ...record, platform: 'ios' })).toBe(false);
+
+    const mainThreadChecker = parseLogStreamLine(
+      JSON.stringify({
+        ...diagnostic,
+        category: 'Main Thread Checker',
+        eventMessage: 'Main Thread Checker: UI API called on a background thread',
+      }),
+    );
+    assert(mainThreadChecker);
+    expect(mainThreadChecker.level).toBe('fatal');
   });
 
   test('the focus-cache rule requires the exact UIKit focus event', () => {
