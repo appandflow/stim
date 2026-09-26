@@ -26,7 +26,6 @@ import {
   launchAndroidReleaseApp,
   ADB_INSTALL_TIMEOUT_MS,
   installConflictKind,
-  deviceShellArg,
   restartedAppNote,
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
@@ -218,7 +217,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `Fix the crash, then restart the app: \`adb -s ${deviceShellArg(serial)} shell am force-stop ${deviceShellArg(androidPackage)}\`, then run \`${runCommand}\` again. A crashed Android process can remain alive behind the system crash dialog; Metro reload cannot recover it.`,
+          `Fix the crash, then run \`${runCommand}\` again; it force-stops a crashed process that remains alive behind the system crash dialog. Metro reload cannot recover it.`,
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {

@@ -308,7 +308,8 @@ export function launchIosApp(
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
       } catch (err) {
         const pid = launchedWithInitialUrl ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
-        if (pid) return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
+        if (pid && pid !== restart.restartedPid)
+          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         return {
           failed: true,
           code: LAUNCH_ERROR,
@@ -325,7 +326,7 @@ export function launchIosApp(
     return result;
   } catch (err) {
     const pid = runningPid === null ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
-    if (pid) {
+    if (pid && pid !== restart.restartedPid) {
       const result: IosLaunchResult = { ok: true, mode: 'launch', pid, ...restart };
       if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
       return result;

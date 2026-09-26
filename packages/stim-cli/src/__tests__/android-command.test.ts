@@ -3335,7 +3335,6 @@ describe('launch verification', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(h.stderr.join('\n')).toContain("adb -s 'emulator-5584' shell am force-stop 'com.example.app'");
     expect(h.stderr.join('\n')).toContain(`run \`stim android${slot === 'default' ? '' : ` --slot ${slot}`}\` again`);
   });
 

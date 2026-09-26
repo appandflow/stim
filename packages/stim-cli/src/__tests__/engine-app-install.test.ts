@@ -429,6 +429,17 @@ describe('ios', () => {
     expect(exec.calls.some((call) => call.includes('launch'))).toBe(false);
   });
 
+  test('a no-process-handle error after a restart does not count the terminated pid as the new launch', () => {
+    const exec = recordingExec({
+      fail: 'simctl launch',
+      failStderr:
+        "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
+      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+  });
+
   test('an unreadable process list neither terminates nor claims a restart', () => {
     const exec = recordingExec({ fail: 'launchctl list' });
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
