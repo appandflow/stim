@@ -76,6 +76,11 @@ struct PhonesView: View {
     .sheet(isPresented: $pairing, onDismiss: server.reloadDevices) {
       PairSheet(server: server)
     }
+    .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
+      guard pairs else { return }
+      OpenRequests.shared.pairsPhone = false
+      pairing = server.isRunning
+    }
     .confirmationDialog(
       "Revoke \(revoking?.name ?? "")?", isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
       presenting: revoking

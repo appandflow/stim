@@ -372,6 +372,7 @@ struct SidebarFooter: View {
   @ObservedObject private var server = ServerController.shared
   @Binding var selection: SidebarItem?
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @AppStorage("settingsTab") private var settingsTab = "app"
   @Environment(\.openSettings) private var openSettings
 
   private var status: SidebarFooterStatus {
@@ -444,11 +445,11 @@ struct SidebarFooter: View {
   }
 
   private var phonesButton: some View {
-    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-      .font(.system(size: 12, weight: .medium))
-      .foregroundStyle(Theme.secondary)
-      .frame(width: 26, height: 24)
-      .help(phonesTooltip)
+    FooterIconButton(systemImage: "iphone.gen3.radiowaves.left.and.right", help: phonesTooltip) {
+      OpenRequests.shared.pairsPhone = true
+      settingsTab = "phones"
+      openSettings()
+    }
   }
 
   private var phonesTooltip: String {
