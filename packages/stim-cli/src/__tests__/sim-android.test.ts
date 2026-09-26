@@ -719,7 +719,7 @@ test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadli
         },
       },
     ),
-  ).toThrow(/did not finish shutting down within 1s/);
+  ).toThrow(/did not finish shutting down after 1s/);
   expect(commandTimeout).toBe(250);
 });
 
@@ -828,7 +828,7 @@ test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock 
         elapsed += ms;
       },
     }),
-  ).toThrow(/did not finish shutting down within 1s/);
+  ).toThrow(/did not finish shutting down after 1s/);
 });
 
 test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', () => {
@@ -933,25 +933,32 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     expect(signals).toEqual(['SIGTERM:4242@0']);
   });
 
+  test('gives an emulator adb cannot reach the whole timeout to exit on SIGTERM before SIGKILL', () => {
+    const { options, signals, alive } = hungEmulator({ pids: [4242] });
+
+    waitForAndroidEmulatorShutdown('stim-app', null, options);
+
+    expect(signals).toEqual(['SIGTERM:4242@0', 'SIGKILL:4242@60000']);
+    expect(alive.size).toBe(0);
+  });
+
   test('never signals a pid whose identity changed or could not be captured, and refuses instead', () => {
     const different = hungEmulator({ pids: [4242], identity: () => 'different' });
     const unverified = hungEmulator({ pids: [4242], captured: () => false });
 
-    waitForAndroidEmulatorShutdown('stim-app', () => {}, different.options);
-    expect(different.signals).toEqual([]);
-
-    expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, unverified.options)).toThrow(
-      'Owned AVD stim-app did not finish shutting down within 60s: emulator process 4242 is still running ' +
-        '(Stim could not verify the identity of 4242, so it sent no signal).',
-    );
-    expect(unverified.signals).toEqual([]);
+    for (const { options, signals } of [different, unverified]) {
+      expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
+        /emulator process 4242 is still running \(Stim could not verify the identity of 4242, so it sent no signal\)\.$/,
+      );
+      expect(signals).toEqual([]);
+    }
   });
 
   test('refuses when the emulator survives SIGKILL', () => {
     const { options, signals } = hungEmulator({ pids: [4242], dies: [] });
 
     expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
-      'Owned AVD stim-app did not finish shutting down within 60s: emulator process 4242 is still running.',
+      'Owned AVD stim-app did not finish shutting down after 70s: emulator process 4242 is still running.',
     );
     expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
   });

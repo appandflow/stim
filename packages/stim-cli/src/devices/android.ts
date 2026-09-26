@@ -1237,7 +1237,7 @@ function escapeRegExp(value: string): string {
 
 export function parseAvdEmulatorProcesses(psOutput: string, avdName: string): number[] {
   const command = new RegExp(
-    `(?:^|/)(?:qemu-system-[^\\s/]+|emulator)(?:\\.exe)?(?:\\s.*)?\\s(?:-avd\\s+|@)${escapeRegExp(avdName)}(?:\\s|$)`,
+    `(?:^|/)(?:qemu-system-[^\\s/]+|emulator)(?:\\s.*)?\\s(?:-avd\\s+|@)${escapeRegExp(avdName)}(?:\\s|$)`,
   );
   const pids: number[] = [];
   for (const line of psOutput.split('\n')) {
@@ -1247,10 +1247,6 @@ export function parseAvdEmulatorProcesses(psOutput: string, avdName: string): nu
   return pids;
 }
 
-/**
- * Live emulator processes launched for `avdName`, read from the process table, or null when the table
- * cannot be read. Windows has no `ps`, so there only the AVD's process lock is checked.
- */
 function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): number[] | null {
   if (platform === 'win32') return [];
   const out = getExecutor().runFileQuiet('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: 5000 });
@@ -1320,8 +1316,9 @@ const EMULATOR_SIGNAL_GRACE_MS = 5000;
 /**
  * Shuts down the emulator of an owned AVD and returns only once every emulator process launched for it
  * has exited. `shutdown` asks the emulator to quit through its console; it is null when the emulator is
- * not reachable over adb. Processes still running after the timeout get SIGTERM, then SIGKILL, but only a
- * process whose command line names this AVD and whose identity, captured before shutdown, still matches.
+ * not reachable over adb. Processes still running after it get SIGTERM, and SIGKILL if they outlive their
+ * grace, but only a process whose command line names this AVD and whose identity, captured before
+ * shutdown, still matches. Windows has no process-table scan, so there nothing is signalled.
  */
 export function waitForAndroidEmulatorShutdown(
   avdName: string,
@@ -1391,8 +1388,9 @@ export function waitForAndroidEmulatorShutdown(
       sleep(Math.min(pollMs, remaining));
     }
   };
+  const started = now();
   if (shutdown) {
-    const deadline = now() + timeoutMs;
+    const deadline = started + timeoutMs;
     const shutdownTimeoutMs = deadline - now();
     if (shutdownTimeoutMs > 0) shutdown(shutdownTimeoutMs);
     waitUntil(deadline);
@@ -1408,19 +1406,31 @@ export function waitForAndroidEmulatorShutdown(
         signal(pid, name);
       } catch {}
     }
-    if (waitUntil(now() + signalGraceMs)) break;
+    const graceMs = name === 'SIGTERM' && !shutdown ? timeoutMs : signalGraceMs;
+    if (waitUntil(now() + graceMs)) break;
   }
   const left = new Set(running());
   for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
-    if (!identities.has(pid) || !exited(pid)) left.add(pid);
+    const record = identities.get(pid);
+    if (record === undefined || (record === null ? processAlive(pid) : inspectIdentity(record) !== 'gone')) {
+      left.add(pid);
+    }
   }
   if (left.size) {
-    const unverified = platform === 'win32' ? [] : [...left].filter((pid) => !identities.get(pid));
+    const scanned = platform !== 'win32';
+    const unverified = [...left].filter((pid) => {
+      const record = identities.get(pid);
+      return scanned && (record === null || (record !== undefined && inspectIdentity(record) === 'different'));
+    });
+    const unlisted = [...left].filter((pid) => scanned && !identities.has(pid));
     throw new Error(
-      `Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s: ` +
+      `Owned AVD ${avdName} did not finish shutting down after ${Math.ceil((now() - started) / 1000)}s: ` +
         `emulator process ${[...left].join(', ')} is still running` +
         (unverified.length
           ? ` (Stim could not verify the identity of ${unverified.join(', ')}, so it sent no signal)`
+          : '') +
+        (unlisted.length
+          ? ` (${unlisted.join(', ')} holds the AVD process lock, but its command line does not name the AVD, so Stim sent no signal)`
           : '') +
         '.',
     );

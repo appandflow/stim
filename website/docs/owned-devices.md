@@ -319,9 +319,10 @@ support for `--session-lock reject`. Remote daemons are never used.
 
 An owned emulator counts as stopped only when no emulator process launched for
 its AVD is left. Stim asks it to quit with `adb emu kill`. A hung emulator that
-ignores that, or that adb cannot reach, gets SIGTERM and then SIGKILL, but only
-after Stim verifies that the process runs that AVD and is the same process it
-saw before shutdown. If the emulator still runs, `stop`, `worktree remove` and
+ignores that for 60 seconds, or that adb cannot reach, gets SIGTERM and then
+SIGKILL, but only after Stim verifies that the process runs that AVD and is the
+same process it saw before shutdown. Windows has no such check, so Stim signals
+nothing there. If the emulator still runs, `stop`, `worktree remove` and
 `gc` report `teardown failed` and keep the device record instead of reporting it
 stopped or parked.
 
