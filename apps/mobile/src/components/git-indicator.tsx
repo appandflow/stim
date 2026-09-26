@@ -1,21 +1,23 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Chip, StatusDot } from '@/components/chip';
+import { Pill, StatusDot } from '@/components/pill';
+import { Text } from '@/components/text';
+import { withAlpha } from '@/design/color';
 import { gitBadges } from '@/lib/format';
 import type { WorktreeGit } from '@/protocol/types';
-import { useColors } from '@/theme';
 
-/** Uncommitted changes, commits ahead and behind, and a merged branch: inline text, or chips with `chips`. */
+/** Uncommitted changes, commits ahead and behind, and a merged branch: inline text, or pills with `chips`. */
 export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null | undefined; chips?: boolean }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const badges = gitBadges(git);
   if (!badges) return null;
   if (chips) {
     return (
       <>
-        {badges.uncommitted ? <Chip tint={colors.warn}>{`${badges.uncommitted} uncommitted`}</Chip> : null}
-        {badges.arrows ? <Chip mono={badges.arrows}>{''}</Chip> : null}
-        {badges.merged ? <Chip tint={colors.primary}>merged</Chip> : null}
+        {badges.uncommitted ? <Pill tone="warning">{`${badges.uncommitted} uncommitted`}</Pill> : null}
+        {badges.arrows ? <Pill tabular={badges.arrows} /> : null}
+        {badges.merged ? <Pill tone="accent">merged</Pill> : null}
       </>
     );
   }
@@ -23,13 +25,19 @@ export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null |
     <View style={styles.inline} accessible accessibilityLabel={badges.label}>
       {badges.uncommitted ? (
         <>
-          <StatusDot color={colors.warn} />
-          <Text style={[styles.text, { color: colors.warn }]}>{badges.uncommitted}</Text>
+          <StatusDot color={theme.colors.warning} />
+          <Text variant="footnote" weight="semibold" tone="warning" style={styles.tabular}>
+            {badges.uncommitted}
+          </Text>
         </>
       ) : null}
-      {badges.arrows ? <Text style={[styles.text, { color: colors.secondary }]}>{badges.arrows}</Text> : null}
+      {badges.arrows ? (
+        <Text variant="footnote" weight="semibold" tone="secondary" style={styles.tabular}>
+          {badges.arrows}
+        </Text>
+      ) : null}
       {badges.merged ? (
-        <Text style={[styles.text, styles.pill, { color: colors.primary, backgroundColor: `${colors.primary}1F` }]}>
+        <Text variant="caption2" weight="semibold" tone="brand" style={styles.merged}>
           merged
         </Text>
       ) : null}
@@ -37,8 +45,14 @@ export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null |
   );
 }
 
-const styles = StyleSheet.create({
-  inline: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
-  text: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  pill: { fontSize: 11, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, overflow: 'hidden' },
-});
+const styles = StyleSheet.create((theme) => ({
+  inline: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs, flexShrink: 0 },
+  tabular: { fontVariant: ['tabular-nums'] },
+  merged: {
+    paddingHorizontal: theme.space.xs,
+    paddingVertical: 1,
+    borderRadius: theme.radius.small,
+    overflow: 'hidden',
+    backgroundColor: withAlpha(theme.colors.primary, theme.opacity.pressed),
+  },
+}));

@@ -41,7 +41,6 @@ export function Filters() {
         {ACTIVITY.map(({ value, label }) => (
           <Toggle
             key={value}
-            colors={colors}
             label={label}
             on={filters.activity === value}
             onPress={() => update({ activity: value })}
@@ -50,11 +49,10 @@ export function Filters() {
       </Group>
       {connections.length > 1 ? (
         <Group title="Machines">
-          <Toggle colors={colors} label="All" on={selectedMacs.length === 0} onPress={() => update({ macs: [] })} />
+          <Toggle label="All" on={selectedMacs.length === 0} onPress={() => update({ macs: [] })} />
           {connections.map((c) => (
             <Toggle
               key={c.mac.id}
-              colors={colors}
               label={c.mac.name}
               on={selectedMacs.includes(c.mac.id)}
               onPress={() => update({ macs: toggled(selectedMacs, c.mac.id) })}
@@ -64,16 +62,10 @@ export function Filters() {
       ) : null}
       {projects.length > 1 ? (
         <Group title="Projects">
-          <Toggle
-            colors={colors}
-            label="All"
-            on={filters.projects.length === 0}
-            onPress={() => update({ projects: [] })}
-          />
+          <Toggle label="All" on={filters.projects.length === 0} onPress={() => update({ projects: [] })} />
           {projects.map((project) => (
             <Toggle
               key={project}
-              colors={colors}
               label={project}
               on={filters.projects.includes(project)}
               onPress={() => update({ projects: toggled(filters.projects, project) })}

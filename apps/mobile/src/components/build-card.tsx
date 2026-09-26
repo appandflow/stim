@@ -1,15 +1,16 @@
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { BuildProgressBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
+import { Text } from '@/components/text';
 import { useBuildPlans, useMacConnection } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { lastBuildSummary, nextBuild } from '@/lib/format';
 import { planKey, type PlanState } from '@/lib/plan-checks';
 import { runningBuild } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState, Platform } from '@/protocol/types';
-import { useColors } from '@/theme';
 
 const PLATFORMS: Platform[] = ['ios', 'android'];
 
@@ -48,7 +49,6 @@ function PlatformCard({
   plan: PlanState | undefined;
   build: BuildReport | null;
 }) {
-  const colors = useColors();
   const router = useRouter();
   const macId = useMacConnection().mac?.id ?? '';
   const now = useNow(30_000);
@@ -65,19 +65,27 @@ function PlatformCard({
           <BuildProgressBar build={build} />
         ) : (
           <View style={styles.header}>
-            <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
-            <Text style={[styles.name, { color: colors.tertiary }]}>{'\u203A'}</Text>
+            <Text variant="callout" weight="semibold">
+              {name}
+            </Text>
+            <Text variant="callout" weight="semibold" tone="tertiary">
+              {'\u203A'}
+            </Text>
           </View>
         )}
         {last ? (
-          <Text style={[styles.line, { color: last.status === 'failed' ? colors.error : colors.secondary }]}>
+          <Text variant="footnote" tone={last.status === 'failed' ? 'error' : 'secondary'}>
             {`Last: ${lastBuildSummary(last, now)}`}
           </Text>
         ) : building ? null : (
-          <Text style={[styles.line, { color: colors.secondary }]}>No build recorded</Text>
+          <Text variant="footnote" tone="secondary">
+            No build recorded
+          </Text>
         )}
         {building ? null : build ? (
-          <Text style={[styles.line, { color: colors.tertiary }]}>Next: checked after the running build</Text>
+          <Text variant="footnote" tone="tertiary">
+            Next: checked after the running build
+          </Text>
         ) : (
           <NextBuild plan={plan} />
         )}
@@ -87,32 +95,30 @@ function PlatformCard({
 }
 
 function NextBuild({ plan }: { plan: PlanState | undefined }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   if (plan?.kind === 'checking') {
     return (
       <View style={styles.row}>
-        <ActivityIndicator size="small" color={colors.tertiary} />
-        <Text style={[styles.line, { color: colors.tertiary }]}>{'Checking next build\u2026'}</Text>
+        <ActivityIndicator size="small" color={theme.colors.tertiary} />
+        <Text variant="footnote" tone="tertiary">
+          {'Checking next build\u2026'}
+        </Text>
       </View>
     );
   }
   if (plan?.kind === 'failed') {
-    return <Text style={[styles.line, { color: colors.warn }]}>{`Cannot plan: ${plan.message}`}</Text>;
+    return <Text variant="footnote" tone="warning">{`Cannot plan: ${plan.message}`}</Text>;
   }
   if (plan?.kind !== 'done') return null;
   return (
-    <Text
-      style={[styles.line, { color: plan.plan.refusal || plan.plan.cacheHit === false ? colors.warn : colors.live }]}
-    >
+    <Text variant="footnote" tone={plan.plan.refusal || plan.plan.cacheHit === false ? 'warning' : 'success'}>
       {`Next: ${nextBuild(plan.plan)}`}
     </Text>
   );
 }
 
-const styles = StyleSheet.create({
-  platform: { padding: 12, gap: 4 },
+const styles = StyleSheet.create((theme) => ({
+  platform: { padding: theme.space.lg, gap: theme.space.xs },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  name: { fontSize: 14, fontWeight: '600' },
-  line: { fontSize: 13, lineHeight: 18 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-});
+  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+}));

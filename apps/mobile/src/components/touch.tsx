@@ -1,8 +1,9 @@
-import { Platform, StyleSheet } from 'react-native';
+import { Platform } from 'react-native';
 import { Touchable, type TouchableProps } from 'react-native-gesture-handler';
-import { withUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles, withUnistyles } from 'react-native-unistyles';
 
-import { useColors, type Colors } from '@/theme';
+import { withAlpha } from '@/design/color';
+import type { Theme } from '@/design/theme';
 
 /**
  * How a `Touch` answers a press:
@@ -17,13 +18,13 @@ const ThemedTouchable = withUnistyles(Touchable);
 
 export type TouchProps = TouchableProps & { feedback?: TouchFeedback };
 
-function feedbackProps(feedback: TouchFeedback, colors: Colors): Partial<TouchableProps> {
-  const ripple = { color: `${colors.text}1F` };
+function feedbackProps(feedback: TouchFeedback, theme: Theme): Partial<TouchableProps> {
+  const ripple = { color: withAlpha(theme.colors.text, theme.opacity.pressed) };
   switch (feedback) {
     case 'row':
       return Platform.OS === 'android'
         ? { androidRipple: ripple }
-        : { underlayColor: colors.primary, activeUnderlayOpacity: 0.1 };
+        : { underlayColor: theme.colors.primary, activeUnderlayOpacity: theme.opacity.subtle };
     case 'card':
       return Platform.OS === 'android' ? { androidRipple: ripple } : { activeScale: 0.97 };
     case 'opacity':
@@ -53,10 +54,10 @@ export function Touch({
   style,
   ...props
 }: TouchProps) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   return (
     <ThemedTouchable
-      {...feedbackProps(feedback, colors)}
+      {...feedbackProps(feedback, theme)}
       accessible={accessible}
       accessibilityRole={accessibilityRole}
       accessibilityState={disabled ? { ...accessibilityState, disabled: true } : accessibilityState}

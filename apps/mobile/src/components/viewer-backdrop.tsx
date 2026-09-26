@@ -1,8 +1,15 @@
-import { StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { useColors } from '@/theme';
+import { withAlpha } from '@/design/color';
 
 export function ViewerBackdrop() {
-  const colors = useColors();
-  return <View style={[StyleSheet.absoluteFill, { backgroundColor: `${colors.screen}E6` }]} pointerEvents="none" />;
+  return <View style={styles.backdrop} pointerEvents="none" />;
 }
+
+const styles = StyleSheet.create((theme) => ({
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: withAlpha(theme.media.screen, theme.opacity.backdrop),
+  },
+}));

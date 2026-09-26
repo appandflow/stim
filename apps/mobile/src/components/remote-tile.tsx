@@ -1,30 +1,31 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Card } from '@/components/card';
-import { Chip } from '@/components/chip';
+import { Pill } from '@/components/pill';
+import { Text } from '@/components/text';
 import { useNow } from '@/hooks/use-now';
 import { shortDuration } from '@/lib/format';
 import type { RemoteDeviceState } from '@/protocol/types';
-import { mono, useColors } from '@/theme';
 
 export function RemoteTile({ session }: { session: RemoteDeviceState }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const now = useNow(30_000);
   const started = session.startedAt ? Date.parse(session.startedAt) : NaN;
   return (
-    <Card ring={colors.remote}>
+    <Card ring={theme.colors.info}>
       <View style={styles.body}>
         <View style={styles.row}>
-          <Text style={[styles.title, { color: colors.text }]}>
+          <Text variant="callout" weight="semibold">
             EAS Simulator{session.platform ? ` \u00B7 ${session.platform === 'ios' ? 'iOS' : 'Android'}` : ''}
           </Text>
           <View style={styles.spacer} />
-          <Chip tint={colors.warn}>billable</Chip>
+          <Pill tone="warning">billable</Pill>
         </View>
-        <Text style={[styles.detail, { color: colors.secondary }]} selectable>
+        <Text variant="caption" tone="secondary" mono selectable>
           {session.sessionId}
         </Text>
-        <Text style={[styles.meta, { color: colors.tertiary }]}>
+        <Text variant="caption" tone="tertiary">
           {session.state === 'claimed'
             ? 'Claimed by this workspace'
             : session.state === 'unclaimed'
@@ -37,11 +38,8 @@ export function RemoteTile({ session }: { session: RemoteDeviceState }) {
   );
 }
 
-const styles = StyleSheet.create({
-  body: { padding: 12, gap: 6 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  title: { fontSize: 14, fontWeight: '600' },
+const styles = StyleSheet.create((theme) => ({
+  body: { padding: theme.space.lg, gap: theme.space.sm },
+  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
   spacer: { flex: 1 },
-  detail: { fontSize: 12, fontFamily: mono },
-  meta: { fontSize: 12 },
-});
+}));

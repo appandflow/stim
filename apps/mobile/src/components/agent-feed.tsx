@@ -1,14 +1,14 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useLogs, useMacConnection, type LogsChange } from '@/hooks/mac-connection';
 import { agentActions, agentFeedFilter, type AgentAction } from '@/lib/logs';
-import { mono, useColors } from '@/theme';
 
 export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; slot: string; deviceId: string }) {
-  const colors = useColors();
   const router = useRouter();
   const macId = useMacConnection().mac?.id ?? '';
   const [actions, setActions] = useState<AgentAction[]>([]);
@@ -28,7 +28,7 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
       params: { id: macId, path: workspace, source: 'agent', slot, ...(at === undefined ? {} : { at: String(at) }) },
     });
   return (
-    <View style={[styles.feed, { borderTopColor: colors.border }]}>
+    <View style={styles.feed}>
       <Touch
         onPress={() => openLog()}
         accessibilityLabel="Agent actions"
@@ -36,8 +36,12 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
         hitSlop={6}
         style={styles.header}
       >
-        <Text style={[styles.title, { color: colors.secondary }]}>Agent actions</Text>
-        <Text style={[styles.title, { color: colors.primary }]}>{'All ›'}</Text>
+        <Text variant="caption2" weight="semibold" tone="secondary">
+          Agent actions
+        </Text>
+        <Text variant="caption2" weight="semibold" tone="brand">
+          {'All \u203A'}
+        </Text>
       </Touch>
       {actions.map(({ key, record }) => {
         const time = new Date(record.ts).toTimeString().slice(0, 8);
@@ -50,9 +54,14 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
             accessibilityHint="Opens this action in the agent log"
             style={styles.row}
           >
-            <Text style={[styles.time, { color: colors.tertiary }]}>{time}</Text>
+            <Text variant="caption2" tone="tertiary" mono>
+              {time}
+            </Text>
             <Text
-              style={[styles.msg, { color: record.level === 'error' ? colors.error : colors.text }]}
+              variant="caption2"
+              tone={record.level === 'error' ? 'error' : 'default'}
+              mono
+              style={styles.msg}
               numberOfLines={1}
             >
               {record.msg}
@@ -64,11 +73,15 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
   );
 }
 
-const styles = StyleSheet.create({
-  feed: { paddingHorizontal: 12, paddingVertical: 10, gap: 4, borderTopWidth: StyleSheet.hairlineWidth },
+const styles = StyleSheet.create((theme) => ({
+  feed: {
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    gap: theme.space.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
   header: { flexDirection: 'row', justifyContent: 'space-between' },
-  title: { fontSize: 11, fontWeight: '600' },
-  row: { flexDirection: 'row', gap: 8 },
-  time: { fontFamily: mono, fontSize: 11 },
-  msg: { fontFamily: mono, fontSize: 11, flexShrink: 1 },
-});
+  row: { flexDirection: 'row', gap: theme.space.md },
+  msg: { flexShrink: 1 },
+}));

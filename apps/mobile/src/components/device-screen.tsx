@@ -1,9 +1,10 @@
 import { Image } from 'expo-image';
 import { useEffect, useState, type ReactNode } from 'react';
-import { StyleSheet, Text, View, type ViewProps } from 'react-native';
+import { View, type ViewProps } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
+import { Text } from '@/components/text';
 import type { DeviceStream } from '@/hooks/device-stream';
-import { useColors } from '@/theme';
 import { StimVideoView } from '../../modules/stim-video/src';
 
 /**
@@ -25,7 +26,6 @@ export function DeviceScreen({
   /** The fps and max edge asked of the server, shown in the dev-only stats overlay next to the measured rate. */
   requested?: { fps: number; maxEdge: number };
 }) {
-  const colors = useColors();
   const source = stream.video ?? stream.frame;
   return (
     <View style={[styles.screen, style]} accessibilityLabel={`Live screen of ${label}`}>
@@ -43,7 +43,9 @@ export function DeviceScreen({
         />
       ) : null}
       {!source ? (
-        <Text style={[styles.placeholder, { color: colors.tertiary }]}>{stream.error ?? 'Waiting for frames'}</Text>
+        <Text variant="footnote" tone="tertiary" style={styles.placeholder}>
+          {stream.error ?? 'Waiting for frames'}
+        </Text>
       ) : null}
       {children}
       {__DEV__ ? (
@@ -79,26 +81,25 @@ function StreamStats({
     return () => clearInterval(timer);
   }, [meter, mode, asked]);
   return text ? (
-    <Text style={styles.stats} pointerEvents="none">
+    <Text variant="caption2" style={styles.stats} pointerEvents="none">
       {text}
     </Text>
   ) : null;
 }
 
-const styles = StyleSheet.create({
-  screen: { backgroundColor: 'black', overflow: 'hidden', justifyContent: 'center' },
-  placeholder: { fontSize: 13, textAlign: 'center', position: 'absolute', left: 12, right: 12 },
+const styles = StyleSheet.create((theme) => ({
+  screen: { backgroundColor: theme.media.frame, overflow: 'hidden', justifyContent: 'center' },
+  placeholder: { textAlign: 'center', position: 'absolute', left: theme.space.lg, right: theme.space.lg },
   stats: {
     position: 'absolute',
-    top: 4,
-    left: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    top: theme.space.xs,
+    left: theme.space.xs,
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xxs,
+    borderRadius: theme.radius.small,
     overflow: 'hidden',
-    fontSize: 11,
     fontVariant: ['tabular-nums'],
-    color: 'white',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    color: theme.media.text,
+    backgroundColor: theme.media.badge,
   },
-});
+}));

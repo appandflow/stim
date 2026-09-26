@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { Alert, StyleSheet, Text, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Card } from '@/components/card';
 import { StatusDot } from '@/components/chip';
@@ -13,6 +14,7 @@ import { mono, useColors } from '@/theme';
 
 export function MacList() {
   const colors = useColors();
+  const { theme } = useUnistyles();
   const router = useRouter();
   const { reload, connections } = useMacs();
 
@@ -31,7 +33,7 @@ export function MacList() {
       renderItem={({ item: { mac: item, state, missing } }) => (
         <Card accessibilityRole="link" onPress={() => router.push({ pathname: '/mac/[id]', params: { id: item.id } })}>
           <View style={styles.row}>
-            <StatusDot color={connectionColor(state, missing, colors)} />
+            <StatusDot color={connectionColor(state, missing, theme.colors)} />
             <View style={styles.rowText}>
               <View style={styles.nameRow}>
                 <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>

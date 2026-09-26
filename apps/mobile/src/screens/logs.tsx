@@ -127,7 +127,6 @@ export function Logs({
           {SOURCES.map(({ source, label }) => (
             <Toggle
               key={source}
-              colors={colors}
               label={label}
               on={filter.sources.includes(source)}
               onPress={() => toggleSource(source)}
@@ -136,20 +135,9 @@ export function Logs({
         </View>
         {slots.length > 1 ? (
           <View style={styles.row}>
-            <Toggle
-              colors={colors}
-              label="All slots"
-              on={active.slot === null}
-              onPress={() => update({ slot: null })}
-            />
+            <Toggle label="All slots" on={active.slot === null} onPress={() => update({ slot: null })} />
             {slots.map((slot) => (
-              <Toggle
-                key={slot}
-                colors={colors}
-                label={slot}
-                on={active.slot === slot}
-                onPress={() => update({ slot })}
-              />
+              <Toggle key={slot} label={slot} on={active.slot === slot} onPress={() => update({ slot })} />
             ))}
           </View>
         ) : null}
