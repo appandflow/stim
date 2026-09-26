@@ -6,7 +6,7 @@ import { DEFAULT_FILTERS, parseFilters, type HomeFilters } from '@/lib/home';
 const KEY = 'stim.homeFilters';
 const VIEW_KEY = 'stim.homeView';
 
-export type HomeView = 'workspaces' | 'devices';
+export type HomeView = 'workspaces' | 'devices' | 'machines';
 
 interface FiltersContext {
   filters: HomeFilters;
@@ -35,7 +35,7 @@ export function HomeFiltersProvider({ children }: { children: ReactNode }) {
       () => {},
     );
     SecureStore.getItemAsync(VIEW_KEY).then(
-      (raw) => setViewState(raw === 'devices' ? 'devices' : 'workspaces'),
+      (raw) => setViewState(raw === 'devices' || raw === 'machines' ? raw : 'workspaces'),
       () => {},
     );
   }, []);

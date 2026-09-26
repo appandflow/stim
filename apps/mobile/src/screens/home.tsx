@@ -34,10 +34,12 @@ import {
   type HomeItem,
 } from '@/lib/home';
 import { isActive } from '@/lib/workspaces';
+import { MacList } from '@/screens/mac-list';
 import { radius, useColors } from '@/theme';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const PLUS_ICON = require('@/assets/icons/plus.png');
 const WORDMARK = require('@/assets/images/wordmark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
 
@@ -104,7 +106,9 @@ export function Home() {
                 accessibilityLabel="Stim"
               />
             ) : (
-              <Text style={[styles.headerTitleText, { color: colors.text }]}>Devices</Text>
+              <Text style={[styles.headerTitleText, { color: colors.text }]}>
+                {view === 'devices' ? 'Devices' : 'Machines'}
+              </Text>
             ),
         }}
       />
@@ -117,17 +121,27 @@ export function Home() {
         />
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button
-          icon={FUNNEL_ICON}
-          iconRenderingMode="template"
-          tintColor={colors.text}
-          accessibilityLabel="Filter"
-          onPress={() => router.push('/filters')}
-        >
-          {filtersActive(filters, macIds, projectNames(items)) ? (
-            <Stack.Toolbar.Badge style={{ backgroundColor: colors.primary }} />
-          ) : null}
-        </Stack.Toolbar.Button>
+        {view === 'machines' ? (
+          <Stack.Toolbar.Button
+            icon={Platform.OS === 'ios' ? 'plus' : PLUS_ICON}
+            iconRenderingMode="template"
+            tintColor={colors.text}
+            accessibilityLabel="Pair a machine"
+            onPress={() => router.push('/pair')}
+          />
+        ) : (
+          <Stack.Toolbar.Button
+            icon={FUNNEL_ICON}
+            iconRenderingMode="template"
+            tintColor={colors.text}
+            accessibilityLabel="Filter"
+            onPress={() => router.push('/filters')}
+          >
+            {filtersActive(filters, macIds, projectNames(items)) ? (
+              <Stack.Toolbar.Badge style={{ backgroundColor: colors.primary }} />
+            ) : null}
+          </Stack.Toolbar.Button>
+        )}
       </Stack.Toolbar>
     </>
   );
@@ -182,6 +196,15 @@ export function Home() {
       </ScrollView>
     </View>
   );
+
+  if (view === 'machines') {
+    return (
+      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+        {header}
+        <MacList />
+      </View>
+    );
+  }
 
   if (view === 'devices') {
     return (

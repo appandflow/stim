@@ -28,8 +28,13 @@ reload and stop a workspace:
   pixels, unsubscribes when
   it arrives, and asks again 2 seconds later, backing off after errors. Tiles
   off screen, or under another screen, ask for nothing, and the server's
-  capture loop runs only briefly. The chosen view is saved on the
-  phone.
+  capture loop runs only briefly.
+- **Machines**: the third destination on home, alongside Workspaces and
+  Devices, lists every paired machine with its connection state and endpoint,
+  with **Rename** and **Forget** on each row and **Pair** in the header.
+  Tapping a machine opens that machine's status. Whichever of the three
+  destinations is open is saved on the phone and is what home shows next
+  launch.
 - **Filters**: the funnel button filters the list by machine, by project, by live
   or idle, and to workspaces with errors or with remote sessions. The filters
   are saved on the phone; a dot on the button shows that some are on. Live only
@@ -45,10 +50,10 @@ reload and stop a workspace:
   `cd '<workspace>' && <remedy>`. No remedy maps to Reload or Stop, so none
   offers an action button.
 - **Menu**: the menu button, or a swipe from the left edge of home, slides
-  home right and shows the menu behind it: **Workspaces** and **Devices**
-  (the same switch as home's toggle), **Machines** (rename and forget),
-  **Pair a machine**, and **Recent workspaces**, the workspaces most recently
-  live or opened on this phone. The button at the bottom shows the number of
+  home right and shows the menu behind it: **Workspaces**, **Devices** and
+  **Machines** (the same switch as home's toggle), **Pair a machine**, and
+  **Recent workspaces**, the workspaces most recently live or opened on this
+  phone. The button at the bottom shows the number of
   paired machines and opens **About**, with the app and server versions. A tap
   on home, a swipe left, or Android's back button closes it. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed

@@ -75,7 +75,12 @@ export function Menu({ onClose }: { onClose: () => void }) {
           selected={pathname === '/' && view === 'devices'}
           onPress={() => show('devices')}
         />
-        <NavRow icon="laptopcomputer" title="Machines" selected={pathname === '/macs'} onPress={() => go('/macs')} />
+        <NavRow
+          icon="laptopcomputer"
+          title="Machines"
+          selected={pathname === '/' && view === 'machines'}
+          onPress={() => show('machines')}
+        />
         <NavRow icon="plus" title="Pair a machine" selected={false} onPress={() => go('/pair')} />
         {recentRows.length > 0 ? (
           <>
