@@ -1814,6 +1814,8 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   and takes at most 10 seconds. A timeout is not proof of an app crash or OOM.
   During boot, Stim reports elapsed time, the simulator name, last boot output,
   current pressure and the highest observed pressure roughly every 15 seconds.
+  Warning or critical pressure adds recovery advice to the first report at
+  that level; later reports repeat it only after the level changes.
   Failure diagnostics retain the highest pressure and unavailable sample count;
   they do not infer the cause of a timeout. Monitoring stops when boot ends.
   Monitoring and timeout handling are best-effort: synchronous CLI work can

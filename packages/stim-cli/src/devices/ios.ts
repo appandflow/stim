@@ -275,10 +275,13 @@ export async function bootIosSim(
     longestGapMs > 30000
       ? ` Observations were delayed: longest gap ${Math.round(longestGapMs / 1000)}s. Pressure during gaps is unobserved; blocking CLI work can also delay progress and timeout handling.`
       : '';
+  let warnedPressure: HostMemoryPressure | null = null;
   const report = () => {
     const pressure = sample();
+    const warn = (pressure === 'warning' || pressure === 'critical') && pressure !== warnedPressure;
+    if (pressure !== null) warnedPressure = pressure;
     out(
-      `Simulator ${label} is still booting after ${Math.round((Date.now() - started) / 1000)}s. Last boot output: ${phase}. Memory pressure: ${pressure ?? 'unknown'}; highest observed: ${worst ?? 'unknown'}. Boot deadline: ${Math.round(timeoutMs / 1000)}s.${coverage()}${pressure === 'warning' || pressure === 'critical' ? ` Boot may be delayed or stalled. ${recovery}` : ''}`,
+      `Simulator ${label} is still booting after ${Math.round((Date.now() - started) / 1000)}s. Last boot output: ${phase}. Memory pressure: ${pressure ?? 'unknown'}; highest observed: ${worst ?? 'unknown'}. Boot deadline: ${Math.round(timeoutMs / 1000)}s.${coverage()}${warn ? ` Boot may be delayed or stalled. ${recovery}` : ''}`,
     );
   };
   const onLine = (line: string) => {

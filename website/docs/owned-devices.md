@@ -208,7 +208,8 @@ reduce future resource use but is not a guaranteed fix for a stalled host.
 
 During a slow local iOS boot, Stim reports the simulator name, elapsed time, last boot
 output, current memory pressure, and highest observed pressure roughly every
-15 seconds. Boot failures retain the highest pressure and the number of
+15 seconds. Recovery advice for warning or critical pressure appears once per
+pressure level, not on every report. Boot failures retain the highest pressure and the number of
 unavailable readings. Unknown readings are not treated as normal, and pressure
 does not prove the cause of a timeout. The boot deadline remains ten minutes,
 but synchronous CLI work can delay observations, progress, and timeout handling.

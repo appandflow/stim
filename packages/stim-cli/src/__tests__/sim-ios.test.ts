@@ -1026,6 +1026,43 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
   }
 });
 
+test('boot progress repeats the pressure warning only when the pressure level changes', async () => {
+  vi.useFakeTimers();
+  const messages: string[] = [];
+  let reads = 0;
+  const levels = ['2', '2', '2', '4', '4', '1', '2'];
+  const child = makeChildProcess();
+  child.kill = () => {
+    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+    return true;
+  };
+  setExecutor({
+    runFile: (_file, args) =>
+      args[0] === '-n' ? levels[Math.min(reads++, levels.length - 1)] : bootSimList('Booting'),
+    spawn: () => child,
+  });
+  try {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    const outcome = bootIosSim('UDID-A', { timeoutMs: 100000, out: (message) => messages.push(message) }).catch(
+      (error) => error,
+    );
+    await vi.advanceTimersByTimeAsync(100000);
+    await outcome;
+    expect(messages.slice(0, 6).map((message) => message.includes('Boot may be delayed or stalled'))).toEqual([
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+    ]);
+    expect(messages[1]).toContain('Memory pressure: warning');
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
 test('delayed boot observations report missing coverage without inventing unknown readings', async () => {
   vi.useFakeTimers();
   const messages: string[] = [];
