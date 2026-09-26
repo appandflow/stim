@@ -102,6 +102,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
     !controlling && !(landscape && readOnly) && !screenZoom.zoomed,
     root,
     stage,
+    screenZoom.lens,
   );
   const snapshot = zoom.landed && source ? null : zoom.snapshot;
   const screen = zoom.screenSize;
@@ -312,76 +313,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
               ]}
             >
               <View style={styles.root}>
-                <View
-                  style={styles.bar}
-                  onLayout={(event) => {
-                    const { y, height } = event.nativeEvent.layout;
-                    setBarBottom(y + height);
-                  }}
-                >
-                  <Pressable
-                    onLayout={(event) => {
-                      const { width } = event.nativeEvent.layout;
-                      setBarSides(([, right]) => [width, right]);
-                    }}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      keyboardHeight.set(withTiming(0, { duration: 200 }));
-                      zoom.close();
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close"
-                    hitSlop={10}
-                  >
-                    <Icon name="xmark" size={22} color="#FFFFFF" />
-                  </Pressable>
-                  <View
-                    style={[
-                      styles.titles,
-                      {
-                        paddingLeft: Math.max(0, barSides[1] - barSides[0]),
-                        paddingRight: Math.max(0, barSides[0] - barSides[1]),
-                      },
-                    ]}
-                  >
-                    <Text style={styles.title} numberOfLines={1}>
-                      {title}
-                    </Text>
-                    <View style={styles.subtitleRow}>
-                      <Text style={styles.subtitle} numberOfLines={1}>
-                        {`${model} · ${slot}`}
-                      </Text>
-                      {driver ? (
-                        <View
-                          style={styles.driver}
-                          accessible
-                          accessibilityLabel={controlling ? `Also driven by ${driver}` : `Driven by ${driver}`}
-                        >
-                          <View style={[styles.driverDot, { backgroundColor: colors.accent }]} />
-                          <Text style={styles.driverText} numberOfLines={1}>
-                            {driver}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View
-                    onLayout={(event) => {
-                      const { width } = event.nativeEvent.layout;
-                      setBarSides(([left]) => [left, width]);
-                    }}
-                  >
-                    {control.allowed !== null ? (
-                      <Toggle
-                        colors={colors}
-                        label={controlling ? 'Control on' : 'Control'}
-                        on={controlling}
-                        disabled={readOnly}
-                        onPress={toggle}
-                      />
-                    ) : null}
-                  </View>
-                </View>
+                <View style={{ height: barBottom }} />
                 {landscape ? null : readOnlyBanner}
                 <Banner
                   colors={colors}
@@ -396,7 +328,12 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                   </View>
                 ) : null}
                 <View style={landscape ? styles.row : styles.root}>
-                  <View ref={stage} style={styles.stage} onLayout={zoom.measure} collapsable={false}>
+                  <View
+                    ref={stage}
+                    style={styles.stage}
+                    onLayout={barBottom > 0 ? zoom.measure : undefined}
+                    collapsable={false}
+                  >
                     {streams ? null : (
                       <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
                     )}
@@ -416,37 +353,107 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
             </View>
           </Animated.View>
           {streams ? (
-            <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
-              <GestureDetector gesture={screenZoom.gesture}>
-                <Animated.View style={StyleSheet.absoluteFill} onLayout={screenZoom.onLayout}>
-                  <Animated.View style={screenZoom.style}>
-                    <DeviceScreen
-                      stream={stream}
-                      label={model}
-                      style={StyleSheet.absoluteFill}
-                      requested={{ fps: preset.fps, maxEdge }}
-                    >
-                      {snapshot ? (
-                        <Image
-                          source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
-                          style={StyleSheet.absoluteFill}
-                          contentFit="contain"
-                          transition={0}
-                        />
-                      ) : null}
-                      {source ? (
-                        <View
-                          style={[styles.overlay, controlling && { borderColor: colors.primary }]}
-                          pointerEvents={controlling ? 'auto' : 'none'}
-                          {...(controlling ? touchHandlers : {})}
-                        />
-                      ) : null}
-                    </DeviceScreen>
-                  </Animated.View>
+            <GestureDetector gesture={screenZoom.gesture}>
+              <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+                <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
+                  <DeviceScreen
+                    stream={stream}
+                    label={model}
+                    style={StyleSheet.absoluteFill}
+                    requested={{ fps: preset.fps, maxEdge }}
+                  >
+                    {snapshot ? (
+                      <Image
+                        source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="contain"
+                        transition={0}
+                      />
+                    ) : null}
+                    {source ? (
+                      <View
+                        style={[styles.overlay, controlling && { borderColor: colors.primary }]}
+                        pointerEvents={controlling ? 'auto' : 'none'}
+                        {...(controlling ? touchHandlers : {})}
+                      />
+                    ) : null}
+                  </DeviceScreen>
                 </Animated.View>
-              </GestureDetector>
-            </Animated.View>
+              </View>
+            </GestureDetector>
           ) : null}
+          <Animated.View
+            style={[
+              styles.header,
+              { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right },
+              zoom.fadeStyle,
+            ]}
+          >
+            <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
+              <Pressable
+                onLayout={(event) => {
+                  const { width } = event.nativeEvent.layout;
+                  setBarSides(([, right]) => [width, right]);
+                }}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  keyboardHeight.set(withTiming(0, { duration: 200 }));
+                  zoom.close();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={10}
+              >
+                <Icon name="xmark" size={22} color="#FFFFFF" />
+              </Pressable>
+              <View
+                style={[
+                  styles.titles,
+                  {
+                    paddingLeft: Math.max(0, barSides[1] - barSides[0]),
+                    paddingRight: Math.max(0, barSides[0] - barSides[1]),
+                  },
+                ]}
+              >
+                <Text style={styles.title} numberOfLines={1}>
+                  {title}
+                </Text>
+                <View style={styles.subtitleRow}>
+                  <Text style={styles.subtitle} numberOfLines={1}>
+                    {`${model} · ${slot}`}
+                  </Text>
+                  {driver ? (
+                    <View
+                      style={styles.driver}
+                      accessible
+                      accessibilityLabel={controlling ? `Also driven by ${driver}` : `Driven by ${driver}`}
+                    >
+                      <View style={[styles.driverDot, { backgroundColor: colors.accent }]} />
+                      <Text style={styles.driverText} numberOfLines={1}>
+                        {driver}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+              <View
+                onLayout={(event) => {
+                  const { width } = event.nativeEvent.layout;
+                  setBarSides(([left]) => [left, width]);
+                }}
+              >
+                {control.allowed !== null ? (
+                  <Toggle
+                    colors={colors}
+                    label={controlling ? 'Control on' : 'Control'}
+                    on={controlling}
+                    disabled={readOnly}
+                    onPress={toggle}
+                  />
+                ) : null}
+              </View>
+            </View>
+          </Animated.View>
           {rotateNote && rest ? (
             <Animated.View
               pointerEvents="none"
@@ -577,6 +584,7 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  header: { position: 'absolute', top: 0, left: 0, right: 0 },
   bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 4 },
   titles: { flex: 1, alignItems: 'center' },
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },

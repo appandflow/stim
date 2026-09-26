@@ -12,6 +12,7 @@ import {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import type { ScreenLens } from '@/hooks/screen-zoom';
 import { aspectOf, fitRect, zoomRect, type Rect } from '@/lib/zoom';
 import type { FrameEvent, Platform } from '@/protocol/types';
 
@@ -83,7 +84,8 @@ export function useZoomedAway(key: string): boolean {
 /**
  * The viewer's side of the zoom: the screen grows from the thumbnail it opened from (or from slightly smaller
  * than its place when there is none) into the fitted stage, the rest fades in, and closing, the back button or
- * a swipe down while not controlling shrinks it back before the route pops.
+ * a swipe down while not controlling shrinks it back before the route pops. The screen's frame follows `lens`
+ * around its fitted place, and closing takes the lens back to fit as the screen shrinks.
  */
 export function useDeviceZoom(
   key: string,
@@ -92,6 +94,7 @@ export function useDeviceZoom(
   dragEnabled: boolean,
   root: RefObject<ViewInstance | null>,
   stageRef: RefObject<ViewInstance | null>,
+  lens: ScreenLens,
 ) {
   const window = useWindowDimensions();
   const reduced = useReducedMotion();
@@ -151,6 +154,9 @@ export function useDeviceZoom(
       if (collapsed) return;
       collapsed = true;
       const duration = reduced ? 0 : CLOSE_MS;
+      lens.scale.set(withTiming(1, { duration, easing: EASING }));
+      lens.x.set(withTiming(0, { duration, easing: EASING }));
+      lens.y.set(withTiming(0, { duration, easing: EASING }));
       drag.set(withTiming(0, { duration, easing: EASING }));
       progress.set(withTiming(0, { duration, easing: EASING }, () => scheduleOnRN(pop)));
     };
@@ -161,7 +167,7 @@ export function useDeviceZoom(
       if (!collapsed && width > 0 && height > 0) from.set([x - offset[0], y - offset[1], width, height]);
       collapse();
     });
-  }, [drag, progress, from, closingOnUI, origin, offset, pop, reduced]);
+  }, [drag, progress, from, closingOnUI, origin, offset, pop, reduced, lens]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -173,6 +179,8 @@ export function useDeviceZoom(
 
   const hasOrigin = origin !== null;
   const fitted = stage ? fitRect(aspect, stage) : null;
+  const [fitX, fitY, fitWidth, fitHeight] = fitted ?? [0, 0, 0, 0];
+  useEffect(() => lens.fit.set([fitX, fitY, fitWidth, fitHeight]), [lens.fit, fitX, fitY, fitWidth, fitHeight]);
   const dismissDistance = window.height / 2;
   const screenStyle = useAnimatedStyle(() => {
     const target = to.get();
@@ -184,7 +192,15 @@ export function useDeviceZoom(
       drag.get(),
       dismissDistance,
     );
-    return { left, top, width, height, opacity: hasOrigin ? 1 : progress.get(), borderRadius: 6 + 2 * progress.get() };
+    const scale = lens.scale.get();
+    return {
+      left: left + width * ((1 - scale) / 2 + lens.x.get()),
+      top: top + height * ((1 - scale) / 2 + lens.y.get()),
+      width: width * scale,
+      height: height * scale,
+      opacity: hasOrigin ? 1 : progress.get(),
+      borderRadius: (6 + 2 * progress.get()) * scale,
+    };
   });
   const fadeStyle = useAnimatedStyle(() => ({
     opacity: progress.get() * (1 - Math.min(Math.max(drag.get(), 0) / dismissDistance, 1)),
