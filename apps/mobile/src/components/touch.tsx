@@ -10,7 +10,7 @@ import { useColors, type Colors } from '@/theme';
  *   background, such as cards, chips and filled buttons, where an iOS underlay would be hidden behind the content.
  * - `opacity`: the content dims. For icon buttons, text buttons and toggles.
  */
-export type TouchFeedback = 'row' | 'card' | 'opacity';
+type TouchFeedback = 'row' | 'card' | 'opacity';
 
 export type TouchProps = TouchableProps & { feedback?: TouchFeedback };
 
@@ -28,12 +28,22 @@ function feedbackProps(feedback: TouchFeedback, colors: Colors): Partial<Touchab
   }
 }
 
+/**
+ * React Native's iOS view reports a checked switch as the value "1" or "0", which VoiceOver reads as on or off.
+ * Gesture Handler's native button maps only `selected` and `disabled` from the accessibility state.
+ */
+function switchValue(role: TouchProps['accessibilityRole'], state: TouchProps['accessibilityState']) {
+  if (Platform.OS !== 'ios' || role !== 'switch' || typeof state?.checked !== 'boolean') return undefined;
+  return { text: state.checked ? '1' : '0' };
+}
+
 /** Gesture Handler's `Touchable` with the app's press feedback, exposed to assistive technology as one button. */
 export function Touch({
   feedback = 'opacity',
   accessible = true,
   accessibilityRole = 'button',
   accessibilityState,
+  accessibilityValue,
   disabled,
   style,
   ...props
@@ -45,6 +55,7 @@ export function Touch({
       accessible={accessible}
       accessibilityRole={accessibilityRole}
       accessibilityState={disabled ? { ...accessibilityState, disabled: true } : accessibilityState}
+      accessibilityValue={accessibilityValue ?? switchValue(accessibilityRole, accessibilityState)}
       disabled={disabled}
       style={[feedback === 'card' && styles.clip, style]}
       {...props}
