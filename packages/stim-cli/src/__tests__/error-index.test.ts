@@ -10,6 +10,21 @@ vi.mock('../ndjson.ts', async (importOriginal) => {
   return { ...actual, parseNdjsonLine: vi.fn<typeof actual.parseNdjsonLine>(actual.parseNdjsonLine) };
 });
 
+const inodes = vi.hoisted(() => ({ beyondDoublePrecision: false }));
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  const fstatSync = ((fd: number, options?: { bigint?: boolean }) => {
+    const stat = actual.fstatSync(fd, { bigint: true });
+    if (!inodes.beyondDoublePrecision) return options?.bigint ? stat : actual.fstatSync(fd);
+    // NTFS file IDs carry a sequence number in their top 16 bits, so they often exceed 2^53.
+    const ino = (1n << 60n) + stat.ino;
+    const size = options?.bigint ? stat.size : Number(stat.size);
+    return { dev: options?.bigint ? stat.dev : Number(stat.dev), ino: options?.bigint ? ino : Number(ino), size };
+  }) as typeof actual.fstatSync;
+  return { ...actual, fstatSync, default: { ...actual, fstatSync } };
+});
+
 let root: string;
 let dir: string;
 let index: string;
@@ -21,6 +36,7 @@ beforeEach(() => {
   vi.mocked(parseNdjsonLine).mockClear();
 });
 afterEach(() => {
+  inodes.beyondDoublePrecision = false;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -83,6 +99,14 @@ test('a later marker in any generation raises the boundary for records already r
 
   write('build-android.ndjson', []);
   expect(count()).toBe(1);
+  writeFileSync(join(dir, 'build-android.ndjson.1'), lines([{ ts: 6, src: 'build', marker: true }]));
+  expect(count()).toBe(0);
+});
+
+test('files whose inodes differ only beyond double precision keep separate summaries', () => {
+  inodes.beyondDoublePrecision = true;
+  write('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'boom' }]);
+  write('build-android.ndjson', []);
   writeFileSync(join(dir, 'build-android.ndjson.1'), lines([{ ts: 6, src: 'build', marker: true }]));
   expect(count()).toBe(0);
 });
