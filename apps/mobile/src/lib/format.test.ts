@@ -7,10 +7,18 @@ import {
   nextBuild,
   planDetail,
 } from '@/lib/format';
-import type { BuildPlan, BuildReport } from '@/protocol/types';
+import type { BuildMissReason, BuildPlan, BuildReport } from '@/protocol/types';
 
 const now = Date.parse('2026-09-25T12:00:00Z');
 const ago = (ms: number) => new Date(now - ms).toISOString();
+const reason = (summary: string): BuildMissReason => ({
+  kind: 'changed',
+  summary,
+  changes: [],
+  changeCount: 0,
+  baseline: null,
+  rekeyedBy: [],
+});
 
 describe('activityBadge', () => {
   it('shows no idle badge for a device used in the last 10 minutes', () => {
@@ -70,14 +78,20 @@ describe('build cache outcome', () => {
       startedAt: ago(90_000),
       finishedAt: ago(7_000),
     };
-    expect(lastBuildSummary(last, now)).toBe('Cache miss, compiled in 1:23 \u00B7 <1m ago');
-    expect(lastBuildSummary({ ...last, cacheSkipped: true }, now)).toBe('Compiled in 1:23 \u00B7 <1m ago');
+    expect(lastBuildSummary(last, now)).toBe('Cold build \u00B7 1:23 \u00B7 <1m ago');
+    expect(lastBuildSummary({ ...last, cacheSkipped: true }, now)).toBe(
+      'Cold build (cache reads off) \u00B7 1:23 \u00B7 <1m ago',
+    );
+    expect(lastBuildSummary({ ...last, missReason: reason('app config changed') }, now)).toBe(
+      'Cold build: app config changed \u00B7 1:23 \u00B7 <1m ago',
+    );
+    expect(lastBuildSummary({ ...last, cacheHit: 'local' }, now)).toBe('Cache hit (local) \u00B7 1:23 \u00B7 <1m ago');
     expect(
       lastBuildSummary(
         { ...last, status: 'failed', errorCode: 'STIM_BUILD_FAILED', finishedAt: ago(3 * 3600_000) },
         now,
       ),
-    ).toBe('Failed (STIM_BUILD_FAILED) in 1:23 \u00B7 3h ago');
+    ).toBe('Failed (STIM_BUILD_FAILED) \u00B7 1:23 \u00B7 3h ago');
   });
 
   it('describes a planned hit, a miss that regenerates, and a refusal', () => {
@@ -107,6 +121,19 @@ describe('build cache outcome', () => {
       'cold build, regenerates the native dir',
       'No cold run of this project recorded yet',
     ]);
+    expect(
+      nextBuild({ ...miss, prebuild: null, expectedMs: 340_000, missReason: reason('Podfile.lock changed') }),
+    ).toBe('cold build, Podfile.lock changed, ~5:40');
+    expect(
+      nextBuild({ ...miss, missReason: reason('no earlier build of this project in the cache to compare with') }),
+    ).toBe('cold build, regenerates the native dir, no earlier build of this project in the cache to compare with');
+    const pending = {
+      ...reason('Podfile.lock changed (before prebuild regenerates ios/)'),
+      kind: 'prebuild-pending' as const,
+    };
+    expect(nextBuild({ ...miss, missReason: pending })).toBe(
+      'cold build, Podfile.lock changed (before prebuild regenerates ios/)',
+    );
     const refused: BuildPlan = {
       ...miss,
       outcome: null,

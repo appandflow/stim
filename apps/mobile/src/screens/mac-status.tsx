@@ -79,7 +79,7 @@ export function MacStatus({ id }: { id: string }) {
       <Text style={[styles.endpoint, { color: colors.tertiary }]} selectable>
         {mac.endpoint}
       </Text>
-      <ConnectionBanner state={state} />
+      <ConnectionBanner state={state} style={styles.banner} />
       {pairingScope(state) === 'read' ? (
         <View style={styles.readOnly}>
           <Text style={[styles.readOnlyText, { color: colors.secondary }]}>
@@ -290,6 +290,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   container: { padding: 20, paddingTop: 28, gap: 14, paddingBottom: 48 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  banner: { marginHorizontal: -20 },
   dot: { position: 'absolute', top: -2, right: -4, width: 11, height: 11, borderRadius: 6, borderWidth: 2 },
   titleText: { flex: 1 },
   title: { fontSize: 22, fontWeight: '700' },

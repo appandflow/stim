@@ -26,8 +26,7 @@ function usedPlatforms(env: EnvironmentState, build: BuildReport | null): Platfo
   );
 }
 
-export function BuildCard({ env }: { env: EnvironmentState }) {
-  const colors = useColors();
+export function BuildCards({ env }: { env: EnvironmentState }) {
   const build = runningBuild(env);
   const used = usedPlatforms(env, build);
   const { plan, recheck } = useBuildPlans(
@@ -35,18 +34,13 @@ export function BuildCard({ env }: { env: EnvironmentState }) {
     Object.fromEntries(used.map((platform) => [platform, planKey(env.lastBuilds?.[platform])])),
     build !== null,
   );
-  return (
-    <Card>
-      {(used.length ? used : PLATFORMS).map((platform, index) => (
-        <View
-          key={platform}
-          style={[styles.platform, index > 0 && [styles.divided, { borderTopColor: colors.border }]]}
-        >
-          <PlatformBuild env={env} platform={platform} plan={plan(platform)} build={build} recheck={recheck} />
-        </View>
-      ))}
+  return (used.length ? used : PLATFORMS).map((platform) => (
+    <Card key={platform}>
+      <View style={styles.platform}>
+        <PlatformBuild env={env} platform={platform} plan={plan(platform)} build={build} recheck={recheck} />
+      </View>
     </Card>
-  );
+  ));
 }
 
 function PlatformBuild({
@@ -107,7 +101,7 @@ function PlatformBuild({
         <Text style={[styles.line, { color: colors.secondary }]}>No build recorded</Text>
       )}
       {building ? null : build ? (
-        <Text style={[styles.line, { color: colors.tertiary }]}>Next build: checked after the running build</Text>
+        <Text style={[styles.line, { color: colors.tertiary }]}>Next: checked after the running build</Text>
       ) : (
         <NextBuild plan={plan} name={name} openReason={() => openReason(true)} />
       )}
@@ -163,24 +157,26 @@ function NextBuild({ plan, name, openReason }: { plan: PlanState | undefined; na
   if (plan?.kind !== 'done') return null;
   const detail = planDetail(plan.plan);
   const miss = plan.plan.missReason;
+  const next = (
+    <Text
+      style={[styles.line, { color: plan.plan.refusal || plan.plan.cacheHit === false ? colors.warn : colors.live }]}
+    >
+      {`Next: ${nextBuild(plan.plan)}`}
+    </Text>
+  );
   return (
     <>
-      <Text
-        style={[styles.line, { color: plan.plan.refusal || plan.plan.cacheHit === false ? colors.warn : colors.live }]}
-      >
-        {`Next build: ${nextBuild(plan.plan)}`}
-      </Text>
       {miss ? (
         <Disclosure
-          label={`Why the next ${name} build would miss the cache: ${miss.summary}`}
+          label={`Next ${name} build: ${nextBuild(plan.plan)}`}
           hint="Shows the changed sources"
           onPress={openReason}
         >
-          <Text style={[styles.line, { color: colors.warn }]} numberOfLines={2}>
-            {`Why: ${miss.summary}`}
-          </Text>
+          {next}
         </Disclosure>
-      ) : null}
+      ) : (
+        next
+      )}
       {detail ? <Text style={[styles.detail, { color: colors.tertiary }]}>{detail}</Text> : null}
       {plan.plan.refusal ? (
         <Text style={[styles.line, { color: colors.secondary }]} selectable>
@@ -193,7 +189,6 @@ function NextBuild({ plan, name, openReason }: { plan: PlanState | undefined; na
 
 const styles = StyleSheet.create({
   platform: { padding: 12, gap: 4 },
-  divided: { borderTopWidth: StyleSheet.hairlineWidth },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   name: { fontSize: 14, fontWeight: '600' },
   line: { fontSize: 13, lineHeight: 18 },
