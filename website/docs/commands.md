@@ -832,7 +832,8 @@ stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>] [--work
 ```
 
 Reports stale workspace entries, orphaned workspace directories, clean linked
-worktrees whose branch is merged, orphaned owned devices and remote sessions,
+worktrees whose branch is merged or whose pull request was merged or closed,
+orphaned owned devices and remote sessions,
 stale locks, and shared cache sizes. It does not change anything without
 `--delete`. See
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)
@@ -904,6 +905,8 @@ prints, for example:
         "path": "/path/to/feature",
         "idleDays": 12,
         "mergedInto": null,
+        "pullRequest": null,
+        "pullRequestUnknown": null,
         "willRemove": true,
         "reason": null,
         "detail": "idle 12d",
@@ -913,6 +916,8 @@ prints, for example:
         "path": "/path/to/shipped",
         "idleDays": 0,
         "mergedInto": "origin/main",
+        "pullRequest": null,
+        "pullRequestUnknown": null,
         "willRemove": true,
         "reason": null,
         "detail": "merged into origin/main",
@@ -922,6 +927,8 @@ prints, for example:
         "path": "/path/to/just-merged",
         "idleDays": 0,
         "mergedInto": "origin/main",
+        "pullRequest": null,
+        "pullRequestUnknown": null,
         "willRemove": false,
         "reason": "recent-activity",
         "detail": "recent activity: merged into origin/main 12m ago; removable after 2026-09-25T15:48:00.000Z",
@@ -931,9 +938,16 @@ prints, for example:
         "path": "/path/to/wip",
         "idleDays": 20,
         "mergedInto": null,
+        "pullRequest": {
+          "number": 123,
+          "state": "merged",
+          "url": "https://github.com/acme/app/pull/123",
+          "containsHead": true
+        },
+        "pullRequestUnknown": null,
         "willRemove": false,
         "reason": "dirty",
-        "detail": "dirty: uncommitted changes or untracked files",
+        "detail": "dirty: 2 uncommitted or untracked files",
         "eligibleAt": null
       }
     ],
@@ -956,7 +970,10 @@ prints, for example:
 The example omits the empty sections. `reason` is `null` for an entry `--delete`
 acts on and otherwise a stable code; `detail` is the text the report prints.
 A linked worktree's `eligibleAt` is the time a `recent-activity` worktree
-becomes removable, and otherwise `null`.
+becomes removable, and otherwise `null`. `pullRequest` is the pull request of
+the worktree's branch whose head is or contains HEAD, found with `gh`, with
+`state` `"open"`, `"merged"` or `"closed"`; `pullRequestUnknown` says why `gh`
+could not answer, such as `"gh is not installed"`.
 `bytes` is `null` when the size is unknown. `worktreeSweep` is `null` without
 `--worktrees`, which still reports merged worktrees. With `--delete`, `mode` is `"delete"`, the sections list what
 the run acted on, and `failures` counts the entries it could not delete. A

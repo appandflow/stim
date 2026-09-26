@@ -13,7 +13,13 @@ import {
   type WorkspaceOutputsReport,
 } from './workspaces.ts';
 import type { GcCache } from './caches.ts';
-import { worktreeRemovalReason, type WorktreeSkipCode, type WorktreeSweep } from './worktrees.ts';
+import {
+  worktreePullRequestNote,
+  worktreeRemovalReason,
+  type WorktreeSkipCode,
+  type WorktreeSweep,
+} from './worktrees.ts';
+import type { PullRequestLookup } from '../../workspace/pull-request.ts';
 import type {
   DeviceLeaseGarbage,
   ParkedAvdReport,
@@ -392,14 +398,22 @@ function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
       ? `, or clean, pushed and idle ${sweep.idle.olderThan}d or more (the default without --older-than)`
       : `, or clean, pushed and idle ${sweep.idle.olderThan}d or more`;
   const lines = [
-    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean and merged into the default branch${idle}:`,
+    `Linked worktrees (${removable.length} removable, ${sweep.worktrees.length - removable.length} kept) - clean and merged into the default branch, or with a merged or closed pull request${idle}:`,
   ];
+  const unknown = new Set(
+    sweep.worktrees.flatMap((w) =>
+      w.pullRequest && 'unavailable' in w.pullRequest ? [w.pullRequest.unavailable] : [],
+    ),
+  );
+  for (const reason of unknown)
+    lines.push(`  Pull request state unknown (${reason}); merges are judged from git alone.`);
   for (const w of sweep.worktrees) {
     const age = w.idleDays === null ? '' : ` (idle ${w.idleDays}d)`;
     lines.push(`  ${w.path}${age}`);
+    const note = worktreePullRequestNote(w);
     lines.push(
       w.skipped
-        ? `              kept: ${w.skipped}`
+        ? `              kept: ${w.skipped}${note && !w.skipped.includes(note) ? ` (${note})` : ''}`
         : `              would be REMOVED by \`stim worktree remove\`: ${worktreeRemovalReason(w)}`,
     );
   }
@@ -423,6 +437,11 @@ function jsonLock({ path, platform, key, pid, projectRoot }: BuildLockInfo): GcJ
   return { path, platform, key, pid, projectRoot };
 }
 
+function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['linkedWorktrees'][number]['pullRequest'] {
+  const pr = lookup && 'pullRequest' in lookup ? lookup.pullRequest : null;
+  return pr ? { number: pr.number, state: pr.state, url: pr.url, containsHead: pr.containsHead } : null;
+}
+
 /** The `gc --json` sections, in text report order. Each section is an array of entries. */
 export interface GcJsonSections {
   deadProjects: { path: string }[];
@@ -433,6 +452,8 @@ export interface GcJsonSections {
     path: string;
     idleDays: number | null;
     mergedInto: string | null;
+    pullRequest: { number: number; state: 'open' | 'merged' | 'closed'; url: string; containsHead: boolean } | null;
+    pullRequestUnknown: string | null;
     willRemove: boolean;
     reason: WorktreeSkipCode | null;
     detail: string;
@@ -537,6 +558,8 @@ export function gcReportSections({
       path: w.path,
       idleDays: w.idleDays,
       mergedInto: w.merge?.merged ? w.merge.into : null,
+      pullRequest: jsonPullRequest(w.pullRequest),
+      pullRequestUnknown: w.pullRequest && 'unavailable' in w.pullRequest ? w.pullRequest.unavailable : null,
       willRemove: w.skipCode === null,
       reason: w.skipCode,
       detail: w.skipped ?? worktreeRemovalReason(w),

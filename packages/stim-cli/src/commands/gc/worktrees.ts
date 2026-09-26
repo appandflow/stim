@@ -15,6 +15,12 @@ import { workspaceInUse } from '../../workspace/in-use.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { fetchDefaultBranch, mergeState, type MergeState } from '../../workspace/merge-state.ts';
 import {
+  describePullRequest,
+  endedPullRequest,
+  pullRequestLookup,
+  type PullRequestLookup,
+} from '../../workspace/pull-request.ts';
+import {
   dirtyPaths,
   hasPopulatedSubmodules,
   hasUncommittedWork,
@@ -54,6 +60,7 @@ export interface WorktreeFacts {
   inUse: string[];
   idleDays: number | null;
   merge: MergeState | null;
+  pullRequest: PullRequestLookup | null;
   activity: WorktreeActivity | null;
 }
 
@@ -87,6 +94,8 @@ interface WorktreeCandidate {
   keys: string[];
   idleDays: number | null;
   merge: MergeState | null;
+  head: string | null;
+  pullRequest: PullRequestLookup | null;
   skipCode: WorktreeSkipCode | null;
   skipped: string | null;
   eligibleAt: number | null;
@@ -109,6 +118,12 @@ function skip(code: WorktreeSkipCode, text: string): WorktreeSkip {
   return { code, text };
 }
 
+function pullRequestNote(lookup: PullRequestLookup | null): string | null {
+  const pr = lookup && 'pullRequest' in lookup ? lookup.pullRequest : null;
+  if (!pr) return null;
+  return pr.containsHead ? describePullRequest(pr) : `${describePullRequest(pr)}, and HEAD has commits it does not`;
+}
+
 /**
  * Why gc keeps a worktree, or null when it removes it. A worktree that would be removed is still kept while its last
  * activity, or its merge into the default branch, is less than `grace.ms` old, and kept when that activity is unknown.
@@ -121,14 +136,18 @@ export function worktreeSkipReason(
   return removalBlocker(facts, olderThan) ?? graceBlocker(facts, grace);
 }
 
-function graceBlocker(facts: Pick<WorktreeFacts, 'merge' | 'activity'>, grace: WorktreeGrace): WorktreeSkip | null {
+function graceBlocker(
+  facts: Pick<WorktreeFacts, 'merge' | 'pullRequest' | 'activity'>,
+  grace: WorktreeGrace,
+): WorktreeSkip | null {
   if (grace.ms <= 0) return null;
   if (!facts.activity) return skip('activity-unknown', 'its last activity could not be read');
   const merged = facts.merge?.merged ? facts.merge : null;
-  const latest =
-    merged && merged.mergedAt > facts.activity.at
-      ? { at: merged.mergedAt, basis: `merged into ${merged.into}` }
-      : facts.activity;
+  const ended = endedPullRequest(facts.pullRequest);
+  const events: WorktreeActivity[] = [facts.activity];
+  if (merged) events.push({ at: merged.mergedAt, basis: `merged into ${merged.into}` });
+  if (ended?.endedAt) events.push({ at: ended.endedAt, basis: describePullRequest(ended) });
+  const latest = events.reduce((a, b) => (b.at > a.at ? b : a));
   const eligibleAt = latest.at + grace.ms;
   if (grace.now >= eligibleAt) return null;
   const ago = formatLongDuration(Math.max(0, grace.now - latest.at));
@@ -148,29 +167,39 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   if (facts.locked) return skip('locked', 'locked with git worktree lock');
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
-  if (excludePodChurn(facts.porcelain).lines.length) {
-    return skip('dirty', 'dirty: uncommitted changes or untracked files');
-  }
+  const dirty = excludePodChurn(facts.porcelain).lines.length;
+  if (dirty) return skip('dirty', `dirty: ${plural(dirty, 'uncommitted or untracked file')}`);
   if (facts.unpushed === null) return skip('unpushed-unchecked', 'unpushed commits could not be checked');
   const merged = facts.merge?.merged ? facts.merge : null;
-  if (facts.unpushed.length && !merged?.coversUnpushed) {
+  const ended = endedPullRequest(facts.pullRequest);
+  if (facts.unpushed.length && !merged?.coversUnpushed && ended?.state !== 'merged') {
     return skip('unpushed', `unpushed: ${plural(facts.unpushed.length, 'commit')} on no remote or other branch`);
   }
   if (facts.submodules) return skip('submodules', 'initialized submodules');
-  if (merged) return null;
+  if (merged || ended) return null;
   const notMerged = facts.merge && !facts.merge.merged ? facts.merge : null;
+  const details = [notMerged?.detail, pullRequestNote(facts.pullRequest)].filter(Boolean);
   if (olderThan === null) {
-    return skip(notMerged?.unknown ? 'merge-unknown' : 'not-merged', notMerged?.detail ?? 'not merged');
+    return skip(notMerged?.unknown ? 'merge-unknown' : 'not-merged', details.join('; ') || 'not merged');
   }
-  const also = notMerged ? `; ${notMerged.detail}` : '';
+  const also = details.map((detail) => `; ${detail}`).join('');
   if (facts.idleDays === null) return skip('last-use-unknown', `recently used: its last use is unknown${also}`);
   if (facts.idleDays < olderThan) return skip('recently-used', `recently used ${facts.idleDays}d ago${also}`);
   return null;
 }
 
-/** Why gc removes a worktree it did not skip: `merged into origin/main` or `idle 9d`. */
-export function worktreeRemovalReason(candidate: Pick<WorktreeCandidate, 'merge' | 'idleDays'>): string {
-  return candidate.merge?.merged ? `merged into ${candidate.merge.into}` : `idle ${candidate.idleDays ?? 0}d`;
+/** Why gc removes a worktree it did not skip: `merged into origin/main`, `PR #12 closed` or `idle 9d`. */
+export function worktreeRemovalReason(
+  candidate: Pick<WorktreeCandidate, 'merge' | 'pullRequest' | 'idleDays'>,
+): string {
+  if (candidate.merge?.merged) return `merged into ${candidate.merge.into}`;
+  const ended = endedPullRequest(candidate.pullRequest);
+  return ended ? describePullRequest(ended) : `idle ${candidate.idleDays ?? 0}d`;
+}
+
+/** The pull request note a kept worktree's report line carries, such as `PR #12 merged`, or null. */
+export function worktreePullRequestNote(candidate: Pick<WorktreeCandidate, 'pullRequest'>): string | null {
+  return pullRequestNote(candidate.pullRequest);
 }
 
 function lastUsedOf(keys: readonly string[]): number {
@@ -356,6 +385,8 @@ export function collectWorktreeSweep({
         keys: [root],
         idleDays: null,
         merge: null,
+        head: null,
+        pullRequest: null,
         skipCode: 'not-a-worktree',
         skipped: 'not inside a git worktree',
         eligibleAt: null,
@@ -366,6 +397,7 @@ export function collectWorktreeSweep({
   }
   const worktrees: WorktreeCandidate[] = [];
   const pending: PendingMerge[] = [];
+  const lookup = pullRequestLookup();
   for (const [path, roots] of groups) {
     const entries = listWorktrees(path);
     const entry = matchWorktreeEntry(entries, path);
@@ -375,6 +407,7 @@ export function collectWorktreeSweep({
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const activity = linked && grace.ms > 0 ? worktreeActivityOf(path, keys) : null;
     const gitAnswered = linked ? hasUncommittedWork(path) : null;
+    const head = linked ? resolveFullRef(path, 'HEAD') : null;
     const facts: WorktreeFacts = {
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
@@ -385,6 +418,7 @@ export function collectWorktreeSweep({
       inUse: linked ? inUseOf(keys, { managedLocks: true }) : [],
       idleDays,
       merge: null,
+      pullRequest: head && entry?.branch ? lookup(path, entry.branch, head) : null,
       activity,
     };
     const verdict = worktreeSkipReason(facts, days, grace);
@@ -393,6 +427,8 @@ export function collectWorktreeSweep({
       keys,
       idleDays,
       merge: null,
+      head,
+      pullRequest: facts.pullRequest,
       skipCode: verdict?.code ?? null,
       skipped: verdict?.text ?? null,
       eligibleAt: verdict?.eligibleAt ?? null,
@@ -428,8 +464,13 @@ export async function removeWorktrees(
         ...inUseOf(lockedKeys, { managedLocks: false }),
         ...inUseOf(unlocked, { managedLocks: true }),
       ].map((r) => `in use: ${r}`);
-      if (candidate.merge?.merged) {
-        if (resolveFullRef(candidate.path, 'HEAD') !== candidate.merge.head) {
+      const mergedHead = candidate.merge?.merged
+        ? candidate.merge.head
+        : endedPullRequest(candidate.pullRequest)
+          ? candidate.head
+          : null;
+      if (mergedHead) {
+        if (resolveFullRef(candidate.path, 'HEAD') !== mergedHead) {
           reasons.push('its HEAD moved since gc checked it');
         }
       } else {
@@ -440,7 +481,11 @@ export async function removeWorktrees(
       }
       if (sweep.graceMs > 0) {
         const recent = graceBlocker(
-          { merge: candidate.merge, activity: worktreeActivityOf(candidate.path, keys) },
+          {
+            merge: candidate.merge,
+            pullRequest: candidate.pullRequest,
+            activity: worktreeActivityOf(candidate.path, keys),
+          },
           { ms: sweep.graceMs, now: Date.now() },
         );
         if (recent) reasons.push(recent.text);
@@ -450,7 +495,13 @@ export async function removeWorktrees(
     };
     let removed = false;
     try {
-      const mergedHead = candidate.merge?.merged && candidate.merge.coversUnpushed ? candidate.merge.head : undefined;
+      const ended = endedPullRequest(candidate.pullRequest);
+      const mergedHead =
+        candidate.merge?.merged && candidate.merge.coversUnpushed
+          ? candidate.merge.head
+          : ended?.state === 'merged'
+            ? (candidate.head ?? undefined)
+            : undefined;
       removed = await removeWorktreeTarget(candidate.path, { linkedOnly: true, guard, mergedHead });
     } catch (error) {
       console.error(chalk.red(`Could not remove ${candidate.path}: ${(error as Error)?.message || String(error)}`));

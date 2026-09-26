@@ -520,12 +520,18 @@ RULES
     orphanedPorts           { project, label, port }
     orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
                               whole workspace directory
-    linkedWorktrees         { path, idleDays, mergedInto, willRemove,
-                              reason, detail, eligibleAt }  mergedInto is
-                              the default branch HEAD is merged into
-                              ("origin/main"), or null; detail says why it
-                              is removed ("merged into origin/main", "idle
-                              9d") or kept. eligibleAt is the ISO time a
+    linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
+                              pullRequestUnknown, willRemove, reason,
+                              detail, eligibleAt }  mergedInto is the
+                              default branch HEAD is merged into
+                              ("origin/main"), or null. pullRequest is the
+                              branch's pull request { number, state:
+                              "open" | "merged" | "closed", url,
+                              containsHead }, or null; pullRequestUnknown
+                              says why gh could not answer, else null.
+                              detail says why it is removed ("merged into
+                              origin/main", "PR #12 closed", "idle 9d") or
+                              kept. eligibleAt is the ISO time a
                               recent-activity worktree becomes removable,
                               else null. Without --worktrees, the source
                               checkout and roots outside git are left out
