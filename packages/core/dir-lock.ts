@@ -1,6 +1,7 @@
-import { lstatSync, mkdirSync, readdirSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ClaimRefusedError, releaseClaim, tryAcquireClaim, type ClaimHandle } from './ownership-claim.ts';
+import { quotedPath } from './quoted-path.ts';
 
 const DEFAULT_LOCK_WAIT_MS = 12000;
 const DEFAULT_LOCK_POLL_MS = 25;
@@ -85,7 +86,15 @@ function takeLockDirectory(lockPath: string, claim: ClaimHandle): string | null 
     if (!removeLockDirectory(lockPath, marker) || !createLockDirectory(lockPath)) return null;
   }
   const marker = join(lockPath, `.stim-claim-${claim.claimId}`);
-  writeFileSync(marker, '', { flag: 'wx' });
+  try {
+    writeFileSync(marker, '', { flag: 'wx' });
+  } catch (error) {
+    try {
+      rmSync(marker, { force: true });
+      rmdirSync(lockPath);
+    } catch {}
+    throw error;
+  }
   return marker;
 }
 
@@ -115,7 +124,10 @@ function acquireDirLock(
       if (Date.now() >= deadline) {
         const error = new Error(
           `Timed out waiting for the lock at ${lockPath}. ` +
-            'Another Stim process may be holding it; if none is running, remove that directory.',
+            (claim
+              ? 'No running Stim holds it: the directory is empty or was left by an older Stim version. ' +
+                `If no older Stim is running, remove it and run the command again:\n  rm -rf ${quotedPath(lockPath)}`
+              : 'Another Stim process is holding it; wait for that command to finish and run the command again.'),
         );
         (error as Error & { code?: string; lockPath?: string }).code = 'STIM_LOCK_TIMEOUT';
         (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;

@@ -22,6 +22,7 @@ const faults = vi.hoisted(() => ({
   renaming: null as null | ((from: string, to: string) => void),
   removing: null as null | ((path: string) => void),
   removed: null as null | ((path: string) => void),
+  writing: null as null | ((path: string) => void),
 }));
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -46,6 +47,10 @@ vi.mock('node:fs', async (importOriginal) => {
       faults.removing?.(String(args[0]));
       fs.rmSync(...args);
       faults.removed?.(String(args[0]));
+    },
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      faults.writing?.(String(args[0]));
+      return fs.writeFileSync(...args);
     },
     unlinkSync: (...args: Parameters<typeof fs.unlinkSync>) => {
       fs.unlinkSync(...args);
@@ -83,6 +88,7 @@ afterEach(() => {
   faults.renaming = null;
   faults.removing = null;
   faults.removed = null;
+  faults.writing = null;
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
@@ -114,14 +120,36 @@ test.each(['empty', 'legacy'])('an unidentified %s directory needs explicit remo
   const body = vi.fn<() => void>();
 
   expect(() => withDirLock(lock, body, { waitMs: 0 })).toThrow(
-    expect.objectContaining({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock }),
+    expect.objectContaining({
+      code: 'STIM_LOCK_TIMEOUT',
+      lockPath: lock,
+      message: expect.stringContaining(`\n  rm -rf '${lock}'`),
+    }),
   );
   expect(body).not.toHaveBeenCalled();
   expect(existsSync(lock)).toBe(true);
 
-  rmSync(lock, { recursive: true });
+  execFileSync('sh', ['-c', `rm -rf '${lock}'`]);
   expect(withDirLock(lock, () => 'recovered')).toBe('recovered');
 });
+
+test.each(['before', 'after'])(
+  'a marker write that fails %s creating the file leaves no lock directory behind',
+  (when) => {
+    faults.writing = (path) => {
+      if (dirname(path) !== lock) return;
+      faults.writing = null;
+      if (when === 'after') writeFileSync(path, '');
+      throw Object.assign(new Error(`ENOSPC: no space left on device, open '${path}'`), { code: 'ENOSPC' });
+    };
+    const body = vi.fn<() => void>();
+
+    expect(() => withDirLock(lock, body)).toThrow(expect.objectContaining({ code: 'ENOSPC' }));
+    expect(body).not.toHaveBeenCalled();
+    expect(existsSync(lock)).toBe(false);
+    expect(withDirLock(lock, () => 'next', { waitMs: 0 })).toBe('next');
+  },
+);
 
 describe.skipIf(process.platform !== 'win32')('a lock directory removed by hand while a waiter polls', () => {
   const accessDenied = (syscall: string, path: string): never => {

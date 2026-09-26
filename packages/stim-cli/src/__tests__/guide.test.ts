@@ -294,6 +294,7 @@ test('short lock recovery requires checking the holder before manual removal', (
   expect(body).toContain('STIM_CLAIM_UNAVAILABLE');
   expect(body).toContain('<path>.claims');
   expect(body).toMatch(/empty before marker publication/);
+  expect(body).toContain("rm -rf '<path>'");
 });
 
 test('the rendered guide carries the warm --refresh contract, not just its source', () => {

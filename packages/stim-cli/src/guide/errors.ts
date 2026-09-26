@@ -1046,8 +1046,13 @@ captured"  (in metro.ndjson, bare RN)
 "Timed out waiting for the lock at <path>."
   Short directory locks serialize writes to config, workspace state, device
   leases, ownership records, metadata, and cache manifests. The path identifies
-  the lock. These locks wait up to 12s and never expire based on age. Wait for
-  the command holding it; if none is running, remove the named directory.
+  the lock. These locks wait up to 12s and never expire based on age. When
+  another Stim command holds the lock, the message says so: wait for it and
+  retry. When no running Stim holds it, the directory is empty or was left by
+  an older Stim version, and the message ends with \`rm -rf '<path>'\`:
+  if none is running, remove the named directory with that command. A failed
+  marker write, such as ENOSPC on a full disk, removes the directory it just
+  created before Stim reports the write error.
   Short locks use the same process-identity claims as long operations, stored
   beside the visible directory at <path>.claims. An opaque marker in the visible
   directory also excludes older Stim versions. Only the exclusive claim holder
