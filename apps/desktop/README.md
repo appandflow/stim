@@ -429,7 +429,8 @@ at the next launch. Notifications and launch at login need the bundled app.
   preview needs a `stim` with `gc --json`. At launch the app reads the
   environment of `zsh -lic` once and runs every `stim` command with it, so
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a
-  terminal.
+  terminal. It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
+  tells `stim` that Stim Desktop is installed without a Launch Services lookup.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and

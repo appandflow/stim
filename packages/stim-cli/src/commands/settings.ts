@@ -70,7 +70,7 @@ function readContext(env: NodeJS.ProcessEnv): SettingsContext {
     repoRoot: common ? (repoRoot(start) ?? projectPath) : null,
     machine: loadConfig(),
     env,
-    desktopInstalled: () => (installed ??= stimDesktopInstalled()),
+    desktopInstalled: () => (installed ??= stimDesktopInstalled(process.platform, env)),
   };
 }
 

@@ -247,8 +247,10 @@ devices are unaffected. It has no effect on Linux or Windows. An invalid value
 refuses before boot. There is no per-run flag.
 
 Stim finds Stim Desktop by its bundle id, `dev.stim.desktop`, in Launch
-Services. A value you set always wins over that default. `stim settings` shows
-such a default as `(default: Stim Desktop installed)`, and `--json` adds
+Services. A command Stim Desktop runs skips that lookup: Desktop sets
+`STIM_DESKTOP_APP` to its app path for every command it starts. A value you
+set always wins over that default. `stim settings` shows such a default as
+`(default: Stim Desktop installed)`, and `--json` adds
 `"defaultReason": "Stim Desktop installed"` to the entry.
 
 `pool.iosParkedMax` bounds the simulators `worktree remove` parks for a later
