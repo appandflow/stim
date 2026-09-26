@@ -22,6 +22,7 @@ import {
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -436,6 +437,7 @@ async function reclaimIdleProject(
     const replacement = Boolean(
       (currentState?.supervisor && !sameProcessRecord(currentState.supervisor, initialState?.supervisor)) ||
       (currentProject?.supervisor && !sameProcessRecord(currentProject.supervisor, project?.supervisor)) ||
+      readWebRecord(path) !== null ||
       Object.entries(currentState?.collectors ?? {}).some(
         ([platform, record]) =>
           !sameProcessRecord(

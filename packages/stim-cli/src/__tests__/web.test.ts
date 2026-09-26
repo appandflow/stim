@@ -87,9 +87,13 @@ describe('Chrome launch', () => {
   });
 });
 
-test('gc names a ledgered browser profile whose directory is gone', () => {
-  const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set(['/gone', '/kept']) };
-  expect(staleBrowserProfiles(ledger, (path) => path === '/kept')).toEqual([{ kind: 'web', id: '/gone' }]);
+test('gc names a ledgered browser profile whose directory is gone, never one on a missing volume', () => {
+  const gone = '/stim/workspaces/a/web/profile';
+  const kept = '/stim/workspaces/b/web/profile';
+  const unmounted = '/Volumes/Off/stim/workspaces/c/web/profile';
+  const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([gone, kept, unmounted]) };
+  const present = new Set(['/stim/workspaces', kept]);
+  expect(staleBrowserProfiles(ledger, (path) => present.has(path))).toEqual([{ kind: 'web', id: gone }]);
 });
 
 describe('web.url', () => {

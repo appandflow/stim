@@ -194,6 +194,26 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
     ok: false,
     error: { code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim web` first.' },
   });
+  expect(
+    await runReload({ root: '/project', platform: 'web', deps: reloadDeps({ readBrowser: () => 'unverified' }) }),
+  ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED' } });
+});
+
+test('a bare reload keeps reporting a stopped native app instead of switching to the owned page', async () => {
+  const reloaded: string[] = [];
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      androidProcess: () => null,
+      readBrowser: () => browser,
+      reloadPage: async (record) => {
+        reloaded.push(record.targetId);
+      },
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+  expect(result.ok ? '' : result.error.remedy).toContain('`stim reload web`');
+  expect(reloaded).toEqual([]);
 });
 
 test('reload ignores a stopped platform while auto-selecting the live one', async () => {

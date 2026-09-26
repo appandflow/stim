@@ -41,9 +41,9 @@ export function workspaceInUse(
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
     const browser = webFacts(readWebRecord(root));
-    if (browser?.status === 'running')
+    if (browser?.status === 'running' || browser?.status === 'orphaned') {
       reasons.push(`its owned Chrome (pid ${browser.record.chromeProcess?.pid}) is running`);
-    else if (browser?.status === 'unverified') reasons.push('its owned Chrome cannot be verified');
+    } else if (browser?.status === 'unverified') reasons.push('its owned Chrome cannot be verified');
   }
   if (nativeRun) {
     const claims = readClaimSet(workspaceProcessLockPath(workspaceDir(root), NATIVE_RUN, true));
