@@ -60,6 +60,7 @@ import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
+import { collectInventory, type GcInventory } from './gc/inventory.ts';
 
 export { selectCaches } from './gc/caches.ts';
 export {
@@ -107,6 +108,7 @@ type GcPayload =
       failures: number | null;
       sections: GcJsonSections;
       results: GcResult[];
+      inventory: GcInventory | null;
     }
   | GcRefusal;
 
@@ -595,6 +597,10 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
           collectIdleDevices(loadConfig(), listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }), report.deadProjects),
         ).failures;
   if (idleFailures) process.exitCode = 1;
+  const inventory =
+    opts.json && !opts.delete && idle === null && report.cacheScope === null
+      ? collectInventory(loadConfig(), deadProjects)
+      : null;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',
     idle,
@@ -605,6 +611,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     failures,
     sections: gcReportSections(report),
     results: takeGcResults(),
+    inventory,
   });
 
   if (!opts.delete) {

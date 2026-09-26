@@ -348,18 +348,19 @@ test('the facts topic documents the status remote device fields and states', () 
   for (const state of ['"claimed"', '"unclaimed"', '"unknown"']) expect(body).toContain(state);
 });
 
-test('the facts topic documents every gc verdict reason code', () => {
+test('the facts topic documents every gc verdict reason code and inventory owner', () => {
   const body = renderSection('facts', 'gc');
   assert(body);
   for (const [file, type] of [
     ['../commands/gc/worktrees.ts', 'WorktreeSkipCode'],
     ['../commands/gc/workspaces.ts', 'WorkspaceKeptCode'],
     ['../commands/gc/logs.ts', 'WorkspaceLogsKeptCode'],
+    ['../commands/gc/inventory.ts', 'InventoryOwner'],
   ] as const) {
     const src = readFileSync(new URL(file, import.meta.url), 'utf-8');
-    const start = src.indexOf(`export type ${type} =`);
+    const start = src.indexOf(`type ${type} =`);
     const union = src.slice(start, src.indexOf(';', start));
-    const codes = [...union.matchAll(/'([a-z-]+)'/g)].map((m) => m[1] as string);
+    const codes = [...union.matchAll(/'([a-zA-Z-]+)'/g)].map((m) => m[1] as string);
     expect(codes.length).toBeGreaterThan(0);
     for (const code of codes) expect(body).toMatch(new RegExp(`(^|[\\s|])${code}(?=[\\s|]|$)`, 'm'));
   }
