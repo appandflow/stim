@@ -35,6 +35,14 @@ import Testing
     #expect(device.detail == nil)
   }
 
+  @Test func doesNotParseParensOutOfAnUnownedSimulatorsOwnName() {
+    let se = IosDevice(name: "iPhone SE (3rd generation)", udid: "U1", owned: false, state: "Shutdown")
+    let ipad = IosDevice(name: "iPad Pro 11-inch (M4)", udid: "U2", owned: false, state: "Shutdown")
+    #expect(DeviceRef.ios(slot: "default", se).label == "iPhone SE (3rd generation)")
+    #expect(DeviceRef.ios(slot: "default", se).detail == nil)
+    #expect(DeviceRef.ios(slot: "default", ipad).label == "iPad Pro 11-inch (M4)")
+  }
+
   @Test func readsAnAndroidDeviceProfileAndFallsBackWithoutOne() {
     let fold = AndroidDevice(
       name: "stim-a", owned: true, physical: false, serial: "S1", state: "detected", deviceProfile: "pixel_fold")

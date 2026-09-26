@@ -65,11 +65,12 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
 
   /// The model and runtime from an owned simulator name, `stim-<label> (<model> <runtime>)`. A name collision makes
   /// Stim append a disambiguating suffix after the closing paren, so the match stops at the paren that closes the
-  /// one it opened rather than at the name's own end.
+  /// one it opened rather than at the name's own end. Only tried on an owned name: Apple's own simulator names carry
+  /// parens too ("iPhone SE (3rd generation)", "iPad Pro 11-inch (M4)"), which are not this format at all.
   public var model: String {
     switch self {
     case .ios(_, let d):
-      return DeviceRef.parenthesizedModel(in: d.name) ?? d.name
+      return d.owned ? (DeviceRef.parenthesizedModel(in: d.name) ?? d.name) : d.name
     case .android(_, let d):
       return d.name
     case .remote(let d):
@@ -141,7 +142,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// Only splits off a trailing numeric runtime from a name Stim itself formatted as `<model> <runtime>` inside
   /// parens -- an unowned simulator can be legitimately named e.g. "iPhone 16", which is not `<model> <runtime>`.
   private var iosModel: (name: String, runtime: String?) {
-    guard case .ios(_, let d) = self, let parsed = DeviceRef.parenthesizedModel(in: d.name) else { return (model, nil) }
+    guard case .ios(_, let d) = self, d.owned, let parsed = DeviceRef.parenthesizedModel(in: d.name) else {
+      return (model, nil)
+    }
     guard let space = parsed.lastIndex(of: " ") else { return (parsed, nil) }
     let runtime = parsed[parsed.index(after: space)...]
     guard runtime.first?.isNumber == true, runtime.allSatisfy({ $0.isNumber || $0 == "." }) else { return (parsed, nil) }
