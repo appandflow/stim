@@ -134,6 +134,20 @@ ready only after that fresh review is clear. Merge only after all required CI
 checks pass; if CI fails, fix the branch, repeat the review when behavior
 changes, and wait for the new checks.
 
+Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
+review and CI run. A polish change alters only how an app looks or reads:
+layout, styles, copy, icons, animation. It does not change which commands the
+app runs, which Stim data it reads or how it decodes it, navigation,
+dependencies, native modules, the device frame pipelines, or app and build
+configuration. Collect polish changes under one tracking issue that lists each
+change, claimed and worked like any other issue; when an open issue already
+describes a change, link it from the list and close it with the pull request.
+Keep one commit per change. The pull request shows a screenshot or recording of
+each change on each platform it affects, and gets the same fresh review and
+green CI as any pull request; a commit added after the review needs a new review.
+The reviewer checks each commit against this definition, and one that falls
+outside it moves to its own issue and pull request.
+
 ## Architecture rules
 
 - **Single exec wrapper.** Route all child processes through
