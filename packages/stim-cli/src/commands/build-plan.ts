@@ -3,6 +3,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { resolveTieredBuild, type CacheProviderConfig, type loadCacheProvider } from '@stim-cli/cache';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
 import { artifactIn, entryDir } from '../cache/build-cache.ts';
+import { predictBuildMiss } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, plural, shortHash } from '../command-output.ts';
 import { estimateBuild } from '../engine/build-progress.ts';
 import { staleNativeDirRefusal, type planPrebuild } from '../engine/prebuild.ts';
@@ -129,9 +130,18 @@ export async function planCachedBuild(
   }
   let prebuild: BuildPlanPayload['prebuild'] = null;
   let refusal: Refusal | null = null;
+  let missReason: BuildPlanPayload['missReason'];
   if (!cacheHit) {
     prebuild = deps.planPrebuild(root, platform, { isExpo, fingerprint, sources });
     if (prebuild === 'refuse') refusal = staleNativeDirRefusal(platform);
+    else if (cachePolicy.read) {
+      missReason = predictBuildMiss({
+        root,
+        platform,
+        current: { hash: fingerprint, sources },
+        prebuild: prebuild === 'generate' || prebuild === 'regenerate' ? prebuild : null,
+      });
+    }
   }
   return planPayload(lookup, {
     fingerprint,
@@ -140,17 +150,21 @@ export async function planCachedBuild(
     provider,
     cacheSkipped: !cachePolicy.read,
     prebuild,
+    ...(missReason ? { missReason } : {}),
     refusal,
   });
 }
 
 export function planPayload(
   { platform, slot, projectKey }: PlanTarget,
-  found: Pick<BuildPlanPayload, 'fingerprint' | 'cacheKey' | 'cacheHit' | 'provider' | 'cacheSkipped' | 'prebuild'> & {
+  found: Pick<
+    BuildPlanPayload,
+    'fingerprint' | 'cacheKey' | 'cacheHit' | 'provider' | 'cacheSkipped' | 'prebuild' | 'missReason'
+  > & {
     refusal: Refusal | null;
   },
 ): BuildPlanPayload {
-  const { refusal, ...rest } = found;
+  const { refusal, missReason, ...rest } = found;
   const outcome = refusal ? null : found.cacheHit ? 'hit' : 'cold';
   const estimate = outcome
     ? estimateBuild(readStats().record?.history?.[projectKey], platform, outcome, 'prepare')
@@ -162,6 +176,7 @@ export function planPayload(
     outcome,
     expectedMs: estimate.expectedMs,
     basis: estimate.basis,
+    ...(missReason ? { missReason } : {}),
     ...(refusal ? { refusal } : {}),
   };
 }
@@ -183,6 +198,7 @@ export function printPlan(plan: BuildPlanPayload, json: boolean): void {
   }
   const slot = plan.slot ? ` [${plan.slot}]` : '';
   console.log(phaseLine('plan', `${plan.platform}${slot} ${shortHash(plan.fingerprint)} -> ${cacheLine(plan)}`));
+  if (plan.missReason) console.log(phaseLine('cache', `miss: ${plan.missReason.summary}`));
   if (plan.refusal) {
     console.log(phaseLine('error', plan.refusal.message));
     console.log(phaseLine('remedy', plan.refusal.remedy));

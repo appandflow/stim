@@ -65,7 +65,7 @@ struct BuildCacheSection: View {
           .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
         }
         if let reason = last.missReason {
-          MissReasonButton(reason: reason)
+          MissReasonButton(reason: reason, help: "Why this build missed the cache")
         }
       } else {
         Text("No build recorded").foregroundStyle(Theme.tertiary)
@@ -98,6 +98,9 @@ struct BuildCacheSection: View {
         Text("Next build: \(plan.nextBuild)")
           .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Theme.warn : Theme.live)
           .help(plan.detail ?? "")
+        if let reason = plan.missReason {
+          MissReasonButton(reason: reason, help: "Why the next build would miss the cache")
+        }
         if let refusal = plan.refusal {
           Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
             .foregroundStyle(Theme.secondary)
@@ -119,6 +122,7 @@ struct BuildCacheSection: View {
 
 private struct MissReasonButton: View {
   var reason: BuildMissReason
+  var help: String
   @State private var shown = false
 
   var body: some View {
@@ -132,7 +136,7 @@ private struct MissReasonButton: View {
       .foregroundStyle(Theme.warn)
     }
     .buttonStyle(.plain)
-    .help("Why this build missed the cache")
+    .help(help)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
       VStack(alignment: .leading, spacing: 8) {
         Text(reason.summary).font(Theme.body(13, weight: .semibold)).textSelection(.enabled)

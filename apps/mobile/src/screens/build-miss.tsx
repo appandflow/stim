@@ -1,22 +1,34 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { useStatus } from '@/hooks/mac-connection';
+import { useBuildPlan, useStatus } from '@/hooks/mac-connection';
 import type { BuildMissChange, Platform } from '@/protocol/types';
 import { mono, useColors } from '@/theme';
 
 const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', removed: '\u2212', changed: '~' };
 
-export function BuildMiss({ path, platform }: { path: string; platform: Platform }) {
+/** Why the last build compiled, or with `next`, why the next build would according to the last plan. */
+export function BuildMiss({ path, platform, next }: { path: string; platform: Platform; next: boolean }) {
   const colors = useColors();
   const status = useStatus();
-  const report = status?.environments.find((e) => e.path === path)?.lastBuilds?.[platform];
-  const reason = report?.missReason;
-  const title = `Why ${platform === 'ios' ? 'iOS' : 'Android'} compiled`;
+  const plan = useBuildPlan(path, platform);
+  const reason = next
+    ? plan?.kind === 'done'
+      ? plan.plan.missReason
+      : undefined
+    : status?.environments.find((e) => e.path === path)?.lastBuilds?.[platform]?.missReason;
+  const name = platform === 'ios' ? 'iOS' : 'Android';
+  const title = next ? `Why the next ${name} build compiles` : `Why ${name} compiled`;
   if (!reason) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
-        <Text style={[styles.note, { color: colors.secondary }]}>The last build no longer records a cache miss.</Text>
+        <Text style={[styles.note, { color: colors.secondary }]}>
+          {!next
+            ? 'The last build no longer records a cache miss.'
+            : plan?.kind === 'checking'
+              ? 'Checking the next build\u2026'
+              : 'The next build no longer predicts a cache miss.'}
+        </Text>
       </View>
     );
   }

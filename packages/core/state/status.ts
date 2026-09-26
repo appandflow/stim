@@ -70,9 +70,11 @@ export interface BuildMissChange {
 /**
  * Why a run compiled instead of installing a cached app. `changes` holds at most 20 entries,
  * ordered by importance; `changeCount` is the full number of changed fingerprint sources.
+ * Only a plan reports `prebuild-pending`: the run would prebuild before compiling, so the changes
+ * compare the fingerprint before that prebuild.
  */
 export interface BuildMissReason {
-  kind: 'changed' | 'no-baseline' | 'same-sources' | 'cache-skipped' | 'fingerprint-error';
+  kind: 'changed' | 'no-baseline' | 'same-sources' | 'cache-skipped' | 'fingerprint-error' | 'prebuild-pending';
   summary: string;
   changes: BuildMissChange[];
   changeCount: number;
@@ -94,6 +96,8 @@ export interface BuildPlanPayload {
   outcome: RunOutcomeKind | null;
   expectedMs: number | null;
   basis: number;
+  /** On a predicted miss with cache reads on, why the cache has no app; `baseline` omits `cacheKey`. */
+  missReason?: BuildMissReason;
   refusal?: { code: string; message: string; remedy: string };
 }
 

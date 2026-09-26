@@ -42,7 +42,8 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }
 }
 
-/// Why a run compiled instead of installing a cached app, from `lastBuilds.<platform>.missReason`.
+/// Why a run compiled instead of installing a cached app, from `lastBuilds.<platform>.missReason`, or why
+/// the next one would, from a plan's `missReason`.
 public struct BuildMissReason: Decodable, Hashable, Sendable {
   public struct Change: Decodable, Hashable, Sendable {
     public var source: String
@@ -87,6 +88,7 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var outcome: String?
   public var expectedMs: Double?
   public var basis: Int
+  public var missReason: BuildMissReason?
   public var refusal: CommandRefusal?
 
   /// What the next build would do, as the Builds section words it after "Next build: ".

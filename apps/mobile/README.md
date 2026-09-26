@@ -62,7 +62,8 @@ reload and stop a workspace:
   each platform's last build (local cache, remote cache, compiled, or failed,
   with its duration and age), with why a compiled build missed the cache,
   which opens a sheet listing the changed fingerprint sources, and what the next build would find and how long it
-  should take ("Next build: cache hit (local)" or "cold build, ~5:40"), from the server's read-only `build.plan`. The
+  should take ("Next build: cache hit (local)" or "cold build, ~5:40"), from the server's read-only `build.plan`, with
+  why a predicted cold build would miss the cache, which opens the same sheet. The
   screen asks for each platform with a last build or a device when it opens, one plan at a time, reuses a result for
   60 seconds unless that platform's last build changes, ignores a reply that arrives after it closes, and asks nothing
   while a build runs. The refresh icon asks again;
@@ -206,7 +207,7 @@ the build carries a remote EAS session added by hand (listed under `edits` in
 in the shape of a real miss. `build.plan` answers from
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
---json`.
+--json`, with a `missReason` added to the Android one by hand.
 
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and

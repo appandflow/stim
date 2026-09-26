@@ -87,33 +87,61 @@ function PlatformBuilds({
         {last ? `Last: ${lastBuildSummary(last, now)}` : 'No build recorded'}
       </Text>
       {last?.missReason ? (
-        <Pressable
+        <MissReasonRow
+          summary={last.missReason.summary}
+          label={`Why the last ${name} build missed the cache`}
           onPress={() =>
             router.push({ pathname: '/mac/[id]/build-miss', params: { id: macId, path: env.path, platform } })
           }
-          accessibilityRole="button"
-          accessibilityLabel={`Why the last ${name} build missed the cache`}
-          hitSlop={6}
-          style={styles.reason}
-        >
-          <Text style={[styles.line, styles.reasonText, { color: colors.warn }]} numberOfLines={1}>
-            {`Why: ${last.missReason.summary}`}
-          </Text>
-          <Text style={[styles.line, { color: colors.tertiary }]}>{'\u203A'}</Text>
-        </Pressable>
+        />
       ) : null}
       {build ? (
         <Text style={[styles.line, { color: colors.tertiary }]}>
           {build.platform === platform ? 'Building now' : 'Next build: checked after the running build'}
         </Text>
       ) : (
-        <NextBuild plan={plan} />
+        <NextBuild
+          plan={plan}
+          label={`Why the next ${name} build would miss the cache`}
+          openReason={() =>
+            router.push({
+              pathname: '/mac/[id]/build-miss',
+              params: { id: macId, path: env.path, platform, next: '1' },
+            })
+          }
+        />
       )}
     </View>
   );
 }
 
-function NextBuild({ plan }: { plan: PlanState | undefined }) {
+function MissReasonRow({ summary, label, onPress }: { summary: string; label: string; onPress: () => void }) {
+  const colors = useColors();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={6}
+      style={styles.reason}
+    >
+      <Text style={[styles.line, styles.reasonText, { color: colors.warn }]} numberOfLines={1}>
+        {`Why: ${summary}`}
+      </Text>
+      <Text style={[styles.line, { color: colors.tertiary }]}>{'\u203A'}</Text>
+    </Pressable>
+  );
+}
+
+function NextBuild({
+  plan,
+  label,
+  openReason,
+}: {
+  plan: PlanState | undefined;
+  label: string;
+  openReason: () => void;
+}) {
   const colors = useColors();
   if (plan?.kind === 'checking') {
     return (
@@ -140,6 +168,9 @@ function NextBuild({ plan }: { plan: PlanState | undefined }) {
         {`Next build: ${nextBuild(plan.plan)}`}
       </Text>
       {detail ? <Text style={[styles.line, { color: colors.tertiary }]}>{detail}</Text> : null}
+      {plan.plan.missReason ? (
+        <MissReasonRow summary={plan.plan.missReason.summary} label={label} onPress={openReason} />
+      ) : null}
       {plan.plan.refusal ? (
         <Text style={[styles.line, { color: colors.secondary }]} selectable>
           {`${plan.plan.refusal.message} ${plan.plan.refusal.remedy}`}

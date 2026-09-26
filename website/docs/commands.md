@@ -317,11 +317,26 @@ setting's provider, and the app config's build cache provider. Providers have no
 lookup that skips the download, so a remote check downloads the artifact. The
 `cache.provider` tier downloads to a temporary directory that the plan removes;
 the app config's provider keeps its download wherever it does during a run. On a miss, the plan also reports the
-[prebuild decision](./build-caches.md#native-artifact-cache) the run would make. With
+[prebuild decision](./build-caches.md#native-artifact-cache) the run would make. With cache reads on,
+it also says why the cache has no app, the way the run would
+([cache misses](./build-caches.md#generated-dependency-output-and-cache-misses)):
+
+```text
+$ stim ios --plan
+  plan        ios 3d4168.. -> cache miss: compiles, regenerates the native dir
+  cache       miss: native dependency added: expo-clipboard (before prebuild regenerates ios/)
+  expect      unknown: no cold run of this project is recorded yet
+```
+
+A plan never runs `expo prebuild`. When the run would and there is an earlier
+build to compare with, the reason's `kind` is `prebuild-pending` and it compares
+the fingerprint before that prebuild. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
 `--json` prints
-`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, refusal? }`.
+`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, refusal? }`.
+`missReason` has the shape of `lastBuilds.<platform>.missReason` in
+[`stim status --json`](#status).
 `cacheHit` is `"local"`, `"remote"` or `false`. `expectedMs` is the median of
 this project's recorded runs with that outcome, `basis` counts those runs, and
 both are empty (`null` and `0`) until the project has such a run. A run that
@@ -340,7 +355,8 @@ Try it with an agent:
 
 ```text
 Before building, run `stim ios --plan --json` in this worktree and tell me
-whether the next build is a cache hit and how long it should take.
+whether the next build is a cache hit, how long it should take, and, on a
+miss, which native change causes it.
 ```
 
 ## `reload`
