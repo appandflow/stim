@@ -115,5 +115,7 @@ test.each([
   await vi.waitFor(() => expect(records).toHaveLength(2));
   expect(records.map((r) => r.event)).toEqual(['bundle_response_started', 'bundle_response_finished']);
   expect(records.map((r) => r.clientPid)).toEqual([clientPid, clientPid]);
-  if (platform === 'ios') expect(args).toEqual(['-nP', expect.stringMatching(/^-iTCP:\d+$/), '-Fpn']);
+  expect(args.length ? [args[0], args[1]!.replace(/\d+$/, 'N'), args[2]] : []).toEqual(
+    platform === 'ios' ? ['-nP', '-iTCP:N', '-Fpn'] : [],
+  );
 });
