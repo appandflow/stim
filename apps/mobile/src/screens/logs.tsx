@@ -21,9 +21,9 @@ import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/m
 import {
   appendRecords,
   copyText,
-  DEFAULT_FILTER,
   expoContext,
   groupRecords,
+  initialFilter,
   LEVELS,
   logFilter,
   MAX_RECORDS,
@@ -40,16 +40,23 @@ import { mono, useColors, type Colors } from '@/theme';
 
 const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
 
-export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }) {
+export function Logs({
+  path,
+  params,
+}: {
+  path: string;
+  params: { errors?: string; source?: string; slot?: string; at?: string };
+}) {
   const colors = useColors();
   const { state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
   const slots = useMemo(() => ['default', ...(env?.slots ?? []).map((s) => s.slot)], [env?.slots]);
-  const [filter, setFilter] = useState<LogFilterState>({ ...DEFAULT_FILTER, errors: errorsOnly });
+  const [filter, setFilter] = useState<LogFilterState>(() => initialFilter(params));
   const [grepDraft, setGrepDraft] = useState('');
   const [records, setRecords] = useState<LogRecord[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const opened = params.at ? `${params.at}:0` : null;
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(opened ? [opened] : []));
   const [fetched, setFetched] = useState<Map<string, string[]>>(new Map());
   const generation = useRef(0);
   const [following, setFollowing] = useState(true);
@@ -57,15 +64,18 @@ export function Logs({ path, errorsOnly }: { path: string; errorsOnly: boolean }
   const entries = useMemo(() => groupRecords(records), [records]);
 
   const [problem, setProblem] = useState<string | null>(null);
-  const onLogs = useCallback((change: LogsChange) => {
-    if (change.kind === 'records') return setRecords((existing) => appendRecords(existing, change.records));
-    if (change.kind === 'error') return setProblem(change.message);
-    setRecords([]);
-    setExpanded(new Set());
-    setFetched(new Map());
-    generation.current += 1;
-    setProblem(null);
-  }, []);
+  const onLogs = useCallback(
+    (change: LogsChange) => {
+      if (change.kind === 'records') return setRecords((existing) => appendRecords(existing, change.records));
+      if (change.kind === 'error') return setProblem(change.message);
+      setRecords([]);
+      setExpanded(new Set(opened ? [opened] : []));
+      setFetched(new Map());
+      generation.current += 1;
+      setProblem(null);
+    },
+    [opened],
+  );
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
   useLogs(logFilter(path, active), onLogs);
 

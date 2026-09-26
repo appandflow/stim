@@ -6,6 +6,7 @@ import {
   DEFAULT_FILTER,
   expoContext,
   groupRecords,
+  initialFilter,
   logFilter,
   needsContext,
   shareText,
@@ -31,6 +32,43 @@ describe('logFilter', () => {
         100,
       ),
     ).toEqual({ workspace: '/w', tail: 100, sources: ['metro', 'client'], level: 'warn', grep: 'Error', slot: 'ipad' });
+  });
+});
+
+describe('initialFilter', () => {
+  it('opens on one source and slot from a device card', () => {
+    expect(logFilter('/w', initialFilter({ source: 'agent', slot: 'default' }), 100)).toEqual({
+      workspace: '/w',
+      tail: 100,
+      sources: ['agent'],
+      slot: 'default',
+    });
+  });
+
+  it('ignores a source it does not know and keeps errors only', () => {
+    expect(logFilter('/w', initialFilter({ errors: '1', source: 'bogus' }), 100)).toEqual({
+      workspace: '/w',
+      tail: 100,
+      errors: true,
+    });
+  });
+});
+
+describe('viewEntry for an agent action', () => {
+  it('lists the details of a failed action', () => {
+    const failed: LogRecord = {
+      ts: 1,
+      src: 'agent',
+      level: 'error',
+      msg: 'Failed orientation: COMMAND_FAILED',
+      details: { durationMs: 228, code: 'COMMAND_FAILED', diagnosticId: 'mui9yw8q-ecb1359b' },
+    };
+    expect(viewEntry({ key: '1:0', lead: failed, related: [], context: [] }, '/w', null)).toEqual({
+      title: 'Failed orientation: COMMAND_FAILED',
+      location: null,
+      codeFrame: [],
+      details: ['durationMs: 228', 'code: COMMAND_FAILED', 'diagnosticId: mui9yw8q-ecb1359b'],
+    });
   });
 });
 
