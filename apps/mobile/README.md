@@ -169,7 +169,7 @@ reconnects on its own, so a revoked grant shows as read-only everywhere.
 `DeviceScreen` (`src/components/device-screen.tsx`) shows the stream
 `useDeviceStream` (`src/hooks/device-stream.ts`) opens, which subscribes with
 `video: ["h264"]`. When the server offers video, each binary
-message goes straight to `StimVideoView`, a native view from the local Expo
+message goes straight to `StimVideoView`, a native view from the Expo inline
 module in `modules/stim-video`. On iOS it decodes with
 `AVSampleBufferDisplayLayer`, and on Android with `MediaCodec` onto a
 `SurfaceView`. The view stays black until the first keyframe. A decoder that
@@ -184,7 +184,13 @@ time minus the Mac's capture time) in the corner. The grid tiles keep
 requesting JPEG frames.
 
 `modules/stim-video` is native code: pull it, then rebuild the app with
-`stim ios` or `stim android`. Fast Refresh does not load it.
+`stim ios` or `stim android`. Fast Refresh does not load it. Its Swift and
+Kotlin files are an [inline module](https://docs.expo.dev/modules/inline-modules-reference/):
+prebuild compiles every file in `ios/` and `android/` into the app, as
+`experiments.inlineModules` in `app.config.ts` lists them. For each file that
+defines a module, it registers the class named after the file, so the module
+class in `StimVideo.swift` and `StimVideo.kt` must be named `StimVideo`. `fingerprint.config.js` adds those
+directories to the fingerprint, which does not hash inline modules on its own.
 
 ## Protocol types
 

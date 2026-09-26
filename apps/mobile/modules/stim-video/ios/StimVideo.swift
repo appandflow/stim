@@ -1,7 +1,7 @@
-import ExpoModulesCore
+internal import ExpoModulesCore
 
-public class StimVideoModule: Module {
-  public func definition() -> ModuleDefinition {
+class StimVideo: Module {
+  func definition() -> ModuleDefinition {
     Name("StimVideo")
 
     Function("push") { (streamId: String, accessUnit: Uint8Array, _: Int, _: Int) in

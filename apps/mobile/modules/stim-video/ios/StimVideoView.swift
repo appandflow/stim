@@ -1,5 +1,5 @@
 import AVFoundation
-import ExpoModulesCore
+internal import ExpoModulesCore
 
 final class DisplayLayerView: UIView {
   override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
