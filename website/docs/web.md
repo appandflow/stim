@@ -114,12 +114,15 @@ stim stop`}
 />
 
 - `stim ports get web` from the app directory registers the app without
-  starting Metro. Run it before any `ports` command in the web package. A
-  reservation made there first stays on the web package until you release it.
+  starting Metro. Run it before any `ports` or `web` command in the web package.
+  A reservation made there first keeps the web package as its own workspace
+  until you release it and run `stim stop`.
 - Pass `--port` and `--strictPort` through the dev script. Otherwise Vite binds
   its configured port and moves to the next free one when that is taken.
-- Put the base path in `web.url`. Without it, the document fails with HTTP 404,
-  or with the proxy's error status.
+- Put the base path in `web.url`. A path outside it can reach the dev server's
+  proxy instead of the app.
+- The certificate and scheme remedies print `--scope workspace`, which
+  overrides the `repo` value for one worktree only.
 - API calls that the dev server proxies to a backend that is not running show
   up as device errors in `stim logs --errors`. The page still loads.
 - `stim stop` closes Chrome but leaves the dev server running. Use

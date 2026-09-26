@@ -70,14 +70,16 @@ and uses @vitejs/plugin-basic-ssl; apps/mobile is the Stim app.
   stim worktree remove    # in a linked worktree: Chrome, Vite and profile
 
 The repo layer is shared by every worktree of the repository, so a new
-worktree skips the two settings lines. Run ports get from the app directory
-before any ports command in the web package: a reservation made there first
-stays on the web package until you release it. Pass --port and --strictPort
+worktree skips the two settings lines; the certificate and scheme remedies
+print --scope workspace, which overrides it for one worktree only. Run ports
+get from the app directory before any ports or web command in the web
+package: a reservation made there first keeps the web package as its own
+workspace until you release it and stop. Pass --port and --strictPort
 through the dev script: Vite otherwise binds its config default and moves to
-the next free port when that one is taken. Put the base path in web.url, or
-the document fails with HTTP 404 or the proxy's error status. API calls the
-dev server proxies to a backend that is not running fail as device errors in
-stim logs --errors; the page still loads.
+the next free port when that one is taken. Put the base path in web.url: a
+path outside it can reach the dev server's proxy instead of the app. API
+calls the dev server proxies to a backend that is not running fail as device
+errors in stim logs --errors; the page still loads.
 
 LAUNCHED
 
