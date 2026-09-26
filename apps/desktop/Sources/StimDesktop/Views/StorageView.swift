@@ -92,12 +92,12 @@ struct StorageView: View {
   }
 
   private func summary(_ report: StorageReport) -> some View {
-    let lowest = metrics.volumes.min { $0.availableBytes < $1.availableBytes } ?? autopilot.lowestVolume
+    let lowest = metrics.volumes.min { $0.freeBytes < $1.freeBytes } ?? autopilot.lowestVolume
     let workspaceBytes = report.workspaces.compactMap(\.total).reduce(0, +)
     let cacheBytes = report.caches.compactMap(\.bytes).reduce(0, +)
     return HStack(spacing: 14) {
       tile(
-        "Free", lowest.map { formatDisk($0.unpurgeableFreeBytes ?? $0.availableBytes) } ?? "\u{2014}",
+        "Free", lowest.map { formatDisk($0.freeBytes) } ?? "\u{2014}",
         detail: lowest.map { "\($0.name), without purgeable space" }, icon: "internaldrive")
       tile(
         "Workspaces", formatDisk(workspaceBytes),

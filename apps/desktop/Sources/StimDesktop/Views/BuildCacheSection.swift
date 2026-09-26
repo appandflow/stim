@@ -169,7 +169,7 @@ private struct MissReasonButton: View {
       shown.toggle()
     } label: {
       HStack(spacing: 4) {
-        Text("Why: \(reason.summary)").lineLimit(1).truncationMode(.tail)
+        Text("Why: \(reason.summary)").multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
         Image(systemName: "info.circle")
       }
       .foregroundStyle(Theme.warn)

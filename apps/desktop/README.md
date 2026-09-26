@@ -143,8 +143,9 @@ and its window is on screen: each workspace's
 supervisor and Metro process trees plus the `launchd_sim` tree of each of its
 simulators (matched by UDID) and the qemu process of each emulator (matched by
 AVD name or console port). Memory is the sum of resident sizes, so memory
-shared between processes counts more than once. The toolbar shows free space
-on the volumes holding the repositories, `$STIM_HOME`, and CoreSimulator, and
+shared between processes counts more than once. The toolbar shows free space,
+without purgeable space and with the same figure as Storage, on the fullest
+volume holding the repositories, `$STIM_HOME`, and CoreSimulator, and
 what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
 version with `gc --json`.
 

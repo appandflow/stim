@@ -35,9 +35,13 @@ struct DeviceTile: View {
           BuildProgressBar(build: build, compact: true).padding(.horizontal, 12).padding(.bottom, 9)
         }
         Rectangle().fill(Theme.border).frame(height: 1)
-        screen
-          .frame(height: screenHeight)
-          .background(Theme.screen)
+        if let workspace, showsStoppedBar {
+          stoppedBar(canBoot ? runCommand(for: device, cwd: workspace) : nil)
+        } else {
+          screen
+            .frame(height: screenHeight)
+            .background(Theme.screen)
+        }
       }
     }
     .overlay {
@@ -130,6 +134,37 @@ struct DeviceTile: View {
           .help("Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
       }
     }
+  }
+
+  private var canBoot: Bool {
+    if case .android(_, let avd) = device { return !avd.physical }
+    return true
+  }
+
+  private var showsStoppedBar: Bool {
+    if case .remote = device { return false }
+    return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
+  }
+
+  private func stoppedBar(_ run: StimCommand?) -> some View {
+    HStack(spacing: 10) {
+      Text(
+        run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+          ?? "Not connected."
+      )
+      .font(Theme.body(12))
+      .foregroundStyle(Theme.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 0)
+      if let run {
+        Button("Run") { actions.run("Run \(device.slot)", run) }
+          .buttonStyle(.stim())
+          .fixedSize()
+          .disabled(actions.active(for: run.cwd) != nil)
+          .help(run.displayLine())
+      }
+    }
+    .padding(12)
   }
 
   private func stopButton(workspace: String) -> some View {

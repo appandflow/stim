@@ -153,8 +153,8 @@ final class AutopilotRunner: ObservableObject {
     Task.detached(priority: .utility) {
       let cli = await cli.value
       let volumes = DiskUsage.volumes(for: locations)
-      let lowest = volumes.min { $0.availableBytes < $1.availableBytes }
-      let free = volumes.map { $0.unpurgeableFreeBytes ?? $0.availableBytes }.min()
+      let lowest = volumes.min { $0.freeBytes < $1.freeBytes }
+      let free = lowest?.freeBytes
       let limits =
         budget
         ?? (try? cli.settings(cwd: NSHomeDirectory())).map { settings in
