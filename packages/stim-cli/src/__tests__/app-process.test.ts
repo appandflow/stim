@@ -8,7 +8,15 @@ const bundle = (udid: string, app: string) =>
 
 function tables(host: string[] | null, adb: string | null = null): DeviceProcessTables {
   return {
-    host: () => host?.map((command, i): HostProcess => ({ pid: i + 1, startedAt: null, command })) ?? null,
+    host: () =>
+      host?.map((command, i): HostProcess => ({
+        pid: i + 1,
+        ppid: 1,
+        rssKb: 0,
+        cpuPercent: 0,
+        startedAt: null,
+        command,
+      })) ?? null,
     android: () => adb,
   };
 }

@@ -257,6 +257,92 @@ async function runStatusJson() {
   return JSON.parse(line);
 }
 
+function setBootedSims(ps: string | null, calls: string[] = [], state = 'Booted') {
+  const listJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ['UDID-ABC', 'UDID-DEF'].map((udid) => ({
+        udid,
+        name: `stim-${udid}`,
+        state,
+        isAvailable: true,
+        deviceTypeIdentifier: 'iphone-17',
+      })),
+    },
+  });
+  setExecutor({
+    runFile: (_file, args = []) => (args.join(' ').includes('simctl list devices --json') ? listJson : ''),
+    runFileAsync: async (_file, args = []) => (args.join(' ').includes('simctl list devices --json') ? listJson : ''),
+    runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: (file) => {
+      calls.push(file);
+      return file === 'ps' ? ps : null;
+    },
+    spawn() {
+      throw new Error('spawn should not be called from status');
+    },
+  });
+}
+
+test('status --json attributes each simulator tree to its workspace and keeps memoryMb as the estimate', async () => {
+  const start = 'Sat Sep 26 15:33:49 2026';
+  const sim = (udid: string) =>
+    `/Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`;
+  setBootedSims(
+    [
+      `  10     1  51200  9.0 ${start} /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/XPCServices/com.apple.CoreSimulator.CoreSimulatorService.xpc/Contents/MacOS/com.apple.CoreSimulator.CoreSimulatorService`,
+      ` 100     1  10240  0.0 ${start} launchd_sim ${sim('UDID-ABC')}`,
+      ` 101   100 512000  5.0 ${start} /runtime/SpringBoard`,
+      ` 110     1  10240  0.0 ${start} launchd_sim ${sim('UDID-DEF')}`,
+      ` 111   110 204800  1.0 ${start} /runtime/SpringBoard`,
+    ].join('\n'),
+  );
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
+        '/proj/b': { label: 'agent-2', platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } } },
+      },
+    }),
+  );
+
+  const payload = await runStatusJson();
+
+  expect(payload.environments.map((e: { memoryMb: number }) => e.memoryMb)).toEqual([1500, 1500]);
+  expect(
+    payload.machine.owners.map(
+      (o: { name: string; workspace: string | null; residentMb: number; cpuPercent: number }) => [
+        o.name,
+        o.workspace,
+        o.residentMb,
+        o.cpuPercent,
+      ],
+    ),
+  ).toEqual([
+    ['stim-UDID-ABC', '/proj/a', 510, 5],
+    ['stim-UDID-DEF', '/proj/b', 210, 1],
+    ['CoreSimulator services', null, 50, 9],
+  ]);
+});
+
+test('an unreadable process table leaves machine null, and an idle machine reads no process table', async () => {
+  setBootedSims(null);
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: { '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
+    }),
+  );
+  expect((await runStatusJson()).machine).toBeNull();
+
+  const calls: string[] = [];
+  setBootedSims('', calls, 'Shutdown');
+  const idle = await runStatusJson();
+  expect(idle.environments[0].live).toBe(false);
+  expect(idle.machine).toBeNull();
+  expect(calls).not.toContain('ps');
+});
+
 function writeLogs(root: string, records: NdjsonRecord[]) {
   mkdirSync(workspaceLogsDir(root), { recursive: true });
   writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');

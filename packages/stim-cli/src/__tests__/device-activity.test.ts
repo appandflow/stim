@@ -76,10 +76,10 @@ describe('driver processes', () => {
   test('parses ps lstart rows and ignores Stim log collectors', () => {
     const rows = parseProcessTable(
       [
-        `  3503 ${RUNNER_START}     /usr/bin/xcodebuild test-without-building -destination platform=iOS Simulator,id=${UDID}`,
-        ` 18172 ${RUNNER_START}     /bin/simctl spawn ${UDID} log stream --style ndjson`,
-        ` 18200 ${RUNNER_START}     /bin/simctl spawn ${UDID}0 something`,
-        ' 18201 Thu Sep 24 22:00:05 2026     adb -s emulator-5554 logcat --pid 42',
+        `  3503     1 204800  12.5 ${RUNNER_START}     /usr/bin/xcodebuild test-without-building -destination platform=iOS Simulator,id=${UDID}`,
+        ` 18172  3503   2048   0,5 ${RUNNER_START}     /bin/simctl spawn ${UDID} log stream --style ndjson`,
+        ` 18200     1   1024   0.0 ${RUNNER_START}     /bin/simctl spawn ${UDID}0 something`,
+        ' 18201     1    512   0.0 Thu Sep 24 22:00:05 2026     adb -s emulator-5554 logcat --pid 42',
       ].join('\n'),
     );
     expect(rows.map((row) => [row.pid, driverTool(row.command, UDID)])).toEqual([
@@ -88,6 +88,8 @@ describe('driver processes', () => {
       [18200, null],
       [18201, null],
     ]);
+    expect(rows[0]).toMatchObject({ ppid: 1, rssKb: 204800, cpuPercent: 12.5 });
+    expect(rows[1]).toMatchObject({ ppid: 3503, cpuPercent: 0.5 });
     expect(rows[0]!.startedAt).toBe(new Date(RUNNER_START).toISOString());
   });
 });
@@ -185,7 +187,7 @@ describe('createActivityReader', () => {
   });
 
   test('a host test runner naming the device makes it driven', () => {
-    ps = `  3503 ${RUNNER_START}     maestro test flow.yaml --udid ${UDID}\n`;
+    ps = `  3503     1   1024   0.0 ${RUNNER_START}     maestro test flow.yaml --udid ${UDID}\n`;
     expect(read({})).toMatchObject({ state: 'driven', driver: { tool: 'maestro', pid: 3503 } });
   });
 

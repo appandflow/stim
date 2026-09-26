@@ -695,7 +695,7 @@ RULES
     },
     status: {
       summary:
-        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, and whether the app runs on it",
+        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
 
   Each environment carries issues, the things in that workspace that need
@@ -900,7 +900,46 @@ RULES
   looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.
 
   There is no completion fraction: a compile's log volume depends on what
-  is already built, so it does not measure progress.`,
+  is already built, so it does not measure progress.
+
+  An environment's memoryMb is an estimate, not a measurement: a fixed amount
+  per booted simulator, detected emulator, running Metro and running Chrome.
+  capacity.committedMb sums it, and the memory budget uses the same estimate.
+  What is using CPU and memory now is the top-level machine section:
+
+  machine   null, or { owners: [{ kind, name, workspace, slot?, id, owned,
+            cpuPercent, residentMb, processes }] }
+
+  kind         simulator  a booted simulator's launchd_sim tree
+               emulator   an emulator's launcher and qemu tree, by its -avd
+               metro      a workspace's supervisor and Metro trees
+               build      a running ios or android run's process tree,
+                          xcodebuild, Gradle and compilers included
+               browser    the Chrome of \`stim web\` and its supervisor
+               server     stim-server
+               shared     machine-wide processes no workspace owns:
+                          CoreSimulator services, adb server, Gradle and
+                          Kotlin daemons, Watchman, the emulator's netsimd
+  workspace    the workspace that records the device or runs the process;
+               null for a device no workspace records and for server and
+               shared
+  id           the simulator's UDID, the AVD name, Metro's port or the
+               build's platform; null otherwise
+  owned        true for what Stim started and stops: a workspace's owned
+               device (\`stim stop --slot <slot>\`), its Metro (\`stim
+               stop\`), build or Chrome. Never act on an owner with false.
+  cpuPercent   ps %CPU summed over the owner's processes; 100 is one core
+  residentMb   summed resident set size. Pages shared between processes
+               count once per process, so a simulator reports well above
+               its physical footprint.
+
+  Each process counts in exactly one owner, the one whose root process is
+  its nearest ancestor, so the supervisor a build started counts as Metro,
+  not as the build. Processes with no owner are left out. machine comes
+  from the same host ps status already reads, and is null when no simulator
+  is booted, no workspace is live and no build runs: status then reads no
+  process table. \`status --watch --json\` rereads it every 15 seconds while
+  machine is not null, with no other subprocess.`,
     },
     plan: {
       summary: 'the ios and android --plan payload: fingerprint, cacheHit, prebuild, missReason, expectedMs and basis',

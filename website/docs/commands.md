@@ -680,13 +680,28 @@ A dev server that its supervisor stopped after
 prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
 `metro` carries `idleStop` with `reason`, `at`, and `idleMinutes`.
 
+In `--json`, `machine` lists what uses CPU and memory now: each booted
+simulator and emulator with its workspace, each Metro, running build and
+`stim web` Chrome, stim-server, and a shared bucket for machine-wide processes
+such as CoreSimulator services, the adb server and Gradle daemons. Each owner
+carries `cpuPercent`, `residentMb` and `processes`, and every process counts in
+exactly one owner. `owned` marks what Stim can stop: a workspace's owned device
+with `stim stop --slot <name>`, and its Metro with `stim stop`. Resident memory
+counts pages shared between processes once per process, so a simulator reads
+well above its physical footprint. An environment's `memoryMb` stays the fixed
+estimate the memory budget uses. `machine` is `null` when nothing runs, and
+status then reads no process table. `stim guide facts status` lists every
+field.
+
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, adb device arrivals and
 departures, and simulator state, and recomputes every 30 seconds as a
 fallback. A log append updates only the log error count and device activity,
-no sooner than 15 seconds after the previous refresh. It exits with status 0
+no sooner than 15 seconds after the previous refresh. With `--json`, while
+`machine` is not `null`, it rereads the process table every 15 seconds so
+`machine` stays current. It exits with status 0
 on Ctrl+C, SIGTERM, or when its stdout closes. Use it to wait for a device, a
 build, or a dev server instead of polling `stim status --json`.
 

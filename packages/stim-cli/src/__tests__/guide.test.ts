@@ -5,6 +5,7 @@ import {
   BUILD_RESULTS,
   SETTINGS,
   STATUS_ISSUE_CODES,
+  MACHINE_OWNER_KINDS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -640,6 +641,12 @@ test('the facts topic documents every status issue code', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const code of STATUS_ISSUE_CODES) expect(body).toMatch(new RegExp(`^ +(code +)?${code} `, 'm'));
+});
+
+test('the facts topic documents every machine owner kind', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const kind of MACHINE_OWNER_KINDS) expect(body).toMatch(new RegExp(`^ +(kind +)?${kind} `, 'm'));
 });
 
 test('the facts topic documents every app process state', () => {
