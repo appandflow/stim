@@ -186,6 +186,22 @@ export interface EnvironmentState {
   remoteDevices?: RemoteDeviceState[];
   build?: BuildReport | null;
   lastBuilds?: { ios?: LastBuild; android?: LastBuild };
+  /** Each platform's recent runs, newest first, at most 10 each. Absent from a `stim` without build history. */
+  builds?: { ios?: BuildHistoryEntry[]; android?: BuildHistoryEntry[] };
+}
+
+export type BuildResult = 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+
+/**
+ * One run in a workspace's build history. `configuration` is the iOS configuration or Android variant, null
+ * when the run ended before resolving it. An interrupted run has null `durationMs` and `finishedAt`.
+ */
+export interface BuildHistoryEntry extends LastBuild {
+  result: BuildResult;
+  slot: string;
+  configuration: string | null;
+  cacheKey: string | null;
+  phases: Partial<Record<BuildPhase, number>>;
 }
 
 /** A platform's most recent `ios` or `android` run in one workspace. */

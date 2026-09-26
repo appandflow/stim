@@ -2,12 +2,15 @@ import {
   activityBadge,
   buildProgress,
   gitBadges,
+  durationBars,
+  historyDetail,
+  historyTitle,
   lastBuildSummary,
   outcomeLabel,
   nextBuild,
   planDetail,
 } from '@/lib/format';
-import type { BuildMissReason, BuildPlan, BuildReport } from '@/protocol/types';
+import type { BuildHistoryEntry, BuildMissReason, BuildPlan, BuildReport } from '@/protocol/types';
 
 const now = Date.parse('2026-09-25T12:00:00Z');
 const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -172,5 +175,60 @@ describe('gitBadges', () => {
       merged: true,
       label: 'merged into origin/main',
     });
+  });
+});
+
+describe('build history rows', () => {
+  const entry = (extra: Partial<BuildHistoryEntry> = {}): BuildHistoryEntry => ({
+    platform: 'ios',
+    status: 'ok',
+    result: 'succeeded',
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: 83_000,
+    fingerprint: 'abc',
+    startedAt: ago(2 * 3600_000 + 83_000),
+    finishedAt: ago(2 * 3600_000),
+    slot: 'default',
+    configuration: 'Debug',
+    cacheKey: 'abc-debug-sim',
+    phases: {},
+    ...extra,
+  });
+
+  test('the title says how the run ended, and where a finished app came from', () => {
+    expect(historyTitle(entry({ cacheHit: 'local' }))).toBe('Cache hit (local)');
+    expect(historyTitle(entry())).toBe('Cold build');
+    expect(historyTitle(entry({ result: 'failed', status: 'failed', errorCode: 'STIM_BUILD_FAILED' }))).toBe(
+      'Failed (STIM_BUILD_FAILED)',
+    );
+    expect(historyTitle(entry({ result: 'cancelled', status: 'failed', errorCode: 'STIM_CANCELLED' }))).toBe(
+      'Cancelled',
+    );
+    expect(historyTitle(entry({ result: 'interrupted', status: 'failed', durationMs: null }))).toBe('Interrupted');
+  });
+
+  test('the detail gives the cache outcome only where the title does not, then when and which slot', () => {
+    expect(historyDetail(entry({ cacheHit: 'local' }), now)).toBe('2h ago');
+    expect(historyDetail(entry({ missReason: reason('app config changed'), slot: 'tablet' }), now)).toBe(
+      'miss: app config changed \u00B7 2h ago \u00B7 slot tablet',
+    );
+    expect(historyDetail(entry({ result: 'failed', status: 'failed', cacheHit: 'local' }), now)).toBe(
+      'local cache hit \u00B7 2h ago',
+    );
+    expect(historyDetail(entry({ cacheSkipped: true }), now)).toBe('cache reads off \u00B7 2h ago');
+    expect(historyDetail(entry({ result: 'interrupted', status: 'failed', cacheSkipped: true }), now)).toBe('2h ago');
+  });
+
+  test('sparkline bars run oldest first, scaled to the longest run, and skip runs without a duration', () => {
+    const bars = durationBars([
+      entry({ durationMs: 20_000 }),
+      entry({ result: 'interrupted', durationMs: null }),
+      entry({ result: 'failed', durationMs: 80_000 }),
+    ]);
+    expect(bars).toEqual([
+      { fraction: 1, result: 'failed' },
+      { fraction: 0.25, result: 'succeeded' },
+    ]);
   });
 });
