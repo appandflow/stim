@@ -18,6 +18,8 @@ const light = {
   warn: '#B7791F',
   error: '#DC2626',
   remote: '#2F6BFF',
+  grouped: '#F6F4FA',
+  groupedRow: '#FFFFFF',
 };
 
 const dark: typeof light = {
@@ -37,6 +39,8 @@ const dark: typeof light = {
   warn: '#F5B454',
   error: '#FF6B6B',
   remote: '#7AA7FF',
+  grouped: '#0E0C13',
+  groupedRow: '#201B2B',
 };
 
 export type Colors = typeof light;

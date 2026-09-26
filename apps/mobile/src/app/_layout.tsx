@@ -1,5 +1,6 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Platform } from 'react-native';
 
 import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
@@ -48,18 +49,31 @@ function RootLayoutContent() {
         <HomeFiltersProvider>
           <RecentsProvider>
             <MenuDrawer>
-              <Stack screenOptions={{ headerTintColor: colors.primary, headerTitleStyle: { color: colors.text } }}>
+              <Stack
+                screenOptions={{
+                  headerTintColor: colors.primary,
+                  headerTitleStyle: { color: colors.text },
+                  headerBackButtonDisplayMode: 'minimal',
+                }}
+              >
                 <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
                 <Stack.Screen name="filters" options={sheet([0.6, 1])} />
                 <Stack.Screen name="about" options={sheet([0.5, 1])} />
-                <Stack.Screen name="settings" options={{ title: 'Settings', headerLargeTitle: true }} />
+                <Stack.Screen
+                  name="settings"
+                  options={{
+                    title: 'Settings',
+                    headerLargeTitle: true,
+                    contentStyle: { backgroundColor: colors.grouped },
+                    ...(Platform.OS === 'android'
+                      ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
+                      : null),
+                  }}
+                />
                 <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
                 <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
                 <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-                <Stack.Screen
-                  name="mac/[id]/workspace"
-                  options={{ title: 'Workspace', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: false }}
-                />
+                <Stack.Screen name="mac/[id]/workspace" options={{ title: 'Workspace', headerShadowVisible: false }} />
                 <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
                 <Stack.Screen
                   name="mac/[id]/device"

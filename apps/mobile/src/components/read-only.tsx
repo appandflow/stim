@@ -38,5 +38,5 @@ export function ScopeChip({ state }: { state: ConnectionState }) {
   const colors = useColors();
   const scope = pairingScope(state);
   if (!scope) return null;
-  return scope === 'control' ? <Chip tint={colors.live}>Control</Chip> : <Chip tint={colors.warn}>Read-only</Chip>;
+  return scope === 'control' ? <Chip tint={colors.live}>Can control</Chip> : <Chip tint={colors.warn}>Read-only</Chip>;
 }

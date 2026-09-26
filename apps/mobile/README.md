@@ -36,7 +36,7 @@ reload and stop a workspace:
 - **Machines**: the third destination on home, alongside Workspaces and
   Devices, lists every paired machine with its connection state and endpoint,
   with **Rename** and **Forget** on each row and **Pair** in the header. A
-  connected machine's row shows the pairing's scope, **Control** or
+  connected machine's row shows the pairing's scope, **Can control** or
   **Read-only** (see [Read-only pairings](#read-only-pairings)).
   Tapping a machine opens that machine's status. Whichever of the three
   destinations is open is saved on the phone and is what home shows next
@@ -167,8 +167,11 @@ that predates actions shows neither entry.
 
 `hello` returns the pairing's `capabilities` and the phone's device id. A
 pairing without `control` is read-only: Stim Desktop's **Pair a phone** makes
-read-only pairings. The machine row, the machine sheet and a **Pairings**
-line per machine in Settings show the scope while connected. Wherever the app
+read-only pairings. The machine row, the machine sheet and the **Machines**
+section in Settings show the scope while connected: **Can control**,
+**Read-only**, or the connection state. In Settings, tapping a read-only
+machine explains how to allow control, and tapping any other machine opens
+its sheet. Wherever the app
 would offer a control action, a read-only pairing shows it disabled with a
 short reason, and **Allow control** explains the upgrade: in Stim Desktop on
 the Mac, **Settings**, **Phones**, turn on **Allow control** for this phone,
