@@ -13,6 +13,16 @@ interface IosSimulatorViewer {
 
 const OPEN_OPTIONS = { timeoutMs: 5000, killSignal: 'SIGKILL' } as const;
 
+/**
+ * macOS `open` passes its environment to an app it launches, so Stim Desktop
+ * started by a command run under a scoped `STIM_HOME` would serve that home.
+ */
+export const STIM_DESKTOP_OPEN_OPTIONS = {
+  timeoutMs: 5000,
+  killSignal: 'SIGKILL',
+  omitEnv: ['STIM_HOME'],
+} as const;
+
 export function parseIosSimulatorApp(value: unknown, source = 'iosSimulatorApp in machine config'): IosSimulatorApp {
   if ((IOS_SIMULATOR_APPS as readonly unknown[]).includes(value)) return value as IosSimulatorApp;
   const error = new Error(`Invalid ${source}. Use "xcode", "siniulator", or "stim-desktop".`);
@@ -32,7 +42,7 @@ export function configuredIosSimulatorViewer(override?: IosSimulatorApp): IosSim
 function openSimulator(app: IosSimulatorApp, udid: string): void {
   const exec = getExecutor();
   if (app === 'stim-desktop') {
-    exec.runFileQuiet('open', ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`], OPEN_OPTIONS);
+    exec.runFileQuiet('open', ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`], STIM_DESKTOP_OPEN_OPTIONS);
     return;
   }
   if (app === 'siniulator') {

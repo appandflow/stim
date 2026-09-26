@@ -722,13 +722,15 @@ type BootstatusOutcome = 'hang' | { exitCode: number; stderr?: string };
 function bootstatusExecutor(outcomes: BootstatusOutcome[], list: () => string) {
   const spawned: string[] = [];
   const quiet: string[] = [];
+  const omittedEnv: (readonly string[] | undefined)[] = [];
   setExecutor({
     runFile: (_file, args = []) => {
       if (args.includes('devices')) return list();
       return '';
     },
-    runFileQuiet: (file, args = []) => {
+    runFileQuiet: (file, args = [], opts) => {
       quiet.push([file, ...args].join(' '));
+      omittedEnv.push(opts?.omitEnv);
       return '';
     },
     spawn: (cmd: string, args: readonly string[] = []) => {
@@ -746,7 +748,7 @@ function bootstatusExecutor(outcomes: BootstatusOutcome[], list: () => string) {
       return makeExitingChild(outcome.exitCode, outcome.stderr);
     },
   });
-  return { spawned, quiet };
+  return { spawned, quiet, omittedEnv };
 }
 
 test('bootIosSim waits on `simctl bootstatus -b` as a child process, so the caller can work meanwhile', async () => {
@@ -956,19 +958,20 @@ test('machine config opens the owned simulator in Siniulator', async () => {
 });
 
 test.each([
-  ['xcode', 'siniulator', 'open -a Siniulator siniulator://open?udid=UDID-A'],
-  ['siniulator', 'xcode', 'open -a Simulator'],
-  ['xcode', 'stim-desktop', 'open -g -a Stim stim-desktop://open?udid=UDID-A'],
-  ['unknown', 'xcode', 'open -a Simulator'],
+  ['xcode', 'siniulator', 'open -a Siniulator siniulator://open?udid=UDID-A', undefined],
+  ['siniulator', 'xcode', 'open -a Simulator', undefined],
+  ['xcode', 'stim-desktop', 'open -g -a Stim stim-desktop://open?udid=UDID-A', ['STIM_HOME']],
+  ['unknown', 'xcode', 'open -a Simulator', undefined],
 ] as const)(
   'a %s machine preference is overridden by %s without saving it',
-  async (configured, simulatorApp, command) => {
+  async (configured, simulatorApp, command, omitEnv) => {
     const configPath = join(tmpHome, 'config.json');
     const config = JSON.stringify({ iosSimulatorApp: configured });
     writeFileSync(configPath, config);
-    const { quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
+    const { quiet, omittedEnv } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
     await bootIosSim('UDID-A', { simulatorApp });
     expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
+    expect(omittedEnv[quiet.indexOf(command)]).toEqual(omitEnv);
     expect(readFileSync(configPath, 'utf8')).toBe(config);
   },
 );

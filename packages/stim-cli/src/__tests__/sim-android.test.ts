@@ -1126,12 +1126,14 @@ test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Des
   process.env.DISPLAY = ':0';
   const spawned: string[][] = [];
   const opened: string[][] = [];
+  const omittedEnv: (readonly string[] | undefined)[] = [];
   let desktop: string | null = null;
   setExecutor({
     runQuiet: () => null,
-    runFileQuiet: (file: string, args: string[] = []) => {
+    runFileQuiet: (file: string, args: string[] = [], opts?: { omitEnv?: readonly string[] }) => {
       if (file === 'osascript') return desktop;
       opened.push([file, ...args]);
+      omittedEnv.push(opts?.omitEnv);
       return null;
     },
     spawn: (_cmd: string, args: string[]) => {
@@ -1162,6 +1164,7 @@ test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Des
     ['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5556'],
     ['open', '-g', '-a', 'Stim', 'stim-desktop://open?serial=emulator-5560'],
   ]);
+  expect(omittedEnv).toEqual([['STIM_HOME'], ['STIM_HOME']]);
 });
 
 test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 37+, and removes the crash database for an older one', () => {

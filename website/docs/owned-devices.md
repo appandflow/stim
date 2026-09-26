@@ -67,6 +67,11 @@ simulator and focuses that device, and no simulator window opens. It only
 displays the simulator; it never boots or shuts it down. Pass
 `--simulator-app stim-desktop` to use it for one launch.
 
+When Stim Desktop is not running, Stim starts it without the command's
+`STIM_HOME`. Stim Desktop then reads the same Stim home, and serves the same
+paired phones, as when you open it yourself. It shows only devices from that
+home, so a simulator booted under another `STIM_HOME` does not appear in it.
+
 For owned Android emulators, Stim starts newly booted emulators on macOS with
 `-no-window -gpu host`, which keeps GPU acceleration, and opens
 `stim-desktop://open?serial=<serial>` in the background so Stim Desktop focuses
