@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { Icon } from '@/components/icon';
-import { useHomeFilters } from '@/hooks/home-filters';
+import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { useColors, type Appearance } from '@/theme';
 
@@ -14,9 +14,10 @@ const APPEARANCE_OPTIONS: { value: Appearance; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-const HOME_VIEW_OPTIONS: { value: 'workspaces' | 'devices'; label: string }[] = [
+const HOME_VIEW_OPTIONS: { value: HomeView; label: string }[] = [
   { value: 'workspaces', label: 'Workspaces' },
   { value: 'devices', label: 'Devices' },
+  { value: 'machines', label: 'Machines' },
 ];
 
 const VIDEO_QUALITY_OPTIONS: { value: VideoQuality; label: string }[] = [
@@ -48,7 +49,6 @@ export function Settings() {
           <ChoiceRow options={VIDEO_QUALITY_OPTIONS} value={videoQuality} onChange={setVideoQuality} />
         </FieldGroup.Section>
         <FieldGroup.Section title="More">
-          <LinkRow label="Machines" onPress={() => router.push('/macs')} />
           <LinkRow label="About Stim" onPress={() => router.push('/about')} />
         </FieldGroup.Section>
       </FieldGroup>

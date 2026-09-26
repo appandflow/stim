@@ -51,7 +51,6 @@ function RootLayoutContent() {
               <Stack screenOptions={{ headerTintColor: colors.primary, headerTitleStyle: { color: colors.text } }}>
                 <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
                 <Stack.Screen name="filters" options={sheet([0.6, 1])} />
-                <Stack.Screen name="macs" options={{ title: 'Machines', headerLargeTitle: true }} />
                 <Stack.Screen name="about" options={sheet([0.5, 1])} />
                 <Stack.Screen name="settings" options={{ title: 'Settings', headerLargeTitle: true }} />
                 <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
