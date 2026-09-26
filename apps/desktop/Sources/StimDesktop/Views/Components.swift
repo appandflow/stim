@@ -350,3 +350,28 @@ struct BuildProgressBar: View {
     return "Median of the last \(build.basis) \(outcome) \(build.platform) runs of this project"
   }
 }
+
+extension View {
+  func toolbarBackdrop(_ color: Color) -> some View {
+    modifier(ToolbarBackdrop(color: color))
+  }
+}
+
+private struct ToolbarBackdrop: ViewModifier {
+  var color: Color
+  @State private var toolbarHeight: CGFloat = 0
+
+  func body(content: Content) -> some View {
+    content
+      .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { toolbarHeight = $0 }
+      .overlay(alignment: .top) {
+        VStack(spacing: 0) {
+          color.frame(height: toolbarHeight)
+          LinearGradient(colors: [color, color.opacity(0)], startPoint: .top, endPoint: .bottom)
+            .frame(height: 12)
+        }
+        .ignoresSafeArea(edges: .top)
+        .allowsHitTesting(false)
+      }
+  }
+}
