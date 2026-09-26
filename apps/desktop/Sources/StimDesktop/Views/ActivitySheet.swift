@@ -48,13 +48,9 @@ struct ActivitySheet: View {
     }
   }
 
-  /// A plain successful action closes itself after showing that it finished. A preview, and a cleanup
-  /// with anything left alone or failed, stays open to be read.
-  private var closesOnSuccess: Bool {
-    if deleteArguments != nil { return false }
-    if case .success(let outcome) = outcome { return outcome.kept.isEmpty && outcome.failed.isEmpty }
-    return true
-  }
+  /// A plain successful action closes itself after showing that it finished. A preview and a cleanup
+  /// summary stay open to be read.
+  private var closesOnSuccess: Bool { deleteArguments == nil && outcome == nil }
 
   @ViewBuilder private var content: some View {
     if run.isRunning {
@@ -120,7 +116,7 @@ struct ActivitySheet: View {
   private var failureMessage: String? {
     if let launchError = run.launchError { return launchError }
     if case .failure(let error) = report { return error.localizedDescription }
-    if case .failure(let error) = outcome, run.exitStatus != 0 { return error.localizedDescription }
+    if case .failure(let error as GcPreview.Failure) = outcome, case .refused = error { return error.localizedDescription }
     if case .success = outcome { return nil }
     guard let status = run.exitStatus, status != 0 else { return nil }
     return steps.last { $0.state == .failed }.map { $0.fact.isEmpty ? $0.label : $0.fact }

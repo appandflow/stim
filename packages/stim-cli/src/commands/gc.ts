@@ -506,9 +506,13 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
     if (result.stoppedTunnel) {
       console.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
     }
+    for (const name of result.deletedDevices) recordGcResult('device', 'done', name);
     for (const s of result.skippedDevices) {
       console.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
-      recordGcResult('device', 'kept', s.name, { detail: s.reason });
+      recordGcResult('device', result.failedDevices.includes(s) ? 'failed' : 'kept', s.name, {
+        id: s.udid ?? null,
+        detail: s.reason,
+      });
     }
     deleteFailures += result.failedDevices.length;
   }

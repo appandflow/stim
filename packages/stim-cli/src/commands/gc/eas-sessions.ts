@@ -415,6 +415,10 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
               for (const session of easSessionSweep.orphaned) {
                 if (recorded.has(session.id)) {
                   console.log(chalk.dim(`EAS session ${session.id} has a workspace record and was left running.`));
+                  recordGcResult('easSession', 'kept', session.name, {
+                    id: session.id,
+                    detail: 'it has a workspace record and was left running',
+                  });
                   continue;
                 }
                 const claim = ledger.claims.get(session.id);

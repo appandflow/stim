@@ -13,6 +13,7 @@ public struct GcOutcome: Hashable, Sendable {
     public var kind: String
     public var status: Status
     public var label: String
+    public var id: String?
     public var bytes: Int64?
     public var detail: String?
   }
@@ -55,19 +56,19 @@ public struct GcOutcome: Hashable, Sendable {
           let label = result["label"] as? String
         else { return nil }
         return Item(
-          kind: result["kind"] as? String ?? "entry", status: status, label: label,
+          kind: result["kind"] as? String ?? "entry", status: status, label: label, id: result["id"] as? String,
           bytes: (result["bytes"] as? NSNumber)?.int64Value, detail: result["detail"] as? String)
       }
     } else {
       items = ((try? GcPreview(json: json))?.sections ?? []).flatMap { section in
         section.entries.filter { $0.kept == nil }.map {
-          Item(kind: section.key, status: .done, label: $0.label, bytes: $0.bytes, detail: nil)
+          Item(kind: section.key, status: .done, label: $0.label, id: nil, bytes: $0.bytes, detail: nil)
         }
       }
     }
-    items += Self.notes(sections)
+    if object["mode"] as? String == "delete" { items += Self.notes(sections) }
     var seen = Set<String>()
-    items = items.filter { seen.insert("\($0.status)|\($0.kind)|\($0.label)").inserted }
+    items = items.filter { seen.insert("\($0.status)|\($0.kind)|\($0.id ?? $0.label)|\($0.label)").inserted }
     done = items.filter { $0.status == .done }
     kept = items.filter { $0.status == .kept }
     failed = items.filter { $0.status == .failed }
@@ -83,17 +84,17 @@ public struct GcOutcome: Hashable, Sendable {
       let command = row["command"] as? String
       notes.append(
         Item(
-          kind: "unverifiedDevice", status: .kept, label: name, bytes: nil,
+          kind: "unverifiedDevice", status: .kept, label: name, id: row["id"] as? String, bytes: nil,
           detail: "Not created by this Stim home" + (command.map { "; to delete it, run \($0)" } ?? "")))
     }
     for row in rows("skipped") {
       guard let path = row["path"] as? String else { continue }
-      notes.append(Item(kind: "skipped", status: .kept, label: path, bytes: nil, detail: row["detail"] as? String))
+      notes.append(Item(kind: "skipped", status: .kept, label: path, id: nil, bytes: nil, detail: row["detail"] as? String))
     }
     for key in ["deviceSweepNotices", "easSessionSweepNotices"] {
       for row in rows(key) {
         guard let message = row["message"] as? String else { continue }
-        notes.append(Item(kind: key, status: .kept, label: message, bytes: nil, detail: nil))
+        notes.append(Item(kind: key, status: .kept, label: message, id: nil, bytes: nil, detail: nil))
       }
     }
     return notes

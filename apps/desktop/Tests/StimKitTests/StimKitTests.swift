@@ -570,6 +570,21 @@ import Testing
     #expect(outcome.failures == 1)
   }
 
+  @Test func keepsDistinctEntriesThatShareALabelAndSkipsNotesOnAnIdleRun() throws {
+    let json = """
+      {"mode":"dry-run","idle":3600000,"failures":0,"sections":{
+        "skipped":[{"path":"/s/workspaces/x","detail":"workspace directory not resolved"}]
+      },"results":[
+        {"kind":"cache","status":"done","label":"Metro transform cache","id":"/s/metro/a","bytes":1000,"detail":null},
+        {"kind":"cache","status":"done","label":"Metro transform cache","id":"/s/metro/b","bytes":2000,"detail":null}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.done.count == 2)
+    #expect(outcome.freedBytes == 3000)
+    #expect(outcome.kept.isEmpty)
+  }
+
   @Test func fallsBackToTheReportOnACLIWithoutResults() throws {
     let json = """
       {"mode":"delete","actionable":true,"failures":0,"sections":{
