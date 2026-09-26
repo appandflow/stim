@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
 import type { StatusPayload } from '@stim-cli/core/state';
-import type { FrameTarget } from './protocol.ts';
+import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
 import { terminate } from './stim-command.ts';
@@ -230,7 +230,10 @@ function simulatorCapturer(
     const lit = litPanels.get(device.udid) ?? 'primary';
     const jpeg = await screenshot([`--display=${lit}`]);
     open();
-    if (!(await isBlack(jpeg))) return { raw: jpeg, jpeg: async () => jpeg, posture: POSTURES[lit] };
+    if (!(await isBlack(jpeg))) {
+      litPanels.set(device.udid, lit);
+      return { raw: jpeg, jpeg: async () => jpeg, posture: POSTURES[lit] };
+    }
     const other: DuoPanel = lit === 'primary' ? 'primary-1' : 'primary';
     open();
     const otherJpeg = await screenshot([`--display=${other}`]);
@@ -408,57 +411,99 @@ function hasHinge(body: Buffer): boolean {
   return false;
 }
 
+function grpcSession(endpoint: EmulatorEndpoint): ClientHttp2Session {
+  const session = connect(`http://127.0.0.1:${endpoint.grpcPort}`);
+  session.on('error', () => {});
+  return session;
+}
+
+function grpcCall(
+  session: ClientHttp2Session,
+  endpoint: EmulatorEndpoint,
+  serial: string,
+  method: string,
+  requestBody: Buffer,
+  timeoutMs: number,
+): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const request = session.request({
+      ':method': 'POST',
+      ':path': `/android.emulation.control.EmulatorController/${method}`,
+      'content-type': 'application/grpc',
+      te: 'trailers',
+      ...(endpoint.token ? { authorization: `Bearer ${endpoint.token}` } : {}),
+    });
+    const chunks: Buffer[] = [];
+    let status: string | undefined;
+    let message: string | undefined;
+    let timedOut = false;
+    const record = (headers: Record<string, unknown>) => {
+      if (headers['grpc-status'] !== undefined) status = String(headers['grpc-status']);
+      if (headers['grpc-message'] !== undefined) message = String(headers['grpc-message']);
+    };
+    request.setTimeout(timeoutMs, () => {
+      timedOut = true;
+      request.close();
+    });
+    request.on('response', record);
+    request.on('trailers', record);
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('error', (error) => {
+      const text = `${method} failed on ${serial}: ${error.message}`;
+      reject(timedOut ? timeoutError(text) : new Error(text));
+    });
+    request.on('close', () => {
+      if (status === '0') return resolve(Buffer.concat(chunks));
+      const text = `${method} failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`;
+      reject(timedOut ? timeoutError(text) : new Error(text));
+    });
+    request.end(requestBody);
+  });
+}
+
+const POSTURE_MODEL = grpcMessage([1 << 3, 16]);
+
+/**
+ * The postures `input.posture` accepts for an owned device: the two panels of an iPhone Duo, and the hinge
+ * positions of an emulator whose physical model has a posture.
+ */
+export async function devicePostures(
+  device: Device,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<DevicePosture[]> {
+  if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
+  const endpoint = emulatorEndpoint(env, device.serial);
+  if (!endpoint) return [];
+  const session = grpcSession(endpoint);
+  try {
+    const hinged = hasHinge(
+      await grpcCall(session, endpoint, device.serial, 'getPhysicalModel', POSTURE_MODEL, timeoutMs),
+    );
+    return hinged ? ['folded', 'half-open', 'unfolded'] : [];
+  } catch {
+    return [];
+  } finally {
+    session.close();
+  }
+}
+
 function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameLimits): Capturer {
   let session: ClientHttp2Session | null = null;
   let tmp: string | null = null;
   const running = new Set<ChildProcess>();
   let hinged: boolean | null = null;
-  const call = (endpoint: EmulatorEndpoint, method: string, requestBody: Buffer) =>
-    new Promise<Buffer>((resolve, reject) => {
-      if (!session || session.closed || session.destroyed) {
-        session = connect(`http://127.0.0.1:${endpoint.grpcPort}`);
-        session.on('error', () => {});
-      }
-      const request = session.request({
-        ':method': 'POST',
-        ':path': `/android.emulation.control.EmulatorController/${method}`,
-        'content-type': 'application/grpc',
-        te: 'trailers',
-        ...(endpoint.token ? { authorization: `Bearer ${endpoint.token}` } : {}),
-      });
-      const chunks: Buffer[] = [];
-      let status: string | undefined;
-      let message: string | undefined;
-      let timedOut = false;
-      const record = (headers: Record<string, unknown>) => {
-        if (headers['grpc-status'] !== undefined) status = String(headers['grpc-status']);
-        if (headers['grpc-message'] !== undefined) message = String(headers['grpc-message']);
-      };
-      request.setTimeout(limits.toolTimeoutMs, () => {
-        timedOut = true;
-        request.close();
-      });
-      request.on('response', record);
-      request.on('trailers', record);
-      request.on('data', (chunk: Buffer) => chunks.push(chunk));
-      request.on('error', (error) => {
-        const text = `${method} failed on ${serial}: ${error.message}`;
-        reject(timedOut ? timeoutError(text) : new Error(text));
-      });
-      request.on('close', () => {
-        if (status === '0') return resolve(Buffer.concat(chunks));
-        const text = `${method} failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`;
-        reject(timedOut ? timeoutError(text) : new Error(text));
-      });
-      request.end(requestBody);
-    });
+  const call = (endpoint: EmulatorEndpoint, method: string, requestBody: Buffer) => {
+    if (!session || session.closed || session.destroyed) session = grpcSession(endpoint);
+    return grpcCall(session, endpoint, serial, method, requestBody, limits.toolTimeoutMs);
+  };
   return {
     capture: async () => {
       const endpoint = emulatorEndpoint(env, serial);
       if (!endpoint) {
         throw new Error(`${serial} has no gRPC endpoint. Frames appear after Stim next boots this emulator.`);
       }
-      hinged ??= await call(endpoint, 'getPhysicalModel', grpcMessage([1 << 3, 16]))
+      hinged ??= await call(endpoint, 'getPhysicalModel', POSTURE_MODEL)
         .then(hasHinge)
         .catch(() => false);
       const { png, folded } = screenshotReply(
@@ -660,6 +705,12 @@ export class FramePool {
       cancelled = true;
       detach();
     };
+  }
+
+  /** The posture of an iPhone Duo as its last frame showed it; null before a frame and for other devices. */
+  litPosture(device: Device): Posture | null {
+    const lit = device.platform === 'ios' && device.foldable ? this.litPanels.get(device.udid) : undefined;
+    return lit ? POSTURES[lit] : null;
   }
 
   /** Makes the next video frame of `device` a keyframe, for a subscriber whose decoder lost its state. */

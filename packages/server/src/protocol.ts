@@ -28,6 +28,8 @@ export const METHODS = [
   'input.touch',
   'input.text',
   'input.button',
+  'input.rotate',
+  'input.posture',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -243,12 +245,15 @@ export interface ControlBeginParams {
 
 /**
  * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
- * as after taking over a device another workspace leases.
+ * as after taking over a device another workspace leases. `postures` lists what `input.posture` accepts for
+ * the device: `folded` and `unfolded` for an iPhone Duo, all three for an emulator with a hinge, and none
+ * otherwise.
  */
 export interface ControlBeginResult {
   session: string;
   platform: Platform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
+  postures: DevicePosture[];
 }
 
 export interface ControlEndParams {
@@ -284,6 +289,26 @@ export type InputButton = (typeof INPUT_BUTTONS)[number];
 export interface InputButtonParams {
   session: string;
   button: InputButton;
+}
+
+/** `left` turns the device a quarter turn counterclockwise, `right` clockwise. */
+export const ROTATE_DIRECTIONS = ['left', 'right'] as const;
+
+export type RotateDirection = (typeof ROTATE_DIRECTIONS)[number];
+
+export interface InputRotateParams {
+  session: string;
+  direction: RotateDirection;
+}
+
+export const DEVICE_POSTURES = ['folded', 'half-open', 'unfolded'] as const;
+
+export type DevicePosture = (typeof DEVICE_POSTURES)[number];
+
+/** Moves the hinge of a device whose `control.begin` result lists `posture`. */
+export interface InputPostureParams {
+  session: string;
+  posture: DevicePosture;
 }
 
 /** Predicts the next `ios` or `android` build of `workspace` in `slot` (`default` when absent). */
@@ -368,6 +393,8 @@ export interface Methods {
   'input.touch': { params: InputTouchParams; result: Record<string, never> };
   'input.text': { params: InputTextParams; result: Record<string, never> };
   'input.button': { params: InputButtonParams; result: Record<string, never> };
+  'input.rotate': { params: InputRotateParams; result: Record<string, never> };
+  'input.posture': { params: InputPostureParams; result: Record<string, never> };
 }
 
 export type ClientRequest = {
@@ -656,7 +683,7 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ControlBeginResult: {
         type: 'object',
-        required: ['session', 'platform', 'lease'],
+        required: ['session', 'platform', 'lease', 'postures'],
         additionalProperties: false,
         properties: {
           session: { type: 'string' },
@@ -675,6 +702,7 @@ export function protocolJsonSchema(): JsonSchema {
               },
             ],
           },
+          postures: { type: 'array', items: { enum: [...DEVICE_POSTURES] }, uniqueItems: true },
         },
       },
       BuildPlanParams: {
@@ -820,6 +848,8 @@ export function protocolJsonSchema(): JsonSchema {
             ),
           ),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
+          request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
+          request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
         ],
       },
       ServerResponse: {

@@ -253,15 +253,21 @@ export interface ControlBeginParams {
   takeOver?: boolean;
 }
 
+/** `postures` lists what `input.posture` takes: none for a device without a hinge. */
 export interface ControlBeginResult {
   session: string;
   platform: Platform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
+  postures: DevicePosture[];
 }
 
 export type TouchPhase = 'down' | 'move' | 'up';
 
 export type InputButton = 'home' | 'lock' | 'back' | 'app-switch';
+
+export type RotateDirection = 'left' | 'right';
+
+export type DevicePosture = 'folded' | 'half-open' | 'unfolded';
 
 export type ActionName = 'reload' | 'stop';
 
@@ -347,6 +353,8 @@ export interface Methods {
   /** Printable ASCII; `\n` presses Return, `\t` Tab and `\b` Delete. */
   'input.text': { params: { session: string; text: string }; result: Record<string, never> };
   'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
+  'input.rotate': { params: { session: string; direction: RotateDirection }; result: Record<string, never> };
+  'input.posture': { params: { session: string; posture: DevicePosture }; result: Record<string, never> };
 }
 
 export type Method = keyof Methods;

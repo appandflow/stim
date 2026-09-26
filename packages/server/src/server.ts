@@ -8,7 +8,7 @@ import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/sta
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
-import { buildFrameHelper, type FrameHint } from './frame-helper.ts';
+import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
   DEFAULT_FRAME_LIMITS,
   deviceKey,
@@ -71,6 +71,8 @@ export interface ServerOptions {
    * one at startup, and devices subscribed before the build finishes get screenshots.
    */
   frameHelper?: string | null;
+  /** The `sim-fold` helper that folds an iPhone Duo. Without it, the server builds one on the first fold. */
+  foldHelper?: string;
   controlLimits?: Partial<ControlLimits>;
 }
 
@@ -270,6 +272,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   if (options.frameHelper === undefined) buildHelper();
   const frames = new FramePool(options.env, frameLimits, frameHelper);
+  let foldBuild: Promise<string> | null = null;
+  const foldHelper = () => {
+    if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
+    foldBuild ??= buildFoldHelper(options.env, helperAbort.signal).catch((cause: Error) => {
+      foldBuild = null;
+      throw new Error(`sim-fold could not be built: ${cause.message}`);
+    });
+    return foldBuild;
+  };
   const running = new Set<() => Promise<void>>();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
@@ -291,6 +302,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     idleMs: controlLimits.idleMs,
     renewMs: controlLimits.renewMs,
     leaseFor: controlLimits.leaseFor,
+    foldHelper,
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
@@ -441,12 +453,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function input(
       id: RequestId,
-      method: 'input.touch' | 'input.text' | 'input.button',
+      method: 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture',
       params: unknown,
       session: PairedDevice,
     ): Promise<void> {
       const owner = controller(session);
-      const parsed = parseInput(method, params, (name) => control.platformOf(owner, name));
+      const parsed = parseInput(method, params, (name) => control.targetOf(owner, name));
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
       if (!take(inputs, 1, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
@@ -921,7 +933,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         return send(socket, { id, result: {} });
       }
-      if (message.method === 'input.touch' || message.method === 'input.text' || message.method === 'input.button') {
+      if (
+        message.method === 'input.touch' ||
+        message.method === 'input.text' ||
+        message.method === 'input.button' ||
+        message.method === 'input.rotate' ||
+        message.method === 'input.posture'
+      ) {
         const method = message.method;
         void input(id, method, message.params, device);
         return;

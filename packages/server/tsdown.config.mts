@@ -28,6 +28,8 @@ export default defineConfig({
       ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);
       }
+      copyFileSync('../../apps/desktop/Support/SimFold/main.m', 'dist/stim-frames/sim-fold.m');
+      copyFileSync('../../apps/desktop/Support/SimFold/entitlements.plist', 'dist/stim-frames/sim-fold.entitlements');
     },
   },
 });

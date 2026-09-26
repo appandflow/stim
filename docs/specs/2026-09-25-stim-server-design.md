@@ -316,8 +316,8 @@ can drive an owned simulator or emulator from the phone.
 
 - Protocol: `control.begin` starts a session on the device that `stim status`
   lists as owned by a workspace and slot. It is resolved exactly like frames,
-  so no other device is reachable. `input.touch`, `input.text` and
-  `input.button` take the session. `control.end` ends it, and the server
+  so no other device is reachable. `input.touch`, `input.text`,
+  `input.button`, `input.rotate` and `input.posture` take the session. `control.end` ends it, and the server
   ends it with a `control-ended` event when the session goes idle, is taken
   over, loses its device or loses `control`. There is one session per device
   across all connections.
@@ -333,6 +333,10 @@ can drive an owned simulator or emulator from the phone.
   Android touches use the helper's emulator gRPC `sendTouch`. Android text
   and buttons use `adb shell input`, because Stim's AVDs have no hardware
   keyboard.
+- Rotation and posture (#1225) reuse Stim Desktop's paths: the helper sends a
+  simulator the orientation message Simulator.app sends, and an emulator
+  gRPC `setPhysicalModel` and `setPosture`. An iPhone Duo folds with Stim
+  Desktop's `sim-fold`, run inside the simulator.
 - Audit: session start, takeover and end go to the action log. Individual
   inputs do not.
 - Limits: 120 inputs a second per connection, and 256 printable ASCII
