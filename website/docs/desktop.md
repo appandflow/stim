@@ -56,8 +56,8 @@ dev server and a local device run. The inspector's
 after a failed build, and a **Check** button that predicts the next build with
 `stim ios --plan` or `stim android --plan` without building.
 
-When a device is up but the app is not running on it, because it crashed or
-was closed, the device shows **App not running** with a **Run** button.
+When a device is up but the app is not running on it, because it crashed, was
+closed or was never launched there, the device shows **App not running** with a **Run** button.
 
 ## Show devices in the app
 
