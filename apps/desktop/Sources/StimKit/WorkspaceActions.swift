@@ -73,12 +73,13 @@ extension Workspace {
   /// The platforms Run offers: `usedPlatforms`, or both when neither is recorded.
   public var runPlatforms: [String] { usedPlatforms.isEmpty ? ["ios", "android"] : usedPlatforms }
 
-  /// Whether `stim reload` can reach an app: the dev server runs and a local device is up.
+  /// Whether `stim reload` can reach an app: the dev server runs and a local device is up with the app not known
+  /// to be stopped.
   public var canReload: Bool {
     metro?.running == true
       && devices.contains { device in
         if case .remote = device { return false }
-        return device.isRunning
+        return device.isRunning && !device.appStopped
       }
   }
 }

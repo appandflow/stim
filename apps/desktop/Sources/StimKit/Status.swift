@@ -154,8 +154,9 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var owned: Bool
   public var state: String
   public var activity: DeviceActivity?
+  public var app: AppProcess?
 
-  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity }
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app }
 
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
@@ -172,7 +173,15 @@ public struct IosDevice: Decodable, Hashable, Sendable {
     owned = try c.decode(Bool.self, forKey: .owned)
     state = try c.decode(String.self, forKey: .state)
     activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)
+    app = try c.decodeIfPresent(AppProcess.self, forKey: .app)
   }
+}
+
+/// Whether the workspace's app process runs on a device now: `state` is "running", "stopped", or "unknown" when
+/// `stim status` could not read the process list. Absent from a `stim` that does not report it.
+public struct AppProcess: Decodable, Hashable, Sendable {
+  public var id: String
+  public var state: String
 }
 
 public struct AndroidDevice: Decodable, Hashable, Sendable {
@@ -183,6 +192,7 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var state: String
   public var deviceProfile: String?
   public var activity: DeviceActivity?
+  public var app: AppProcess?
 }
 
 /// A billable remote session recorded for the workspace, such as an EAS Simulator.

@@ -91,6 +91,20 @@ struct DeviceTile: View {
             activityChip(badge)
           }
         }
+        if device.appStopped {
+          Chip(tint: Theme.warn) { Text("App not running") }
+            .fixedSize()
+            .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
+          if let workspace {
+            Button("Run", systemImage: "play.fill") {
+              actions.run("Run on \(platformName(device.platform))", runCommand(for: device, cwd: workspace))
+            }
+            .buttonStyle(.stim(.primary))
+            .fixedSize()
+            .disabled(actions.active(for: workspace) != nil || build != nil)
+            .help((["stim"] + runCommand(for: device, cwd: workspace).arguments).joined(separator: " "))
+          }
+        }
         Text(source).font(Theme.body(10.5)).foregroundStyle(Theme.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
           Chip { Text(posture) }.fixedSize()
