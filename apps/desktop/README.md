@@ -77,8 +77,9 @@ submenu.
 Each workspace row shows its worktree's git state from `stim status --json`: a
 dot with the number of uncommitted files, arrows for commits ahead of and
 behind the upstream, and **merged** when `gc` would call the branch merged. A
-clean branch level with its upstream shows nothing. The workspace header shows
-the same as chips, and hovering the row indicator spells it out.
+clean branch level with its upstream shows nothing. The inspector's workspace
+header shows the same as chips, with "↑4 unpushed" and "↓3 behind" in place of
+the arrows, and hovering the row indicator or a chip spells it out.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears in the sidebar under its project and

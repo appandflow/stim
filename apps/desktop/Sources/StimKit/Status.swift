@@ -148,11 +148,21 @@ public struct WorktreeGit: Decodable, Hashable, Sendable {
   public var summary: String {
     var parts: [String] = []
     if uncommitted > 0 { parts.append("\(uncommitted) uncommitted \(uncommitted == 1 ? "change" : "changes")") }
-    if let ahead, ahead > 0 { parts.append("\(ahead) ahead of \(upstream ?? "upstream")") }
-    if let behind, behind > 0 { parts.append("\(behind) behind") }
+    if let ahead, ahead > 0 { parts.append(unpushedLabel(ahead)) }
+    if let behind, behind > 0 { parts.append(behindLabel(behind)) }
     if let mergedInto { parts.append("merged into \(mergedInto)") }
     return parts.isEmpty ? "Clean" : parts.joined(separator: ", ")
   }
+
+  public func unpushedLabel(_ count: Int) -> String {
+    "\(Self.commits(count)) not pushed" + (upstream.map { " to \($0)" } ?? "")
+  }
+
+  public func behindLabel(_ count: Int) -> String {
+    "\(Self.commits(count)) behind \(upstream ?? "the upstream")"
+  }
+
+  private static func commits(_ count: Int) -> String { "\(count) \(count == 1 ? "commit" : "commits")" }
 }
 
 public struct Slot: Decodable, Hashable, Sendable {

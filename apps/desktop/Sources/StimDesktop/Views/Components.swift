@@ -23,9 +23,21 @@ struct GitIndicator: View {
   var body: some View {
     if let git, git.isNotable {
       if chips {
-        if git.uncommitted > 0 { Pill(tone: .warning) { Text("\(git.uncommitted) uncommitted") } }
-        if let arrows = git.arrows { Pill { Text(arrows).monospacedDigit() } }
-        if git.mergedInto != nil { Pill(tone: .accent) { Text("merged") } }
+        if git.uncommitted > 0 {
+          Pill(tone: .warning) { Text("\(git.uncommitted) uncommitted") }
+            .help("\(git.uncommitted) uncommitted \(git.uncommitted == 1 ? "change" : "changes")")
+        }
+        if let ahead = git.ahead, ahead > 0 {
+          Pill { Text("\u{2191}\(ahead) unpushed").monospacedDigit() }
+            .help(git.unpushedLabel(ahead))
+            .accessibilityLabel(git.unpushedLabel(ahead))
+        }
+        if let behind = git.behind, behind > 0 {
+          Pill { Text("\u{2193}\(behind) behind").monospacedDigit() }
+            .help(git.behindLabel(behind))
+            .accessibilityLabel(git.behindLabel(behind))
+        }
+        if let mergedInto = git.mergedInto { Pill(tone: .accent) { Text("merged") }.help("merged into \(mergedInto)") }
       } else {
         HStack(spacing: Space.xs) {
           if git.uncommitted > 0 {

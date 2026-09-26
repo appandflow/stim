@@ -98,7 +98,7 @@ import Testing
     let git = try #require(payload.unprovisionedWorktrees?.first?.git)
     #expect(git.uncommitted == 3)
     #expect(git.arrows == "\u{2191}3 \u{2193}1")
-    #expect(git.summary == "3 uncommitted changes, 3 ahead of origin/feat/x, 1 behind")
+    #expect(git.summary == "3 uncommitted changes, 3 commits not pushed to origin/feat/x, 1 commit behind origin/feat/x")
     #expect(workspace.worktree?.git == nil)
   }
 
