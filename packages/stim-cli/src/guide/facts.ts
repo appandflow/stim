@@ -810,6 +810,28 @@ RULES
   Plain status prints "last build: ios local cache in 12s, android compiled
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.
 
+  An environment with a recorded run also carries builds, each platform's
+  last 10 runs, newest first. The first entry is the run lastBuilds reports.
+
+  builds         { ios?, android? }, each a list of lastBuilds entries
+                 with { result, slot, configuration, cacheKey, phases }
+  result         "succeeded", "failed", "cancelled" (an interrupt or
+                 \`stim stop\` ended it) or "interrupted": its process ended
+                 without recording a result, so the next run recorded it with
+                 null durationMs and finishedAt, no cache facts, and 0 for the
+                 phase it stopped in
+  slot           the device slot, "default" without --slot
+  configuration  the iOS configuration or Android variant the run built,
+                 "Debug" or "debug" by default; null when the run ended
+                 before resolving it
+  cacheKey       the cache key the run looked up or stored under
+  phases         milliseconds spent in each phase the run entered, among
+                 prepare, cache-lookup, wait, prebuild, pods, compile,
+                 install and launch
+
+  A run that stops before looking up a build, such as a bad flag, is not
+  recorded. Estimates (expectedMs) come from run statistics, not builds.
+
   There is no completion fraction: a compile's log volume depends on what
   is already built, so it does not measure progress.`,
     },

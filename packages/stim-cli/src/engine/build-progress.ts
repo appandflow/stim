@@ -2,7 +2,17 @@ import { formatElapsed, plural } from '../command-output.ts';
 import { readClaimSet, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
 import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import type { RunHistory, RunOutcomeKind, RunSample, StatsPlatform } from './stats.ts';
-import { BUILD_PHASES, type ActiveBuildState, type BuildPhase, type BuildReport } from '@stim-cli/core/state';
+import {
+  BUILD_HISTORY_KEY,
+  BUILD_HISTORY_LIMIT,
+  BUILD_PHASES,
+  LAST_BUILD_KEYS,
+  type ActiveBuildState,
+  type BuildPhase,
+  type BuildReport,
+  type BuildResult,
+  type WorkspaceState,
+} from '@stim-cli/core/state';
 
 export type { ActiveBuildState, BuildPhase, BuildReport } from '@stim-cli/core/state';
 
@@ -75,8 +85,9 @@ export function startBuildProgress({
       note(`Build progress could not be recorded in the workspace state: ${(error as Error)?.message || error}`);
     }
   };
-  const write = () => guard(() => updateWorkspaceState(root, (state) => ({ ...state, [ACTIVE_BUILD_KEY]: record })));
-  write();
+  const write = (before: (state: WorkspaceState) => WorkspaceState = (state) => state) =>
+    guard(() => updateWorkspaceState(root, (state) => ({ ...before(state), [ACTIVE_BUILD_KEY]: record })));
+  write(withInterruptedBuild);
   return {
     step(phase) {
       if (phase === record.phase) return;
@@ -111,6 +122,81 @@ function phaseDurations(phases: ActiveBuildRecord['phases'], now: number): Recor
     out[phase] = (out[phase] ?? 0) + Math.max(0, end - start);
   });
   return out;
+}
+
+const HISTORY_FIELDS = [
+  'platform',
+  'status',
+  'configuration',
+  'fingerprint',
+  'cacheKey',
+  'cacheHit',
+  'cacheSkipped',
+  'durationMs',
+  'startedAt',
+  'errorCode',
+  'missReason',
+  'diagnostics',
+] as const;
+
+function withHistoryEntry(
+  state: WorkspaceState,
+  platform: StatsPlatform,
+  entry: Record<string, unknown>,
+): WorkspaceState {
+  const saved = state[BUILD_HISTORY_KEY];
+  const history = saved && typeof saved === 'object' && !Array.isArray(saved) ? (saved as Record<string, unknown>) : {};
+  const list = Array.isArray(history[platform]) ? (history[platform] as unknown[]) : [];
+  return {
+    ...state,
+    [BUILD_HISTORY_KEY]: { ...history, [platform]: [entry, ...list].slice(0, BUILD_HISTORY_LIMIT) },
+  };
+}
+
+function finishedResult(record: Record<string, unknown>): BuildResult {
+  if (record.status === 'ok') return 'succeeded';
+  return record.errorCode === 'STIM_CANCELLED' ? 'cancelled' : 'failed';
+}
+
+/** Record a finished run as its platform's last build and the newest entry of its history, in one locked write. */
+export function recordFinishedBuild(
+  root: string,
+  record: Record<string, unknown>,
+  { update = updateWorkspaceState, now = Date.now }: { update?: typeof updateWorkspaceState; now?: () => number } = {},
+): void {
+  const platform = record.platform as StatsPlatform;
+  update(root, (state) => {
+    const active = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
+    const own = active?.platform === platform ? active : null;
+    const entry: Record<string, unknown> = {
+      ...Object.fromEntries(HISTORY_FIELDS.filter((key) => key in record).map((key) => [key, record[key]])),
+      result: finishedResult(record),
+      slot: own?.slot ?? 'default',
+      phases: own ? phaseDurations(own.phases, now()) : {},
+    };
+    return withHistoryEntry({ ...state, lastBuild: record, [LAST_BUILD_KEYS[platform]]: record }, platform, entry);
+  });
+}
+
+function withInterruptedBuild(state: WorkspaceState): WorkspaceState {
+  const left = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
+  if (!left) return state;
+  const last = state[LAST_BUILD_KEYS[left.platform]] as { startedAt?: unknown } | undefined;
+  if (Date.parse(String(last?.startedAt)) >= Date.parse(left.startedAt)) return state;
+  return withHistoryEntry(state, left.platform, {
+    platform: left.platform,
+    status: 'failed',
+    result: 'interrupted',
+    slot: left.slot,
+    configuration: null,
+    fingerprint: null,
+    cacheKey: null,
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: null,
+    startedAt: left.startedAt,
+    phases: phaseDurations(left.phases, Date.parse(left.phaseStartedAt)),
+  });
 }
 
 export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {

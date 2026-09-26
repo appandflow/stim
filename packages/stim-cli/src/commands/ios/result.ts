@@ -11,12 +11,11 @@ import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.t
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
-import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS, buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
+import { recordFinishedBuild } from '../../engine/build-progress.ts';
+import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
-import type { IosDeps } from './dependencies.ts';
 
 export function lastBuildRecord({
   fingerprint = null,
@@ -31,7 +30,9 @@ export function lastBuildRecord({
   errorCode = null,
   missReason = null,
   diagnostics = null,
+  configuration = null,
 }: {
+  configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
   fingerprint?: string | null;
@@ -56,6 +57,7 @@ export function lastBuildRecord({
     bundleId,
     startedAt,
     status,
+    configuration,
   };
   if (errorCode) record.errorCode = errorCode;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
@@ -144,10 +146,10 @@ export function iosFacts({
 export function writeLastBuild(
   root: string,
   record: Record<string, unknown>,
-  { write = writeWorkspaceState }: { write?: typeof writeWorkspaceState } = {},
+  { record: recordBuild = recordFinishedBuild }: { record?: typeof recordFinishedBuild } = {},
 ): Record<string, unknown> {
   try {
-    write(root, { lastBuild: record, [LAST_BUILD_KEYS[PLATFORM]]: record });
+    recordBuild(root, record);
   } catch {}
   return record;
 }
@@ -184,7 +186,6 @@ export async function finishIosUpload(
 
 export interface ReportIosResultArgs {
   slot?: string;
-  d: IosDeps;
   root: string;
   json: boolean;
   release: boolean;
@@ -220,7 +221,6 @@ export interface ReportIosResultArgs {
 
 export function reportIosResult({
   slot,
-  d,
   root,
   json,
   release,
@@ -268,8 +268,8 @@ export function reportIosResult({
       bundleId,
       startedAt,
       status: 'ok',
+      configuration: configuration ?? 'Debug',
     }),
-    { write: d.writeWorkspaceState },
   );
   closeWriter();
 

@@ -2,7 +2,18 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
 import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
-import type { BuildDiagnostic, BuildMissChange, BuildMissReason, LastBuildReport, StatsPlatform } from './status.ts';
+import {
+  BUILD_PHASES,
+  BUILD_RESULTS,
+  type BuildDiagnostic,
+  type BuildHistoryEntry,
+  type BuildMissChange,
+  type BuildMissReason,
+  type BuildPhase,
+  type BuildResult,
+  type LastBuildReport,
+  type StatsPlatform,
+} from './status.ts';
 
 export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
@@ -36,6 +47,12 @@ export const LAST_BUILD_KEYS: Readonly<Record<StatsPlatform, string>> = {
   ios: 'lastIosBuild',
   android: 'lastAndroidBuild',
 };
+
+/** Each platform's recent runs, newest first: `{ ios?: [...], android?: [...] }`. */
+export const BUILD_HISTORY_KEY = 'buildHistory';
+
+/** How many runs of each platform a workspace keeps: the same count run statistics keep per outcome. */
+export const BUILD_HISTORY_LIMIT = 10;
 
 const MISS_KINDS: ReadonlySet<string> = new Set([
   'changed',
@@ -168,6 +185,53 @@ export function readLastBuilds(
     if (report) reports[platform] = report;
   }
   return reports;
+}
+
+function historyPhases(value: unknown): Partial<Record<BuildPhase, number>> {
+  const phases: Partial<Record<BuildPhase, number>> = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return phases;
+  for (const phase of BUILD_PHASES) {
+    const ms = (value as Record<string, unknown>)[phase];
+    if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) phases[phase] = Math.round(ms);
+  }
+  return phases;
+}
+
+function historyEntry(platform: StatsPlatform, value: unknown): BuildHistoryEntry | null {
+  const report = lastBuildReport(platform, value);
+  if (!report) return null;
+  const record = value as Record<string, unknown>;
+  const result = (BUILD_RESULTS as readonly unknown[]).includes(record.result)
+    ? (record.result as BuildResult)
+    : report.status === 'ok'
+      ? 'succeeded'
+      : 'failed';
+  return {
+    ...report,
+    result,
+    slot: typeof record.slot === 'string' && record.slot ? record.slot : 'default',
+    configuration: typeof record.configuration === 'string' ? record.configuration : null,
+    cacheKey: typeof record.cacheKey === 'string' ? record.cacheKey : null,
+    phases: historyPhases(record.phases),
+  };
+}
+
+/** Each platform's recorded runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
+export function readBuildHistory(
+  state: WorkspaceState | null | undefined,
+): Partial<Record<StatsPlatform, BuildHistoryEntry[]>> {
+  const history = state?.[BUILD_HISTORY_KEY] as Record<string, unknown> | undefined;
+  const builds: Partial<Record<StatsPlatform, BuildHistoryEntry[]>> = {};
+  for (const platform of ['ios', 'android'] as const) {
+    const list = history?.[platform];
+    if (!Array.isArray(list)) continue;
+    const entries = list
+      .slice(0, BUILD_HISTORY_LIMIT)
+      .map((value) => historyEntry(platform, value))
+      .filter((entry): entry is BuildHistoryEntry => entry !== null);
+    if (entries.length) builds[platform] = entries;
+  }
+  return builds;
 }
 
 export function readWorkspaceState(root: string): WorkspaceState | null {

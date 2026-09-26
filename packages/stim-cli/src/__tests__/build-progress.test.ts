@@ -10,9 +10,11 @@ import {
   buildStatusLine,
   estimateBuild,
   parseActiveBuild,
+  recordFinishedBuild,
   startBuildProgress,
   type ActiveBuildRecord,
 } from '../engine/build-progress.ts';
+import { BUILD_HISTORY_LIMIT, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import {
   emptyStats,
   HISTORY_LIMIT,
@@ -104,6 +106,106 @@ describe('active build record', () => {
   test('a record the state file cannot describe is ignored', () => {
     writeWorkspaceState(root, { [ACTIVE_BUILD_KEY]: { platform: 'ios', phase: 'compiling' } });
     expect(activeRecord()).toBeNull();
+  });
+});
+
+function finished(startedAt: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    platform: 'ios',
+    fingerprint: 'abc',
+    cacheKey: 'abc-debug-sim',
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: 90_000,
+    appPath: '/tmp/App.app',
+    bundleId: 'com.example.app',
+    startedAt,
+    status: 'ok',
+    configuration: 'Debug',
+    ...extra,
+  };
+}
+
+describe('build history', () => {
+  test("a finished run is its platform's last build and newest history entry, with the run's slot and phases", () => {
+    const claim = takeClaim();
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'tablet', claim, now: () => now });
+    now += 5_000;
+    progress.step('compile');
+    now += 80_000;
+    progress.step('install');
+    now += 5_000;
+    recordFinishedBuild(root, finished('2026-09-24T10:00:00.100Z'), { now: () => now });
+    progress.clear();
+    releaseClaim(claim);
+
+    const state = readWorkspaceState(root);
+    expect(state?.lastIosBuild).toEqual(state?.lastBuild);
+    const [entry] = readBuildHistory(state).ios!;
+    expect(entry).toMatchObject({
+      result: 'succeeded',
+      slot: 'tablet',
+      configuration: 'Debug',
+      cacheKey: 'abc-debug-sim',
+      phases: { prepare: 5_000, compile: 80_000, install: 5_000 },
+    });
+    expect(entry).toMatchObject(readLastBuilds(state).ios!);
+  });
+
+  test('keeps the newest runs of each platform, newest first, and names cancelled and failed runs', () => {
+    for (let i = 0; i < BUILD_HISTORY_LIMIT + 2; i += 1) {
+      recordFinishedBuild(root, finished(new Date(T0 + i * 60_000).toISOString()));
+    }
+    recordFinishedBuild(root, finished('2026-09-24T11:00:00.000Z', { status: 'failed', errorCode: 'STIM_CANCELLED' }));
+    recordFinishedBuild(
+      root,
+      finished('2026-09-24T11:01:00.000Z', { platform: 'android', status: 'failed', errorCode: 'STIM_BUILD_FAILED' }),
+    );
+
+    const history = readBuildHistory(readWorkspaceState(root));
+    expect(history.ios).toHaveLength(BUILD_HISTORY_LIMIT);
+    expect(history.ios!.map((entry) => entry.result).slice(0, 2)).toEqual(['cancelled', 'succeeded']);
+    expect(history.ios!.at(-1)!.startedAt).toBe(new Date(T0 + 3 * 60_000).toISOString());
+    expect(history.android!.map((entry) => entry.result)).toEqual(['failed']);
+  });
+
+  test("a run that finds an earlier run's active-build record records that run as interrupted", () => {
+    let now = T0;
+    const first = takeClaim();
+    const killed = startBuildProgress({ root, platform: 'android', slot: 'default', claim: first, now: () => now });
+    now += 4_000;
+    killed.step('compile');
+    releaseClaim(first);
+
+    now += 30_000;
+    const second = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: second, now: () => now }).clear();
+    releaseClaim(second);
+
+    expect(readBuildHistory(readWorkspaceState(root)).android).toEqual([
+      expect.objectContaining({
+        result: 'interrupted',
+        status: 'failed',
+        startedAt: '2026-09-24T10:00:00.000Z',
+        durationMs: null,
+        finishedAt: null,
+        phases: { prepare: 4_000, compile: 0 },
+      }),
+    ]);
+  });
+
+  test('an active-build record whose run recorded its result is not an interrupted run', () => {
+    const first = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: first, now: () => T0 });
+    recordFinishedBuild(root, finished('2026-09-24T10:00:00.100Z'));
+    releaseClaim(first);
+
+    const second = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
+    releaseClaim(second);
+
+    expect(readBuildHistory(readWorkspaceState(root)).ios!.map((entry) => entry.result)).toEqual(['succeeded']);
   });
 });
 

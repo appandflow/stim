@@ -5,7 +5,7 @@ import type { ChildProcess } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { basename } from 'node:path';
 import chalk from 'chalk';
-import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildPhase, recordFinishedBuild } from '../../engine/build-progress.ts';
 import type { ProviderCallResult } from '@stim-cli/cache';
 import {
   verifyAndroidReleaseLaunch,
@@ -31,7 +31,6 @@ import {
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch } from '../../supervisor/state.ts';
-import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -353,7 +352,7 @@ interface FinishAndroidRunArgs {
   pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
   writeLaunch: typeof writeWorkspaceLaunch;
-  writeState: typeof writeWorkspaceState;
+  recordBuild?: typeof recordFinishedBuild;
   now: () => number;
   out: (line: string) => void;
   emit: (line: string) => void;
@@ -455,7 +454,7 @@ export async function finishAndroidRun({
   pidAlive,
   verifyCollector,
   writeLaunch,
-  writeState,
+  recordBuild,
   now,
   out,
   emit,
@@ -678,7 +677,7 @@ export async function finishAndroidRun({
   const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
   if (providerOutcome) phase('cache', providerOutcome.warn ? chalk.yellow(providerOutcome.line) : providerOutcome.line);
 
-  persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
+  persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
   const remoteRelease = Boolean(remoteDevice && release);
   if (remoteDevice) {

@@ -2,7 +2,12 @@ import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-bui
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
-import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
+import {
+  NO_BUILD_PROGRESS,
+  startBuildProgress,
+  type BuildProgress,
+  type recordFinishedBuild,
+} from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
@@ -354,6 +359,7 @@ interface RunAndroidOptions {
   createWriter?: typeof createNdjsonWriter;
   writeLaunch?: typeof writeWorkspaceLaunch;
   writeState?: typeof writeWorkspaceState;
+  recordBuild?: typeof recordFinishedBuild;
   recordStats?: typeof recordRunStats;
   readEstimates?: typeof readRunEstimates;
   now?: () => number;
@@ -440,6 +446,7 @@ function resolveRunAndroidOptions(
     createWriter = createNdjsonWriter,
     writeLaunch = writeWorkspaceLaunch,
     writeState = writeWorkspaceState,
+    recordBuild,
     recordStats = recordRunStats,
     readEstimates = readRunEstimates,
     now = Date.now,
@@ -525,6 +532,7 @@ function resolveRunAndroidOptions(
     createWriter,
     writeLaunch,
     writeState,
+    recordBuild,
     recordStats,
     readEstimates,
     now,
@@ -654,6 +662,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     createWriter,
     writeLaunch,
     writeState,
+    recordBuild,
     recordStats,
     readEstimates,
     now,
@@ -729,7 +738,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (cancellation) ({ code, message, remedy, lines } = cancellation);
     if (lastBuildStatus) {
       persistLastBuild({
-        writeState,
+        recordBuild,
         root,
         record,
         startedAt,
@@ -800,6 +809,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const { plan } = planned;
   const { build: buildPlan, target, isExpo, cacheProviderConfig } = plan;
   const { variant, release, cache: cachePolicy } = buildPlan;
+  record.configuration = variant ?? 'debug';
   const useBuildCache = cachePolicy.read;
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
@@ -1220,7 +1230,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         pidAlive,
         verifyCollector,
         writeLaunch,
-        writeState,
+        recordBuild,
         now,
         out,
         emit,

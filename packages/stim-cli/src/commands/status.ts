@@ -39,6 +39,7 @@ import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
   readIdleStop,
+  readBuildHistory,
   readLastBuilds,
   type DeviceAppProcess,
   type LastBuildReport,
@@ -471,11 +472,13 @@ function workspaceBuilds(
   path: string,
   saved: WorkspaceState | null,
   history: Record<string, RunHistory> | undefined,
-): Pick<EnvironmentState, 'build' | 'lastBuilds'> {
+): Pick<EnvironmentState, 'build' | 'lastBuilds' | 'builds'> {
   const lastBuilds = readLastBuilds(saved);
+  const builds = readBuildHistory(saved);
   return {
     build: workspaceBuild(path, saved, history),
     ...(lastBuilds.ios || lastBuilds.android ? { lastBuilds } : {}),
+    ...(builds.ios || builds.android ? { builds } : {}),
   };
 }
 

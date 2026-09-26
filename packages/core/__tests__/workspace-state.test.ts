@@ -1,4 +1,4 @@
-import { lastUseFrom, readLastBuilds } from '../state/workspace-state.ts';
+import { BUILD_HISTORY_LIMIT, lastUseFrom, readBuildHistory, readLastBuilds } from '../state/workspace-state.ts';
 
 describe('last use of a workspace', () => {
   const at = (iso: string) => Date.parse(iso);
@@ -110,5 +110,58 @@ describe('last build per platform', () => {
       readLastBuilds({ lastBuild: { ...ios, cacheHit: false, missReason: { kind: 'bogus', summary: 'x' } } }).ios
         ?.missReason,
     ).toBeUndefined();
+  });
+});
+
+describe('build history per platform', () => {
+  const entry = (startedAt: string, extra: Record<string, unknown> = {}) => ({
+    platform: 'ios',
+    status: 'ok',
+    result: 'succeeded',
+    startedAt,
+    durationMs: 1000,
+    cacheHit: false,
+    ...extra,
+  });
+
+  test('drops entries it cannot read, bounds each list, and keeps the baseline cache key out of the report', () => {
+    const ios = [
+      entry('2026-09-20T00:00:00Z', {
+        slot: 'tablet',
+        configuration: 'Release',
+        phases: { compile: 900.4, unknown: 5, install: -1 },
+        missReason: {
+          kind: 'changed',
+          summary: 'package.json changed',
+          changes: [],
+          changeCount: 0,
+          baseline: { fingerprint: 'old', cacheKey: 'old-key', from: 'workspace' },
+          rekeyedBy: [],
+        },
+      }),
+      { platform: 'android', status: 'ok', startedAt: '2026-09-19T00:00:00Z' },
+      'not a record',
+      ...Array.from({ length: BUILD_HISTORY_LIMIT + 3 }, (_, i) => entry(`2026-09-1${i % 9}T00:00:00Z`)),
+    ];
+    const history = readBuildHistory({ buildHistory: { ios, android: 'nope' } });
+    expect(history.android).toBeUndefined();
+    expect(history.ios).toHaveLength(BUILD_HISTORY_LIMIT - 2);
+    expect(history.ios![0]).toMatchObject({
+      result: 'succeeded',
+      slot: 'tablet',
+      configuration: 'Release',
+      cacheKey: null,
+      phases: { compile: 900 },
+      finishedAt: '2026-09-20T00:00:01.000Z',
+    });
+    expect(history.ios![0]!.missReason?.baseline).toEqual({ fingerprint: 'old', from: 'workspace' });
+    expect(history.ios![1]).toMatchObject({ slot: 'default', configuration: null, phases: {} });
+  });
+
+  test('an entry without a known result takes it from its status', () => {
+    const history = readBuildHistory({
+      buildHistory: { ios: [entry('2026-09-20T00:00:00Z', { status: 'failed', result: 'exploded' })] },
+    });
+    expect(history.ios![0]!.result).toBe('failed');
   });
 });

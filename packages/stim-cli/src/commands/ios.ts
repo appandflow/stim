@@ -349,6 +349,7 @@ async function runIos(
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let reclaimed: ReclaimedStep[] = [];
+  let builtConfiguration: string | null = null;
 
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
     ({ code, message, remedy, lines } = cancelledFailure(PLATFORM, { code, message }) ?? {
@@ -365,8 +366,14 @@ async function runIos(
     if (build)
       writeLastBuild(
         root,
-        lastBuildRecord({ ...build, startedAt, status: 'failed', errorCode: code, durationMs: elapsed() }),
-        { write: d.writeWorkspaceState },
+        lastBuildRecord({
+          ...build,
+          configuration: builtConfiguration,
+          startedAt,
+          status: 'failed',
+          errorCode: code,
+          durationMs: elapsed(),
+        }),
       );
     note(chalk.red(phaseLine('failed', code)));
     recordRun({ failed: true, durationMs: elapsed() });
@@ -439,6 +446,7 @@ async function runIos(
   }
 
   const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
+  builtConfiguration = configuration ?? 'Debug';
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
   const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);

@@ -718,6 +718,19 @@ when those steps moved the cache key. The build prints the same summary on
 stderr as `cache miss: <summary>`. To predict the next
 build instead, use [`--plan`](#predict-the-next-build).
 
+The same environment also carries `builds: { ios?, android? }`, each
+platform's last 10 runs, newest first. Each entry has the fields of
+`lastBuilds` plus `{ result, slot, configuration, cacheKey, phases }`.
+`result` is `succeeded`, `failed`, `cancelled` (an interrupt or `stim stop`
+ended it), or `interrupted`: the run's process ended without recording a
+result, so the next run in the workspace recorded it without a duration or
+cache facts. `configuration` is the iOS configuration or Android variant the run built
+(`Debug` or `debug` by default), and
+`phases` gives the milliseconds the run spent in each build phase it entered,
+such as `pods`, `compile` and `install`. A run that stopped before looking up
+a build, such as one with a bad flag, is not listed. Stim Desktop and the phone
+app show this list in a workspace's build details.
+
 Each booted simulator and detected emulator also shows who is using it:
 
 ```text

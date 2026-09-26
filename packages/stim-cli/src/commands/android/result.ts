@@ -14,8 +14,8 @@ import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
-import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS, buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
+import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
+import { recordFinishedBuild } from '../../engine/build-progress.ts';
 
 export function androidFacts({
   slot,
@@ -115,7 +115,9 @@ export function lastBuildRecord({
   deviceName = null,
   missReason = null,
   diagnostics = null,
+  configuration = null,
 }: {
+  configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
   fingerprint?: string | null;
@@ -144,6 +146,7 @@ export function lastBuildRecord({
     bundleId: bundleId ?? null,
     startedAt,
     status,
+    configuration: configuration ?? null,
   };
   if (errorCode) record.errorCode = errorCode;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
@@ -311,7 +314,7 @@ function cacheOutcome(cacheHit: unknown, providerName: string | null = null): st
 }
 
 export function persistLastBuild({
-  writeState,
+  recordBuild = recordFinishedBuild,
   root,
   record,
   startedAt,
@@ -321,7 +324,7 @@ export function persistLastBuild({
   diagnostics = null,
   out,
 }: {
-  writeState: typeof writeWorkspaceState;
+  recordBuild?: typeof recordFinishedBuild;
   root: string;
   record: AndroidRecord;
   startedAt: string;
@@ -333,7 +336,7 @@ export function persistLastBuild({
 }): Record<string, unknown> {
   const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode, diagnostics });
   try {
-    writeState(root, { lastBuild, [LAST_BUILD_KEYS[PLATFORM]]: lastBuild });
+    recordBuild(root, lastBuild);
   } catch (err) {
     out(phaseLine('state', chalk.yellow(`could not record lastBuild: ${(err as Error)?.message || err}`)));
   }
