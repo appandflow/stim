@@ -683,9 +683,12 @@ Each workspace also shows its last build per platform:
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, diagnostics? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
-when the run compiled or failed before finding an app.
+when the run compiled or failed before finding an app. A failed run whose
+compiler reported errors carries `diagnostics`: up to five
+`{ file, line, column, message }`, with `null` for a position the compiler
+did not give.
 
 A run that did not install a cached app (it compiled, or failed before finding
 one) carries `missReason`: why the cache had no app for it.

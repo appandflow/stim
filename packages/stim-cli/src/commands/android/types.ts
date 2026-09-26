@@ -56,6 +56,7 @@ export interface VerifyLaunchResultLike {
 export interface FailExtra {
   lastBuildStatus?: boolean;
   diagnostics?: string[];
+  buildDiagnostics?: readonly unknown[];
   lines?: string[];
   logPath?: string | null;
   lease?: LeaseFacts | null;

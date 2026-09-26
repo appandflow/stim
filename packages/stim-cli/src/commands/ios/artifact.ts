@@ -732,7 +732,7 @@ export async function acquireIosArtifact(
             message: report.message,
             remedy: report.remedy,
             logPath: logFile,
-            build: buildFailure,
+            build: { ...buildFailure, diagnostics: result.diagnostics },
           });
         }
         stats.setBuildMs(result.durationMs);

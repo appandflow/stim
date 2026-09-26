@@ -757,7 +757,7 @@ RULES
 
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
-               errorCode?, missReason? }
+               errorCode?, missReason?, diagnostics? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -775,6 +775,9 @@ RULES
                baseline is { fingerprint, from: "workspace" | "project" }, the
                cached build compared with; rekeyedBy lists "prebuild" or
                "pod install" when those steps moved the key.
+  diagnostics  only on a failed run whose compiler reported errors: up to
+               5 { file, line, column, message }, null where the compiler
+               gave no position.
 
   Plain status prints "last build: ios local cache in 12s, android compiled
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.

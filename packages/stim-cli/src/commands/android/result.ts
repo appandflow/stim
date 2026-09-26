@@ -15,7 +15,7 @@ import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter }
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
 import { writeWorkspaceState } from '../../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS, type BuildMissReason } from '@stim-cli/core/state';
+import { LAST_BUILD_KEYS, buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 
 export function androidFacts({
   slot,
@@ -114,8 +114,10 @@ export function lastBuildRecord({
   avdName = null,
   deviceName = null,
   missReason = null,
+  diagnostics = null,
 }: {
   missReason?: BuildMissReason | null;
+  diagnostics?: readonly unknown[] | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   cacheHit?: boolean | string;
@@ -145,6 +147,8 @@ export function lastBuildRecord({
   };
   if (errorCode) record.errorCode = errorCode;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
+  const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
+  if (recorded.length) record.diagnostics = recorded;
   return record;
 }
 
@@ -314,6 +318,7 @@ export function persistLastBuild({
   durationMs,
   status,
   errorCode = null,
+  diagnostics = null,
   out,
 }: {
   writeState: typeof writeWorkspaceState;
@@ -323,9 +328,10 @@ export function persistLastBuild({
   durationMs: number;
   status: string;
   errorCode?: string | null;
+  diagnostics?: readonly unknown[] | null;
   out: (line: string) => void;
 }): Record<string, unknown> {
-  const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode });
+  const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode, diagnostics });
   try {
     writeState(root, { lastBuild, [LAST_BUILD_KEYS[PLATFORM]]: lastBuild });
   } catch (err) {

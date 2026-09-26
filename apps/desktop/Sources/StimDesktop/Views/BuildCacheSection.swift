@@ -65,6 +65,9 @@ struct BuildCacheSection: View {
           .foregroundStyle(last.status == "ok" ? Theme.secondary : Theme.error)
           .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
         }
+        if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
+          BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
+        }
         if let reason = last.missReason {
           MissReasonButton(reason: reason, help: "Why this build missed the cache")
         }
@@ -127,6 +130,31 @@ struct BuildCacheSection: View {
       Text(message).foregroundStyle(Theme.error)
     case nil:
       EmptyView()
+    }
+  }
+}
+
+private struct BuildDiagnosticsView: View {
+  var diagnostics: [BuildDiagnostic]
+  var workspace: String
+  @State private var expanded = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      ForEach(Array((expanded ? diagnostics : [diagnostics[0]]).enumerated()), id: \.offset) { _, diagnostic in
+        Text(diagnostic.text(workspace: workspace))
+          .font(Theme.mono(11))
+          .foregroundStyle(Theme.error)
+          .fixedSize(horizontal: false, vertical: true)
+          .textSelection(.enabled)
+      }
+      if diagnostics.count > 1 {
+        Button(expanded ? "Show fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
+          expanded.toggle()
+        }
+        .buttonStyle(.link)
+        .font(Theme.body(11))
+      }
     }
   }
 }

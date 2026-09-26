@@ -2,7 +2,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
 import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
-import type { BuildMissChange, BuildMissReason, LastBuildReport, StatsPlatform } from './status.ts';
+import type { BuildDiagnostic, BuildMissChange, BuildMissReason, LastBuildReport, StatsPlatform } from './status.ts';
 
 export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
@@ -102,6 +102,30 @@ function missReason(value: unknown): BuildMissReason | null {
   };
 }
 
+const DIAGNOSTIC_CAP = 5;
+
+const positive = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+
+/** The first diagnostics of a failed build in the shape a last-build record stores and `status` reports. */
+export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
+  return (Array.isArray(value) ? value : [])
+    .flatMap((item): BuildDiagnostic[] => {
+      if (!item || typeof item !== 'object') return [];
+      const { file, line, column, message } = item as Record<string, unknown>;
+      if (typeof message !== 'string' || message === '') return [];
+      return [
+        {
+          file: typeof file === 'string' && file ? file : null,
+          line: positive(line),
+          column: positive(column),
+          message,
+        },
+      ];
+    })
+    .slice(0, DIAGNOSTIC_CAP);
+}
+
 function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildReport | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -110,6 +134,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
   const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
   const reason = record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : missReason(record.missReason);
+  const diagnostics = record.status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
   return {
     platform,
     status: record.status,
@@ -121,6 +146,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
     finishedAt: Number.isNaN(finished.getTime()) ? null : finished.toISOString(),
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
     ...(reason ? { missReason: reason } : {}),
+    ...(diagnostics.length ? { diagnostics } : {}),
   };
 }
 

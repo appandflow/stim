@@ -49,6 +49,8 @@ public struct AttentionItem: Hashable, Sendable {
   public var runnable: Bool
   /// Whether the workspace's error logs explain the item.
   public var opensLogs = false
+  /// A second line, such as a failed build's first compiler error.
+  public var detail: String? = nil
 }
 
 public struct AttentionGroup: Hashable, Sendable {
@@ -96,7 +98,8 @@ private func failedRunItems(_ env: Workspace) -> [AttentionItem] {
     else { return nil }
     return AttentionItem(
       text: "\(platform == "ios" ? "iOS" : "Android") run failed (\(build.errorCode ?? "error"))", isError: true,
-      command: StimCommand([platform], cwd: env.path), runnable: true, opensLogs: true)
+      command: StimCommand([platform], cwd: env.path), runnable: true, opensLogs: true,
+      detail: build.diagnostics?.first?.text(workspace: env.path))
   }
 }
 
