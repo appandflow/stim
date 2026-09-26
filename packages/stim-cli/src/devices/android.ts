@@ -685,10 +685,19 @@ export function avdPathExists(path: string): boolean {
  * unreadable path throws.
  */
 export function avdNameAbsent(avdName: string, roots: readonly string[] = avdStorageRoots()): boolean {
-  if (!roots[0] || !avdPathExists(roots[0])) return false;
+  if (!roots[0] || !isDirectoryPath(roots[0])) return false;
   return roots.every(
     (root) => !avdPathExists(join(root, `${avdName}.ini`)) && !avdPathExists(join(root, `${avdName}.avd`)),
   );
+}
+
+function isDirectoryPath(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirectory[] {

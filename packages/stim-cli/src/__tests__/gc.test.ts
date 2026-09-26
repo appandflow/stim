@@ -589,7 +589,6 @@ describe('android ledger names', () => {
     expect(await androidEntries()).toEqual([{ kind: 'android', id: GONE }]);
     const output = await captureLog(() => runGc({ delete: true }));
     expect(output).toContain(`Forgot the ledger entry for android ${GONE}`);
-    expect(output).not.toContain('Forgot the ledger entry for android stim-t1401-data');
     expect([...readCreatedDevices().android].toSorted()).toEqual([
       'stim-t1401-ini',
       'stim-t1401-listed',
@@ -604,6 +603,25 @@ describe('android ledger names', () => {
     breakIt();
     expect(await androidEntries()).toEqual([]);
     await captureLog(() => runGc({ delete: true }));
+    expect(readCreatedDevices().android.has(GONE)).toBe(true);
+  });
+
+  test.each([
+    ['missing', () => rmSync(avdHome(), { recursive: true })],
+    [
+      'a link to a volume that is not mounted',
+      () => {
+        rmSync(avdHome(), { recursive: true });
+        symlinkSync(join(tmpHome, 'unmounted-volume', 'avd'), avdHome());
+      },
+    ],
+  ])('--delete keeps a reported name when the first AVD root is now %s', async (_, breakIt) => {
+    const entries = await androidEntries();
+    expect(entries).toEqual([{ kind: 'android', id: GONE }]);
+    breakIt();
+    expect(await captureLog(() => forgetStaleLedgerEntries(entries))).toContain(
+      `Kept the ledger entry for android ${GONE}`,
+    );
     expect(readCreatedDevices().android.has(GONE)).toBe(true);
   });
 

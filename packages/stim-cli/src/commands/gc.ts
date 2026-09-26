@@ -279,7 +279,7 @@ export async function collectGcReport(
       }
     }
     if (avdsChecked) {
-      staleLedgerEntries = [...staleLedgerEntries, ...findStaleAndroidLedgerEntries(ledger, avds, cfg)];
+      staleLedgerEntries = [...staleLedgerEntries, ...findStaleAndroidLedgerEntries(ledger, avds, loadConfig())];
     }
     const registeredAvds = new Set(avds);
     avds = [...new Set([...avds, ...orphanedAvdDirectories.map((entry) => entry.name)])];
