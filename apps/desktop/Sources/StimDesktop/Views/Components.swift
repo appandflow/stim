@@ -33,7 +33,10 @@ struct GitIndicator: View {
           }
           if let arrows = git.arrows { Text(arrows).foregroundStyle(Palette.secondary) }
           if git.mergedInto != nil {
-            Pill("merged", tone: .accent, size: .small)
+            Text("merged")
+              .foregroundStyle(Palette.primary)
+              .padding(.horizontal, Space.xs)
+              .background(RoundedRectangle(cornerRadius: Radius.small).fill(Palette.primary.opacity(Opacity.tint)))
           }
         }
         .font(Theme.body(10.5, weight: .semibold))

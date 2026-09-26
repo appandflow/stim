@@ -115,9 +115,6 @@ struct StimDesktopApp: App {
       UpdateCommands()
       SidebarCommands()
       InspectorCommands()
-      #if DEBUG
-        GalleryCommands()
-      #endif
     }
 
     #if DEBUG

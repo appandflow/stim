@@ -102,7 +102,6 @@ struct DeviceTile: View {
         }
         if device.appStopped {
           Pill(tone: .warning) { Text("App not running") }
-            .fixedSize()
             .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
           if let workspace, let run = runCommand(for: device, cwd: workspace) {
             Button("Run", systemImage: "play.fill") {
@@ -116,7 +115,7 @@ struct DeviceTile: View {
         }
         Text(source).font(Theme.body(10.5)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
-          Pill { Text(posture) }.fixedSize()
+          Pill { Text(posture) }
         }
       }
     }
@@ -184,7 +183,6 @@ struct DeviceTile: View {
 
   @ViewBuilder private var remoteControls: some View {
     Pill(tone: .warning) { Text("billable") }
-      .fixedSize()
       .help("This remote session is billed while it runs.")
     if let workspace {
       Button("Stop") { confirmingStop = true }
@@ -213,7 +211,6 @@ struct DeviceTile: View {
     case .unknown: tone = .warning
     }
     return Pill(tone: tone) { Text(badge.text) }
-      .fixedSize()
       .help(device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? "")
   }
 

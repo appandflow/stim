@@ -1,16 +1,6 @@
 #if DEBUG
   import SwiftUI
 
-  struct GalleryCommands: Commands {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some Commands {
-      CommandGroup(after: .windowList) {
-        Button("Component Gallery") { openWindow(id: ComponentGallery.windowID) }
-      }
-    }
-  }
-
   /// Every design token and kit component, in light and dark side by side.
   struct ComponentGallery: View {
     static let windowID = "gallery"
