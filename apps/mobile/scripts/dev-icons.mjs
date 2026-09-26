@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { fileURLToPath } from 'node:url';
+
 import sharp from 'sharp';
 
 const ICONS = [
@@ -18,14 +20,15 @@ function badge(size) {
 </svg>`);
 }
 
-const path = (file) => new URL(`../${file}`, import.meta.url).pathname;
+const path = (file) => fileURLToPath(new URL(`../${file}`, import.meta.url));
 
 for (const [source, target] of ICONS) {
-  const { width } = await sharp(path(source)).metadata();
-  await sharp(path(source))
+  const { width, hasAlpha } = await sharp(path(source)).metadata();
+  const icon = await sharp(path(source))
     .modulate({ hue: HUE_SHIFT, brightness: 1.6 })
     .composite([{ input: badge(width), blend: 'atop' }])
     .png()
-    .toFile(path(target));
+    .toBuffer();
+  await (hasAlpha ? sharp(icon) : sharp(icon).removeAlpha()).toFile(path(target));
   console.log(`${source} -> ${target}`);
 }

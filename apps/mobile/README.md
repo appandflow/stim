@@ -302,7 +302,7 @@ and find its UDID with `xcrun devicectl list devices`. Then, from
 
 ```bash
 APP_VARIANT=development npx expo prebuild -p ios --clean
-xcodebuild -workspace ios/StimDev.xcworkspace -scheme StimDev \
+APP_VARIANT=development xcodebuild -workspace ios/StimDev.xcworkspace -scheme StimDev \
   -configuration Release -destination id=<UDID> -derivedDataPath ios/build \
   -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
   -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
@@ -310,7 +310,13 @@ xcodebuild -workspace ios/StimDev.xcworkspace -scheme StimDev \
   DEVELOPMENT_TEAM=R7E8P23K3N build
 xcrun devicectl device install app --device <UDID> \
   ios/build/Build/Products/Release-iphoneos/StimDev.app
+rm -rf ios
 ```
+
+`xcodebuild` reads `app.config.ts` again during the build, so it needs
+`APP_VARIANT` too. Remove `ios/` at the end: Stim records the prebuild it ran
+for this workspace and does not notice a hand-made one, so the next `stim ios`
+would build and cache the Stim Dev project as the production app.
 
 The key's role must reach Certificates, Identifiers & Profiles: Admin, or
 App Manager with that access. With it, Xcode creates the
@@ -342,7 +348,8 @@ build profiles:
 
 - `development`: a development client of the Stim Dev variant (see
   [Variants](#variants)), distributed internally.
-- `preview`: a release build, distributed internally.
+- `preview`: a release build of the production variant, distributed
+  internally. It replaces the TestFlight app on a phone.
 - `production`: an App Store build. EAS owns the build number
   (`appVersionSource: "remote"`) and increments it on every build. The
   marketing version is `version` in `app.config.ts`.
