@@ -10,7 +10,18 @@ import { resolveAndroidCas, resolveAndroidCompilerCache } from '../../engine/and
 import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { productFlavorRefusal, readProductFlavors } from '../../engine/gradle.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
-import { listAvdDeviceProfiles, listInstalledSystemImages } from '../../devices/android.ts';
+import {
+  DEFAULT_AVD_DEVICE_PROFILE,
+  listAvdDeviceProfiles,
+  listInstalledSystemImages,
+  ownedAvdDeviceProfile,
+  ownedAvdSystemImage,
+  pickDefaultSystemImage,
+  profileNeedsFoldFeature,
+  systemImageSupportsFold,
+} from '../../devices/android.ts';
+import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
+import { getProject } from '../../workspace/config.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
@@ -28,6 +39,7 @@ import {
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import {
   deviceProfileRefusal,
+  foldableImageRefusal,
   isReleaseVariant,
   resolveDeviceProfile,
   resolveSystemImage,
@@ -108,6 +120,23 @@ export interface AndroidPlanDependencies {
   listSystemImages?: typeof listInstalledSystemImages;
   listDeviceProfiles?: typeof listAvdDeviceProfiles;
   parkedLimit?: typeof parkedMaxSetting;
+  supportsFold?: (pkg: string) => boolean;
+  ownedAvd?: typeof slotOwnedAvd;
+}
+
+interface SlotAvd {
+  avdName: string;
+  systemImage: string;
+  deviceProfile: string | null;
+}
+
+function slotOwnedAvd(projectPath: string, slot: string): SlotAvd | null {
+  const android = deviceSlotPlatforms(getProject(projectPath), slot)?.android;
+  if (!android?.owned || !android.avdName || android.setupIncomplete) return null;
+  const systemImage = ownedAvdSystemImage(android.avdName);
+  return systemImage
+    ? { avdName: android.avdName, systemImage, deviceProfile: ownedAvdDeviceProfile(android.avdName) }
+    : null;
 }
 
 function fail(
@@ -167,6 +196,8 @@ export function resolveAndroidRunPlan(
     listSystemImages = listInstalledSystemImages,
     listDeviceProfiles = listAvdDeviceProfiles,
     parkedLimit = parkedMaxSetting,
+    supportsFold = systemImageSupportsFold,
+    ownedAvd = slotOwnedAvd,
   }: AndroidPlanDependencies,
 ): AndroidPlanResult {
   const root = settingsContext.projectPath;
@@ -277,6 +308,21 @@ export function resolveAndroidRunPlan(
     listProfiles: listDeviceProfiles,
   });
   if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
+  if (!physical && !remoteBackend) {
+    const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
+    const existing = flagImage ? null : ownedAvd(root, slot);
+    const profile = existing?.deviceProfile ?? deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+    const foldRefusal =
+      profileNeedsFoldFeature(profile) &&
+      foldableImageRefusal({
+        profile,
+        image: existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null,
+        avdName: existing?.avdName ?? null,
+        images: listSystemImages,
+        supportsFold,
+      });
+    if (foldRefusal) return fail(foldRefusal.code, foldRefusal.message, foldRefusal.remedy);
+  }
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
     : remoteBackend

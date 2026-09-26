@@ -1427,8 +1427,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   sim with \`stim worktree remove\` (or \`stim gc --delete\`), then run
   \`stim ios\` again to create the requested one. \`--device-profile\` does
   the same for an AVD of another profile. To keep both devices, give the new
-  one its own \`--slot\`. \`--runtime\` and \`--system-image\` apply at
-  creation only, so an existing device keeps the version it was made with.
+  one its own \`--slot\`. \`--runtime\` and the ios.runtime and
+  android.systemImage settings apply at creation only, so an existing device
+  keeps the version it was made with. An explicit \`--system-image\` that
+  names another image than this workspace's AVD refuses the same way, unless
+  that AVD never finished a boot (for example one made from an image its
+  profile cannot boot): Stim then deletes it through owned-device teardown and
+  creates the requested one. \`--device-profile pixel_fold\` or
+  \`resizable\` on a system image without foldable support (SupportPixelFold
+  in its advancedFeatures.ini) refuses with STIM_BAD_ARG before anything is
+  created, since the emulator quits on boot; the remedy names an installed
+  image that has it.
   The --json payload reports what was actually used: \`deviceType\` and
   \`runtime\` on iOS, \`systemImage\` and \`deviceProfile\` on Android, read
   from the device itself, so a settings-driven run reports them too.`,

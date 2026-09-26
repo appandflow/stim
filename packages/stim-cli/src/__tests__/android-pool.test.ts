@@ -590,3 +590,52 @@ test('adoption recovery gives ownership and readiness probes the remaining timeo
     vi.useRealTimers();
   }
 });
+
+describe('an explicit --system-image against the slot existing AVD', () => {
+  const other = `system-images;android-34;google_apis;${hostSystemImageArch()}`;
+  const options = { platform: 'android', projectPath: '/adopter', label: 'adopter', settings: {} };
+
+  beforeEach(() => {
+    process.env.STIM_POOL_ANDROID_PARKED_MAX = '0';
+    mkdirSync(join(home, 'sdk', ...other.split(';')), { recursive: true });
+    makeAvd('stim-source');
+  });
+
+  test('replaces an owned AVD that never finished a boot, through teardown', async () => {
+    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true, bootPending: true } } });
+    const result = await ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other, explicitSystemImage: other },
+    });
+    expect(calls.some((call) => call.includes('delete avd -n "stim-source"'))).toBe(true);
+    expect(calls.find((call) => call.includes('create avd'))).toContain(`-k ${other}`);
+    expect(result).toMatchObject({ created: true, systemImage: other });
+    expect(getProject('/adopter')?.platforms?.android).toMatchObject({ avdName: result.avdName });
+    expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
+  });
+
+  test('refuses with the --slot remedy for an AVD with no pending first boot, and keeps it', async () => {
+    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true } } });
+    const refused = ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other, explicitSystemImage: other },
+    });
+    await expect(refused).rejects.toThrow(/uses system image .*android-36.*, but .*android-34.* was requested/);
+    await expect(refused).rejects.toHaveProperty('remedy', expect.stringContaining('--slot <name>'));
+    expect(calls.some((call) => /delete avd|create avd/.test(call))).toBe(false);
+  });
+
+  test('a system image from settings alone never replaces or refuses the existing AVD', async () => {
+    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true, bootPending: true } } });
+    const result = await ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other },
+    });
+    expect(result).toMatchObject({ avdName: 'stim-source' });
+    expect(calls.some((call) => /delete avd|create avd/.test(call))).toBe(false);
+    expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
+  });
+});

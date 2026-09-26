@@ -193,6 +193,16 @@ export function releaseAndroidConsolePort(projectPath: string, consolePort: numb
   });
 }
 
+export function clearAndroidBootPending(projectPath: string, avdName: string, slot = 'default'): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    const android = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.android;
+    if (!cfg || android?.avdName !== avdName || !android.bootPending) return;
+    delete android.bootPending;
+    saveConfig(cfg);
+  });
+}
+
 export function clearDevice(projectPath: string, platform: string, slot = 'default', expectedId?: string): boolean {
   return withConfigLock(() => {
     const cfg = loadConfig();

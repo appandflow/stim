@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import {
   allConsolePortsAndSerials,
+  clearAndroidBootPending,
   clearDevice,
   loadConfig,
   releaseAndroidConsolePort,
@@ -105,6 +106,32 @@ export async function ensureOwnedAndroidDevice({
         'Wait for any active AVD operation to finish. If the refusal names an unresolved claim, inspect its creator and native processes before removing only that claim. Retry `stim android` to reconcile the incomplete device.',
       );
     }
+    record = null;
+  }
+  const requestedImage = flags.explicitSystemImage || null;
+  const currentImage = requestedImage && record?.owned && record.avdName ? ownedAvdSystemImage(record.avdName) : null;
+  if (record?.avdName && requestedImage && currentImage && currentImage !== requestedImage) {
+    const avdName = record.avdName;
+    if (!record.bootPending) {
+      throw new AvdRecoveryError(
+        `this project's emulator ${avdName} uses system image ${currentImage}, but ${requestedImage} was requested. --system-image replaces only an emulator that never finished a boot, and this one has.`,
+        'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+      );
+    }
+    const cleanup = teardownAvd(avdName, {
+      del: true,
+      owner: { projectPath, slot, expectedRecord: record },
+      onRemoved: () => {
+        clearDevice(projectPath, 'android', slot, avdName);
+      },
+    });
+    if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
+      throw new AvdRecoveryError(
+        `Owned AVD ${avdName} never finished a boot, but could not be deleted to create one on ${requestedImage} (${cleanup.reason || cleanup.status}). Stim kept the device record.`,
+        'Fix the cause, then retry, or pass `--slot <name>` to create the requested emulator beside it.',
+      );
+    }
+    out(phaseLine('device', `deleted ${avdName}, which never finished a boot, to create one on ${requestedImage}`));
     record = null;
   }
   if (record?.avdName) {
@@ -289,7 +316,7 @@ export async function ensureOwnedAndroidDevice({
   return {
     ...(await bootOwnedAvdOnFreshPort({
       avdName: created.avdName,
-      metadata: created.created ? { poolConfiguration: configuration } : undefined,
+      metadata: created.created ? { poolConfiguration: configuration, bootPending: true } : undefined,
       projectPath,
       slot,
       deviceName: created.avdName,
@@ -342,6 +369,7 @@ export function claimAndroidConsolePort(
     const claim: AndroidConsolePortClaim = {
       ...(metadata?.poolConfiguration ? { poolConfiguration: metadata.poolConfiguration } : {}),
       ...(metadata?.adoptionPending ? { adoptionPending: true } : {}),
+      ...(metadata?.bootPending ? { bootPending: true } : {}),
       avdName,
       consolePort,
       owned: true,
@@ -398,7 +426,9 @@ async function bootOwnedAvdOnFreshPort({
         `${serial} is running AVD ${running}, not this workspace's owned AVD ${avdName}; refusing to use it.`,
       );
     }
-    return { ...claim, serial };
+    clearAndroidBootPending(projectPath, avdName, slot);
+    const { bootPending: _booted, ...booted } = claim;
+    return { ...booted, serial };
   } catch (error) {
     releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
     throw error;
@@ -518,13 +548,18 @@ export async function ensureAndroidBooted({
   if (resolved.notOwned) {
     return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned by name; refusing to boot it.` };
   }
+  const avdName = device.avdName;
+  const booted = (result: BootResult): BootResult => {
+    if (!result.failed) clearAndroidBootPending(projectPath, avdName, slot);
+    return result;
+  };
   if (resolved.serial) {
-    return waitForAndroidBoot({ serial: resolved.serial, timeoutMs, out });
+    return booted(await waitForAndroidBoot({ serial: resolved.serial, timeoutMs, out }));
   }
 
   const freshSerial = `emulator-${device.consolePort}`;
   if (device.owned && device.serial === freshSerial) {
-    return waitForAndroidBoot({ serial: freshSerial, timeoutMs, out });
+    return booted(await waitForAndroidBoot({ serial: freshSerial, timeoutMs, out }));
   }
 
   const claim = claimAndroidConsolePort({
@@ -550,5 +585,5 @@ export async function ensureAndroidBooted({
   }
   const result = await waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
   if (result.failed) releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
-  return result;
+  return booted(result);
 }

@@ -12,6 +12,7 @@ import { readProductFlavors } from '../engine/gradle.ts';
 import { planAndroid, type AndroidPlanDeps, type AndroidPlanOptions } from '../commands/android/next-build.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { hostSystemImageArch } from '../devices/android.ts';
 
 let root: string;
 
@@ -308,5 +309,65 @@ describe('planAndroid', () => {
     const { payload, exitCode } = await plan({ device: 'emulator-5554' });
     expect(exitCode).toBe(1);
     expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', message: expect.stringContaining('--device') });
+  });
+});
+
+describe('a profile the emulator gates on foldable image support', () => {
+  const arch = hostSystemImageArch();
+  const image = (api: number, tag = 'google_apis') => ({
+    api,
+    tag,
+    arch,
+    pkg: `system-images;android-${api};${tag};${arch}`,
+  });
+  const foldable = new Set([image(34).pkg]);
+  const plan = (
+    overrides: Partial<AndroidPlanInputs>,
+    {
+      images = [image(30), image(33), image(34)],
+      owned = null as ReturnType<NonNullable<AndroidPlanDependencies['ownedAvd']>>,
+    } = {},
+  ) =>
+    resolveAndroidRunPlan(inputs(overrides), {
+      ...inspection([]),
+      listSystemImages: () => images,
+      listDeviceProfiles: () => ['pixel_6', 'pixel_fold', 'resizable', '7.6in Foldable'],
+      supportsFold: (pkg) => foldable.has(pkg),
+      ownedAvd: () => owned,
+    });
+
+  test('refuses pixel_fold on the default image when it lacks the feature, naming an installed one that has it', () => {
+    const result = plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(34), image(35)] });
+    assert(!result.ok);
+    expect(result.code).toBe('STIM_BAD_ARG');
+    expect(result.message).toContain(`pixel_fold with system image ${image(35).pkg}`);
+    expect(result.remedy).toContain(`--system-image "${image(34).pkg}"`);
+  });
+
+  test('refuses resizable on an explicit image without the feature, whatever its API level', () => {
+    const result = plan({ deviceProfile: 'resizable', systemImage: image(33).pkg });
+    assert(!result.ok);
+    expect(result.remedy).toContain(image(34).pkg);
+  });
+
+  test('accepts pixel_fold on an image with the feature and a hinged generic profile on an old image', () => {
+    expect(plan({ deviceProfile: 'pixel_fold', systemImage: image(34).pkg }).ok).toBe(true);
+    expect(plan({ deviceProfile: '7.6in Foldable', systemImage: image(30).pkg }).ok).toBe(true);
+  });
+
+  test('without an installed image that has the feature, the remedy is an sdkmanager install', () => {
+    const result = plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(33)] });
+    assert(!result.ok);
+    expect(result.remedy).toContain(`sdkmanager "system-images;android-36;google_apis;${arch}"`);
+  });
+
+  test("checks the slot's existing AVD instead of the default image unless --system-image names one", () => {
+    const owned = { avdName: 'stim-app-fold', systemImage: image(30).pkg, deviceProfile: 'pixel_fold' };
+    const refused = plan({}, { owned });
+    assert(!refused.ok);
+    expect(refused.message).toContain(`emulator stim-app-fold uses device profile pixel_fold on ${image(30).pkg}`);
+    expect(refused.remedy).toMatch(/replaces stim-app-fold if that emulator never finished a boot.*--slot <name>/);
+    expect(plan({ systemImage: image(34).pkg }, { owned }).ok).toBe(true);
+    expect(plan({}, { owned: { ...owned, systemImage: image(34).pkg } }).ok).toBe(true);
   });
 });

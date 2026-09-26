@@ -943,7 +943,11 @@ captured"  (in metro.ndjson, bare RN)
   ios.deviceType, ios.runtime, android.systemImage or android.deviceProfile
   setting is checked the same way, and the check applies
   even when this workspace ALREADY owns a device, so a name that could never
-  create anything is caught rather than left to a later run.
+  create anything is caught rather than left to a later run. The
+  \`pixel_fold\` and \`resizable\` profiles on a system image without
+  foldable support (SupportPixelFold in its advancedFeatures.ini) refuse the
+  same way, since the emulator quits on boot; the remedy names an installed
+  image that has it, or an sdkmanager install when none does.
   \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
   carries the name; the remedy names the caches on this machine. \`gc\`
   refuses --cache together with --worktrees the same way.

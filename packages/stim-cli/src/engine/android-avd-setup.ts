@@ -223,7 +223,7 @@ export async function prepareOwnedAvd({
             avdName,
             owned: true,
             deviceName: avdName,
-            ...(prepared.created ? { poolConfiguration: configuration } : {}),
+            ...(prepared.created ? { poolConfiguration: configuration, bootPending: true } : {}),
             ...(prepared.consolePort ? { consolePort: prepared.consolePort } : {}),
           },
           slot,
