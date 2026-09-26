@@ -65,8 +65,9 @@ function summarize(
     return null;
   }
   try {
-    const { dev, ino, size } = fstatSync(fd);
-    const key = `${dev}:${ino}`;
+    const stat = fstatSync(fd, { bigint: true });
+    const key = `${stat.dev}:${stat.ino}`;
+    const size = Number(stat.size);
     const cached = known[key];
     const base = cached && stillExtends(fd, cached, size) ? cached : null;
     const start = base ?? { offset: 0, head: '', tail: '', markers: {}, errors: [] };
