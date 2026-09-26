@@ -96,14 +96,17 @@ test('gc names a ledgered browser profile whose directory is gone, never one on 
   expect(staleBrowserProfiles(ledger, (path) => present.has(path))).toEqual([{ kind: 'web', id: gone }]);
 });
 
-test('gc keeps the ledger entry of a workspace linked to a missing volume', () => {
-  const workspaces = join(home, 'workspaces');
-  mkdirSync(workspaces);
-  symlinkSync(join(home, 'unmounted', 'ws'), join(workspaces, 'ws'));
-  const profile = join(workspaces, 'ws', 'web', 'profile');
-  const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([profile]) };
-  expect(staleBrowserProfiles(ledger)).toEqual([]);
-});
+test.skipIf(process.platform === 'win32')(
+  'gc keeps the ledger entry of a workspace linked to a missing volume (symlink creation needs privileges on win32)',
+  () => {
+    const workspaces = join(home, 'workspaces');
+    mkdirSync(workspaces);
+    symlinkSync(join(home, 'unmounted', 'ws'), join(workspaces, 'ws'));
+    const profile = join(workspaces, 'ws', 'web', 'profile');
+    const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([profile]) };
+    expect(staleBrowserProfiles(ledger)).toEqual([]);
+  },
+);
 
 describe('web.url', () => {
   test('fills named ports and the Metro port, and refuses {port:metro} without a reservation', async () => {
