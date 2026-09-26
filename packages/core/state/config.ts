@@ -30,11 +30,11 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
 
 export function loadConfig(): Config | null {
   const p = getConfigPath();
-  if (!existsSync(p)) return null;
   let parsed: unknown;
   try {
     parsed = readJsonFile(p);
   } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     if (!(err instanceof SyntaxError)) throw err;
     throw configCorrupt(`is not valid JSON: ${err.message}`, p);
   }

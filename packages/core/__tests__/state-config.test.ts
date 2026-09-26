@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConcurrencyLimits, getRepoSettings, loadConfig, withConfigLock } from '../state/config.ts';
+import { withStateReadCache } from '../state/json-file.ts';
 
 let tmpHome: string;
 
@@ -21,6 +22,23 @@ afterEach(() => {
 
 test('loadConfig returns null when no file exists', () => {
   expect(loadConfig()).toBe(null);
+});
+
+test('withStateReadCache reads config.json once per scope, across awaits, and never shares the parsed object', async () => {
+  await withStateReadCache(async () => {
+    expect(loadConfig()).toBe(null);
+    writeConfig({ projects: { '/a': { metroPort: 8081 } } });
+    await Promise.resolve();
+    expect(loadConfig()).toBe(null);
+  });
+  await withStateReadCache(async () => {
+    const first = loadConfig()!;
+    first.projects['/b'] = { metroPort: 8082 };
+    writeConfig({ projects: {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(Object.keys(loadConfig()!.projects)).toEqual(['/a']);
+  });
+  expect(loadConfig()!.projects).toEqual({});
 });
 
 test('loadConfig reports a corrupt config by path instead of throwing a raw SyntaxError', () => {
