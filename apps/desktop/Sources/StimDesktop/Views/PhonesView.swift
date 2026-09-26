@@ -44,7 +44,10 @@ struct PhonesView: View {
           Text("No paired phones.").foregroundStyle(Theme.secondary)
         }
         ForEach(server.devices) { device in
-          DeviceRow(device: device, allowControl: { server.grant(device, control: $0) }) { revoking = device }
+          DeviceRow(
+            device: device, changing: server.pendingGrants[device.id] != nil,
+            allowControl: { server.grant(device, control: $0) }
+          ) { revoking = device }
         }
       } header: {
         HStack {
@@ -221,6 +224,7 @@ private struct RouteSection: View {
 
 private struct DeviceRow: View {
   var device: PairedDevice
+  var changing: Bool
   var allowControl: (Bool) -> Void
   var revoke: () -> Void
 
@@ -243,6 +247,7 @@ private struct DeviceRow: View {
       .font(Theme.body(11.5))
       Toggle("Allow control", isOn: .init(get: { device.canControl }, set: allowControl))
         .toggleStyle(.checkbox)
+        .disabled(changing)
         .help("Let this phone drive simulators and emulators and run reload and stop.")
       Button("Revoke", role: .destructive, action: revoke)
     }

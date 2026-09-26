@@ -17,12 +17,14 @@ final class ServerController: ObservableObject {
   @Published private(set) var devices: [PairedDevice] = []
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
+  @Published private(set) var pendingGrants: [String: Bool] = [:]
 
   private var environment: Task<[String: String], Never>?
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
   private var generation = 0
+  private var devicesEpoch = 0
 
   var port: Int { StimServerCLI.defaultPort }
 
@@ -129,12 +131,20 @@ final class ServerController: ObservableObject {
   }
 
   func reloadDevices() {
+    let epoch = devicesEpoch
     Task {
       let cli = await cli()
       let result = await Task.detached { Result { try cli.devices() } }.value
+      guard epoch == devicesEpoch else { return }
       switch result {
       case .success(let devices):
-        self.devices = devices.sorted { $0.pairedAt > $1.pairedAt }
+        self.devices = devices.map { device in
+          guard let control = pendingGrants[device.id] else { return device }
+          var device = device
+          device.capabilities = Self.capabilities(control: control)
+          return device
+        }
+        .sorted { $0.pairedAt > $1.pairedAt }
         devicesError = nil
       case .failure(let error):
         devicesError = error.localizedDescription
@@ -143,15 +153,23 @@ final class ServerController: ObservableObject {
   }
 
   func grant(_ device: PairedDevice, control: Bool) {
+    guard pendingGrants[device.id] == nil else { return }
+    pendingGrants[device.id] = control
     if let index = devices.firstIndex(where: { $0.id == device.id }) {
-      devices[index].capabilities = control ? ["read", "control"] : ["read"]
+      devices[index].capabilities = Self.capabilities(control: control)
     }
     Task {
       let cli = await cli()
       let result = await Task.detached(operation: { Result { try cli.grant(device.id, control: control) } }).value
+      pendingGrants[device.id] = nil
+      devicesEpoch += 1
       if case .failure(let error) = result { changeError = error.localizedDescription } else { changeError = nil }
       reloadDevices()
     }
+  }
+
+  private static func capabilities(control: Bool) -> [String] {
+    control ? ["read", "control"] : ["read"]
   }
 
   func revoke(_ device: PairedDevice) {

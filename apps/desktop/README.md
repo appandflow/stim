@@ -291,7 +291,8 @@ can also drive simulators and emulators and run reload and stop.
 **Pair a Phone** runs `stim-server pair --json`, with `--control` while **Allow
 this phone to control devices** is checked (the default), and shows its
 single-use code as a QR code with the time left before it expires, plus the
-endpoint and token for manual entry. Changing the option generates a new code.
+endpoint and token for manual entry. Changing the option generates a new code;
+the previous code stays valid until it expires.
 The sheet shows the phone once it pairs. The paired phones list comes from
 `stim-server devices --json`: each phone's name, a **Read-only** or **Can
 control** badge, its short id, the tailnet node it paired from, when it was last
