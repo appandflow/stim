@@ -38,3 +38,10 @@ overrides:
   uuid: ^11.1.1
   serialize-javascript: '>=7.0.5'
   qs: '>=6.16.0'
+
+# AGP 9 (React Native 0.88) registers the Kotlin plugin itself, and these packages
+# apply it again unconditionally, which fails Gradle configuration. Drop each
+# patch once the fix ships: margelo/react-native-mmkv#1090, margelo/nitro#1579.
+patchedDependencies:
+  react-native-mmkv@4.3.2: patches/react-native-mmkv@4.3.2.patch
+  react-native-nitro-modules@0.37.1: patches/react-native-nitro-modules@0.37.1.patch

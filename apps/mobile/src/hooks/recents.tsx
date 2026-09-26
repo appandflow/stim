@@ -40,7 +40,7 @@ export function RecentsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const next = newlyLive(
       live.current,
-      connections.map((c) => ({ id: c.mac.id, name: c.mac.name, status: c.status })),
+      connections.map((c) => ({ id: c.mac.id, name: c.mac.name, status: c.cachedSeenAt === null ? c.status : null })),
     );
     live.current = next.live;
     if (next.started.length > 0) touchAll(next.started);

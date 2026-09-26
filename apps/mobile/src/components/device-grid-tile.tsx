@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, type ViewInstance } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
@@ -7,30 +7,32 @@ import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
-import { useFrameSnapshot } from '@/hooks/mac-connection';
-import type { StimConnection } from '@/lib/connection';
-import type { DeviceTileItem } from '@/lib/home';
+import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
+import type { DeviceTileItem, HomeItem } from '@/lib/home';
 import { useColors } from '@/theme';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
 
-export function DeviceGridTile({
-  tile,
-  wide,
-  connection,
-  visible,
-  onAspect,
-  onPress,
-}: {
+interface TileProps {
   tile: DeviceTileItem;
   wide: boolean;
-  connection: StimConnection | null;
   visible: boolean;
   onAspect: (key: string, aspect: number) => void;
-  onPress: () => void;
-}) {
+  onOpen: (item: HomeItem, errors: boolean) => void;
+}
+
+const sameTile = (a: TileProps, b: TileProps) =>
+  a.tile.key === b.tile.key &&
+  a.tile.item === b.tile.item &&
+  a.wide === b.wide &&
+  a.visible === b.visible &&
+  a.onAspect === b.onAspect &&
+  a.onOpen === b.onOpen;
+
+export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible, onAspect, onOpen }: TileProps) {
   const colors = useColors();
+  const { connection } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
   const streams = device.owned && !device.physical;
   const { frame, error } = useFrameSnapshot(
@@ -51,7 +53,7 @@ export function DeviceGridTile({
   const zoomedAway = useZoomedAway(zoomKey(target));
   return (
     <Card
-      onPress={onPress}
+      onPress={() => onOpen(item, false)}
       accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
       style={[styles.tile, wide && styles.wide]}
     >
@@ -100,7 +102,7 @@ export function DeviceGridTile({
       </View>
     </Card>
   );
-}
+}, sameTile);
 
 const styles = StyleSheet.create({
   tile: { flex: 1, maxWidth: '50%' },

@@ -1,0 +1,15 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index f564aad07f9a1bb91996331a3dafbfeea1b1f0da..9d94f04fdb09bb288544e2965250a11860a4a3c7 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -21,7 +21,9 @@ def isNewArchitectureEnabled() {
+ }
+ 
+ apply plugin: "com.android.library"
+-apply plugin: 'org.jetbrains.kotlin.android'
++if (project.extensions.findByName('kotlin') == null) {
++  apply plugin: 'org.jetbrains.kotlin.android'
++}
+ apply from: "./fix-prefab.gradle"
+ 
+ if (isNewArchitectureEnabled()) {

@@ -23,14 +23,13 @@ import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
 import {
   filtersActive,
   filterWorkspaces,
   gridRows,
-  mergeWorkspaces,
   projectNames,
   runningDevices,
   type DeviceTileItem,
@@ -50,7 +49,8 @@ export function Home() {
   const colors = useColors();
   const router = useRouter();
   const menu = useMenuDrawer();
-  const { macs, connections } = useMacs();
+  const macs = usePairedMacs();
+  const items = useWorkspaceItems();
   const { filters, update, view } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const [aspects, setAspects] = useState<ReadonlyMap<string, number>>(new Map());
@@ -72,12 +72,7 @@ export function Home() {
     [],
   );
 
-  const macIds = useMemo(() => connections.map((c) => c.mac.id), [connections]);
-  const byMac = useMemo(() => new Map(connections.map((c) => [c.mac.id, c])), [connections]);
-  const items = useMemo(
-    () => mergeWorkspaces(connections.map((c) => ({ id: c.mac.id, name: c.mac.name, status: c.status }))),
-    [connections],
-  );
+  const macIds = useMemo(() => (macs ?? []).map((mac) => mac.id), [macs]);
   const { shown, hiddenByActivity } = useMemo(() => filterWorkspaces(items, filters, macIds), [items, filters, macIds]);
   const sections = useMemo(() => {
     const live = shown.filter((item) => isActive(item.env));
@@ -88,30 +83,18 @@ export function Home() {
     ].filter((s) => s.data.length > 0);
   }, [shown]);
   const now = useNow(30_000);
-  const attention = useMemo(
-    () =>
-      homeAttention(
-        connections.map((c) => ({
-          id: c.mac.id,
-          name: c.mac.name,
-          state: c.state,
-          missing: c.missing,
-          status: c.status,
-          usage: c.usage,
-          home: c.home,
-          disconnectedAt: c.disconnectedAt,
-        })),
-        now,
-      ),
-    [connections, now],
-  );
   const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
   const rows = useMemo(() => gridRows(tiles, aspects), [tiles, aspects]);
   const noFilterSet = useMemo(() => !filtersActive(filters, macIds, projectNames(items)), [filters, macIds, items]);
-  const loading =
-    macs === null ||
-    (items.length === 0 &&
-      connections.some((c) => !c.status && !c.missing && (c.state.kind === 'connecting' || c.state.kind === 'open')));
+
+  const openWorkspace = useCallback(
+    (item: HomeItem, errors: boolean) =>
+      router.push({
+        pathname: errors ? '/mac/[id]/logs' : '/mac/[id]/workspace',
+        params: { id: item.macId, path: item.env.path, ...(errors ? { errors: '1' } : {}) },
+      }),
+    [router],
+  );
 
   const header = (
     <>
@@ -187,12 +170,6 @@ export function Home() {
     );
   }
 
-  const openWorkspace = (item: HomeItem, errors: boolean) =>
-    router.push({
-      pathname: errors ? '/mac/[id]/logs' : '/mac/[id]/workspace',
-      params: { id: item.macId, path: item.env.path, ...(errors ? { errors: '1' } : {}) },
-    });
-
   const openAttention = ({ target }: HomeAttentionItem) => {
     if (target.kind === 'machine') router.push({ pathname: '/mac/[id]', params: { id: target.macId } });
     else
@@ -211,15 +188,15 @@ export function Home() {
         </Touch>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-        {connections.map((c) => (
+        {(macs ?? []).map((mac) => (
           <MacChip
-            key={c.mac.id}
-            mac={c}
-            onPress={() => router.push({ pathname: '/mac/[id]', params: { id: c.mac.id } })}
+            key={mac.id}
+            mac={mac}
+            onPress={() => router.push({ pathname: '/mac/[id]', params: { id: mac.id } })}
           />
         ))}
       </ScrollView>
-      {view === 'workspaces' ? <AttentionStrip items={attention} onOpen={openAttention} /> : null}
+      {view === 'workspaces' ? <HomeAttention now={now} onOpen={openAttention} /> : null}
     </View>
   );
 
@@ -251,26 +228,15 @@ export function Home() {
                   key={tile.key}
                   tile={tile}
                   wide={(aspects.get(tile.key) ?? 0) > 1}
-                  connection={byMac.get(tile.item.macId)?.connection ?? null}
                   visible={focused && visible.has(tile.key)}
                   onAspect={onAspect}
-                  onPress={() => openWorkspace(tile.item, false)}
+                  onOpen={openWorkspace}
                 />
               ))}
             </View>
           )}
           ListEmptyComponent={
-            loading ? (
-              <ActivityIndicator style={styles.loading} color={colors.primary} />
-            ) : (
-              <View style={styles.empty}>
-                <StimJar playing={focused} />
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>No device running</Text>
-                <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
-                  Simulators and emulators appear here while they run, on every paired machine the filters keep.
-                </Text>
-              </View>
-            )
+            <HomeEmpty view="devices" items={items.length} noFilterSet={noFilterSet} focused={focused} />
           }
         />
       </View>
@@ -292,45 +258,9 @@ export function Home() {
             <Text style={[styles.sectionTitle, { color: colors.tertiary }]}>{section.title}</Text>
           </View>
         )}
-        renderItem={({ item }) => {
-          const mac = byMac.get(item.macId);
-          return (
-            <WorkspaceRow
-              item={item}
-              macOnline={mac?.state.kind === 'open'}
-              disconnectedAt={mac?.disconnectedAt ?? null}
-              now={now}
-              onPress={() => openWorkspace(item, false)}
-              onErrors={() => openWorkspace(item, true)}
-            />
-          );
-        }}
+        renderItem={({ item }) => <WorkspaceRow item={item} now={now} onOpen={openWorkspace} />}
         ListEmptyComponent={
-          loading ? (
-            <ActivityIndicator style={styles.loading} color={colors.primary} />
-          ) : (
-            <View style={styles.empty}>
-              <StimJar playing={focused} />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                {items.length
-                  ? noFilterSet
-                    ? 'No live workspaces'
-                    : 'Nothing matches the filters'
-                  : connections.some((c) => c.state.kind === 'open')
-                    ? 'Nothing running'
-                    : 'No machine connected'}
-              </Text>
-              <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
-                {items.length
-                  ? noFilterSet
-                    ? 'Start one with `stim ios` or `stim android` in a worktree.'
-                    : 'Change the filters to see more workspaces.'
-                  : !connections.some((c) => c.state.kind === 'open')
-                    ? 'The chips above show why each machine is offline.'
-                    : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
-              </Text>
-            </View>
-          )
+          <HomeEmpty view="workspaces" items={items.length} noFilterSet={noFilterSet} focused={focused} />
         }
         ListFooterComponent={
           filters.activity === 'live' && hiddenByActivity > 0 ? (
@@ -343,6 +273,83 @@ export function Home() {
           ) : undefined
         }
       />
+    </View>
+  );
+}
+
+function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttentionItem) => void }) {
+  const { connections } = useMacs();
+  const items = useMemo(
+    () =>
+      homeAttention(
+        connections.map((c) => ({
+          id: c.mac.id,
+          name: c.mac.name,
+          state: c.state,
+          missing: c.missing,
+          status: c.cachedSeenAt === null ? c.status : null,
+          usage: c.usage,
+          home: c.home,
+          disconnectedAt: c.disconnectedAt,
+          seenAt: c.cachedSeenAt,
+        })),
+        now,
+      ),
+    [connections, now],
+  );
+  return <AttentionStrip items={items} onOpen={onOpen} />;
+}
+
+function HomeEmpty({
+  view,
+  items,
+  noFilterSet,
+  focused,
+}: {
+  view: 'workspaces' | 'devices';
+  items: number;
+  noFilterSet: boolean;
+  focused: boolean;
+}) {
+  const colors = useColors();
+  const { macs, connections } = useMacs();
+  const loading =
+    macs === null ||
+    (items === 0 &&
+      connections.some((c) => !c.status && !c.missing && (c.state.kind === 'connecting' || c.state.kind === 'open')));
+  if (loading) return <ActivityIndicator style={styles.loading} color={colors.primary} />;
+  if (view === 'devices') {
+    return (
+      <View style={styles.empty}>
+        <StimJar playing={focused} />
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>No device running</Text>
+        <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
+          Simulators and emulators appear here while they run, on every paired machine the filters keep.
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.empty}>
+      <StimJar playing={focused} />
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>
+        {items
+          ? noFilterSet
+            ? 'No live workspaces'
+            : 'Nothing matches the filters'
+          : connections.some((c) => c.state.kind === 'open')
+            ? 'Nothing running'
+            : 'No machine connected'}
+      </Text>
+      <Text style={[styles.emptyMessage, { color: colors.secondary }]}>
+        {items
+          ? noFilterSet
+            ? 'Start one with `stim ios` or `stim android` in a worktree.'
+            : 'Change the filters to see more workspaces.'
+          : !connections.some((c) => c.state.kind === 'open')
+            ? 'The chips above show why each machine is offline.'
+            : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
+      </Text>
     </View>
   );
 }
