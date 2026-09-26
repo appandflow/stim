@@ -38,15 +38,20 @@ export function runStim(
   const chunks: Buffer[] = [];
   let size = 0;
   let stderr = '';
+  const release = () => {
+    child.stdout.destroy();
+    child.stderr.destroy();
+  };
   const fail = (message: string) => {
     if (failure) return;
     failure = message;
+    release();
     void terminate(child);
   };
-  const timer = setTimeout(
-    () => fail(`${label} did not finish within ${limits.timeoutMs / 1000} s.`),
-    limits.timeoutMs,
-  );
+  const timer = setTimeout(() => {
+    if (child.exitCode !== null || child.signalCode !== null) return release();
+    fail(`${label} did not finish within ${limits.timeoutMs / 1000} s.`);
+  }, limits.timeoutMs);
   child.stdout.on('data', (chunk: Buffer) => {
     size += chunk.length;
     if (size > limits.maxOutputBytes) return fail(`${label} printed more than ${limits.maxOutputBytes} bytes.`);

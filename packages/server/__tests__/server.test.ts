@@ -88,6 +88,14 @@ if (command === 'status') {
   };
   if (!env.FAKE_STIM_PLAN_GATE) answer();
   else setInterval(() => existsSync(env.FAKE_STIM_PLAN_GATE) && answer(), 10);
+} else if (env.FAKE_STIM_GRANDCHILD) {
+  const { spawn } = await import('node:child_process');
+  const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+    detached: true,
+    stdio: 'inherit',
+  });
+  writeFileSync(env.FAKE_STIM_GRANDCHILD, String(grandchild.pid));
+  setInterval(() => {}, 1000);
 } else if (env.FAKE_STIM_HANG || env.FAKE_STIM_STUBBORN) {
   setInterval(() => {}, 1000);
 } else if (env.FAKE_STIM_JSON_FAIL) {
@@ -818,6 +826,20 @@ describe('stats.get and settings.get', () => {
       error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
     });
     expect(childPids()).toEqual([]);
+  });
+
+  it('ends a command at its timeout while a grandchild still holds its output', async () => {
+    const grandchild = join(root, 'grandchild.pid');
+    const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 2000 } });
+    const client = await authed(port);
+    try {
+      expect(await client.request('stats.get')).toMatchObject({
+        error: { code: 'stim-failed', message: 'stim stats did not finish within 2 s.' },
+      });
+      expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
+    } finally {
+      if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
+    }
   });
 });
 
