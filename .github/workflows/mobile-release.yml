@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 120
     defaults:
       run:
+        shell: bash
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -46,12 +47,22 @@ jobs:
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
 
+      - name: Install before any secret is loaded
+        run: npm ci
+
+      - name: The tag matches the app version
+        if: github.event_name == 'push'
+        run: |
+          version="$(npx expo config --json | jq -r .version)"
+          if [ "$GITHUB_REF_NAME" != "mobile-v$version" ]; then
+            echo "::error::$GITHUB_REF_NAME does not match version $version in app.config.ts."
+            exit 1
+          fi
+
       - uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # 9.0.0
         with:
-          eas-version: latest
+          eas-version: 24.8.0
           token: ${{ secrets.EXPO_TOKEN }}
-
-      - run: npm ci
 
       - name: Choose update or build
         id: mode
@@ -59,11 +70,6 @@ jobs:
           INPUT_MODE: ${{ inputs.mode }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
-            version="$(npx expo config --json | jq -r .version)"
-            if [ "$GITHUB_REF_NAME" != "mobile-v$version" ]; then
-              echo "::error::$GITHUB_REF_NAME does not match version $version in app.config.ts."
-              exit 1
-            fi
             mode=build
           else
             mode="$INPUT_MODE"
@@ -85,7 +91,7 @@ jobs:
         if: steps.mode.outputs.mode == 'update'
         run: |
           message="$(git log -1 --format=%s)"
-          eas update --channel production --platform ios --message "$message" --non-interactive
+          eas update --channel production --environment production --platform ios --message "$message" --non-interactive
 
       - name: Build and submit to TestFlight
         if: steps.mode.outputs.mode == 'build'

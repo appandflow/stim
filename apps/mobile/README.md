@@ -468,17 +468,21 @@ or prefix each command with `npx`).
     compares it with the runtime of the latest finished `production` build.
     The same runtime publishes an update; a different one, or no build with a
     runtime, builds and submits.
-  - `update`: `eas update --channel production --platform ios` with the
-    commit subject as the message. Use it only when you know the change is
+  - `update`: publishes an update to channel `production` with the commit
+    subject as the message. Use it only when you know the change is
     JS-only; an update for a runtime no build has reaches no one.
-  - `build`: `eas build --platform ios --profile production
---non-interactive --auto-submit`.
+  - `build`: builds with the `production` profile and submits to
+    TestFlight (`eas build --auto-submit`).
 - A `mobile-v<version>` tag on `main` always builds and submits. The version
   must equal `version` in `app.config.ts`, so raise it first.
 
-The runner computes the fingerprint on Linux and EAS Build computes the
-build's runtime on macOS. When they disagree, `auto` builds even for a
-JS-only change: it costs a build, never a broken update.
+`eas build` records as the build's runtime the fingerprint computed on the
+machine that starts it, so a build from this workflow and the fingerprint
+`auto` compares are both computed on the Linux runner. A build started by hand
+on a Mac records the Mac's fingerprint; if a platform difference ever made
+the two disagree, `auto` would build for a JS-only change. `auto` compares
+with the newest production build from any branch, so start production builds
+only from `main`.
 
 `--auto-submit` and `eas submit` read the App Store Connect API key from EAS
 credentials, not from GitHub. Store it once, from `apps/mobile`:
@@ -497,7 +501,7 @@ To release by hand instead:
 
 ```bash
 eas build --platform ios --profile production --auto-submit
-eas update --channel production --platform ios --message "<what changed>"
+eas update --channel production --environment production --platform ios --message "<what changed>"
 ```
 
 The build appears in TestFlight after Apple finishes processing it, usually
