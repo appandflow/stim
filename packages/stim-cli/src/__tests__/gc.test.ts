@@ -2560,6 +2560,7 @@ test('gc --json lists every device with its owner and every runtime and system i
       deletable: true,
     },
   };
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   const execCalls: string[] = [];
   setExecutor({
     ...getExecutor(),
