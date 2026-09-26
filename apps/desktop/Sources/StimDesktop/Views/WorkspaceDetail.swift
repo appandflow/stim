@@ -343,11 +343,14 @@ struct Inspector: View {
     let busy = actions.active(for: env.path) != nil
     return Menu {
       WorkspaceActionsMenu(
-        kind: .workspace(metroRunning: env.metro?.running == true),
+        kind: .workspace(metroRunning: env.metro?.running == true, platforms: env.runPlatforms),
         path: env.path,
         busy: busy,
         removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
+        building: env.build?.isRunning == true,
+        reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", StimCommand(["reload"], cwd: env.path)) },
         onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
         onStopDevServer: {

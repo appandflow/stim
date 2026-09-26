@@ -1,10 +1,13 @@
+import Foundation
 import Testing
 
 @testable import StimKit
 
 @Suite struct WorkspaceMenuItemsTests {
   @Test func workspaceRowOffersStartWhenMetroIsStopped() {
-    let items = workspaceMenuItems(for: .workspace(metroRunning: false)).compactMap { $0 }
+    let items = workspaceMenuItems(for: .workspace(metroRunning: false, platforms: ["ios"])).compactMap { $0 }
+    #expect(items.contains(.run(platform: "ios")))
+    #expect(!items.contains(.run(platform: "android")))
     #expect(items.contains(.startDevServer))
     #expect(!items.contains(.stopDevServer))
     #expect(items.contains(.reload))
@@ -14,7 +17,7 @@ import Testing
   }
 
   @Test func workspaceRowOffersStopWhenMetroIsRunning() {
-    let items = workspaceMenuItems(for: .workspace(metroRunning: true)).compactMap { $0 }
+    let items = workspaceMenuItems(for: .workspace(metroRunning: true, platforms: [])).compactMap { $0 }
     #expect(items.contains(.stopDevServer))
     #expect(!items.contains(.startDevServer))
   }
@@ -24,6 +27,7 @@ import Testing
     #expect(items.contains(.warmWorktree))
     #expect(items.contains(.removeWorktree))
     #expect(!items.contains(.reload))
+    #expect(!items.contains(.run(platform: "ios")))
     #expect(!items.contains(.startDevServer))
     #expect(!items.contains(.stopDevServer))
     #expect(!items.contains(.showLogs))
@@ -33,6 +37,31 @@ import Testing
   @Test func projectRowOnlyOffersFileActionsAndStopAll() {
     let items = workspaceMenuItems(for: .project).compactMap { $0 }
     #expect(items == [.revealInFinder, .copyPath, .stopAllLiveWorkspaces])
+  }
+}
+
+@Suite struct WorkspaceRunTests {
+  private func workspace(_ fields: String) throws -> Workspace {
+    try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/w","live":true,"warnings":[]\#(fields)}"#.utf8))
+  }
+
+  @Test func runOffersThePlatformsTheWorkspaceUsesOrBoth() throws {
+    #expect(try workspace("").runPlatforms == ["ios", "android"])
+    let android = try workspace(#","android":{"name":"stim-w","owned":true,"physical":false,"state":"not-detected"}"#)
+    #expect(android.runPlatforms == ["android"])
+    let built = try workspace(
+      #","lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":1,"fingerprint":null,"startedAt":"2026-09-26T00:00:00Z","finishedAt":null}}"#
+    )
+    #expect(built.runPlatforms == ["ios"])
+  }
+
+  @Test func reloadNeedsTheDevServerAndARunningLocalDevice() throws {
+    let metro = #","metro":{"port":8081,"running":true,"pid":1}"#
+    let booted = #","ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Booted"}"#
+    let shutdown = #","ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Shutdown"}"#
+    #expect(try workspace(metro + booted).canReload)
+    #expect(!(try workspace(metro + shutdown).canReload))
+    #expect(!(try workspace(booted).canReload))
   }
 }
 
