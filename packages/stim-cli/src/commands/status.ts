@@ -65,7 +65,10 @@ import {
   remoteDeviceState,
   tightVolumes,
   unprovisionedWorktrees,
+  webFacts,
+  withWebFacts,
 } from '../status.ts';
+import { readWebRecord } from '../web/state.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 
@@ -177,32 +180,35 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
     const launches = readWorkspaceLaunches(path);
     launchesByState.push(launches);
     states.push(
-      environmentState(
-        { ...proj, __path: path },
-        {
-          simsByUdid,
-          metro,
-          worktrees,
-          simsAvailable,
-          ...devices[i],
-          supervisor,
-          logs: logs[i],
-          remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
-          idleStop: readIdleStop(saved),
-          launches,
-          leasedIds: new Set(
-            deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
-              lease.mine && !lease.expired && lease.id ? [lease.id] : [],
+      withWebFacts(
+        environmentState(
+          { ...proj, __path: path },
+          {
+            simsByUdid,
+            metro,
+            worktrees,
+            simsAvailable,
+            ...devices[i],
+            supervisor,
+            logs: logs[i],
+            remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
+            idleStop: readIdleStop(saved),
+            launches,
+            leasedIds: new Set(
+              deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
+                lease.mine && !lease.expired && lease.id ? [lease.id] : [],
+              ),
             ),
-          ),
-          now: leaseNow,
-        },
+            now: leaseNow,
+          },
+        ),
+        webFacts(readWebRecord(path)),
       ),
     );
     const state = states[states.length - 1];
     if (state) Object.assign(state, builds);
     labelOnlyRoots.push(
-      Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android),
+      Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android && !state?.web),
     );
   }
 
@@ -300,6 +306,12 @@ async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]
           `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}`,
         );
       }
+    }
+    if (state.web) {
+      const browser = state.web.running
+        ? chalk.green(`running (pid ${state.web.pid}, DevTools ${state.web.cdpEndpoint})`)
+        : chalk.dim('not running');
+      out.push(`  web: ${chalk.cyan(state.web.url)} ${browser}${state.web.headless ? '' : chalk.dim(' (headed)')}`);
     }
     for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
     for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));

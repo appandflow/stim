@@ -9,8 +9,12 @@ import { isPortFree } from './ports.ts';
 const FIRST_PORT = 8900;
 const LAST_PORT = 8999;
 
+const BROWSER_LABEL = 'web-cdp';
+
 function validatePortLabel(label: string): void {
   if (label === 'metro') throw new Error('metro is managed by stim start and stim stop; choose another label.');
+  if (label === BROWSER_LABEL)
+    throw new Error(`${BROWSER_LABEL} is managed by stim web and stim stop; choose another label.`);
   if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(label)) {
     throw new Error(
       'A port label must start with a letter and contain at most 64 letters, digits, underscores or hyphens.',
@@ -48,15 +52,41 @@ function withPortsLock<T>(fn: () => Promise<T>): Promise<T> {
   return withWorkspaceProcessLock(getConfigDir(), 'ports', fn, { external: true });
 }
 
-export async function getNamedPort(
+interface AllocateOptions {
+  isFree?: (port: number) => Promise<boolean>;
+  log?: (line: string) => void;
+}
+
+export async function getNamedPort(projectPath: string, label: string, options: AllocateOptions = {}): Promise<number> {
+  validatePortLabel(label);
+  return allocateNamedPort(projectPath, label, options);
+}
+
+/** The loopback DevTools port of the workspace's owned Chrome, allocated like a named port under `web-cdp`. */
+export function reserveBrowserPort(projectPath: string, options: AllocateOptions = {}): Promise<number> {
+  return allocateNamedPort(projectPath, BROWSER_LABEL, options);
+}
+
+export function releaseBrowserPort(projectPath: string, port: number): Promise<void> {
+  return withPortsLock(async () =>
+    withConfigLock(() => {
+      const cfg = loadConfig();
+      const ports = cfg?.projects?.[projectPath]?.ports;
+      if (!cfg || ports?.[BROWSER_LABEL] !== port) return;
+      delete ports[BROWSER_LABEL];
+      saveConfig(cfg);
+    }),
+  );
+}
+
+async function allocateNamedPort(
   projectPath: string,
   label: string,
   {
     isFree = async (port: number) => (await isPortFree(port)) && portListeners(port, process.platform).length === 0,
     log = console.error,
-  }: { isFree?: (port: number) => Promise<boolean>; log?: (line: string) => void } = {},
+  }: AllocateOptions,
 ): Promise<number> {
-  validatePortLabel(label);
   const root = realpathSync(projectPath);
   return withPortsLock(async () => {
     const existing = getProject(root)?.ports;
@@ -149,7 +179,9 @@ export async function clearNamedPorts(
   if (label !== undefined) validatePortLabel(label);
   await withPortsLock(async () => {
     const ports = getProject(projectPath)?.ports ?? {};
-    const selected = Object.entries(ports).filter(([name]) => label === undefined || name === label);
+    const selected = Object.entries(ports).filter(
+      ([name]) => name !== BROWSER_LABEL && (label === undefined || name === label),
+    );
     if (stop && selected.length > 0 && platform !== 'win32' && !getExecutor().findExecutable('lsof')) {
       throw new Error('Cannot stop named ports: lsof is not installed.');
     }

@@ -42,7 +42,7 @@ import {
   writeWorkspaceState,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -202,6 +202,7 @@ interface DeviceOutcome {
   ios: DeviceOutcomeEntry | null;
   android: DeviceOutcomeEntry | null;
   remote?: DeviceOutcomeEntry | null;
+  web?: DeviceOutcomeEntry | null;
 }
 
 interface PortOutcome {
@@ -295,6 +296,7 @@ export async function runStop(options: StopArgs & { slot?: string }): ReturnType
       return true;
     },
     clearRegistration: async () => true,
+    teardownBrowser: null,
     releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
   });
   result.outcomes.port = {
@@ -324,6 +326,7 @@ async function stopWorkspace({
   resolveMetro = resolveProjectMetro,
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
+  teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
   remoteDevice = undefined,
   teardownRemoteSession = defaultTeardownRemoteSession,
   metroTunnel = undefined,
@@ -350,6 +353,7 @@ async function stopWorkspace({
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
+  teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
@@ -497,6 +501,9 @@ async function stopWorkspace({
     outcomes.device = shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
+
+  outcomes.device.web = await closeBrowser(root, teardownBrowser, report);
+  if (outcomes.device.web && outcomes.device.web.status !== 'shut-down') ok = false;
 
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
@@ -852,6 +859,24 @@ function reportDevice(
   report(chalk.red(phaseLine('device', `failed to shut down ${r.label ?? label}: ${r.reason}`)));
   report(chalk.dim(phaseLine('', remedy)));
   return { status: 'failed', label: r.label ?? label, reason: r.reason, remedy };
+}
+
+async function closeBrowser(
+  root: string,
+  teardownBrowser: ((root: string) => Promise<TeardownResult>) | null,
+  report: (line: string) => void,
+): Promise<DeviceOutcomeEntry | null> {
+  if (!teardownBrowser) return null;
+  const r = await teardownBrowser(root);
+  if (r.status === 'missing') return null;
+  if (r.status === 'torn-down') {
+    report(chalk.green(phaseLine('device', `closed ${r.label}; its profile is kept`)));
+    return { status: 'shut-down', label: 'Chrome' };
+  }
+  const remedy = 'run `stim status`, then `stim guide errors teardown`';
+  report(chalk.red(phaseLine('device', `did not close the owned Chrome: ${r.reason}`)));
+  report(chalk.dim(phaseLine('', remedy)));
+  return { status: r.status, kind: r.kind ?? null, label: 'Chrome', reason: r.reason, remedy };
 }
 
 function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {

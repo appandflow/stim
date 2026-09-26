@@ -680,6 +680,9 @@ RULES
              supervisor-unverified  a supervisor record whose process status
                                     cannot prove gone or ours; stop refuses to
                                     signal it
+             browser-unverified     the owned Chrome's supervisor or Chrome
+                                    process cannot be proven gone or ours;
+                                    stop and stim web refuse to signal it
   severity   "error" when stop or start refuses until it is resolved, else
              "warning"
   remedy     a command to run from workspace, such as "stim android --slot
@@ -690,6 +693,19 @@ RULES
   reports supervisor null, and the next stop or start clears the record.
   \`stop --slot <name>\` forgets that slot's launch, so a device stopped on
   purpose is not reported while the shared dev server keeps running.
+
+  An environment where \`stim web\` ran carries web, its Stim-owned Chrome:
+
+  web  { browser, version, running, pid, supervisorPid, url, headless,
+         viewport, profile, cdpEndpoint }
+
+  running        the browser supervisor and Chrome are both verified live;
+                 pid, supervisorPid and cdpEndpoint are null when false
+  cdpEndpoint    http://127.0.0.1:<port>, the reserved loopback DevTools
+                 endpoint of that Chrome. Attach Playwright MCP
+                 (--cdp-endpoint) or agent-browser (--cdp <port>) to it; it
+                 reaches only the Stim profile, never your own browser
+  profile        the Stim-owned user data directory under STIM_HOME
 
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:

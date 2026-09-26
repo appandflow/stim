@@ -13,6 +13,7 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['stop', () => import('../src/commands/stop.ts')],
   ['ios', () => import('../src/commands/ios.ts')],
   ['android', () => import('../src/commands/android.ts')],
+  ['web', () => import('../src/commands/web.ts')],
   ['reload', () => import('../src/commands/reload.ts')],
   ['device', () => import('../src/commands/device.ts')],
   ['logs', () => import('../src/commands/logs.ts')],

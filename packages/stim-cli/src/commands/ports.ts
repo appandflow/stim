@@ -22,7 +22,10 @@ export default function portsCommand(program: Command): void {
   ports.action(() =>
     inProject(async (root) => {
       const project = getProject(root);
-      const rows = Object.entries(project?.ports ?? {});
+      const rows = Object.entries(project?.ports ?? {}).map(([name, port]): [string, number] => [
+        name === 'web-cdp' ? 'web-cdp (managed)' : name,
+        port,
+      ]);
       if (typeof project?.metroPort === 'number') rows.push(['metro (managed)', project.metroPort]);
       if (!rows.length) {
         console.log('No ports allocated. Use stim ports get <label>.');
