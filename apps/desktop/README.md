@@ -129,8 +129,9 @@ shows when it was last checked.
 When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running** with
 **Run**, which runs `stim ios` or `stim android` (with `--slot <name>` for a
-named slot), and the inspector's device list says **App stopped**. Reload
-app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
+named slot). Run appears only on a Stim-owned simulator or emulator, which that
+command targets; a physical device gets no Run. The inspector's device list
+says **App stopped**. Reload app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
 
 Each device tile shows the `activity` that `stim status` reports: "Driven by
 <tool> · 12m" while agent-device, a Stim device lock, or a test runner drives
