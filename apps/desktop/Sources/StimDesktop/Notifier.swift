@@ -83,7 +83,7 @@ final class Notifier: ObservableObject {
   }
 }
 
-/// Handles the Do it button of a disk pressure notification, and opens the Storage view when one is clicked.
+/// Handles the Do it button of a disk pressure notification, and opens the Machine page when one is clicked.
 final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
   static let shared = NotificationResponder()
 
@@ -112,7 +112,7 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
         if action == Notifier.doItAction {
           self.runPlan?()
         } else if id.hasPrefix("pressure") {
-          OpenRequests.shared.showsStorage = true
+          OpenRequests.shared.showsMachine = true
         }
       }
       completionHandler()

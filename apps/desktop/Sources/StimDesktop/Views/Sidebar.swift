@@ -76,8 +76,8 @@ struct Sidebar: View {
             .fixedSize()
         }
       }
-      PinnedRow(item: .storage, selection: $selection) {
-        SidebarLabel(title: "Storage", icon: "internaldrive", selected: selection == .storage)
+      PinnedRow(item: .machine, selection: $selection) {
+        SidebarLabel(title: "Machine", icon: "internaldrive", selected: selection == .machine)
         Spacer()
         if autopilot.pressure != nil {
           Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.warn)
@@ -433,7 +433,7 @@ struct SidebarFooter: View {
       }
       .buttonStyle(.plain)
     case .diskCritical(let freeBytes):
-      Button { selection = .storage } label: {
+      Button { selection = .machine } label: {
         statusLabel(dot: Theme.error, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
@@ -443,7 +443,7 @@ struct SidebarFooter: View {
       }
       .buttonStyle(.plain)
     case .diskWarning(let freeBytes):
-      Button { selection = .storage } label: {
+      Button { selection = .machine } label: {
         statusLabel(dot: Theme.warn, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)

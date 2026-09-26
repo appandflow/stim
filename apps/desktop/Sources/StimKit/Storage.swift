@@ -9,6 +9,7 @@ public struct StoragePaths: Sendable {
   public var derivedData: String
   public var gradleCaches: String
   public var libraryCaches: String
+  public var systemImages: String
 
   /// The AVD directory follows the Android tools: `ANDROID_AVD_HOME`, then `ANDROID_USER_HOME/avd`, then `~/.android/avd`.
   public init(home: String, environment: [String: String] = [:]) {
@@ -19,13 +20,15 @@ public struct StoragePaths: Sendable {
     derivedData = "\(home)/Library/Developer/Xcode/DerivedData"
     gradleCaches = "\(home)/.gradle/caches"
     libraryCaches = "\(home)/Library/Caches"
+    let sdk = environment["ANDROID_HOME"] ?? environment["ANDROID_SDK_ROOT"] ?? "\(home)/Library/Android/sdk"
+    systemImages = "\(sdk)/system-images"
   }
 
   public func simulator(_ udid: String) -> String { "\(simulatorDevices)/\(udid)" }
   public func avd(_ name: String) -> String { "\(avds)/\(name).avd" }
 
-  /// Directories `du -d 1` sizes entry by entry, so each device can be attributed.
-  public var deviceSets: [String] { [simulatorDevices, avds] }
+  /// Directories `du` sizes entry by entry, with the depth that reaches each AVD and each system image.
+  public var deviceSets: [(path: String, depth: Int)] { [(avds, 1), (systemImages, 3)] }
 
   public var unmanaged: [(title: String, path: String)] {
     [
@@ -172,19 +175,198 @@ public struct StorageLocation: Identifiable, Hashable, Sendable {
   }
 }
 
+/// A simulator or AVD from the `stim gc --json` inventory, with its size.
+public struct DeviceStorage: Identifiable, Hashable, Sendable {
+  public var device: GcReport.InventoryDevice
+  public var size: DiskSize
+
+  public var id: String { "\(device.kind):\(device.id)" }
+  public var isStim: Bool { [.workspace, .parked, .orphaned].contains(device.owner) }
+  public var lastUsed: Date? { device.lastUsedAt.flatMap(StorageReport.parseDate) }
+
+  /// The runtime as people name it: "iOS 27.0", or "Android 36 · google_apis_playstore".
+  public var runtimeTitle: String? {
+    guard let runtime = device.runtime else { return nil }
+    return device.kind == "ios" ? StorageReport.iosRuntimeTitle(runtime) : StorageReport.systemImageTitle(runtime)
+  }
+}
+
+/// An iOS simulator runtime or an Android system image, and how many devices use it.
+public struct RuntimeStorage: Identifiable, Hashable, Sendable {
+  public var id: String
+  public var title: String
+  public var detail: String?
+  public var size: DiskSize
+  public var deviceCount: Int
+  /// The vendor command that deletes it, for the user to run. Stim never runs it.
+  public var command: String?
+
+  public var unused: Bool { deviceCount == 0 }
+}
+
+/// The workspaces and worktrees of one repository.
+public struct RepositoryStorage: Identifiable, Hashable, Sendable {
+  public var path: String
+  public var worktrees: [WorkspaceStorage]
+
+  public var id: String { path }
+  public var name: String { (path as NSString).lastPathComponent }
+  public var total: Int64? {
+    let known = worktrees.compactMap(\.total)
+    return known.isEmpty ? nil : known.reduce(0, +)
+  }
+  public var totalComplete: Bool { worktrees.allSatisfy(\.totalComplete) }
+}
+
+/// The CLI command that frees a "Safe to free now" item.
+public enum FreeAction: Hashable, Sendable {
+  /// `stim gc --delete`: devices, records, logs, idle build outputs and merged worktrees together.
+  case gc
+  /// `stim gc --delete --cache workspaces`: build outputs of idle workspaces.
+  case workspaceOutputs
+  /// `stim gc --delete --cache <selector>`: one shared cache, emptied whole.
+  case cache(String)
+  /// `stim worktree remove <path>`, run from the repository.
+  case removeWorktree(path: String, repository: String?)
+
+  /// Whether `stim gc --delete` also frees what this action frees.
+  public var partOfGc: Bool {
+    switch self {
+    case .gc, .workspaceOutputs, .removeWorktree: return true
+    case .cache: return false
+    }
+  }
+}
+
+/// One thing Stim can free now, and the command that frees it.
+public struct FreeItem: Identifiable, Hashable, Sendable {
+  public var id: String
+  public var title: String
+  /// A workspace or worktree the view names, or nil when `title` says it all.
+  public var path: String?
+  public var detail: String
+  public var bytes: Int64?
+  public var action: FreeAction
+}
+
+/// Which items a set of selected actions frees, and the commands that free them.
+public enum FreePlan {
+  /// The actions checked by default: everything but emptying whole caches.
+  public static func defaultSelection(_ items: [FreeItem]) -> Set<FreeAction> {
+    Set(items.map(\.action).filter { if case .cache = $0 { return false } else { return true } })
+  }
+
+  public static func frees(_ action: FreeAction, selected: Set<FreeAction>) -> Bool {
+    selected.contains(action) || (action.partOfGc && selected.contains(.gc))
+  }
+
+  /// Whether the item's own checkbox decides, rather than `stim gc --delete` including it anyway.
+  public static func canToggle(_ action: FreeAction, selected: Set<FreeAction>) -> Bool {
+    action == .gc || !action.partOfGc || !selected.contains(.gc)
+  }
+
+  public static func bytes(_ items: [FreeItem], selected: Set<FreeAction>) -> Int64 {
+    items.filter { frees($0.action, selected: selected) }.compactMap(\.bytes).reduce(0, +)
+  }
+
+  /// The commands to run, worktree removals first, each once.
+  public static func commands(_ selected: Set<FreeAction>, home: String) -> [StimCommand] {
+    var commands: [StimCommand] = []
+    if !selected.contains(.gc) {
+      for case let .removeWorktree(path, repository) in selected.sorted(by: { "\($0)" < "\($1)" }) {
+        commands.append(StimCommand(["worktree", "remove", path], cwd: repository ?? home))
+      }
+      if selected.contains(.workspaceOutputs) {
+        commands.append(StimCommand(["gc", "--json", "--delete", "--cache", "workspaces"], cwd: home))
+      }
+    } else {
+      commands.append(StimCommand(["gc", "--json", "--delete"], cwd: home))
+    }
+    for case let .cache(selector) in selected.sorted(by: { "\($0)" < "\($1)" }) {
+      commands.append(StimCommand(["gc", "--json", "--delete", "--cache", selector], cwd: home))
+    }
+    return commands
+  }
+
+  /// The `stim gc --json` dry run that previews `commands` when they are one gc run, whose sheet then offers
+  /// the same scope with `--delete`; nil when they need a confirmation of their own.
+  public static func preview(_ commands: [StimCommand]) -> [String]? {
+    guard commands.count == 1, let only = commands.first, only.arguments.first == "gc" else { return nil }
+    return only.arguments.filter { $0 != "--delete" }
+  }
+}
+
+/// What the stacked disk bar splits the space into.
+public enum DiskCategory: String, CaseIterable, Hashable, Sendable {
+  case stimDevices
+  case stimCaches
+  case nodeModules
+  case otherDevices
+  case runtimes
+  case otherTools
+
+  public var title: String {
+    switch self {
+    case .stimDevices: return "Stim devices"
+    case .stimCaches: return "Stim caches and outputs"
+    case .nodeModules: return "node_modules"
+    case .otherDevices: return "Other simulators and AVDs"
+    case .runtimes: return "Runtimes and system images"
+    case .otherTools: return "Other tools"
+    }
+  }
+}
+
+/// A category's measured bytes, and whether anything in it is still unsized.
+public struct CategoryTotal: Hashable, Sendable {
+  public var bytes: Int64
+  public var complete: Bool
+}
+
 public struct StorageReport: Sendable {
   /// Largest first; rows with no size yet last.
   public var workspaces: [WorkspaceStorage]
-  /// Stim's shared caches from `stim gc --json` that hold something, largest first.
-  public var caches: [GcReport.Cache]
+  /// Workspaces grouped by repository, largest first.
+  public var repositories: [RepositoryStorage]
   /// Every cache `stim gc --json` reports, for `--cache` selection and titles.
   public var allCaches: [GcReport.Cache]
-  /// Caches `stim gc --json` sized at zero bytes.
-  public var emptyCaches: [GcReport.Cache]
-  /// Owned devices `stim gc --delete` deletes: parked, orphaned and stale.
-  public var reclaimableDevices: StorageLocation?
+  /// What Stim can free now, largest first.
+  public var free: [FreeItem]
+  /// Every simulator and AVD, largest first; empty when the CLI does not report an inventory.
+  public var devices: [DeviceStorage]
+  /// iOS runtimes and Android system images, unused ones first, then largest first.
+  public var runtimes: [RuntimeStorage]
+  /// Whether `stim gc --json` reported an inventory; false with a CLI that predates it.
+  public var hasInventory: Bool
   /// Largest first.
   public var unmanaged: [StorageLocation]
+  public var categories: [DiskCategory: CategoryTotal]
+
+  public func total(_ category: DiskCategory) -> CategoryTotal {
+    categories[category] ?? CategoryTotal(bytes: 0, complete: false)
+  }
+
+  static func parseDate(_ text: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    if let date = formatter.date(from: text) { return date }
+    formatter.formatOptions.insert(.withFractionalSeconds)
+    return formatter.date(from: text)
+  }
+
+  /// "com.apple.CoreSimulator.SimRuntime.iOS-27-0" reads "iOS 27.0".
+  static func iosRuntimeTitle(_ identifier: String) -> String {
+    guard let last = identifier.split(separator: ".").last else { return identifier }
+    let parts = last.split(separator: "-")
+    guard let platform = parts.first, parts.count > 1 else { return String(last) }
+    return "\(platform) \(parts.dropFirst().joined(separator: "."))"
+  }
+
+  /// "system-images;android-36;google_apis;arm64-v8a" reads "Android 36 · google_apis".
+  static func systemImageTitle(_ package: String) -> String {
+    let parts = package.split(separator: ";").map(String.init)
+    guard parts.count >= 3, parts[1].hasPrefix("android-") else { return package }
+    return "Android \(parts[1].dropFirst("android-".count)) \u{00B7} \(parts[2])"
+  }
 
   public static func make(
     environments: [Workspace], unprovisioned: [UnprovisionedWorktree] = [], gc: GcReport?,
@@ -199,20 +381,38 @@ public struct StorageReport: Sendable {
     let worktrees = Dictionary(
       (gc?.sections.linkedWorktrees ?? []).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
     let dead = Set((gc?.sections.deadProjects ?? []).map(\.path))
-    var stimSimulators = Set((gc?.deletableDevices ?? []).compactMap(\.udid).map { $0.uppercased() })
+    let inventory = gc?.inventory
+
+    let devices = (inventory?.devices ?? []).map { device -> DeviceStorage in
+      let size: DiskSize
+      if device.kind == "ios" {
+        size = device.bytes.map(DiskSize.size) ?? .failed
+      } else if let directory = device.directory {
+        size =
+          (directory as NSString).deletingLastPathComponent == paths.avds
+          ? disk.measure(directory, in: paths.avds) : .notMeasured
+      } else {
+        size = .absent
+      }
+      return DeviceStorage(device: device, size: size)
+    }
+    .sorted { ($0.size.bytes ?? -1, $1.device.name) > ($1.size.bytes ?? -1, $0.device.name) }
 
     var workspaces = environments.map { env -> WorkspaceStorage in
       let root = env.worktree?.path ?? env.path
-      var devices: [DiskSize] = []
-      for device in env.devices {
-        switch device {
-        case .ios(_, let sim) where sim.owned:
-          stimSimulators.insert(sim.udid.uppercased())
-          devices.append(disk.measure(paths.simulator(sim.udid.uppercased()), in: paths.simulatorDevices))
-        case .android(_, let avd) where avd.owned && !avd.physical:
-          devices.append(disk.measure(paths.avd(avd.name), in: paths.avds))
-        default:
-          continue
+      var sizes: [DiskSize] = []
+      if inventory != nil {
+        sizes = devices.filter { $0.device.owner == .workspace && $0.device.project == env.path }.map(\.size)
+      } else {
+        for device in env.devices {
+          switch device {
+          case .ios(_, let sim) where sim.owned:
+            sizes.append(disk.measure(paths.simulator(sim.udid.uppercased()), in: paths.simulatorDevices))
+          case .android(_, let avd) where avd.owned && !avd.physical:
+            sizes.append(disk.measure(paths.avd(avd.name), in: paths.avds))
+          default:
+            continue
+          }
         }
       }
       let output = outputs[env.path]
@@ -228,8 +428,8 @@ public struct StorageReport: Sendable {
         logs: gc?.sections.workspaceLogs == nil ? .notMeasured : log.map { .size($0.bytes) } ?? .absent,
         logsTrimmed: log.flatMap { $0.willTrim ? $0.trimBytes : nil },
         logsKept: log.flatMap { $0.trimBytes > 0 && !$0.willTrim ? ($0.detail ?? "kept") : nil },
-        devices: .sum(devices),
-        deviceCount: devices.count, worktree: worktrees[root], missing: missing)
+        devices: .sum(sizes),
+        deviceCount: sizes.count, worktree: worktrees[root], missing: missing)
     }
     let listed = Set(workspaces.map(\.worktreePath))
     for tree in unprovisioned where !listed.contains(tree.path) {
@@ -240,38 +440,34 @@ public struct StorageReport: Sendable {
           devices: .absent,
           deviceCount: 0, worktree: worktrees[tree.path], unprovisioned: true))
     }
-    workspaces.sort { a, b in
-      switch (a.total, b.total) {
-      case let (x?, y?) where x != y: return x > y
-      case (.some, nil): return true
-      case (nil, .some): return false
-      default: return a.path < b.path
-      }
-    }
-
-    let devices = gc?.deletableDevices ?? []
-    let reclaimableDevices =
-      devices.isEmpty
-      ? nil
-      : StorageLocation(
-        title: devices.count == 1 ? "1 parked, orphaned or stale device" : "\(devices.count) parked, orphaned or stale devices",
-        path: nil, size: devices.contains { $0.bytes != nil } ? .size(devices.compactMap(\.bytes).reduce(0, +)) : .failed,
-        detail: devices.compactMap(\.name).joined(separator: ", "))
+    workspaces.sort(by: largestFirst(\.total, \.path))
+    let repositories = Dictionary(grouping: workspaces) { $0.repository ?? $0.worktreePath }
+      .map { RepositoryStorage(path: $0.key, worktrees: $0.value) }
+      .sorted(by: largestFirst(\.total, \.path))
 
     let allCaches = gc?.sections.caches ?? []
-    var unmanaged: [StorageLocation] = []
-    let simulatorEntries = disk.sizes.filter { path, _ in
-      (path as NSString).deletingLastPathComponent == paths.simulatorDevices
-        && UUID(uuidString: (path as NSString).lastPathComponent) != nil
+    let free = gc.map { freeItems($0, workspaces: workspaces, caches: allCaches) } ?? []
+
+    var runtimes = (inventory?.runtimes ?? []).map { runtime in
+      RuntimeStorage(
+        id: runtime.identifier,
+        title: runtime.version.map { "iOS \($0)" } ?? runtime.runtimeIdentifier.map(iosRuntimeTitle) ?? runtime.identifier,
+        detail: runtime.build, size: runtime.bytes.map(DiskSize.size) ?? .notMeasured,
+        deviceCount: runtime.deviceCount, command: runtime.command)
     }
-    let other = simulatorEntries.filter { !stimSimulators.contains(($0.key as NSString).lastPathComponent.uppercased()) }
-    let simulatorSet = disk.measure(paths.simulatorDevices)
-    unmanaged.append(
-      StorageLocation(
-        title: "Simulators Stim does not own", path: paths.simulatorDevices,
-        size: simulatorSet.bytes == nil ? simulatorSet : .size(other.values.reduce(0, +)),
-        detail: simulatorEntries.isEmpty
-          ? "Created in Xcode or with simctl" : "\(other.count) of \(simulatorEntries.count) CoreSimulator devices"))
+    runtimes += (inventory?.systemImages ?? []).map { image in
+      RuntimeStorage(
+        id: image.package, title: systemImageTitle(image.package),
+        detail: image.package.split(separator: ";").last.map(String.init),
+        size: disk.measure(image.directory, in: paths.systemImages), deviceCount: image.avdCount,
+        command: image.command)
+    }
+    runtimes.sort { a, b in
+      if a.unused != b.unused { return a.unused }
+      return (a.size.bytes ?? -1, b.title) > (b.size.bytes ?? -1, a.title)
+    }
+
+    var unmanaged: [StorageLocation] = []
     for location in paths.unmanaged {
       let inside = allCaches.filter { $0.dir.hasPrefix(location.path + "/") }
       let stimBytes = inside.compactMap(\.bytes).reduce(0, +)
@@ -280,14 +476,99 @@ public struct StorageReport: Sendable {
         StorageLocation(
           title: location.title, path: location.path,
           size: measured.bytes.map { .size(max(0, $0 - stimBytes)) } ?? measured,
-          detail: inside.isEmpty ? nil : "Excludes \(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), listed under Stim"))
+          detail: inside.isEmpty ? nil : "Excludes \(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), counted under Stim"))
     }
+    unmanaged.sort { ($0.size.bytes ?? -1) > ($1.size.bytes ?? -1) }
+
+    func total(_ sizes: [DiskSize]) -> CategoryTotal {
+      CategoryTotal(bytes: sizes.compactMap(\.bytes).reduce(0, +), complete: sizes.allSatisfy { $0.bytes != nil })
+    }
+    let stimOutputs =
+      allCaches.map { $0.bytes.map(DiskSize.size) ?? .failed } + workspaces.flatMap { [$0.buildOutputs, $0.logs] }
+      + (gc?.sections.orphanedWorkspaces ?? []).map { $0.bytes.map(DiskSize.size) ?? .failed }
+    let categories: [DiskCategory: CategoryTotal] = [
+      .stimDevices: total(devices.filter(\.isStim).map(\.size)),
+      .stimCaches: total(gc == nil ? [.notMeasured] : stimOutputs),
+      .nodeModules: total(workspaces.map(\.nodeModules)),
+      .otherDevices: total(devices.filter { !$0.isStim }.map(\.size)),
+      .runtimes: total(runtimes.map(\.size)),
+      .otherTools: total(unmanaged.map(\.size)),
+    ]
+
     return StorageReport(
-      workspaces: workspaces,
-      caches: allCaches.filter { $0.bytes != 0 }.sorted { ($0.bytes ?? -1) > ($1.bytes ?? -1) },
-      allCaches: allCaches, emptyCaches: allCaches.filter { $0.bytes == 0 },
-      reclaimableDevices: reclaimableDevices,
-      unmanaged: unmanaged.sorted { ($0.size.bytes ?? -1) > ($1.size.bytes ?? -1) })
+      workspaces: workspaces, repositories: repositories, allCaches: allCaches, free: free, devices: devices,
+      runtimes: runtimes, hasInventory: inventory != nil, unmanaged: unmanaged, categories: categories)
+  }
+
+  private static func largestFirst<T>(_ size: KeyPath<T, Int64?>, _ name: KeyPath<T, String>) -> (T, T) -> Bool {
+    { a, b in
+      switch (a[keyPath: size], b[keyPath: size]) {
+      case let (x?, y?) where x != y: return x > y
+      case (.some, nil): return true
+      case (nil, .some): return false
+      default: return a[keyPath: name] < b[keyPath: name]
+      }
+    }
+  }
+
+  static func freeItems(_ gc: GcReport, workspaces: [WorkspaceStorage], caches: [GcReport.Cache]) -> [FreeItem] {
+    let s = gc.sections
+    var items: [FreeItem] = []
+    func devices(_ list: [GcReport.Device]?, _ detail: String) {
+      for device in list ?? [] {
+        let id = device.udid ?? device.id ?? device.name ?? "?"
+        items.append(
+          FreeItem(
+            id: "device:\(id)", title: device.name ?? id, path: nil, detail: detail, bytes: device.bytes, action: .gc))
+      }
+    }
+    devices(s.parkedSimulators, "Parked simulator, kept for reuse")
+    devices(s.parkedEmulators, "Parked emulator, kept for reuse")
+    devices(s.orphanedDevices, "Created by this Stim home; no workspace uses it")
+    devices(s.staleDevices, "Its workspace has not been used for a while")
+    for dir in s.orphanedWorkspaces ?? [] {
+      items.append(
+        FreeItem(
+          id: "workspace:\(dir.dir ?? "?")", title: "Data of a removed workspace", path: nil,
+          detail: dir.dir ?? "Stim workspace directory", bytes: dir.bytes, action: .gc))
+    }
+    for project in s.deadProjects ?? [] {
+      items.append(
+        FreeItem(
+          id: "project:\(project.path)", title: "Record of a deleted folder", path: nil,
+          detail: "\(project.path); its owned devices are listed apart", bytes: nil, action: .gc))
+    }
+    for log in gc.trimmableLogs {
+      items.append(
+        FreeItem(
+          id: "logs:\(log.projectRoot ?? "?")", title: "Logs over the cap", path: log.projectRoot,
+          detail: "Each log keeps its newest 8 MiB", bytes: log.trimBytes, action: .gc))
+    }
+    for output in gc.clearableOutputs {
+      items.append(
+        FreeItem(
+          id: "outputs:\(output.projectRoot ?? output.dir ?? "?")", title: "Build outputs", path: output.projectRoot,
+          detail: output.idleDays.map { "Not used for \($0) days; rebuilt on the next run" } ?? "Not in use; rebuilt on the next run",
+          bytes: output.bytes, action: .workspaceOutputs))
+    }
+    for worktree in gc.mergedWorktrees {
+      let inside = workspaces.filter { $0.worktreePath == worktree.path }
+      let bytes = inside.compactMap(\.total).reduce(0, +)
+      items.append(
+        FreeItem(
+          id: "worktree:\(worktree.path)", title: "Worktree", path: worktree.path,
+          detail: worktree.detail ?? worktree.mergedInto.map { "Merged into \($0)" } ?? "Merged",
+          bytes: inside.isEmpty ? nil : bytes,
+          action: .removeWorktree(path: worktree.path, repository: inside.first?.repository)))
+    }
+    for cache in caches where (cache.bytes ?? 0) > 0 {
+      guard let selector = cache.selector(among: caches) else { continue }
+      items.append(
+        FreeItem(
+          id: "cache:\(cache.dir)", title: cache.title(among: caches), path: nil,
+          detail: "Shared cache, emptied whole; builds refill it", bytes: cache.bytes, action: .cache(selector)))
+    }
+    return items.sorted(by: largestFirst(\.bytes, \.id))
   }
 }
 

@@ -34,44 +34,107 @@ import Testing
     return try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
   }
 
-  /// Catches double counting: a Stim cache inside an unmanaged location, or a Stim simulator counted as the user's.
-  @Test func attributesSpaceToTheWorkspaceAndKeepsStimOutOfUnmanagedTotals() throws {
+  func inventoryGc() throws -> GcReport {
+    let json = """
+      {"sections":{
+        "linkedWorktrees":[{"path":"/r/.worktrees/a","idleDays":2,"mergedInto":"origin/main","willRemove":true}],
+        "parkedSimulators":[{"udid":"\(parked)","name":"stim-parked","bytes":3072}],
+        "workspaceBuildOutputs":[{"dir":"/h/w/a","projectRoot":"/r/.worktrees/a/app","bytes":8192,"willClear":false,
+          "detail":"in use: dev server running"}],
+        "caches":[{"name":"Gradle build cache","dir":"/Users/me/.gradle/caches/build-cache-1","bytes":2048}]},
+       "inventory":{"notices":[],
+        "devices":[
+          {"kind":"ios","id":"\(owned)","name":"stim-a","runtime":"com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+           "bytes":10240,"owner":"workspace","project":"/r/.worktrees/a/app","slot":"default"},
+          {"kind":"ios","id":"\(parked)","name":"stim-parked","bytes":3072,"owner":"parked"},
+          {"kind":"ios","id":"\(users)","name":"iPhone 18","bytes":7168,"owner":"user"},
+          {"kind":"ios","id":"F","name":"stim-1362-mobile","bytes":1024,"owner":"otherStimHome"},
+          {"kind":"android","id":"stim-a-tablet","name":"stim-a-tablet","directory":"/Users/me/.android/avd/stim-a-tablet.avd",
+           "runtime":"system-images;android-36;google_apis;arm64-v8a","owner":"workspace","project":"/r/.worktrees/a/app","slot":"tablet"},
+          {"kind":"android","id":"Pixel","name":"Pixel","directory":"/Volumes/x/Pixel.avd","owner":"user"},
+          {"kind":"android","id":"Future","name":"Future","directory":"/Users/me/.android/avd/Future.avd","owner":"someNewOwner"}],
+        "runtimes":[
+          {"identifier":"R27","runtimeIdentifier":"com.apple.CoreSimulator.SimRuntime.iOS-27-0","version":"27.0","bytes":8000,
+           "deviceCount":3,"command":"xcrun simctl runtime delete R27"},
+          {"identifier":"R18","version":"18.3.1","bytes":9000,"deviceCount":0,"command":"xcrun simctl runtime delete R18"}],
+        "systemImages":[
+          {"package":"system-images;android-36;google_apis;arm64-v8a",
+           "directory":"/Users/me/Library/Android/sdk/system-images/android-36/google_apis/arm64-v8a","avdCount":1,
+           "command":"sdkmanager --uninstall x"},
+          {"package":"system-images;android-30;google_apis;arm64-v8a",
+           "directory":"/Users/me/Library/Android/sdk/system-images/android-30/google_apis/arm64-v8a","avdCount":0,
+           "command":"sdkmanager --uninstall y"}]}}
+      """
+    return try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+  }
+
+  /// Catches a device counted under the wrong owner or twice, a Stim cache inside an unmanaged location, and an
+  /// unknown owner from a newer CLI reading as Stim's.
+  @Test func attributesEveryDeviceToItsOwnerAndKeepsStimOutOfUnmanagedTotals() throws {
     let du = """
       4\t/r/.worktrees/a/node_modules
-      10\t/Users/me/Library/Developer/CoreSimulator/Devices/\(owned)
-      3\t/Users/me/Library/Developer/CoreSimulator/Devices/\(parked)
-      7\t/Users/me/Library/Developer/CoreSimulator/Devices/\(users)
-      20\t/Users/me/Library/Developer/CoreSimulator/Devices
       5\t/Users/me/.android/avd/stim-a-tablet.avd
-      9\t/Users/me/.android/avd/Pixel.avd
+      2\t/Users/me/.android/avd/Future.avd
       14\t/Users/me/.android/avd
+      3\t/Users/me/Library/Android/sdk/system-images/android-30/google_apis/arm64-v8a
       6\t/Users/me/.gradle/caches
       du: /Users/me/Library/Caches/locked: Permission denied
       1\t/Users/me/Library/Caches
       """
     let report = StorageReport.make(
-      environments: [try workspace()], gc: try gc(), disk: DiskMeasurements(sizes: DiskSizes.parse(du)), paths: paths)
+      environments: [try workspace()], gc: try inventoryGc(), disk: DiskMeasurements(sizes: DiskSizes.parse(du)),
+      paths: paths)
 
     let row = try #require(report.workspaces.first)
-    #expect(row.buildOutputs == .size(Int64(8192)))
-    #expect(row.buildOutputsKept == "in use: dev server running")
-    #expect(row.nodeModules == .size(Int64(4096)))
-    #expect(row.logs == .size(Int64(40_000_000)))
-    #expect(row.logsTrimmed == nil && row.logsKept == "in use: dev server running")
-    #expect(row.devices == .size(Int64((10 + 5) * 1024)))
-    let expectedTotal: Int64 = 8192 + 4096 + 40_000_000 + 15 * 1024
-    #expect(row.total == expectedTotal)
+    #expect(row.devices == .size(Int64(10240 + 5 * 1024)))
     #expect(row.deviceCount == 2)
-    #expect(row.worktree?.mergedInto == "origin/main")
+    #expect(report.hasInventory)
+    #expect(report.devices.first { $0.device.id == "Pixel" }?.size == .notMeasured)
+    #expect(report.devices.first { $0.device.id == "Future" }?.isStim == false)
+    #expect(report.total(.stimDevices) == CategoryTotal(bytes: 10240 + 3072 + 5 * 1024, complete: true))
+    #expect(report.total(.otherDevices) == CategoryTotal(bytes: 7168 + 1024 + 2 * 1024, complete: false))
+    #expect(report.total(.nodeModules).bytes == 4096)
 
-    #expect(report.reclaimableDevices?.size == .size(Int64(3072)))
+    #expect(report.runtimes.map(\.title) == ["iOS 18.3.1", "Android 30 \u{00B7} google_apis", "iOS 27.0", "Android 36 \u{00B7} google_apis"])
+    #expect(report.runtimes[1].size == .size(Int64(3 * 1024)) && report.runtimes[1].unused)
+    #expect(report.runtimes[3].size == .notMeasured)
+
     let unmanaged: [String: Int64] = Dictionary(
       report.unmanaged.compactMap { location in location.size.bytes.map { (location.title, $0) } },
       uniquingKeysWith: { a, _ in a })
-    #expect(unmanaged["Simulators Stim does not own"] == Int64(7 * 1024))
     #expect(unmanaged["Gradle caches"] == Int64(6 * 1024 - 2048))
     #expect(unmanaged["~/Library/Caches"] == Int64(1024))
     #expect(unmanaged["Xcode DerivedData"] == nil)
+  }
+
+  /// Catches an older CLI without an inventory blanking the page or crediting the user's simulators to Stim.
+  @Test func withoutAnInventoryFallsBackToTheWorkspaceRecords() throws {
+    let du = """
+      5\t/Users/me/.android/avd/stim-a-tablet.avd
+      9\t/Users/me/.android/avd/Pixel.avd
+      14\t/Users/me/.android/avd
+      """
+    let report = StorageReport.make(
+      environments: [try workspace()], gc: try gc(), disk: DiskMeasurements(sizes: DiskSizes.parse(du)), paths: paths)
+    let row = try #require(report.workspaces.first)
+    #expect(!report.hasInventory && report.devices.isEmpty && report.runtimes.isEmpty)
+    #expect(row.deviceCount == 2)
+    #expect(row.devices == .notMeasured)
+  }
+
+  /// Catches worktrees of one repository scattered through the list, or a repository ranked by its first worktree.
+  @Test func groupsWorktreesByRepositoryAndRanksRepositoriesByTotal() throws {
+    func env(_ path: String, repository: String?) throws -> Workspace {
+      let worktree = repository.map { #","worktree":{"path":"\#(path)","branch":"b","repository":"\#($0)"}"# } ?? ""
+      return try JSONDecoder().decode(
+        Workspace.self, from: Data(#"{"path":"\#(path)","live":false,"warnings":[]\#(worktree)}"#.utf8))
+    }
+    let disk = DiskMeasurements(sizes: ["/t/.w/a/node_modules": 5, "/t/.w/b/node_modules": 6, "/solo/node_modules": 9])
+    let report = StorageReport.make(
+      environments: [try env("/t/.w/a", repository: "/t"), try env("/solo", repository: nil), try env("/t/.w/b", repository: "/t")],
+      gc: nil, disk: disk, paths: paths)
+    #expect(report.repositories.map(\.name) == ["t", "solo"])
+    #expect(report.repositories[0].total == 11 && report.repositories[0].worktrees.map(\.path) == ["/t/.w/b", "/t/.w/a"])
   }
 
   /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.
@@ -126,8 +189,9 @@ import Testing
     #expect(report.workspaces[1].unprovisioned && report.workspaces[1].repository == "/w/repo")
   }
 
-  /// Catches per-project Metro stores reading as identical rows whose Empty button can never select one.
-  @Test func namesSameNamedCachesByDirectoryAndSortsThemBySize() throws {
+  /// Catches per-project Metro stores reading as identical rows whose Free can never select one, and empty caches
+  /// offered for freeing.
+  @Test func offersEachNonEmptyCacheByASelectorThatPicksItAlone() throws {
     let json = """
       {"sections":{"deadProjects":[{"path":"/gone"}],"caches":[
         {"name":"Metro transform cache","dir":"/s/metro-cache/app","bytes":0},
@@ -137,10 +201,49 @@ import Testing
     let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
     let gone = try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/gone","live":false,"warnings":[]}"#.utf8))
     let report = StorageReport.make(environments: [gone], gc: gc, disk: DiskMeasurements(), paths: paths)
-    #expect(report.caches.map { $0.title(among: report.allCaches) } == ["Metro transform cache: tlon-mobile", "Build cache"])
-    #expect(report.emptyCaches.map(\.dir) == ["/s/metro-cache/app"])
-    #expect(report.caches.first?.selector(among: report.allCaches) == "/s/metro-cache/tlon-mobile")
+    #expect(report.free.map(\.title) == ["Metro transform cache: tlon-mobile", "Build cache", "Record of a deleted folder"])
+    #expect(report.free.first?.action == .cache("/s/metro-cache/tlon-mobile"))
     #expect(report.workspaces.first?.missing == true)
+  }
+}
+
+@Suite struct FreePlanTests {
+  let home = "/Users/me"
+  let worktree = FreeAction.removeWorktree(path: "/r/.w/a", repository: "/r")
+
+  /// Catches a checkbox that promises to keep something stim gc --delete deletes anyway, and a whole cache
+  /// emptied without being asked for.
+  @Test func stimGcIncludesWorktreesAndOutputsAndCachesStayOptIn() {
+    let items = [
+      FreeItem(id: "d", title: "stim-parked", path: nil, detail: "", bytes: 3, action: .gc),
+      FreeItem(id: "w", title: "Worktree", path: "/r/.w/a", detail: "", bytes: 5, action: worktree),
+      FreeItem(id: "o", title: "Build outputs", path: "/r/.w/a", detail: "", bytes: 7, action: .workspaceOutputs),
+      FreeItem(id: "c", title: "Build cache", path: nil, detail: "", bytes: 11, action: .cache("/s/build-cache")),
+    ]
+    let defaults = FreePlan.defaultSelection(items)
+    #expect(!defaults.contains(.cache("/s/build-cache")))
+    #expect(FreePlan.bytes(items, selected: defaults) == 15)
+    #expect(FreePlan.commands(defaults, home: home).map(\.arguments) == [["gc", "--json", "--delete"]])
+    #expect(!FreePlan.canToggle(worktree, selected: defaults) && FreePlan.frees(worktree, selected: [.gc]))
+
+    let alone: Set<FreeAction> = [worktree, .workspaceOutputs, .cache("/s/build-cache")]
+    let commands = FreePlan.commands(alone, home: home)
+    #expect(
+      commands.map(\.arguments) == [
+        ["worktree", "remove", "/r/.w/a"], ["gc", "--json", "--delete", "--cache", "workspaces"],
+        ["gc", "--json", "--delete", "--cache", "/s/build-cache"],
+      ])
+    #expect(commands.first?.cwd == "/r")
+    #expect(FreePlan.bytes(items, selected: alone) == 23)
+  }
+
+  /// Catches several commands squeezed into one gc preview whose Delete would act on only one of them.
+  @Test func previewsOnlyASingleGcRun() {
+    #expect(FreePlan.preview(FreePlan.commands([.gc], home: home)) == ["gc", "--json"])
+    #expect(
+      FreePlan.preview(FreePlan.commands([.cache("x")], home: home)) == ["gc", "--json", "--cache", "x"])
+    #expect(FreePlan.preview(FreePlan.commands([.gc, .cache("x")], home: home)) == nil)
+    #expect(FreePlan.preview(FreePlan.commands([worktree], home: home)) == nil)
   }
 }
 

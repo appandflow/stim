@@ -10,7 +10,7 @@ final class OpenRequests: ObservableObject {
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
   @Published var selectedWorkspace: String?
-  @Published var showsStorage = false
+  @Published var showsMachine = false
   @Published var pairsPhone = false
 }
 

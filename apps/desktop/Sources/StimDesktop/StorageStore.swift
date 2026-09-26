@@ -50,7 +50,7 @@ final class StorageStore: ObservableObject {
       let paths = StoragePaths(home: NSHomeDirectory(), environment: environment)
       self.paths = paths
       let jobs =
-        paths.deviceSets.map { (path: $0, options: ["-k", "-d", "1"]) }
+        paths.deviceSets.map { (path: $0.path, options: ["-k", "-d", "\($0.depth)"]) }
         + (modules.sorted() + paths.unmanaged.map(\.path)).map { (path: $0, options: ["-k", "-s"]) }
       let absent = await Task.detached { Set(jobs.map(\.path).filter { !FileManager.default.fileExists(atPath: $0) }) }.value
       disk = DiskMeasurements(pending: Set(jobs.map(\.path)).subtracting(absent), absent: absent)
