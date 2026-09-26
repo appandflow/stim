@@ -4,6 +4,7 @@ import SwiftUI
 struct Sidebar: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var onboarding: Onboarding
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
@@ -50,6 +51,9 @@ struct Sidebar: View {
         pinned
       }
       .background(Theme.sidebar)
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, selection: $selection)
     }
   }
 
@@ -355,6 +359,133 @@ private struct PlainSelectionHighlight: NSViewRepresentable {
 extension View {
   fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
     tag(item).listRowBackground(item == selection ? Theme.selected : Color.clear)
+  }
+}
+
+/// The sidebar's pinned bottom bar: one status line at a time on the left (`SidebarFooterStatus`), and
+/// up to three small icon buttons on the right, each hidden rather than disabled when it does not apply.
+struct SidebarFooter: View {
+  @ObservedObject var store: StatusStore
+  @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var onboarding: Onboarding
+  @ObservedObject private var updater = AppUpdater.shared
+  @ObservedObject private var server = ServerController.shared
+  @Binding var selection: SidebarItem?
+  @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @Environment(\.openSettings) private var openSettings
+
+  private var status: SidebarFooterStatus {
+    SidebarFooterStatus.decide(
+      stim: onboarding.report?.stim, pressure: autopilot.pressure,
+      desktopUpdateAvailable: updater.isAvailable && updater.updateAvailable)
+  }
+
+  private var drivenDevices: [DrivenDevice] { DrivenDevice.all(in: store.payload?.environments ?? []) }
+
+  var body: some View {
+    HStack(spacing: 6) {
+      leftStatus
+      Spacer(minLength: 8)
+      if !drivenDevices.isEmpty { agentsButton }
+      if servesPhones { phonesButton }
+      settingsButton
+    }
+    .padding(.horizontal, 10)
+    .frame(height: 44)
+    .background(Theme.sidebar)
+    .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+  }
+
+  @ViewBuilder private var leftStatus: some View {
+    switch status {
+    case .stimUnavailable(let compatibility):
+      Button(action: onboarding.installStim) {
+        statusLabel(dot: Theme.warn, text: compatibility == .missing ? "Install stim" : "stim update available")
+      }
+      .buttonStyle(.plain)
+    case .diskCritical(let freeBytes):
+      Button { selection = .storage } label: {
+        statusLabel(dot: Theme.error, text: "Low disk: \(formatDisk(freeBytes)) free")
+      }
+      .buttonStyle(.plain)
+    case .desktopUpdateAvailable:
+      Button(action: updater.checkForUpdates) {
+        statusLabel(dot: Theme.primary, text: "Update available")
+      }
+      .buttonStyle(.plain)
+    case .diskWarning(let freeBytes):
+      Button { selection = .storage } label: {
+        statusLabel(dot: Theme.warn, text: "Low disk: \(formatDisk(freeBytes)) free")
+      }
+      .buttonStyle(.plain)
+    case .normal(let version):
+      statusLabel(dot: Theme.live, text: version.map { "Stim \($0)" } ?? "Stim")
+    }
+  }
+
+  private func statusLabel(dot: Color, text: String) -> some View {
+    HStack(spacing: 6) {
+      Circle().fill(dot).frame(width: 6, height: 6)
+      Text(text).font(Theme.body(11.5)).foregroundStyle(Theme.secondary).lineLimit(1)
+    }
+  }
+
+  private var agentsButton: some View {
+    FooterIconButton(
+      systemImage: "cursorarrow.rays", tint: Theme.lavender, badge: "\(drivenDevices.count)", help: agentsTooltip
+    ) {
+      selection = .wall
+    }
+  }
+
+  private var agentsTooltip: String {
+    (["\(drivenDevices.count) device\(drivenDevices.count == 1 ? "" : "s") driven by an agent:"]
+      + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
+  }
+
+  private var phonesButton: some View {
+    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+      .font(.system(size: 12, weight: .medium))
+      .foregroundStyle(Theme.secondary)
+      .frame(width: 26, height: 24)
+      .help(phonesTooltip)
+  }
+
+  private var phonesTooltip: String {
+    guard case .running(let health, _) = server.state, let route = health.route, let dnsName = health.tailscale.dnsName
+    else { return "Phones on" }
+    return "Phones connect to \(route.endpoint(dnsName: dnsName))"
+  }
+
+  private var settingsButton: some View {
+    FooterIconButton(systemImage: "gearshape", help: "Settings") { openSettings() }
+  }
+}
+
+private struct FooterIconButton: View {
+  var systemImage: String
+  var tint = Theme.secondary
+  /// A short count shown next to the icon, such as an agent-driven device count.
+  var badge: String?
+  var help: String
+  var action: () -> Void
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 3) {
+        Image(systemName: systemImage).font(.system(size: 12, weight: .medium))
+        if let badge { Text(badge).font(Theme.body(10.5, weight: .medium)) }
+      }
+      .foregroundStyle(tint)
+      .padding(.horizontal, badge == nil ? 0 : 6)
+      .frame(minWidth: 26, minHeight: 24)
+      .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.raised : Color.clear))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .help(help)
   }
 }
 
