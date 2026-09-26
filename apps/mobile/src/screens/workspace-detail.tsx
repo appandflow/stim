@@ -205,7 +205,14 @@ export function WorkspaceDetail({ path }: { path: string }) {
                 </Pill>
               ) : null}
               <GitIndicator git={env.worktree?.git} chips />
-              {env.memoryMb > 0 ? <Pill>{`${(env.memoryMb / 1024).toFixed(1)} GB`}</Pill> : null}
+              {env.memoryMb > 0 ? (
+                <Pill
+                  icon="memorychip"
+                  accessibilityLabel={`Estimated to use about ${(env.memoryMb / 1024).toFixed(1)} GB of memory`}
+                >
+                  {`${(env.memoryMb / 1024).toFixed(1)} GB`}
+                </Pill>
+              ) : null}
               {env.logs ? (
                 <Pill tone={errors > 0 ? 'error' : 'neutral'} onPress={() => openLogs(true)}>
                   {errors === 1 ? '1 error' : `${errors} errors`}
