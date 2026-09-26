@@ -1,4 +1,5 @@
 import type { HomeView } from '@/hooks/home-filters';
+import type { NotifyEvent } from '@/lib/attention';
 import type { Appearance, VideoQuality } from '@/hooks/settings';
 
 export interface Option<T extends string> {
@@ -34,3 +35,17 @@ export const VIDEO_QUALITY_FOOTER =
 
 export const READ_ONLY_FOOTER =
   "A read-only machine shows its status but can't run actions or control devices from this phone. Tap it to see how to allow control.";
+
+export const NOTIFY_EVENT_LABELS: Record<NotifyEvent, string> = {
+  'build-failed': 'Build failed',
+  'log-errors': 'New log errors',
+  disk: 'Disk below the floor',
+  offline: 'Machine offline or refused',
+  'app-stopped': 'App stopped',
+  'slow-build': 'Build far over its usual time',
+};
+
+export const AGENT_ONLY_LABEL = 'Only workspaces an agent drives';
+
+export const NOTIFICATIONS_FOOTER =
+  "Each problem notifies once. On iPhone, a Mac whose stim-server sends push notifications notifies while Stim is in the background or closed, as long as stim-server runs; they pass through Expo's push service and Apple. Everything else, including a machine going offline and every notification on Android, arrives only while Stim is open: the connection to the Mac closes seconds after you leave the app. The agent filter skips workspaces with no device an agent drives right now.";

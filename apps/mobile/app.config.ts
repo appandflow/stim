@@ -56,6 +56,7 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    ['expo-notifications', { mode: dev ? 'development' : 'production' }],
   ],
   experiments: {
     typedRoutes: true,
@@ -66,6 +67,7 @@ const config: ExpoConfig = {
   },
   extra: {
     router: {},
+    push: !dev || process.env.STIM_DEV_PUSH === '1',
     eas: {
       projectId: '1e92e2da-38f5-415b-b82e-72f4edd2b2bc',
     },

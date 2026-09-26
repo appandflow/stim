@@ -7,6 +7,7 @@ import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { MacsProvider } from '@/hooks/mac-connection';
+import { NotificationsProvider } from '@/hooks/notifications';
 import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
 
@@ -52,52 +53,57 @@ function RootLayoutContent() {
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <MacsProvider>
         <DevPairing />
-        <HomeFiltersProvider>
-          <RecentsProvider>
-            <MenuDrawer>
-              <Stack
-                screenOptions={{
-                  orientation: phoneOrientation('portrait_up'),
-                  headerTintColor: colors.primary,
-                  headerTitleStyle: { color: colors.text },
-                  headerBackButtonDisplayMode: 'minimal',
-                }}
-              >
-                <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
-                <Stack.Screen name="filters" options={sheet([0.6, 1])} />
-                <Stack.Screen name="about" options={sheet([0.5, 1])} />
-                <Stack.Screen
-                  name="settings"
-                  options={{
-                    title: 'Settings',
-                    headerLargeTitle: true,
-                    contentStyle: { backgroundColor: colors.grouped },
-                    ...(Platform.OS === 'android'
-                      ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
-                      : null),
+        <NotificationsProvider>
+          <HomeFiltersProvider>
+            <RecentsProvider>
+              <MenuDrawer>
+                <Stack
+                  screenOptions={{
+                    orientation: phoneOrientation('portrait_up'),
+                    headerTintColor: colors.primary,
+                    headerTitleStyle: { color: colors.text },
+                    headerBackButtonDisplayMode: 'minimal',
                   }}
-                />
-                <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
-                <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
-                <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-                <Stack.Screen name="mac/[id]/workspace" options={{ title: 'Workspace', headerShadowVisible: false }} />
-                <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
-                <Stack.Screen
-                  name="mac/[id]/device"
-                  options={{
-                    headerShown: false,
-                    orientation: phoneOrientation('default'),
-                    presentation: 'transparentModal',
-                    animation: 'none',
-                    gestureEnabled: false,
-                    contentStyle: { backgroundColor: 'transparent' },
-                  }}
-                />
-                <Stack.Screen name="mac/[id]/build" options={sheet([0.6, 1])} />
-              </Stack>
-            </MenuDrawer>
-          </RecentsProvider>
-        </HomeFiltersProvider>
+                >
+                  <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
+                  <Stack.Screen name="filters" options={sheet([0.6, 1])} />
+                  <Stack.Screen name="about" options={sheet([0.5, 1])} />
+                  <Stack.Screen
+                    name="settings"
+                    options={{
+                      title: 'Settings',
+                      headerLargeTitle: true,
+                      contentStyle: { backgroundColor: colors.grouped },
+                      ...(Platform.OS === 'android'
+                        ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
+                        : null),
+                    }}
+                  />
+                  <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
+                  <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
+                  <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
+                  <Stack.Screen
+                    name="mac/[id]/workspace"
+                    options={{ title: 'Workspace', headerShadowVisible: false }}
+                  />
+                  <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
+                  <Stack.Screen
+                    name="mac/[id]/device"
+                    options={{
+                      headerShown: false,
+                      orientation: phoneOrientation('default'),
+                      presentation: 'transparentModal',
+                      animation: 'none',
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: 'transparent' },
+                    }}
+                  />
+                  <Stack.Screen name="mac/[id]/build" options={sheet([0.6, 1])} />
+                </Stack>
+              </MenuDrawer>
+            </RecentsProvider>
+          </HomeFiltersProvider>
+        </NotificationsProvider>
       </MacsProvider>
     </ThemeProvider>
   );

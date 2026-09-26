@@ -19,11 +19,17 @@ import { describeState } from '@/components/mac-chip';
 import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
+import { useNotificationPrefs } from '@/hooks/notifications';
+import type { NotifyEvent } from '@/lib/attention';
+import { NOTIFY_EVENTS } from '@/lib/notifications';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope } from '@/lib/connection';
 import {
+  AGENT_ONLY_LABEL,
   APPEARANCE_OPTIONS,
   HOME_FOOTER,
+  NOTIFICATIONS_FOOTER,
+  NOTIFY_EVENT_LABELS,
   HOME_VIEW_OPTIONS,
   labelOf,
   READ_ONLY_FOOTER,
@@ -39,6 +45,7 @@ const ICONS = {
   idle: require('@/assets/icons/bedtime.xml'),
   video: require('@/assets/icons/videocam.xml'),
   machine: require('@/assets/icons/laptop-mac.xml'),
+  notifications: require('@/assets/icons/notifications.xml'),
   about: require('@/assets/icons/info.xml'),
 } satisfies Record<string, ImageSourcePropType>;
 
@@ -49,6 +56,10 @@ export function Settings() {
   const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
+  const { prefs, enable, update: updateNotifications } = useNotificationPrefs();
+  const toggleEvent = (event: NotifyEvent, on: boolean) =>
+    updateNotifications({ events: on ? [...prefs.events, event] : prefs.events.filter((e) => e !== event) });
+  const switchColors = { checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary };
   const showIdle = filters.activity !== 'live';
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
 
@@ -91,6 +102,52 @@ export function Settings() {
               />
             }
           />
+        </Section>
+        <Section colors={colors} title="Notifications" footer={NOTIFICATIONS_FOOTER}>
+          <Row
+            colors={colors}
+            title="Notify when something needs attention"
+            icon={ICONS.notifications}
+            onPress={() => (prefs.enabled ? updateNotifications({ enabled: false }) : void enable())}
+            trailing={
+              <Switch
+                value={prefs.enabled}
+                onCheckedChange={(on) => (on ? void enable() : updateNotifications({ enabled: false }))}
+                colors={switchColors}
+              />
+            }
+          />
+          {prefs.enabled
+            ? NOTIFY_EVENTS.map((event) => (
+                <Row
+                  key={event}
+                  colors={colors}
+                  title={NOTIFY_EVENT_LABELS[event]}
+                  onPress={() => toggleEvent(event, !prefs.events.includes(event))}
+                  trailing={
+                    <Switch
+                      value={prefs.events.includes(event)}
+                      onCheckedChange={(on) => toggleEvent(event, on)}
+                      colors={switchColors}
+                    />
+                  }
+                />
+              ))
+            : null}
+          {prefs.enabled ? (
+            <Row
+              colors={colors}
+              title={AGENT_ONLY_LABEL}
+              onPress={() => updateNotifications({ agentOnly: !prefs.agentOnly })}
+              trailing={
+                <Switch
+                  value={prefs.agentOnly}
+                  onCheckedChange={(agentOnly) => updateNotifications({ agentOnly })}
+                  colors={switchColors}
+                />
+              }
+            />
+          ) : null}
         </Section>
         <Section colors={colors} title="Device view" footer={VIDEO_QUALITY_FOOTER}>
           <Choice
@@ -193,7 +250,7 @@ function Row({
 }: {
   colors: Theme['colors'];
   title: string;
-  icon: ImageSourcePropType;
+  icon?: ImageSourcePropType;
   value?: string;
   valueColor?: string;
   trailing?: ReactNode;
@@ -208,9 +265,11 @@ function Row({
       }}
       modifiers={[fillMaxWidth(), clickable(onPress)]}
     >
-      <ListItem.LeadingContent>
-        <Icon source={icon} size={24} tint={colors.primary} />
-      </ListItem.LeadingContent>
+      {icon ? (
+        <ListItem.LeadingContent>
+          <Icon source={icon} size={24} tint={colors.primary} />
+        </ListItem.LeadingContent>
+      ) : null}
       <ListItem.HeadlineContent>
         <Text>{title}</Text>
       </ListItem.HeadlineContent>

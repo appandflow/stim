@@ -6,6 +6,7 @@ import { createMMKV } from 'react-native-mmkv';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
+import type { AttentionMachine } from '@/lib/attention';
 import { RequestError, StimConnection } from '@/lib/connection';
 import type { HomeItem } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
@@ -173,6 +174,21 @@ export function useMacs(): { macs: PairedMac[] | null; reload: () => void; conne
     [macs, links, snapshots, usage],
   );
   return { macs, reload, connections };
+}
+
+/** What home's attention strip and the notifications read of a machine; a still-cached status counts as none. */
+export function toAttentionMachine(c: PairedConnection): AttentionMachine {
+  return {
+    id: c.mac.id,
+    name: c.mac.name,
+    state: c.state,
+    missing: c.missing,
+    status: c.cachedSeenAt === null ? c.status : null,
+    usage: c.usage,
+    home: c.home,
+    disconnectedAt: c.disconnectedAt,
+    seenAt: c.cachedSeenAt,
+  };
 }
 
 /** The paired machines, null until the pairings load. */

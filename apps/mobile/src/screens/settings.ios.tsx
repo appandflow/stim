@@ -22,11 +22,17 @@ import { describeState } from '@/components/mac-chip';
 import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
+import { useNotificationPrefs } from '@/hooks/notifications';
+import type { NotifyEvent } from '@/lib/attention';
+import { NOTIFY_EVENTS } from '@/lib/notifications';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope } from '@/lib/connection';
 import {
+  AGENT_ONLY_LABEL,
   APPEARANCE_OPTIONS,
   HOME_FOOTER,
+  NOTIFICATIONS_FOOTER,
+  NOTIFY_EVENT_LABELS,
   HOME_VIEW_OPTIONS,
   READ_ONLY_FOOTER,
   VIDEO_QUALITY_FOOTER,
@@ -41,6 +47,7 @@ export function Settings() {
   const { appearance, setAppearance, videoQuality, setVideoQuality } = useSettings();
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
+  const notifications = useNotificationPrefs();
   const rowModifiers = [listRowBackground(colors.groupedRow)];
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
 
@@ -76,6 +83,7 @@ export function Settings() {
             <RowLabel colors={colors} title="Show idle workspaces" symbol="moon.zzz" />
           </Toggle>
         </Section>
+        <NotificationsSection colors={colors} value={notifications} modifiers={rowModifiers} />
         <Section title="Device view" footer={<Text>{VIDEO_QUALITY_FOOTER}</Text>}>
           <Choice
             colors={colors}
@@ -127,6 +135,57 @@ export function Settings() {
 }
 
 type RowModifiers = ReturnType<typeof listRowBackground>[];
+
+const EVENT_SYMBOLS: Record<NotifyEvent, SFSymbol> = {
+  'build-failed': 'hammer',
+  'log-errors': 'exclamationmark.triangle',
+  disk: 'internaldrive',
+  offline: 'wifi.slash',
+  'app-stopped': 'app.dashed',
+  'slow-build': 'tortoise',
+};
+
+function NotificationsSection({
+  colors,
+  value,
+  modifiers,
+}: {
+  colors: Theme['colors'];
+  value: ReturnType<typeof useNotificationPrefs>;
+  modifiers: RowModifiers;
+}) {
+  const { prefs, enable, update } = value;
+  const toggle = (event: NotifyEvent, on: boolean) =>
+    update({ events: on ? [...prefs.events, event] : prefs.events.filter((e) => e !== event) });
+  return (
+    <Section title="Notifications" footer={<Text>{NOTIFICATIONS_FOOTER}</Text>}>
+      <Toggle
+        isOn={prefs.enabled}
+        onIsOnChange={(on) => (on ? void enable() : update({ enabled: false }))}
+        modifiers={modifiers}
+      >
+        <RowLabel colors={colors} title="Notify when something needs attention" symbol="bell.badge" />
+      </Toggle>
+      {prefs.enabled
+        ? NOTIFY_EVENTS.map((event) => (
+            <Toggle
+              key={event}
+              isOn={prefs.events.includes(event)}
+              onIsOnChange={(on) => toggle(event, on)}
+              modifiers={modifiers}
+            >
+              <RowLabel colors={colors} title={NOTIFY_EVENT_LABELS[event]} symbol={EVENT_SYMBOLS[event]} />
+            </Toggle>
+          ))
+        : null}
+      {prefs.enabled ? (
+        <Toggle isOn={prefs.agentOnly} onIsOnChange={(agentOnly) => update({ agentOnly })} modifiers={modifiers}>
+          <RowLabel colors={colors} title={AGENT_ONLY_LABEL} symbol="sparkles" />
+        </Toggle>
+      ) : null}
+    </Section>
+  );
+}
 
 function RowLabel({ colors, title, symbol }: { colors: Theme['colors']; title: string; symbol: SFSymbol }) {
   return (
