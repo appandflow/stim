@@ -178,7 +178,10 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   can create refuses with `STIM_BAD_ARG` and prints the ones they do offer.
 - `--runtime <version>` creates it on that iOS runtime, overriding `ios.runtime`
   the same way. It takes a version (`26.5`) or a runtime's full name
-  (`iOS 26.5`), exactly.
+  (`iOS 26.5`), exactly. When the workspace's simulator already runs another
+  installed version, `stim ios` refuses instead of booting it: remove the
+  simulator with `stim worktree remove` or `stim gc --delete`, or pass
+  `--slot <name>` to create one beside it.
 - `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
   preference for this run. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators

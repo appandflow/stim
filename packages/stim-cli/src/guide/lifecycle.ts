@@ -1448,14 +1448,14 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   (\`iOS 26.5\`), exactly; no prefix or suffix matches.
 
   These flags describe a device that does not exist yet. When this workspace
-  ALREADY owns a simulator and \`--device-type\` names a different model,
-  Stim refuses rather than silently booting the wrong one: reap the current
-  sim with \`stim worktree remove\` (or \`stim gc --delete\`), then run
-  \`stim ios\` again to create the requested one. \`--device-profile\` does
-  the same for an AVD of another profile. To keep both devices, give the new
-  one its own \`--slot\`. \`--runtime\` and the ios.runtime and
-  android.systemImage settings apply at creation only, so an existing device
-  keeps the version it was made with. An explicit \`--system-image\` that
+  ALREADY owns a simulator and \`--device-type\` names a different model, or
+  \`--runtime\` a different iOS version, Stim refuses rather than silently
+  booting the wrong one: reap the current sim with \`stim worktree remove\`
+  (or \`stim gc --delete\`), then run \`stim ios\` again to create the
+  requested one. \`--device-profile\` does the same for an AVD of another
+  profile. To keep both devices, give the new one its own \`--slot\`. The
+  ios.runtime and android.systemImage settings apply at creation only, so an
+  existing device keeps the version it was made with. An explicit \`--system-image\` that
   names another image than this workspace's AVD refuses the same way, unless
   that AVD never finished a boot (for example one made from an image its
   profile cannot boot): Stim then deletes it through owned-device teardown and

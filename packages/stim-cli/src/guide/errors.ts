@@ -624,6 +624,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   \`gc --delete\`) and run \`stim ios\` again to create the requested model.
   That loses the old sim's app state.
 
+"this project's sim runs iOS X, but --runtime asked for Y"
+  The same refusal for an explicit \`--runtime\` that names another installed
+  iOS version than the project's sim runs. Reap the sim the same way, or pass
+  \`--slot <name>\` to create one on the requested runtime beside it. The
+  ios.runtime setting alone never refuses; it applies at creation.
+
 "this project's emulator uses device profile X, but Y was requested"
   The Android counterpart, from \`--device-profile\` or android.deviceProfile.
   Reap the AVD the same way, or pass \`--slot <name>\` to create the requested
