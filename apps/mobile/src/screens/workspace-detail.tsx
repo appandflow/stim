@@ -16,20 +16,11 @@ import { ScrollView } from '@/components/lists';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { Touch } from '@/components/touch';
-import { useAction, useMacConnection, useStatus } from '@/hooks/mac-connection';
+import { useAction, useHasStatus, useMacConnection, useWorkspace } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
-import {
-  deviceWarnings,
-  devicesOf,
-  livePlatforms,
-  orderDevices,
-  pathInCheckout,
-  projectOf,
-  repositoryRoots,
-  workspaceTitleAt,
-} from '@/lib/workspaces';
+import { deviceWarnings, devicesOf, livePlatforms, orderDevices, workspaceTitleAt } from '@/lib/workspaces';
 import type { ActionName, Platform as DevicePlatform } from '@/protocol/types';
 import { mono, useColors } from '@/theme';
 
@@ -41,13 +32,13 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const colors = useColors();
   const router = useRouter();
   const { mac, state, home, connection } = useMacConnection();
-  const status = useStatus();
-  const env = status?.environments.find((e) => e.path === path);
-  const title = workspaceTitleAt(path, status);
   const macId = mac?.id ?? '';
-  const roots = status ? repositoryRoots(status) : [];
-  const project = status && env ? projectOf(env, roots).name : null;
-  const inCheckout = env ? pathInCheckout(env, roots) : null;
+  const hasStatus = useHasStatus(macId);
+  const item = useWorkspace(macId, path);
+  const env = item?.env;
+  const title = item?.title ?? workspaceTitleAt(path, null);
+  const project = item?.project ?? null;
+  const inCheckout = item?.inCheckout ?? null;
   const actions = useAction(path);
   const [toast, setToast] = useState<Toast | null>(null);
   const [bannerHeight, setBannerHeight] = useState(0);
@@ -158,7 +149,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
     </>
   );
 
-  if (!status) {
+  if (!hasStatus) {
     return (
       <>
         <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingTop: bannerHeight }}>

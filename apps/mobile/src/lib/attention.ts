@@ -16,6 +16,8 @@ export interface AttentionMachine {
   home: string | null;
   /** When the connection last dropped; null while connected or before the first connection. */
   disconnectedAt: number | null;
+  /** When a status cached before this launch was last known current; null once connected. */
+  seenAt: number | null;
 }
 
 export type AttentionTarget =
@@ -46,7 +48,8 @@ function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | nu
     return { ...base, key: `${mac.id}\noffline`, severity: 'error', detail: `Refused the connection: ${fix}` };
   }
   if (state.kind === 'open' || (state.kind === 'connecting' && mac.disconnectedAt === null)) return null;
-  const seen = mac.disconnectedAt === null ? '' : ` \u00B7 last seen ${shortDuration(now - mac.disconnectedAt)} ago`;
+  const lastSeenAt = mac.seenAt ?? mac.disconnectedAt;
+  const seen = lastSeenAt === null ? '' : ` \u00B7 last seen ${shortDuration(now - lastSeenAt)} ago`;
   return { ...base, key: `${mac.id}\noffline`, severity: 'warning', detail: `Offline${seen}` };
 }
 

@@ -10,7 +10,7 @@ import { MachineStatsRow } from '@/components/machine-stats';
 import { explainReadOnly, ScopeChip } from '@/components/read-only';
 import { Touch } from '@/components/touch';
 import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
-import { useMacById } from '@/hooks/mac-connection';
+import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/mac-connection';
 import { pairingScope } from '@/lib/connection';
 import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
@@ -20,7 +20,9 @@ import { mono, useColors } from '@/theme';
 
 export function MacStatus({ id }: { id: string }) {
   const colors = useColors();
-  const { mac, connection, state, missing, status, usage, home } = useMacById(id);
+  const { mac, connection, state, missing, home } = useMacById(id);
+  const status = useMachineStatus(id);
+  const usage = useMachineUsage(id);
   const [budgets, setBudgets] = useState<BudgetRow[] | null>(null);
   const open = state.kind === 'open';
   const samples = useUsageHistory(connection, open, usage);

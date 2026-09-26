@@ -325,6 +325,11 @@ export const pathRules = [
   { path: 'website', exempt: 'documentation website' },
   { path: 'apps', exempt: 'macOS desktop app, not part of the published npm packages' },
   { path: 'apps/mobile', exempt: 'Expo mobile app, not part of the published npm packages' },
+  {
+    path: 'patches',
+    exempt:
+      'pnpm patches of Expo mobile app dependencies; a patch of a published package dependency needs its own rule',
+  },
   { path: 'scripts', exempt: 'repository tooling, not published behavior' },
   { path: '.claude', exempt: 'local agent configuration, not published behavior' },
   { path: '.github', exempt: 'CI configuration, covered by the exact-commit CI in section 4' },

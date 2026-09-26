@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
@@ -7,27 +7,24 @@ import { Chip } from '@/components/chip';
 import { GitIndicator } from '@/components/git-indicator';
 import { Icon } from '@/components/icon';
 import { Touch } from '@/components/touch';
+import { useMachinePresence } from '@/hooks/mac-connection';
 import { shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { devicesOf, isActive, runningBuild } from '@/lib/workspaces';
 import { useColors } from '@/theme';
 
-export function WorkspaceRow({
+export const WorkspaceRow = memo(function WorkspaceRow({
   item,
-  macOnline,
-  disconnectedAt,
   now,
-  onPress,
-  onErrors,
+  onOpen,
 }: {
   item: HomeItem;
-  macOnline: boolean;
-  disconnectedAt: number | null;
   now: number;
-  onPress: () => void;
-  onErrors: () => void;
+  onOpen: (item: HomeItem, errors: boolean) => void;
 }) {
   const colors = useColors();
+  const { online, cached, lastSeenAt } = useMachinePresence(item.macId);
+  const macOnline = online && !cached;
   const offline = !macOnline;
   const { env } = item;
   const build = runningBuild(env);
@@ -37,14 +34,14 @@ export function WorkspaceRow({
   const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = offline ? colors.tertiary : build ? colors.accent : active ? colors.live : colors.tertiary;
   const lastSeen = offline
-    ? disconnectedAt === null
+    ? lastSeenAt === null
       ? 'Offline'
-      : `Last seen ${shortDuration(now - disconnectedAt)} ago`
+      : `Last seen ${shortDuration(now - lastSeenAt)} ago`
     : null;
   return (
     <Touch
       feedback="row"
-      onPress={onPress}
+      onPress={() => onOpen(item, false)}
       accessibilityLabel={`Workspace ${item.title} on ${item.macName}${lastSeen ? `, ${lastSeen}` : ''}`}
       style={styles.row}
     >
@@ -83,7 +80,7 @@ export function WorkspaceRow({
                 <Chip tint={offline ? undefined : colors.live}>
                   {`${d.platform === 'ios' ? 'iOS' : 'Android'}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`}
                 </Chip>
-                <ActivityChip activity={d.activity} frozenAt={offline ? (disconnectedAt ?? now) : null} />
+                <ActivityChip activity={d.activity} frozenAt={offline ? (lastSeenAt ?? now) : null} />
               </Fragment>
             ))}
             {(env.remoteDevices ?? []).map((r) => (
@@ -92,7 +89,7 @@ export function WorkspaceRow({
               </Chip>
             ))}
             {errors > 0 ? (
-              <Touch onPress={onErrors} hitSlop={6}>
+              <Touch onPress={() => onOpen(item, true)} hitSlop={6}>
                 <Chip tint={colors.error}>{errors === 1 ? '1 error' : `${errors} errors`}</Chip>
               </Touch>
             ) : null}
@@ -103,11 +100,11 @@ export function WorkspaceRow({
             ) : null}
           </View>
         ) : null}
-        {build ? <BuildProgressBar build={build} frozenAt={offline ? (disconnectedAt ?? now) : null} /> : null}
+        {build ? <BuildProgressBar build={build} frozenAt={offline ? (lastSeenAt ?? now) : null} /> : null}
       </View>
     </Touch>
   );
-}
+});
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 14, paddingHorizontal: 20, paddingVertical: 12 },

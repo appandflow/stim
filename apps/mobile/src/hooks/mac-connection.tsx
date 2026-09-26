@@ -1,21 +1,17 @@
 import Constants from 'expo-constants';
 import { useLocalSearchParams } from 'expo-router';
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { AppState } from 'react-native';
+import { createMMKV } from 'react-native-mmkv';
+import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
-import { RequestError, StimConnection, type ConnectionState } from '@/lib/connection';
+import { RequestError, StimConnection } from '@/lib/connection';
+import type { HomeItem } from '@/lib/home';
+import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import { PlanChecks, type PlanSnapshot, type PlanState } from '@/lib/plan-checks';
+import { StatusCache } from '@/lib/status-cache';
 import type {
   ActionName,
   ActionParams,
@@ -38,50 +34,35 @@ const USAGE_INTERVAL_MS = 15_000;
 const SNAPSHOT_EDGE = 640;
 const MAX_INPUT_TEXT = 256;
 
-export interface MacConnection {
-  mac: PairedMac | null;
-  connection: StimConnection | null;
-  state: ConnectionState;
-  missing: boolean;
-  status: StatusPayload | null;
-  usage: MachineUsage | null;
-  /** The Mac's home folder, from `hello`; null until connected or from an older server. */
-  home: string | null;
-  /** When the connection last dropped; null while connected or before the first connection. */
-  disconnectedAt: number | null;
+const machines = createMachineStore({ cache: new StatusCache(createMMKV({ id: 'stim.status' })) });
+AppState.addEventListener('change', (state) => {
+  if (state !== 'active') machines.flushAll();
+});
+
+function useMachines<T>(selector: (state: MachinesState) => T): T {
+  return useStore(machines.store, selector);
 }
 
-interface Live {
-  connection: StimConnection | null;
-  state: ConnectionState;
-  missing: boolean;
-  status: StatusPayload | null;
-  usage: MachineUsage | null;
-  home: string | null;
-  disconnectedAt: number | null;
-}
-
-const IDLE: Live = {
-  connection: null,
-  state: { kind: 'connecting' },
-  missing: false,
-  status: null,
-  usage: null,
-  home: null,
-  disconnectedAt: null,
+const reload = () => {
+  listMacs().then(
+    (macs) => machines.setMacs(macs, true),
+    () => machines.setMacs([], false),
+  );
 };
 
-interface Pool {
-  macs: PairedMac[] | null;
-  live: Record<string, Live>;
-  reload: () => void;
+export interface MacConnection extends MachineLink {
+  mac: PairedMac | null;
 }
 
-const Context = createContext<Pool>({ macs: null, live: {}, reload: () => {} });
+export type PairedConnection = MachineLink & {
+  mac: PairedMac;
+  status: StatusPayload | null;
+  usage: MachineUsage | null;
+  /** Set while `status` comes from the cache: when it was last known current. */
+  cachedSeenAt: number | null;
+};
 
-type Update = (id: string, patch: Partial<Live> | null) => void;
-
-function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
+function MacLink({ mac }: { mac: PairedMac }) {
   const [connection, setConnection] = useState<StimConnection | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -93,7 +74,7 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
       const token = await macToken(mac.id);
       if (cancelled) return;
       if (!token) {
-        update(mac.id, { missing: true, state: { kind: 'closed' } });
+        machines.patchLink(mac.id, { missing: true, state: { kind: 'closed' } });
         return;
       }
       const next = new StimConnection({
@@ -104,7 +85,7 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
           if (cancelled) return;
           const isOpen = state.kind === 'open';
           setOpen(isOpen);
-          update(
+          machines.patchLink(
             mac.id,
             state.kind === 'open'
               ? { state, home: state.server.home ?? null, disconnectedAt: null }
@@ -117,15 +98,15 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
       });
       created = next;
       setConnection(next);
-      update(mac.id, { connection: next, missing: false, state: { kind: 'connecting' } });
+      machines.patchLink(mac.id, { connection: next, missing: false, state: { kind: 'connecting' } });
       next.start();
     })();
     return () => {
       cancelled = true;
       created?.close();
-      update(mac.id, null);
+      machines.removeLink(mac.id);
     };
-  }, [mac.id, mac.endpoint, update]);
+  }, [mac.id, mac.endpoint]);
 
   useEffect(() => {
     if (!connection) return;
@@ -138,16 +119,16 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
   useEffect(() => {
     if (!connection) return;
     return connection.subscribe('status.subscribe', {}, (event) => {
-      if (event.event === 'status') update(mac.id, { status: event.payload });
+      if (event.event === 'status') machines.receiveStatus(mac.id, event.payload);
     });
-  }, [connection, mac.id, update]);
+  }, [connection, mac.id]);
 
   useEffect(() => {
     if (!connection || !open) return;
     let cancelled = false;
     const poll = () =>
       connection.request('machine.get', {}).then(
-        (usage) => !cancelled && update(mac.id, { usage }),
+        (usage) => !cancelled && machines.setUsage(mac.id, usage),
         (error: Error) => {
           if (error instanceof RequestError && error.error.code === 'unknown-method') clearInterval(timer);
         },
@@ -158,52 +139,58 @@ function MacLink({ mac, update }: { mac: PairedMac; update: Update }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [connection, open, mac.id, update]);
+  }, [connection, open, mac.id]);
 
   return null;
 }
 
 export function MacsProvider({ children }: { children: ReactNode }) {
-  const [macs, setMacs] = useState<PairedMac[] | null>(null);
-  const [live, setLive] = useState<Record<string, Live>>({});
-
-  const reload = useCallback(() => {
-    listMacs().then(setMacs, () => setMacs([]));
-  }, []);
-  useEffect(reload, [reload]);
-
-  const update = useCallback<Update>((id, patch) => {
-    setLive((all) => {
-      if (patch) return { ...all, [id]: { ...(all[id] ?? IDLE), ...patch } };
-      const { [id]: _removed, ...rest } = all;
-      return rest;
-    });
-  }, []);
-
-  const value = useMemo(() => ({ macs, live, reload }), [macs, live, reload]);
+  const macs = useMachines((state) => state.macs);
+  useEffect(reload, []);
   return (
-    <Context.Provider value={value}>
+    <>
       {(macs ?? []).map((mac) => (
-        <MacLink key={`${mac.id}\n${mac.endpoint}\n${mac.pairedAt}`} mac={mac} update={update} />
+        <MacLink key={`${mac.id}\n${mac.endpoint}\n${mac.pairedAt}`} mac={mac} />
       ))}
       {children}
-    </Context.Provider>
+    </>
   );
 }
 
-export type PairedConnection = MacConnection & { mac: PairedMac };
-
 export function useMacs(): { macs: PairedMac[] | null; reload: () => void; connections: PairedConnection[] } {
-  const { macs, live, reload } = useContext(Context);
-  const connections = useMemo(() => (macs ?? []).map((mac) => ({ mac, ...(live[mac.id] ?? IDLE) })), [macs, live]);
+  const { macs, links, snapshots, usage } = useMachines(
+    useShallow((state) => ({ macs: state.macs, links: state.links, snapshots: state.snapshots, usage: state.usage })),
+  );
+  const connections = useMemo(
+    () =>
+      (macs ?? []).map((mac) => ({
+        mac,
+        ...(links[mac.id] ?? IDLE_LINK),
+        status: snapshots[mac.id]?.status ?? null,
+        cachedSeenAt: snapshots[mac.id]?.cachedSeenAt ?? null,
+        usage: usage[mac.id] ?? null,
+      })),
+    [macs, links, snapshots, usage],
+  );
   return { macs, reload, connections };
 }
 
+/** The paired machines, null until the pairings load. */
+export function usePairedMacs(): PairedMac[] | null {
+  return useMachines((state) => state.macs);
+}
+
 export function useMacById(id: string | undefined): MacConnection {
-  const { macs, live } = useContext(Context);
-  const mac = macs?.find((m) => m.id === id) ?? null;
-  if (!mac) return { ...IDLE, mac: null, missing: macs !== null, state: { kind: macs ? 'closed' : 'connecting' } };
-  return { mac, ...(live[mac.id] ?? IDLE) };
+  const loaded = useMachines((state) => state.macs !== null);
+  const mac = useMachines((state) => state.macs?.find((m) => m.id === id) ?? null);
+  const link = useMachines((state) => (id ? state.links[id] : undefined));
+  return useMemo(
+    () =>
+      mac
+        ? { mac, ...(link ?? IDLE_LINK) }
+        : { ...IDLE_LINK, mac: null, missing: loaded, state: { kind: loaded ? 'closed' : 'connecting' } },
+    [mac, link, loaded],
+  );
 }
 
 /** The Mac the current `/mac/[id]/...` route names. */
@@ -212,8 +199,58 @@ export function useMacConnection(): MacConnection {
   return useMacById(id);
 }
 
+export function useMachineStatus(macId: string | undefined): StatusPayload | null {
+  return useMachines((state) => (macId ? (state.snapshots[macId]?.status ?? null) : null));
+}
+
 export function useStatus(): StatusPayload | null {
-  return useMacConnection().status;
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  return useMachineStatus(id);
+}
+
+export function useMachineUsage(macId: string | undefined): MachineUsage | null {
+  return useMachines((state) => (macId ? (state.usage[macId] ?? null) : null));
+}
+
+export function useMachineLink(macId: string): MachineLink {
+  return useMachines((state) => state.links[macId] ?? IDLE_LINK);
+}
+
+export interface MachinePresence {
+  online: boolean;
+  /** Whether the machine's status is the cached one, not yet replaced by a live status. */
+  cached: boolean;
+  /** When the machine's status was last known current: the cached status's time, or the drop. */
+  lastSeenAt: number | null;
+}
+
+export function useMachinePresence(macId: string): MachinePresence {
+  return useMachines(
+    useShallow((state) => {
+      const link = state.links[macId];
+      const cachedSeenAt = state.snapshots[macId]?.cachedSeenAt ?? null;
+      return {
+        online: link?.state.kind === 'open',
+        cached: cachedSeenAt !== null,
+        lastSeenAt: cachedSeenAt ?? link?.disconnectedAt ?? null,
+      };
+    }),
+  );
+}
+
+/** Every workspace of every machine, in home's order, from the pairings or, before they load, the cache. */
+export function useWorkspaceItems(): HomeItem[] {
+  return useMachines((state) => state.workspaces);
+}
+
+/** One workspace's item, undefined while its machine has no status or no longer lists it. */
+export function useWorkspace(macId: string, path: string): HomeItem | undefined {
+  const key = `${macId}\n${path}`;
+  return useMachines((state) => state.workspaces.find((item) => item.key === key));
+}
+
+export function useHasStatus(macId: string): boolean {
+  return useMachines((state) => macId in state.snapshots);
 }
 
 export type LogsChange =

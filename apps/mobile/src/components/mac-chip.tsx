@@ -3,9 +3,10 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
 import { MachineStatsRow } from '@/components/machine-stats';
 import { Touch } from '@/components/touch';
-import type { PairedConnection } from '@/hooks/mac-connection';
+import { useMachineLink, useMachineUsage } from '@/hooks/mac-connection';
 import type { ConnectionState } from '@/lib/connection';
 import { machineStats } from '@/lib/home';
+import type { PairedMac } from '@/lib/macs';
 import { useColors, type Colors } from '@/theme';
 
 export function connectionColor(state: ConnectionState, missing: boolean, colors: Colors): string {
@@ -14,15 +15,17 @@ export function connectionColor(state: ConnectionState, missing: boolean, colors
   return state.kind === 'waiting' ? colors.warn : colors.tertiary;
 }
 
-export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () => void }) {
+export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void }) {
   const colors = useColors();
-  const dot = connectionColor(mac.state, mac.missing, colors);
-  const name = mac.mac.name;
-  const open = mac.state.kind === 'open';
-  const stats = open ? machineStats(mac.usage) : [];
+  const { state, missing } = useMachineLink(mac.id);
+  const usage = useMachineUsage(mac.id);
+  const dot = connectionColor(state, missing, colors);
+  const name = mac.name;
+  const open = state.kind === 'open';
+  const stats = open ? machineStats(usage) : [];
   const detail = open
     ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || 'Loading'
-    : describeState(mac.state, mac.missing);
+    : describeState(state, missing);
   return (
     <Touch
       feedback="card"
@@ -39,7 +42,7 @@ export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () =
           {name}
         </Text>
         {open && stats.length > 0 ? (
-          <MachineStatsRow usage={mac.usage} />
+          <MachineStatsRow usage={usage} />
         ) : (
           <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1}>
             {open ? 'Loading' : detail}
