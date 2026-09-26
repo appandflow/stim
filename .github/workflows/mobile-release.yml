@@ -99,4 +99,7 @@ jobs:
 
       - name: Build and submit to TestFlight
         if: steps.mode.outputs.mode == 'build'
+        env:
+          EXPO_APPLE_TEAM_ID: R7E8P23K3N
+          EXPO_APPLE_TEAM_TYPE: COMPANY_OR_ORGANIZATION
         run: eas build --platform ios --profile production --non-interactive --auto-submit
