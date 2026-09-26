@@ -15,7 +15,9 @@ import {
   REMOTE_DEVICE_BACKENDS,
   SETTING_GROUPS,
   SETTINGS,
+  WEB_VIEWPORTS,
   type SettingsObject,
+  type WebViewport,
 } from '@stim-cli/core/state';
 export type { SettingsObject };
 
@@ -656,4 +658,18 @@ function normalizedHttpsUrl(raw: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+export function webSettings(settings: SettingsObject): {
+  url: string | null;
+  ignoreCertificateErrors: boolean;
+  viewport: WebViewport;
+} {
+  const url = settingValueAt(settings, 'web.url');
+  const viewport = settingValueAt(settings, 'web.viewport');
+  return {
+    url: typeof url === 'string' ? url : null,
+    ignoreCertificateErrors: settingValueAt(settings, 'web.ignoreCertificateErrors') === true,
+    viewport: WEB_VIEWPORTS.includes(viewport as WebViewport) ? (viewport as WebViewport) : 'desktop',
+  };
 }

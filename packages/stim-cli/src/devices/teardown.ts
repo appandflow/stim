@@ -1,12 +1,26 @@
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
-import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { forgetCreatedDevice, readCreatedDevices, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { lstatSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { loadConfig, withConfigLock } from '../workspace/config.ts';
+import { getProject, loadConfig, withConfigLock } from '../workspace/config.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { signalProcessTree } from '../metro.ts';
+import { releaseBrowserPort } from '../named-ports.ts';
+import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
+import {
+  CDP_PORT_LABEL,
+  clearWebRecord,
+  readWebRecord,
+  webClaimRoot,
+  webProfileDir,
+  type OwnedProcess,
+} from '../web/state.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import {
   deleteParkedIosSim,
   deleteIosSim,
@@ -38,7 +52,14 @@ import {
 } from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
-import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import {
+  claimRemoveCommand,
+  clearClaimChild,
+  clearFreeClaimSet,
+  markClaimChildPending,
+  releaseClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 
 export interface ParkedDevice {
   udid: string;
@@ -499,5 +520,121 @@ function teardownClaimedAvd(
     };
   } catch (e) {
     return { status: 'failed', reason: String((e as Error)?.message || e) };
+  }
+}
+
+const BROWSER_EXIT_WAIT_MS = 15_000;
+const CHROME_KILL_WAIT_MS = 5_000;
+
+async function stopOwnedChrome(record: OwnedProcess): Promise<boolean> {
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    const state = chromeProcessState(record);
+    if (state === 'gone') return true;
+    if (state === 'unknown') return false;
+    try {
+      signalProcessTree(record.pid, signal, { group: true });
+    } catch {}
+    const deadline = Date.now() + CHROME_KILL_WAIT_MS;
+    while (chromeProcessState(record) !== 'gone' && Date.now() < deadline) await sleepAsync(50);
+  }
+  return chromeProcessState(record) === 'gone';
+}
+
+const sleepAsync = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+/** The `web` workspace process lock `stim web` and browser teardown share. */
+export const BROWSER_LOCK = 'web';
+
+/**
+ * Closes the workspace's Stim-owned Chrome and its supervisor, after verifying both process identities. With
+ * `deleteProfile`, it also deletes the profile directory, only when the created-devices ledger lists it.
+ */
+export async function teardownOwnedBrowser(
+  root: string,
+  options: { deleteProfile?: boolean } = {},
+): Promise<TeardownOutcome> {
+  try {
+    return await withWorkspaceProcessLock(workspaceDir(root), BROWSER_LOCK, () => teardownBrowserHeld(root, options), {
+      external: true,
+      ownerPurpose: 'browser teardown',
+    });
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  }
+}
+
+/** {@link teardownOwnedBrowser} for a caller that already holds the {@link BROWSER_LOCK} lock. */
+export async function teardownBrowserHeld(
+  root: string,
+  { deleteProfile = false }: { deleteProfile?: boolean } = {},
+): Promise<TeardownOutcome> {
+  try {
+    const record = readWebRecord(root);
+    const profile = record?.profile ?? webProfileDir(root);
+    if (record) {
+      const supervisor = inspectProcessIdentity(record);
+      const chrome = record.chromeProcess ? inspectProcessIdentity(record.chromeProcess) : 'gone';
+      if (supervisor === 'unknown' || chrome === 'unknown') {
+        return {
+          status: 'skipped',
+          kind: 'not-verified',
+          reason: `the browser supervisor (pid ${record.pid}) or its Chrome could not be verified; its record was kept`,
+        };
+      }
+      if (supervisor === 'same') {
+        try {
+          process.kill(record.pid, 'SIGTERM');
+        } catch {}
+        if (!(await waitForProcessExit(record, BROWSER_EXIT_WAIT_MS))) {
+          return { status: 'failed', reason: `browser supervisor pid ${record.pid} did not exit` };
+        }
+      }
+      if (record.chromeProcess && !(await stopOwnedChrome(record.chromeProcess))) {
+        return { status: 'failed', reason: `Chrome pid ${record.chromeProcess.pid} did not exit` };
+      }
+      const holder = liveProfileHolder(profile);
+      if (holder !== null) {
+        return {
+          status: 'skipped',
+          kind: 'not-verified',
+          reason: `pid ${holder} still holds ${profile}, and the browser record does not name it; it was left running`,
+        };
+      }
+      const claims = clearFreeClaimSet({ root: webClaimRoot(root), label: 'browser supervisor' });
+      if (claims.status !== 'cleared') {
+        return {
+          status: 'skipped',
+          kind: 'not-verified',
+          reason:
+            claims.status === 'held'
+              ? `the browser supervisor claim is still held${claims.holder ? ` by pid ${claims.holder.owner.pid}` : ''}`
+              : `the browser supervisor claim could not be cleared (${claims.reason}); remove it with ${claimRemoveCommand(webClaimRoot(root))}`,
+        };
+      }
+      clearWebRecord(root, record);
+      await releaseBrowserPort(root, record.cdpPort);
+    } else {
+      const holder = liveProfileHolder(profile);
+      if (holder !== null) {
+        return {
+          status: 'skipped',
+          kind: 'not-verified',
+          reason: `pid ${holder} holds ${profile} but no browser supervisor is recorded; it was left running`,
+        };
+      }
+      const port = getProject(root)?.ports?.[CDP_PORT_LABEL];
+      if (typeof port === 'number') await releaseBrowserPort(root, port);
+    }
+    if (existsSync(profile)) removeSingletonFiles(profile);
+    if (deleteProfile && existsSync(profile)) {
+      if (!readCreatedDevices().web.has(profile)) {
+        return { status: 'skipped', kind: 'not-owned', reason: `${profile} is not in Stim's ledger; it was kept` };
+      }
+      rmSync(profile, { recursive: true, force: true });
+      forgetCreatedDevice('web', profile);
+    }
+    return record ? { status: 'torn-down', label: `Chrome (${profile})` } : { status: 'missing' };
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }

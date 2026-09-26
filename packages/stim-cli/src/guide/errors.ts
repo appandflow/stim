@@ -853,6 +853,50 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   app, so several matching peers are that app on several devices. Stim reloads
   every one of them and reports the count in the facts as targets.`,
     },
+    STIM_WEB_NO_CHROME: {
+      summary: 'stim web found no installed Chrome or Chromium',
+      separator: '--- WEB CODES (`stim web`) ---',
+      body: () => `STIM_WEB_NO_CHROME
+  stim web drives the installed Google Chrome (or Chromium) with a profile
+  Stim creates. It looks in /Applications and ~/Applications on macOS, in
+  Program Files on Windows, and for google-chrome or chromium on PATH. Stim
+  never installs a browser. Install Chrome, then run stim doctor.`,
+    },
+    STIM_WEB_NO_URL: {
+      summary: 'not an Expo app and web.url is unset, so Stim does not know which page to open',
+      body: () => `STIM_WEB_NO_URL
+  Only Expo serves web from Metro, so for any other app Stim needs web.url.
+  Stim never starts the web dev server. Start it on a named port and point
+  web.url at it:
+    pnpm exec vite --port "$(stim ports get web)" --strictPort
+    stim settings set web.url 'http://localhost:{port:web}/'
+  See stim guide web.`,
+    },
+    STIM_WEB_DEPS_MISSING: {
+      summary: 'an Expo app without react-native-web cannot render on the web',
+      body: () => `STIM_WEB_DEPS_MISSING
+  The Expo app does not resolve react-native-web, so Metro cannot build a web
+  bundle. Install the web dependencies, then run stim web again:
+    npx expo install react-dom react-native-web @expo/metro-runtime`,
+    },
+    STIM_WEB_BROWSER_HELD: {
+      summary: 'the previous owned Chrome could not be stopped or verified; it was left running',
+      body: () => `STIM_WEB_BROWSER_HELD
+  stim web replaces the workspace's owned Chrome when its options change, and
+  the previous one could not be stopped: its supervisor or Chrome did not
+  exit, or their process identities could not be verified. Stim never signals
+  a process it cannot verify. Check stim status for browser-unverified, then
+  follow stim guide errors teardown.`,
+    },
+    STIM_WEB_LAUNCH_FAILED: {
+      summary: 'the owned Chrome did not start or did not open DevTools on its reserved port',
+      body: () => `STIM_WEB_LAUNCH_FAILED
+  The browser supervisor exited before Chrome answered on its reserved
+  DevTools port. The remedy names the supervisor log; web.ndjson carries the
+  failure as web_browser_failed, and browser.log holds Chrome's own output.
+  A port another process bound first also lands here: run stim web again to
+  reserve a fresh one.`,
+    },
     STIM_WORKTREE_REMOVAL_IN_PROGRESS: {
       summary: 'a managed remote start found worktree remove holding the lock; wait, then rerun',
       separator: '--- DEV-SERVER CODES (`stim start`) ---',

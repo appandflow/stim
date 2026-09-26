@@ -694,6 +694,22 @@ test('the ccache finding belongs to the Android group and is filtered out by --p
   }
 });
 
+test('a missing Chrome is a finding only for a project that renders on the web', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-chrome-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupChrome: () => null };
+    const chromeFinding = (findings: { title: string }[]) => findings.some((f) => /No Chrome/.test(f.title));
+    expect(chromeFinding(runDoctor(project, options))).toBe(false);
+    writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { platforms: ['ios', 'web'] } }));
+    expect(chromeFinding(runDoctor(project, options))).toBe(true);
+    expect(chromeFinding(runDoctor(project, { ...options, platform: 'ios' }))).toBe(false);
+    expect(chromeFinding(runDoctor(project, { ...options, lookupChrome: () => '/Applications/Chrome' }))).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('Android doctor skips iOS architecture metadata and findings', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-architectures-platform-'));
   try {

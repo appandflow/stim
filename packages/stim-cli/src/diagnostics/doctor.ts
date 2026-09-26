@@ -7,7 +7,8 @@ import { readJsonObject } from '@stim-cli/core/state';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo } from '../workspace/project.ts';
+import { appProjectProblem, detectIsExpo, isPackageResolvable } from '../workspace/project.ts';
+import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
@@ -46,7 +47,9 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  webSettings,
 } from '../workspace/settings.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
 import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
 import { MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION } from '../engine/eas-build.ts';
@@ -410,6 +413,37 @@ export function checkCcacheConflict(podfileSource: string | null, podfilePropert
     'ccache is enabled, so Stim leaves Xcode compilation caching off',
     "The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. Stim will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and in its default configuration ccache hashes the working directory and every absolute include path, so it misses across worktrees. (Stim relocates ccache itself on Android, where it drives the compile and can set CCACHE_BASEDIR and CCACHE_NOHASHDIR; the Podfile launcher script here is the project's, not Stim's.)",
     'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- Stim supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `stim ios` do it).',
+  );
+}
+
+function checkChrome({
+  usesWeb,
+  chrome = findChrome,
+}: {
+  usesWeb: () => boolean;
+  chrome?: () => string | null;
+}): Finding | null {
+  if (!usesWeb() || chrome()) return null;
+  return finding(
+    'cost',
+    'No Chrome is installed, so `stim web` cannot open this app',
+    '`stim web` drives the installed Google Chrome or Chromium with a Stim-owned profile, and found neither in /Applications, ~/Applications, Program Files or on PATH. This project renders on the web (web.url is set, app.json lists the web platform, or react-native-web is installed).',
+    CHROME_INSTALL_REMEDY,
+  );
+}
+
+function projectUsesWeb(
+  projectRoot: string,
+  settings: SettingsObject,
+  appConfig: AnyJson | null,
+  platform: DoctorPlatform | undefined,
+): boolean {
+  if (platform) return false;
+  const platforms = ((appConfig?.expo ?? appConfig) as AnyJson | null)?.platforms;
+  return (
+    webSettings(settings).url !== null ||
+    (Array.isArray(platforms) && platforms.includes('web')) ||
+    isPackageResolvable(projectRoot, 'react-native-web')
   );
 }
 
@@ -794,6 +828,7 @@ export function runDoctor(
     lookupSimSlim = null,
     memoryPressure = readHostMemoryPressure,
     lookupCcache = null,
+    lookupChrome,
     platform,
     host = process.platform,
   }: {
@@ -809,6 +844,7 @@ export function runDoctor(
     lookupSimSlim?: (() => boolean) | null;
     memoryPressure?: () => HostMemoryPressure | null;
     lookupCcache?: (() => boolean) | null;
+    lookupChrome?: () => string | null;
     platform?: DoctorPlatform;
     host?: NodeJS.Platform;
   } = {},
@@ -963,6 +999,10 @@ export function runDoctor(
       : androidCcacheFindings(projectRoot, platform, lookupCcache)),
     checkAndroidPathRoom(projectRoot, platform, host),
     checkAndroidSdk(projectRoot, platform),
+    checkChrome({
+      usesWeb: () => projectUsesWeb(projectRoot, projectSettings, appConfig, platform),
+      chrome: lookupChrome,
+    }),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     easBuildDownloadFinding,

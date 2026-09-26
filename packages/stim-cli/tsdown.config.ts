@@ -9,6 +9,7 @@ export default defineConfig({
     'cache-manifest': 'src/cache/cache-manifest.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
+    'web-run': 'src/web/run.ts',
   },
   format: 'esm',
   dts: true,
