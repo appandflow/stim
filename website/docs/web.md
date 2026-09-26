@@ -60,7 +60,9 @@ In a monorepo where the web app is its own package, such as `apps/web` beside
 `apps/mobile`, run the commands from the web package. `stim ports` and
 `stim web` resolve to the one Stim app registered in the same Git worktree, so
 the port and the browser belong to that app's workspace. Register the app
-first with `stim start`, `stim ios` or `stim android`.
+first with `stim start`, `stim ios` or `stim android`. Other commands keep the
+nearest package, so put `web.url` in the app's `.stim.json`, and run
+`stim settings`, `logs`, `reload` and `stop` from the app directory.
 
 | Setting                       | Effect                                                                   |
 | ----------------------------- | ------------------------------------------------------------------------ |
