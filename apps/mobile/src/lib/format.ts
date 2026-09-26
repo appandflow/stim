@@ -74,7 +74,7 @@ export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase'>): str
   return settled ? 'Cold build' : 'Likely cold';
 }
 
-export function lastBuildSummary(last: LastBuild, now: number): string {
+export function lastBuildSummary(last: LastBuild, now: number, withReason = true): string {
   const ended = Date.parse(last.finishedAt ?? last.startedAt);
   const took = `${last.durationMs === null ? '' : ` \u00B7 ${clockDuration(last.durationMs)}`}${
     Number.isNaN(ended) ? '' : ` \u00B7 ${shortDuration(now - ended)} ago`
@@ -82,12 +82,18 @@ export function lastBuildSummary(last: LastBuild, now: number): string {
   if (last.status !== 'ok') return `Failed (${last.errorCode ?? 'error'})${took}`;
   if (last.cacheHit === 'local') return `Cache hit (local)${took}`;
   if (last.cacheHit === 'remote') return `Cache hit (remote)${took}`;
-  const why = last.missReason ? `: ${last.missReason.summary}` : last.cacheSkipped ? ' (cache reads off)' : '';
+  const why = last.missReason
+    ? withReason
+      ? `: ${last.missReason.summary}`
+      : ''
+    : last.cacheSkipped
+      ? ' (cache reads off)'
+      : '';
   return `Cold build${why}${took}`;
 }
 
 /** What the next build would do and why, worded to follow "Next: ". */
-export function nextBuild(plan: BuildPlan): string {
+export function nextBuild(plan: BuildPlan, withReason = true): string {
   if (plan.refusal) return `would refuse (${plan.refusal.code})`;
   const took = plan.expectedMs === null ? '' : `, ~${clockDuration(plan.expectedMs)}`;
   if (plan.cacheHit === 'local') return `cache hit (local)${took}`;
@@ -97,7 +103,7 @@ export function nextBuild(plan: BuildPlan): string {
     (plan.prebuild === 'generate' || plan.prebuild === 'regenerate') && plan.missReason?.kind !== 'prebuild-pending'
       ? `, ${plan.prebuild}s the native dir`
       : '';
-  const why = plan.missReason ? `, ${plan.missReason.summary}` : '';
+  const why = withReason && plan.missReason ? `, ${plan.missReason.summary}` : '';
   return `cold build${off}${native}${why}${took}`;
 }
 

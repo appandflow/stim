@@ -46,6 +46,11 @@ export class PlanChecks {
     return snapshot.get(key(workspace, platform))?.state;
   }
 
+  /** When the platform's last check settled, or null while none has. */
+  static checkedAt(snapshot: PlanSnapshot, workspace: string, platform: Platform): number | null {
+    return snapshot.get(key(workspace, platform))?.checkedAt ?? null;
+  }
+
   /** Plans each platform, keyed by its last build, unless a check for that build is running or fresh. */
   check(workspace: string, builds: Partial<Record<Platform, string>>, force = false): void {
     for (const [platform, buildKey] of Object.entries(builds) as [Platform, string][]) {

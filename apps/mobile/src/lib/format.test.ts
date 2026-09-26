@@ -82,6 +82,9 @@ describe('build cache outcome', () => {
     expect(lastBuildSummary({ ...last, cacheSkipped: true }, now)).toBe(
       'Cold build (cache reads off) \u00B7 1:23 \u00B7 <1m ago',
     );
+    expect(lastBuildSummary({ ...last, cacheSkipped: true, missReason: reason('cache reuse off') }, now, false)).toBe(
+      'Cold build \u00B7 1:23 \u00B7 <1m ago',
+    );
     expect(lastBuildSummary({ ...last, missReason: reason('app config changed') }, now)).toBe(
       'Cold build: app config changed \u00B7 1:23 \u00B7 <1m ago',
     );
@@ -131,6 +134,7 @@ describe('build cache outcome', () => {
       ...reason('Podfile.lock changed (before prebuild regenerates ios/)'),
       kind: 'prebuild-pending' as const,
     };
+    expect(nextBuild({ ...miss, missReason: pending }, false)).toBe('cold build');
     expect(nextBuild({ ...miss, missReason: pending })).toBe(
       'cold build, Podfile.lock changed (before prebuild regenerates ios/)',
     );

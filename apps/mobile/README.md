@@ -90,13 +90,15 @@ reload and stop a workspace:
   build's progress with its cache outcome ("Cache hit" or "Cold build",
   "Likely ..." before the run reaches a phase that decides it) in place of the
   platform's name; the last build and why it built that way ("Cache hit (local)",
-  "Cold build: app config changed", or failed), with its duration and age, which, when it missed the cache, opens a
-  sheet listing the changed fingerprint sources; and what the next build would find, why, and how long it
-  should take ("Next: cache hit (local)" or "Next: cold build, Podfile.lock changed, ~5:40"), from the server's
-  read-only `build.plan`; a predicted miss opens the same sheet. The
-  screen asks for each platform with a last build or a device when it opens, one plan at a time, reuses a result for
-  60 seconds unless that platform's last build changes, ignores a reply that arrives after it closes, and asks nothing
-  while a build runs. The refresh icon asks again;
+  "Cold build: app config changed", or failed), with its duration and age; and what the next build would find, why,
+  and how long it should take ("Next: cache hit (local)" or "Next: cold build, Podfile.lock changed, ~5:40"), from
+  the server's read-only `build.plan`. Tapping a card opens that platform's build details: the running build, the
+  last build with when it ran, a failed build's compiler errors, and why it missed the cache with the changed
+  fingerprint sources; then the next build with the median behind its estimate, why it would miss the cache, a
+  refusal's remedy, when it was checked, and **Check again**. Stim keeps only the last build of each platform, so
+  there is no build history. The screen asks for each platform with a last build or a device when it opens, one plan
+  at a time, reuses a result for 60 seconds unless that platform's last build changes, asks again after a failure or a
+  reconnect, ignores a reply that arrives after it closes, and asks nothing while a build runs. Below the cards come
   warnings, remote sessions, and each
   device: a running device with the latest frame the server sends for it,
   fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone

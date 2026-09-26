@@ -182,6 +182,15 @@ export interface LastBuild {
   finishedAt: string | null;
   errorCode?: string;
   missReason?: BuildMissReason;
+  /** The first compiler diagnostics of a failed build, when the build tool reported any. */
+  diagnostics?: BuildDiagnostic[];
+}
+
+export interface BuildDiagnostic {
+  file: string | null;
+  line: number | null;
+  column: number | null;
+  message: string;
 }
 
 export interface DeviceLeaseState {

@@ -372,7 +372,7 @@ export function useBuildPlans(
   workspace: string,
   builds: Partial<Record<Platform, string>>,
   building: boolean,
-): { plan: (platform: Platform) => PlanState | undefined; recheck: ((platform: Platform) => void) | null } {
+): (platform: Platform) => PlanState | undefined {
   const { checks, snapshot } = usePlanChecks();
   const open = useMacConnection().state.kind === 'open';
   const wanted = JSON.stringify(builds);
@@ -382,19 +382,29 @@ export function useBuildPlans(
     else checks.check(workspace, JSON.parse(wanted) as Partial<Record<Platform, string>>);
   }, [checks, workspace, wanted, building, open]);
   useEffect(() => () => checks?.cancel(workspace), [checks, workspace]);
-  const recheck = useCallback(
-    (platform: Platform) => checks?.check(workspace, { [platform]: builds[platform] ?? '' }, true),
-    [checks, workspace, builds],
-  );
-  return {
-    plan: (platform) => PlanChecks.state(snapshot, workspace, platform),
-    recheck: checks && !building ? recheck : null,
-  };
+  return (platform) => PlanChecks.state(snapshot, workspace, platform);
 }
 
-/** The last `build.plan` result for `workspace` and `platform`, without asking for one. */
-export function useBuildPlan(workspace: string, platform: Platform): PlanState | undefined {
-  return PlanChecks.state(usePlanChecks().snapshot, workspace, platform);
+/**
+ * The last `build.plan` result for `workspace` and `platform` and when it settled, without asking for one.
+ * `recheck` asks again for the build `buildKey`, the `planKey` of the platform's last build.
+ */
+export function useBuildPlan(
+  workspace: string,
+  platform: Platform,
+  buildKey: string,
+  building: boolean,
+): { plan: PlanState | undefined; checkedAt: number | null; recheck: (() => void) | null } {
+  const { checks, snapshot } = usePlanChecks();
+  const recheck = useCallback(
+    () => checks?.check(workspace, { [platform]: buildKey }, true),
+    [checks, workspace, platform, buildKey],
+  );
+  return {
+    plan: PlanChecks.state(snapshot, workspace, platform),
+    checkedAt: PlanChecks.checkedAt(snapshot, workspace, platform),
+    recheck: checks && !building ? recheck : null,
+  };
 }
 
 function usePlanChecks(): { checks: PlanChecks | null; snapshot: PlanSnapshot } {
