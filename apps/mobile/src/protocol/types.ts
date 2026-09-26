@@ -369,6 +369,17 @@ export interface MachineHistory {
 
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
+/** The attention events stim-server can push. */
+export type PushEvent = 'build-failed' | 'log-errors' | 'disk' | 'app-stopped' | 'slow-build';
+
+/** `ref` comes back as `data.ref` in every push, naming the Mac that sent it. */
+export interface PushRegisterParams {
+  token: string;
+  events: PushEvent[];
+  agentOnly?: boolean;
+  ref: string;
+}
+
 export interface Methods {
   hello: {
     params: { protocol: number; client: { name: string; version: string }; auth: ClientAuth };
@@ -409,6 +420,8 @@ export interface Methods {
   'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
   'input.rotate': { params: { session: string; direction: RotateDirection }; result: Record<string, never> };
   'input.posture': { params: { session: string; posture: DevicePosture }; result: Record<string, never> };
+  'push.register': { params: PushRegisterParams; result: Record<string, never> };
+  'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
 }
 
 export type Method = keyof Methods;

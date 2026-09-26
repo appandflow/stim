@@ -3,7 +3,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { configDir, withDirLock } from '@stim-cli/core';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
-import { CAPABILITIES, type Capability } from './protocol.ts';
+import { CAPABILITIES, PUSH_EVENTS, PUSH_TOKEN_PATTERN, type Capability, type PushEvent } from './protocol.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
@@ -17,6 +17,16 @@ export interface PairedDevice {
   pairedAt: string;
   lastSeenAt: string | null;
   capabilities: Capability[];
+  /** Where and what to push, from the device's last `push.register`. */
+  push?: PushRegistration;
+}
+
+export interface PushRegistration {
+  token: string;
+  events: PushEvent[];
+  agentOnly: boolean;
+  ref: string;
+  registeredAt: string;
 }
 
 interface PairingRecord {
@@ -71,12 +81,29 @@ export function capabilitiesFor(control: boolean): Capability[] {
   return control ? ['read', 'control'] : ['read'];
 }
 
+const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
+
+function parsePush(value: unknown): PushRegistration | null {
+  if (!isJsonObject(value)) return null;
+  const { token, events, agentOnly, ref, registeredAt } = value;
+  if (typeof token !== 'string' || !pushToken.test(token) || typeof ref !== 'string') return null;
+  if (!Array.isArray(events) || typeof registeredAt !== 'string') return null;
+  return {
+    token,
+    events: PUSH_EVENTS.filter((event) => events.includes(event)),
+    agentOnly: agentOnly === true,
+    ref,
+    registeredAt,
+  };
+}
+
 function parseDevice(value: unknown): PairedDevice | null {
   if (!isJsonObject(value)) return null;
   const { id, name, tokenHash, pairedAt, lastSeenAt } = value;
   const identity = parseIdentity(value.identity);
   if (typeof id !== 'string' || typeof name !== 'string' || typeof tokenHash !== 'string' || !identity) return null;
   if (typeof pairedAt !== 'string') return null;
+  const push = parsePush(value.push);
   return {
     id,
     name,
@@ -85,6 +112,7 @@ function parseDevice(value: unknown): PairedDevice | null {
     pairedAt,
     lastSeenAt: typeof lastSeenAt === 'string' ? lastSeenAt : null,
     capabilities: parseCapabilities(value.capabilities),
+    ...(push ? { push } : {}),
   };
 }
 
@@ -203,6 +231,33 @@ export function grantDevice(id: string, capabilities: Capability[]): boolean {
     device.capabilities = capabilities;
     writeJson(devicesFile(), { version: 1, devices });
     return true;
+  });
+}
+
+/** Sets or, with null, removes a device's push registration. False when the device is no longer paired. */
+export function setDevicePush(id: string, push: PushRegistration | null): boolean {
+  return transaction(() => {
+    const devices = readDevices();
+    const device = devices.find((entry) => entry.id === id);
+    if (!device) return false;
+    if (push) device.push = push;
+    else delete device.push;
+    writeJson(devicesFile(), { version: 1, devices });
+    return true;
+  });
+}
+
+/** Removes every registration of a push token the push service no longer delivers to. */
+export function dropPushToken(token: string): void {
+  transaction(() => {
+    const devices = readDevices();
+    let changed = false;
+    for (const device of devices) {
+      if (device.push?.token !== token) continue;
+      delete device.push;
+      changed = true;
+    }
+    if (changed) writeJson(devicesFile(), { version: 1, devices });
   });
 }
 

@@ -216,6 +216,7 @@ async function start(
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
     controlLimits: overrides.controlLimits,
+    pushEndpoint: 'http://127.0.0.1:9/push',
   });
   return server.addresses[0]!.port;
 }
@@ -593,6 +594,57 @@ describe('status.subscribe', () => {
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
+  });
+});
+
+describe('push.register', () => {
+  const PUSH = { token: 'ExponentPushToken[abc123]', events: ['build-failed', 'disk'], ref: 'mac-1' };
+
+  it('stores the registration with the pairing and keeps a status child until it is removed', async () => {
+    const port = await start();
+    const { token } = await pair(port);
+    const client = await connect(port);
+    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    expect(await client.request('push.register', PUSH)).toEqual({ id: 2, result: {} });
+    expect(readDevices()[0]!.push).toMatchObject({ ...PUSH, agentOnly: false });
+    await until(() => childPids().length === 1);
+    const [pid] = childPids();
+    expect(readFileSync(join(pids, String(pid)), 'utf8')).toBe('status --watch --json');
+
+    client.socket.close();
+    await client.closed;
+    expect(alive(pid!)).toBe(true);
+
+    const again = await connect(port);
+    await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    expect(await again.request('push.unregister')).toEqual({ id: 2, result: {} });
+    expect(readDevices().every((device) => !device.push)).toBe(true);
+    await until(() => !alive(pid!));
+  });
+
+  it('drops the registration with a revoked pairing', async () => {
+    const port = await start();
+    const client = await authed(port);
+    await client.request('push.register', PUSH);
+    await until(() => childPids().length === 1);
+    const [pid] = childPids();
+    revokeDevice(readDevices()[0]!.id);
+    expect(readDevices()).toEqual([]);
+    await until(() => !alive(pid!));
+  });
+
+  it('refuses a token that is not an Expo push token and unknown events', async () => {
+    const port = await start();
+    const client = await authed(port);
+    for (const params of [
+      { ...PUSH, token: 'https://example.com/hook' },
+      { ...PUSH, events: ['offline'] },
+      { ...PUSH, ref: '' },
+      { ...PUSH, agentOnly: 'yes' },
+    ]) {
+      expect(await client.request('push.register', params)).toMatchObject({ error: { code: 'bad-request' } });
+    }
+    expect(readDevices()[0]!.push).toBeUndefined();
   });
 });
 

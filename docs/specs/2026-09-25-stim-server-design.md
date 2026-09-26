@@ -343,6 +343,30 @@ can drive an owned simulator or emulator from the phone.
 - Limits: 120 inputs a second per connection, and 256 printable ASCII
   characters per text input.
 
+## Push notifications
+
+Added 2026-09-26 by #1577, part of roadmap item 1.6. The phone cannot keep
+its WebSocket open in the background, so the server pushes attention
+notifications itself through the Expo push service. This is the only traffic
+that leaves the tailnet, and it is not the hosted relay the non-goals rule
+out: it carries notification text, never status or frames.
+
+- Protocol: `push.register` stores an Expo push token, the chosen events, an
+  `agentOnly` filter and an opaque `ref` with the device's pairing in
+  `devices.json`; `push.unregister` and revoking the pairing remove it. It
+  needs only `read`.
+- Evaluation: while a device is registered, the server holds its own status
+  subscription and reads the disks every minute. `src/attention.ts` copies
+  the phone's attention strip rules for failed builds, log errors, low disk,
+  stopped apps and slow builds; `src/notify.ts` decides what notifies, once
+  per occurrence, with settle and cooldown times. The phone keeps the same
+  rules in `apps/mobile/src/lib`.
+- Delivery: pushes go to `exp.host`, at most 20 per device per hour, with a
+  summary for more than three at once. A `DeviceNotRegistered` ticket or
+  receipt drops the token. Nothing is pushed while the server is down.
+- Out: APNs directly (which would need a key on every Mac) and Android push,
+  which needs FCM credentials in the app.
+
 ## Invariants
 
 - One implementation of state reading and locking: the server uses core's
