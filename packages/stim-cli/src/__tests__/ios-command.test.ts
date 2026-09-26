@@ -6535,6 +6535,14 @@ describe('--plan', () => {
       outcome: 'cold',
       expectedMs: 400_000,
       basis: 3,
+      missReason: {
+        kind: 'no-baseline',
+        summary: 'no earlier build of this project in the cache to compare with',
+        changes: [],
+        changeCount: 0,
+        baseline: null,
+        rekeyedBy: [],
+      },
     });
     expect(calls.order.filter((name) => RUN_ONLY.includes(name))).toEqual([]);
     expect(existsSync(workspaceStateFile(root))).toBe(false);
@@ -6579,11 +6587,64 @@ describe('--plan', () => {
     expect(existsSync(entryDir('ios', debugKey))).toBe(false);
   });
 
-  test('a miss reports a regeneration the run would make', async () => {
-    const { logs } = await run({ plan: true, json: true }, { planPrebuild: () => 'regenerate' });
+  function recordBaseline() {
+    writeWorkspaceState(root, { lastIosBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' } });
+    mkdirSync(join(tmpHome, 'build-cache', 'ios', 'old-key'), { recursive: true });
+    writeFileSync(
+      join(tmpHome, 'build-cache', 'ios', 'old-key', 'fingerprint-sources.json'),
+      JSON.stringify([
+        { type: 'dir', filePath: 'node_modules/expo-camera', reasons: ['expoAutolinkingIos'], hash: 'aa' },
+      ]),
+    );
+    return statSync(workspaceStateFile(root)).mtimeMs;
+  }
+
+  const withClipboard = {
+    fingerprintProject: async () => ({
+      hash: FINGERPRINT,
+      sources: [
+        { type: 'dir', filePath: 'node_modules/expo-camera', reasons: ['expoAutolinkingIos'], hash: 'aa' },
+        { type: 'dir', filePath: 'node_modules/expo-clipboard', reasons: ['expoAutolinkingIos'], hash: 'bb' },
+      ],
+    }),
+  } as const;
+
+  test('a miss names what changed since the baseline build without writing state', async () => {
+    const written = recordBaseline();
+    const { logs } = await run({ plan: true, json: true }, withClipboard);
+    expect(parseFirst(logs).missReason).toEqual({
+      kind: 'changed',
+      summary: 'native dependency added: expo-clipboard',
+      changes: [{ source: 'node_modules/expo-clipboard', change: 'added', category: 'native-dependency' }],
+      changeCount: 1,
+      baseline: { fingerprint: 'oldhash', from: 'workspace' },
+      rekeyedBy: [],
+    });
+    expect(statSync(workspaceStateFile(root)).mtimeMs).toBe(written);
+  });
+
+  test('a miss the run would prebuild first says the changes predate that prebuild', async () => {
+    recordBaseline();
+    const { logs } = await run({ plan: true, json: true }, { ...withClipboard, planPrebuild: () => 'regenerate' });
     const payload = parseFirst(logs);
-    expect(payload).toMatchObject({ prebuild: 'regenerate', outcome: 'cold' });
+    expect(payload).toMatchObject({
+      prebuild: 'regenerate',
+      outcome: 'cold',
+      missReason: {
+        kind: 'prebuild-pending',
+        summary: 'native dependency added: expo-clipboard (before prebuild regenerates ios/)',
+        changeCount: 1,
+      },
+    });
     expect(payload.refusal).toBeUndefined();
+  });
+
+  test('a plan with cache reads off gives no miss reason', async () => {
+    recordBaseline();
+    const { logs } = await run({ plan: true, json: true, buildCache: false }, withClipboard);
+    const payload = parseFirst(logs);
+    expect(payload).toMatchObject({ cacheSkipped: true, outcome: 'cold' });
+    expect(payload.missReason).toBeUndefined();
   });
 
   test('a miss the run would refuse at prebuild is predicted as that refusal, not as a cold build', async () => {

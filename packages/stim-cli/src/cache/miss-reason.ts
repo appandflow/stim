@@ -233,6 +233,29 @@ export function explainBuildMiss({
   };
 }
 
+export function predictBuildMiss({
+  root,
+  platform,
+  current,
+  prebuild,
+}: {
+  root: string;
+  platform: StatsPlatform;
+  current: { hash: string; sources: FingerprintSource[] };
+  prebuild: 'generate' | 'regenerate' | null;
+}): BuildMissReason {
+  const { reason } = explainBuildMiss({ root, platform, current });
+  const baseline = reason.baseline && { fingerprint: reason.baseline.fingerprint, from: reason.baseline.from };
+  if (!prebuild || !baseline) return { ...reason, baseline };
+  const dir = platform === 'ios' ? 'ios/' : 'android/';
+  return {
+    ...reason,
+    kind: 'prebuild-pending',
+    summary: `${reason.summary} (before prebuild ${prebuild}s ${dir})`,
+    baseline,
+  };
+}
+
 export function skippedMissReason(summary: string): BuildMissReason {
   return { kind: 'cache-skipped', summary, changes: [], changeCount: 0, baseline: null, rekeyedBy: [] };
 }

@@ -72,7 +72,8 @@ Stim compares the build's fingerprint sources with the last build of the same
 platform in this workspace, or else with the newest build of the same project
 in another worktree. `stim status --json` keeps the reason under
 `lastBuilds.<platform>.missReason`, and Stim Desktop and the phone app show it
-on the workspace's build row.
+on the workspace's build row. `stim ios --plan` and `stim android --plan` give
+the same reason before a build, and the apps show it under "Next build".
 
 If identical worktrees build instead of reusing an artifact, compare their
 fingerprint sources before adding exclusions. A project-level

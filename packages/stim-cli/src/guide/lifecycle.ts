@@ -721,7 +721,11 @@ PREDICTING THE NEXT BUILD (--plan)
   the cache.provider tier into a temporary directory the plan removes, the
   app config's provider wherever it keeps its downloads, as during a run.
   On a miss it adds the prebuild decision the run would make (generate,
-  regenerate, none, or refuse with STIM_PREBUILD_FAILED). With --eas-profile it asks EAS for a matching
+  regenerate, none, or refuse with STIM_PREBUILD_FAILED) and, with cache
+  reads on, the miss reason the run would print, such as "native dependency
+  added: expo-clipboard". A plan never prebuilds, so when the run would, the
+  reason's kind is prebuild-pending and it compares the fingerprint before
+  that prebuild. With --eas-profile it asks EAS for a matching
   build (config, fingerprint:generate, build:list) and downloads nothing.
   expectedMs is the median of this project's recorded runs with that outcome;
   the payload is in \`guide facts plan\`.

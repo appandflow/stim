@@ -222,7 +222,8 @@ Events are `{ "event", "subscription", ... }`.
   (`default` when absent), and returns the payload of
   `stim <platform> --plan --json` run in the workspace: the fingerprint, the
   cache result the next build would get (`local`, `remote` or `false`), the
-  prebuild decision, and `expectedMs` with its `basis`. It builds, boots and
+  prebuild decision, `expectedMs` with its `basis`, and on a predicted cold
+  build its `missReason`. It builds, boots and
   installs nothing and writes no Stim state; a remote cache check can
   download the artifact into a temporary directory, so it gets 150 seconds
   instead of 60. A plan predicting that the build would refuse is a result

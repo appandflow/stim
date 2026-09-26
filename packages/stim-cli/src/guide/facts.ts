@@ -694,11 +694,12 @@ RULES
   is already built, so it does not measure progress.`,
     },
     plan: {
-      summary: 'the ios and android --plan payload: fingerprint, cacheHit, prebuild, expectedMs and basis',
+      summary: 'the ios and android --plan payload: fingerprint, cacheHit, prebuild, missReason, expectedMs and basis',
       body: () => `  stim ios --plan --json            # or: stim android --plan --json
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
-    cacheSkipped, prebuild, outcome, expectedMs, basis, refusal? }
+    cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?,
+    refusal? }
 
   fingerprint   the fingerprint the run would look up first; with
                 --eas-profile, the one EAS CLI computes
@@ -713,6 +714,13 @@ RULES
   expectedMs    the median wall time of this project's last successful runs
                 with that outcome on that platform, or null with none
   basis         how many runs expectedMs comes from (at most 10)
+  missReason    on a predicted cold build with cache reads on, why the
+                cache has no app, in the shape of lastBuilds.<platform>
+                .missReason (\`guide facts status\`), compared with the same
+                baseline the run would use. kind is "changed",
+                "no-baseline", "same-sources" or "prebuild-pending": the run
+                would prebuild first, the plan does not, so changes compare
+                the fingerprint before that prebuild. rekeyedBy is empty.
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
