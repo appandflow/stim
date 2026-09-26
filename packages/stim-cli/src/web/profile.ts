@@ -2,6 +2,8 @@ import { readlinkSync, rmSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { pidExists } from '../metro.ts';
+import { processGroupAlive } from '../ownership-claim.ts';
+import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 
 const SINGLETON_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
 
@@ -28,4 +30,19 @@ export function liveProfileHolder(
 /** Removes the lock files a Chrome that did not exit cleanly leaves; call only once that Chrome is gone. */
 export function removeSingletonFiles(profile: string): void {
   for (const name of SINGLETON_FILES) rmSync(join(profile, name), { force: true });
+}
+
+/**
+ * Whether the owned Chrome still runs. `lingering` means the recorded process exited but its process group, whose
+ * id is that pid, still has helper processes: a live group id cannot be reused. A pid now held by a different
+ * process is `gone`, never something to signal.
+ */
+export function chromeProcessState(
+  record: ProcessRecord & { pid: number },
+): 'running' | 'lingering' | 'gone' | 'unknown' {
+  const identity = inspectProcessIdentity(record);
+  if (identity === 'same') return 'running';
+  if (identity === 'unknown') return 'unknown';
+  if (identity === 'different') return 'gone';
+  return processGroupAlive(record.pid) ? 'lingering' : 'gone';
 }

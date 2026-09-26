@@ -240,6 +240,22 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     expect(getProject(workspace)?.ports).toEqual({});
   });
 
+  test('never signals a recorded pid that another process now holds', async () => {
+    const workspace = realpathSync(root);
+    const record = await ownedBrowser();
+    const stranger = nodeProcess('setInterval(() => {}, 1000);');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const identity = JSON.parse(Buffer.from(record.chromeProcess!.processToken.slice(6), 'base64url').toString());
+    const reusedToken = `upid1.${Buffer.from(JSON.stringify({ ...identity, pid: stranger.pid })).toString('base64url')}`;
+    const reused = { pid: stranger.pid!, processToken: reusedToken };
+    writeWebRecord(workspace, { ...record, pid: reused.pid, processToken: reused.processToken, chromeProcess: reused });
+    expect(inspectProcessIdentity(reused)).toBe('different');
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(inspectProcessIdentity({ pid: stranger.pid, processToken: captureProcessToken(stranger.pid!) })).toBe(
+      'same',
+    );
+  });
+
   test('deletes the profile only when the ledger lists it', async () => {
     const workspace = realpathSync(root);
     const record = await ownedBrowser();

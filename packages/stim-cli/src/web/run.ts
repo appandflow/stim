@@ -12,7 +12,6 @@ import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import {
   clearClaimChild,
   markClaimChildPending,
-  processGroupAlive,
   releaseClaim,
   setClaimChild,
   tryAcquireClaim,
@@ -22,7 +21,7 @@ import { captureProcessIdentity, captureProcessToken, inspectProcessIdentity } f
 import { connectOwnedBrowser, type CdpConnection, type CdpEvent } from './cdp.ts';
 import { PHONE_SCREEN, chromeArgs } from './chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from './events.ts';
-import { liveProfileHolder, removeSingletonFiles } from './profile.ts';
+import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from './profile.ts';
 import {
   browserLogFile,
   clearWebRecord,
@@ -140,8 +139,7 @@ export async function runWebSupervisor(
   let finished = false;
   let stopping = false;
 
-  const chromeGone = () =>
-    !chromeRecord || (inspectProcessIdentity(chromeRecord) !== 'same' && !processGroupAlive(chromeRecord.pid));
+  const chromeGone = () => !chromeRecord || chromeProcessState(chromeRecord) === 'gone';
 
   const finish = (code: number, level: string, event: string, msg: string) => {
     if (finished) return;

@@ -11,7 +11,7 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { signalProcessTree } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
-import { liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
+import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
 import { CDP_PORT_LABEL, clearWebRecord, readWebRecord, webProfileDir, type OwnedProcess } from '../web/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import {
@@ -45,13 +45,7 @@ import {
 } from './android.ts';
 import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
-import {
-  clearClaimChild,
-  markClaimChildPending,
-  processGroupAlive,
-  releaseClaim,
-  type ClaimHandle,
-} from '../ownership-claim.ts';
+import { clearClaimChild, markClaimChildPending, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 
 export interface ParkedDevice {
   udid: string;
@@ -518,20 +512,18 @@ function teardownClaimedAvd(
 const BROWSER_EXIT_WAIT_MS = 10_000;
 const CHROME_KILL_WAIT_MS = 5_000;
 
-function browserProcessGone(record: OwnedProcess): boolean {
-  return inspectProcessIdentity(record) !== 'same' && !processGroupAlive(record.pid);
-}
-
 async function stopOwnedChrome(record: OwnedProcess): Promise<boolean> {
   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-    if (browserProcessGone(record)) return true;
+    const state = chromeProcessState(record);
+    if (state === 'gone') return true;
+    if (state === 'unknown') return false;
     try {
       signalProcessTree(record.pid, signal, { group: true });
     } catch {}
     const deadline = Date.now() + CHROME_KILL_WAIT_MS;
-    while (!browserProcessGone(record) && Date.now() < deadline) await sleepAsync(50);
+    while (chromeProcessState(record) !== 'gone' && Date.now() < deadline) await sleepAsync(50);
   }
-  return browserProcessGone(record);
+  return chromeProcessState(record) === 'gone';
 }
 
 const sleepAsync = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
