@@ -2,13 +2,12 @@ import { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useLogs, type LogsChange } from '@/hooks/mac-connection';
-import { agentActions, agentFeedFilter } from '@/lib/logs';
-import type { LogRecord } from '@/protocol/types';
+import { agentActions, agentFeedFilter, type AgentAction } from '@/lib/logs';
 import { mono, useColors } from '@/theme';
 
 export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; slot: string; deviceId: string }) {
   const colors = useColors();
-  const [actions, setActions] = useState<LogRecord[]>([]);
+  const [actions, setActions] = useState<AgentAction[]>([]);
   const filter = useMemo(() => agentFeedFilter(workspace, slot), [workspace, slot]);
   const onChange = useCallback(
     (change: LogsChange) => {
@@ -22,8 +21,8 @@ export function AgentFeed({ workspace, slot, deviceId }: { workspace: string; sl
   return (
     <View style={[styles.feed, { borderTopColor: colors.border }]} accessibilityLabel="Agent actions">
       <Text style={[styles.title, { color: colors.secondary }]}>Agent actions</Text>
-      {actions.map((record) => (
-        <View key={`${record.ts}-${record.msg}`} style={styles.row}>
+      {actions.map(({ key, record }) => (
+        <View key={key} style={styles.row}>
           <Text style={[styles.time, { color: colors.tertiary }]}>
             {new Date(record.ts).toTimeString().slice(0, 8)}
           </Text>
