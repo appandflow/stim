@@ -1049,14 +1049,16 @@ export async function stopWorkspaceNow({
   stop?: (options: { root: string; slot?: string }) => ReturnType<typeof runStop>;
 }): Promise<Awaited<ReturnType<typeof runStop>> | { refusal: StopRefusal; remote: DeviceOutcomeEntry | null }> {
   if (slot === WEB_SLOT) return stop({ root, slot });
-  const known = slot === undefined ? [] : recordedSlots(root);
-  let unknownSlot = slot !== undefined && !known.includes(slot);
-  const unknownSlotRefusal = () =>
-    new StopBlocked({
+  let unknownSlot = slot !== undefined && !recordedSlots(root).includes(slot);
+  const stillUnknown = () => {
+    const known = recordedSlots(root);
+    if (known.includes(slot!)) return null;
+    return new StopBlocked({
       code: 'STIM_BAD_ARG',
       message: `This workspace has no device slot named ${slot}. Its slots are ${known.join(', ')}.`,
       remedy: `Run \`stim stop --slot <name>\` with one of those slots, \`stim stop --slot ${WEB_SLOT}\` to close only the owned Chrome, or \`stim stop\` for the whole workspace.`,
     });
+  };
   let remote: DeviceOutcomeEntry | null = null;
   let remoteHandled = slot !== undefined;
   const endRemoteNow = () => {
@@ -1085,7 +1087,8 @@ export async function stopWorkspaceNow({
     endRemoteNow();
     const target = nativeRunHolder(holder);
     if (unknownSlot) {
-      if (target.slot !== slot) throw unknownSlotRefusal();
+      const refusal = target.slot === slot ? null : stillUnknown();
+      if (refusal) throw refusal;
       unknownSlot = false;
     }
     const { action } = decideStopAction({
@@ -1133,7 +1136,8 @@ export async function stopWorkspaceNow({
         workspaceDir(root),
         NATIVE_RUN_LOCK,
         () => {
-          if (unknownSlot && !recordedSlots(root).includes(slot!)) throw unknownSlotRefusal();
+          const refusal = unknownSlot ? stillUnknown() : null;
+          if (refusal) throw refusal;
           return stop({ root, slot });
         },
         {

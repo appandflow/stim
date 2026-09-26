@@ -290,6 +290,22 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     },
   );
 
+  test('a slot recorded after stop first looked is stopped, not refused', async () => {
+    const reads = [['default'], ['default', 'phone']];
+    const calls: { slot?: string }[] = [];
+    const result = await stopWorkspaceNow({
+      root,
+      slot: 'phone',
+      recordedSlots: () => reads.shift() ?? ['default', 'phone'],
+      stop: async (options) => {
+        calls.push(options);
+        return stopped();
+      },
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(calls).toEqual([{ root, slot: 'phone' }]);
+  });
+
   test('stop --slot web closes the browser without waiting on or interrupting a build', async () => {
     const holder = await startHolder('ios', 'default', 'sleep');
     const lines: string[] = [];
