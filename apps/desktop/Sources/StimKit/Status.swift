@@ -5,6 +5,7 @@ public struct StatusPayload: Decodable, Sendable {
   public var environments: [Workspace]
   public var capacity: Capacity?
   public var unprovisionedWorktrees: [UnprovisionedWorktree]?
+  public var machine: MachineUsage?
 }
 
 public struct Capacity: Decodable, Sendable {

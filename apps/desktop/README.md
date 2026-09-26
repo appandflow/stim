@@ -168,7 +168,20 @@ version with `gc --json`.
 
 ## Machine
 
-**Machine** at the top of the sidebar shows what uses disk space, largest first,
+**Machine** starts with **Now**: what uses the Mac's CPU and memory at this
+moment, from the `machine` section of the status watch, which refreshes it
+every 15 seconds while something runs. Each row is a booted simulator or
+emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
+build or `stim web` Chrome, stim-server, or a machine-wide process such as
+CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
+is one core) and resident memory, busiest first; each process counts in one
+row only. A workspace's owned simulator or emulator has **Shut down**, which
+runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
+`stim stop`. Nothing Stim does not own has an action. Two sparklines above the
+list follow the Mac's memory in use and the rows' total CPU while the window
+is visible.
+
+Below it, the page shows what uses disk space, largest first,
 and what Stim can free. It never blocks on a measurement: the device, runtime
 and cache sizes come from `stim gc --json`, and the app sizes only folders
 outside `$STIM_HOME` with `du`, each path on its own, three at a time. A path
@@ -516,7 +529,7 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the Machine report, free plan and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, and the autopilot schedule, pressure plan and log. Unit-tested.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
