@@ -115,8 +115,9 @@ reload and stop a workspace:
   its code frame and stack lines, and a failed bundle response) are one entry.
   An entry leads with the error type and message, then the file and line
   relative to the workspace, such as `App.js:12:31`. Tapping it shows the code
-  frame; when a filter leaves the code frame lines out, such as Errors only,
-  the app fetches them from the Metro log. **Copy** copies the message and location,
+  frame. Under Errors only, Stim attaches the code frame to the error record.
+  When a level or search filter leaves the code frame lines out, or an older
+  Stim does not attach them, the app fetches them from the Metro log. **Copy** copies the message and location,
   and **Share** shares the whole entry.
 
 Paths under the Mac's home folder show as `~/...`; the server reports the home

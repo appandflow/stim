@@ -451,7 +451,9 @@ result.
   commands. A plain `logs` includes it; `--errors` includes it only when
   selected with `--source agent` or `--source all`.
 - `--follow` streams new matching records.
-- `--json` writes NDJSON. Zero matches writes zero bytes.
+- `--json` writes NDJSON. Zero matches writes zero bytes. With `--errors`, an
+  Expo error record also carries a `context` array: the code frame and stack
+  lines Expo printed after it.
 
 ## `stop`
 

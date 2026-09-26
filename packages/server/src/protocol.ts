@@ -598,6 +598,11 @@ export function protocolJsonSchema(): JsonSchema {
           src: { type: 'string' },
           level: { type: 'string' },
           msg: { type: 'string' },
+          context: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'With `errors`: the code frame and stack lines Expo printed after this error.',
+          },
         },
       },
       LogFilter: {

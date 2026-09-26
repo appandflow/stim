@@ -227,6 +227,8 @@ export interface LogRecord {
   event?: string;
   stack?: StackFrame[];
   deviceId?: string;
+  /** With `errors`: the code frame and stack lines Expo printed after this error. */
+  context?: string[];
   [key: string]: unknown;
 }
 

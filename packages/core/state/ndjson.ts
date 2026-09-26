@@ -6,6 +6,8 @@ export interface NdjsonRecord {
   src?: string;
   level?: string;
   msg?: string;
+  /** With `logs --errors --json`: the code frame and stack lines Expo printed after this error. */
+  context?: string[];
   [key: string]: unknown;
 }
 

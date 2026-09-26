@@ -153,6 +153,14 @@ describe('groupRecords and viewEntry, on records captured from an Expo app', () 
     expect(context).toEqual(groupRecords(syntax)[1]!.context);
   });
 
+  it('under Errors only, takes the code frame the CLI attached to the error record', () => {
+    const full = groupRecords(syntax)[1]!;
+    const attached = errorsOnly.map((r) => (r === full.lead ? { ...r, context: full.context } : r));
+    const [entry] = groupRecords(attached);
+    expect(entry!.context).toEqual(full.context);
+    expect(needsContext(entry!)).toBe(false);
+  });
+
   it('leads with the message, then the location relative to the workspace, then the code frame', () => {
     const view = viewEntry(groupRecords(syntax)[1]!, workspace, '/Users/janicduplessis');
     expect(view.title).toBe('SyntaxError: Unexpected token, expected "}"');
