@@ -344,6 +344,7 @@ test('the facts topic documents every gc verdict reason code', () => {
   for (const [file, type] of [
     ['../commands/gc/worktrees.ts', 'WorktreeSkipCode'],
     ['../commands/gc/workspaces.ts', 'WorkspaceKeptCode'],
+    ['../commands/gc/logs.ts', 'WorkspaceLogsKeptCode'],
   ] as const) {
     const src = readFileSync(new URL(file, import.meta.url), 'utf-8');
     const start = src.indexOf(`export type ${type} =`);

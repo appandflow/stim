@@ -13,6 +13,7 @@ import {
   type WorkspaceOutputsReport,
 } from './workspaces.ts';
 import type { GcCache } from './caches.ts';
+import type { WorkspaceLogs, WorkspaceLogsKeptCode } from './logs.ts';
 import {
   worktreePullRequestNote,
   worktreeRemovalReason,
@@ -54,6 +55,7 @@ export interface GcReport {
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
+  workspaceLogs: WorkspaceLogs[];
   worktreeSweep?: WorktreeSweep | null;
   cacheScope: string | null;
   olderThan: number | null;
@@ -143,6 +145,7 @@ export function formatGcReport(
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     caches = [],
     workspaceOutputs = null,
+    workspaceLogs = [],
     worktreeSweep = null,
     cacheScope = null,
     olderThan = null,
@@ -173,6 +176,7 @@ export function formatGcReport(
       expiredLeases,
       easSessionSweep.orphaned,
       workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
+      workspaceLogs.filter((entry) => entry.willTrim),
       worktreeSweep?.worktrees.filter((entry) => !entry.skipped) ?? [],
     ].every((found) => found.length === 0)
   ) {
@@ -304,8 +308,27 @@ export function formatGcReport(
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
+  lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...cacheLines(caches, workspaceOutputs));
 
+  return lines;
+}
+
+function workspaceLogLines(workspaceLogs: readonly WorkspaceLogs[]): string[] {
+  const over = workspaceLogs.filter((w) => w.trimBytes > 0);
+  if (!over.length) return [];
+  const total = workspaceLogs.reduce((n, w) => n + w.bytes, 0);
+  const lines = [
+    `Workspace logs (${formatBytes(total)} in ${workspaceLogs.length} workspace${workspaceLogs.length === 1 ? '' : 's'}) - ${over.length} with a log over twice the 8 MiB cap:`,
+  ];
+  for (const w of over) {
+    lines.push(`  ${formatBytes(w.bytes).padStart(10)}  ${w.projectRoot ?? w.dir}`);
+    lines.push(
+      w.willTrim
+        ? `              would TRIM ${formatBytes(w.trimBytes)}: Metro, client and device logs keep their newest 8 MiB`
+        : `              kept: ${w.keptReason}`,
+    );
+  }
   return lines;
 }
 
@@ -516,6 +539,15 @@ export interface GcJsonSections {
   deviceSweepNotices: { message: string }[];
   easSessionSweepNotices: { message: string }[];
   skipped: { path: string; detail: string }[];
+  workspaceLogs: {
+    dir: string;
+    projectRoot: string | null;
+    bytes: number;
+    trimBytes: number;
+    willTrim: boolean;
+    reason: WorkspaceLogsKeptCode | null;
+    detail: string | null;
+  }[];
   workspaceBuildOutputs: {
     dir: string;
     projectRoot: string | null;
@@ -557,6 +589,7 @@ export function gcReportSections({
   deviceSweepNotices = [],
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
+  workspaceLogs = [],
   caches = [],
 }: Partial<GcReport>): GcJsonSections {
   return {
@@ -666,6 +699,15 @@ export function gcReportSections({
     deviceSweepNotices: deviceSweepNotices.map((message) => ({ message })),
     easSessionSweepNotices: easSessionSweep.notices.map((message) => ({ message })),
     skipped: skipped.map(({ dir, reason }) => ({ path: dir, detail: reason })),
+    workspaceLogs: workspaceLogs.map((w) => ({
+      dir: w.dir,
+      projectRoot: w.projectRoot,
+      bytes: w.bytes,
+      trimBytes: w.trimBytes,
+      willTrim: w.willTrim,
+      reason: w.keptCode,
+      detail: w.keptReason,
+    })),
     workspaceBuildOutputs: (workspaceOutputs?.workspaces ?? []).map((w) => ({
       dir: w.dir,
       projectRoot: w.projectRoot,

@@ -90,6 +90,7 @@ public struct GcPreview: Sendable {
     ("deviceSweepNotices", "Device sweep notices"),
     ("easSessionSweepNotices", "EAS session sweep notices"),
     ("skipped", "Skipped"),
+    ("workspaceLogs", "Workspace logs"),
     ("workspaceBuildOutputs", "Workspace build outputs"),
     ("caches", "Shared caches"),
   ]
@@ -130,7 +131,10 @@ public struct GcPreview: Sendable {
     let known = Set(Self.order.map(\.key))
     let keys = Self.order + sections.keys.filter { !known.contains($0) }.sorted().map { ($0, $0) }
     self.sections = keys.compactMap { key, title in
-      guard let items = sections[key] as? [[String: Any]], !items.isEmpty else { return nil }
+      let items = ((sections[key] as? [[String: Any]]) ?? []).filter {
+        key != "workspaceLogs" || (($0["trimBytes"] as? NSNumber)?.int64Value ?? 0) > 0
+      }
+      guard !items.isEmpty else { return nil }
       let entries = items.map { Self.entry($0, key: key) }
       return Section(key: key, title: title, entries: entries)
     }
@@ -139,8 +143,8 @@ public struct GcPreview: Sendable {
   private static func entry(_ item: [String: Any], key: String) -> Entry {
     let reportOnly = Self.reportOnly.contains(key)
     let label = ["name", "dir", "path", "project", "id", "message"].lazy.compactMap { item[$0] as? String }.first ?? "?"
-    let bytes = (item["bytes"] as? NSNumber)?.int64Value
-    let acted = ["willRemove", "willClear", "willEmpty"].compactMap { item[$0] as? Bool }.first
+    let bytes = (item[key == "workspaceLogs" ? "trimBytes" : "bytes"] as? NSNumber)?.int64Value
+    let acted = ["willRemove", "willClear", "willEmpty", "willTrim"].compactMap { item[$0] as? Bool }.first
     let kept: String?
     if key == "idleDevices" {
       let idle = (item["idleForMs"] as? NSNumber).map { "idle \(ActivityBadge.duration($0.doubleValue / 1000))" }

@@ -56,6 +56,7 @@ import {
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
 import { findStaleLedgerEntries, forgetStaleLedgerEntries, type StaleLedgerEntry } from './gc/ledger.ts';
 import { readCreatedDevices } from '../devices/created-devices.ts';
+import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
@@ -156,6 +157,7 @@ export async function collectGcReport(
       parkedAvds: [],
       caches,
       workspaceOutputs: withWorkspaces ? collectWorkspaceOutputs({ olderThan, now }) : null,
+      workspaceLogs: [],
       worktreeSweep: null,
       cacheScope: scope,
       olderThan,
@@ -330,6 +332,7 @@ export async function collectGcReport(
 
   const locks = listBuildLocks();
   const slots = listBuildSlots();
+  const goneWorkspaceDirs = [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)];
   const deviceLeases = collectDeviceLeases(now);
 
   return {
@@ -362,11 +365,8 @@ export async function collectGcReport(
     deviceSweepNotices,
     easSessionSweep,
     caches,
-    workspaceOutputs: collectWorkspaceOutputs({
-      olderThan,
-      now,
-      exclude: [...workspaceDirs.orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)],
-    }),
+    workspaceOutputs: collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
+    workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
     worktreeSweep: collectWorktreeSweep({ idle: worktrees, olderThan, now }),
     cacheScope: null,
     olderThan,
@@ -574,6 +574,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     deadProjects.length + invalidProjects.length > 0 ||
     report.orphanedWorkspaces.length > 0 ||
     Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
+    report.workspaceLogs.some((entry) => entry.willTrim) ||
     Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
     report.parkedSims.length > 0 ||
     report.parkedAvds.length > 0 ||
@@ -623,6 +624,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += report.workspaceOutputs
     ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan })).failures
     : 0;
+  deleteFailures += await trimWorkspaceLogs(report.workspaceLogs);
   deleteFailures += deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
 
   removeInvalidProjectEntries(invalidProjects);
@@ -732,7 +734,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs of each workspace. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs and logs of each workspace. Reports by default; pass --delete to act.',
     )
     .option(
       '--worktrees',
@@ -740,7 +742,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, and clear the build outputs of every workspace not in use',
+      'actually prune the reported entries, reap the reported devices, clear the build outputs of every workspace not in use, and trim its Metro, client and device logs to their newest 8 MiB',
     )
     .option(
       '--older-than <days>',
