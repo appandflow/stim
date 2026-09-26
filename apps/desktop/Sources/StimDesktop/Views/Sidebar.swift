@@ -492,6 +492,9 @@ private struct FooterIconButton: View {
 
 /// The hand-lettered "Stim" wordmark, tinted to `Theme.primary` for both appearances.
 struct StimWordmark: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var wiggles = 0
+
   var body: some View {
     if let wordmark = BrandAssets.wordmark {
       Image(nsImage: wordmark)
@@ -500,7 +503,30 @@ struct StimWordmark: View {
         .aspectRatio(contentMode: .fit)
         .frame(height: 22)
         .foregroundStyle(Theme.primary)
+        .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
+          content.rotationEffect(.degrees(value.angle)).scaleEffect(value.scale)
+        } keyframes: { _ in
+          KeyframeTrack(\.angle) {
+            CubicKeyframe(-6, duration: 0.1)
+            CubicKeyframe(5, duration: 0.1)
+            CubicKeyframe(-3, duration: 0.1)
+            CubicKeyframe(1.5, duration: 0.1)
+            CubicKeyframe(0, duration: 0.1)
+          }
+          KeyframeTrack(\.scale) {
+            CubicKeyframe(1.06, duration: 0.15)
+            SpringKeyframe(1, duration: 0.35)
+          }
+        }
+        .onHover { inside in
+          if inside && !reduceMotion { wiggles += 1 }
+        }
         .accessibilityLabel("Stim")
     }
+  }
+
+  private struct Wiggle {
+    var angle = 0.0
+    var scale = 1.0
   }
 }
