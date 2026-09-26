@@ -78,29 +78,39 @@ const RETRY = 'then run `stim web` again';
 
 export function webLaunchRemedy(
   verdict: WebLaunchVerdict,
-  { url, usesMetro }: { url: string; usesMetro: boolean },
+  { url, template, usesMetro }: { url: string; template: string | null; usesMetro: boolean },
 ): string | null {
   const https = url.startsWith('https:');
   const reason = verdict.reason ?? '';
+  const withScheme = (scheme: 'http' | 'https') =>
+    template
+      ? `\`stim settings set web.url '${template.replace(/^https?:/, `${scheme}:`)}' --scope workspace\``
+      : `web.url with ${scheme}://`;
+  const status = Number(/failed: HTTP (\d+)/.exec(reason)?.[1]);
   switch (verdict.kind) {
     case 'loaded':
       return null;
     case 'bundling':
       return 'Metro is still building the web bundle. Run `stim logs --errors` in a moment to confirm the page rendered.';
     case 'loading':
+      if (usesMetro) break;
       return `A cold dev server can take longer on its first load. Read \`stim logs --errors\`, ${RETRY}.`;
     case 'document-failed':
       if (https && /net::ERR_CERT_/.test(reason)) {
         return `The dev server's certificate is not trusted, as with a self-signed development certificate. Accept it in the owned profile only: \`stim settings set web.ignoreCertificateErrors true --scope workspace\`, ${RETRY}.`;
       }
       if (https && /net::ERR_SSL_PROTOCOL_ERROR/.test(reason)) {
-        return `The server on that port did not answer HTTPS. If it serves plain HTTP, set web.url with http:// (\`stim settings set web.url <url> --scope workspace\`), ${RETRY}.`;
+        return `The server on that port did not answer HTTPS. If it serves plain HTTP, set ${withScheme('http')}, ${RETRY}.`;
       }
       if (!https && /net::ERR_EMPTY_RESPONSE/.test(reason)) {
-        return `The server on that port closed the connection without an HTTP answer. If it serves HTTPS, set web.url with https:// (\`stim settings set web.url <url> --scope workspace\`), ${RETRY}.`;
+        return `The server on that port closed the connection without an HTTP answer. If it serves HTTPS, set ${withScheme('https')}, ${RETRY}.`;
       }
-      if (/failed: HTTP \d+/.test(reason)) {
-        return `The server answered, but not with the page. Check web.url's path, including the app's base path, ${RETRY}.`;
+      if (usesMetro) break;
+      if (status >= 400 && status < 500) {
+        return `The server has no page at ${url}. Check web.url's path, including the app's base path, ${RETRY}.`;
+      }
+      if (status >= 500) {
+        return `The dev server failed to serve ${url}. Read its output and \`stim logs --errors\`, ${RETRY}.`;
       }
       break;
     case 'no-bundle':

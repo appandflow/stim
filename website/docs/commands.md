@@ -471,7 +471,8 @@ Queries the workspace log timeline. No matching records is a successful empty
 result.
 
 - `--errors` selects errors and fatals from Metro, client, and build logs, plus
-  confirmed native app-crash reports and the `stim web` page's failed requests,
+  confirmed native app-crash reports and the `stim web` page's failed requests
+  and browser errors,
   since the last launch marker. A completed
   bundle attempt resets only older Metro errors. General device logs require
   an explicit `--source device` or `--source all`.

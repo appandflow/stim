@@ -46,8 +46,9 @@ web.ignoreCertificateErrors is true, which accepts the certificate in the
 owned profile only:
   stim settings set web.url 'https://localhost:{port:web}/' --scope workspace
   stim settings set web.ignoreCertificateErrors true --scope workspace
-An https:// URL on a plain HTTP server fails with ERR_SSL_PROTOCOL_ERROR; the
-remedy line says to switch the scheme. web.viewport phone gives the page a
+An https:// URL on a plain HTTP server fails with ERR_SSL_PROTOCOL_ERROR, and
+an http:// URL on an HTTPS server with ERR_EMPTY_RESPONSE; the remedy line
+prints the settings command that switches the scheme. web.viewport phone gives the page a
 390x844 touch screen at 3x instead of the 1280x800 desktop window. See stim
 guide settings.
 
@@ -83,6 +84,8 @@ platform "web":
                as CSP violations; the browser's own lifecycle
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).
+stim web writes no launch marker, so logs --errors still lists page errors
+from earlier stim web runs; add --since 1m to see only the latest load.
 
 AGENTS AND OTHER TOOLS ON THE SAME BROWSER
 

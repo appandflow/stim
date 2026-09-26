@@ -45,7 +45,8 @@ FLAGS
                    so --level error --tail 5 is the last five ERRORS)
   --errors         errors and fatals since the last marker, from metro, client
                    and build, plus confirmed native app-crash reports and the
-                   owned Chrome page's failed requests (platform web).
+                   owned Chrome's device errors (platform web: failed
+                   requests, browser errors).
                    Capped at 20 printed records.
   --follow         keep streaming until interrupted (Ctrl+C is exit 0)
   --json           the raw records, one per line, so stdout is valid NDJSON.
@@ -58,8 +59,8 @@ FLAGS
 --ERRORS, PRECISELY
   Level error or fatal, from metro, client and build, plus device records with
   event native_crash (app/device/time-correlated OS reports or fatal app console output)
-  and device records with platform web (the owned page's failed document and
-  requests, from stim web), timestamped after the
+  and device records with platform web (the owned page's failed requests and
+  browser errors, from stim web), timestamped after the
   marker that closes their window. Three rules, and a field test
   caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
   healthy app while hiding a real startup crash.

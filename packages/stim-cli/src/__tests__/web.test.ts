@@ -229,18 +229,41 @@ describe('launched', () => {
 
   test('the remedy follows what the page reported instead of assuming nothing listens', () => {
     const failed = (msg: string) => verdict([at('web_document_failed', 20, { msg })])!;
-    const https = { url: 'https://localhost:8900/apps/groups/', usesMetro: false };
+    const https = {
+      url: 'https://localhost:8900/apps/groups/',
+      template: 'https://localhost:{port:web}/apps/groups/',
+      usesMetro: false,
+    };
+    const http = {
+      ...https,
+      url: 'http://localhost:8900/apps/groups/',
+      template: 'http://localhost:{port:web}/apps/groups/',
+    };
     expect(webLaunchRemedy(failed('GET x failed: net::ERR_CERT_AUTHORITY_INVALID'), https)).toContain(
       '`stim settings set web.ignoreCertificateErrors true --scope workspace`',
     );
-    expect(webLaunchRemedy(failed('GET x failed: net::ERR_SSL_PROTOCOL_ERROR'), https)).toContain('http://');
-    expect(
-      webLaunchRemedy(failed('GET x failed: net::ERR_EMPTY_RESPONSE'), { ...https, url: 'http://localhost:8900/' }),
-    ).toContain('https://');
+    expect(webLaunchRemedy(failed('GET x failed: net::ERR_SSL_PROTOCOL_ERROR'), https)).toContain(
+      "`stim settings set web.url 'http://localhost:{port:web}/apps/groups/' --scope workspace`",
+    );
+    expect(webLaunchRemedy(failed('GET x failed: net::ERR_EMPTY_RESPONSE'), http)).toContain(
+      "`stim settings set web.url 'https://localhost:{port:web}/apps/groups/' --scope workspace`",
+    );
     expect(webLaunchRemedy(failed('GET x failed: HTTP 404'), https)).toContain('base path');
+    expect(webLaunchRemedy(failed('GET x failed: HTTP 500'), https)).toContain('failed to serve');
     expect(webLaunchRemedy(failed('GET x failed: net::ERR_CONNECTION_REFUSED'), https)).toMatch(/^Nothing served/);
     const loading = verdict([at('web_document_response', 20, { status: 200 })], { elapsedMs: 60_000 })!;
     expect(webLaunchRemedy(loading, https)).toContain('cold dev server');
+  });
+
+  test('on Metro, an HTTP error or a missing bundle points at the Metro build', () => {
+    const metro = { url: 'http://localhost:8081/', template: null, usesMetro: true };
+    const failed = verdict([at('web_document_failed', 20, { msg: 'GET x failed: HTTP 500' })])!;
+    expect(webLaunchRemedy(failed, metro)).toContain('Metro may have failed');
+    const answered = verdict([at('web_document_response', 20, { status: 200 })], {
+      expectBundle: true,
+      elapsedMs: 20_000,
+    })!;
+    expect(webLaunchRemedy(answered, metro)).toContain('Metro may have failed');
   });
 });
 

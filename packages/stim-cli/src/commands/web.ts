@@ -270,7 +270,7 @@ export async function runWeb({
   const verdict = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const remedy = webLaunchRemedy(verdict, { url, usesMetro });
+  const remedy = webLaunchRemedy(verdict, { url, template: web.url, usesMetro });
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,

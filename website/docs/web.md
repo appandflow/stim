@@ -120,6 +120,9 @@ Page records carry `platform: "web"`:
 Expo also prints web console calls on Metro, so they can appear twice: once
 from the page and once from Metro.
 
+`stim web` writes no launch marker, so `stim logs --errors` still lists page
+errors from earlier runs. Add `--since 1m` to see only the latest load.
+
 ## Attach Playwright MCP or agent-browser
 
 `stim status --json` reports `environments[].web.cdpEndpoint`, a reserved
