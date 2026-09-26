@@ -107,7 +107,10 @@ const DIAGNOSTIC_CAP = 5;
 const positive = (value: unknown): number | null =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
 
-/** The first diagnostics of a failed build in the shape a last-build record stores and `status` reports. */
+/**
+ * The first diagnostics of a failed build in the shape a last-build record stores and `status` reports, the
+ * ones with a source position first.
+ */
 export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
   return (Array.isArray(value) ? value : [])
     .flatMap((item): BuildDiagnostic[] => {
@@ -123,6 +126,7 @@ export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
         },
       ];
     })
+    .toSorted((a, b) => Number(b.file !== null) - Number(a.file !== null))
     .slice(0, DIAGNOSTIC_CAP);
 }
 

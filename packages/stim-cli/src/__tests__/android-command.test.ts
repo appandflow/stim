@@ -2223,13 +2223,13 @@ describe('a failed build', () => {
     expect(lastBuild.status).toBe('failed');
     expect(lastBuild.errorCode).toBe(BUILD_ERROR);
     expect(lastBuild.diagnostics).toEqual([
-      { file: null, line: null, column: null, message: 'Task :app:compileDebugKotlin FAILED' },
       {
         file: '/p/android/app/src/main/java/com/app/MainActivity.kt',
         line: 23,
         column: 9,
         message: "Unresolved reference 'Foo'.",
       },
+      { file: null, line: null, column: null, message: 'Task :app:compileDebugKotlin FAILED' },
     ]);
     expect(lastBuild.platform).toBe('android');
     expect(lastBuild.fingerprint).toBe(FINGERPRINT);

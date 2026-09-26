@@ -71,20 +71,21 @@ describe('last build per platform', () => {
     expect(readLastBuilds({ lastBuild: { ...ios, durationMs: 1e308 } }).ios).toMatchObject({ finishedAt: null });
   });
 
-  test('a failed build reports its first diagnostics, bounded, and drops malformed ones', () => {
+  test('a failed build reports its first diagnostics, positioned ones first, bounded, and drops malformed ones', () => {
     const diagnostics = [
       { file: '/app/ios/App/AppDelegate.swift', line: 71, column: 24, message: 'cannot convert value', remedy: 'x' },
       { message: 'linker command failed', line: 0 },
       { file: 'a', line: 1 },
+      { file: 'a', line: -2, message: 'b' },
       ...Array.from({ length: 6 }, (_, i) => ({ message: `m${i}` })),
     ];
     const failed = { ...ios, cacheHit: false, status: 'failed', errorCode: 'STIM_BUILD_FAILED', diagnostics };
     expect(readLastBuilds({ lastBuild: failed }).ios?.diagnostics).toEqual([
       { file: '/app/ios/App/AppDelegate.swift', line: 71, column: 24, message: 'cannot convert value' },
+      { file: 'a', line: null, column: null, message: 'b' },
       { file: null, line: null, column: null, message: 'linker command failed' },
       { file: null, line: null, column: null, message: 'm0' },
       { file: null, line: null, column: null, message: 'm1' },
-      { file: null, line: null, column: null, message: 'm2' },
     ]);
     expect(readLastBuilds({ lastBuild: { ...ios, diagnostics } }).ios).not.toHaveProperty('diagnostics');
   });

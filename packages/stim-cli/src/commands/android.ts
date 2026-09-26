@@ -719,7 +719,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     {
       lastBuildStatus = false,
       diagnostics = [],
-      buildDiagnostics = [],
+      buildDiagnostics: rawDiagnostics = [],
       lines = [],
       logPath = null,
       lease,
@@ -736,7 +736,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         durationMs: now() - started,
         status: 'failed',
         errorCode: code,
-        diagnostics: buildDiagnostics,
+        diagnostics: rawDiagnostics,
         out,
       });
     }
