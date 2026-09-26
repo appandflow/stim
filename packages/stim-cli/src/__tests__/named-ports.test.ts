@@ -9,7 +9,7 @@ import * as identity from '../process-identity.ts';
 
 let home: string;
 let root: string;
-const free = { isFree: async () => true, log: () => {} };
+const free = { isFree: async () => true };
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-named-ports-')));
