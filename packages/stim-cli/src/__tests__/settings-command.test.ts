@@ -174,6 +174,28 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
   }
 });
 
+test('a command run by Stim Desktop reports the Desktop viewer default without the Launch Services lookup', async () => {
+  const stubbed = getExecutor();
+  setExecutor(
+    Object.assign(Object.create(stubbed), {
+      runFileQuiet: (file: string, args: string[], opts: object) => {
+        if (file === 'osascript') throw new Error('Launch Services lookup ran');
+        return stubbed.runFileQuiet(file, args, opts);
+      },
+    }),
+  );
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    const payload = JSON.parse((await settings(['--json'], { STIM_DESKTOP_APP: '/Applications/Stim.app' })).out[0]!);
+    expect(entry(payload, 'iosSimulatorApp')).toMatchObject({
+      value: 'stim-desktop',
+      defaultReason: 'Stim Desktop installed',
+    });
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+
 test.each([
   [
     ['set', 'android.dataPartitionSizeGb', '5', '--scope', 'workspace'],

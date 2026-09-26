@@ -429,6 +429,8 @@ Like the iOS viewer, it starts Stim Desktop without the command's
 setting has no effect.
 
 Stim finds Stim Desktop by its bundle id, dev.stim.desktop, in Launch Services.
+A command Stim Desktop runs skips that lookup: Desktop sets \`STIM_DESKTOP_APP\`
+to its app path for every command it starts.
 \`stim settings\` shows that default as \`(default: Stim Desktop installed)\`,
 \`settings get\` prints it on stderr, and \`--json\` adds
 \`"defaultReason": "Stim Desktop installed"\`. A set value always wins; set
