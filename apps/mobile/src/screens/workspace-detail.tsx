@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
 import { BuildCards } from '@/components/build-card';
@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/empty-state';
 import { GitIndicator } from '@/components/git-indicator';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
+import { Touch } from '@/components/touch';
 import { useAction, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
 import type { ConnectionState } from '@/lib/connection';
@@ -211,11 +212,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
               <GitIndicator git={env.worktree?.git} chips />
               {env.memoryMb > 0 ? <Chip>{`${(env.memoryMb / 1024).toFixed(1)} GB`}</Chip> : null}
               {env.logs ? (
-                <Pressable onPress={() => openLogs(true)} accessibilityRole="button" hitSlop={6}>
+                <Touch onPress={() => openLogs(true)} hitSlop={6}>
                   <Chip tint={errors > 0 ? colors.error : undefined}>
                     {errors === 1 ? '1 error' : `${errors} errors`}
                   </Chip>
-                </Pressable>
+                </Touch>
               ) : null}
             </View>
           </View>

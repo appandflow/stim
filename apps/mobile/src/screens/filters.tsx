@@ -1,8 +1,9 @@
 import { Host, Switch } from '@expo/ui';
 import { useMemo, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Toggle } from '@/components/toggle';
+import { Touch } from '@/components/touch';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { mergeWorkspaces, projectNames, type ActivityFilter } from '@/lib/home';
@@ -31,9 +32,9 @@ export function Filters() {
     <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: colors.background }}>
       <View style={styles.titleRow}>
         <Text style={[styles.title, { color: colors.text }]}>Filters</Text>
-        <Pressable onPress={reset} accessibilityRole="button" hitSlop={8}>
+        <Touch onPress={reset} hitSlop={8}>
           <Text style={[styles.reset, { color: colors.primary }]}>Reset</Text>
-        </Pressable>
+        </Touch>
       </View>
       <Group title="Show">
         {ACTIVITY.map(({ value, label }) => (

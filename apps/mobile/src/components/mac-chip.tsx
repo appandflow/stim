@@ -1,7 +1,8 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
 import { MachineStatsRow } from '@/components/machine-stats';
+import { Touch } from '@/components/touch';
 import type { PairedConnection } from '@/hooks/mac-connection';
 import type { ConnectionState } from '@/lib/connection';
 import { machineStats } from '@/lib/home';
@@ -23,15 +24,11 @@ export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () =
     ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || 'Loading'
     : describeState(mac.state, mac.missing);
   return (
-    <Pressable
+    <Touch
+      feedback="card"
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={`${name}, ${detail}`}
-      style={({ pressed }) => [
-        styles.chip,
-        { backgroundColor: colors.surface, borderColor: colors.border },
-        pressed && styles.pressed,
-      ]}
+      style={[styles.chip, { backgroundColor: colors.surface, borderColor: colors.border }]}
     >
       <View>
         <Icon name="laptopcomputer" size={20} color={colors.text} />
@@ -49,7 +46,7 @@ export function MacChip({ mac, onPress }: { mac: PairedConnection; onPress: () =
           </Text>
         )}
       </View>
-    </Pressable>
+    </Touch>
   );
 }
 
@@ -82,7 +79,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     maxWidth: 280,
   },
-  pressed: { opacity: 0.6 },
   dot: { position: 'absolute', top: -2, right: -3, width: 9, height: 9, borderRadius: 5, borderWidth: 1.5 },
   text: { flexShrink: 1 },
   name: { fontSize: 15, fontWeight: '600' },

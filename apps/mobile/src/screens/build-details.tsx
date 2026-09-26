@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BuildProgressBar } from '@/components/build-progress';
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import {
@@ -73,10 +74,9 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
       <Section
         title="Next build"
         action={
-          <Pressable
+          <Touch
             onPress={() => recheck?.()}
             disabled={!canCheck}
-            accessibilityRole="button"
             accessibilityLabel={`Check the next ${name} build again`}
             hitSlop={10}
             style={styles.refresh}
@@ -85,7 +85,7 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
             <Text style={[styles.refreshText, { color: canCheck ? colors.primary : colors.tertiary }]}>
               Check again
             </Text>
-          </Pressable>
+          </Touch>
         }
       >
         {running ? (
@@ -214,9 +214,9 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
           const expanded = open === key;
           return (
             <View key={key} style={styles.historyRow}>
-              <Pressable
+              <Touch
+                feedback="row"
                 onPress={() => setOpen(expanded ? null : key)}
-                accessibilityRole="button"
                 accessibilityState={{ expanded }}
                 style={styles.historyHeader}
               >
@@ -238,7 +238,7 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                 >
                   {historyDetail(entry, now)}
                 </Text>
-              </Pressable>
+              </Touch>
               {expanded ? <HistoryEntryDetails entry={entry} root={root} /> : null}
             </View>
           );

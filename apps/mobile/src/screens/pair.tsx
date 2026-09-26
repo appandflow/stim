@@ -5,16 +5,16 @@ import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
   type TextInputProps,
 } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { CLIENT, useMacs } from '@/hooks/mac-connection';
 import { pair } from '@/lib/connection';
 import { renameMac, saveMac } from '@/lib/macs';
@@ -137,18 +137,17 @@ export function Pair() {
         ) : null}
         {error ? <Text style={[styles.error, { color: colors.error }]}>{error}</Text> : null}
         {step.kind === 'scan' || step.kind === 'manual' ? (
-          <Pressable
+          <Touch
             onPress={() => {
               setError(null);
               setStep(step.kind === 'scan' ? { kind: 'manual' } : { kind: 'scan' });
             }}
-            accessibilityRole="button"
             hitSlop={8}
           >
             <Text style={[styles.link, { color: colors.primary }]}>
               {step.kind === 'scan' ? 'Enter the endpoint and token instead' : 'Scan a QR code instead'}
             </Text>
-          </Pressable>
+          </Touch>
         ) : null}
         <Text style={[styles.hint, { color: colors.tertiary }]}>
           Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any
@@ -216,15 +215,14 @@ function Field({
           style={[styles.input, { color: colors.text }, monospaced && { fontFamily: mono }]}
         />
         {secret ? (
-          <Pressable
+          <Touch
             onPress={() => setRevealed((r) => !r)}
-            accessibilityRole="button"
             accessibilityLabel={revealed ? 'Hide token' : 'Show token'}
             hitSlop={8}
             style={styles.reveal}
           >
             <Icon name={revealed ? 'eye.slash' : 'eye'} size={20} color={colors.secondary} />
-          </Pressable>
+          </Touch>
         ) : null}
       </View>
     </View>
@@ -233,21 +231,17 @@ function Field({
 
 function CloseButton({ colors, onPress }: { colors: Colors; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="Close" hitSlop={8}>
+    <Touch onPress={onPress} accessibilityLabel="Close" hitSlop={8}>
       <Text style={[styles.close, { color: colors.primary }]}>{'\u2715'}</Text>
-    </Pressable>
+    </Touch>
   );
 }
 
 function Button({ colors, title, onPress }: { colors: Colors; title: string; onPress: () => void }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={[styles.button, { backgroundColor: colors.primary }]}
-      accessibilityRole="button"
-    >
+    <Touch feedback="card" onPress={onPress} style={[styles.button, { backgroundColor: colors.primary }]}>
       <Text style={[styles.buttonText, { color: colors.onPrimary }]}>{title}</Text>
-    </Pressable>
+    </Touch>
   );
 }
 

@@ -1,15 +1,16 @@
 import { Image } from 'expo-image';
 import { useEffect, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View, type ViewInstance } from 'react-native';
+import { StyleSheet, Text, View, type ViewInstance } from 'react-native';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
+import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot } from '@/hooks/mac-connection';
 import type { StimConnection } from '@/lib/connection';
 import type { DeviceTileItem } from '@/lib/home';
-import { useColors } from '@/theme';
+import { radius, useColors } from '@/theme';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -49,29 +50,28 @@ export function DeviceGridTile({
   const target = { macId: item.macId, workspace: item.env.path, platform: device.platform, slot: device.slot };
   const zoomedAway = useZoomedAway(zoomKey(target));
   return (
-    <Pressable
+    <Touch
+      feedback="card"
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
-      style={({ pressed }) => [styles.tile, wide && styles.wide, pressed && styles.pressed]}
+      style={[styles.tile, wide && styles.wide]}
     >
       <Card style={styles.card}>
         <View style={[styles.screen, { backgroundColor: colors.screen }]}>
           {frame ? (
-            <Pressable
+            <Touch
               ref={thumbnail}
               onPress={() => openDeviceViewer(thumbnail.current, target, frame)}
-              accessibilityRole="button"
               accessibilityLabel={`Open the live screen of ${device.model}`}
-              style={[{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }, zoomedAway && styles.away]}
+              style={{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }}
             >
               <Image
                 source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-                style={[StyleSheet.absoluteFill, { borderRadius: 6 }]}
+                style={[StyleSheet.absoluteFill, { borderRadius: 6 }, zoomedAway && styles.away]}
                 contentFit="contain"
                 transition={0}
               />
-            </Pressable>
+            </Touch>
           ) : (
             <Text style={[styles.placeholder, { color: colors.tertiary }]}>
               {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
@@ -101,15 +101,14 @@ export function DeviceGridTile({
           </View>
         </View>
       </Card>
-    </Pressable>
+    </Touch>
   );
 }
 
 const styles = StyleSheet.create({
-  tile: { flex: 1, maxWidth: '50%' },
+  tile: { flex: 1, maxWidth: '50%', borderRadius: radius.card, borderCurve: 'continuous' },
   wide: { maxWidth: '100%' },
   card: { flex: 1 },
-  pressed: { opacity: 0.7 },
   away: { opacity: 0 },
   screen: { height: SCREEN_HEIGHT, alignItems: 'center', justifyContent: 'center', padding: 8 },
   placeholder: { fontSize: 12, textAlign: 'center', paddingHorizontal: 8 },
