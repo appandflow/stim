@@ -5385,21 +5385,21 @@ describe('--device with no serial: the pool', () => {
 
 describe('the emulator device-profile flag', () => {
   test('the flag overrides the setting at the engine, and the payload reports the profile the AVD has', async () => {
-    const settings = { android: { deviceProfile: 'pixel_tablet' } };
+    const settings = { android: { deviceProfile: 'pixel_6' } };
     const h = harness({
       json: true,
       resolveSettingsFor: () => settings,
-      deviceProfile: 'pixel_fold',
+      deviceProfile: 'pixel_tablet',
       listDeviceProfiles: () => ['pixel_6', 'pixel_fold', 'pixel_tablet'],
       ensureDevice: async (args: unknown) => {
         h.calls.ensureDevice.push(args);
-        return { avdName: 'stim-app-412', consolePort: 5584, owned: true, deviceProfile: 'pixel_fold' };
+        return { avdName: 'stim-app-412', consolePort: 5584, owned: true, deviceProfile: 'pixel_tablet' };
       },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { deviceProfile: 'pixel_fold' } });
-    expect(JSON.parse(h.stdout[0] ?? '{}').deviceProfile).toBe('pixel_fold');
+    expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { deviceProfile: 'pixel_tablet' } });
+    expect(JSON.parse(h.stdout[0] ?? '{}').deviceProfile).toBe('pixel_tablet');
   });
 
   test('a plain run with neither flag nor setting never runs avdmanager to list profiles', async () => {

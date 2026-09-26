@@ -20,6 +20,7 @@ let calls: string[];
 let failDelete: boolean;
 let packageOutput: string;
 let cleanupResult: string;
+let bootFails: boolean;
 const image = `system-images;android-36;google_apis;${hostSystemImageArch()}`;
 const configuration = avdPoolConfiguration(8, { 'hw.keyboard': 'yes' });
 
@@ -55,13 +56,14 @@ beforeEach(() => {
   failDelete = false;
   packageOutput = 'package:com.example.app\npackage:com.example.other';
   cleanupResult = 'Success';
+  bootFails = false;
   const run = (cmd: string): string => {
     calls.push(cmd);
     if (cmd === 'emulator -list-avds') return [...avds].join('\n');
     if (cmd === 'emulator -version') return 'Android emulator version 37.1.11';
     if (cmd === 'adb devices') return `List of devices attached\n${running ? 'emulator-5554\tdevice\n' : ''}`;
     if (cmd.includes('emu avd name')) return `${running}\nOK`;
-    if (cmd.includes('getprop sys.boot_completed')) return '1';
+    if (cmd.includes('getprop sys.boot_completed')) return bootFails ? '' : '1';
     if (cmd.includes('pm path android')) return 'package:/system/framework/framework-res.apk';
     if (cmd.includes('getprop ')) return '';
     if (cmd.includes('shell sync')) return '';
@@ -91,7 +93,7 @@ beforeEach(() => {
     spawn(_file, args = []) {
       if (args[0] === 'create') {
         calls.push([_file, ...args].join(' '));
-        makeAvd(args[args.indexOf('-n') + 1]!);
+        makeAvd(args[args.indexOf('-n') + 1]!, undefined, args[args.indexOf('--device') + 1]);
         return makeExitingChild();
       }
       running = args[args.indexOf('-avd') + 1]!;
@@ -109,14 +111,14 @@ afterEach(() => {
   }
 });
 
-function makeAvd(name: string, keyboard = 'hw.keyboard=yes\n'): void {
+function makeAvd(name: string, keyboard = 'hw.keyboard=yes\n', profile = 'pixel_6'): void {
   avds.add(name);
   const directory = join(home, 'avd', `${name}.avd`);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(home, 'avd', `${name}.ini`), `path=${directory}\n`);
   writeFileSync(
     join(directory, 'config.ini'),
-    `image.sysdir.1=${image.split(';').join('/')}\ndisk.dataPartition.size=8589934592\nhw.device.name=pixel_6\n${keyboard}`,
+    `image.sysdir.1=${image.split(';').join('/')}\ndisk.dataPartition.size=8589934592\nhw.device.name=${profile}\n${keyboard}`,
   );
 }
 
@@ -589,4 +591,74 @@ test('adoption recovery gives ownership and readiness probes the remaining timeo
   } finally {
     vi.useRealTimers();
   }
+});
+
+describe('an explicit --system-image against the slot existing AVD', () => {
+  const other = `system-images;android-34;google_apis;${hostSystemImageArch()}`;
+  const options = { platform: 'android', projectPath: '/adopter', label: 'adopter', settings: {} };
+
+  beforeEach(() => {
+    process.env.STIM_POOL_ANDROID_PARKED_MAX = '0';
+    mkdirSync(join(home, 'sdk', ...other.split(';')), { recursive: true });
+    makeAvd('stim-source');
+  });
+
+  test('replaces an owned AVD that never finished a boot, through teardown', async () => {
+    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true, bootPending: true } } });
+    const result = await ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other, systemImageFlag: other },
+    });
+    expect(calls.some((call) => call.includes('delete avd -n "stim-source"'))).toBe(true);
+    expect(calls.find((call) => call.includes('create avd'))).toContain(`-k ${other}`);
+    expect(result).toMatchObject({ created: true, systemImage: other });
+    expect(getProject('/adopter')?.platforms?.android).toMatchObject({ avdName: result.avdName });
+    expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
+  });
+
+  test('a first boot that fails keeps the marker, and an explicit image then replaces the AVD with its profile', async () => {
+    upsertProject('/adopter', {});
+    bootFails = true;
+    await expect(
+      ensureOwnedDevice({ ...options, flags: { systemImage: image, deviceProfile: 'pixel_fold' } }),
+    ).rejects.toThrow(/exited before the device finished booting/);
+    const failed = getProject('/adopter')?.platforms?.android;
+    expect(failed).toMatchObject({ owned: true, bootPending: true });
+    bootFails = false;
+    running = null;
+    calls = [];
+    const result = await ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other, systemImageFlag: other },
+    });
+    expect(calls.some((call) => call.includes(`delete avd -n "${failed?.avdName}"`))).toBe(true);
+    expect(calls.find((call) => call.includes('create avd'))).toMatch(new RegExp(`-k ${other} --device pixel_fold$`));
+    expect(result).toMatchObject({ created: true, systemImage: other });
+  });
+
+  test('refuses with the --slot remedy for an AVD with no pending first boot, and keeps it', async () => {
+    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true } } });
+    const refused = ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other, systemImageFlag: other },
+    });
+    await expect(refused).rejects.toThrow(/uses system image .*android-36.*, but .*android-34.* was requested/);
+    await expect(refused).rejects.toHaveProperty('remedy', expect.stringContaining('--slot <name>'));
+    expect(calls.some((call) => /delete avd|create avd/.test(call))).toBe(false);
+  });
+
+  test('a system image from settings alone never replaces or refuses the existing AVD', async () => {
+    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true, bootPending: true } } });
+    const result = await ensureOwnedDevice({
+      ...options,
+      project: getProject('/adopter'),
+      flags: { systemImage: other },
+    });
+    expect(result).toMatchObject({ avdName: 'stim-source' });
+    expect(calls.some((call) => /delete avd|create avd/.test(call))).toBe(false);
+    expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
+  });
 });

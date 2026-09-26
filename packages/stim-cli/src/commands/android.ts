@@ -966,7 +966,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         projectPath: root,
         settingsRoot,
         settings,
-        flags: { systemImage: target.systemImage, deviceProfile: target.deviceProfile },
+        flags: {
+          systemImage: target.systemImage,
+          systemImageFlag: systemImageFlag?.trim() || null,
+          deviceProfile: target.deviceProfile,
+        },
         note: out,
         out,
         logFile: emuLog,

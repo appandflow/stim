@@ -2301,6 +2301,16 @@ describe('claimAndroidConsolePort', () => {
     expect(registry.seenDepths).toEqual([1, 1, 1, 1]);
   });
 
+  test('a claim keeps the pending first boot of the record it replaces', () => {
+    const recorded: DeviceRecord[] = [];
+    const claim = claimAndroidConsolePort(
+      { projectPath: '/w/a', avdName: 'stim-a', metadata: { bootPending: true } },
+      { lock: (fn) => fn(), recordedPorts: () => [], record: (_path, _platform, fields) => recorded.push(fields) },
+    );
+    expect(claim.bootPending).toBe(true);
+    expect(recorded[0]).toMatchObject({ bootPending: true });
+  });
+
   test('live emulator ports outside the registry are claimed too', () => {
     const registry = fakeRegistry();
     const claim = claimAndroidConsolePort(

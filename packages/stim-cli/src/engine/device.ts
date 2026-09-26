@@ -19,6 +19,7 @@ export interface OwnedDeviceRecord {
   consolePort?: number;
   serial?: string;
   setupIncomplete?: boolean;
+  bootPending?: boolean;
   simslimManaged?: boolean;
   deviceType?: string | null;
   runtime?: string | null;
@@ -53,6 +54,7 @@ export interface DeviceFlags {
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
+  systemImageFlag?: string | null;
   deviceProfile?: string | null;
 }
 

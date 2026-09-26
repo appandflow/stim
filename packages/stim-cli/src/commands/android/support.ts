@@ -17,6 +17,10 @@ import {
   listAdbDevices,
   physicalDeviceModel,
   probeEmulatorSerial,
+  hostSystemImageArch,
+  pickDefaultSystemImage,
+  profileNeedsFoldFeature,
+  type SystemImage,
 } from '../../devices/android.ts';
 import { unknownAndroidDeviceProfileRefusal, unknownAndroidSystemImageRefusal } from '../../engine/device-capacity.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
@@ -149,6 +153,41 @@ export function deviceProfileRefusal({
   }
   const refusal = unknownAndroidDeviceProfileRefusal(resolved, profiles);
   return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
+}
+
+export function foldableImageRefusal({
+  profile,
+  image,
+  avdName,
+  images,
+  supportsFold,
+}: {
+  profile: string;
+  image: string | null;
+  avdName: string | null;
+  images: () => SystemImage[];
+  supportsFold: (pkg: string) => boolean;
+}): { code: string; message: string; remedy: string } | null {
+  if (!profileNeedsFoldFeature(profile) || !image || supportsFold(image)) return null;
+  const compatible = pickDefaultSystemImage(images().filter((candidate) => supportsFold(candidate.pkg)))?.pkg;
+  const subject = avdName
+    ? `This workspace's emulator ${avdName} uses device profile ${profile} on ${image}`
+    : `Device profile ${profile} with system image ${image}`;
+  const message = `${subject}, which the emulator refuses to boot: ${profile} needs a system image with foldable support (SupportPixelFold in its advancedFeatures.ini).`;
+  if (!compatible) {
+    return {
+      code: 'STIM_BAD_ARG',
+      message,
+      remedy: `Install an image with foldable support, e.g. \`sdkmanager "system-images;android-36;google_apis;${hostSystemImageArch()}"\`, then pass it with \`--system-image\`, or pick another \`--device-profile\`.`,
+    };
+  }
+  return {
+    code: 'STIM_BAD_ARG',
+    message,
+    remedy: avdName
+      ? `Pass \`--system-image "${compatible}"\`: it replaces ${avdName} if that emulator never finished a boot. Otherwise add \`--slot <name>\` to create the foldable beside it.`
+      : `Pass \`--system-image "${compatible}"\` (or set android.systemImage to it), or pick another \`--device-profile\`.`,
+  };
 }
 
 export function isReleaseVariant(variant: string | null | undefined): boolean {

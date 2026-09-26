@@ -261,14 +261,28 @@ the app, opens it, and checks launch logs.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
   package id, overriding `android.systemImage` for one invocation; an id this
   SDK has not installed refuses with `STIM_BAD_ARG` and prints the installed
-  ids.
+  ids. When the workspace already owns an AVD made from another image, Stim
+  refuses with the same remedy as a profile change, unless that AVD never
+  finished a boot: Stim then deletes it through owned-device teardown and
+  creates one from the requested image. `android.systemImage` still applies
+  only to a new AVD.
 - `--device-profile <id>` creates this workspace's owned AVD with that
   avdmanager hardware profile, such as `pixel_tablet` or `pixel_fold`,
   overriding `android.deviceProfile` for one invocation. An id that
   `avdmanager list device -c` does not print refuses with `STIM_BAD_ARG` and
   prints the offered ids. When the workspace already owns an AVD of another
   profile, Stim refuses instead of booting it; use another `--slot` or remove
-  the workspace's devices first.
+  the workspace's devices first. `pixel_fold` and `resizable` need a system
+  image with foldable support (`SupportPixelFold = on` in its
+  `advancedFeatures.ini`, as recent images such as API 34 google_apis have);
+  the emulator quits on boot without it. Stim refuses that pair with `STIM_BAD_ARG` before
+  creating anything, and the remedy names an installed image that has it:
+
+  ```bash
+  stim android --slot fold --device-profile pixel_fold \
+    --system-image "system-images;android-36;google_apis;arm64-v8a"
+  ```
+
 - `--device [serial]` installs and launches on a connected physical device.
   With no serial it selects a connected device this workspace can lease. It
   cannot be combined with `--remote`.

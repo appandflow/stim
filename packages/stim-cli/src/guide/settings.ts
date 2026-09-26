@@ -155,6 +155,12 @@ KEYS STIM READS
                         profile. When this workspace already owns an AVD of
                         another profile, a requested profile refuses rather
                         than booting it; reap the AVD to create the new one.
+                        "pixel_fold" and "resizable" need a system image
+                        whose advancedFeatures.ini turns on SupportPixelFold
+                        (recent images such as API 34 google_apis do); the
+                        emulator quits on boot without it, so Stim refuses
+                        the pair with
+                        STIM_BAD_ARG and names an installed image that has it.
                         Existing AVDs keep their display settings; parked AVDs
                         from the old generic profile are not adopted.
   android.dataPartitionSizeGb

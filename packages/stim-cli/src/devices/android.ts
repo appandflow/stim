@@ -235,6 +235,24 @@ export function pickDefaultSystemImage(
   );
 }
 
+// Android Emulator 35.6 quits these profiles at startup with "Device %s requires foldable feature, but
+// the system image does not support. Quit." unless the image's advancedFeatures.ini turns on
+// SupportPixelFold. Other hinged profiles, e.g. "7.6in Foldable", boot on images without it.
+const FOLD_FEATURE_PROFILES: ReadonlySet<string> = new Set(['pixel_fold', 'resizable']);
+
+export function profileNeedsFoldFeature(profile: string | null | undefined): boolean {
+  return typeof profile === 'string' && FOLD_FEATURE_PROFILES.has(profile);
+}
+
+export function systemImageSupportsFold(pkg: string, home: string = androidHome()): boolean {
+  try {
+    const ini = readFileSync(join(home, ...pkg.split(';'), 'advancedFeatures.ini'), 'utf8');
+    return /^\s*SupportPixelFold\s*=\s*on\s*$/im.test(ini);
+  } catch {
+    return false;
+  }
+}
+
 export async function createOwnedAvd(
   label: string,
   {
