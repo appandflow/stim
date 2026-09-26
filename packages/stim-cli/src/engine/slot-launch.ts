@@ -2,7 +2,7 @@ import { deviceShellArg } from './app-install.ts';
 import { fileLeaseIo } from './device-lease.ts';
 import { getProject } from '../workspace/config.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
-import { ownedAvdSerialResolver } from '../devices/android.ts';
+import { getAvdNameForSerial, listAdbDevices } from '../devices/android.ts';
 import { listAllIosSims } from '../devices/ios.ts';
 import type { DeviceRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -22,8 +22,12 @@ function ownedDeviceRunning(platform: 'ios' | 'android'): (device: DeviceRecord)
   let listing: ((device: DeviceRecord) => boolean) | null = null;
   const list = (): ((device: DeviceRecord) => boolean) => {
     if (platform === 'android') {
-      const resolve = ownedAvdSerialResolver({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
-      return (device) => typeof device.avdName === 'string' && Boolean(resolve(device.avdName).serial);
+      const { emulators, unhealthy } = listAdbDevices({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
+      const names = [...emulators, ...unhealthy.filter((entry) => entry.kind === 'emulator')].map((entry) =>
+        getAvdNameForSerial(entry.serial, { timeoutMs: DEVICE_LISTING_TIMEOUT_MS }),
+      );
+      if (names.includes(null)) return () => true;
+      return (device) => typeof device.avdName === 'string' && names.includes(device.avdName);
     }
     const booted = new Set(
       listAllIosSims({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS })
