@@ -239,7 +239,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
       patternHelp: 'an http:// or https:// URL; {port:<label>} is replaced by a named or the Metro port',
     },
     scopes: PROJECT,
-    description: 'Page `stim web` opens; unset opens Metro for Expo web',
+    description: 'Page `stim web` opens; unset opens the Metro URL for Expo web',
   },
   {
     key: 'web.ignoreCertificateErrors',

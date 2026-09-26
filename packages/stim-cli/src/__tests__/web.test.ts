@@ -20,7 +20,8 @@ import { resolveWebUrl } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { webLaunchRemedy, webLaunchVerdict } from '../web/launch.ts';
+import { webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
+import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
 import { readWebRecord, webFacts, webProfileDir, writeWebRecord, type WebRecord } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -233,6 +234,7 @@ describe('launched', () => {
       url: 'https://localhost:8900/apps/groups/',
       template: 'https://localhost:{port:web}/apps/groups/',
       usesMetro: false,
+      serve: 'Start the web dev server on that port',
     };
     const http = {
       ...https,
@@ -255,8 +257,18 @@ describe('launched', () => {
     expect(webLaunchRemedy(loading, https)).toContain('cold dev server');
   });
 
-  test('on Metro, an HTTP error or a missing bundle points at the Metro build', () => {
-    const metro = { url: 'http://localhost:8081/', template: null, usesMetro: true };
+  test('on Metro, an unserved page points at stim start; an HTTP error or a missing bundle at the Metro build', () => {
+    const metro = {
+      url: 'http://localhost:8081/',
+      template: null,
+      usesMetro: true,
+      serve: "Start this workspace's Metro with `stim start`",
+    };
+    const refused = verdict([at('web_document_failed', 20, { msg: 'GET x failed: net::ERR_CONNECTION_REFUSED' })])!;
+    expect(webLaunchRemedy(refused, metro)).toContain('`stim start`, then run `stim web` again');
+    const silent = verdict([], { elapsedMs: 20_000 })!;
+    expect(webLaunchRemedy(silent, metro)).toContain('`stim start`');
+    expect(webLaunchRemedy(silent, { ...metro, serve: null })).toContain('Metro may have failed');
     const failed = verdict([at('web_document_failed', 20, { msg: 'GET x failed: HTTP 500' })])!;
     expect(webLaunchRemedy(failed, metro)).toContain('Metro may have failed');
     const answered = verdict([at('web_document_response', 20, { status: 200 })], {
@@ -264,6 +276,33 @@ describe('launched', () => {
       elapsedMs: 20_000,
     })!;
     expect(webLaunchRemedy(answered, metro)).toContain('Metro may have failed');
+  });
+});
+
+describe('what serves the page', () => {
+  const plan = (opts: Partial<Parameters<typeof webServePlan>[0]>) =>
+    webServePlan({ usesMetro: true, metro: { missing: true }, supervisorHeld: false, missingWebPackages: [], ...opts });
+
+  test('an empty Metro port needs stim start, after the missing web packages', () => {
+    expect(plan({})).toEqual({ serve: "Start this workspace's Metro with `stim start`", foreign: null });
+    expect(plan({ missingWebPackages: ['react-dom'] }).serve).toMatch(/^Run `npx expo install .*` and `stim start`$/);
+    expect(plan({ usesMetro: false }).serve).toContain('stim ports get web');
+  });
+
+  test('a running Metro or a starting supervisor serves the page', () => {
+    const running = { metro: { pid: 7, leader: 7, cwd: '/app' } };
+    expect(plan({ metro: running, missingWebPackages: ['react-dom'] })).toEqual({ serve: null, foreign: null });
+    const unresponsive = { notOurs: "pid 7 on port 8084 does not answer Metro's /status", kind: 'unresponsive' };
+    expect(plan({ metro: unresponsive, supervisorHeld: true })).toEqual({ serve: null, foreign: null });
+  });
+
+  test('another process on the port is foreign, and the remedy frees the port the way stim start will', () => {
+    const unresponsive = { notOurs: "pid 7 on port 8084 does not answer Metro's /status", kind: 'unresponsive' };
+    expect(plan({ metro: unresponsive }).foreign?.remedy).toMatch(/^Run `stim start`, which reserves a free/);
+    const stranger = { notOurs: 'pid 7 on port 8084 runs from /other, outside /app', kind: NOT_OURS_FOREIGN_CWD };
+    expect(plan({ metro: stranger, supervisorHeld: true }).foreign?.remedy).toMatch(
+      /^Run `stim stop` and follow its output, then `stim start`/,
+    );
   });
 });
 

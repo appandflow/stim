@@ -8,14 +8,24 @@ import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
-import type { DevServerStart } from '../engine/build-facts.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
+import { resolveProjectMetro } from '../metro.ts';
 import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
+import { reserveMetroPort } from '../ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
-import { webLaunchRemedy, webLaunchVerdict, type WebLaunched } from '../web/launch.ts';
+import {
+  EXPO_WEB_DEPENDENCIES,
+  EXPO_WEB_PACKAGES,
+  webLaunchRemedy,
+  webLaunchVerdict,
+  webServePlan,
+  type WebLaunched,
+  type WebLaunchVerdict,
+} from '../web/launch.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import {
   cdpEndpoint,
@@ -30,9 +40,9 @@ import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { detectIsExpo, findCommandWorkspace, isPackageResolvable } from '../workspace/project.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings } from '../workspace/settings.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
-import { ensureDevServer, ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
+import { ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
 
 interface WebFailure {
   code: string;
@@ -47,7 +57,6 @@ export interface WebFacts extends WebBrowserState {
   metroPort: number | null;
   logs: { dir: string };
   durationMs: number;
-  devServer?: DevServerStart;
 }
 
 const PORT_PLACEHOLDER = /\{port:([^}]*)\}/g;
@@ -55,8 +64,6 @@ const REGISTER_WAIT_MS = 30_000;
 const POLL_MS = 250;
 
 const printNote = (line: string) => console.error(line);
-
-const EXPO_WEB_DEPENDENCIES = 'npx expo install react-dom react-native-web @expo/metro-runtime';
 
 function failure(code: string, message: string, remedy: string | null): { ok: false; error: WebFailure } {
   return { ok: false, error: { code, message, remedy } };
@@ -192,18 +199,25 @@ export async function runWeb({
     return failure(
       'STIM_WEB_DEPS_MISSING',
       'This Expo app cannot render on the web: react-native-web is not installed.',
-      `Run \`${EXPO_WEB_DEPENDENCIES}\`, then run \`stim web\` again.`,
+      `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\`, then run \`stim web\` again.`,
     );
   }
 
   let metroPort = getProject(root)?.metroPort ?? null;
-  let devServer: DevServerStart | null = null;
-  if (usesMetro) {
-    const gate = await ensureDevServer({ root, port: metroPort, settings, remote: false, note });
-    if (!gate.ok) return failure(gate.code, gate.message, gate.remedy);
-    metroPort = gate.port;
-    devServer = gate.devServer;
-  }
+  if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
+  const metro = usesMetro && metroPort !== null ? await resolveProjectMetro(metroPort, root) : null;
+  const supervisor = resolveSupervisorTarget({
+    state: readWorkspaceState(root)?.supervisor,
+    record: getProject(root)?.supervisor,
+    reservedPort: metroPort,
+  });
+  const { serve, foreign } = webServePlan({
+    usesMetro,
+    metro,
+    supervisorHeld: supervisor.status !== 'none' && supervisor.status !== 'stale',
+    missingWebPackages:
+      usesMetro && detectIsExpo(root) ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [],
+  });
   let url: string;
   try {
     url = await resolveWebUrl(web.url ?? 'http://localhost:{port:metro}/', {
@@ -267,10 +281,13 @@ export async function runWeb({
   );
   if (!launch.ok) return launch;
 
-  const verdict = await verifyLaunch(root, launch.since, usesMetro);
+  const measured = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const remedy = webLaunchRemedy(verdict, { url, template: web.url, usesMetro });
+  const verdict: WebLaunchVerdict = foreign
+    ? { launched: 'unverified', kind: 'no-response', reason: foreign.reason }
+    : measured;
+  const remedy = foreign ? foreign.remedy : webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,
@@ -291,7 +308,6 @@ export async function runWeb({
       metroPort: usesMetro ? metroPort : null,
       logs: { dir: workspaceLogsDir(root) },
       durationMs: Date.now() - startedAt,
-      ...(devServer ? { devServer } : {}),
     },
   };
 }

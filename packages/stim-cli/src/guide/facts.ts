@@ -365,7 +365,6 @@ per session, with the preview URL.`,
                   that does not use {port:metro}
   logs            { dir }: web.ndjson holds the page records
   durationMs      wall time of the run
-  devServer       as in ios, present when this run started Metro
 
   stim doctor --json
 

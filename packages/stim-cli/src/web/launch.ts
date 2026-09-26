@@ -1,3 +1,4 @@
+import { NOT_OURS_FOREIGN_CWD, type MetroResolution } from '../metro.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 
 export type WebLaunched = true | 'bundling' | 'unverified';
@@ -74,12 +75,61 @@ export function webLaunchVerdict({
     : { launched: 'unverified', kind: 'no-response', reason: 'the page never received a response' };
 }
 
+export const EXPO_WEB_PACKAGES: readonly string[] = ['react-dom', 'react-native-web', '@expo/metro-runtime'];
+export const EXPO_WEB_DEPENDENCIES: string = `npx expo install ${EXPO_WEB_PACKAGES.join(' ')}`;
+const WEB_SERVER_EXAMPLE = 'pnpm exec vite --port "$(stim ports get web)" --strictPort';
+
+export function webServePlan({
+  usesMetro,
+  metro,
+  supervisorHeld,
+  missingWebPackages,
+}: {
+  usesMetro: boolean;
+  metro: MetroResolution | null;
+  supervisorHeld: boolean;
+  missingWebPackages: readonly string[];
+}): { serve: string | null; foreign: { reason: string; remedy: string } | null } {
+  if (!usesMetro) {
+    return {
+      serve: `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``,
+      foreign: null,
+    };
+  }
+  if (metro?.notOurs && (!supervisorHeld || metro.kind === NOT_OURS_FOREIGN_CWD)) {
+    return {
+      serve: null,
+      foreign: {
+        reason: `Another process holds this workspace's Metro port: ${metro.notOurs}`,
+        remedy: supervisorHeld
+          ? 'Run `stim stop` and follow its output, then `stim start`, then run `stim web` again.'
+          : 'Run `stim start`, which reserves a free Metro port for this workspace, then run `stim web` again.',
+      },
+    };
+  }
+  if (metro?.metro || supervisorHeld) return { serve: null, foreign: null };
+  return {
+    serve: missingWebPackages.length
+      ? `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``
+      : "Start this workspace's Metro with `stim start`",
+    foreign: null,
+  };
+}
+
 const RETRY = 'then run `stim web` again';
+const METRO_BUILD = (url: string) =>
+  `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`;
 
 export function webLaunchRemedy(
   verdict: WebLaunchVerdict,
-  { url, template, usesMetro }: { url: string; template: string | null; usesMetro: boolean },
+  {
+    url,
+    template,
+    usesMetro,
+    serve,
+  }: { url: string; template: string | null; usesMetro: boolean; serve: string | null },
 ): string | null {
+  const nothingServed = serve ? `Nothing served ${url}. ${serve}, ${RETRY}.` : METRO_BUILD(url);
   const https = url.startsWith('https:');
   const reason = verdict.reason ?? '';
   const withScheme = (scheme: 'http' | 'https') =>
@@ -105,7 +155,7 @@ export function webLaunchRemedy(
       if (!https && /net::ERR_EMPTY_RESPONSE/.test(reason)) {
         return `The server on that port closed the connection without an HTTP answer. If it serves HTTPS, set ${withScheme('https')}, ${RETRY}.`;
       }
-      if (usesMetro) break;
+      if (usesMetro) return Number.isNaN(status) ? nothingServed : METRO_BUILD(url);
       if (status >= 400 && status < 500) {
         return `The server has no page at ${url}. Check web.url's path, including the app's base path, ${RETRY}.`;
       }
@@ -113,11 +163,10 @@ export function webLaunchRemedy(
         return `The dev server failed to serve ${url}. Read its output and \`stim logs --errors\`, ${RETRY}.`;
       }
       break;
-    case 'no-bundle':
     case 'no-response':
+      return nothingServed;
+    case 'no-bundle':
       break;
   }
-  return usesMetro
-    ? `Run \`stim logs --errors\`; Metro may have failed to build the web bundle for ${url}.`
-    : `Nothing served ${url}. Start the web dev server on that port, for example \`pnpm exec vite --port "$(stim ports get web)" --strictPort\`, ${RETRY}.`;
+  return usesMetro ? METRO_BUILD(url) : nothingServed;
 }

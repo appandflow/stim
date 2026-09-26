@@ -21,7 +21,10 @@ and reports whether the page loaded, the same way `stim ios` and
 Stim uses the Google Chrome or Chromium already installed on the machine, with
 a profile it creates under `STIM_HOME`. It never installs a browser, and
 `stim doctor` reports a missing Chrome for a project that renders on the web.
-Stim also never runs your web dev server; it only opens the page.
+
+`stim web` never starts a web server, for any framework. It opens, reuses or
+reloads the owned Chrome at the page URL. Every web project follows the same
+two steps: start your dev server, then run `stim web`.
 
 <StimTabs
 code={`stim web
@@ -35,19 +38,20 @@ Chrome runs headless by default. `--headed` shows its window.
 ## Expo web
 
 An Expo app renders on the web through the same Metro server as iOS and
-Android. With no `web.url` set, `stim web` starts the workspace's Metro when it
-is not running and opens `http://localhost:<metroPort>/`. Install the web
-dependencies first:
+Android. With no `web.url` set, `stim web` opens `http://localhost:<metroPort>/`.
+Its dev server is `stim start`. Install the web dependencies once, then start
+Metro before `stim web`:
 
 <StimTabs
 code={`npx expo install react-dom react-native-web @expo/metro-runtime
+stim start
 stim web`}
 />
 
 ## Vite, Next, and other web servers
 
-Start the server yourself on a named port and point `web.url` at it. In
-`web.url`, `{port:<label>}` becomes the workspace's named port and
+Start the server with its own command on a named port and point `web.url` at
+it. In `web.url`, `{port:<label>}` becomes the workspace's named port and
 `{port:metro}` its Metro port.
 
 <StimTabs
@@ -68,7 +72,7 @@ workspace. Register the app first by running `stim ports get web`,
 
 | Setting                       | Effect                                                                   |
 | ----------------------------- | ------------------------------------------------------------------------ |
-| `web.url`                     | The page to open; unset opens Metro for Expo                             |
+| `web.url`                     | The page to open; unset opens the Metro URL for Expo                     |
 | `web.ignoreCertificateErrors` | Accept a dev server's self-signed certificate, in the owned profile only |
 | `web.viewport`                | `desktop` (1280×800, the default) or `phone` (390×844 at 3× with touch)  |
 
@@ -92,8 +96,10 @@ remedy line names the scheme to use.
 
 In this layout, `apps/web` runs Vite through its `dev` script, serves the app
 under `/apps/groups/`, and uses `@vitejs/plugin-basic-ssl`. `apps/mobile` is
-the Stim app. Set the page once per repository. The `repo` layer is shared by
-every worktree, so a new worktree only registers the app and starts the server:
+the Stim app. The flow is the same as for any web project: start the dev
+server, then run `stim web`. Set the page once per repository. The `repo`
+layer is shared by every worktree, so a new worktree only registers the app and
+starts the server:
 
 <StimTabs
 code={`cd apps/mobile
@@ -154,7 +160,12 @@ from a port that any tab can reach:
   `net::ERR_CONNECTION_REFUSED` when nothing listens on the URL or
   `net::ERR_CERT_AUTHORITY_INVALID` for a self-signed certificate, or the page
   did not finish loading: 20 seconds with no answer, 60 once a server other
-  than Metro answered. The remedy line names the fix.
+  than Metro answered. The remedy line names the fix. When nothing serves the
+  page, it names this workspace's dev server step: `stim start` for Expo web,
+  the `stim ports get web` recipe for any other server. A Metro port held by
+  another process is also `"unverified"`; `stim start` then reserves a free
+  port for this workspace. When this workspace's supervisor is still recorded,
+  run `stim stop` first.
 
 A page that loads and then throws still reports `true`. Its errors are in
 `stim logs --errors`.
@@ -206,7 +217,8 @@ not show the browser yet.
 Try it with an agent:
 
 ```text
-Read stim guide web. Open this app's web target with stim web, then run
+Read stim guide web. Start this app's dev server (stim start for Expo web),
+open its web target with stim web, then run
 stim logs --errors and tell me whether the page loaded and which errors it
 logged. If launched is not true, follow the printed remedy.
 ```

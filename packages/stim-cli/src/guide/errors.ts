@@ -876,8 +876,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'not an Expo app and web.url is unset, so Stim does not know which page to open',
       body: () => `STIM_WEB_NO_URL
   Only Expo serves web from Metro, so for any other app Stim needs web.url.
-  Stim never starts the web dev server. Start it on a named port and point
-  web.url at it:
+  stim web never starts a web server, for any framework. Start yours on a
+  named port and point web.url at it:
     pnpm exec vite --port "$(stim ports get web)" --strictPort
     stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
   See stim guide web.`,
@@ -886,8 +886,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'an Expo app without react-native-web cannot render on the web',
       body: () => `STIM_WEB_DEPS_MISSING
   The Expo app does not resolve react-native-web, so Metro cannot build a web
-  bundle. Install the web dependencies, then run stim web again:
-    npx expo install react-dom react-native-web @expo/metro-runtime`,
+  bundle. Install the web dependencies, start Metro, then run stim web again:
+    npx expo install react-dom react-native-web @expo/metro-runtime
+    stim start`,
     },
     STIM_WEB_BROWSER_HELD: {
       summary: 'the previous owned Chrome could not be stopped or verified; it was left running',
