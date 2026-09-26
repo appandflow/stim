@@ -94,10 +94,6 @@ struct RootView: View {
       ActivitySheet(run: run).environmentObject(actions)
     }
     .onAppear {
-      actions.onFinish = { [store, metrics] run in
-        if !store.watching { store.refresh() }
-        if run.steps.contains(where: GcReport.changed(by:)) { metrics.gc.changed() }
-      }
       store.start()
       metrics.start()
     }

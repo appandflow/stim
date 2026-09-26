@@ -263,7 +263,8 @@ public struct GcReport: Decodable, Sendable {
     guard command.program == "stim", let verb = command.arguments.first else { return false }
     switch verb {
     case "gc": return command.arguments.contains("--delete") || command.arguments.contains("--idle")
-    case "stop", "start", "ios", "android", "web", "worktree", "ports", "device": return true
+    case "stop", "start", "ios", "android", "web", "worktree", "device": return true
+    case "ports": return ["release", "stop"].contains(command.arguments.dropFirst().first)
     case "settings": return ["set", "unset"].contains(command.arguments.dropFirst().first)
     default: return false
     }

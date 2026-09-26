@@ -428,6 +428,7 @@ import Testing
     #expect(changes(["ios"]))
     #expect(changes(["start"]))
     #expect(changes(["worktree", "remove"]))
+    #expect(changes(["ports", "release", "bench"]))
     #expect(changes(["gc", "--delete", "--json"]))
     #expect(changes(["gc", "--idle", "30m", "--json"]))
     #expect(changes(["settings", "set", "gc.worktreeGraceMinutes", "0", "--scope", "machine"]))
@@ -438,6 +439,7 @@ import Testing
     #expect(!changes(["gc", "--json"]))
     #expect(!changes(["settings", "get", "gc.worktreeGraceMinutes"]))
     #expect(!changes(["logs", "--errors"]))
+    #expect(!changes(["ports", "get", "bench"]))
     #expect(!changes(["stop"], program: "adb"))
   }
 }

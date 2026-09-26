@@ -87,6 +87,11 @@ struct StimDesktopApp: App {
     _actions = StateObject(wrappedValue: actions)
     let gc = GcReportStore(cli: cli)
     _gc = StateObject(wrappedValue: gc)
+    actions.onFinish = { [store, gc] run in
+      let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
+      if !store.watching || worktree { store.refresh() }
+      if run.steps.contains(where: GcReport.changed(by:)) { gc.changed() }
+    }
     let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, cli: cli)
     _autopilot = StateObject(wrappedValue: autopilot)
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)

@@ -254,7 +254,7 @@ final class AutopilotRunner: ObservableObject {
         } ?? true
       let answered = finished
       let asked = !candidates.isEmpty && stale
-      let report = asked ? await gc.report(maxAge: 0) : nil
+      let report = asked ? await gc.report(startedAfter: Date()) : nil
       await MainActor.run {
         self.pollingPullRequests = false
         self.pullRequestCheck = problem

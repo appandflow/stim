@@ -28,6 +28,12 @@ final class GcReportStore: ObservableObject {
     return await current().value
   }
 
+  /// The result of a run that started at or after `date`, so it saw everything that happened before then.
+  func report(startedAfter date: Date) async -> GcReport? {
+    if let report, let at, at >= max(changedAt, date) { return report }
+    return await current(after: date).value
+  }
+
   func refresh() {
     _ = current()
   }
@@ -46,8 +52,8 @@ final class GcReportStore: ObservableObject {
     }
   }
 
-  private func current() -> Task<GcReport?, Never> {
-    if let task, taskStartedAt >= changedAt { return task }
+  private func current(after date: Date = .distantPast) -> Task<GcReport?, Never> {
+    if let task, taskStartedAt >= max(changedAt, date) { return task }
     let previous = task
     let startedAt = Date()
     let cli = cli
