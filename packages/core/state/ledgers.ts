@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { workspaceName } from '../index.ts';
+import { readStateFile } from './json-file.ts';
 import { createdDevicesFile, easMachineStateRoot, easSessionLedgerFile } from './paths.ts';
 
 export type CreatedDevicePlatform = 'ios' | 'android' | 'web';
@@ -20,7 +21,7 @@ function ids(value: unknown): string[] {
 
 export function readCreatedDevices(): CreatedDevices {
   try {
-    const parsed = JSON.parse(readFileSync(createdDevicesFile(), 'utf8')) as Record<string, unknown>;
+    const parsed = JSON.parse(readStateFile(createdDevicesFile())) as Record<string, unknown>;
     return { ios: new Set(ids(parsed?.ios)), android: new Set(ids(parsed?.android)), web: new Set(ids(parsed?.web)) };
   } catch {
     return { ios: new Set(), android: new Set(), web: new Set() };

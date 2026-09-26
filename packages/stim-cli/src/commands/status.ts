@@ -40,6 +40,7 @@ import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts
 import {
   readIdleStop,
   readLastBuilds,
+  withStateReadCache,
   type DeviceAppProcess,
   type LastBuildReport,
   type StatusPayload,
@@ -98,7 +99,11 @@ export default function statusCommand(program: Command): void {
     });
 }
 
-async function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]> {
+function statusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]> {
+  return withStateReadCache(() => readStatusLines(json, gitMaxAgeMs));
+}
+
+async function readStatusLines(json: boolean, gitMaxAgeMs: number): Promise<string[]> {
   const out: string[] = [];
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
