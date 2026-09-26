@@ -63,7 +63,6 @@ function RootLayoutContent() {
                   options={{
                     title: 'Settings',
                     headerLargeTitle: true,
-                    headerStyle: { backgroundColor: colors.grouped },
                     contentStyle: { backgroundColor: colors.grouped },
                   }}
                 />
