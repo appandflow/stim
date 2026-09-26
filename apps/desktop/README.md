@@ -174,8 +174,8 @@ every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
 build or `stim web` Chrome, stim-server, or a machine-wide process such as
 CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
-is one core) and resident memory, busiest first; each process counts in one
-row only. A workspace's owned simulator or emulator has **Shut down**, which
+is one core) and resident memory, largest memory first so rows stay in place
+as CPU changes; each process counts in one row only. A workspace's owned simulator or emulator has **Shut down**, which
 runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
 `stim stop`. Nothing Stim does not own has an action. Two sparklines above the
 list follow the Mac's memory in use and the rows' total CPU, sampled every 3

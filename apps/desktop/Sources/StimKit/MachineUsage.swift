@@ -68,10 +68,11 @@ public struct MachineOwner: Decodable, Hashable, Sendable {
 }
 
 extension MachineUsage {
-  /// The owners, busiest first: by CPU, then by resident memory, then by name so equal rows keep their order.
+  /// The owners by resident memory, then CPU, then name. Memory moves slowly, so rows keep their place between
+  /// refreshes and a Stop or Shut down button stays under the pointer; CPU swings each refresh.
   public var ranked: [MachineOwner] {
     owners.sorted {
-      ($0.cpuPercent, $0.residentMb, $1.name) > ($1.cpuPercent, $1.residentMb, $0.name)
+      ($0.residentMb, $0.cpuPercent, $1.name) > ($1.residentMb, $1.cpuPercent, $0.name)
     }
   }
 

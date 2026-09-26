@@ -41,14 +41,14 @@ import Testing
     }
   }
 
-  @Test func ranksByCpuThenMemoryThenName() {
+  @Test func ranksByMemoryThenCpuThenName() {
     let usage = MachineUsage(owners: [
       MachineOwner(kind: .shared, name: "b", cpuPercent: 5, residentMb: 10),
       MachineOwner(kind: .shared, name: "a", cpuPercent: 5, residentMb: 10),
       MachineOwner(kind: .build, name: "build", cpuPercent: 220, residentMb: 1960),
       MachineOwner(kind: .simulator, name: "sim", cpuPercent: 5, residentMb: 8000),
     ])
-    #expect(usage.ranked.map(\.name) == ["build", "sim", "a", "b"])
+    #expect(usage.ranked.map(\.name) == ["sim", "build", "a", "b"])
     #expect(usage.cpuPercent == 235)
   }
 }

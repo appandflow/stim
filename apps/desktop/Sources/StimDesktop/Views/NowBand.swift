@@ -1,7 +1,7 @@
 import StimKit
 import SwiftUI
 
-/// What uses the Mac's CPU and memory now, from the status watch's `machine` section, busiest first.
+/// What uses the Mac's CPU and memory now, from the status watch's `machine` section.
 struct NowBand: View {
   @ObservedObject var status: StatusStore
   @ObservedObject var metrics: MetricsStore
