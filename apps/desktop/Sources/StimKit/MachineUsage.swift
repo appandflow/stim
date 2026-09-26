@@ -76,5 +76,4 @@ extension MachineUsage {
   }
 
   public var cpuPercent: Double { owners.reduce(0) { $0 + $1.cpuPercent } }
-  public var residentMb: Int { owners.reduce(0) { $0 + $1.residentMb } }
 }

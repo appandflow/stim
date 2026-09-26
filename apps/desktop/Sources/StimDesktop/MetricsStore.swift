@@ -108,6 +108,8 @@ final class MetricsStore: ObservableObject {
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
         if let machine = self.status.payload?.machine {
           self.ownersCpu = Array((self.ownersCpu + [machine.cpuPercent]).suffix(UsageHistory.limit))
+        } else {
+          self.ownersCpu = []
         }
       }
     }

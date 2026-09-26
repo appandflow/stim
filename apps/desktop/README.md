@@ -178,8 +178,10 @@ is one core) and resident memory, busiest first; each process counts in one
 row only. A workspace's owned simulator or emulator has **Shut down**, which
 runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
 `stim stop`. Nothing Stim does not own has an action. Two sparklines above the
-list follow the Mac's memory in use and the rows' total CPU while the window
-is visible.
+list follow the Mac's memory in use and the rows' total CPU, sampled every 3
+seconds while the window is visible, so the CPU line steps with the 15-second
+refresh. When workspaces are live but `machine` is missing, the band says live
+usage is unavailable instead of listing nothing.
 
 Below it, the page shows what uses disk space, largest first,
 and what Stim can free. It never blocks on a measurement: the device, runtime

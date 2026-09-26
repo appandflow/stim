@@ -18,15 +18,22 @@ struct NowBand: View {
         VStack(spacing: Space.md) { tiles }
       }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
+        let actionWidth = machine.owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
         VStack(alignment: .leading, spacing: Space.xs) {
-          header
-          ListSection(data: machine.ranked, id: \.key) { EmptyView() } row: { owner in row(owner) }
+          header(actionWidth: actionWidth)
+          ListSection(data: machine.ranked, id: \.key) { EmptyView() } row: { owner in
+            row(owner, actionWidth: actionWidth)
+          }
         }
         Text(
           "Each process counts in one row. Resident memory counts memory shared between processes once per process, so simulators read high."
         )
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
+      } else if status.payload?.environments.contains(where: \.live) == true {
+        Text("Live usage is unavailable: this stim does not report it, or it could not read the process table.")
+          .font(.stim(.callout))
+          .foregroundStyle(Palette.secondary)
       } else {
         Text("No simulator, emulator, dev server or build is running.")
           .font(.stim(.callout))
@@ -47,30 +54,30 @@ struct NowBand: View {
   }
 
   private func tile(_ icon: String, _ title: String, _ value: String, values: [Double], peak: Double) -> some View {
-    VStack(alignment: .leading, spacing: Space.sm) {
-      Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
-      Text(value).font(.stim(.headline)).monospacedDigit()
-      Sparkline(values: values, minimumPeak: peak).frame(height: 28)
+    Card {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
+        Text(value).font(.stim(.headline)).monospacedDigit()
+        Sparkline(values: values, minimumPeak: peak).frame(height: 28)
+      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(Space.lg)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
-  private var header: some View {
+  private func header(actionWidth: CGFloat) -> some View {
     HStack(spacing: Space.md) {
       Text("What").frame(maxWidth: .infinity, alignment: .leading)
       Text("CPU").frame(width: Self.valueWidth, alignment: .trailing)
       Text("Memory").frame(width: Self.valueWidth, alignment: .trailing)
-      Color.clear.frame(width: Self.actionWidth, height: 1)
+      Color.clear.frame(width: actionWidth, height: 1)
     }
     .font(.stim(.caption2, weight: .semibold))
     .foregroundStyle(Palette.tertiary)
     .padding(.horizontal, Space.xl)
   }
 
-  private func row(_ owner: MachineOwner) -> some View {
+  private func row(_ owner: MachineOwner, actionWidth: CGFloat) -> some View {
     ListRow {
       Image(systemName: Self.icon(owner.kind))
         .foregroundStyle(owner.owned ? Palette.primary : Palette.tertiary)
@@ -82,22 +89,18 @@ struct NowBand: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       Text(formatPercent(owner.cpuPercent))
         .monospacedDigit()
-        .foregroundStyle(owner.cpuPercent >= 100 ? Palette.warning : Palette.text)
         .frame(width: Self.valueWidth, alignment: .trailing)
       Text(formatMemory(Int64(owner.residentMb) * 1_048_576))
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
-      action(owner).frame(width: Self.actionWidth, alignment: .trailing)
+      if actionWidth > 0 { action(owner).frame(width: actionWidth, alignment: .trailing) }
     }
   }
 
   @ViewBuilder private func action(_ owner: MachineOwner) -> some View {
-    if owner.stopCommand == nil {
-      Color.clear.frame(height: 1)
-    }
     if let command = owner.stopCommand, let title = owner.stopTitle, let workspace = owner.workspace {
       Button(title) {
-        actions.run("\(title) \(owner.name)", command)
+        actions.run("\(title) \(owner.kind == .metro ? status.names(ofPath: workspace).title : owner.name)", command)
       }
       .buttonStyle(.stim(.destructive))
       .fixedSize()
@@ -106,6 +109,8 @@ struct NowBand: View {
         owner.kind == .metro
           ? "stim stop: stops this workspace's dev server and its devices"
           : "stim stop --slot \(owner.slot ?? "default"): stops every device in this slot, keeping the shared server and other slots running")
+    } else {
+      Color.clear.frame(height: 1)
     }
   }
 
