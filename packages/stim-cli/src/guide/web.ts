@@ -41,7 +41,9 @@ point web.url at it. {port:<label>} in web.url becomes that named port,
 
 When nothing serves the page, stim web still opens Chrome, reports launched
 "unverified", and prints the remedy for this workspace: stim start for an
-Expo web app, the stim ports get web recipe for any other server.
+Expo web app, the stim ports get web recipe for any other server. A Metro
+port held by another process is also "unverified"; stim start then reserves
+a free port for this workspace.
 
 In a monorepo whose web app is its own package (apps/web beside apps/mobile),
 stim ports, web, settings, logs, reload, stop and status run from the web

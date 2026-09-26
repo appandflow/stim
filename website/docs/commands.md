@@ -398,9 +398,10 @@ It never starts a web server: start the dev server first, then run
 `stim web`. Expo apps open their Metro URL and start Metro with `stim start`.
 Other apps set `web.url`, for example `http://localhost:{port:web}/`, and run
 their own dev server on `stim ports get web`. When nothing serves the page,
-`launched` is `"unverified"` and the remedy names that step. The payload reports `launched`, the page URL, the Chrome `pid`, the
-`profile` directory and the reserved `cdpEndpoint`. A second run with the same
-options navigates the same Chrome again.
+`launched` is `"unverified"` and the remedy names that step. The payload
+reports `launched`, the page URL, the Chrome `pid`, the `profile` directory and
+the reserved `cdpEndpoint`. A second run with the same options navigates the
+same Chrome again.
 
 `stim stop` closes the browser and keeps its profile. `worktree remove` and
 `gc --delete` also delete the profile. See [Web in an owned Chrome](./web.md).

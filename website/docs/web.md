@@ -51,8 +51,7 @@ stim web`}
 ## Vite, Next, and other web servers
 
 Start the server with its own command on a named port and point `web.url` at
-it. In
-`web.url`, `{port:<label>}` becomes the workspace's named port and
+it. In `web.url`, `{port:<label>}` becomes the workspace's named port and
 `{port:metro}` its Metro port.
 
 <StimTabs
@@ -98,8 +97,9 @@ remedy line names the scheme to use.
 In this layout, `apps/web` runs Vite through its `dev` script, serves the app
 under `/apps/groups/`, and uses `@vitejs/plugin-basic-ssl`. `apps/mobile` is
 the Stim app. The flow is the same as for any web project: start the dev
-server, then run `stim web`. Set the page once per repository. The `repo` layer is shared by
-every worktree, so a new worktree only registers the app and starts the server:
+server, then run `stim web`. Set the page once per repository. The `repo`
+layer is shared by every worktree, so a new worktree only registers the app and
+starts the server:
 
 <StimTabs
 code={`cd apps/mobile
@@ -162,7 +162,9 @@ from a port that any tab can reach:
   did not finish loading: 20 seconds with no answer, 60 once a server other
   than Metro answered. The remedy line names the fix. When nothing serves the
   page, it names this workspace's dev server step: `stim start` for Expo web,
-  the `stim ports get web` recipe for any other server.
+  the `stim ports get web` recipe for any other server. A Metro port held by
+  another process is also `"unverified"`; `stim start` then reserves a free
+  port for this workspace.
 
 A page that loads and then throws still reports `true`. Its errors are in
 `stim logs --errors`.

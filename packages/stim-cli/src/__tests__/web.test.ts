@@ -265,7 +265,9 @@ describe('launched', () => {
     };
     const refused = verdict([at('web_document_failed', 20, { msg: 'GET x failed: net::ERR_CONNECTION_REFUSED' })])!;
     expect(webLaunchRemedy(refused, metro)).toContain('`stim start`, then run `stim web` again');
-    expect(webLaunchRemedy(verdict([], { elapsedMs: 20_000 })!, metro)).toContain('`stim start`');
+    const silent = verdict([], { elapsedMs: 20_000 })!;
+    expect(webLaunchRemedy(silent, metro)).toContain('`stim start`');
+    expect(webLaunchRemedy(silent, { ...metro, serve: null })).toContain('Metro may have failed');
     const failed = verdict([at('web_document_failed', 20, { msg: 'GET x failed: HTTP 500' })])!;
     expect(webLaunchRemedy(failed, metro)).toContain('Metro may have failed');
     const answered = verdict([at('web_document_response', 20, { status: 200 })], {

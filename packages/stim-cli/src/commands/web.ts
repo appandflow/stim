@@ -10,12 +10,13 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
+import { resolveProjectMetro } from '../metro.ts';
 import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
-import { webLaunchRemedy, webLaunchVerdict, type WebLaunched } from '../web/launch.ts';
+import { webLaunchRemedy, webLaunchVerdict, type WebLaunched, type WebLaunchVerdict } from '../web/launch.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import {
   cdpEndpoint,
@@ -199,12 +200,13 @@ export async function runWeb({
 
   let metroPort = getProject(root)?.metroPort ?? null;
   if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
-  const expoWeb = usesMetro && detectIsExpo(root);
-  const missingWebPackages = expoWeb ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [];
-  let serve: string;
+  const metro = usesMetro && metroPort !== null ? await resolveProjectMetro(metroPort, root) : null;
+  const missingWebPackages =
+    usesMetro && detectIsExpo(root) ? EXPO_WEB_PACKAGES.filter((name) => !isPackageResolvable(root, name)) : [];
+  let serve: string | null = null;
   if (!usesMetro) serve = `Start the web dev server on that port, for example \`${WEB_SERVER_EXAMPLE}\``;
   else if (missingWebPackages.length) serve = `Run \`${EXPO_WEB_DEPENDENCIES}\` and \`stim start\``;
-  else serve = "Start this workspace's Metro with `stim start`";
+  else if (!metro?.metro) serve = "Start this workspace's Metro with `stim start`";
   let url: string;
   try {
     url = await resolveWebUrl(web.url ?? 'http://localhost:{port:metro}/', {
@@ -268,10 +270,19 @@ export async function runWeb({
   );
   if (!launch.ok) return launch;
 
-  const verdict = await verifyLaunch(root, launch.since, usesMetro);
+  const measured = await verifyLaunch(root, launch.since, usesMetro);
   const live = liveWebRecord(readWebRecord(root));
   const record = live ?? launch.record;
-  const remedy = webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
+  const verdict: WebLaunchVerdict = metro?.notOurs
+    ? {
+        launched: 'unverified',
+        kind: 'no-bundle',
+        reason: `Port ${metroPort} is held by another process: ${metro.notOurs}`,
+      }
+    : measured;
+  const remedy = metro?.notOurs
+    ? 'Run `stim start`, which reserves a free Metro port for this workspace, then run `stim web` again.'
+    : webLaunchRemedy(verdict, { url, template: web.url, usesMetro, serve });
   return {
     ok: true,
     remedy: verdict.reason && remedy ? `${verdict.reason}. ${remedy}` : remedy,

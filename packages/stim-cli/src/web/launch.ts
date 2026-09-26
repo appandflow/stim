@@ -80,9 +80,14 @@ const METRO_BUILD = (url: string) =>
 
 export function webLaunchRemedy(
   verdict: WebLaunchVerdict,
-  { url, template, usesMetro, serve }: { url: string; template: string | null; usesMetro: boolean; serve: string },
+  {
+    url,
+    template,
+    usesMetro,
+    serve,
+  }: { url: string; template: string | null; usesMetro: boolean; serve: string | null },
 ): string | null {
-  const nothingServed = `Nothing served ${url}. ${serve}, ${RETRY}.`;
+  const nothingServed = serve ? `Nothing served ${url}. ${serve}, ${RETRY}.` : METRO_BUILD(url);
   const https = url.startsWith('https:');
   const reason = verdict.reason ?? '';
   const withScheme = (scheme: 'http' | 'https') =>
