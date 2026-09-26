@@ -1,11 +1,11 @@
 import { usePathname } from 'expo-router';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BackHandler, Platform, StyleSheet } from 'react-native';
+import { BackHandler, Platform } from 'react-native';
 import { Drawer, useDrawerProgress } from 'react-native-drawer-layout';
 import Animated, { interpolate, useAnimatedStyle } from 'react-native-reanimated';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Menu } from '@/screens/menu';
-import { useColors } from '@/theme';
 
 const DISPLAY_RADIUS = Platform.select({ ios: 55, default: 28 });
 
@@ -16,7 +16,7 @@ export function useMenuDrawer() {
 }
 
 export function MenuDrawer({ children }: { children: ReactNode }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const value = useMemo(() => ({ open: () => setOpen(true) }), []);
@@ -38,8 +38,8 @@ export function MenuDrawer({ children }: { children: ReactNode }) {
         onClose={() => setOpen(false)}
         drawerType="back"
         swipeEnabled={open || pathname === '/'}
-        style={{ backgroundColor: colors.sidebar }}
-        drawerStyle={{ width: '80%', backgroundColor: colors.sidebar }}
+        style={{ backgroundColor: theme.colors.sidebar }}
+        drawerStyle={{ width: '80%', backgroundColor: theme.colors.sidebar }}
         overlayStyle={styles.overlay}
         overlayAccessibilityLabel="Close menu"
         renderDrawerContent={() => <Menu onClose={() => setOpen(false)} />}
@@ -50,21 +50,27 @@ export function MenuDrawer({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * The background is an inline value: Reanimated can overwrite a Unistyles update on a view that also has an animated
+ * style (jpudysz/react-native-unistyles#1170).
+ */
 function SceneCard({ children }: { children: ReactNode }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const progress = useDrawerProgress();
   const corners = useAnimatedStyle(() => ({
     borderRadius: interpolate(progress.value, [0, 0.02], [0, DISPLAY_RADIUS], 'clamp'),
   }));
   return (
     <Animated.View style={[styles.card, corners]}>
-      <Animated.View style={[styles.clip, { backgroundColor: colors.background }, corners]}>{children}</Animated.View>
+      <Animated.View style={[styles.clip, { backgroundColor: theme.colors.background }, corners]}>
+        {children}
+      </Animated.View>
     </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   overlay: { backgroundColor: 'transparent' },
-  card: { flex: 1, borderCurve: 'continuous', boxShadow: '-6px 0 24px rgba(0, 0, 0, 0.14)' },
+  card: { flex: 1, borderCurve: 'continuous', boxShadow: `-6px 0 24px ${theme.colors.scrim}` },
   clip: { flex: 1, borderCurve: 'continuous', overflow: 'hidden' },
-});
+}));

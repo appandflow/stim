@@ -1,9 +1,8 @@
 import * as Clipboard from 'expo-clipboard';
 import { Alert } from 'react-native';
 
-import { Chip } from '@/components/chip';
+import { Pill } from '@/components/pill';
 import { pairingScope, type ConnectionState, type StimConnection } from '@/lib/connection';
-import { useColors } from '@/theme';
 
 export const READ_ONLY_REASON = 'This phone is read-only';
 
@@ -33,10 +32,9 @@ export function explainReadOnly(
   ]);
 }
 
-/** The pairing's scope as a chip: nothing while not connected, since only `hello` says. */
+/** The pairing's scope as a pill: nothing while not connected, since only `hello` says. */
 export function ScopeChip({ state }: { state: ConnectionState }) {
-  const colors = useColors();
   const scope = pairingScope(state);
   if (!scope) return null;
-  return scope === 'control' ? <Chip tint={colors.live}>Can control</Chip> : <Chip tint={colors.warn}>Read-only</Chip>;
+  return scope === 'control' ? <Pill tone="success">Can control</Pill> : <Pill tone="warning">Read-only</Pill>;
 }

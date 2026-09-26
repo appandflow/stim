@@ -1,17 +1,18 @@
 import { Image } from 'expo-image';
 import { useRef, useState } from 'react';
-import { StyleSheet, Text, View, type ViewInstance } from 'react-native';
+import { View, type ViewInstance } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { AgentFeed } from '@/components/agent-feed';
 import { Card } from '@/components/card';
-import { Chip, StatusDot } from '@/components/chip';
+import { Pill, StatusDot } from '@/components/pill';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { tildeHome } from '@/lib/paths';
 import type { DeviceRef } from '@/lib/workspaces';
-import { useColors } from '@/theme';
 
 const SCREEN_HEIGHT = 420;
 const SCREEN_PADDING = 12;
@@ -25,7 +26,7 @@ export function DeviceTile({
   device: DeviceRef;
   warnings: string[];
 }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const { home, mac } = useMacConnection();
   const [screenWidth, setScreenWidth] = useState(0);
   const streams = device.running && device.owned && !device.physical;
@@ -34,7 +35,7 @@ export function DeviceTile({
   const target = { macId: mac?.id ?? '', workspace, platform: device.platform, slot: device.slot };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const notes = warnings.map((warning) => (
-    <Text key={warning} style={[styles.note, { color: colors.warn }]}>
+    <Text key={warning} variant="caption" tone="warning" style={styles.note}>
       {tildeHome(warning, home)}
     </Text>
   ));
@@ -43,9 +44,11 @@ export function DeviceTile({
       <Card>
         <View style={styles.compact}>
           <View style={styles.header}>
-            <StatusDot color={colors.tertiary} filled={false} />
-            <Text style={[styles.line, { color: colors.secondary }]} numberOfLines={1}>
-              <Text style={[styles.slot, { color: colors.text }]}>{device.slot}</Text>
+            <StatusDot color={theme.colors.tertiary} filled={false} />
+            <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1}>
+              <Text variant="footnote" weight="semibold">
+                {device.slot}
+              </Text>
               {` \u00B7 ${device.model} \u00B7 ${device.state}`}
             </Text>
           </View>
@@ -59,29 +62,28 @@ export function DeviceTile({
   return (
     <Card>
       <View style={styles.header}>
-        <StatusDot color={device.running ? colors.live : colors.tertiary} filled={device.running} />
-        <Text style={[styles.slot, { color: colors.text }]} numberOfLines={1}>
+        <StatusDot color={device.running ? theme.colors.success : theme.colors.tertiary} filled={device.running} />
+        <Text variant="footnote" weight="semibold" style={styles.shrink} numberOfLines={1}>
           {device.slot}
         </Text>
-        <Text style={[styles.model, { color: colors.secondary }]} numberOfLines={1}>
+        <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1}>
           {device.model}
         </Text>
         <View style={styles.spacer} />
-        <Text style={[styles.source, { color: colors.tertiary }]} numberOfLines={1}>
+        <Text variant="caption2" tone="tertiary" style={styles.shrink} numberOfLines={1}>
           {device.platform === 'ios' ? 'iOS Simulator' : device.physical ? 'Android device' : 'Android Emulator'}
         </Text>
       </View>
       <View style={styles.badges}>
         <ActivityChip activity={device.activity} />
-        {streams && frame?.posture ? <Chip>{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Chip> : null}
-        {streams && delayed ? <Chip tint={colors.warn}>Screen updates delayed</Chip> : null}
+        {streams && frame?.posture ? <Pill>{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Pill> : null}
+        {streams && delayed ? <Pill tone="warning">Screen updates delayed</Pill> : null}
       </View>
       {notes.length ? <View style={styles.notes}>{notes}</View> : null}
       <View
         onLayout={(event) => setScreenWidth(event.nativeEvent.layout.width)}
         style={[
           styles.screen,
-          { backgroundColor: colors.screen, borderTopColor: colors.border },
           streams && frame && screenWidth > 0 && { height: imageHeight + SCREEN_PADDING * 2 },
           !streams && styles.screenOff,
         ]}
@@ -95,7 +97,7 @@ export function DeviceTile({
             <Image
               source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
               style={[
-                { height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: 6 },
+                { height: Math.max(imageHeight, 0), aspectRatio: aspect, borderRadius: theme.radius.small },
                 zoomedAway && styles.away,
               ]}
               contentFit="contain"
@@ -104,7 +106,7 @@ export function DeviceTile({
             />
           </Touch>
         ) : (
-          <Text style={[styles.placeholder, { color: colors.tertiary }]}>
+          <Text variant="footnote" tone="tertiary" style={styles.placeholder}>
             {streams
               ? (error ?? 'Waiting for frames')
               : device.running
@@ -118,25 +120,36 @@ export function DeviceTile({
   );
 }
 
-const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 10 },
-  compact: { paddingBottom: 10, gap: 6 },
-  line: { fontSize: 13, flexShrink: 1 },
-  note: { fontSize: 12, lineHeight: 16, paddingHorizontal: 12 },
-  notes: { gap: 4, paddingBottom: 10 },
-  slot: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
-  model: { fontSize: 13, flexShrink: 1 },
+const styles = StyleSheet.create((theme) => ({
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.lg,
+    paddingTop: theme.space.md,
+  },
+  compact: { paddingBottom: theme.space.md, gap: theme.space.sm },
+  shrink: { flexShrink: 1 },
+  note: { paddingHorizontal: theme.space.lg },
+  notes: { gap: theme.space.xs, paddingBottom: theme.space.md },
   spacer: { flex: 1 },
-  source: { fontSize: 11, flexShrink: 1 },
-  badges: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
+  badges: {
+    flexDirection: 'row',
+    gap: theme.space.sm,
+    paddingHorizontal: theme.space.lg,
+    paddingTop: theme.space.md,
+    paddingBottom: theme.space.md,
+  },
   screen: {
     height: SCREEN_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+    backgroundColor: theme.media.screen,
     padding: SCREEN_PADDING,
   },
   screenOff: { height: 64 },
-  placeholder: { fontSize: 13, textAlign: 'center' },
+  placeholder: { textAlign: 'center' },
   away: { opacity: 0 },
-});
+}));

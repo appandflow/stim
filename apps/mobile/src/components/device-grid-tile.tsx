@@ -1,15 +1,16 @@
 import { Image } from 'expo-image';
 import { memo, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, type ViewInstance } from 'react-native';
+import { View, type ViewInstance } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivityChip } from '@/components/activity-chip';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
-import { useColors } from '@/theme';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -31,7 +32,7 @@ const sameTile = (a: TileProps, b: TileProps) =>
   a.onOpen === b.onOpen;
 
 export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible, onAspect, onOpen }: TileProps) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
   const { connection } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
   const streams = device.owned && !device.physical;
@@ -57,7 +58,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
       accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
       style={[styles.tile, wide && styles.wide]}
     >
-      <View style={[styles.screen, { backgroundColor: colors.screen }]}>
+      <View style={styles.screen}>
         {frame ? (
           <Touch
             ref={thumbnail}
@@ -67,32 +68,32 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           >
             <Image
               source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
-              style={[StyleSheet.absoluteFill, { borderRadius: 6 }, zoomedAway && styles.away]}
+              style={[styles.frame, zoomedAway && styles.away]}
               contentFit="contain"
               transition={0}
             />
           </Touch>
         ) : (
-          <Text style={[styles.placeholder, { color: colors.tertiary }]}>
+          <Text variant="caption" tone="tertiary" style={styles.placeholder}>
             {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
           </Text>
         )}
       </View>
       {frame && error ? (
-        <Text style={[styles.stale, { color: colors.warn }]} numberOfLines={2}>
+        <Text variant="caption2" tone="warning" style={styles.stale} numberOfLines={2}>
           {error}
         </Text>
       ) : null}
       <View style={styles.meta}>
-        <Text style={[styles.model, { color: colors.text }]} numberOfLines={1}>
+        <Text variant="callout" weight="semibold" numberOfLines={1}>
           {device.model}
         </Text>
-        <Text style={[styles.detail, { color: colors.secondary }]} numberOfLines={1} ellipsizeMode="middle">
+        <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
           {item.title}
         </Text>
         <View style={styles.mac}>
-          <Icon name="laptopcomputer" size={13} color={colors.tertiary} />
-          <Text style={[styles.detail, { color: colors.tertiary }]} numberOfLines={1}>
+          <Icon name="laptopcomputer" size={13} color={theme.colors.tertiary} />
+          <Text variant="caption" tone="tertiary" style={styles.shrink} numberOfLines={1}>
             {item.macName}
           </Text>
         </View>
@@ -104,16 +105,22 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   );
 }, sameTile);
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   tile: { flex: 1, maxWidth: '50%' },
   wide: { maxWidth: '100%' },
   away: { opacity: 0 },
-  screen: { height: SCREEN_HEIGHT, alignItems: 'center', justifyContent: 'center', padding: 8 },
-  placeholder: { fontSize: 12, textAlign: 'center', paddingHorizontal: 8 },
-  meta: { padding: 10, gap: 2 },
-  stale: { fontSize: 11, paddingHorizontal: 10, paddingTop: 8 },
-  model: { fontSize: 14, fontWeight: '600' },
-  detail: { fontSize: 12, flexShrink: 1 },
-  mac: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  badge: { flexDirection: 'row', marginTop: 4 },
-});
+  screen: {
+    height: SCREEN_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.space.md,
+    backgroundColor: theme.media.screen,
+  },
+  frame: { ...StyleSheet.absoluteFillObject, borderRadius: theme.radius.small },
+  placeholder: { textAlign: 'center', paddingHorizontal: theme.space.md },
+  meta: { padding: theme.space.md, gap: theme.space.xxs },
+  stale: { paddingHorizontal: theme.space.md, paddingTop: theme.space.md },
+  shrink: { flexShrink: 1 },
+  mac: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
+  badge: { flexDirection: 'row', marginTop: theme.space.xs },
+}));

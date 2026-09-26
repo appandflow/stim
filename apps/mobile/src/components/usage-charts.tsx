@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/icon';
 import { STAT_ICON, toneColor } from '@/components/machine-stats';
+import { Text } from '@/components/text';
+import { withAlpha } from '@/design/color';
+import type { Theme } from '@/design/theme';
 import type { StimConnection } from '@/lib/connection';
 import { HISTORY_WINDOW_MS, type UsageChart, type UsageTone } from '@/lib/home';
 import type { MachineUsage, UsageSample } from '@/protocol/types';
-import { useColors, type Colors } from '@/theme';
 
 const CHART_HEIGHT = 48;
 const GRID_LINES = [0.25, 0.5, 0.75];
@@ -55,24 +58,29 @@ export function useUsageHistory(connection: StimConnection | null, open: boolean
   return samples;
 }
 
-function fillColor(tone: UsageTone, colors: Colors): string {
+function fillColor(tone: UsageTone, colors: Theme['colors']): string {
   return tone === 'normal' ? colors.accent : toneColor(tone, colors);
 }
 
 function Chart({ chart }: { chart: UsageChart }) {
-  const colors = useColors();
+  const { theme } = useUnistyles();
+  const colors = theme.colors;
   const lastIndex = chart.columns.findLastIndex((column) => column !== null);
   const last = chart.columns[lastIndex];
   return (
     <View style={styles.chart} accessibilityLabel={`${chart.label} over the last hour, now ${chart.value}`}>
       <View style={styles.header}>
         <Icon name={STAT_ICON[chart.kind]} size={13} color={colors.secondary} />
-        <Text style={[styles.label, { color: colors.secondary }]}>{chart.label}</Text>
-        <Text style={[styles.value, { color: fillColor(chart.tone, colors) }]}>{chart.value}</Text>
+        <Text variant="footnote" tone="secondary" style={styles.label}>
+          {chart.label}
+        </Text>
+        <Text variant="headline" weight="bold" style={[styles.value, { color: fillColor(chart.tone, colors) }]}>
+          {chart.value}
+        </Text>
       </View>
-      <View style={[styles.plot, { borderColor: colors.border }]}>
+      <View style={styles.plot}>
         {GRID_LINES.map((line) => (
-          <View key={line} style={[styles.grid, { bottom: line * CHART_HEIGHT, backgroundColor: colors.border }]} />
+          <View key={line} style={[styles.grid, { bottom: line * CHART_HEIGHT }]} />
         ))}
         <View style={styles.columns}>
           {chart.columns.map((column, i) => (
@@ -83,7 +91,7 @@ function Chart({ chart }: { chart: UsageChart }) {
                     styles.area,
                     {
                       height: Math.max(2, column.fraction * CHART_HEIGHT),
-                      backgroundColor: `${fillColor(column.tone, colors)}40`,
+                      backgroundColor: withAlpha(fillColor(column.tone, colors), theme.opacity.track),
                       borderTopColor: fillColor(column.tone, colors),
                     },
                   ]}
@@ -111,32 +119,47 @@ function Chart({ chart }: { chart: UsageChart }) {
 }
 
 export function UsageCharts({ charts }: { charts: UsageChart[] }) {
-  const colors = useColors();
   return (
     <View style={styles.charts}>
       {charts.map((chart) => (
         <Chart key={chart.kind} chart={chart} />
       ))}
       <View style={styles.axis}>
-        <Text style={[styles.axisLabel, { color: colors.tertiary }]}>60 min ago</Text>
-        <Text style={[styles.axisLabel, { color: colors.tertiary }]}>now</Text>
+        <Text variant="caption2" tone="tertiary" style={styles.tabular}>
+          60 min ago
+        </Text>
+        <Text variant="caption2" tone="tertiary" style={styles.tabular}>
+          now
+        </Text>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  charts: { gap: 14 },
-  chart: { gap: 6 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  label: { fontSize: 13, flex: 1 },
-  value: { fontSize: 17, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  plot: { height: CHART_HEIGHT, borderBottomWidth: StyleSheet.hairlineWidth, marginRight: 4 },
-  grid: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth, opacity: 0.7 },
-  columns: { ...StyleSheet.absoluteFill, flexDirection: 'row', alignItems: 'flex-end' },
+const styles = StyleSheet.create((theme) => ({
+  charts: { gap: theme.space.lg },
+  chart: { gap: theme.space.sm },
+  header: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
+  label: { flex: 1 },
+  value: { fontVariant: ['tabular-nums'] },
+  plot: {
+    height: CHART_HEIGHT,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    marginRight: theme.space.xs,
+  },
+  grid: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+    opacity: 0.7,
+    backgroundColor: theme.colors.border,
+  },
+  columns: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', alignItems: 'flex-end' },
   column: { flex: 1, height: '100%', justifyContent: 'flex-end' },
   area: { borderTopWidth: 1.5 },
   dot: { position: 'absolute', width: 8, height: 8, marginLeft: -4, borderRadius: 4, borderWidth: 1.5 },
-  axis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -6 },
-  axisLabel: { fontSize: 11, fontVariant: ['tabular-nums'] },
-});
+  axis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -theme.space.sm },
+  tabular: { fontVariant: ['tabular-nums'] },
+}));

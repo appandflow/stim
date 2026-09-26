@@ -1,10 +1,11 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
+import { Pill } from '@/components/pill';
+import { Text } from '@/components/text';
 import { useNow } from '@/hooks/use-now';
-import { Chip } from '@/components/chip';
 import { buildProgress, clockDuration, outcomeLabel } from '@/lib/format';
 import type { BuildReport } from '@/protocol/types';
-import { mono, useColors } from '@/theme';
 
 export function BuildProgressBar({
   build,
@@ -15,7 +16,6 @@ export function BuildProgressBar({
   compact?: boolean;
   frozenAt?: number | null;
 }) {
-  const colors = useColors();
   const ticking = useNow(1000);
   const progress = buildProgress(build, frozenAt ?? ticking);
   const elapsed = clockDuration(progress.elapsedMs);
@@ -25,26 +25,28 @@ export function BuildProgressBar({
   return (
     <View style={styles.container}>
       <View style={styles.row}>
-        <Text style={[styles.label, { color: colors.text }]} numberOfLines={1}>
+        <Text variant="footnote" style={styles.label} numberOfLines={1}>
           {compact ? '' : `Building ${platform}${build.slot === 'default' ? '' : ` \u00B7 ${build.slot}`}  `}
-          <Text style={[styles.phase, { color: colors.primary }]}>{build.phase}</Text>
+          <Text variant="caption" tone="brand" mono>
+            {build.phase}
+          </Text>
         </Text>
-        {outcome ? <Chip tint={build.outcome === 'hit' ? colors.live : colors.warn}>{outcome}</Chip> : null}
-        <Text style={[styles.timing, { color: colors.secondary }]} numberOfLines={1}>
+        {outcome ? <Pill tone={build.outcome === 'hit' ? 'success' : 'warning'}>{outcome}</Pill> : null}
+        <Text variant="caption" tone="secondary" mono style={styles.timing} numberOfLines={1}>
           {timing}
         </Text>
       </View>
-      <View style={[styles.track, { backgroundColor: colors.raised }]}>
+      <View style={styles.track}>
         <View
           style={[
             styles.fill,
-            { backgroundColor: colors.accent, width: `${Math.round((progress.fraction ?? 0.15) * 100)}%` },
+            { width: `${Math.round((progress.fraction ?? 0.15) * 100)}%` },
             progress.fraction === null && styles.indeterminate,
           ]}
         />
       </View>
       {progress.remaining ? (
-        <Text style={[styles.remaining, { color: colors.tertiary }]} numberOfLines={1}>
+        <Text variant="caption2" tone="tertiary" style={styles.remaining} numberOfLines={1}>
           {`${progress.remaining} \u00B7 median of ${build.basis} ${build.outcome} run${build.basis === 1 ? '' : 's'}`}
         </Text>
       ) : null}
@@ -52,14 +54,13 @@ export function BuildProgressBar({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { gap: 6 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { fontSize: 13, flex: 1, flexShrink: 1 },
-  phase: { fontSize: 12, fontFamily: mono },
-  timing: { fontSize: 12, fontFamily: mono, flexShrink: 0 },
-  track: { height: 4, borderRadius: 2, overflow: 'hidden' },
-  fill: { height: 4, borderRadius: 2 },
+const styles = StyleSheet.create((theme) => ({
+  container: { gap: theme.space.sm },
+  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
+  label: { flex: 1, flexShrink: 1 },
+  timing: { flexShrink: 0 },
+  track: { height: 4, borderRadius: theme.radius.round, overflow: 'hidden', backgroundColor: theme.colors.raised },
+  fill: { height: 4, borderRadius: theme.radius.round, backgroundColor: theme.colors.accent },
   indeterminate: { opacity: 0.6 },
-  remaining: { fontSize: 11, marginTop: -2 },
-});
+  remaining: { marginTop: -theme.space.xxs },
+}));

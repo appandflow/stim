@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Touch, type TouchProps } from '@/components/touch';
-import { radius, useColors } from '@/theme';
 
 export function Card({
   children,
@@ -13,12 +13,7 @@ export function Card({
   TouchProps,
   'children' | 'style'
 >) {
-  const colors = useColors();
-  const cardStyle = [
-    styles.card,
-    { backgroundColor: colors.surface, borderColor: ring ?? colors.border, borderWidth: ring ? 2 : 1 },
-    style,
-  ];
+  const cardStyle = [styles.card(ring), style];
   if (touch.onPress) {
     return (
       <Touch feedback="card" {...touch} style={cardStyle}>
@@ -29,6 +24,13 @@ export function Card({
   return <View style={cardStyle}>{children}</View>;
 }
 
-const styles = StyleSheet.create({
-  card: { borderRadius: radius.card, borderCurve: 'continuous', overflow: 'hidden' },
-});
+const styles = StyleSheet.create((theme) => ({
+  card: (ring: string | undefined) => ({
+    backgroundColor: theme.colors.surface,
+    borderColor: ring ?? theme.colors.border,
+    borderWidth: ring ? 2 : 1,
+    borderRadius: theme.radius.card,
+    borderCurve: 'continuous',
+    overflow: 'hidden',
+  }),
+}));

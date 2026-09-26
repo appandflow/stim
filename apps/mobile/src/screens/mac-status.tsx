@@ -1,6 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
@@ -20,6 +21,7 @@ import { mono, useColors } from '@/theme';
 
 export function MacStatus({ id }: { id: string }) {
   const colors = useColors();
+  const { theme } = useUnistyles();
   const { mac, connection, state, missing, home } = useMacById(id);
   const status = useMachineStatus(id);
   const usage = useMachineUsage(id);
@@ -66,7 +68,7 @@ export function MacStatus({ id }: { id: string }) {
           <View
             style={[
               styles.dot,
-              { backgroundColor: connectionColor(state, missing, colors), borderColor: colors.background },
+              { backgroundColor: connectionColor(state, missing, theme.colors), borderColor: colors.background },
             ]}
           />
         </View>

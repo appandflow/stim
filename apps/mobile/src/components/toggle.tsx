@@ -1,42 +1,44 @@
-import { StyleSheet, Text } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { radius, type Colors } from '@/theme';
+import { withAlpha } from '@/design/color';
 
 export function Toggle({
-  colors,
   label,
   on,
   disabled,
   onPress,
 }: {
-  colors: Colors;
   label: string;
   on: boolean;
   disabled?: boolean;
   onPress: () => void;
 }) {
+  const { theme } = useUnistyles();
   return (
     <Touch
       onPress={onPress}
       disabled={disabled}
-      defaultOpacity={disabled ? 0.4 : 1}
+      defaultOpacity={disabled ? theme.opacity.disabled : 1}
       accessibilityRole="switch"
       accessibilityState={{ checked: on, disabled }}
-      style={[
-        styles.toggle,
-        {
-          backgroundColor: on ? `${colors.primary}29` : 'transparent',
-          borderColor: on ? colors.primary : colors.border,
-        },
-      ]}
+      style={styles.toggle(on)}
     >
-      <Text style={[styles.toggleText, { color: on ? colors.primary : colors.secondary }]}>{label}</Text>
+      <Text variant="footnote" weight="medium" tone={on ? 'brand' : 'secondary'}>
+        {label}
+      </Text>
     </Touch>
   );
 }
 
-const styles = StyleSheet.create({
-  toggle: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: radius.chip, borderWidth: 1 },
-  toggleText: { fontSize: 13, fontWeight: '500' },
-});
+const styles = StyleSheet.create((theme) => ({
+  toggle: (on: boolean) => ({
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.xs,
+    borderRadius: theme.radius.chip,
+    borderWidth: 1,
+    backgroundColor: on ? withAlpha(theme.colors.primary, theme.opacity.tint) : 'transparent',
+    borderColor: on ? theme.colors.primary : theme.colors.border,
+  }),
+}));
