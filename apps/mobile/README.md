@@ -268,6 +268,61 @@ rewritten `.env.local`; reload the app after `dev:pair`.
 stim-server devices revoke <id>
 ```
 
+## Variants
+
+`app.config.ts` builds one of two variants, chosen by `APP_VARIANT`:
+
+- `production`, the default: **Stim**, bundle id and Android package
+  `com.appandflow.stim`, scheme `stim`.
+- `development`: **Stim Dev**, `com.appandflow.stim.dev`, schemes `stim` and
+  `stim-dev`, and an orange icon with a **DEV** band. It installs next to the
+  TestFlight app instead of replacing it.
+
+`stim ios`, `stim android` and the EAS `production` profile build
+`production`; the EAS `development` profile builds `development`. Set the
+variable for any other command that reads the config, such as
+`APP_VARIANT=development npx expo prebuild`.
+
+The development icons in `assets/images/icon-dev.png` and
+`assets/images/icon-ios-dev.png` are generated from the production icons.
+After changing an icon, regenerate them and commit the result:
+
+```bash
+node scripts/dev-icons.mjs
+```
+
+## Building the dev app for your own phone
+
+A Release build of the Stim Dev variant runs on an iPhone without Metro and
+without TestFlight. `xcodebuild` signs it with the App&Flow team (`R7E8P23K3N`)
+through an App Store Connect API key, so Xcode does not need to be signed in
+to an Apple ID. Unlock the phone, connect it by cable or on the same network,
+and find its UDID with `xcrun devicectl list devices`. Then, from
+`apps/mobile`:
+
+```bash
+APP_VARIANT=development npx expo prebuild -p ios --clean
+xcodebuild -workspace ios/StimDev.xcworkspace -scheme StimDev \
+  -configuration Release -destination id=<UDID> -derivedDataPath ios/build \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
+  -authenticationKeyID <KEY_ID> -authenticationKeyIssuerID <ISSUER_ID> \
+  DEVELOPMENT_TEAM=R7E8P23K3N build
+xcrun devicectl device install app --device <UDID> \
+  ios/build/Build/Products/Release-iphoneos/StimDev.app
+```
+
+The key's role must reach Certificates, Identifiers & Profiles: Admin, or
+App Manager with that access. With it, Xcode creates the
+development certificate, registers the bundle id, and adds the phone named by
+`-destination` to the team's devices, then refreshes the team provisioning
+profile. `-destination generic/platform=iOS` also signs, but registers no
+device, so the app installs only on phones the team already has.
+
+A Release build ignores `.env.local`; pair it with the QR code or the
+endpoint and token, as with the TestFlight app. `npm run dev:pair` is for
+development builds on this Mac's simulators and emulators.
+
 ## Checks
 
 ```bash
@@ -285,11 +340,12 @@ The app ships to TestFlight with EAS, under the App&Flow Expo account
 (`appandflow`) and the App&Flow Apple Developer team. `eas.json` has three
 build profiles:
 
-- `development`: a development client, distributed internally.
+- `development`: a development client of the Stim Dev variant (see
+  [Variants](#variants)), distributed internally.
 - `preview`: a release build, distributed internally.
 - `production`: an App Store build. EAS owns the build number
   (`appVersionSource: "remote"`) and increments it on every build. The
-  marketing version is `version` in `app.json`.
+  marketing version is `version` in `app.config.ts`.
 
 `development` and `preview` builds install only on devices registered with
 `eas device:create`.
@@ -317,8 +373,8 @@ or prefix each command with `npx`).
    eas init --account appandflow
    ```
 
-   This writes `owner` and `extra.eas.projectId` to `app.json`; commit that
-   change. If the project already exists on expo.dev, link it with
+   This prints the `owner` and `extra.eas.projectId` to set in
+   `app.config.ts`; commit that change. If the project already exists on expo.dev, link it with
    `eas init --id <project-id>` instead.
 
 3. Create the App Store Connect app record, if it does not exist yet. In
@@ -359,5 +415,5 @@ eas submit --platform ios --latest
 
 The build appears in TestFlight after Apple finishes processing it, usually
 within 30 minutes. Add testers under the app's **TestFlight** tab. Raise
-`version` in `app.json` for a new marketing version; build numbers need no
+`version` in `app.config.ts` for a new marketing version; build numbers need no
 change.
