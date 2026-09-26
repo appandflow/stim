@@ -16,7 +16,7 @@ in the workspace directory:
   button. Each issue runs its remedy from the workspace, such as
   `stim android --slot fold`, and can copy it; a `stim guide` remedy is copy
   only. With a `stim` that reports only warning text, `stim android` still
-  answers an undetected emulator.
+  answers an undetected emulator and `stim stop` a stale supervisor record.
 - Workspace inspector: `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch. Each running device,
   in the device tile and the inspector's device list, has its own **Stop**

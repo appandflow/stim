@@ -190,9 +190,9 @@ function NeedsAttention({ groups, home }: { groups: AttentionGroup[]; home: stri
               {group.live ? 'live' : 'idle'}
             </Text>
           </View>
-          {group.items.map((item) => (
+          {group.items.map((item, index) => (
             <View
-              key={item.message}
+              key={index}
               style={[styles.issue, { backgroundColor: `${item.severity === 'error' ? colors.error : colors.warn}1A` }]}
             >
               <Text style={[styles.issueText, { color: item.severity === 'error' ? colors.error : colors.warn }]}>
