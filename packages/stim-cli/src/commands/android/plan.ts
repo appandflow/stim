@@ -310,14 +310,18 @@ export function resolveAndroidRunPlan(
   if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
   if (!physical && !remoteBackend) {
     const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
-    const existing = flagImage ? null : ownedAvd(root, slot);
-    const profile = existing?.deviceProfile ?? deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+    const existing = ownedAvd(root, slot);
+    const profile = deviceProfile ?? existing?.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+    const image = () =>
+      flagImage ?? existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null;
+    const checked = profileNeedsFoldFeature(profile) ? image() : null;
     const foldRefusal =
-      profileNeedsFoldFeature(profile) &&
+      checked !== null &&
       foldableImageRefusal({
         profile,
-        image: existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null,
-        avdName: existing?.avdName ?? null,
+        image: checked,
+        avdName:
+          existing && existing.systemImage === checked && existing.deviceProfile === profile ? existing.avdName : null,
         images: listSystemImages,
         supportsFold,
       });

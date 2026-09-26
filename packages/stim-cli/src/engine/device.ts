@@ -54,8 +54,7 @@ export interface DeviceFlags {
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
-  /** The `--system-image` flag alone; unlike `systemImage`, never filled in from settings. */
-  explicitSystemImage?: string | null;
+  systemImageFlag?: string | null;
   deviceProfile?: string | null;
 }
 

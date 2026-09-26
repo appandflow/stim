@@ -968,7 +968,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         settings,
         flags: {
           systemImage: target.systemImage,
-          explicitSystemImage: systemImageFlag?.trim() || null,
+          systemImageFlag: systemImageFlag?.trim() || null,
           deviceProfile: target.deviceProfile,
         },
         note: out,

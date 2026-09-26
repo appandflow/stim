@@ -368,6 +368,11 @@ describe('a profile the emulator gates on foldable image support', () => {
     expect(refused.message).toContain(`emulator stim-app-fold uses device profile pixel_fold on ${image(30).pkg}`);
     expect(refused.remedy).toMatch(/replaces stim-app-fold if that emulator never finished a boot.*--slot <name>/);
     expect(plan({ systemImage: image(34).pkg }, { owned }).ok).toBe(true);
+    expect(plan({ systemImage: image(30).pkg }, { owned })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('emulator stim-app-fold'),
+    });
+    expect(plan({ deviceProfile: 'pixel_6' }, { owned }).ok).toBe(true);
     expect(plan({}, { owned: { ...owned, systemImage: image(34).pkg } }).ok).toBe(true);
   });
 });

@@ -84,13 +84,7 @@ export async function ensureOwnedAndroidDevice({
   const projectAvdConfig = androidAvdConfigSetting(settings, settingsRoot);
   const avdConfig = { ...OWNED_AVD_CONFIG_DEFAULTS, ...projectAvdConfig };
   const requestedProfile = flags.deviceProfile || settings.android?.deviceProfile || null;
-  const deviceProfile = requestedProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
-  const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig, deviceProfile);
-  const configurationBeforeDefaults = avdPoolConfiguration(
-    androidDataPartitionSizeGbSetting(settings),
-    projectAvdConfig,
-    deviceProfile,
-  );
+  let replacedProfile: string | null = null;
   if (record?.setupIncomplete && record.avdName) {
     const avdName = record.avdName;
     const cleanup = teardownAvd(avdName, {
@@ -108,7 +102,7 @@ export async function ensureOwnedAndroidDevice({
     }
     record = null;
   }
-  const requestedImage = flags.explicitSystemImage || null;
+  const requestedImage = flags.systemImageFlag || null;
   const currentImage = requestedImage && record?.owned && record.avdName ? ownedAvdSystemImage(record.avdName) : null;
   if (record?.avdName && requestedImage && currentImage && currentImage !== requestedImage) {
     const avdName = record.avdName;
@@ -118,6 +112,7 @@ export async function ensureOwnedAndroidDevice({
         'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
       );
     }
+    replacedProfile = ownedAvdDeviceProfile(avdName);
     const cleanup = teardownAvd(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: record },
@@ -134,6 +129,13 @@ export async function ensureOwnedAndroidDevice({
     out(phaseLine('device', `deleted ${avdName}, which never finished a boot, to create one on ${requestedImage}`));
     record = null;
   }
+  const deviceProfile = requestedProfile ?? replacedProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+  const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig, deviceProfile);
+  const configurationBeforeDefaults = avdPoolConfiguration(
+    androidDataPartitionSizeGbSetting(settings),
+    projectAvdConfig,
+    deviceProfile,
+  );
   if (record?.avdName) {
     if (record.owned) {
       const resolved = resolveOwnedAvdSerial(record.avdName);

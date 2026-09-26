@@ -274,8 +274,8 @@ the app, opens it, and checks launch logs.
   profile, Stim refuses instead of booting it; use another `--slot` or remove
   the workspace's devices first. `pixel_fold` and `resizable` need a system
   image with foldable support (`SupportPixelFold = on` in its
-  `advancedFeatures.ini`, as on the API 34 and later images); the emulator
-  quits on boot without it. Stim refuses that pair with `STIM_BAD_ARG` before
+  `advancedFeatures.ini`, as recent images such as API 34 google_apis have);
+  the emulator quits on boot without it. Stim refuses that pair with `STIM_BAD_ARG` before
   creating anything, and the remedy names an installed image that has it:
 
   ```bash
