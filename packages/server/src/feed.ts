@@ -6,7 +6,7 @@ import { terminate } from './stim-command.ts';
 export type JsonObject = Record<string, unknown>;
 
 export interface FeedListener {
-  /** `text` is the line the child printed for `value`, so a listener can forward it without serializing again. */
+  /** `text` is the exact line that parsed to `value`. */
   item: (value: JsonObject, text: string) => void;
   failed: (message: string) => void;
 }
