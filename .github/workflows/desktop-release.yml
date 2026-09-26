@@ -252,17 +252,18 @@ jobs:
       - name: Bump the Homebrew cask
         if: github.event_name == 'push' && env.NEWEST == 'true'
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
         run: |
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::notice::HOMEBREW_TAP_TOKEN is not set; the appandflow/homebrew-tap cask is not bumped."
+          if [ -z "$HOMEBREW_TAP_DEPLOY_KEY" ]; then
+            echo "::notice::HOMEBREW_TAP_DEPLOY_KEY is not set; the appandflow/homebrew-tap cask is not bumped."
             exit 0
           fi
+          key="$RUNNER_TEMP/homebrew-tap-key"
+          (umask 077 && printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$key")
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          ssh-keyscan -t ed25519 github.com > "$RUNNER_TEMP/known_hosts" 2>/dev/null
           tap="$RUNNER_TEMP/homebrew-tap"
-          basic=$(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64)
-          echo "::add-mask::$basic"
-          auth="AUTHORIZATION: basic $basic"
-          git -c http.extraheader="$auth" clone --depth 1 https://github.com/appandflow/homebrew-tap.git "$tap"
+          git clone --depth 1 git@github.com:appandflow/homebrew-tap.git "$tap"
           mkdir -p "$tap/Casks"
           apps/desktop/packaging/bump-cask.sh "$VERSION" "$tap/Casks/stim.rb"
           cd "$tap"
@@ -273,10 +274,10 @@ jobs:
           fi
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m "stim $VERSION"
-          git -c http.extraheader="$auth" push origin HEAD
+          git push origin HEAD
 
       - name: Remove the signing keychain and API key
         if: always()
         run: |
           if [ -n "${DESKTOP_KEYCHAIN:-}" ]; then security delete-keychain "$DESKTOP_KEYCHAIN" || true; fi
-          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12"
+          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12" "$RUNNER_TEMP/homebrew-tap-key"
