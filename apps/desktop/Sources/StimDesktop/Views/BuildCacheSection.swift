@@ -74,6 +74,10 @@ struct BuildCacheSection: View {
       } else {
         Text("No build recorded").foregroundStyle(Theme.tertiary)
       }
+      let history = env.builds?.builds(for: platform) ?? []
+      if !history.isEmpty {
+        BuildHistoryList(entries: history, workspace: env.path)
+      }
       if let running {
         if running.platform == platform {
           BuildProgressBar(build: running, compact: true)
@@ -130,6 +134,92 @@ struct BuildCacheSection: View {
       Text(message).foregroundStyle(Theme.error)
     case nil:
       EmptyView()
+    }
+  }
+}
+
+private struct BuildHistoryList: View {
+  var entries: [BuildHistoryEntry]
+  var workspace: String
+  @State private var expanded = false
+
+  var body: some View {
+    DisclosureGroup(isExpanded: $expanded) {
+      TimelineView(.periodic(from: .now, by: 30)) { context in
+        VStack(alignment: .leading, spacing: 2) {
+          ForEach(entries, id: \.self) { entry in
+            BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
+          }
+        }
+        .padding(.top, 4)
+      }
+    } label: {
+      Text("Recent builds (\(entries.count))").foregroundStyle(Theme.secondary)
+    }
+  }
+}
+
+private struct BuildHistoryRow: View {
+  var entry: BuildHistoryEntry
+  var workspace: String
+  var now: Date
+  @State private var expanded = false
+
+  private var color: Color {
+    switch entry.result {
+    case "succeeded": return Theme.live
+    case "failed": return Theme.error
+    default: return Theme.warn
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Button {
+        expanded.toggle()
+      } label: {
+        VStack(alignment: .leading, spacing: 1) {
+          HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(entry.outcome)
+              .foregroundStyle(entry.result == "succeeded" ? Theme.secondary : color)
+              .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(
+              [entry.build.durationMs.map { formatDuration(ms: $0) }, entry.started.map { formatAgo(now.timeIntervalSince($0)) }]
+                .compactMap { $0 }.joined(separator: " \u{00B7} ")
+            )
+            .foregroundStyle(Theme.tertiary)
+            .fixedSize()
+            Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Theme.tertiary)
+          }
+          if let detail = entry.detail {
+            Text(detail).foregroundStyle(Theme.tertiary).lineLimit(1).padding(.leading, 12)
+          }
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help(entry.build.summary)
+      if expanded {
+        VStack(alignment: .leading, spacing: 4) {
+          let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
+            .compactMap { $0 }
+          if !facts.isEmpty {
+            Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Theme.tertiary)
+          }
+          if let phases = entry.phaseLine {
+            Text(phases).foregroundStyle(Theme.tertiary)
+          }
+          if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
+            BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
+          }
+          if let reason = entry.build.missReason {
+            MissReasonButton(reason: reason, help: "Why this build missed the cache")
+          }
+        }
+        .padding(.leading, 12)
+      }
     }
   }
 }
