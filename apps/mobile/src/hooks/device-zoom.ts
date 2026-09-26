@@ -35,7 +35,7 @@ const CLOSE_MS = 340;
 const RETARGET_MS = 250;
 const DISMISS_DRAG = 120;
 const DISMISS_VELOCITY = 900;
-const STAGE_MARGIN = 8;
+const STAGE_MARGIN = 0;
 const REMEASURE_MS = 150;
 const EASING = Easing.bezier(0.2, 0.9, 0.1, 1);
 

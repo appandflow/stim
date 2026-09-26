@@ -46,7 +46,7 @@ const TYPING_BAR_HEIGHT = 56;
 const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const NOTE_INSET = 64;
-const SIDE_WIDTH = 240;
+const SIDE_WIDTH = 208;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -239,40 +239,48 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       </View>
     </View>
   ) : null;
-  const toolbars =
+  const buttons =
     controlling || readOnly ? (
       <>
-        <View style={styles.toolbar}>
-          <ToolButton
-            label={typing ? 'Hide keyboard' : 'Keyboard'}
-            disabled={readOnly}
-            onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
-          />
-          <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
-          {platform === 'android' ? (
-            <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} />
-          ) : null}
-          {platform === 'android' ? (
-            <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
-          ) : null}
-          <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
-        </View>
-        <View style={styles.toolbar}>
-          <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
-          <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
-          {postures
-            .filter((posture) => platform === 'android' || posture !== shown)
-            .map((posture) => (
-              <ToolButton
-                key={posture}
-                label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
-                disabled={moving !== null}
-                onPress={() => move(posture)}
-              />
-            ))}
-        </View>
+        <ToolButton
+          label={typing ? 'Hide keyboard' : 'Keyboard'}
+          disabled={readOnly}
+          onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
+        />
+        <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
+        {platform === 'android' ? <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} /> : null}
+        {platform === 'android' ? (
+          <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
+        ) : null}
+        <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
+        <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
+        <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
+        {postures
+          .filter((posture) => platform === 'android' || posture !== shown)
+          .map((posture) => (
+            <ToolButton
+              key={posture}
+              label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
+              disabled={moving !== null}
+              onPress={() => move(posture)}
+            />
+          ))}
       </>
     ) : null;
+  const toolbars = buttons ? (
+    landscape ? (
+      <View style={styles.toolbar}>{buttons}</View>
+    ) : (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.toolScroll}
+        contentContainerStyle={styles.toolRow}
+      >
+        {buttons}
+      </ScrollView>
+    )
+  ) : null;
   const model = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
   const title = workspaceTitleAt(workspace, status);
 
@@ -561,7 +569,7 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 4 },
   titles: { flex: 1, alignItems: 'center' },
   title: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   subtitle: { color: '#FFFFFF99', fontSize: 12, flexShrink: 1 },
@@ -628,11 +636,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
-  tool: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, backgroundColor: '#FFFFFF1F' },
+  toolScroll: { flexGrow: 0 },
+  toolRow: { flexGrow: 1, justifyContent: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  tool: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#FFFFFF1F' },
   pressed: { opacity: 0.6 },
   toolText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500' },
   typingBar: {

@@ -165,17 +165,19 @@ viewer, so the column can scroll.
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
-finger: a tap, a drag or swipe, or a long press. The toolbar has **Keyboard**,
+finger: a tap, a drag or swipe, or a long press. The toolbar under the screen
+is one row that scrolls sideways in portrait. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. While the keyboard is open, a bar above it shows what you typed
 since the last Return, with **Done** to close it, and the screen keeps its
 size and moves up until its bottom meets that bar, stopping below the title.
-A second row has **Rotate left** and **Rotate right**, and, when the
-device has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
-whichever its latest frame or video shows it is not,
-and **Fold**, **Half open** and **Unfold** on a foldable emulator. The session ends when you turn Control off, leave the view, lose the
-connection, or after 5 minutes without input; the banner says why.
+It continues with **Rotate left** and **Rotate right**, and, when the device
+has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
+whichever its latest frame or video shows it is not, and **Fold**, **Half
+open** and **Unfold** on a foldable emulator. The session ends when you turn
+Control off, leave the view, lose the connection, or after 5 minutes without
+input; the banner says why.
 
 After a rotate, a note over the screen says "Rotated to landscape" (or
 portrait) once the picture turns. When it has not turned after 2.5 seconds,
