@@ -21,6 +21,23 @@
     "prebuild": "generate",
     "outcome": "cold",
     "expectedMs": null,
-    "basis": 0
+    "basis": 0,
+    "missReason": {
+      "kind": "prebuild-pending",
+      "summary": "native dependency added: expo-clipboard (before prebuild generates android/)",
+      "changes": [
+        {
+          "source": "node_modules/expo-clipboard",
+          "change": "added",
+          "category": "native-dependency"
+        }
+      ],
+      "changeCount": 1,
+      "baseline": {
+        "fingerprint": "9e0c2a41d7b35f8e6a1c4b2d0f9e8a7c6b5d4e3f",
+        "from": "project"
+      },
+      "rekeyedBy": []
+    }
   }
 }

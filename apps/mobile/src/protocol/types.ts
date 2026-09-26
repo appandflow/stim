@@ -77,7 +77,7 @@ export interface BuildMissChange {
 
 /** Why a run compiled instead of installing a cached app; `changes` holds at most 20 of `changeCount`. */
 export interface BuildMissReason {
-  kind: 'changed' | 'no-baseline' | 'same-sources' | 'cache-skipped' | 'fingerprint-error';
+  kind: 'changed' | 'no-baseline' | 'same-sources' | 'cache-skipped' | 'fingerprint-error' | 'prebuild-pending';
   summary: string;
   changes: BuildMissChange[];
   changeCount: number;
@@ -98,6 +98,7 @@ export interface BuildPlan {
   outcome: 'hit' | 'cold' | null;
   expectedMs: number | null;
   basis: number;
+  missReason?: BuildMissReason;
   refusal?: { code: string; message: string; remedy: string };
 }
 

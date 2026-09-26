@@ -356,17 +356,7 @@ export function useBuildPlans(
   builds: Partial<Record<Platform, string>>,
   building: boolean,
 ): { plan: (platform: Platform) => PlanState | undefined; recheck: ((platform: Platform) => void) | null } {
-  const { connection } = useMacConnection();
-  const checks = useMemo(() => {
-    if (!connection) return null;
-    let found = planChecks.get(connection);
-    if (!found) {
-      found = new PlanChecks((path, platform) => connection.request('build.plan', { workspace: path, platform }));
-      planChecks.set(connection, found);
-    }
-    return found;
-  }, [connection]);
-  const snapshot = useSyncExternalStore(checks?.subscribe ?? noSubscription, checks?.snapshot ?? (() => NO_PLANS));
+  const { checks, snapshot } = usePlanChecks();
   const wanted = JSON.stringify(builds);
   useEffect(() => {
     if (!checks) return;
@@ -382,6 +372,26 @@ export function useBuildPlans(
     plan: (platform) => PlanChecks.state(snapshot, workspace, platform),
     recheck: checks && !building ? recheck : null,
   };
+}
+
+/** The last `build.plan` result for `workspace` and `platform`, without asking for one. */
+export function useBuildPlan(workspace: string, platform: Platform): PlanState | undefined {
+  return PlanChecks.state(usePlanChecks().snapshot, workspace, platform);
+}
+
+function usePlanChecks(): { checks: PlanChecks | null; snapshot: PlanSnapshot } {
+  const { connection } = useMacConnection();
+  const checks = useMemo(() => {
+    if (!connection) return null;
+    let found = planChecks.get(connection);
+    if (!found) {
+      found = new PlanChecks((path, platform) => connection.request('build.plan', { workspace: path, platform }));
+      planChecks.set(connection, found);
+    }
+    return found;
+  }, [connection]);
+  const snapshot = useSyncExternalStore(checks?.subscribe ?? noSubscription, checks?.snapshot ?? (() => NO_PLANS));
+  return { checks, snapshot };
 }
 
 export type ControlState =
