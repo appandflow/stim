@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { FeedListener, JsonObject } from '../src/feed.ts';
-import { PushNotifier, type PushMessage } from '../src/push.ts';
+import { maskPushTokens, PushNotifier, type PushMessage } from '../src/push.ts';
 import type { PairedDevice, PushRegistration } from '../src/registry.ts';
 
 const T0 = Date.parse('2026-09-26T12:00:00Z');
@@ -284,6 +284,33 @@ describe('PushNotifier', () => {
     expect(t.dropped).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
   });
 
+  it('logs refused tickets and failed receipts without the push token', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const t = (current = setup());
+      expo.tickets = () => [
+        { status: 'error', message: `"${TOKEN}" is not a valid Expo push token`, details: { error: 'InvalidToken' } },
+      ];
+      t.emit(status());
+      t.at(1000);
+      t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:00Z') })));
+      for (let i = 0; i < 500 && logged.mock.calls.length < 1; i++) await tick();
+      expo.tickets = () => [{ status: 'ok', id: 't0' }];
+      expo.receipts = { t0: { status: 'error', message: `Rate exceeded for ${TOKEN}` } };
+      t.at(2000);
+      t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:01Z') })));
+      for (let i = 0; i < 500 && logged.mock.calls.length < 2; i++) await tick();
+      const lines = logged.mock.calls.map((call) => String(call[0]));
+      expect(lines).toEqual([
+        `stim-server: Expo refused a push: "${maskPushTokens(TOKEN)}" is not a valid Expo push token`,
+        `stim-server: a push failed: Rate exceeded for ${maskPushTokens(TOKEN)}`,
+      ]);
+      for (const line of lines) expect(line).not.toContain('phone-a');
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it('stays quiet about low disk that a replayed status found at registration', async () => {
     const t = (current = setup({ replay: status(env()), freeGb: 3 }));
     t.at(90_000);
@@ -323,5 +350,19 @@ describe('PushNotifier', () => {
     }
     await settle(20);
     expect(expo.sent.flat()).toHaveLength(20);
+  });
+});
+
+describe('maskPushTokens', () => {
+  it('replaces every Expo push token with a short hash that still tells devices apart', () => {
+    const masked = maskPushTokens(
+      'to ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx] and ExpoPushToken[yyyyyyyyyyyyyyyyyyyyyy] and ExponentPushToken[zzzz',
+    );
+    expect(masked).toMatch(
+      /^to ExponentPushToken\[#[0-9a-f]{8}\] and ExpoPushToken\[#[0-9a-f]{8}\] and ExponentPushToken\[#[0-9a-f]{8}\]$/,
+    );
+    expect(masked).not.toMatch(/xxxx|yyyy|zzzz/);
+    expect(maskPushTokens('ExponentPushToken[a]')).toBe(maskPushTokens('ExponentPushToken[a]'));
+    expect(maskPushTokens('ExponentPushToken[a]')).not.toBe(maskPushTokens('ExponentPushToken[b]'));
   });
 });

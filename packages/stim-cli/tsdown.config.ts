@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { copyFileSync, writeFileSync } from 'node:fs';
 import { defineConfig } from 'tsdown';
 import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from '@stim-cli/core/state';
 
@@ -21,6 +21,7 @@ export default defineConfig({
   hooks: {
     'build:done': () => {
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
+      copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
     },
   },
 });

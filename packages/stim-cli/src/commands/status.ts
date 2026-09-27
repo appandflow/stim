@@ -40,6 +40,7 @@ import {
   type BuildReport,
 } from '../engine/build-progress.ts';
 import { volumeRootFor } from '../fs-util.ts';
+import { workspacePhase } from '../engine/warm-progress.ts';
 import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
@@ -63,14 +64,18 @@ import {
   type DeviceProcessTables,
 } from '../devices/activity.ts';
 import { createAppProcessReader } from '../devices/app-process.ts';
+import { hasMetroReverse } from '../engine/app-install.ts';
 import {
   activityLabel,
+  addReverseMissingIssue,
+  applyMachineMemory,
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
   diskLine,
   environmentState,
   gitSummaryText,
+  metroReverseTargets,
   parseDfFree,
   poolLine,
   remoteDeviceLine,
@@ -82,6 +87,7 @@ import {
 } from '../status.ts';
 import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
+import { readFootprints } from '../footprint.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 
@@ -254,7 +260,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
       ),
     );
     const state = states[states.length - 1];
-    if (state) Object.assign(state, builds);
+    if (state) Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }));
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android && !state?.web),
     );
@@ -262,10 +268,11 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
 
   const tables = createDeviceProcessTables();
   readDeviceProcesses(states, tables, { projects, launchesByState });
+  readMetroReverses(states, launchesByState);
   const sims = Object.values(simsByUdid);
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
-  const machine = readMachineUsage({ states, roots, simNames, tables, busy });
+  const machine = await readMachineUsage({ states, roots, simNames, tables, busy });
   return {
     projects,
     states,
@@ -283,6 +290,12 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
   };
 }
 
+function phaseMarker({ phase, live, warmStep }: EnvironmentState): string {
+  if (phase === 'warming') return chalk.cyan(` [warming: ${warmStep}]`);
+  if (phase === 'ready') return chalk.green(' [ready]');
+  return live ? '' : chalk.dim(' [idle]');
+}
+
 function browserPids(web: WebFacts | null): number[] {
   if (!web) return [];
   const chrome = web.record.chromeProcess?.pid;
@@ -291,10 +304,11 @@ function browserPids(web: WebFacts | null): number[] {
 }
 
 /**
- * Attributes the host process table to its owners. Reads the table only when a simulator is booted, a workspace is
- * live or a build runs, so an idle machine runs no `ps`.
+ * Attributes the host process table and the processes' footprints to their owners, and sets each environment's
+ * `memoryMb` from them. Reads both only when a simulator is booted, a workspace is live or a build runs, so an idle
+ * machine runs no `ps` and keeps the estimate.
  */
-function readMachineUsage({
+async function readMachineUsage({
   states,
   roots,
   simNames,
@@ -306,17 +320,21 @@ function readMachineUsage({
   simNames: Record<string, string>;
   tables: DeviceProcessTables;
   busy: boolean;
-}): MachineUsageState | null {
+}): Promise<MachineUsageState | null> {
   const needed = busy || states.some((state) => state.live || state.build?.state === 'running');
   const processes = needed ? tables.host() : null;
-  return processes ? attributeMachineUsage({ processes, environments: states, roots, simNames }) : null;
+  if (!processes) return null;
+  const footprints = await readFootprints();
+  const machine = attributeMachineUsage({ processes, footprints, environments: states, roots, simNames });
+  applyMachineMemory(states, machine);
+  return machine;
 }
 
 /**
  * Rereads only the error counts, device activity and machine usage. With `machine`, and when the snapshot measured
  * machine usage, it reads the host process table again; it reuses every other subprocess fact of the full read.
  */
-function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): void {
+async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Promise<void> {
   const fresh = createDeviceProcessTables();
   snapshot.tables = {
     host: machine && snapshot.machine ? fresh.host : snapshot.tables.host,
@@ -329,7 +347,7 @@ function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): void {
     readDeviceProcesses(snapshot.states, snapshot.tables, null);
   });
   if (machine && snapshot.machine) {
-    snapshot.machine = readMachineUsage({ ...snapshot, busy: true });
+    snapshot.machine = await readMachineUsage({ ...snapshot, busy: true });
   }
 }
 
@@ -389,7 +407,7 @@ function renderStatus(
     if (!state) continue;
     const shortcut = projectShortcut(path, proj);
     const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
-    const idle = state.live ? '' : chalk.dim(' [idle]');
+    const idle = phaseMarker(state);
     out.push(`\n${marker}${idle} ${chalk.dim(`(${path})`)}`);
     out.push(
       labelOnlyRoots[i]
@@ -479,7 +497,9 @@ function renderStatus(
 
   out.push(
     chalk.dim(
-      `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
+      machine?.memorySource === 'footprint'
+        ? `\n${cap.liveCount} live environment(s) use ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)}.`
+        : `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );
   const volumes = readVolumes(cwdRoot || process.cwd());
@@ -517,7 +537,7 @@ async function watchStatus(json: boolean): Promise<void> {
     run: async (kind) => {
       let text: string;
       try {
-        if (kind === 'light' && snapshot) refreshLightFacts(snapshot, json);
+        if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
         else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
@@ -626,6 +646,20 @@ function readDeviceProcesses(
       web.page = readWebPage(state.path);
       const ownPids = [web.pid, web.supervisorPid].filter((pid): pid is number => pid !== null);
       web.activity = statusActivity(readWebActivity({ port, ownPids, workspace: state.path }, tables));
+    }
+  }
+}
+
+function readMetroReverses(
+  states: EnvironmentState[],
+  launchesByState: ReturnType<typeof readWorkspaceLaunches>[],
+): void {
+  for (const [i, state] of states.entries()) {
+    for (const target of metroReverseTargets(state, launchesByState[i]!)) {
+      const listing = getExecutor().runFileQuiet('adb', ['-s', target.serial, 'reverse', '--list'], {
+        timeoutMs: 5000,
+      });
+      if (listing !== null && !hasMetroReverse(listing, target.metroPort)) addReverseMissingIssue(state, target);
     }
   }
 }

@@ -8,6 +8,8 @@
       {
         "path": "/Users/dev/Developer/stim",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -23,6 +25,8 @@
       {
         "path": "/Users/dev/Developer/react-native/private/helloworld",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -38,6 +42,8 @@
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -53,6 +59,8 @@
       {
         "path": "/Users/dev/Developer/tlon-apps",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -68,6 +76,8 @@
       {
         "path": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -83,6 +93,8 @@
       {
         "path": "/Users/dev/Developer/react-native-reserved-regions/example",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": {
@@ -569,6 +581,9 @@
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges/example",
+        "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "fold3-camera",
@@ -582,7 +597,6 @@
             }
           }
         ],
-        "live": false,
         "memoryMb": 0,
         "warnings": [
           "fold3-camera: recorded AVD stim-react-native-hinges-example-fold3-camera no longer exists; run `stim android --slot fold3-camera`"
@@ -623,6 +637,9 @@
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges",
+        "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "fold3-camera",
@@ -636,7 +653,6 @@
             }
           }
         ],
-        "live": false,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -652,6 +668,8 @@
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [
           "supervisor pid 48213 could not be verified: workspace state and registry process identities disagree; run `stim guide errors teardown`"
@@ -709,6 +727,8 @@
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile",
         "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "memoryMb": 0,
         "warnings": [],
         "ios": null,
@@ -726,6 +746,9 @@
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "duo",
@@ -753,7 +776,6 @@
             "android": null
           }
         ],
-        "live": true,
         "memoryMb": 2200,
         "warnings": ["owned AVD stim-wide-insets-tlon-mobile is not detected by adb; run `stim android`"],
         "ios": null,
@@ -830,6 +852,9 @@
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+        "live": false,
+        "phase": "idle",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "ipad",
@@ -842,7 +867,6 @@
             "android": null
           }
         ],
-        "live": false,
         "memoryMb": 0,
         "warnings": [],
         "ios": {
@@ -875,6 +899,9 @@
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "ipad",
@@ -917,7 +944,6 @@
             "android": null
           }
         ],
-        "live": true,
         "memoryMb": 2200,
         "warnings": ["owned AVD stim-wide-split-layout-tlon-mobile is not detected by adb; run `stim android`"],
         "ios": {
@@ -997,6 +1023,9 @@
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "ios18",
@@ -1014,7 +1043,6 @@
             "android": null
           }
         ],
-        "live": true,
         "memoryMb": 3700,
         "warnings": [],
         "ios": {
@@ -1069,6 +1097,9 @@
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
         "slots": [
           {
             "slot": "phone",
@@ -1086,7 +1117,6 @@
             "android": null
           }
         ],
-        "live": true,
         "memoryMb": 2200,
         "warnings": [],
         "ios": {
@@ -1147,6 +1177,65 @@
           "basis": 0
         },
         "issues": []
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer/apps/tlon-mobile",
+        "live": false,
+        "phase": "warming",
+        "phaseSince": "2026-09-25T04:22:41.000Z",
+        "warmStep": "copy",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer",
+          "branch": "janic/new-composer",
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": null,
+            "ahead": null,
+            "behind": null,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "issues": []
+      },
+      {
+        "path": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search/apps/tlon-mobile",
+        "live": false,
+        "phase": "ready",
+        "phaseSince": "2026-09-25T04:15:02.000Z",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search",
+          "branch": "janic/fix-search",
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": null,
+            "ahead": null,
+            "behind": null,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "issues": []
       }
     ],
     "capacity": {
@@ -1206,6 +1295,7 @@
     "environments[path*=wide-insets|wide-split-layout|chat-perf-demo|ios27-uiscene|1123-mobile-app].worktree: added by hand with a WorktreeGit git field; the capture predates nested worktree matching and the field",
     "environments[].warnings and environments[].issues: rewritten by hand in the StatusIssue shape; the capture predates issues and listed not-detected emulators on idle workspaces, which status no longer reports. wide-insets and wide-split-layout keep avd-not-detected as if they had launched on Android, ios27-uiscene has an unverified supervisor, and react-native-hinges/example a missing fold3-camera AVD",
     "environments[path*=react-native-reserved-regions].builds: copied from a real stim status --json build history (hits, misses after an app config change, compile failures, a cancelled and an interrupted run) with paths rewritten; its lastBuilds were replaced with the matching newest entries",
+    "environments[].phase and phaseSince: added by hand, live for live workspaces and idle otherwise; the capture predates lifecycle phases. environments[path*=new-composer] (warming, copy step) and environments[path*=fix-search] (ready) were added by hand in the shape stim status --json reports for a worktree being warmed and one warmed and not yet run",
     "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome"
   ]
 }

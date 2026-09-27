@@ -100,6 +100,24 @@ describe('homeAttention', () => {
     ]);
   });
 
+  it('does not raise a workspace a warm is setting up', () => {
+    const warning = {
+      code: 'port-not-ours' as const,
+      severity: 'warning' as const,
+      message: 'm',
+      remedy: 'stim start',
+      workspace: 'new',
+    };
+    expect(
+      summary([
+        mac([
+          env('new', { phase: 'warming', warmStep: 'copy', issues: [{ ...warning }] }),
+          env('ready', { phase: 'ready', issues: [{ ...warning, workspace: 'ready' }] }),
+        ]),
+      ]),
+    ).toEqual([]);
+  });
+
   it('leaves out log errors and day-old failed builds of idle workspaces', () => {
     expect(
       summary([

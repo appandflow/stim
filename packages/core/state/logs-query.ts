@@ -86,13 +86,32 @@ function isWebPageRecord(record: NdjsonRecord): boolean {
   return record.platform === 'web' && record.src !== 'metro';
 }
 
+function isSharedRecord(record: NdjsonRecord): boolean {
+  return record.slot === undefined && (record.src === 'metro' || record.src === 'client') && !isWebPageRecord(record);
+}
+
+function inSlot(record: NdjsonRecord, slot: string): boolean {
+  return isSharedRecord(record) || (record.slot ?? 'default') === slot;
+}
+
+/**
+ * The platform a bundle marker speaks for, lowercased: its `platform` field, or the tag @expo/cli prints before
+ * "Bundled" ("iOS", "Android", "Web", "RSC(iOS)" as ios, or an environment tag such as "DOM"). Null when unknown.
+ */
+export function bundleMarkerPlatform(record: NdjsonRecord): string | null {
+  if (typeof record.platform === 'string') return record.platform;
+  const tag = /^\s*(\S+)\s+Bundl/.exec(String(record.msg ?? ''))?.[1];
+  if (!tag) return null;
+  return (/^RSC\((.+)\)$/.exec(tag)?.[1] ?? tag).toLowerCase();
+}
+
 function isAppDeviceRecord(record: NdjsonRecord): boolean {
   return record.src === 'device' && (record.event === 'native_crash' || record.platform === 'web');
 }
 
 export function recordMatches(record: NdjsonRecord | null | undefined, criteria: QueryCriteria = {}): boolean {
   if (!record) return false;
-  if (criteria.slot !== undefined && (record.slot ?? 'default') !== criteria.slot) return false;
+  if (criteria.slot !== undefined && !inSlot(record, criteria.slot)) return false;
   const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs, bundleMarkerTs } = criteria;
 
   if (
@@ -333,6 +352,32 @@ function includeBareErrorContext(
   return sortByTs([...matched, ...renderedContext]);
 }
 
+function nativePlatform(record: NdjsonRecord): string | null {
+  const platform = record.src === 'metro' && record.marker === true ? bundleMarkerPlatform(record) : record.platform;
+  return platform === 'ios' || platform === 'android' ? platform : null;
+}
+
+function newestByPlatform(records: NdjsonRecord[], platformOf: (record: NdjsonRecord) => string | null) {
+  const newest = new Map<string | null, number>();
+  for (const record of records) {
+    const ts = tsOf(record);
+    if (ts === null) continue;
+    const platform = platformOf(record);
+    if (ts > (newest.get(platform) ?? -Infinity)) newest.set(platform, ts);
+  }
+  return newest;
+}
+
+function newestWhere(newest: Map<string | null, number>, include: (platform: string | null) => boolean) {
+  let ts: number | undefined;
+  for (const [platform, at] of newest) if (include(platform) && (ts === undefined || at > ts)) ts = at;
+  return ts;
+}
+
+function isLaunchMarker(record: NdjsonRecord): boolean {
+  return record.marker === true && record.src !== 'metro' && !isWebPageRecord(record);
+}
+
 function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
   const markers = new Map<unknown, number>();
   for (const record of records) {
@@ -369,8 +414,11 @@ export function queryLogs({
   errorContext?: boolean;
   now?: number;
 } = {}): NdjsonRecord[] {
-  const all = (records ?? readLogRecords(dir as string)).filter(
-    (record) => slot === undefined || (record.slot ?? 'default') === slot,
+  const source = records ?? readLogRecords(dir as string);
+  const slotLaunched =
+    slot !== undefined && source.some((record) => isLaunchMarker(record) && (record.slot ?? 'default') === slot);
+  const all = source.filter(
+    (record) => slot === undefined || (record.slot ?? 'default') === slot || (slotLaunched && isSharedRecord(record)),
   );
   if (all.length === 0) return [];
 
@@ -390,12 +438,40 @@ export function queryLogs({
   });
 
   const slotMarkers = launchMarkersBySlot(all);
+  const markers = all.filter((record) => record.marker === true);
+  const launches = newestByPlatform(
+    markers.filter((record) => record.src !== 'metro' && !isWebPageRecord(record)),
+    (record) => (typeof record.platform === 'string' ? record.platform : null),
+  );
+  const bundles = newestByPlatform(
+    markers.filter((record) => record.src === 'metro'),
+    bundleMarkerPlatform,
+  );
+  const slotPlatforms = slot === undefined ? [] : [...launches.keys()].filter((platform) => platform !== null);
   const windowStart = (record: NdjsonRecord): number | undefined => {
     if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
-    if (record.src === 'metro' || record.src === 'client') return criteria.markerTs;
-    return slotMarkers.get(record.slot ?? 'default');
+    if (record.src !== 'metro' && record.src !== 'client') return slotMarkers.get(record.slot ?? 'default');
+    const platform = nativePlatform(record);
+    return (platform === null ? undefined : launches.get(platform)) ?? criteria.markerTs;
   };
-  let matched = all.filter((record) => recordMatches(record, { ...criteria, markerTs: windowStart(record) }));
+  const otherPlatform = (record: NdjsonRecord) => {
+    const platform = nativePlatform(record);
+    return slotPlatforms.length > 0 && isSharedRecord(record) && platform !== null && !slotPlatforms.includes(platform);
+  };
+  const bundleWindowStart = (record: NdjsonRecord): number | undefined => {
+    const platform = nativePlatform(record);
+    return newestWhere(
+      bundles,
+      (marker) =>
+        marker === null ||
+        (platform ? marker === platform : slotPlatforms.length === 0 || slotPlatforms.includes(marker)),
+    );
+  };
+  let matched = all.filter(
+    (record) =>
+      !otherPlatform(record) &&
+      recordMatches(record, { ...criteria, markerTs: windowStart(record), bundleMarkerTs: bundleWindowStart(record) }),
+  );
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }

@@ -47,6 +47,7 @@ export interface RemoteSessionRecord {
   sessionId: string;
   startedAt: string | null;
   webPreviewUrl: string | null;
+  deviceType?: string | null;
 }
 
 export function readMetroTunnel(root: string): MetroTunnelRecord | null {
@@ -132,11 +133,13 @@ export function readRemoteSession(root: string): RemoteSessionRecord | null {
   const platform = (record as { platform?: unknown }).platform;
   const startedAt = (record as { startedAt?: unknown }).startedAt;
   const webPreviewUrl = (record as { webPreviewUrl?: unknown }).webPreviewUrl;
+  const deviceType = (record as { deviceType?: unknown }).deviceType;
   return {
     platform: platform === 'ios' || platform === 'android' ? platform : null,
     sessionId: id,
     startedAt: typeof startedAt === 'string' ? startedAt : null,
     webPreviewUrl: typeof webPreviewUrl === 'string' && webPreviewUrl.length > 0 ? webPreviewUrl : null,
+    deviceType: typeof deviceType === 'string' && deviceType.length > 0 ? deviceType : null,
   };
 }
 

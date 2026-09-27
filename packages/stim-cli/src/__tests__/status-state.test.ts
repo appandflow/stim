@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { join } from 'node:path';
 import {
   activityLabel,
+  addReverseMissingIssue,
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
@@ -9,6 +10,7 @@ import {
   diskLine,
   environmentState,
   formatSpace,
+  metroReverseTargets,
   parseDfFree,
   poolLine,
   remoteDeviceLine,
@@ -17,6 +19,7 @@ import {
   tightVolumes,
   unprovisionedWorktrees,
   type DeviceLeaseState,
+  type EnvironmentState,
 } from '../status.ts';
 import type { LeaseFileEntry } from '../engine/device-lease.ts';
 import { makeEnvironmentState } from './_factories.ts';
@@ -491,4 +494,56 @@ test('statusActivity rounds lastActivityAt down to the minute, so records within
   );
   expect(at('2026-09-24T09:01:00.000Z').lastActivityAt).toBe('2026-09-24T09:01:00.000Z');
   expect(statusActivity({ state: 'idle', basis: [] })).toEqual({ state: 'idle', basis: [] });
+});
+
+describe('the adb reverse check', () => {
+  const launch = { deviceId: 'emulator-5554', metroPort: 8082, release: false };
+  const android = {
+    name: 'stim-app',
+    owned: true,
+    physical: false,
+    serial: 'emulator-5554',
+    state: 'detected' as const,
+    app: { id: 'com.app', state: 'running' as const },
+  };
+  const live = (overrides: Partial<EnvironmentState> = {}) =>
+    makeEnvironmentState({ metro: { port: 8082, running: true, pid: 1 }, android, ...overrides });
+
+  test('probes each owned emulator whose running debug app was launched against the serving Metro', () => {
+    const state = live({
+      slots: [{ slot: 'tablet', ios: null, android: { ...android, serial: 'emulator-5556' } }],
+    });
+    expect(
+      metroReverseTargets(state, { android: launch, 'android:tablet': { ...launch, deviceId: 'emulator-5556' } }),
+    ).toEqual([
+      { slot: 'default', serial: 'emulator-5554', metroPort: 8082 },
+      { slot: 'tablet', serial: 'emulator-5556', metroPort: 8082 },
+    ]);
+  });
+
+  test.each([
+    ['Metro is not serving', live({ metro: { port: 8082, running: false, pid: null } }), { android: launch }],
+    [
+      'the app is not running',
+      live({ android: { ...android, app: { id: 'com.app', state: 'stopped' } } }),
+      { android: launch },
+    ],
+    ['the device is physical', live({ android: { ...android, owned: false, physical: true } }), { android: launch }],
+    ['the launch is a release build', live(), { android: { ...launch, release: true, metroPort: null } }],
+    ['the launch went to another serial', live(), { android: { ...launch, deviceId: 'emulator-5556' } }],
+    ['nothing was launched', live(), {}],
+  ])('runs no adb when %s', (_label, state, launches) => {
+    expect(metroReverseTargets(state, launches)).toEqual([]);
+  });
+
+  test('a missing reverse is an issue whose remedy restores it, with the slot named', () => {
+    const state = live();
+    addReverseMissingIssue(state, { slot: 'tablet', serial: 'emulator-5556', metroPort: 8082 });
+    expect(state.issues).toEqual([
+      expect.objectContaining({ code: 'android-reverse-missing', remedy: 'stim reload android', slot: 'tablet' }),
+    ]);
+    expect(state.warnings).toEqual([
+      'tablet: the adb reverse for Metro port 8082 is missing on emulator-5556, so the app cannot reach Metro; run `stim reload android`',
+    ]);
+  });
 });

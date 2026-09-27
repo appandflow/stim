@@ -1,5 +1,5 @@
 import { Fragment, memo } from 'react';
-import { View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivityChip } from '@/components/activity-chip';
@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
 import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
-import { devicesOf, isActive, platformName, runningBuild } from '@/lib/workspaces';
+import { devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
 
 export const WorkspaceRow = memo(function WorkspaceRow({
   item,
@@ -29,7 +29,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const offline = !macOnline;
   const { env } = item;
   const build = runningBuild(env);
-  const active = isActive(env);
+  const settingUp = isSettingUp(env);
+  const active = isActive(env) || settingUp;
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
   const activityAt = offline ? (lastSeenAt ?? now) : now;
@@ -45,7 +46,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = offline
     ? theme.colors.tertiary
-    : build
+    : build || settingUp
       ? theme.colors.accent
       : active
         ? theme.colors.success
@@ -62,6 +63,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
       accessibilityLabel={[
         `Workspace ${item.title} on ${item.macName}`,
         lastSeen,
+        settingUp ? (env.phase === 'ready' ? 'Ready' : ['Warming', env.warmStep].filter(Boolean).join(', ')) : null,
         gitBadges(env.worktree?.git)?.label,
         ...drivenLabels,
       ]
@@ -99,6 +101,15 @@ export const WorkspaceRow = memo(function WorkspaceRow({
         {lastSeen || active || errors > 0 || env.warnings.length > 0 ? (
           <View style={styles.chips}>
             {lastSeen ? <Pill>{lastSeen}</Pill> : null}
+            {settingUp && env.phase === 'warming' ? (
+              <View style={styles.warming}>
+                {offline ? null : <ActivityIndicator size="small" color={theme.colors.accent} />}
+                <Pill tone={offline ? 'neutral' : 'accent'}>
+                  {env.warmStep ? `Warming\u2026 ${env.warmStep}` : 'Warming\u2026'}
+                </Pill>
+              </View>
+            ) : null}
+            {settingUp && env.phase === 'ready' ? <Pill tone={offline ? 'neutral' : 'accent'}>Ready</Pill> : null}
             {env.metro?.running ? <Pill tabular={`:${env.metro.port}`}>{'Metro '}</Pill> : null}
             {env.supervisor && !env.supervisor.healthy ? <Pill tone="warning">supervisor unhealthy</Pill> : null}
             {running.map((d) => {
@@ -156,4 +167,5 @@ const styles = StyleSheet.create((theme) => ({
   shrink: { flexShrink: 1 },
   mac: { flexShrink: 0, maxWidth: 140 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
+  warming: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
 }));

@@ -223,7 +223,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
               {env.memoryMb > 0 ? (
                 <Pill
                   icon="memorychip"
-                  accessibilityLabel={`Estimated to use about ${(env.memoryMb / 1024).toFixed(1)} GB of memory`}
+                  accessibilityLabel={`${env.memorySource === 'footprint' ? 'Uses' : 'Estimated to use about'} ${(env.memoryMb / 1024).toFixed(1)} GB of memory`}
                 >
                   {`${(env.memoryMb / 1024).toFixed(1)} GB`}
                 </Pill>

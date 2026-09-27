@@ -180,6 +180,15 @@ describe('createSessionArgs', () => {
     expect(args[args.indexOf('--name') + 1]).toBe('stim-wt');
   });
 
+  test('passes --device only when a model was chosen', () => {
+    expect(createSessionArgs({ label: 'wt', platform: 'ios' })).not.toContain('--device');
+    const chosen = createSessionArgs({ label: 'wt', platform: 'ios', device: 'iPhone 17 Pro' });
+    expect(chosen.slice(chosen.indexOf('--device'), chosen.indexOf('--device') + 2)).toEqual([
+      '--device',
+      'iPhone 17 Pro',
+    ]);
+  });
+
   test('omits --max-duration-minutes unless one was chosen', () => {
     expect(createSessionArgs({ label: 'wt', platform: 'ios' })).not.toContain('--max-duration-minutes');
     const bounded = createSessionArgs({ label: 'wt', platform: 'ios', maxDurationMinutes: 30 });

@@ -768,6 +768,18 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   room -- it may be mid-run for whoever started it. Run \`stim stop\` for this
   workspace, then re-run with the platform you want. Nothing was created here.`,
     },
+    STIM_REMOTE_DEVICE_MISMATCH: {
+      summary: 'the recorded EAS session runs another model than --device-type asks for; stop, then rerun',
+      body: () => `STIM_REMOTE_DEVICE_MISMATCH
+  \`stim ios --remote eas --device-type <name>\` found this workspace's
+  recorded EAS Simulator session still running another model, or the model
+  EAS chose when no --device-type was given. EAS cannot change a running
+  session's model, and Stim will not end the recorded session to make room --
+  it may be mid-run for whoever started it. Run \`stim stop\` for this
+  workspace, then rerun with the model you want. A recorded session that has
+  already ended is replaced on the requested model instead, and without
+  --device-type a live one is reused as it is. Nothing was created here.`,
+    },
     STIM_REMOTE_SESSION_STATE: {
       summary: 'the EAS session was created but its state could not be recorded, so Stim stopped it',
       body: () => `STIM_REMOTE_SESSION_STATE
@@ -859,6 +871,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   showing. The printed agent-device open command is the last resort; it
   relaunches that app on that device with this workspace's Metro port and loses
   in-memory state. Keep the existing --session flag and verify afterward.
+
+  ADB COULD NOT LIST OR RESTORE THE REVERSE. Before an Android reload Stim
+  checks the emulator's adb reverse for the Metro port. When adb cannot list
+  or re-apply it, nothing was reloaded; the remedy names the adb reverse
+  command to run before reloading again.
 
   MORE THAN ONE MATCHING PEER IS NOT A FAILURE. A workspace Metro serves one
   app, so several matching peers are that app on several devices. Stim reloads
@@ -986,9 +1003,10 @@ captured"  (in metro.ndjson, bare RN)
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
-  serial or UDID, \`--device\` together with \`--remote\`, \`ios --device-type\`
-  or \`--runtime\` on a remote run (\`--remote\` or ios.remote; the remote
-  backend picks its own device), \`android --system-image\` or
+  serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
+  on a remote run (\`--remote\` or ios.remote; the remote backend picks the
+  iOS version), \`ios --device-type\` on the proxy backend or with an
+  eas-cli older than 22.2.0 on the eas backend, \`android --system-image\` or
   \`--device-profile\` on a remote run (\`--remote\` or android.remote), a
   working directory
   with no package.json above it, or one whose nearest package.json does not

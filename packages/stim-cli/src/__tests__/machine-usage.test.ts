@@ -100,9 +100,10 @@ const b = makeEnvironmentState({
   metro: { port: 8082, running: true, pid: 400 },
 });
 
-const attribute = () =>
+const attribute = (footprints: ReadonlyMap<number, number> | null = null) =>
   attributeMachineUsage({
     processes,
+    footprints,
     environments: [a, b],
     roots: [
       { path: '/w/a', supervisorPid: 199, build: { platform: 'ios', pid: 300 }, browserPids: [] },
@@ -155,6 +156,7 @@ test('a simulator two workspaces both record counts in one of them only', () => 
   const shared = makeEnvironmentState({ ...b, path: '/w/c', ios: a.ios, slots: [] });
   const machine = attributeMachineUsage({
     processes,
+    footprints: null,
     environments: [a, shared],
     roots: [],
     simNames: {},
@@ -166,9 +168,26 @@ test('a simulator two workspaces both record counts in one of them only', () => 
 test('a recorded pid that is no longer in the table claims nothing', () => {
   const machine = attributeMachineUsage({
     processes,
+    footprints: null,
     environments: [makeEnvironmentState({ path: '/w/d', metro: { port: 8090, running: true, pid: 4242 } })],
     roots: [{ path: '/w/d', supervisorPid: 4243, build: { platform: 'android', pid: 4244 }, browserPids: [4245] }],
     simNames: {},
   });
   expect(machine.owners.filter((o) => o.workspace === '/w/d')).toEqual([]);
+});
+
+test('memoryMb sums footprints and takes the resident size of a process the helper could not read', () => {
+  const MB = 1024 * 1024;
+  const footprints = new Map([
+    [100, 2 * MB],
+    [101, 300 * MB],
+    [200, 40 * MB],
+  ]);
+  const machine = attribute(footprints);
+  expect(machine.memorySource).toBe('footprint');
+  const byName = Object.fromEntries(machine.owners.map((o) => [o.name, [o.memoryMb, o.residentMb]]));
+  expect(byName['stim-a (iPhone 17 Pro 26.5)']).toEqual([2 + 300 + 1, 3]);
+  expect(byName['Metro :8081']).toEqual([40 + 1, 2]);
+  expect(attribute().memorySource).toBe('rss');
+  expect(attribute().owners.every((o) => o.memoryMb === o.residentMb)).toBe(true);
 });

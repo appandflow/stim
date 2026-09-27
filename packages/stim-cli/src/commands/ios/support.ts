@@ -138,11 +138,12 @@ export function deviceModelRefusal({
     };
   }
   if (remoteBackend) {
-    const given = [deviceTypeFlag && '--device-type', runtimeFlag && '--runtime'].filter(Boolean).join(' and ');
+    const eas = remoteBackend === 'eas';
+    const given = [!eas && deviceTypeFlag && '--device-type', runtimeFlag && '--runtime'].filter(Boolean).join(' and ');
     if (given) {
       return {
         code: 'STIM_BAD_ARG',
-        message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned iOS simulator; the ${remoteBackend} remote backend chooses its own device.`,
+        message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned iOS simulator; the ${remoteBackend} remote backend chooses its own ${eas ? 'iOS runtime' : 'device'}.`,
         remedy: `Drop ${given} for a remote run. For a local owned simulator, drop --remote and unset ios.remote with \`stim settings unset ios.remote --scope <workspace|repo|committed>\`.`,
       };
     }

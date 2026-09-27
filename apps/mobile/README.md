@@ -12,8 +12,12 @@ reload and stop a workspace:
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  building and live ones first. Each is titled by its worktree's branch, or the
-  worktree's folder when it has no branch, or the project for a main checkout,
+  building, warming and ready ones first, then live ones. A workspace
+  `stim worktree warm` is preparing shows **Warming…** with its step and an
+  activity indicator, and one it has prepared shows **Ready** until its first
+  run; both count as live for the filters. Each is titled by its worktree's
+  branch, or the worktree's folder when it has no branch, or the project for a
+  main checkout,
   truncated in the middle when long. Under the title are the project, the app's
   folder in its checkout, the machine's name and the
   git state (a dot with the count of uncommitted files, arrows for commits ahead
@@ -36,7 +40,7 @@ reload and stop a workspace:
   refuse floor), a failed last build, errors in the logs since the marker,
   status issues, a running build at more than twice its median, and a live
   simulator or emulator whose app is not running. A workspace that is not live,
-  building or holding a remote session adds only its error issues and a build
+  building or holding a remote session, warming and ready ones included, adds only its error issues and a build
   that failed in the last day; the machine status sheet lists every issue. A
   disconnected machine shows only its offline item, because its status is
   stale. It shows three items until you expand it. A machine item opens the machine's status, log errors
@@ -66,7 +70,7 @@ reload and stop a workspace:
   are saved on the phone; a dot on the button shows that some are on. Live only
   is the default.
 - **Machine status**: tapping a chip shows that machine's capacity, with Stim's
-  share of memory (what live workspaces commit), charts of CPU, memory used and
+  share of memory (what live workspaces use, or an estimate from an older `stim`), charts of CPU, memory used and
   startup-volume free space over the last hour, load average, memory used and
   pressure, free disk per volume, Stim budgets, running devices and
   device leases, **Needs attention**, and its server and `stim` versions.

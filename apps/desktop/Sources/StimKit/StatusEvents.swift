@@ -73,7 +73,7 @@ public enum StatusEvents {
       events.append(
         StatusEvent(
           kind: .memory, id: "memory:\(now.timeIntervalSince1970)", title: "Over memory capacity",
-          body: "\(cap.liveCount) live workspaces commit \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."))
+          body: "\(cap.liveCount) live workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."))
     }
     return events
   }
