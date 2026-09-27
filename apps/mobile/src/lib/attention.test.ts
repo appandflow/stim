@@ -150,8 +150,8 @@ describe('homeAttention', () => {
     expect(summary([mac([env('retry', { build: running(60_000, null), lastBuilds: { ios: failed } })])])).toEqual([]);
   });
 
-  it('keeps error issues from idle workspaces but their warnings only from active ones', () => {
-    const issue = (severity: 'error' | 'warning', message: string, workspace: string) => ({
+  it('keeps error issues from idle workspaces, their warnings only from active ones, and no info notes', () => {
+    const issue = (severity: 'error' | 'warning' | 'info', message: string, workspace: string) => ({
       code: 'port-not-ours',
       severity,
       message,
@@ -167,7 +167,13 @@ describe('homeAttention', () => {
               issue('warning', 'recorded sim X no longer exists', '/u/app/.worktrees/idle'),
             ],
           }),
-          env('live', { live: true, issues: [issue('warning', 'simulator is booted with no Metro', '/x')] }),
+          env('live', {
+            live: true,
+            issues: [
+              issue('warning', 'simulator is booted with no Metro', '/x'),
+              issue('info', 'port 8083 is in use by another app; stim start will choose a free port', '/x'),
+            ],
+          }),
         ]),
       ]),
     ).toEqual([
