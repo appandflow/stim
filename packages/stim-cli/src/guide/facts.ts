@@ -26,11 +26,12 @@ environment when one is registered at it or inside it. Each entry is
 directory of a bare repository. status lists worktrees from git's own worktree
 records, and on macOS runs no git in a worktree with no environment under a
 protected folder such as ~/Documents, so listing it raises no privacy prompt.
-\`worktree warm\` registers the app it prepares: the nearest React Native or
-Expo app above where it runs, or else the one app the source checkout has
-registered, at the same path in this worktree. A warm that finds neither
-registers nothing, and \`start\`, \`ios\`, \`android\` and \`doctor\` register
-the app later. An environment's worktree is the linked worktree it is
+\`worktree warm\` registers the app it prepares, before it copies: the
+nearest React Native or Expo app above where it runs when that is below the
+worktree root; else the one app the source checkout has registered, at the
+same path in this worktree; else the worktree root when it is the app. A warm
+that finds none registers nothing and says so on stderr, and \`start\`, \`ios\`,
+\`android\` and \`doctor\` register the app later. An environment's worktree is the linked worktree it is
 registered at or inside.
 
 Each worktree entry, in unprovisionedWorktrees and in an environment's

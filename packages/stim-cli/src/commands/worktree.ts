@@ -123,12 +123,14 @@ function mainCheckoutAppDir(root: string, target: string): string {
 }
 
 /**
- * The app workspace a warm prepares: the nearest app, or else the one app registered in the source checkout,
- * at the same place in this worktree. A monorepo's worktree root is not the app.
+ * The app workspace a warm prepares: the nearest app below the worktree root, or else the one app registered in
+ * the source checkout, at the same place in this worktree, or else the worktree root when it is the app. A monorepo
+ * root can declare react-native without being the app.
  */
 export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
   const nearest = findProjectRoot(cwd);
-  if (nearest && isPathPrefix(target, nearest) && appProjectProblem(nearest) === null) return nearest;
+  const app = nearest && isPathPrefix(target, nearest) && appProjectProblem(nearest) === null ? nearest : null;
+  if (app && app !== target) return app;
   const apps = new Set<string>();
   for (const path of Object.keys(loadConfig()?.projects ?? {})) {
     const rel = relative(root, path);
@@ -136,7 +138,7 @@ export function warmedWorkspace(root: string, target: string, cwd: string): stri
     const mapped = resolve(target, rel);
     if (appProjectProblem(mapped) === null) apps.add(mapped);
   }
-  return apps.size === 1 ? [...apps][0]! : null;
+  return apps.size === 1 ? [...apps][0]! : app;
 }
 
 function registerWarmedWorkspace(workspace: string): void {
@@ -164,7 +166,16 @@ export function registerWarm(worktree: Command): void {
         const app = findProjectRoot(process.cwd());
         if (app) recordWorkspaceUse(app);
         const workspace = warmedWorkspace(root, target, process.cwd());
-        if (workspace) {
+        if (!workspace) {
+          console.error(
+            chalk.dim(
+              phaseLine(
+                'project',
+                'no single app to register here; run warm from the app directory to list it in status while it warms',
+              ),
+            ),
+          );
+        } else {
           registerWarmedWorkspace(workspace);
           progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
             note: (line) => console.error(chalk.yellow(line)),

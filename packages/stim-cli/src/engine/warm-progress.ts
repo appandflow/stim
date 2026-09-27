@@ -82,7 +82,7 @@ export function startWarmProgress(
 type PhaseFacts = Pick<EnvironmentState, 'phase' | 'phaseSince' | 'warmStep'>;
 
 /**
- * The lifecycle phase status reports. A warming record counts only while its own claim is live, and a ready
+ * The lifecycle phase status reports. A warming record counts only while a warm holds the workspace's claim, and a ready
  * record only until the workspace is next used or `READY_PHASE_MS` passes.
  */
 export function workspacePhase(
@@ -93,8 +93,7 @@ export function workspacePhase(
   if (live) return { phase: 'live', phaseSince: null };
   const record = readWarmRecord(state);
   if (record?.phase === 'warming') {
-    const { live: holders } = survey(record.claim.root);
-    if (holders.some((holder) => holder.claimId === record.claim.claimId)) {
+    if (survey(record.claim.root).live.length) {
       return { phase: 'warming', phaseSince: record.startedAt, warmStep: record.step };
     }
   }

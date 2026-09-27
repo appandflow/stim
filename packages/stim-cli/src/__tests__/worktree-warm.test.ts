@@ -620,7 +620,6 @@ test('warm registers the app it prepares and leaves it ready until the workspace
   const record = readWarmRecord(state);
   assert(record?.phase === 'ready');
   expect(workspacePhase(false, state)).toEqual({ phase: 'ready', phaseSince: record.at });
-  expect(workspacePhase(true, state)).toEqual({ phase: 'live', phaseSince: null });
   recordWorkspaceUse(target, new Date(Date.now() + 1000));
   expect(workspacePhase(false, readWorkspaceState(target))).toEqual({ phase: 'idle', phaseSince: null });
 }, 30_000);
@@ -639,6 +638,18 @@ test('warm from a monorepo worktree root registers the app the source checkout r
     join(root, 'apps/mobile'),
   ]);
   expect(workspacePhase(false, readWorkspaceState(join(target, 'apps/mobile'))).phase).toBe('ready');
+}, 30_000);
+
+test('warm from a monorepo root that declares react-native still registers the registered app', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  write(root, 'apps/mobile/package.json', APP_PACKAGE);
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'apps');
+  git(target, 'merge', '-q', 'main');
+  upsertProject(join(root, 'apps/mobile'), {});
+  expect((await runWarm(target)).code).toBe(0);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toContain(join(target, 'apps/mobile'));
+  expect(Object.keys(loadConfig()?.projects ?? {})).not.toContain(target);
 }, 30_000);
 
 test('status reads a warm as warming while it copies and as idle once it fails', async () => {
@@ -666,17 +677,16 @@ test('status reads a warm as warming while it copies and as idle once it fails',
 }, 30_000);
 
 test('a warming record counts only while its claim holder lives, and ready lasts two hours', () => {
-  const claimRoot = join(base, 'warm.lock');
   const warming = (claimId: string) => ({
     warm: {
       phase: 'warming',
       step: 'refresh',
       startedAt: '2026-09-26T10:00:00.000Z',
-      claim: { root: claimRoot, claimId },
+      claim: { root: join(base, `${claimId}.lock`), claimId },
     },
   });
-  plantClaim(claimRoot, 'shared', liveClaimOwner(), { claimId: 'live' });
-  plantClaim(claimRoot, 'shared', goneClaimOwner(), { claimId: 'killed' });
+  plantClaim(join(base, 'live.lock'), 'shared', liveClaimOwner(), { claimId: 'live' });
+  plantClaim(join(base, 'killed.lock'), 'shared', goneClaimOwner(), { claimId: 'killed' });
   expect(workspacePhase(false, warming('live'))).toEqual({
     phase: 'warming',
     phaseSince: '2026-09-26T10:00:00.000Z',

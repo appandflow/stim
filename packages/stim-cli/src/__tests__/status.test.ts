@@ -1,3 +1,4 @@
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
@@ -630,6 +631,15 @@ test('a label-only worktree root is flagged labelOnly in --json and relabelled i
 
   const logs = await runStatus();
   expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
+});
+
+test('a workspace a warm just prepared reports phase ready in --json and [ready] in the human view', async () => {
+  saveConfig(makeConfig({ version: 2, projects: { '/wt/warmed': { platforms: {} } } }));
+  writeWorkspaceState('/wt/warmed', { warm: { phase: 'ready', at: new Date().toISOString() } });
+
+  const payload = await runStatusJson();
+  expect(payload.environments[0]).toMatchObject({ live: false, phase: 'ready' });
+  expect((await runStatus()).some((line) => line.includes('warmed [ready]'))).toBe(true);
 });
 
 test('a worktree root that is itself the app is not flagged labelOnly', async () => {

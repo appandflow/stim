@@ -172,10 +172,12 @@ with its `path`, `branch`, and `repository`.
 
 `worktree warm` registers the app it prepares, so the workspace shows in
 `stim status`, Stim Desktop and the phone app from the moment warm starts.
-That app is the nearest React Native or Expo app where warm runs, or else the
-one app the source checkout has registered, at the same path in the worktree.
-From a monorepo's worktree root, warm finds `apps/mobile` this way when the
-source checkout's `apps/mobile` is registered. Status reports each
+That app is the nearest React Native or Expo app where warm runs when it is
+below the worktree root. Otherwise it is the one app the source checkout has
+registered, at the same path in the worktree, or else the worktree root when
+that is the app. From a monorepo's worktree root, warm finds `apps/mobile`
+this way when the source checkout's `apps/mobile` is registered, even if the
+root `package.json` also lists `react-native`. Status reports each
 environment's `phase`:
 
 - `warming` while warm runs, with `warmStep` `refresh` or `copy`.
