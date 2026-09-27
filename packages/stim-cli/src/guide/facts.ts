@@ -760,7 +760,9 @@ RULES
   running        the browser supervisor and Chrome are both verified live;
                  pid, supervisorPid, cdpEndpoint and targetId are null when
                  false, and page and activity are absent
-  url            the page stim web opened; page.url is where it is now
+  url            the page stim web opened; page.url is the document the page
+                 loaded last (in-app routes that do not load a document are
+                 not tracked)
   cdpEndpoint    http://127.0.0.1:<port>, the reserved loopback DevTools
                  endpoint of that Chrome. Attach Playwright MCP
                  (--cdp-endpoint) or agent-browser (--cdp <port>) to it; it

@@ -150,10 +150,10 @@ status reports it as the browser's driver (web.activity, "driven by
 playwright"), the way it names agent-device on a simulator. web.targetId is
 the owned page; a tab another tool opens is not captured.
 
-stim status also reports where the page is now and how its latest load went:
-web.page { url, state: loading | loaded | failed, error? }. A failed load (the
-dev server is down, a certificate error, a crash) shows in status next to the
-error count.
+stim status also reports the document the page loaded last and how that
+load went: web.page { url, state: loading | loaded | failed, error? }. A failed
+load (the dev server is down, a certificate error, a crash) shows on status's
+web line.
 
 OWNERSHIP AND CLEANUP
 

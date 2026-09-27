@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { rotatedLogPath } from '@stim-cli/core';
 import { WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
-import { tailLines } from '../devices/activity.ts';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 import { chromeProcessState } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -144,6 +145,8 @@ export function webFacts(record: WebRecord | null): WebFacts | null {
 }
 
 const PAGE_FAILURES = new Set(['web_document_failed', 'web_page_crashed']);
+const NAVIGATION = Buffer.from('"event":"web_navigation"');
+const PAGE_EVENT = '"event":"web_';
 
 /**
  * The latest page load in the web log's `lines`: the newest `web_navigation` marker, and whether a document
@@ -170,6 +173,28 @@ export function latestPageLoad(lines: readonly string[]): WebPageState | null {
   return null;
 }
 
+/** The page lines from the newest navigation on, in the web log or, right after a rotation, its previous file. */
+function pageLines(file: string): string[] | null {
+  for (const path of [file, rotatedLogPath(file)]) {
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(path);
+    } catch {
+      continue;
+    }
+    const at = bytes.lastIndexOf(NAVIGATION);
+    if (at < 0) continue;
+    const start = bytes.lastIndexOf(0x0a, at) + 1;
+    return bytes
+      .subarray(start)
+      .toString('utf8')
+      .split('\n')
+      .filter((line) => line.includes(PAGE_EVENT));
+  }
+  return null;
+}
+
 export function readWebPage(root: string): WebPageState | null {
-  return latestPageLoad(tailLines(webLogFile(root)) ?? []);
+  const lines = pageLines(webLogFile(root));
+  return lines ? latestPageLoad(lines) : null;
 }

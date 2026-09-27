@@ -223,7 +223,7 @@ function isDeviceRecord(record: Record<string, unknown>): boolean {
   return !(typeof record.event === 'string' && record.event.startsWith('collector_'));
 }
 
-export function tailLines(path: string): string[] | null {
+function tailLines(path: string): string[] | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, 'r');
@@ -284,7 +284,9 @@ export interface DeviceProcessTables {
   host(): HostProcess[] | null;
   android(serial: string): string | null;
   /** `lsof -Fpn` output for the established connections of a loopback TCP port, or null when lsof failed. */
-  tcpConnections?(port: number): string | null;
+  tcpConnections(port: number): string | null;
+  /** The process table that names DevTools clients, when `host` was read before `tcpConnections`; defaults to `host`. */
+  clients?(): HostProcess[] | null;
 }
 
 export function createDeviceProcessTables(): DeviceProcessTables {
@@ -464,14 +466,18 @@ function parseTcpClients(output: string, port: number): number[] {
  * `stim-frames` in stim-server, Stim Desktop, and the `stim` CLI's short-lived connections.
  */
 function webDriverTool(command: string): string | null {
-  if (/\bstim-(frames|server|web)\b|StimDesktop|\/stim-cli\/|\/bin\/stim(\s|$)|^stim(\s|$)/.test(command)) return null;
+  if (
+    /\bstim-(frames|server|web)\b|StimDesktop|\/stim(-cli)?\/(dist|bin)\/|\/bin\/stim(\s|$)|^stim(\s|$)/.test(command)
+  )
+    return null;
   if (/agent-browser/i.test(command)) return 'agent-browser';
   if (/agent-device/i.test(command)) return 'agent-device';
   if (/chrome-devtools-mcp/i.test(command)) return 'chrome-devtools-mcp';
   if (/playwright/i.test(command)) return 'playwright';
   if (/puppeteer/i.test(command)) return 'puppeteer';
-  const executable = command.trim().split(/\s+/)[0] ?? '';
-  return basename(executable) || 'unknown DevTools client';
+  const [executable = '', script] = command.trim().split(/\s+/);
+  const name = basename(executable);
+  return (/^(node|bun|deno|python3?)$/.test(name) && script ? basename(script) : name) || 'unknown DevTools client';
 }
 
 export interface WebActivityTarget {
@@ -491,12 +497,15 @@ export function readWebActivity(
   now: number = Date.now(),
 ): DeviceActivity {
   const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
-  const connections = tables.tcpConnections?.(target.port) ?? null;
-  const processes = connections === null ? null : tables.host();
+  const connections = tables.tcpConnections(target.port);
+  const clients =
+    connections === null
+      ? []
+      : parseTcpClients(connections, target.port).filter((pid) => !target.ownPids.includes(pid));
+  const processes = clients.length ? (tables.clients ?? tables.host)() : [];
   if (connections === null || processes === null) evidence.unknown.push('cdp-client');
   else {
-    for (const pid of parseTcpClients(connections, target.port)) {
-      if (target.ownPids.includes(pid)) continue;
+    for (const pid of clients) {
       const row = processes.find((candidate) => candidate.pid === pid);
       const tool = row ? webDriverTool(row.command) : 'unknown DevTools client';
       if (tool) evidence.drivers.push({ basis: 'cdp-client', tool, pid, since: row?.startedAt ?? null });

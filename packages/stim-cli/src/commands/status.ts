@@ -317,10 +317,13 @@ function readMachineUsage({
  * machine usage, it reads the host process table again; it reuses every other subprocess fact of the full read.
  */
 function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): void {
-  if (machine && snapshot.machine) {
-    const fresh = createDeviceProcessTables();
-    snapshot.tables = { host: fresh.host, android: snapshot.tables.android };
-  }
+  const fresh = createDeviceProcessTables();
+  snapshot.tables = {
+    host: machine && snapshot.machine ? fresh.host : snapshot.tables.host,
+    android: snapshot.tables.android,
+    tcpConnections: fresh.tcpConnections,
+    clients: fresh.host,
+  };
   withStateReadCache(() => {
     for (const state of snapshot.states) state.logs = logFacts(state.path);
     readDeviceProcesses(snapshot.states, snapshot.tables, null);

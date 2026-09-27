@@ -206,10 +206,11 @@ While a tool is connected, `stim status` names it as the browser's driver
 simulator. `web.targetId` is the owned page; a tab another tool opens is not
 captured.
 
-`web.page` reports where the page is now and how its latest load went:
+`web.page` reports the document the page loaded last and how that load went:
 `{ url, state, error? }`, with `state` one of `loading`, `loaded` or `failed`.
-A failed load (the dev server is down, a certificate error, a crash) shows in
-`stim status` next to the error count.
+In-app routes that load no document are not tracked. A failed load (the dev
+server is down, a certificate error, a crash) shows on the `web:` line of
+`stim status`.
 
 ## Cleanup
 
