@@ -3,10 +3,7 @@ import { clockDuration, shortDuration } from '@/lib/format';
 import { diskTone, formatBytes } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
 import { attentionGroups, devicesOf, isActive, repositoryRoots, runningBuild, workspaceTitle } from '@/lib/workspaces';
-import type { EnvironmentState, MachineUsage, PushEvent, StatusPayload } from '@/protocol/types';
-
-/** The attention events that can notify: what stim-server pushes, and a machine going offline, which only the phone sees. */
-export type NotifyEvent = PushEvent | 'offline';
+import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
 
 export interface AttentionMachine {
   id: string;
@@ -35,16 +32,6 @@ export interface HomeAttentionItem {
   detail: string;
   macName: string;
   target: AttentionTarget;
-  /** Null for an item that never notifies, such as a workspace issue. */
-  event: NotifyEvent | null;
-  /** Changes when the same item describes a new problem, such as a later failed build. */
-  occurrence: string;
-  /** `detail` without times that change while the problem lasts, for a notification. */
-  reason: string;
-  /** Whether an agent drives a device of the workspace; null for a machine item. */
-  driven: boolean | null;
-  /** The workspace's errors since the last log marker, for `log-errors`. */
-  count?: number;
 }
 
 const OVERRUN_FACTOR = 2;
@@ -58,23 +45,17 @@ function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | nu
     title: mac.name,
     target: { kind: 'machine', macId: mac.id } as const,
     key: `${mac.id}\noffline`,
-    event: 'offline' as const,
-    driven: null,
   };
-  if (mac.missing) {
-    const detail = 'Not paired: pair again';
-    return { ...base, severity: 'error', detail, reason: detail, occurrence: 'unpaired' };
-  }
+  if (mac.missing) return { ...base, severity: 'error', detail: 'Not paired: pair again' };
   const { state } = mac;
   if (state.kind === 'refused') {
     const fix = state.code === 'protocol-unsupported' ? 'needs an update' : 'pair again';
-    const detail = `Refused the connection: ${fix}`;
-    return { ...base, severity: 'error', detail, reason: detail, occurrence: 'refused' };
+    return { ...base, severity: 'error', detail: `Refused the connection: ${fix}` };
   }
   if (state.kind === 'open' || (state.kind === 'connecting' && mac.disconnectedAt === null)) return null;
   const lastSeenAt = mac.seenAt ?? mac.disconnectedAt;
   const seen = lastSeenAt === null ? '' : ` \u00B7 last seen ${shortDuration(now - lastSeenAt)} ago`;
-  return { ...base, severity: 'warning', detail: `Offline${seen}`, reason: 'Offline', occurrence: 'offline' };
+  return { ...base, severity: 'warning', detail: `Offline${seen}` };
 }
 
 function diskItem(mac: AttentionMachine): HomeAttentionItem | null {
@@ -83,18 +64,13 @@ function diskItem(mac: AttentionMachine): HomeAttentionItem | null {
     null,
   );
   if (lowest === null || lowest === undefined || diskTone(lowest) !== 'critical') return null;
-  const detail = `${formatBytes(lowest)} free, below Stim's floor`;
   return {
     key: `${mac.id}\ndisk`,
     severity: 'error',
     title: mac.name,
-    detail,
+    detail: `${formatBytes(lowest)} free, below Stim's floor`,
     macName: mac.name,
     target: { kind: 'machine', macId: mac.id },
-    event: 'disk',
-    occurrence: '',
-    reason: detail,
-    driven: null,
   };
 }
 
@@ -108,14 +84,7 @@ function workspaceItems(
 ): HomeAttentionItem[] {
   const items: HomeAttentionItem[] = [];
   const at = { macId: mac.id, path: env.path };
-  const driven = devicesOf(env).some((device) => device.activity?.state === 'driven');
-  const add = (
-    id: string,
-    severity: HomeAttentionItem['severity'],
-    detail: string,
-    notify: Pick<HomeAttentionItem, 'event' | 'occurrence' | 'reason' | 'count'>,
-    logs = false,
-  ) =>
+  const add = (id: string, severity: HomeAttentionItem['severity'], detail: string, logs = false) =>
     items.push({
       key: `${mac.id}\n${env.path}\n${id}`,
       severity,
@@ -123,8 +92,6 @@ function workspaceItems(
       detail,
       macName: mac.name,
       target: logs ? { kind: 'logs', ...at } : { kind: 'workspace', ...at },
-      driven,
-      ...notify,
     });
 
   for (const platform of ['ios', 'android'] as const) {
@@ -135,43 +102,29 @@ function workspaceItems(
     if (!active && !(now - ended < RECENT_FAILURE_MS)) continue;
     const age = Number.isNaN(ended) ? '' : ` \u00B7 ${shortDuration(now - ended)} ago`;
     const code = last.errorCode ? ` (${last.errorCode})` : '';
-    const reason = `${platformName(platform)} build failed${code}`;
-    add(`build-${platform}`, 'error', `${reason}${age}`, { event: 'build-failed', occurrence: endedAt, reason });
+    add(`build-${platform}`, 'error', `${platformName(platform)} build failed${code}${age}`);
   }
 
   const errors = env.logs?.errorsSinceMarker ?? 0;
   if (active && errors > 0) {
-    const detail = `${errors === 1 ? '1 error' : `${errors} errors`} in the logs`;
-    add(
-      'logs',
-      'error',
-      detail,
-      { event: 'log-errors', occurrence: String(errors), reason: detail, count: errors },
-      true,
-    );
+    add('logs', 'error', `${errors === 1 ? '1 error' : `${errors} errors`} in the logs`, true);
   }
 
   issues.forEach((issue, i) => {
-    const detail = tildeHome(issue.message, mac.home);
-    add(`issue-${i}`, issue.severity, detail, { event: null, occurrence: '', reason: detail });
+    add(`issue-${i}`, issue.severity, tildeHome(issue.message, mac.home));
   });
 
   const build = runningBuild(env);
   const started = build ? Date.parse(build.startedAt) : NaN;
   if (build?.expectedMs && Number.isFinite(started) && now - started > OVERRUN_FACTOR * build.expectedMs) {
     const detail = `${platformName(build.platform)} build at ${clockDuration(now - started)}, usually ~${clockDuration(build.expectedMs)}`;
-    add('overrun', 'warning', detail, { event: 'slow-build', occurrence: build.startedAt, reason: detail });
+    add('overrun', 'warning', detail);
   }
 
   if (env.live) {
     for (const device of devicesOf(env)) {
       if (!device.running || device.app?.state !== 'stopped' || runningBuild(env, device)) continue;
-      const detail = `App not running on ${device.model}`;
-      add(`app-${device.platform}-${device.slot}`, 'warning', detail, {
-        event: 'app-stopped',
-        occurrence: '',
-        reason: detail,
-      });
+      add(`app-${device.platform}-${device.slot}`, 'warning', `App not running on ${device.model}`);
     }
     if (env.web?.running && env.web.page?.state === 'failed') {
       const detail = 'Web page failed to load';

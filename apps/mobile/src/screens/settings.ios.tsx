@@ -23,17 +23,20 @@ import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { useNotificationPrefs } from '@/hooks/notifications';
-import type { NotifyEvent } from '@/lib/attention';
-import { NOTIFY_EVENTS } from '@/lib/notifications';
+import { NOTIFY_CATEGORIES } from '@/lib/notifications';
+import type { OversightCategory } from '@/lib/oversight';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope } from '@/lib/connection';
 import {
-  AGENT_ONLY_LABEL,
   APPEARANCE_OPTIONS,
   HOME_FOOTER,
   NOTIFICATIONS_FOOTER,
-  NOTIFY_EVENT_LABELS,
+  NOTIFY_CATEGORY_LABELS,
   HOME_VIEW_OPTIONS,
+  parseQuietHoursValue,
+  QUIET_HOURS_OPTIONS,
+  quietHoursValue,
+  STUCK_MINUTES_OPTIONS,
   READ_ONLY_FOOTER,
   VIDEO_QUALITY_FOOTER,
   VIDEO_QUALITY_OPTIONS,
@@ -136,13 +139,13 @@ export function Settings() {
 
 type RowModifiers = ReturnType<typeof listRowBackground>[];
 
-const EVENT_SYMBOLS: Record<NotifyEvent, SFSymbol> = {
-  'build-failed': 'hammer',
-  'log-errors': 'exclamationmark.triangle',
-  disk: 'internaldrive',
-  offline: 'wifi.slash',
-  'app-stopped': 'app.dashed',
-  'slow-build': 'tortoise',
+const CATEGORY_SYMBOLS: Record<OversightCategory, SFSymbol> = {
+  started: 'play.circle',
+  stuck: 'hourglass',
+  looping: 'arrow.triangle.2.circlepath',
+  finished: 'checkmark.circle',
+  machine: 'laptopcomputer.trianglebadge.exclamationmark',
+  control: 'hand.raised',
 };
 
 function NotificationsSection({
@@ -155,8 +158,8 @@ function NotificationsSection({
   modifiers: RowModifiers;
 }) {
   const { prefs, enable, update } = value;
-  const toggle = (event: NotifyEvent, on: boolean) =>
-    update({ events: on ? [...prefs.events, event] : prefs.events.filter((e) => e !== event) });
+  const toggle = (category: OversightCategory, on: boolean) =>
+    update({ categories: on ? [...prefs.categories, category] : prefs.categories.filter((c) => c !== category) });
   return (
     <Section title="Notifications" footer={<Text>{NOTIFICATIONS_FOOTER}</Text>}>
       <Toggle
@@ -167,21 +170,38 @@ function NotificationsSection({
         <RowLabel colors={colors} title="Notify when something needs attention" symbol="bell.badge" />
       </Toggle>
       {prefs.enabled
-        ? NOTIFY_EVENTS.map((event) => (
+        ? NOTIFY_CATEGORIES.map((category) => (
             <Toggle
-              key={event}
-              isOn={prefs.events.includes(event)}
-              onIsOnChange={(on) => toggle(event, on)}
+              key={category}
+              isOn={prefs.categories.includes(category)}
+              onIsOnChange={(on) => toggle(category, on)}
               modifiers={modifiers}
             >
-              <RowLabel colors={colors} title={NOTIFY_EVENT_LABELS[event]} symbol={EVENT_SYMBOLS[event]} />
+              <RowLabel colors={colors} title={NOTIFY_CATEGORY_LABELS[category]} symbol={CATEGORY_SYMBOLS[category]} />
             </Toggle>
           ))
         : null}
       {prefs.enabled ? (
-        <Toggle isOn={prefs.agentOnly} onIsOnChange={(agentOnly) => update({ agentOnly })} modifiers={modifiers}>
-          <RowLabel colors={colors} title={AGENT_ONLY_LABEL} symbol="sparkles" />
-        </Toggle>
+        <Choice
+          colors={colors}
+          title="Stuck after"
+          symbol="timer"
+          options={STUCK_MINUTES_OPTIONS}
+          value={String(prefs.stuckMinutes)}
+          onChange={(value) => update({ stuckMinutes: Number(value) })}
+          modifiers={modifiers}
+        />
+      ) : null}
+      {prefs.enabled ? (
+        <Choice
+          colors={colors}
+          title="Quiet hours"
+          symbol="moon"
+          options={QUIET_HOURS_OPTIONS}
+          value={quietHoursValue(prefs.quietHours)}
+          onChange={(value) => update({ quietHours: parseQuietHoursValue(value) })}
+          modifiers={modifiers}
+        />
       ) : null}
     </Section>
   );

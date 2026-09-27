@@ -1,11 +1,13 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
-import { homeAttention, type AttentionMachine } from '@/lib/attention';
+import type { AttentionMachine } from '@/lib/attention';
 import type { ConnectionState } from '@/lib/connection';
 import {
   DEFAULT_PREFS,
   localNotifications,
   notificationRoute,
+  parsePrefs,
+  type LocalNotification,
   type NotificationPrefs,
   type NotifyState,
 } from '@/lib/notifications';
@@ -55,19 +57,27 @@ const mac = (environments: EnvironmentState[], extra: Partial<AttentionMachine> 
   ...extra,
 });
 
-const failed = (at: number) => ({
-  ios: {
+/** An iOS history whose newest `count` runs failed at the same Swift line, the newest at `at`. */
+const looping = (at: number, count = 3): Partial<EnvironmentState> => {
+  const runs = Array.from({ length: count }, (_, i) => ({
     platform: 'ios' as const,
     status: 'failed' as const,
+    result: 'failed' as const,
+    slot: 'default',
+    configuration: 'Debug',
+    cacheKey: null,
+    phases: {},
     cacheHit: false as const,
     cacheSkipped: false,
     durationMs: 1000,
     fingerprint: null,
-    startedAt: new Date(at).toISOString(),
-    finishedAt: new Date(at).toISOString(),
+    startedAt: new Date(at - i * 60_000).toISOString(),
+    finishedAt: new Date(at - i * 60_000).toISOString(),
     errorCode: 'STIM_BUILD_FAILED',
-  },
-});
+    diagnostics: [{ file: '/u/app/ios/AppDelegate.swift', line: 71, column: 3, message: 'boom' }],
+  }));
+  return { builds: { ios: runs }, lastBuilds: { ios: runs[0] } };
+};
 
 const sim = (app: 'running' | 'stopped', activity: 'driven' | 'idle' = 'idle') => ({
   name: 'stim-x (iPhone 18 Pro 27.0)',
@@ -78,180 +88,203 @@ const sim = (app: 'running' | 'stopped', activity: 'driven' | 'idle' = 'idle') =
   app: { id: 'com.app', state: app },
 });
 
-/** Feeds each machine snapshot at its time through home's attention and the notifier, like the app does. */
+/** Feeds each machine snapshot at its time through the notifier, like the app does. */
 function run(
-  steps: { at: number; machines: AttentionMachine[]; prefs?: NotificationPrefs; pushed?: string[]; awake?: number }[],
-) {
+  steps: {
+    at: number;
+    machines: AttentionMachine[];
+    prefs?: NotificationPrefs;
+    pushed?: string[];
+    awake?: number;
+    minuteOfDay?: number;
+  }[],
+): LocalNotification[][] {
   let state: NotifyState = {};
-  return steps.map(({ at, machines, prefs = ON, pushed = [], awake = T0 }) => {
+  return steps.map(({ at, machines, prefs = ON, pushed = [], awake = T0, minuteOfDay = 12 * 60 }) => {
     const now = T0 + at;
     const result = localNotifications(
       state,
-      homeAttention(machines, now),
       machines.map((m) => ({
-        id: m.id,
+        mac: m,
         live: m.state.kind === 'open' && m.status !== null,
         pushed: pushed.includes(m.id),
       })),
       prefs,
       now,
+      minuteOfDay,
       awake,
     );
-    state = result.state;
-    return result.notifications.map((n) => `${n.title}${n.subtitle ? ` (${n.subtitle})` : ''}: ${n.body}`);
+    state = JSON.parse(JSON.stringify(result.state)) as NotifyState;
+    return result.notifications;
   });
 }
 
+const texts = (steps: LocalNotification[][]) =>
+  steps.map((notifications) =>
+    notifications.map((n) => `${n.title}${n.subtitle ? ` (${n.subtitle})` : ''}: ${n.body}`),
+  );
+
 describe('localNotifications', () => {
-  it('stays quiet about what is wrong at the first check, then notifies each new failure once', () => {
-    expect(
-      run([
-        { at: 0, machines: [mac([env({ lastBuilds: failed(T0 - 60_000) })])] },
-        { at: 5000, machines: [mac([env({ lastBuilds: failed(T0 - 60_000) })])] },
-        { at: 10_000, machines: [mac([env({ lastBuilds: failed(T0 + 8000) })])] },
-        { at: 15_000, machines: [mac([env({ lastBuilds: failed(T0 + 8000) })])] },
-        { at: 20_000, machines: [mac([env({ lastBuilds: failed(T0 + 18_000) })])] },
-      ]),
-    ).toEqual([
+  it('notifies a looping build once, updating in place, with its build details as the target', () => {
+    const steps = run([
+      { at: 0, machines: [mac([env(looping(T0 - 600_000, 1))])] },
+      { at: 60_000, machines: [mac([env(looping(T0 + 60_000, 2))])] },
+      { at: 120_000, machines: [mac([env(looping(T0 + 120_000))])] },
+      { at: 180_000, machines: [mac([env(looping(T0 + 180_000, 4))])] },
+    ]);
+    expect(steps).toEqual([
       [],
       [],
-      ['feat/login (MacBook Pro): iOS build failed (STIM_BUILD_FAILED)'],
+      [
+        {
+          id: 'a:looping-ios:/u/app/.worktrees/login',
+          title: 'feat/login',
+          subtitle: 'MacBook Pro',
+          body: 'Same Swift error 3x at AppDelegate.swift:71',
+          quiet: false,
+          thread: null,
+          data: { ref: 'a', target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
+        },
+      ],
       [],
-      ['feat/login (MacBook Pro): iOS build failed (STIM_BUILD_FAILED)'],
     ]);
   });
 
-  it('treats a problem that clears briefly as the same one, and one gone two minutes as new', () => {
-    const stopped = mac([env({ ios: sim('stopped') })]);
-    const running = mac([env({ ios: sim('running') })]);
+  it('no longer notifies a single failed build, log errors or a stopped app', () => {
     expect(
-      run([
-        { at: 0, machines: [running] },
-        { at: 1000, machines: [stopped] },
-        { at: 2000, machines: [running] },
-        { at: 60_000, machines: [stopped] },
-        { at: 70_000, machines: [running] },
-        { at: 200_000, machines: [running] },
-        { at: 210_000, machines: [stopped] },
-      ]),
-    ).toEqual([
-      [],
-      ['feat/login (MacBook Pro): App not running on iPhone 18 Pro 27.0'],
-      [],
-      [],
-      [],
-      [],
-      ['feat/login (MacBook Pro): App not running on iPhone 18 Pro 27.0'],
-    ]);
+      texts(
+        run([
+          { at: 0, machines: [mac([env({ ios: sim('running') })])] },
+          {
+            at: 60_000,
+            machines: [
+              mac([
+                env({ ...looping(T0 + 60_000, 1), ios: sim('stopped'), logs: { dir: '/l', errorsSinceMarker: 5 } }),
+              ]),
+            ],
+          },
+        ]),
+      ),
+    ).toEqual([[], []]);
   });
 
-  it('holds what a cached or disconnected status reported until the live status says otherwise', () => {
-    const broken = [env({ lastBuilds: failed(T0 + 1000) })];
-    expect(
-      run([
-        { at: 0, machines: [mac([env()])] },
-        { at: 2000, machines: [mac(broken)] },
-        { at: 400_000, machines: [mac(broken, { status: null, seenAt: T0 })] },
-        { at: 800_000, machines: [mac(broken)] },
-      ]),
-    ).toEqual([[], ['feat/login (MacBook Pro): iOS build failed (STIM_BUILD_FAILED)'], [], []]);
+  it('notifies work started quietly, grouped per machine, and opens the device viewer', () => {
+    const [, started] = run([
+      { at: 0, machines: [mac([env({ ios: sim('running') })])] },
+      { at: 60_000, machines: [mac([env({ ios: sim('running', 'driven') })])] },
+    ]);
+    expect(started).toEqual([
+      expect.objectContaining({
+        id: 'a:started:/u/app/.worktrees/login',
+        quiet: true,
+        thread: 'started:MacBook Pro',
+        data: { ref: 'a', target: 'device', path: '/u/app/.worktrees/login', platform: 'ios', slot: 'default' },
+      }),
+    ]);
   });
 
   it('notifies a machine that stays offline for a minute of open app time', () => {
     const offline = mac([], { state: { kind: 'waiting', retryInMs: 1000, reason: 'x' }, disconnectedAt: T0 });
     expect(
-      run([
-        { at: 0, machines: [mac([])] },
-        { at: 1000, machines: [offline] },
-        { at: 30_000, machines: [offline] },
-        { at: 61_000, machines: [offline] },
-        { at: 120_000, machines: [offline] },
-      ]),
+      texts(
+        run([
+          { at: 0, machines: [mac([])] },
+          { at: 1000, machines: [offline] },
+          { at: 30_000, machines: [offline] },
+          { at: 61_000, machines: [offline] },
+          { at: 120_000, machines: [offline] },
+        ]),
+      ),
     ).toEqual([[], [], [], ['MacBook Pro: Offline'], []]);
 
     expect(
-      run([
-        { at: 0, machines: [mac([])] },
-        { at: 1000, machines: [offline] },
-        { at: 300_000, machines: [offline], awake: T0 + 299_000 },
-        { at: 301_000, machines: [mac([])], awake: T0 + 299_000 },
-      ]),
+      texts(
+        run([
+          { at: 0, machines: [mac([])] },
+          { at: 1000, machines: [offline] },
+          { at: 300_000, machines: [offline], awake: T0 + 299_000 },
+          { at: 301_000, machines: [mac([])], awake: T0 + 299_000 },
+        ]),
+      ),
     ).toEqual([[], [], [], []]);
   });
 
-  it('notifies log errors once the count settles, then new ones after a cooldown', () => {
-    const logs = (count: number) => [mac([env({ logs: { dir: '/l', errorsSinceMarker: count } })])];
-    expect(
-      run([
-        { at: 0, machines: logs(0) },
-        { at: 1000, machines: logs(2) },
-        { at: 4000, machines: logs(3) },
-        { at: 15_000, machines: logs(3) },
-        { at: 20_000, machines: logs(7) },
-        { at: 40_000, machines: logs(7) },
-        { at: 316_000, machines: logs(7) },
-      ]),
-    ).toEqual([
-      [],
-      [],
-      [],
-      ['feat/login (MacBook Pro): 3 errors in the logs'],
-      [],
-      [],
-      ['feat/login (MacBook Pro): 4 new errors in the logs'],
-    ]);
-  });
-
-  it('skips events that are off, and stays quiet about them when they are turned on', () => {
-    const noBuilds = { ...ON, events: ON.events.filter((e) => e !== 'build-failed') };
-    expect(
-      run([
-        { at: 0, machines: [mac([env()])], prefs: noBuilds },
-        { at: 1000, machines: [mac([env({ lastBuilds: failed(T0) })], { usage: usage(3) })], prefs: noBuilds },
-        { at: 2000, machines: [mac([env({ lastBuilds: failed(T0) })], { usage: usage(3) })] },
-      ]),
-    ).toEqual([[], ["MacBook Pro: 3.0 GB free, below Stim's floor"], []]);
-  });
-
-  it('keeps only workspaces an agent drives with the agent filter', () => {
-    const agentOnly = { ...ON, agentOnly: true };
-    const envs = (app: 'running' | 'stopped') => [
-      env({ ios: sim(app, 'idle') }),
-      env({ path: '/u/app/.worktrees/agent', worktree: undefined, ios: sim(app, 'driven') }),
-    ];
-    expect(
-      run([
-        { at: 0, machines: [mac(envs('running'))], prefs: agentOnly },
-        { at: 1000, machines: [mac(envs('stopped'))], prefs: agentOnly },
-      ]),
-    ).toEqual([[], ['agent (MacBook Pro): App not running on iPhone 18 Pro 27.0']]);
-  });
-
   it('leaves what a machine pushes to the push, but still notifies its disconnection', () => {
-    const offline = mac([env({ lastBuilds: failed(T0) })], {
+    const offline = mac([env(looping(T0))], {
       state: { kind: 'waiting', retryInMs: 1000, reason: 'x' },
       disconnectedAt: T0,
     });
     expect(
-      run([
-        { at: 0, machines: [mac([env()])], pushed: ['a'] },
-        { at: 1000, machines: [mac([env({ lastBuilds: failed(T0) })])], pushed: ['a'] },
-        { at: 2000, machines: [offline], pushed: ['a'] },
-        { at: 70_000, machines: [offline], pushed: ['a'] },
-        { at: 80_000, machines: [mac([env({ lastBuilds: failed(T0) })])] },
-      ]),
+      texts(
+        run([
+          { at: 0, machines: [mac([env()])], pushed: ['a'] },
+          { at: 1000, machines: [mac([env(looping(T0))], { usage: usage(3) })], pushed: ['a'] },
+          { at: 2000, machines: [offline], pushed: ['a'] },
+          { at: 70_000, machines: [offline], pushed: ['a'] },
+          { at: 80_000, machines: [mac([env(looping(T0))], { usage: usage(3) })] },
+        ]),
+      ),
     ).toEqual([[], [], [], ['MacBook Pro: Offline'], []]);
   });
 
-  it('sums up more than three at once', () => {
-    const broken = (name: string) =>
-      env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, lastBuilds: failed(T0) });
+  it('skips categories that are off, holds what lasts through quiet hours, and drops what started then', () => {
+    const noLoops = { ...ON, categories: ON.categories.filter((c) => c !== 'looping') };
+    const quiet = { ...ON, quietHours: { start: 22 * 60, end: 7 * 60 } };
     expect(
-      run([
-        { at: 0, machines: [mac([])] },
-        { at: 1000, machines: [mac([broken('a'), broken('b'), broken('c'), broken('d')])] },
-      ]),
-    ).toEqual([[], ['Stim: 4 problems need attention']]);
+      texts(
+        run([
+          { at: 0, machines: [mac([env()])], prefs: noLoops },
+          { at: 1000, machines: [mac([env(looping(T0))], { usage: usage(3) })], prefs: noLoops },
+          { at: 2000, machines: [mac([env(looping(T0))], { usage: usage(3) })] },
+        ]),
+      ),
+    ).toEqual([[], ["MacBook Pro: 3.0 GB free, below Stim's floor"], []]);
+    expect(
+      texts(
+        run([
+          { at: 0, machines: [mac([env({ ios: sim('running') })])], prefs: quiet, minuteOfDay: 23 * 60 },
+          {
+            at: 1000,
+            machines: [mac([env({ ios: sim('running', 'driven') })], { usage: usage(3) })],
+            prefs: quiet,
+            minuteOfDay: 23 * 60,
+          },
+          { at: 2000, machines: [mac([env({ ios: sim('running', 'driven') })], { usage: usage(3) })], prefs: quiet },
+        ]),
+      ),
+    ).toEqual([[], [], ["MacBook Pro: 3.0 GB free, below Stim's floor"]]);
+  });
+
+  it('sums up more than three at once', () => {
+    const broken = (name: string) => env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, ...looping(T0) });
+    expect(
+      texts(
+        run([
+          { at: 0, machines: [mac([])] },
+          { at: 1000, machines: [mac([broken('a'), broken('b'), broken('c'), broken('d')])] },
+        ]),
+      ),
+    ).toEqual([[], ['Stim: 4 things need a look']]);
+  });
+});
+
+describe('parsePrefs', () => {
+  it('keeps notifications on for preferences saved before the categories, with every category', () => {
+    expect(parsePrefs(JSON.stringify({ enabled: true, events: ['build-failed'], agentOnly: true }))).toEqual({
+      ...DEFAULT_PREFS,
+      enabled: true,
+    });
+    expect(
+      parsePrefs(
+        JSON.stringify({
+          enabled: true,
+          categories: ['stuck', 'bogus'],
+          stuckMinutes: 30,
+          quietHours: { start: 1, end: 2 },
+        }),
+      ),
+    ).toEqual({ enabled: true, categories: ['stuck'], stuckMinutes: 30, quietHours: { start: 1, end: 2 } });
+    expect(parsePrefs(JSON.stringify({ stuckMinutes: 0, quietHours: { start: 1440, end: 0 } }))).toEqual(DEFAULT_PREFS);
   });
 });
 
@@ -270,8 +303,29 @@ describe('notificationRoute', () => {
       pathname: '/mac/[id]/logs',
       params: { id: 'a', path: '/w', errors: '1' },
     });
+    expect(
+      notificationRoute({ ref: 'a', target: 'device', path: '/w', platform: 'android', slot: 'tab' }, macs),
+    ).toEqual({
+      pathname: '/mac/[id]/device',
+      params: { id: 'a', path: '/w', platform: 'android', slot: 'tab' },
+    });
+    expect(notificationRoute({ ref: 'a', target: 'build', path: '/w', platform: 'ios' }, macs)).toEqual({
+      pathname: '/mac/[id]/build',
+      params: { id: 'a', path: '/w', platform: 'ios' },
+    });
     expect(notificationRoute({ ref: 'gone', target: 'machine' }, macs)).toEqual({ pathname: '/' });
     expect(notificationRoute({ ref: 'a', target: 'home' }, macs)).toEqual({ pathname: '/' });
     expect(notificationRoute(undefined, macs)).toEqual({ pathname: '/' });
+  });
+
+  it('opens only a GitHub pull request in the browser, and the workspace for any other link', () => {
+    const url = 'https://github.com/appandflow/stim/pull/1648';
+    expect(notificationRoute({ ref: 'a', target: 'url', path: '/w', url }, ['a'])).toEqual({ url });
+    expect(
+      notificationRoute({ ref: 'a', target: 'url', path: '/w', url: 'https://evil.example/pull/1' }, ['a']),
+    ).toEqual({
+      pathname: '/mac/[id]/workspace',
+      params: { id: 'a', path: '/w' },
+    });
   });
 });
