@@ -238,23 +238,13 @@ describe('latest page load', () => {
   });
 
   test('finds the navigation behind more console output than a log tail holds', () => {
-    const home = mkdtempSync(join(tmpdir(), 'stim-web-page-'));
-    process.env.STIM_HOME = home;
-    try {
-      const chatty = '/projects/chatty';
-      mkdirSync(workspaceLogsDir(chatty), { recursive: true });
-      const chatter = Array.from({ length: 5000 }, (_, i) =>
-        line({ src: 'client', msg: `tick ${i} ${'x'.repeat(80)}` }),
-      );
-      writeFileSync(
-        join(workspaceLogsDir(chatty), 'web.ndjson'),
-        [navigation('http://a/'), line({ event: 'web_page_loaded' }), ...chatter, ''].join('\n'),
-      );
-      expect(readWebPage(chatty)).toEqual({ url: 'http://a/', state: 'loaded' });
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-      delete process.env.STIM_HOME;
-    }
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    const chatter = Array.from({ length: 5000 }, (_, i) => line({ src: 'client', msg: `tick ${i} ${'x'.repeat(80)}` }));
+    writeFileSync(
+      join(workspaceLogsDir(root), 'web.ndjson'),
+      [navigation('http://a/'), line({ event: 'web_page_loaded' }), ...chatter, ''].join('\n'),
+    );
+    expect(readWebPage(root)).toEqual({ url: 'http://a/', state: 'loaded' });
   });
 
   test('is null before the first navigation', () => {
