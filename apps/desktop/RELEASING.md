@@ -134,7 +134,9 @@ keeps. Check the first notarization log for a complaint about this binary.
 
 Set these on the `release` environment (Settings > Environments > release), so
 only approved runs can read them. Each group is optional; a missing group skips
-its step with a notice, and a partly set group fails the run.
+its step with a notice, and a partly set group fails the run. The Sentry dSYM
+upload runs only when `SENTRY_AUTH_TOKEN` is set, and then needs `SENTRY_ORG`
+and `SENTRY_DESKTOP_PROJECT`.
 
 | Name                      | Kind     | Content                                                                                    |
 | ------------------------- | -------- | ------------------------------------------------------------------------------------------ |
