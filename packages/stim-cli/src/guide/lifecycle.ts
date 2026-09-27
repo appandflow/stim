@@ -108,6 +108,17 @@ ambiguous no-platform request. Every reload goes over this workspace's Metro
 websocket, on both platforms. It never reopens a development-client URL,
 because that restarts the app rather than reloading its JavaScript.
 
+An Android reload first lists \`adb reverse\` on each live owned emulator
+launched against this Metro and re-applies the Metro port's reverse where it is
+missing. adb ties a reverse to its transport, and a transport that drops and
+reconnects comes back without it and without any error, which leaves the app
+cut off from Metro and Fast Refresh. After restoring one, Stim waits up to 8
+seconds, sending nothing, until the app on every emulator it checked is
+connected again, then sends the reload once. A dev server that cannot name
+its clients (bare React Native) gets a fixed 2.5-second wait instead. \`reverseRestored\` in the
+facts names the serials it restored. \`stim status\` reports the same loss as
+the android-reverse-missing issue.
+
 How the message is addressed depends on the dev server, and \`strategy\` in
 the facts reports which you got. Where Metro can name its clients, Stim
 addresses every peer matching the platform and reports \`metro-websocket\`. A

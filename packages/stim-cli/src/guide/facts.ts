@@ -348,6 +348,9 @@ per session, with the preview URL.`,
                   broadcast. Greater than 1 means several devices are running
                   this app on that Metro and the request addressed all of
                   them, not only deviceId. Completion is not observed
+  reverseRestored the Android serials whose adb reverse for metroPort was
+                  missing and that Stim re-applied before reloading; [] when
+                  none was, and always [] for iOS and web
 
   stim web --json
 
@@ -742,6 +745,12 @@ RULES
              avd-serial-changed     the owned emulator came back on another
                                     serial, so Metro forwarding is lost
              avd-missing            the recorded AVD no longer exists
+             android-reverse-missing the owned emulator runs this
+                                    workspace's debug app against its live
+                                    Metro, but the adb reverse for that Metro
+                                    port is gone, so the app cannot reach
+                                    Metro; the remedy stim reload android
+                                    restores it
              avd-not-detected       adb does not see the owned emulator while
                                     the workspace expects it: it holds an
                                     unexpired lease on its serial, or it

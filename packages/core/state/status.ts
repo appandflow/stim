@@ -207,6 +207,7 @@ export const STATUS_ISSUE_CODES = [
   'avd-missing',
   'avd-not-detected',
   'avd-unchecked',
+  'android-reverse-missing',
   'supervisor-unverified',
   'browser-unverified',
   'browser-orphaned',

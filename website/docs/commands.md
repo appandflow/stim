@@ -434,6 +434,17 @@ Every native reload goes over the workspace Metro websocket, on both platforms. 
 reopens a development-client URL, because that restarts the app rather than
 reloading its JavaScript.
 
+An Android reload first checks `adb reverse` on each live owned emulator launched
+against this Metro and re-applies the Metro port's reverse where it is missing.
+adb ties a reverse to its transport, so an emulator whose adb connection drops
+and reconnects loses it silently, and the app stops reaching Metro and Fast
+Refresh. After restoring one, Stim waits up to 8 seconds, sending nothing,
+until the app on every emulator it checked is connected again, then sends the
+reload once (a bare React Native dev server cannot name its clients, so there
+it waits a fixed 2.5 seconds); `reverseRestored` names the serials it
+restored. `stim status` reports the same loss as the `android-reverse-missing`
+issue, with `stim reload android` as the remedy.
+
 How the message is addressed depends on the dev server, and `strategy` reports
 which you got. Where Metro can name its clients, Stim addresses every peer
 matching the platform and reports `metro-websocket`. A workspace Metro serves one
