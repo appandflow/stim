@@ -145,7 +145,15 @@ them start their own browser:
 The port reaches only the Stim profile: Chrome refuses remote debugging on
 your default profile, and Stim never attaches to a browser it did not start.
 The port is managed like metro: stim ports lists it as web-cdp (managed),
-and ports get, stop and release refuse it.
+and ports get, stop and release refuse it. While a tool is connected,
+status reports it as the browser's driver (web.activity, "driven by
+playwright"), the way it names agent-device on a simulator. web.targetId is
+the owned page; a tab another tool opens is not captured.
+
+stim status also reports where the page is now and how its latest load went:
+web.page { url, state: loading | loaded | failed, error? }. A failed load (the
+dev server is down, a certificate error, a crash) shows in status next to the
+error count.
 
 OWNERSHIP AND CLEANUP
 

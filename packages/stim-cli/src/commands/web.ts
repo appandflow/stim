@@ -303,6 +303,7 @@ export async function runWeb({
       viewport: record.viewport,
       profile: record.profile,
       cdpEndpoint: live ? cdpEndpoint(live.cdpPort) : null,
+      targetId: live?.targetId ?? null,
       reused: launch.reused,
       launched: verdict.launched,
       metroPort: usesMetro ? metroPort : null,

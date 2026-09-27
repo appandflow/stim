@@ -223,7 +223,7 @@ function isDeviceRecord(record: Record<string, unknown>): boolean {
   return !(typeof record.event === 'string' && record.event.startsWith('collector_'));
 }
 
-function tailLines(path: string): string[] | null {
+export function tailLines(path: string): string[] | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, 'r');
@@ -283,13 +283,30 @@ export interface ActivityTarget extends LogRecordTarget {
 export interface DeviceProcessTables {
   host(): HostProcess[] | null;
   android(serial: string): string | null;
+  /** `lsof -Fpn` output for the established connections of a loopback TCP port, or null when lsof failed. */
+  tcpConnections?(port: number): string | null;
 }
 
 export function createDeviceProcessTables(): DeviceProcessTables {
   const exec = getExecutor();
   let host: HostProcess[] | null | undefined;
   const android = new Map<string, string | null>();
+  const tcp = new Map<number, string | null>();
   return {
+    tcpConnections(port) {
+      if (!tcp.has(port)) {
+        let output: string | null;
+        try {
+          output = exec.runFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED', '-Fpn'], { timeoutMs: 5000 });
+        } catch (error) {
+          // lsof exits 1 with empty output when no connection matches.
+          const stdout = (error as { status?: unknown; stdout?: unknown }).stdout;
+          output = (error as { status?: unknown }).status === 1 && (stdout === '' || stdout === undefined) ? '' : null;
+        }
+        tcp.set(port, output);
+      }
+      return tcp.get(port) ?? null;
+    },
     host() {
       if (host === undefined) {
         const output = exec.runFileQuiet('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 5000 });
@@ -423,4 +440,69 @@ export function workspaceActivity(workspace: string, now: number = Date.now()): 
     if (Number.isFinite(at)) recency.push({ basis, at });
   }
   return classifyActivity({ drivers: [], unknown: [], recency }, now);
+}
+
+/**
+ * The pids of processes connected to loopback `port` as clients, from `lsof -Fpn` output: a connection whose remote
+ * end is the port. Chrome's own accepted sockets have the port as their local end and are skipped.
+ */
+function parseTcpClients(output: string, port: number): number[] {
+  const pids = new Set<number>();
+  let pid: number | null = null;
+  for (const line of output.split('\n')) {
+    if (line.startsWith('p')) pid = Number(line.slice(1));
+    else if (line.startsWith('n') && pid !== null && Number.isInteger(pid)) {
+      const remote = line.slice(1).split('->')[1];
+      if (remote && Number(remote.slice(remote.lastIndexOf(':') + 1)) === port) pids.add(pid);
+    }
+  }
+  return [...pids];
+}
+
+/**
+ * The tool a DevTools client's command line names, or null for Stim's own clients: the browser supervisor,
+ * `stim-frames` in stim-server, Stim Desktop, and the `stim` CLI's short-lived connections.
+ */
+function webDriverTool(command: string): string | null {
+  if (/\bstim-(frames|server|web)\b|StimDesktop|\/stim-cli\/|\/bin\/stim(\s|$)|^stim(\s|$)/.test(command)) return null;
+  if (/agent-browser/i.test(command)) return 'agent-browser';
+  if (/agent-device/i.test(command)) return 'agent-device';
+  if (/chrome-devtools-mcp/i.test(command)) return 'chrome-devtools-mcp';
+  if (/playwright/i.test(command)) return 'playwright';
+  if (/puppeteer/i.test(command)) return 'puppeteer';
+  const executable = command.trim().split(/\s+/)[0] ?? '';
+  return basename(executable) || 'unknown DevTools client';
+}
+
+export interface WebActivityTarget {
+  port: number;
+  /** The supervisor's and Chrome's pids, which hold the page's own connections. */
+  ownPids: number[];
+  workspace: string;
+}
+
+/**
+ * The owned browser's activity: a DevTools client other than Stim's is a driver (basis `cdp-client`), and the page's
+ * newest log record gives recency (basis `page-log`).
+ */
+export function readWebActivity(
+  target: WebActivityTarget,
+  tables: DeviceProcessTables,
+  now: number = Date.now(),
+): DeviceActivity {
+  const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
+  const connections = tables.tcpConnections?.(target.port) ?? null;
+  const processes = connections === null ? null : tables.host();
+  if (connections === null || processes === null) evidence.unknown.push('cdp-client');
+  else {
+    for (const pid of parseTcpClients(connections, target.port)) {
+      if (target.ownPids.includes(pid)) continue;
+      const row = processes.find((candidate) => candidate.pid === pid);
+      const tool = row ? webDriverTool(row.command) : 'unknown DevTools client';
+      if (tool) evidence.drivers.push({ basis: 'cdp-client', tool, pid, since: row?.startedAt ?? null });
+    }
+  }
+  const pageAt = latestRecordAt(tailLines(join(workspaceLogsDir(target.workspace), 'web.ndjson')) ?? [], () => true);
+  if (pageAt !== null) evidence.recency.push({ basis: 'page-log', at: pageAt });
+  return classifyActivity(evidence, now);
 }

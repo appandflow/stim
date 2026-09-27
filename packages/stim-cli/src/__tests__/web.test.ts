@@ -22,7 +22,14 @@ import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } 
 import type { NdjsonRecord } from '../ndjson.ts';
 import { webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
 import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
-import { readWebRecord, webFacts, webProfileDir, writeWebRecord, type WebRecord } from '../web/state.ts';
+import {
+  latestPageLoad,
+  readWebRecord,
+  webFacts,
+  webProfileDir,
+  writeWebRecord,
+  type WebRecord,
+} from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
@@ -187,6 +194,49 @@ describe('page logs', () => {
       level: 'debug',
       event: 'web_request_canceled',
     });
+  });
+});
+
+describe('latest page load', () => {
+  const line = (record: object) => JSON.stringify({ ts: 1, src: 'device', platform: 'web', ...record });
+  const navigation = (url: string) => line({ event: 'web_navigation', url, marker: true, msg: `navigating to ${url}` });
+
+  test('reports the newest navigation, loaded once its load event fired', () => {
+    const lines = [navigation('http://a/'), line({ event: 'web_page_loaded' }), navigation('http://a/settings')];
+    expect(latestPageLoad(lines)).toEqual({ url: 'http://a/settings', state: 'loading' });
+    expect(latestPageLoad([...lines, line({ event: 'web_page_loaded' }), ''])).toEqual({
+      url: 'http://a/settings',
+      state: 'loaded',
+    });
+  });
+
+  test('a failed document or a crash after the navigation fails the page with the log message', () => {
+    const refused = networkFailureRecord({
+      url: 'http://a/',
+      method: 'GET',
+      document: true,
+      errorText: 'net::ERR_CONNECTION_REFUSED',
+    });
+    expect(latestPageLoad([navigation('http://a/'), line(refused)])).toEqual({
+      url: 'http://a/',
+      state: 'failed',
+      error: 'GET http://a/ failed: net::ERR_CONNECTION_REFUSED',
+    });
+    expect(
+      latestPageLoad([
+        navigation('http://a/'),
+        line({ event: 'web_page_loaded' }),
+        line({ event: 'web_page_crashed', msg: 'the page renderer crashed (crashed)' }),
+      ]),
+    ).toMatchObject({ state: 'failed', error: 'the page renderer crashed (crashed)' });
+    expect(latestPageLoad([navigation('http://a/'), line(refused), navigation('http://a/')])).toEqual({
+      url: 'http://a/',
+      state: 'loading',
+    });
+  });
+
+  test('is null before the first navigation', () => {
+    expect(latestPageLoad([line({ event: 'web_browser_started' })])).toBeNull();
   });
 });
 

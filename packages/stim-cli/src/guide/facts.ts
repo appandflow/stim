@@ -359,6 +359,8 @@ per session, with the preview URL.`,
   profile         the Stim-owned Chrome user data directory
   cdpEndpoint     http://127.0.0.1:<port>, the reserved DevTools endpoint, or
                   null when not running
+  targetId        the DevTools target id of the owned page, or null when not
+                  running
   reused          true when the running Chrome navigated again instead of
                   starting: same --headed, viewport and certificate options
   launched        true | "bundling" | "unverified" (see \`guide web\`)
@@ -753,15 +755,33 @@ RULES
   An environment where \`stim web\` ran carries web, its Stim-owned Chrome:
 
   web  { browser, version, running, pid, supervisorPid, url, headless,
-         viewport, profile, cdpEndpoint }
+         viewport, profile, cdpEndpoint, targetId, page?, activity? }
 
   running        the browser supervisor and Chrome are both verified live;
-                 pid, supervisorPid and cdpEndpoint are null when false
+                 pid, supervisorPid, cdpEndpoint and targetId are null when
+                 false, and page and activity are absent
+  url            the page stim web opened; page.url is where it is now
   cdpEndpoint    http://127.0.0.1:<port>, the reserved loopback DevTools
                  endpoint of that Chrome. Attach Playwright MCP
                  (--cdp-endpoint) or agent-browser (--cdp <port>) to it; it
                  reaches only the Stim profile, never your own browser
+  targetId       the DevTools target id of the owned page, the one Stim
+                 Desktop and the phone stream; other tabs are not the page
   profile        the Stim-owned user data directory under STIM_HOME
+  page           { url, state, error? }: the page's latest load, from the
+                 newest page-load marker in web.ndjson; null before the first
+                 "loading"  the document was requested; no load event yet
+                 "loaded"   the load event fired
+                 "failed"   the document failed (connection refused, HTTP
+                            error, certificate) or the page crashed; error
+                            is the log message
+  activity       like a device's activity below. driver.tool names a
+                 DevTools client connected to cdpEndpoint (agent-browser,
+                 playwright, puppeteer, chrome-devtools-mcp, or the
+                 executable's name); Stim's own connections (the browser
+                 supervisor, stim-server, Stim Desktop, the stim CLI) are not
+                 drivers. basis: cdp-client (one lsof of the DevTools port),
+                 page-log (the newest web.ndjson record) for recency
 
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:
