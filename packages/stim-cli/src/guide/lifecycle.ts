@@ -1602,6 +1602,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the devicectl launch session. \`gc --delete\` removes expired lease files;
   neither command shuts down the phone or uninstalls the app.
 
+  WATCHING THE PHONE: while this workspace holds the lease, stim-server
+  streams a USB-cabled iPhone's screen to the phone app, view only; Stim
+  sends a physical iPhone no input. The lease ends with the run, so
+  \`device lock ios <udid>\` keeps it watchable between runs. A Wi-Fi phone
+  has no stream, a locked phone shows its last frame until unlocked, and
+  QuickTime Player cannot record it while it streams.
+
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide
   with the simulator one, and neither the build-cache provider nor the Expo
