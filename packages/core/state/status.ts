@@ -139,13 +139,16 @@ export interface ActivityDriver {
   since: string | null;
 }
 
-/** The kinds of evidence that date a device's last activity. */
-export type ActivityRecencyBasis =
-  | 'agent-action'
-  | 'device-log'
-  | 'metro-bundle'
-  | 'workspace-use'
-  | 'supervisor-start';
+/** The kinds of evidence that date a device's last activity, in the order `recent` lists them. */
+export const ACTIVITY_RECENCY_BASES = [
+  'agent-action',
+  'device-log',
+  'metro-bundle',
+  'workspace-use',
+  'supervisor-start',
+] as const;
+
+export type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
 
 export interface DeviceActivity {
   state: ActivityState;

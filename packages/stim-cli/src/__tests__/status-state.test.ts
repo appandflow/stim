@@ -530,6 +530,19 @@ test('statusActivity rounds lastActivityAt down to the minute, so records within
     }),
   );
   expect(at('2026-09-24T09:01:00.000Z').lastActivityAt).toBe('2026-09-24T09:01:00.000Z');
+  const both = (first: 'agent-action' | 'device-log') =>
+    JSON.stringify(
+      statusActivity({
+        state: 'driven',
+        lastActivityAt: '2026-09-24T09:00:40.000Z',
+        recent:
+          first === 'agent-action'
+            ? { 'agent-action': '2026-09-24T09:00:30.000Z', 'device-log': '2026-09-24T09:00:40.000Z' }
+            : { 'device-log': '2026-09-24T09:00:20.000Z', 'agent-action': '2026-09-24T09:00:30.000Z' },
+        basis: [],
+      }).recent,
+    );
+  expect(both('agent-action')).toBe(both('device-log'));
   expect(statusActivity({ state: 'idle', basis: [] })).toEqual({ state: 'idle', basis: [] });
 });
 

@@ -16,7 +16,7 @@ const LOG_TAIL_BYTES = 256 * 1024;
 export interface ActivityEvidence {
   drivers: (ActivityDriver & { basis: string })[];
   unknown: string[];
-  recency: { basis: string; at: number }[];
+  recency: { basis: ActivityRecencyBasis; at: number }[];
 }
 
 export function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
@@ -25,8 +25,8 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
     null,
   );
   const recent: Partial<Record<ActivityRecencyBasis, string>> = {};
-  for (const { basis, at } of evidence.recency.toSorted((a, b) => a.at - b.at)) {
-    if (Number.isFinite(at)) recent[basis as ActivityRecencyBasis] = new Date(at).toISOString();
+  for (const { basis, at } of evidence.recency) {
+    if (Number.isFinite(at) && !(Date.parse(recent[basis] ?? '') >= at)) recent[basis] = new Date(at).toISOString();
   }
   const lastActivityAt = last ? { lastActivityAt: new Date(last.at).toISOString(), recent } : {};
   const [first] = evidence.drivers;

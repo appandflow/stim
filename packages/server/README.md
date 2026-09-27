@@ -316,8 +316,8 @@ the events the device chose:
   once an agent drives it. An agent driving the workspace updates the warming
   notification in place.
 - `stuck`: an agent drove the workspace, its devices are still up, and nothing
-  happened for `stuckMinutes`: no agent action, build, Metro bundle request or
-  new log error. App log records do not count, because an idle app keeps
+  happened for `stuckMinutes`: no agent action, build, Stim run, Metro bundle
+  request or new log error. App log records do not count, because an idle app keeps
   logging: an idle Stim app writes about 200 UIKit info records a minute. It
   opens the device viewer.
 - `looping`: the newest three or more iOS or Android builds failed the same

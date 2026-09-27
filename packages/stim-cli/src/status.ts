@@ -22,6 +22,7 @@ import type {
   WorktreeFacts,
   WorktreeGit,
 } from '@stim-cli/core/state';
+import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
 
 export type {
   AndroidRuntimeFacts,
@@ -484,7 +485,14 @@ export function statusActivity(activity: DeviceActivity): DeviceActivity {
     ...activity,
     lastActivityAt: toMinute(activity.lastActivityAt!),
     ...(activity.recent
-      ? { recent: Object.fromEntries(Object.entries(activity.recent).map(([basis, iso]) => [basis, toMinute(iso)])) }
+      ? {
+          recent: Object.fromEntries(
+            ACTIVITY_RECENCY_BASES.flatMap((basis) => {
+              const iso = activity.recent?.[basis];
+              return iso ? [[basis, toMinute(iso)]] : [];
+            }),
+          ),
+        }
       : {}),
   };
 }
