@@ -55,6 +55,8 @@ export function Touch({
   ...props
 }: TouchProps) {
   const { theme } = useUnistyles();
+  // Unistyles' withUnistyles flattens a style array one level only, and drops the styles of any deeper array.
+  const flatStyle = ([feedback === 'card' && styles.clip, style] as unknown[]).flat(Infinity) as TouchProps['style'];
   return (
     <ThemedTouchable
       {...feedbackProps(feedback, theme)}
@@ -63,7 +65,7 @@ export function Touch({
       accessibilityState={disabled ? { ...accessibilityState, disabled: true } : accessibilityState}
       accessibilityValue={accessibilityValue ?? stateValue(accessibilityRole, accessibilityState)}
       disabled={disabled}
-      style={[feedback === 'card' && styles.clip, style]}
+      style={flatStyle}
       {...props}
     />
   );
