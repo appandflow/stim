@@ -54,6 +54,7 @@ import {
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
+import { IosDeviceMismatchError } from '../engine/device-ios.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
@@ -968,6 +969,36 @@ describe('the device preparation step', () => {
       },
     );
     expect(errs.join('\n')).toMatch(/device\s+stim-fixture \(BF2A\.\.\) created \(/);
+  });
+
+  test('a model or runtime mismatch refusal carries its own remedy, not the toolchain one', async () => {
+    reserve();
+    const mismatch = await run(
+      { json: true },
+      {
+        ensureOwnedDevice: async () => {
+          throw new IosDeviceMismatchError(
+            "this project's sim runs iOS 26.2, but --runtime asked for 18.6. Stim will not silently boot a different iOS version.",
+          );
+        },
+      },
+    );
+    expect(mismatch.exitCode).toBe(1);
+    const payload = parseFirst(mismatch.logs);
+    expect(payload.code).toBe('STIM_NO_DEVICE');
+    expect(payload.message).toMatch(/--runtime asked for 18\.6/);
+    expect(payload.remedy).toMatch(/--slot <name>/);
+    expect(payload.remedy).not.toMatch(/stim doctor/);
+
+    const toolchain = await run(
+      { json: true },
+      {
+        ensureOwnedDevice: async () => {
+          throw new Error('simctl list failed');
+        },
+      },
+    );
+    expect(parseFirst(toolchain.logs).remedy).toMatch(/stim doctor/);
   });
 
   test('a preparation that costs nothing prints nothing of its own', async () => {

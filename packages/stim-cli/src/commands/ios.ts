@@ -67,6 +67,7 @@ import {
   resolveSimulatorAppFlag,
   deviceModelRefusal,
   isReleaseConfiguration,
+  ownedSimFailure,
 } from './ios/support.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
 import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
@@ -633,11 +634,7 @@ async function runIos(
         out: note,
       });
     } catch (e) {
-      return fail({
-        code: 'STIM_NO_DEVICE',
-        message: `Could not ensure an owned iOS simulator: ${(e as Error)?.message || e}`,
-        remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
-      });
+      return fail(ownedSimFailure(e));
     }
     const prepareMs = prepare();
     if (device.created || prepareMs >= SLOW_STEP_MS) {

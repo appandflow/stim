@@ -55,6 +55,11 @@ function startIosBoot(
   return { udid, done };
 }
 
+export class IosDeviceMismatchError extends Error {
+  readonly remedy =
+    'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one, or pass `--slot <name>` to create it beside the current one.';
+}
+
 export async function ensureOwnedIosDevice({
   record,
   projectPath,
@@ -97,19 +102,13 @@ export async function ensureOwnedIosDevice({
         const deviceTypes = listIosDeviceTypes();
         const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, deviceTypes);
         if (mismatch) {
-          throw new Error(
-            `${mismatch}. Stim will not silently boot a different model. ` +
-              'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
-          );
+          throw new IosDeviceMismatchError(`${mismatch}. Stim will not silently boot a different model.`);
         }
         const versionMismatch = flags.runtimeFlag
           ? runtimeMismatch(sim.runtime, flags.runtimeFlag, listIosRuntimes())
           : null;
         if (versionMismatch) {
-          throw new Error(
-            `${versionMismatch}. Stim will not silently boot a different iOS version. ` +
-              'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
-          );
+          throw new IosDeviceMismatchError(`${versionMismatch}. Stim will not silently boot a different iOS version.`);
         }
         const model: SimModel = {
           model: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,

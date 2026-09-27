@@ -8,6 +8,7 @@ import type { SettingsObject } from '../../workspace/settings.ts';
 import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device-capacity.ts';
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
+import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 
@@ -151,6 +152,17 @@ export function deviceModelRefusal({
   const refusal =
     unknownIosRuntimeRefusal(runtime, runtimes) ?? unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
   return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
+}
+
+export function ownedSimFailure(error: unknown): { code: string; message: string; remedy: string } {
+  return {
+    code: 'STIM_NO_DEVICE',
+    message: `Could not ensure an owned iOS simulator: ${(error as Error)?.message || error}`,
+    remedy:
+      error instanceof IosDeviceMismatchError
+        ? error.remedy
+        : 'Run `stim doctor` to check the simulator toolchain, then try again.',
+  };
 }
 
 export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
