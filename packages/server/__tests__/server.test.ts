@@ -2103,6 +2103,9 @@ describe('frames.subscribe', () => {
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
       expect(postures).toEqual(['folded', 'unfolded']);
+      expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining('iPhone Duo does not rotate') },
+      });
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
         error: { code: 'action-failed' },
       });
@@ -2119,6 +2122,19 @@ describe('frames.subscribe', () => {
       expect(spawns()).toEqual([{ tool: 'xcrun', args: ['simctl', 'spawn', 'SIM-1', join(root, 'sim-fold')] }]);
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({ result: {} });
       expect(spawns()).toHaveLength(1);
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.25, y: 0.75 })).toMatchObject({
+        result: {},
+      });
+      expect(await client.request('input.touch', { session, phase: 'up', x: 0.25, y: 0.75, display: 0 })).toMatchObject(
+        { result: {} },
+      );
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+      viewer.socket.close();
+      await until(() => helperRuns().length > 0);
+      expect(helperRuns().flatMap((run) => run.configs.filter((line) => 'input' in line))).toEqual([
+        { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 1 },
+        { input: 'touch', phase: 'up', x: 0.25, y: 0.75, display: 0 },
+      ]);
     },
     10_000,
   );

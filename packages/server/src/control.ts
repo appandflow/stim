@@ -59,7 +59,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
 }
 
 export type InputCommand =
-  | { input: 'touch'; phase: TouchPhase; x: number; y: number; display: number }
+  | { input: 'touch'; phase: TouchPhase; x: number; y: number; display?: number }
   | { input: 'text'; text: string }
   | { input: 'button'; button: InputButton }
   | { input: 'rotate'; direction: RotateDirection }
@@ -97,6 +97,12 @@ export function parseInput(
     return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
   }
   if (method === 'input.rotate') {
+    if (platform === 'ios' && postures.length) {
+      return {
+        code: 'bad-request',
+        message: 'An iPhone Duo does not rotate: its simulator keeps the orientation its posture sets.',
+      };
+    }
     const { direction } = params;
     if (!ROTATE_DIRECTIONS.includes(direction as RotateDirection)) {
       return { code: 'bad-request', message: 'input.rotate needs direction left or right.' };
@@ -112,14 +118,14 @@ export function parseInput(
     return { value: { session, command: { input: 'posture', posture: posture as DevicePosture } } };
   }
   if (method === 'input.touch') {
-    const { phase, x, y, display = 0 } = params;
+    const { phase, x, y, display } = params;
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
       return { code: 'bad-request', message: 'input.touch needs phase (down, move or up), and x and y from 0 to 1.' };
     }
-    if (!Number.isInteger(display) || (display as number) < 0 || (display as number) > 3) {
+    if (display !== undefined && (!Number.isInteger(display) || (display as number) < 0 || (display as number) > 3)) {
       return { code: 'bad-request', message: 'display must be a display index from 0 to 3.' };
     }
-    if (platform !== 'ios' && display !== 0) {
+    if (platform !== 'ios' && display !== undefined && display !== 0) {
       return { code: 'bad-request', message: 'An emulator or a web page takes input on its main display (0) only.' };
     }
     return {
@@ -130,7 +136,7 @@ export function parseInput(
           phase: phase as TouchPhase,
           x: x as number,
           y: y as number,
-          display: display as number,
+          ...(display === undefined ? {} : { display: display as number }),
         },
       },
     };
@@ -493,7 +499,11 @@ export class ControlHub {
       command.input === 'posture' ||
       session.input.keys()
     ) {
-      session.input.send(command);
+      session.input.send(
+        command.input === 'touch' && command.display === undefined
+          ? { ...command, display: this.options.frames.litDisplay(session.device) }
+          : command,
+      );
       return Promise.resolve(null);
     }
     const serial = session.device.serial;

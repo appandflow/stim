@@ -288,7 +288,8 @@ export type TouchPhase = (typeof TOUCH_PHASES)[number];
 
 /**
  * `x` and `y` are fractions of the upright screen, origin top-left; on a web page, of its viewport, where a
- * drag scrolls. `display` is 0 for the main display.
+ * drag scrolls. `display` is 0 for the main display; without it, an iPhone Duo's touch goes to the panel its
+ * frames show.
  */
 export interface InputTouchParams {
   session: string;
