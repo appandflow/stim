@@ -2489,21 +2489,18 @@ describe('frames.subscribe', () => {
         ]),
       );
     },
-  );
-
-  test.skipIf(!fakeTailscale)(
-    'refuses frame rates and sizes outside the protocol range',
-    async () => {
-      const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
-      const client = await authed(port);
-      for (const params of [{ fps: 0 }, { fps: 31 }, { fps: 2.5 }, { maxEdge: 100 }, { maxEdge: 4096 }]) {
-        expect(await client.request('frames.subscribe', { workspace, platform: 'ios', ...params })).toMatchObject({
-          error: { code: 'bad-request' },
-        });
-      }
-    },
     10_000,
   );
+
+  test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
+    const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
+    const client = await authed(port);
+    for (const params of [{ fps: 0 }, { fps: 31 }, { fps: 2.5 }, { maxEdge: 100 }, { maxEdge: 4096 }]) {
+      expect(await client.request('frames.subscribe', { workspace, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+  });
 
   describe.skipIf(!fakeTailscale)('emulator screenshots over gRPC', () => {
     test.each([

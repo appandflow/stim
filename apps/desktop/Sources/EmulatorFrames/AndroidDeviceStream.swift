@@ -45,14 +45,15 @@ final class AndroidDeviceStream {
 
   func start() {
     Thread.detachNewThread { [self] in
+      let sockets: (video: Int32, control: Int32)
       do {
-        try open()
+        sockets = try open()
       } catch {
         end((error as? Failure)?.description ?? "\(error)")
         return
       }
-      Thread.detachNewThread { [self] in drainControl() }
-      readVideo()
+      Thread.detachNewThread { [self] in drainControl(sockets.control) }
+      readVideo(sockets.video)
     }
   }
 
@@ -108,7 +109,7 @@ final class AndroidDeviceStream {
     onEnd(message)
   }
 
-  private func open() throws {
+  private func open() throws -> (video: Int32, control: Int32) {
     let jar = try Data(contentsOf: serverJar)
     let digest = SHA256.hash(data: jar).map { String(format: "%02x", $0) }.joined()
     guard digest == Scrcpy.serverSha256 else {
@@ -155,6 +156,7 @@ final class AndroidDeviceStream {
       close(control)
       throw stoppedFailure
     }
+    return (video, control)
   }
 
   /// The forward accepts a connection even before the server listens, then closes it; the server's dummy
@@ -184,11 +186,9 @@ final class AndroidDeviceStream {
     throw Failure(description: "The scrcpy server on \(serial) did not accept a connection\(output.isEmpty ? "." : ": \(output)")")
   }
 
-  /// The reader threads close the sockets: `stop` only shuts them down, so no thread reads a descriptor number
-  /// that another file has reused.
-  private func readVideo() {
-    let socket = lock.withLock { videoSocket }
-    guard socket >= 0 else { return }
+  /// The reader threads close the sockets, the control one after any pending write: `stop` only shuts them
+  /// down, so no thread reads or writes a descriptor number that another file has reused.
+  private func readVideo(_ socket: Int32) {
     defer { close(socket) }
     var demuxer = ScrcpyVideoDemuxer()
     var chunk = [UInt8](repeating: 0, count: 1 << 16)
@@ -219,10 +219,8 @@ final class AndroidDeviceStream {
   }
 
   /// Device messages (clipboard, acknowledgements) are not used, but must be read so the server never blocks.
-  private func drainControl() {
-    let socket = lock.withLock { controlSocket }
-    guard socket >= 0 else { return }
-    defer { close(socket) }
+  private func drainControl(_ socket: Int32) {
+    defer { writes.async { close(socket) } }
     var chunk = [UInt8](repeating: 0, count: 4096)
     while read(socket, &chunk, chunk.count) > 0 {}
   }
