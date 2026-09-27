@@ -260,8 +260,9 @@ Events are `{ "event", "subscription", ... }`.
   lease only while it runs, so `stim device lock ios <udid>` keeps the
   iPhone watchable between runs. A lease on the workspace's own simulator
   is skipped. The iPhone must be cabled over USB and trust the Mac; over
-  Wi-Fi it has no screen to capture. The helper (`stim-frames iphone
-<udid>`) sets CoreMediaIO's `kCMIOHardwarePropertyAllowScreenCaptureDevices`,
+  Wi-Fi it has no screen to capture. The helper, run as
+  `stim-frames iphone <udid>`, sets CoreMediaIO's
+  `kCMIOHardwarePropertyAllowScreenCaptureDevices`,
   which makes macOS list cabled iPhones as capture devices, the ones
   QuickTime Player's New Movie Recording shows, and opens only the one
   whose unique ID is the UDID without dashes. It captures only while a
