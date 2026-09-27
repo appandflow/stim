@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Platform, View } from 'react-native';
@@ -18,7 +19,7 @@ function phoneOrientation(orientation: 'portrait_up' | 'default') {
   return Platform.OS === 'ios' && Platform.isPad ? undefined : orientation;
 }
 
-export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+function RootErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
     <View style={styles.error}>
       <EmptyState title="Something went wrong" message={error.message}>
@@ -27,6 +28,8 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
     </View>
   );
 }
+
+export const ErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RootErrorBoundary);
 
 export default function RootLayout() {
   return (

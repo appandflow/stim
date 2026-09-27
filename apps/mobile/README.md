@@ -638,9 +638,10 @@ Without it, as in local builds, `stim ios`, CI and forks, Sentry is not
 initialized and the app sends nothing. Sentry starts from JS in
 `src/lib/sentry.ts`, the first import of `index.ts`, so a native crash before
 the JS bundle runs is not reported. React Native sends an error thrown while
-rendering, outside an error boundary, straight to its native exception
-handler rather than through `ErrorUtils`, so Sentry does not see it; only an
-error boundary that calls `Sentry.captureException` reports those.
+rendering straight to its native exception handler rather than through
+`ErrorUtils`, so Sentry reports a render error only because the root
+`ErrorBoundary` in `src/app/_layout.tsx` is wrapped with
+`Sentry.wrapExpoRouterErrorBoundary`.
 
 Reports carry no personal data: `sendDefaultPii` is off, there are no
 screenshots, view hierarchy, session replay or performance tracing, and the
@@ -648,7 +649,9 @@ native SDKs record no network breadcrumbs. Before an event or breadcrumb
 leaves the phone, `src/lib/sentry-scrub.ts` replaces URLs (the paired Mac's
 `wss://` endpoint among them), IP addresses, `*.ts.net` and `*.local` host
 names, Expo push tokens, pairing and device tokens, and `/Users/<name>` home
-folders. Each report names the release
+folders. Events the native SDKs build themselves, such as native crashes and
+app hangs, skip that scrubbing, but carry only the JS breadcrumbs already
+scrubbed. Each report names the release
 (`com.appandflow.stim@<version>+<build>`), the build number as `dist`, and the
 running update in the tags `expo.updates.update_id`, `expo.updates.channel`
 and `expo.updates.runtime_version`.
