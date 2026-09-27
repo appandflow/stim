@@ -143,7 +143,7 @@ export function deviceModelRefusal({
       return {
         code: 'STIM_BAD_ARG',
         message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned iOS simulator; the ${remoteBackend} remote backend chooses its own device.`,
-        remedy: `Drop ${given} for a remote run, or drop --remote (and the ios.remote setting) to use a local owned simulator.`,
+        remedy: `Drop ${given} for a remote run. For a local owned simulator, drop --remote and unset ios.remote with \`stim settings unset ios.remote --scope <workspace|repo|committed>\`.`,
       };
     }
     return null;
