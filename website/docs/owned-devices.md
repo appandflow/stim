@@ -47,9 +47,10 @@ for the run, then releases the lease. Use `stim device lock` to hold it across
 runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
-While a workspace holds an Android phone's lease, the phone app can show the
-phone's screen live through `stim-server`, and a phone paired with control can
-tap, swipe, type and press Home, Back, Apps and Lock on it. The stream runs over
+While a workspace holds an Android phone's lease, `stim-server` can stream the
+phone's screen to paired clients that ask for the physical device, and a client
+paired with control can tap, swipe, type and press Home, Back, Apps and Lock on
+it. The phone app does not ask for it yet. The stream runs over
 adb with the [scrcpy](https://github.com/Genymobile/scrcpy) server, which
 `stim-server` pushes to `/data/local/tmp` and deletes when the stream stops. It
 installs nothing, changes no setting, and cannot rotate the phone. Control ends

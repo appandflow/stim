@@ -1577,8 +1577,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   over the LAN either way.
 
   WATCHING A LEASED ANDROID PHONE: while this workspace holds the phone's lease,
-  a paired phone app can watch its screen through stim-server, and one with
-  control can tap and type on it. stim-server pushes the scrcpy server to
+  stim-server can stream its screen to paired clients that ask for the
+  physical device, and let one with control tap and type on it. stim-server
+  pushes the scrcpy server to
   /data/local/tmp for the stream and deletes it when the stream stops; it
   installs nothing and changes no setting. Control ends when the lease is
   released or expires, and stim-server never takes a phone's lease itself.
