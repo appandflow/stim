@@ -17,6 +17,9 @@ import Testing
     #expect(owners[0].kind == .simulator && owners[0].slot == "tablet" && owners[0].memory == 1200)
     #expect(owners[1].kind == .other && owners[1].memory == 2)
     #expect(payload.machine?.memorySource == .footprint && payload.environments[0].memorySource == .footprint)
+    #expect(payload.environments[0].footprintBytes == Int64(1200) * 1_048_576)
+    let estimate = #"{"environments":[{"path":"/w/b","live":true,"memoryMb":2200,"memorySource":"estimate","warnings":[]}]}"#
+    #expect(try JSONDecoder().decode(StatusPayload.self, from: Data(estimate.utf8)).environments[0].footprintBytes == nil)
     #expect(try JSONDecoder().decode(StatusPayload.self, from: Data(#"{"environments":[]}"#.utf8)).machine == nil)
     let future = #"{"environments":[],"machine":{"memorySource":"sampled","owners":[]}}"#
     #expect(try JSONDecoder().decode(StatusPayload.self, from: Data(future.utf8)).machine?.memorySource == .other)

@@ -56,6 +56,12 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
 
   public var id: String { path }
 
+  /// The physical footprint of the workspace's processes in bytes, when `stim status` measured it.
+  public var footprintBytes: Int64? {
+    guard memorySource == .footprint, let memoryMb else { return nil }
+    return Int64(memoryMb) * 1_048_576
+  }
+
   /// The workspace's default devices followed by each named slot's devices.
   public var devices: [DeviceRef] {
     var out: [DeviceRef] = []
