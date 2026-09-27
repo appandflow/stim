@@ -348,6 +348,10 @@ function includeBareErrorContext(
   return sortByTs([...matched, ...renderedContext]);
 }
 
+function nativePlatform(record: NdjsonRecord): string | null {
+  return record.platform === 'ios' || record.platform === 'android' ? record.platform : null;
+}
+
 function newestByPlatform(records: NdjsonRecord[], platformOf: (record: NdjsonRecord) => string | null) {
   const newest = new Map<string | null, number>();
   for (const record of records) {
@@ -430,8 +434,6 @@ export function queryLogs({
     bundleMarkerPlatform,
   );
   const slotPlatforms = slot === undefined ? [] : [...launches.keys()].filter((platform) => platform !== null);
-  const nativePlatform = (record: NdjsonRecord) =>
-    record.platform === 'ios' || record.platform === 'android' ? record.platform : null;
   const windowStart = (record: NdjsonRecord): number | undefined => {
     if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
     if (record.src !== 'metro' && record.src !== 'client') return slotMarkers.get(record.slot ?? 'default');
