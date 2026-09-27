@@ -86,13 +86,22 @@ function isWebPageRecord(record: NdjsonRecord): boolean {
   return record.platform === 'web' && record.src !== 'metro';
 }
 
+function isSharedRecord(record: NdjsonRecord): boolean {
+  return record.slot === undefined && (record.src === 'metro' || record.src === 'client') && !isWebPageRecord(record);
+}
+
+/** Whether `record` belongs to `slot`: its own slot, or no slot for Metro and client output, which every slot shares. */
+function inSlot(record: NdjsonRecord, slot: string): boolean {
+  return isSharedRecord(record) || (record.slot ?? 'default') === slot;
+}
+
 function isAppDeviceRecord(record: NdjsonRecord): boolean {
   return record.src === 'device' && (record.event === 'native_crash' || record.platform === 'web');
 }
 
 export function recordMatches(record: NdjsonRecord | null | undefined, criteria: QueryCriteria = {}): boolean {
   if (!record) return false;
-  if (criteria.slot !== undefined && (record.slot ?? 'default') !== criteria.slot) return false;
+  if (criteria.slot !== undefined && !inSlot(record, criteria.slot)) return false;
   const { sources, minLevel, grep, sinceTs, errorsOnly, markerTs, bundleMarkerTs } = criteria;
 
   if (
@@ -311,7 +320,7 @@ function expoContextFollower(onRecord: (record: NdjsonRecord) => void, into: Exp
 function includeBareErrorContext(
   all: NdjsonRecord[],
   matched: NdjsonRecord[],
-  launchTs: number | null,
+  launchTs: number | undefined,
   sinceTs: number | undefined,
 ): NdjsonRecord[] {
   const hasClientError = matched.some(
@@ -322,7 +331,7 @@ function includeBareErrorContext(
   for (const record of all) {
     if (record.src !== 'client' || record.event !== 'client_symbolication') continue;
     const ts = tsOf(record);
-    if (launchTs !== null && (ts === null || ts <= launchTs)) continue;
+    if (launchTs !== undefined && (ts === null || ts <= launchTs)) continue;
     if (sinceTs !== undefined && (ts === null || ts < sinceTs)) continue;
     renderedContext.push({
       ...record,
@@ -331,6 +340,39 @@ function includeBareErrorContext(
     });
   }
   return sortByTs([...matched, ...renderedContext]);
+}
+
+interface LaunchStream {
+  slot: unknown;
+  platform: unknown;
+  ts: number;
+}
+
+function latestLaunches(records: NdjsonRecord[]): LaunchStream[] {
+  const latest = new Map<string, LaunchStream>();
+  for (const record of records) {
+    if (record.marker !== true || record.src === 'metro' || isWebPageRecord(record)) continue;
+    const ts = tsOf(record);
+    if (ts === null) continue;
+    const slot = record.slot ?? 'default';
+    const platform = record.platform ?? null;
+    const key = JSON.stringify([slot, platform]);
+    if (ts > (latest.get(key)?.ts ?? -Infinity)) latest.set(key, { slot, platform, ts });
+  }
+  return [...latest.values()];
+}
+
+/**
+ * Metro and client output rarely names its device, so a launch hides it only once every launch it can belong to has
+ * moved past it: the oldest of the latest launches in its slot and platform, for whichever of the two it names.
+ */
+function sharedWindowStart(record: NdjsonRecord, launches: LaunchStream[]): number | undefined {
+  const named = record.platform === 'ios' || record.platform === 'android';
+  const own = launches.filter(
+    (launch) =>
+      (record.slot === undefined || launch.slot === record.slot) && (!named || launch.platform === record.platform),
+  );
+  return own.length ? Math.min(...own.map((launch) => launch.ts)) : undefined;
 }
 
 function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
@@ -369,9 +411,7 @@ export function queryLogs({
   errorContext?: boolean;
   now?: number;
 } = {}): NdjsonRecord[] {
-  const all = (records ?? readLogRecords(dir as string)).filter(
-    (record) => slot === undefined || (record.slot ?? 'default') === slot,
-  );
+  const all = (records ?? readLogRecords(dir as string)).filter((record) => slot === undefined || inSlot(record, slot));
   if (all.length === 0) return [];
 
   const { launchTs, bundleTs, pageLoadTs } = errorsOnly
@@ -390,9 +430,11 @@ export function queryLogs({
   });
 
   const slotMarkers = launchMarkersBySlot(all);
+  const launches = errorsOnly ? latestLaunches(all) : [];
   const windowStart = (record: NdjsonRecord): number | undefined => {
     if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
-    if (record.src === 'metro' || record.src === 'client') return criteria.markerTs;
+    if (isWebPageRecord(record) && record.src === 'client') return criteria.markerTs;
+    if (record.src === 'metro' || record.src === 'client') return sharedWindowStart(record, launches);
     return slotMarkers.get(record.slot ?? 'default');
   };
   let matched = all.filter((record) => recordMatches(record, { ...criteria, markerTs: windowStart(record) }));
@@ -400,7 +442,12 @@ export function queryLogs({
     matched = matched.slice(matched.length - tail);
   }
   return errorContext
-    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
+    ? includeBareErrorContext(
+        all,
+        attachExpoErrorContext(all, matched),
+        sharedWindowStart({ src: 'client' }, launches),
+        criteria.sinceTs,
+      )
     : matched;
 }
 

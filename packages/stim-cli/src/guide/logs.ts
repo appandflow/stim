@@ -31,10 +31,13 @@ The only exit-1 paths are a malformed query and no project.
 Device collectors and build records carry their named slot. Use --slot phone
 for that slot's timeline; its launch marker cannot hide a sibling's errors.
 Untagged legacy records belong to default. Metro/client records are shared and
-usually untagged: use an unfiltered workspace query to inspect those errors.
+usually untagged, so every --slot query includes them, windowed by that slot's
+own launches.
 
 FLAGS
-  --slot <name>   only this slot's records (default includes untagged records)
+  --slot <name>   only this slot's records plus the shared untagged Metro and
+                  client records (default also includes untagged legacy
+                  records)
   --source <s...>  metro, client, device, build, agent (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
@@ -98,9 +101,16 @@ FLAGS
       errors are reported -- and nothing else. A failed attempt's own summary
       and details land at or after its marker, so they stay reported.
     a LAUNCH marker (src build, written before \`ios\` / \`android\` attempts
-      launch) resets EVERYTHING except the web page's records. It precedes the
+      launch) resets its slot's build and device records. It precedes the
       tool call so an immediate native crash is not hidden by a marker written
-      after the process died.
+      after the process died. Metro and client records name no device, so a
+      launch resets them only once every launch they could belong to has
+      passed them: an error stays until each slot and platform has launched
+      again after it. A Metro record that names its platform (bare React
+      Native bundle records) waits only for that platform's launches, so
+      relaunching Android does not hide an iOS error. The cost is that the
+      launch you just made can still show Metro errors from before it while
+      another slot has not relaunched.
     a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
       load of the page's top-level document) resets only the page's records,
       those with platform web. It is written when the load starts, so a

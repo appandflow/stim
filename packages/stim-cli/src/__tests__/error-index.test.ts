@@ -197,3 +197,25 @@ test('an unreadable index is rebuilt from the logs', () => {
   expect(count()).toBe(1);
   expect(count()).toBe(1);
 });
+
+test("counts what logs --errors counts when one slot's relaunch leaves another slot's Metro errors in its window", () => {
+  const launch = (ts: number, platform: string, slot?: string) => ({
+    ts,
+    src: 'build',
+    level: 'info',
+    marker: true,
+    event: 'launch_attempt',
+    platform,
+    ...(slot ? { slot } : {}),
+  });
+  write('build-ios.ios18.ndjson', [launch(10, 'ios', 'ios18')]);
+  write('build-android.ndjson', [launch(40, 'android')]);
+  write('metro.ndjson', [
+    { ts: 20, src: 'metro', level: 'error', msg: 'iOS threw' },
+    { ts: 30, src: 'metro', level: 'error', platform: 'android', msg: 'android bundle failed' },
+  ]);
+  expect(count()).toBe(1);
+
+  append('build-ios.ios18.ndjson', [launch(50, 'ios', 'ios18')]);
+  expect(count()).toBe(0);
+});
