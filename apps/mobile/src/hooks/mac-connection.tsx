@@ -2,7 +2,6 @@ import Constants from 'expo-constants';
 import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { AppState } from 'react-native';
-import { createMMKV } from 'react-native-mmkv';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -30,6 +29,7 @@ import type {
   StatusPayload,
   TouchPhase,
 } from '@/protocol/types';
+import { statusStorage } from '@/storage';
 
 export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.version ?? '0.0.0' };
 
@@ -37,7 +37,7 @@ const USAGE_INTERVAL_MS = 15_000;
 const SNAPSHOT_EDGE = 640;
 const MAX_INPUT_TEXT = 256;
 
-const machines = createMachineStore({ cache: new StatusCache(createMMKV({ id: 'stim.status' })) });
+const machines = createMachineStore({ cache: new StatusCache(statusStorage) });
 AppState.addEventListener('change', (state) => {
   if (state !== 'active') machines.flushAll();
 });

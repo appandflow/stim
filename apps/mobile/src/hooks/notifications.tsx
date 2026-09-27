@@ -4,24 +4,22 @@ import { AndroidImportance } from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { createMMKV } from 'react-native-mmkv';
 
 import { toAttentionMachine, useMacs } from '@/hooks/mac-connection';
 import { RequestError, type StimConnection } from '@/lib/connection';
+import { NOTIFY_STATE_KEY, PUSHED_PREFIX } from '@/lib/derived-data';
 import {
   DEFAULT_PREFS,
   localNotifications,
   notificationRoute,
-  parseNotifyState,
   parsePrefs,
   type NotificationPrefs,
   type NotifyState,
 } from '@/lib/notifications';
 import type { PushRegisterParams } from '@/protocol/types';
+import { notificationStorage as storage } from '@/storage';
 
-const storage = createMMKV({ id: 'stim.notifications' });
 const PREFS_KEY = 'prefs';
-const STATE_KEY = 'state';
 const HANDLED_KEY = 'handledResponse';
 const CHANNEL = 'attention';
 const QUIET_CHANNEL = 'updates';
@@ -74,7 +72,11 @@ const Context = createContext<NotificationsValue>({
 });
 
 function readState(): NotifyState {
-  return parseNotifyState(storage.getString(STATE_KEY));
+  try {
+    return JSON.parse(storage.getString(NOTIFY_STATE_KEY) ?? '{}') as NotifyState;
+  } catch {
+    return {};
+  }
 }
 
 /** Notification settings, local notifications while the app is open, push registration, and notification taps. */
@@ -101,7 +103,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       );
       return;
     }
-    storage.remove(STATE_KEY);
+    storage.remove(NOTIFY_STATE_KEY);
     save({ ...parsePrefs(storage.getString(PREFS_KEY)), enabled: true });
   }, [save]);
 
@@ -125,7 +127,6 @@ export function useNotificationPrefs(): NotificationsValue {
   return useContext(Context);
 }
 
-const PUSHED_PREFIX = 'pushed:';
 const TOKEN_KEY = 'pushToken';
 
 /** Starts from the Macs that accepted a registration before, so a relaunch does not notify what they push. */
@@ -198,7 +199,7 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
       localMinuteOfDay(now),
       awakeSince.current,
     );
-    storage.set(STATE_KEY, JSON.stringify(state));
+    storage.set(NOTIFY_STATE_KEY, JSON.stringify(state));
     for (const { id, title, subtitle, body, quiet, thread, data } of notifications) {
       void Notifications.scheduleNotificationAsync({
         identifier: id,

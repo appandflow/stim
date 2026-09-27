@@ -1,8 +1,10 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Platform } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Button } from '@/components/button';
+import { EmptyState } from '@/components/empty-state';
 import { MenuDrawer } from '@/components/menu-drawer';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
@@ -14,6 +16,16 @@ import { SettingsProvider } from '@/hooks/settings';
 /** On iPad every screen keeps the orientations the system allows, as iPad multitasking requires. */
 function phoneOrientation(orientation: 'portrait_up' | 'default') {
   return Platform.OS === 'ios' && Platform.isPad ? undefined : orientation;
+}
+
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  return (
+    <View style={styles.error}>
+      <EmptyState title="Something went wrong" message={error.message}>
+        <Button title="Try again" onPress={() => void retry()} />
+      </EmptyState>
+    </View>
+  );
 }
 
 export default function RootLayout() {
@@ -108,3 +120,7 @@ function RootLayoutContent() {
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  error: { flex: 1, backgroundColor: theme.colors.background },
+}));
