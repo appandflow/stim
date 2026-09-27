@@ -29,6 +29,7 @@ jobs:
       SPARKLE_VERSION: 2.10.0
       SPARKLE_SHA256: c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
       SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+      STIM_DESKTOP_SENTRY_DSN: ${{ vars.STIM_DESKTOP_SENTRY_DSN }}
       APPCAST_URL: https://github.com/${{ github.repository }}/releases/download/desktop-latest/appcast.xml
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -129,8 +130,28 @@ jobs:
             echo "ASC_ISSUER_ID=$ISSUER_ID"
           } >> "$GITHUB_ENV"
 
+      - name: Install sentry-cli for the dSYM upload
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ] && [ -z "$SENTRY_ORG" ] && [ -z "$SENTRY_PROJECT" ]; then
+            echo "::notice::SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT are not set; no dSYM is uploaded to Sentry."
+            exit 0
+          fi
+          if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$SENTRY_ORG" ] || [ -z "$SENTRY_PROJECT" ]; then
+            echo "::error::Set all of SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT, or none."
+            exit 1
+          fi
+          npm install --global @sentry/cli@3.8.0
+
       - name: Build, sign and notarize
         working-directory: apps/desktop
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
         run: scripts/release.sh "$VERSION"
 
       - name: Sign the update for Sparkle

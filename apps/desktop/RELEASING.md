@@ -92,6 +92,9 @@ attribute, and cannot be notarized. To sign and notarize locally, set:
 - `SPARKLE_PUBLIC_ED_KEY`: the public half of the update signing key, which
   `bundle.sh` writes into `SUPublicEDKey`. Without it, the app never checks for
   updates.
+- `STIM_DESKTOP_SENTRY_DSN`, and `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` and
+  `SENTRY_PROJECT` with `sentry-cli` on `PATH`: crash reporting and the dSYM
+  upload; see [Crash reports](./README.md#crash-reports).
 
 `CFBundleShortVersionString` is the version you pass. `CFBundleVersion` is the
 commit count of `HEAD`, the value Sparkle compares. Release tags must be on
@@ -142,6 +145,10 @@ its step with a notice, and a partly set group fails the run.
 | `ASC_ISSUER_ID`           | secret   | The issuer ID shown above the keys list in App Store Connect                         |
 | `SPARKLE_ED_PRIVATE_KEY`  | secret   | The private EdDSA key from Sparkle's `generate_keys -x <file>`                       |
 | `SPARKLE_PUBLIC_ED_KEY`   | variable | The matching public key that `generate_keys` prints                                  |
+| `STIM_DESKTOP_SENTRY_DSN` | variable | The Sentry project's DSN; unset builds report no crashes                             |
+| `SENTRY_AUTH_TOKEN`       | secret   | A Sentry organization auth token, used only for the dSYM upload                      |
+| `SENTRY_ORG`              | variable | The Sentry organization slug                                                         |
+| `SENTRY_PROJECT`          | variable | The Sentry project slug                                                              |
 | `HOMEBREW_TAP_DEPLOY_KEY` | secret   | The private half of a write deploy key on `appandflow/homebrew-tap`                  |
 
 ### Apple artifacts
