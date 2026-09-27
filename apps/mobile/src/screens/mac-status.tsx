@@ -21,6 +21,7 @@ import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type Bu
 import { tildeHome } from '@/lib/paths';
 import {
   attentionGroups,
+  deviceKey,
   devicesOf,
   platformName,
   shortUrl,
@@ -176,7 +177,7 @@ export function MacStatus({ id }: { id: string }) {
           ) : null}
           {running.map(({ env, device }) => (
             <ListRow
-              key={`${env.path}\n${device.platform}\n${device.slot}`}
+              key={`${env.path}\n${deviceKey(device)}`}
               title={`${platformName(device.platform)} \u00B7 ${device.page ? shortUrl(device.page.url) : device.model}`}
               value={workspaceTitleAt(env.path, status)}
             />

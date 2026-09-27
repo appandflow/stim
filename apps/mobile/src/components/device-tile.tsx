@@ -10,7 +10,9 @@ import { Pill, StatusDot } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
+import { useNow } from '@/hooks/use-now';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
+import { shortDuration } from '@/lib/format';
 import { tildeHome } from '@/lib/paths';
 import { deviceSource, shortUrl, type DeviceRef } from '@/lib/workspaces';
 
@@ -29,6 +31,7 @@ export function DeviceTile({
   const { theme } = useUnistyles();
   const { home, mac } = useMacConnection();
   const [screenWidth, setScreenWidth] = useState(0);
+  const now = useNow(30_000);
   const streams = device.running && device.owned && !device.physical;
   const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
   const thumbnail = useRef<ViewInstance>(null);
@@ -51,7 +54,13 @@ export function DeviceTile({
               </Text>
               {device.platform === 'web' ? ` \u00B7 ${device.state}` : ` \u00B7 ${device.model} \u00B7 ${device.state}`}
             </Text>
+            {device.physical ? <Pill>Physical</Pill> : null}
           </View>
+          {device.physical ? (
+            <Text variant="caption" tone="secondary" style={styles.note} numberOfLines={1}>
+              {device.name}
+            </Text>
+          ) : null}
           {notes}
         </View>
       </Card>
@@ -68,7 +77,11 @@ export function DeviceTile({
           {device.platform === 'web' ? 'Web' : device.slot}
         </Text>
         <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
-          {device.page ? shortUrl(device.page.url) : device.model}
+          {device.page
+            ? shortUrl(device.page.url)
+            : device.physical
+              ? `${device.name} \u00B7 ${device.model}`
+              : device.model}
         </Text>
         <View style={styles.spacer} />
         <Text variant="caption2" tone="tertiary" style={styles.shrink} numberOfLines={1}>
@@ -77,6 +90,10 @@ export function DeviceTile({
       </View>
       <View style={styles.badges}>
         <ActivityChip activity={device.activity} />
+        {device.physical ? <Pill>Physical</Pill> : null}
+        {device.leaseExpiresAt ? (
+          <Pill>{`Leased \u00B7 ${shortDuration(Math.max(0, Date.parse(device.leaseExpiresAt) - now))} left`}</Pill>
+        ) : null}
         {device.page?.error ? <Pill tone="warning">Page failed to load</Pill> : null}
         {streams && frame?.posture ? <Pill>{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Pill> : null}
         {streams && delayed ? <Pill tone="warning">Screen updates delayed</Pill> : null}
@@ -116,9 +133,11 @@ export function DeviceTile({
           <Text variant="footnote" tone="tertiary" style={styles.placeholder}>
             {streams
               ? (error ?? 'Waiting for frames')
-              : device.running
-                ? 'Frames are only served for devices Stim owns.'
-                : device.state}
+              : device.physical
+                ? 'Stim does not stream physical devices.'
+                : device.running
+                  ? 'Frames are only served for devices Stim owns.'
+                  : device.state}
           </Text>
         )}
       </View>

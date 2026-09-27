@@ -1,4 +1,5 @@
 import {
+  deviceKey,
   devicesOf,
   isActive,
   isSettingUp,
@@ -188,7 +189,7 @@ export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: 
   return shown.flatMap((item) =>
     devicesOf(item.env)
       .filter((device) => device.running)
-      .map((device) => ({ key: `${item.key}\n${device.platform}\n${device.slot}`, item, device })),
+      .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device })),
   );
 }
 

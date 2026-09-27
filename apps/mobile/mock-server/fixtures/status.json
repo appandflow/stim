@@ -1093,7 +1093,41 @@
         },
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "physicalDevices": [
+          {
+            "platform": "ios",
+            "slot": "default",
+            "id": "00008101-000A10913C89001E",
+            "name": "Old iPhone",
+            "model": "iPhone 12 Pro",
+            "owned": false,
+            "physical": true,
+            "connection": "connected",
+            "lease": {
+              "holder": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+              "kind": "declared",
+              "grantedAt": "2026-09-25T04:20:00.000Z",
+              "expiresAt": "2026-09-25T04:43:00.000Z"
+            }
+          },
+          {
+            "platform": "android",
+            "slot": "pixel",
+            "id": "R5CT20ABCDE",
+            "name": "Pixel 9",
+            "model": "Pixel 9",
+            "owned": false,
+            "physical": true,
+            "connection": "disconnected",
+            "lease": {
+              "holder": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+              "kind": "declared",
+              "grantedAt": "2026-09-25T04:20:00.000Z",
+              "expiresAt": "2026-09-25T04:43:00.000Z"
+            }
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
@@ -1244,7 +1278,33 @@
       "totalMemoryMb": 49152,
       "overCapacity": false
     },
-    "deviceLeases": [],
+    "deviceLeases": [
+      {
+        "path": "/Users/dev/.stim/device-locks/ios-00008101-000A10913C89001E.json",
+        "platform": "ios",
+        "id": "00008101-000A10913C89001E",
+        "deviceName": "Old iPhone",
+        "holder": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+        "grantedAt": "2026-09-25T04:20:00.000Z",
+        "expiresAt": "2026-09-25T04:43:00.000Z",
+        "mine": false,
+        "expired": false,
+        "parsed": true
+      },
+      {
+        "slot": "pixel",
+        "path": "/Users/dev/.stim/device-locks/android-R5CT20ABCDE.json",
+        "platform": "android",
+        "id": "R5CT20ABCDE",
+        "deviceName": "Pixel 9",
+        "holder": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+        "grantedAt": "2026-09-25T04:20:00.000Z",
+        "expiresAt": "2026-09-25T04:43:00.000Z",
+        "mine": false,
+        "expired": false,
+        "parsed": true
+      }
+    ],
     "unprovisionedWorktrees": [
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app",
@@ -1296,6 +1356,7 @@
     "environments[].warnings and environments[].issues: rewritten by hand in the StatusIssue shape; the capture predates issues and listed not-detected emulators on idle workspaces, which status no longer reports. wide-insets and wide-split-layout keep avd-not-detected as if they had launched on Android, ios27-uiscene has an unverified supervisor, and react-native-hinges/example a missing fold3-camera AVD",
     "environments[path*=react-native-reserved-regions].builds: copied from a real stim status --json build history (hits, misses after an app config change, compile failures, a cancelled and an interrupted run) with paths rewritten; its lastBuilds were replaced with the matching newest entries",
     "environments[].phase and phaseSince: added by hand, live for live workspaces and idle otherwise; the capture predates lifecycle phases. environments[path*=new-composer] (warming, copy step) and environments[path*=fix-search] (ready) were added by hand in the shape stim status --json reports for a worktree being warmed and one warmed and not yet run",
-    "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome"
+    "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome",
+    "environments[path*=chat-perf-demo].physicalDevices and deviceLeases: added by hand in the PhysicalDeviceState shape, a connected iPhone leased in the default slot and a disconnected Android phone in the pixel slot; the capture machine leased no physical device"
   ]
 }

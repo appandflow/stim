@@ -24,6 +24,7 @@ import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import {
   deviceWarnings,
+  deviceKey,
   devicesOf,
   livePlatforms,
   orderDevices,
@@ -247,7 +248,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
         ))}
         {devices.map((device) => (
           <DeviceTile
-            key={`${device.platform}-${device.slot}`}
+            key={deviceKey(device)}
             workspace={env.path}
             device={device}
             warnings={byDevice.get(device) ?? []}

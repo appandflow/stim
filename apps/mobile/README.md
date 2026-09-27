@@ -191,6 +191,15 @@ page, such as Playwright MCP, shows as its driver, and Control asks before
 taking over from it. Reload in the workspace menu reloads the page with
 `stim reload web`.
 
+A physical iPhone, iPad or Android phone the workspace leases with
+`stim ios --device`, `stim android --device` or `stim device lock` shows as its
+own tile, from the environment's `physicalDevices` in `stim status`, next to
+any simulator or emulator in the same slot. The tile names the device and its
+model, carries a **Physical** pill and the time left on the lease, and counts
+as running while the Mac reaches the device. Stim does not stream a physical
+device, so the tile shows no screen and does not open the viewer. A lease
+alone puts the workspace under Live.
+
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
 top, and the Control toolbars and the read-only banner move to a column right
@@ -429,7 +438,9 @@ and activity durations read as they did at capture. The workspace that ran
 the build carries a remote EAS session added by hand (listed under `edits` in
 `status.json`), because the capture machine had none. Two workspaces carry
 `lastBuilds` added the same way; the compiled Android one also carries a `missReason`
-in the shape of a real miss. `build.plan` answers from
+in the shape of a real miss. `chat-perf-demo` also leases a connected
+iPhone and a disconnected Android phone, added by hand in the
+`physicalDevices` shape. `build.plan` answers from
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
 --json`, with a `missReason` added to the Android one by hand.

@@ -130,6 +130,19 @@ export interface RemoteDeviceState {
   webPreviewUrl: string | null;
 }
 
+/** A physical phone or tablet the workspace leases. Stim uses it and never owns it. */
+export interface PhysicalDeviceState {
+  platform: Platform;
+  slot: string;
+  id: string;
+  name: string | null;
+  model: string | null;
+  owned: false;
+  physical: true;
+  connection: 'connected' | 'disconnected' | 'unknown';
+  lease: { holder: string; kind: 'declared' | 'run'; grantedAt: string | null; expiresAt: string };
+}
+
 export interface WorktreeGit {
   changed: number;
   untracked: number;
@@ -204,6 +217,8 @@ export interface EnvironmentState {
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
+  /** Absent from a `stim` that does not report physical devices, and when the workspace leases none. */
+  physicalDevices?: PhysicalDeviceState[];
   build?: BuildReport | null;
   lastBuilds?: { ios?: LastBuild; android?: LastBuild };
   /** Each platform's recent runs, newest first, at most 10 each. Absent from a `stim` without build history. */
