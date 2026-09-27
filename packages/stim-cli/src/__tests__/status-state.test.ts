@@ -90,8 +90,8 @@ test("another process on a running workspace's port is warned about once, not pe
 
 test("a port held by another workspace's Metro names that workspace", () => {
   const s = environmentState(project(), {
-    metro: { notOurs: 'pid 99 runs from /proj/b/app', pid: 99, cwd: '/proj/b/app' },
-    workspaces: ['/proj/a', '/proj/b'],
+    metro: { notOurs: 'pid 99 runs from another workspace', pid: 99, cwd: join('/proj', 'b', 'app') },
+    workspaces: [join('/proj', 'a'), join('/proj', 'b')],
   });
   expect(s.issues[0]?.message).toMatch(/^port 8082 is in use by Metro for workspace b;/);
 });

@@ -454,14 +454,13 @@ function warningTexts(issues: StatusIssue[]): string[] {
   return issues.filter((issue) => issue.severity !== 'info').map(issueText);
 }
 
-/** Names what holds a workspace's port: another registered workspace's Metro, or a short trailing path. */
 function portHolder(cwd: string | undefined, self: string, workspaces: readonly string[] = []): string {
   if (!cwd) return 'another app';
   const owner = workspaces
     .filter((path) => path !== self && isInsideProject(cwd, path))
     .toSorted((a, b) => b.length - a.length)[0];
   if (owner) return `Metro for workspace ${basename(owner)}`;
-  return `a dev server in ${cwd.split(sep).filter(Boolean).slice(-3).join('/')}`;
+  return `a dev server in ${cwd.split(/[\\/]/).filter(Boolean).slice(-3).join('/')}`;
 }
 
 function issueText(issue: StatusIssue): string {

@@ -1143,11 +1143,14 @@ captured"  (in metro.ndjson, bare RN)
   and stop has no override for process ownership.
 
 "port <n> is in use by <holder>; stim start will choose a free port"  (status)
-  A note, not a problem: nothing of this workspace runs, and \`stim start\`
-  reserves a free port when its own is taken. When this workspace's
-  supervisor runs, status warns that its Metro cannot serve on the port;
-  run \`stim stop\`, then \`stim start\`. The holder's pid and directory are
-  in \`status --json\` under metro.heldBy.
+  A note, not a problem: no supervisor of this workspace runs, and
+  \`stim start\` reserves a free port when its own is taken. The holder's pid
+  and directory are in \`status --json\` under metro.heldBy.
+
+"port <n> is in use by <holder>, so this workspace's Metro cannot serve on
+it"  (status)
+  This workspace's supervisor runs but another process answers its port.
+  Run \`stim stop\`, then \`stim start\`, which reserves a free port.
 
 "stop        refusing to signal supervisor pid <n>: ..."  (stop)
   The records disagree, the saved OS identity is unavailable, or it records a
