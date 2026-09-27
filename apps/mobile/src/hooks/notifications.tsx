@@ -12,6 +12,7 @@ import {
   DEFAULT_PREFS,
   localNotifications,
   notificationRoute,
+  parseNotifyState,
   parsePrefs,
   type NotificationPrefs,
   type NotifyState,
@@ -73,11 +74,7 @@ const Context = createContext<NotificationsValue>({
 });
 
 function readState(): NotifyState {
-  try {
-    return JSON.parse(storage.getString(STATE_KEY) ?? '{}') as NotifyState;
-  } catch {
-    return {};
-  }
+  return parseNotifyState(storage.getString(STATE_KEY));
 }
 
 /** Notification settings, local notifications while the app is open, push registration, and notification taps. */
