@@ -146,6 +146,7 @@ export const ACTIVITY_RECENCY_BASES = [
   'metro-bundle',
   'workspace-use',
   'supervisor-start',
+  'page-log',
 ] as const;
 
 export type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];

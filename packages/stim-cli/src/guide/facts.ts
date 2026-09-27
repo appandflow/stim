@@ -848,7 +848,8 @@ RULES
                    when none is recorded
   recent           the newest time of each kind of evidence behind
                    lastActivityAt: agent-action, device-log, metro-bundle,
-                   workspace-use, each rounded down to the minute
+                   workspace-use, supervisor-start or page-log, each
+                   rounded down to the minute
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive

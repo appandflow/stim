@@ -332,6 +332,7 @@ describe('readWebActivity', () => {
     expect(activity).toEqual({
       state: 'active',
       lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      recent: { 'page-log': new Date(NOW - 60_000).toISOString() },
       basis: ['page-log'],
     });
   });

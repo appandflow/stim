@@ -237,7 +237,7 @@ function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceA
   return target.platform === 'ios' ? devices?.ios?.activity : devices?.android?.activity;
 }
 
-const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : 'Android');
+const DEVICE_NOUN = { ios: 'iOS device', android: 'Android device', web: 'web page' } as const;
 
 function conflictAbout(payload: StatusPayload, target: ControlBeginParams): Omit<ControlConflict, 'body'> {
   const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
@@ -408,7 +408,7 @@ export class ControlHub {
       if (current.owner.device.id !== owner.device.id)
         this.options.conflict(current.owner.device.id, {
           ...conflictAbout(status, target),
-          body: `${owner.device.name} took over the ${platformName(target.platform)} device you were controlling`,
+          body: `${owner.device.name} took over the ${DEVICE_NOUN[target.platform]} you were controlling`,
         });
     }
     const id = `c${this.next++}`;
@@ -449,7 +449,7 @@ export class ControlHub {
           const tool = activityOf(latest, target)?.driver?.tool ?? 'An agent';
           this.options.conflict(owner.device.id, {
             ...conflictAbout(latest, target),
-            body: `${tool} started driving the ${platformName(target.platform)} device you are controlling`,
+            body: `${tool} started driving the ${DEVICE_NOUN[target.platform]} you are controlling`,
           });
         }
       },

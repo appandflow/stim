@@ -19,9 +19,10 @@ interface Activity {
 
 /**
  * What counts as someone working on a device: agent actions, reloads and Stim runs. App log records do not, because an
- * idle app keeps logging; a new log error counts through the error count instead.
+ * idle app keeps logging; a new log error counts through the error count instead. The owned Chrome page records no
+ * agent actions, so its page log counts.
  */
-const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
+const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use', 'page-log'];
 
 interface Device {
   name?: string | null;
@@ -58,6 +59,7 @@ export interface OversightEnvironment {
   lastBuilds?: { ios?: Build; android?: Build };
   builds?: { ios?: Build[]; android?: Build[] };
   logs?: { errorsSinceMarker: number } | null;
+  web?: { running: boolean; activity?: Activity } | null;
 }
 
 export interface OversightStatus {
@@ -97,7 +99,7 @@ export interface OversightPrefs {
 export type OversightTarget =
   | { kind: 'machine' }
   | { kind: 'workspace'; path: string }
-  | { kind: 'device'; path: string; platform: 'ios' | 'android'; slot: string }
+  | { kind: 'device'; path: string; platform: 'ios' | 'android' | 'web'; slot: string }
   | { kind: 'build'; path: string; platform: 'ios' | 'android' }
   | { kind: 'url'; path: string; url: string };
 
@@ -212,8 +214,10 @@ export function oversightTitle(env: OversightEnvironment, status: OversightStatu
   return basename(root);
 }
 
+type Platform = 'ios' | 'android' | 'web';
+
 interface SlotDevice {
-  platform: 'ios' | 'android';
+  platform: Platform;
   slot: string;
   model: string;
   running: boolean;
@@ -244,6 +248,15 @@ function devicesOf(env: OversightEnvironment): SlotDevice[] {
   };
   add('default', env.ios, env.android);
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
+  if (env.web) {
+    out.push({
+      platform: 'web',
+      slot: 'default',
+      model: 'Chrome',
+      running: env.web.running,
+      activity: env.web.activity,
+    });
+  }
   return out;
 }
 

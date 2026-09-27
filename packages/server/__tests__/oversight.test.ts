@@ -172,6 +172,23 @@ describe('oversee', () => {
       ]);
     });
 
+    it('counts an agent driving the owned Chrome page, and opens it in the device viewer', () => {
+      const web = (state: string) => ({
+        running: true,
+        activity: { state, ...(state === 'driven' ? { driver: { tool: 'agent-browser', since: iso(T0 + MIN) } } : {}) },
+      });
+      const { sent } = run([
+        { at: T0, input: input([env({ web: web('idle') })]) },
+        { at: T0 + MIN, input: input([env({ web: web('driven') })]) },
+      ]);
+      expect(sent.map((n) => [n.body, n.target])).toEqual([
+        [
+          'agent-browser started driving Chrome on MacBook Pro',
+          { kind: 'device', path: PATH, platform: 'web', slot: 'default' },
+        ],
+      ]);
+    });
+
     it('does not count a phone controlling the device through stim-server as an agent', () => {
       const lease = iso(T0 + MIN);
       const phone = sim({ state: 'driven', tool: 'stim device lock', since: T0 + MIN, lastAt: T0 });
