@@ -1760,7 +1760,7 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     "streams the physical iPhone the workspace leases, not its simulator's lock, with the helper's stall reason",
     async () => {
-      const locked = 'The iPhone PHONE-1 is locked. Unlock it to see its screen.';
+      const locked = 'The iPhone is locked. Unlock it to see its screen.';
       const port = await startWithTools(
         { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_STALLED: locked },
         undefined,

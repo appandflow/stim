@@ -191,9 +191,9 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   private func reportStall() {
     let stall: String?
     if let device, device.isInUseByAnotherApplication {
-      stall = "Another app, such as QuickTime Player, is capturing the iPhone \(udid)."
+      stall = "Another app, such as QuickTime Player, is capturing this iPhone."
     } else if let device, device.isSuspended {
-      stall = "The iPhone \(udid) is locked. Unlock it to see its screen."
+      stall = "The iPhone is locked. Unlock it to see its screen."
     } else {
       stall = failure
     }
