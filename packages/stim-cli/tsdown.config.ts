@@ -7,6 +7,7 @@ export default defineConfig({
     cli: 'bin/cli.ts',
     'android-cas-compiler': 'bin/android-cas-compiler.ts',
     'cache-manifest': 'src/cache/cache-manifest.ts',
+    'pull-requests': 'src/workspace/pull-request.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
     'web-run': 'src/web/run.ts',

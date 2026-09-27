@@ -139,10 +139,24 @@ export interface ActivityDriver {
   since: string | null;
 }
 
+/** The kinds of evidence that date a device's last activity, in the order `recent` lists them. */
+export const ACTIVITY_RECENCY_BASES = [
+  'agent-action',
+  'device-log',
+  'metro-bundle',
+  'workspace-use',
+  'supervisor-start',
+  'page-log',
+] as const;
+
+export type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
+
 export interface DeviceActivity {
   state: ActivityState;
   driver?: ActivityDriver;
   lastActivityAt?: string;
+  /** The newest time of each kind of evidence behind `lastActivityAt`, so a reader can leave out app log chatter. */
+  recent?: Partial<Record<ActivityRecencyBasis, string>>;
   basis: string[];
 }
 

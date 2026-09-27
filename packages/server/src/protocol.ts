@@ -399,21 +399,44 @@ export interface MachineHistory {
   samples: UsageSample[];
 }
 
-/** The attention events stim-server can push, named like the phone's notification settings. */
-export const PUSH_EVENTS = ['build-failed', 'log-errors', 'disk', 'app-stopped', 'slow-build'] as const;
+/**
+ * What stim-server can push, named like the phone's notification settings: work `started` (a workspace began
+ * warming or an agent first drove its device), an agent that looks `stuck`, one that is `looping` on the same
+ * failure, work `finished` (the agent stopped after a green build, or the workspace's pull request became ready for
+ * review or merged), a `machine` in trouble, and a `control` conflict over a device this phone controls.
+ */
+export const PUSH_EVENTS = ['started', 'stuck', 'looping', 'finished', 'machine', 'control'] as const;
 
 export type PushEvent = (typeof PUSH_EVENTS)[number];
 
+/** Events phones registered before `PUSH_EVENTS`: `disk` stands for `machine`, and the others no longer push. */
+export const LEGACY_PUSH_EVENTS = ['build-failed', 'log-errors', 'disk', 'app-stopped', 'slow-build'] as const;
+
+export type LegacyPushEvent = (typeof LEGACY_PUSH_EVENTS)[number];
+
 /**
- * Asks the server to push this device's attention notifications through the Expo push service to `token`, an
- * Expo push token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as `data.ref` in every
- * push, so the phone can tell which Mac sent it.
+ * When pushes stay silent, in minutes after midnight in the phone's IANA `timeZone`; an `end` before `start` spans
+ * midnight. A problem that still holds when they end is pushed then; events during them are not.
+ */
+export interface QuietHours {
+  start: number;
+  end: number;
+  timeZone: string;
+}
+
+/**
+ * Asks the server to push this device's notifications through the Expo push service to `token`, an Expo push
+ * token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as
+ * `data.ref` in every push, so the phone can tell which Mac sent it. `stuckMinutes` is how long a driven workspace
+ * must show no activity to look stuck, 15 by default. `agentOnly` is accepted from older phones and ignored.
  */
 export interface PushRegisterParams {
   token: string;
-  events: PushEvent[];
+  events: (PushEvent | LegacyPushEvent)[];
   agentOnly?: boolean;
   ref: string;
+  stuckMinutes?: number;
+  quietHours?: QuietHours;
 }
 
 export interface Methods {
@@ -905,9 +928,25 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               token: { type: 'string', pattern: PUSH_TOKEN_PATTERN, description: 'An Expo push token.' },
-              events: { type: 'array', minItems: 1, uniqueItems: true, items: { enum: [...PUSH_EVENTS] } },
+              events: {
+                type: 'array',
+                minItems: 1,
+                uniqueItems: true,
+                items: { enum: [...PUSH_EVENTS, ...LEGACY_PUSH_EVENTS] },
+              },
               agentOnly: { type: 'boolean', default: false },
               ref: { type: 'string', minLength: 1, maxLength: 128 },
+              stuckMinutes: { type: 'integer', minimum: 1, maximum: 240, default: 15 },
+              quietHours: {
+                type: 'object',
+                required: ['start', 'end', 'timeZone'],
+                additionalProperties: false,
+                properties: {
+                  start: { type: 'integer', minimum: 0, maximum: 1439 },
+                  end: { type: 'integer', minimum: 0, maximum: 1439 },
+                  timeZone: { type: 'string', minLength: 1, maxLength: 64, description: 'An IANA time zone.' },
+                },
+              },
             },
           }),
           request('push.unregister'),

@@ -518,12 +518,31 @@ test('a stopped dev server reports its recorded cause, or a vanished supervisor 
 });
 
 test('statusActivity rounds lastActivityAt down to the minute, so records within one minute give the same payload', () => {
-  const at = (iso: string) => statusActivity({ state: 'active', lastActivityAt: iso, basis: ['device-log'] });
+  const at = (iso: string) =>
+    statusActivity({ state: 'active', lastActivityAt: iso, recent: { 'device-log': iso }, basis: ['device-log'] });
   expect(at('2026-09-24T09:00:01.250Z')).toEqual(at('2026-09-24T09:00:59.999Z'));
   expect(JSON.stringify(at('2026-09-24T09:00:59.999Z'))).toBe(
-    JSON.stringify({ state: 'active', lastActivityAt: '2026-09-24T09:00:00.000Z', basis: ['device-log'] }),
+    JSON.stringify({
+      state: 'active',
+      lastActivityAt: '2026-09-24T09:00:00.000Z',
+      recent: { 'device-log': '2026-09-24T09:00:00.000Z' },
+      basis: ['device-log'],
+    }),
   );
   expect(at('2026-09-24T09:01:00.000Z').lastActivityAt).toBe('2026-09-24T09:01:00.000Z');
+  const both = (first: 'agent-action' | 'device-log') =>
+    JSON.stringify(
+      statusActivity({
+        state: 'driven',
+        lastActivityAt: '2026-09-24T09:00:40.000Z',
+        recent:
+          first === 'agent-action'
+            ? { 'agent-action': '2026-09-24T09:00:30.000Z', 'device-log': '2026-09-24T09:00:40.000Z' }
+            : { 'device-log': '2026-09-24T09:00:20.000Z', 'agent-action': '2026-09-24T09:00:30.000Z' },
+        basis: [],
+      }).recent,
+    );
+  expect(both('agent-action')).toBe(both('device-log'));
   expect(statusActivity({ state: 'idle', basis: [] })).toEqual({ state: 'idle', basis: [] });
 });
 

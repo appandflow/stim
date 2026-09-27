@@ -39,6 +39,11 @@
       "types": "./dist/cache-manifest.d.mts",
       "module-sync": "./dist/cache-manifest.mjs",
       "default": "./dist/cache-manifest.mjs"
+    },
+    "./pull-requests": {
+      "types": "./dist/pull-requests.d.mts",
+      "module-sync": "./dist/pull-requests.mjs",
+      "default": "./dist/pull-requests.mjs"
     }
   },
   "scripts": {

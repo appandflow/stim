@@ -24,6 +24,8 @@ import {
   type ServerMessage,
   type TouchPhase,
 } from './protocol.ts';
+import { oversightTitle } from './oversight.ts';
+import type { ControlConflict } from './push.ts';
 import type { PairedDevice } from './registry.ts';
 import { runStim, terminate, type CommandLimits } from './stim-command.ts';
 
@@ -235,6 +237,18 @@ function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceA
   return target.platform === 'ios' ? devices?.ios?.activity : devices?.android?.activity;
 }
 
+const DEVICE_NOUN = { ios: 'iOS device', android: 'Android device', web: 'web page' } as const;
+
+function conflictAbout(payload: StatusPayload, target: ControlBeginParams): Omit<ControlConflict, 'body'> {
+  const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
+  return {
+    workspace: target.workspace,
+    title: environment ? oversightTitle(environment, payload) : target.workspace,
+    platform: target.platform,
+    slot: target.slot ?? 'default',
+  };
+}
+
 function otherDriver(activity: DeviceActivity | undefined, ownLeases: ReadonlySet<string>): string | null {
   if (activity?.state !== 'driven' || !activity.driver) return null;
   const { tool, since } = activity.driver;
@@ -265,6 +279,9 @@ interface Session {
   renewing: Promise<void>;
   adb: Promise<void>;
   ended: boolean;
+  /** The driver this session took over, and whether another one was already pushed to the owner. */
+  driver: string | null;
+  driverNoticed: boolean;
 }
 
 /** One authenticated connection that can hold control sessions. */
@@ -287,6 +304,8 @@ export interface ControlOptions {
   /** Resolves to the `sim-fold` helper, building it on first use. */
   foldHelper: () => Promise<string>;
   foldTimeoutMs: number;
+  /** Tells the paired device `deviceId` that someone else took over, or started driving, the device it controls. */
+  conflict: (deviceId: string, conflict: ControlConflict) => void;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -308,6 +327,11 @@ export class ControlHub {
 
   constructor(options: ControlOptions) {
     this.options = options;
+  }
+
+  /** `grantedAt` of the leases this hub took for phones, so their control does not count as an agent. */
+  ownLeaseTimes(): string[] {
+    return [...this.ownLeases];
   }
 
   targetOf(owner: Controller, session: string): SessionTarget | null {
@@ -379,7 +403,14 @@ export class ControlHub {
       });
     }
     const inherited = granted !== null && current?.lease?.mine === true;
-    if (current) void this.end(current, 'taken-over', `${owner.device.name} took over this device.`, !inherited);
+    if (current) {
+      void this.end(current, 'taken-over', `${owner.device.name} took over this device.`, !inherited);
+      if (current.owner.device.id !== owner.device.id)
+        this.options.conflict(current.owner.device.id, {
+          ...conflictAbout(status, target),
+          body: `${owner.device.name} took over the ${DEVICE_NOUN[target.platform]} you were controlling`,
+        });
+    }
     const id = `c${this.next++}`;
     session = {
       id,
@@ -398,15 +429,28 @@ export class ControlHub {
       unwatch: () => {},
       adb: Promise.resolve(),
       ended: false,
+      driver,
+      driverNoticed: false,
     };
     this.sessions.set(id, session);
     this.byDevice.set(key, session);
     session.unwatch = this.options.feeds.subscribe(this.options.statusFeed, {
       item: (payload) => {
-        const resolved = ownedDevice(payload as unknown as StatusPayload, target, key);
+        const latest = payload as unknown as StatusPayload;
+        const resolved = ownedDevice(latest, target, key);
         if (typeof resolved === 'string' || deviceKey(resolved) !== key) {
           const message = typeof resolved === 'string' ? resolved : 'The device changed.';
           queueMicrotask(() => void this.end(session, 'device-gone', message));
+          return;
+        }
+        const other = otherDriver(activityOf(latest, target), this.ownLeases);
+        if (other && other !== session.driver && !session.driverNoticed && !session.ended) {
+          session.driverNoticed = true;
+          const tool = activityOf(latest, target)?.driver?.tool ?? 'An agent';
+          this.options.conflict(owner.device.id, {
+            ...conflictAbout(latest, target),
+            body: `${tool} started driving the ${DEVICE_NOUN[target.platform]} you are controlling`,
+          });
         }
       },
       failed: () => {},

@@ -651,6 +651,7 @@ describe('linked worktree sweep classification', () => {
       pullRequest: {
         number: 12,
         state,
+        draft: false,
         url: 'https://github.com/o/r/pull/12',
         head: 'abc',
         containsHead: true,

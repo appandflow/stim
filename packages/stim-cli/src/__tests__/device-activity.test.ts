@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProcessStart } from '../process-identity.ts';
@@ -110,6 +110,7 @@ test('recent activity is active, older activity is idle, and no evidence is idle
   expect(old).toEqual({
     state: 'idle',
     lastActivityAt: new Date(NOW - 3_600_000).toISOString(),
+    recent: { 'metro-bundle': new Date(NOW - 3_600_000).toISOString() },
     basis: ['metro-bundle'],
   });
   expect(classifyActivity({ drivers: [], unknown: [], recency: [] }, NOW)).toEqual({ state: 'idle', basis: [] });
@@ -165,6 +166,34 @@ describe('createActivityReader', () => {
     });
   });
 
+  test("a live claim's agent actions count as activity, so an agent working without app logs is not quiet", () => {
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({
+        session: 'cwd:11fe14a563f7aed6:ios',
+        device: { id: UDID },
+        ownerPid: 100,
+        ownerStartTime: OWNER_START,
+      }),
+    );
+    const events = join(home, '.agent-device', 'sessions', 'cwd_11fe14a563f7aed6_ios', 'events.ndjson');
+    mkdirSync(join(events, '..'), { recursive: true });
+    writeFileSync(events, '{}\n');
+    const actedAt = NOW - 120_000;
+    utimesSync(events, actedAt / 1000, actedAt / 1000);
+    writeLogs([{ ts: NOW - 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
+    expect(read({ 100: OWNER_START })).toMatchObject({
+      state: 'driven',
+      lastActivityAt: new Date(actedAt).toISOString(),
+      recent: {
+        'agent-action': new Date(actedAt).toISOString(),
+        'device-log': new Date(NOW - 3_600_000).toISOString(),
+      },
+    });
+  });
+
   test('a stale lease falls through to log recency from this device only', () => {
     writeLease(runnerLease());
     const at = NOW - 2 * 3_600_000;
@@ -179,6 +208,7 @@ describe('createActivityReader', () => {
     expect(read({ 100: OWNER_START })).toEqual({
       state: 'idle',
       lastActivityAt: new Date(at).toISOString(),
+      recent: { 'device-log': new Date(at).toISOString(), 'metro-bundle': new Date(at - 1000).toISOString() },
       basis: ['device-log', 'metro-bundle'],
     });
   });
@@ -302,6 +332,7 @@ describe('readWebActivity', () => {
     expect(activity).toEqual({
       state: 'active',
       lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      recent: { 'page-log': new Date(NOW - 60_000).toISOString() },
       basis: ['page-log'],
     });
   });

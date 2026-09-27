@@ -19,12 +19,13 @@ import {
   type FrameLimits,
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
-import { readDiskVolumes, readMachineUsage, UsageSampler } from './machine.ts';
+import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   ACTIONS,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
+  LEGACY_PUSH_EVENTS,
   PLATFORMS,
   PROTOCOL_VERSION,
   PUSH_EVENTS,
@@ -40,10 +41,14 @@ import {
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
-import { EXPO_PUSH_API, PushNotifier, type PushLimits } from './push.ts';
+import { worktreePullRequests } from 'stim/pull-requests';
+import { DEFAULT_STUCK_MINUTES } from './oversight.ts';
+import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
   authenticateDevice,
   dropPushToken,
+  parseQuietHours,
+  pushEvents,
   readDevices,
   setDevicePush,
   serverDir,
@@ -51,6 +56,7 @@ import {
   type AuthOutcome,
   type PairedDevice,
   type PeerIdentity,
+  validStuckMinutes,
 } from './registry.ts';
 import { runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
@@ -84,6 +90,8 @@ export interface ServerOptions {
   /** The Expo push API base URL; tests point it at a local server. */
   pushEndpoint?: string;
   pushLimits?: Partial<PushLimits>;
+  /** Looks up the worktrees' pull requests; tests replace GitHub. */
+  pullRequests?: PushNotifierOptions['pullRequests'];
 }
 
 interface ControlLimits {
@@ -321,6 +329,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     leaseFor: controlLimits.leaseFor,
     foldHelper,
     foldTimeoutMs: controlLimits.foldTimeoutMs,
+    conflict: (deviceId, conflict) => push.control(deviceId, conflict),
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const push = new PushNotifier({
@@ -328,6 +337,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     endpoint: options.pushEndpoint ?? EXPO_PUSH_API,
     subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
     readVolumes: readDiskVolumes,
+    readPressure: readMemoryPressure,
+    pullRequests: options.pullRequests ?? ((worktrees) => worktreePullRequests()(worktrees)),
+    ownLeases: () => control.ownLeaseTimes(),
     devices: readDevices,
     dropToken: dropPushToken,
     limits: options.pushLimits,
@@ -913,34 +925,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function registerPush(id: RequestId, params: unknown, session: PairedDevice): void {
-      const token = isJsonObject(params) ? params.token : undefined;
-      const events = isJsonObject(params) ? params.events : undefined;
-      const agentOnly = isJsonObject(params) ? (params.agentOnly === undefined ? false : params.agentOnly) : undefined;
-      const ref = isJsonObject(params) ? params.ref : undefined;
+      const value = isJsonObject(params) ? params : {};
+      const { token, events, ref } = value;
+      const agentOnly = value.agentOnly ?? false;
+      const stuckMinutes = value.stuckMinutes ?? DEFAULT_STUCK_MINUTES;
+      const quietHours = value.quietHours === undefined ? null : parseQuietHours(value.quietHours);
       if (
         typeof token !== 'string' ||
         !pushToken.test(token) ||
         !Array.isArray(events) ||
         events.length === 0 ||
-        !events.every((event) => (PUSH_EVENTS as readonly unknown[]).includes(event)) ||
+        !events.every((event) => ([...PUSH_EVENTS, ...LEGACY_PUSH_EVENTS] as readonly unknown[]).includes(event)) ||
         typeof agentOnly !== 'boolean' ||
         typeof ref !== 'string' ||
         ref.length === 0 ||
-        ref.length > 128
+        ref.length > 128 ||
+        !validStuckMinutes(stuckMinutes) ||
+        (value.quietHours !== undefined && quietHours === null)
       ) {
         return error(
           id,
           'bad-request',
           'push.register takes an Expo push token, one or more events from ' +
-            `${PUSH_EVENTS.join(', ')}, an optional boolean agentOnly and a ref of 1 to 128 characters.`,
+            `${PUSH_EVENTS.join(', ')}, a ref of 1 to 128 characters, and optionally stuckMinutes from 1 to 240 and ` +
+            'quietHours { start, end, timeZone } in minutes after midnight and an IANA time zone.',
         );
       }
       const registered = setDevicePush(session.id, {
         token,
-        events: PUSH_EVENTS.filter((event) => events.includes(event)),
-        agentOnly,
+        events: pushEvents(events),
         ref,
         registeredAt: new Date().toISOString(),
+        stuckMinutes,
+        quietHours,
       });
       if (!registered) return error(id, 'unauthorized', 'This device is no longer paired.');
       push.refresh();

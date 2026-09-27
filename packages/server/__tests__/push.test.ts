@@ -1,7 +1,13 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { FeedListener, JsonObject } from '../src/feed.ts';
-import { maskPushTokens, PushNotifier, type PushMessage } from '../src/push.ts';
+import {
+  maskPushTokens,
+  PushNotifier,
+  type PushLimits,
+  type PushMessage,
+  type PushNotifierOptions,
+} from '../src/push.ts';
 import type { PairedDevice, PushRegistration } from '../src/registry.ts';
 
 const T0 = Date.parse('2026-09-26T12:00:00Z');
@@ -51,10 +57,11 @@ afterEach(async () => {
 
 const registration = (extra: Partial<PushRegistration> = {}): PushRegistration => ({
   token: TOKEN,
-  events: ['build-failed', 'log-errors', 'disk', 'app-stopped', 'slow-build'],
-  agentOnly: false,
+  events: ['started', 'stuck', 'looping', 'finished', 'machine', 'control'],
   ref: 'mac-1',
   registeredAt: new Date(T0).toISOString(),
+  stuckMinutes: 15,
+  quietHours: null,
   ...extra,
 });
 
@@ -69,20 +76,22 @@ const device = (push?: PushRegistration): PairedDevice => ({
   ...(push ? { push } : {}),
 });
 
-function failed(finishedAt: string) {
-  return {
-    ios: {
-      platform: 'ios',
-      status: 'failed',
-      cacheHit: false,
-      cacheSkipped: false,
-      durationMs: 1000,
-      fingerprint: null,
-      startedAt: finishedAt,
-      finishedAt,
-      errorCode: 'STIM_BUILD_FAILED',
-    },
-  };
+/** A history of `count` iOS builds that failed the same way, the newest at `at`. */
+function looping(at: number, count = 3): JsonObject {
+  const runs = Array.from({ length: count }, (_, i) => ({
+    platform: 'ios',
+    status: 'failed',
+    result: 'failed',
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: 1000,
+    fingerprint: null,
+    startedAt: new Date(at - i * 60_000).toISOString(),
+    finishedAt: new Date(at - i * 60_000).toISOString(),
+    errorCode: 'STIM_BUILD_FAILED',
+    diagnostics: [{ file: '/u/app/ios/AppDelegate.swift', line: 71, column: 3, message: 'boom' }],
+  }));
+  return { builds: { ios: runs }, lastBuilds: { ios: runs[0] } };
 }
 
 const env = (extra: JsonObject = {}): JsonObject => ({
@@ -90,13 +99,41 @@ const env = (extra: JsonObject = {}): JsonObject => ({
   live: true,
   memoryMb: 0,
   warnings: [],
-  worktree: { path: '/u/app/.worktrees/login', branch: 'feat/login', repository: '/u/app' },
+  worktree: {
+    path: '/u/app/.worktrees/login',
+    branch: 'feat/login',
+    repository: '/u/app',
+    git: { changed: 0, untracked: 0, upstream: 'origin/feat/login', ahead: 0, behind: 0, mergedInto: null },
+  },
   ...extra,
+});
+
+const driven = (lastAt: number) => ({
+  ios: {
+    name: 'stim-x (iPhone 18 Pro 27.0)',
+    udid: 'U',
+    owned: true,
+    state: 'Booted',
+    activity: {
+      state: 'driven',
+      driver: { tool: 'agent-device', pid: 1, since: new Date(lastAt).toISOString() },
+      lastActivityAt: new Date(lastAt).toISOString(),
+      basis: ['agent-device-claim'],
+    },
+  },
 });
 
 const status = (...environments: JsonObject[]): JsonObject => ({ environments, unprovisionedWorktrees: [] });
 
-function setup(options: { devices?: PairedDevice[]; replay?: JsonObject; freeGb?: number } = {}) {
+interface Setup {
+  limits?: Partial<PushLimits>;
+  devices?: PairedDevice[];
+  replay?: JsonObject;
+  freeGb?: number;
+  pullRequests?: PushNotifierOptions['pullRequests'];
+}
+
+function setup(options: Setup = {}) {
   let listener: FeedListener | null = null;
   let freeGb = options.freeGb ?? 200;
   let now = T0;
@@ -116,9 +153,12 @@ function setup(options: { devices?: PairedDevice[]; replay?: JsonObject; freeGb?
       };
     },
     readVolumes: () => [{ mount: '/', holds: [], freeBytes: freeGb * 1e9, totalBytes: 1e12 }],
+    readPressure: async () => 'normal',
+    pullRequests: options.pullRequests ?? (async () => new Map()),
+    ownLeases: () => [],
     devices: () => devices,
     dropToken: (token) => dropped.push(token),
-    limits: { receiptDelayMs: 0, diskMs: 10 },
+    limits: { receiptDelayMs: 0, diskMs: 10, ...options.limits },
     now: () => now,
   });
   notifier.refresh();
@@ -150,15 +190,19 @@ describe('PushNotifier', () => {
   let current: ReturnType<typeof setup> | null = null;
   afterEach(() => current?.notifier.close());
 
-  it('stays quiet about what is wrong when it starts, then pushes each new failure once', async () => {
+  it('stays quiet about what is true when it starts, then pushes a looping build once, to its build details', async () => {
     const t = (current = setup());
-    t.emit(status(env({ lastBuilds: failed('2026-09-26T11:59:00Z') })));
+    t.emit(status(env(looping(T0 - 60_000))));
     await settle();
     expect(expo.sent).toEqual([]);
 
     t.at(60_000);
-    t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:30Z') })));
-    t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:30Z') })));
+    t.emit(status(env(looping(T0 + 30_000, 1))));
+    t.at(120_000);
+    t.emit(status(env(looping(T0 + 90_000))));
+    t.emit(status(env(looping(T0 + 90_000))));
+    t.at(180_000);
+    t.emit(status(env(looping(T0 + 150_000, 4))));
     await settle(1);
     expect(expo.sent).toEqual([
       [
@@ -166,51 +210,85 @@ describe('PushNotifier', () => {
           to: TOKEN,
           title: 'feat/login',
           subtitle: 'MacBook Pro',
-          body: 'iOS build failed (STIM_BUILD_FAILED)',
+          body: 'Same Swift error 3x at AppDelegate.swift:71',
           sound: 'default',
-          data: { ref: 'mac-1', target: 'workspace', path: '/u/app/.worktrees/login' },
+          interruptionLevel: 'active',
+          collapseId: expect.stringMatching(/^[0-9a-f]{32}$/),
+          data: { ref: 'mac-1', target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
         },
       ],
     ]);
   });
 
-  it('pushes log errors once they settle, then new ones after a cooldown', async () => {
+  it('pushes work started quietly, grouped per machine, and a stuck agent after the chosen threshold', async () => {
+    const t = (current = setup({ devices: [device(registration({ stuckMinutes: 5 }))] }));
+    t.emit(status());
+    t.at(1000);
+    t.emit(status(env(driven(T0 + 1000))));
+    await settle(1);
+    expect(expo.sent.flat()[0]).toMatchObject({
+      body: 'agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro',
+      sound: null,
+      interruptionLevel: 'passive',
+      threadId: 'started:MacBook Pro',
+      data: { target: 'device', path: '/u/app/.worktrees/login', platform: 'ios', slot: 'default' },
+    });
+    t.at(5 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    t.at(5 * 60_000 + 2000);
+    t.emit(status(env(driven(T0 + 1000))));
+    await settle(2);
+    expect(bodies()).toEqual([
+      'feat/login | agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro',
+      'feat/login | No agent activity for 5 min; iPhone 18 Pro 27.0 still up',
+    ]);
+    const [started, stuck] = expo.sent.flat();
+    expect(started!.collapseId).not.toBe(stuck!.collapseId);
+  });
+
+  it('no longer pushes a failed build, log errors, a stopped app or a slow build', async () => {
     const t = (current = setup());
     t.emit(status(env()));
-    t.at(1000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 2 } })));
-    t.at(5000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 3 } })));
-    t.at(14_000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 3 } })));
-    t.at(16_000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 3 } })));
-    await settle(1);
-    expect(bodies()).toEqual(['feat/login | 3 errors in the logs']);
-    expect(expo.sent[0]![0]!.data).toEqual({ ref: 'mac-1', target: 'logs', path: '/u/app/.worktrees/login' });
-
     t.at(60_000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 7 } })));
-    t.at(200_000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 7 } })));
+    t.emit(
+      status(
+        env({
+          ...looping(T0 + 30_000, 1),
+          logs: { dir: '/l', errorsSinceMarker: 9 },
+          build: {
+            platform: 'android',
+            slot: 'default',
+            state: 'running',
+            phase: 'compile',
+            startedAt: new Date(T0 - 3_600_000).toISOString(),
+            phaseStartedAt: new Date(T0 - 3_600_000).toISOString(),
+            outcome: 'cold',
+            expectedMs: 60_000,
+            expectedPhaseMs: null,
+            basis: 3,
+          },
+          ios: {
+            name: 'stim-x (iPhone 18 Pro 27.0)',
+            udid: 'U',
+            owned: true,
+            state: 'Booted',
+            app: { id: 'a', state: 'stopped' },
+          },
+        }),
+      ),
+    );
     await settle();
-    expect(bodies()).toHaveLength(1);
-
-    t.at(320_000);
-    t.emit(status(env({ logs: { dir: '/l', errorsSinceMarker: 7 } })));
-    await settle(2);
-    expect(bodies()).toEqual(['feat/login | 3 errors in the logs', 'feat/login | 4 new errors in the logs']);
+    expect(expo.sent).toEqual([]);
   });
 
   it('pushes low disk once, to the machine sheet, and only the events the device chose', async () => {
-    const t = (current = setup({ devices: [device(registration({ events: ['disk'] }))] }));
-    const stopped = { name: 'stim-x (iPhone 18 Pro 27.0)', udid: 'U', owned: true, state: 'Booted' };
-    t.emit(status(env({ ios: { ...stopped, app: { id: 'a', state: 'running' } } })));
+    const t = (current = setup({ devices: [device(registration({ events: ['machine'] }))] }));
+    t.emit(status(env()));
     t.at(1000);
-    t.emit(status(env({ ios: { ...stopped, app: { id: 'a', state: 'stopped' } } })));
+    t.emit(status(env({ ...driven(T0 + 1000), ...looping(T0 + 1000) })));
     t.setFreeGb(3);
     await settle();
-    t.emit(status(env({ ios: { ...stopped, app: { id: 'a', state: 'stopped' } } })));
+    t.emit(status(env({ ...driven(T0 + 1000), ...looping(T0 + 1000) })));
     await settle(1);
     expect(expo.sent).toEqual([
       [
@@ -219,37 +297,92 @@ describe('PushNotifier', () => {
           title: 'MacBook Pro',
           body: "3.0 GB free, below Stim's floor",
           sound: 'default',
+          interruptionLevel: 'active',
+          collapseId: expect.any(String),
           data: { ref: 'mac-1', target: 'machine' },
         },
       ],
     ]);
   });
 
-  it('leaves out workspaces no agent drives when the device asks', async () => {
-    const t = (current = setup({ devices: [device(registration({ agentOnly: true }))] }));
-    const sim = (state: 'driven' | 'idle') => ({
-      ios: {
-        name: 'stim-x (iPhone 18 Pro 27.0)',
-        udid: 'U',
-        owned: true,
-        state: 'Booted',
-        activity: { state, basis: [] },
-        app: { id: 'a', state: 'stopped' },
-      },
-    });
-    t.emit(status(env(), env({ path: '/u/app/.worktrees/agent', worktree: undefined })));
+  it('holds pushes during the quiet hours of the phone', async () => {
+    const quietHours = { start: 11 * 60, end: 13 * 60, timeZone: 'UTC' };
+    const t = (current = setup({ devices: [device(registration({ quietHours }))] }));
+    t.emit(status(env()));
     t.at(1000);
-    t.emit(status(env(sim('idle')), env({ path: '/u/app/.worktrees/agent', worktree: undefined, ...sim('driven') })));
+    t.emit(status(env(looping(T0 + 1000))));
+    await settle();
+    expect(expo.sent).toEqual([]);
+    t.at(3_600_000);
+    t.emit(status(env(looping(T0 + 1000))));
     await settle(1);
-    expect(bodies()).toEqual(['agent | App not running on iPhone 18 Pro 27.0']);
+    expect(bodies()).toEqual(['feat/login | Same Swift error 3x at AppDelegate.swift:71']);
   });
 
-  it('sums up more than three problems in one push', async () => {
+  it("looks up the pushed worktrees' pull requests and pushes one that became ready for review", async () => {
+    const asked: string[][] = [];
+    let draft = true;
+    const t = (current = setup({
+      pullRequests: async (worktrees) => {
+        asked.push(worktrees.map((w) => `${w.path} ${w.branch} ${w.repository}`));
+        return new Map([
+          ['/u/app/.worktrees/login', { number: 9, state: 'open', draft, url: 'https://github.com/o/r/pull/9' }],
+        ]);
+      },
+    }));
+    const local = env({
+      path: '/u/app/.worktrees/local',
+      worktree: {
+        path: '/u/app/.worktrees/local',
+        branch: 'local',
+        repository: '/u/app',
+        git: { upstream: null, mergedInto: null },
+      },
+    });
+    t.emit(status(env(), local));
+    for (let i = 0; i < 100 && asked.length < 1; i++) await tick();
+    await tick();
+    expect(asked).toEqual([['/u/app/.worktrees/login feat/login /u/app']]);
+    draft = false;
+    await (t.notifier as unknown as { lookUpPullRequests: () => Promise<void> }).lookUpPullRequests();
+    await settle(1);
+    expect(expo.sent.flat().map((m) => [m.body, m.data])).toEqual([
+      [
+        'PR #9 is ready for review',
+        { ref: 'mac-1', target: 'url', path: '/u/app/.worktrees/login', url: 'https://github.com/o/r/pull/9' },
+      ],
+    ]);
+  });
+
+  it('pushes a control conflict only to a device that registered for it', async () => {
+    const t = (current = setup({
+      devices: [
+        device(registration()),
+        { ...device(registration({ token: 'ExponentPushToken[phone-b]', events: ['stuck'] })), id: 'd2' },
+      ],
+    }));
+    t.emit(status());
+    const conflict = {
+      workspace: '/w',
+      title: 'feat/login',
+      body: 'iPad took over',
+      platform: 'ios' as const,
+      slot: 'default',
+    };
+    t.notifier.control('d1', conflict);
+    t.notifier.control('d2', conflict);
+    await settle(1);
+    expect(expo.sent.flat().map((m) => [m.to, m.body, m.data])).toEqual([
+      [TOKEN, 'iPad took over', { ref: 'mac-1', target: 'device', path: '/w', platform: 'ios', slot: 'default' }],
+    ]);
+  });
+
+  it('sums up more than three notifications in one push', async () => {
     const t = (current = setup());
     t.emit(status());
     t.at(1000);
     const broken = (name: string) =>
-      env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, lastBuilds: failed('2026-09-26T12:00:00Z') });
+      env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, ...looping(T0 + 1000) });
     t.emit(status(broken('a'), broken('b'), broken('c'), broken('d')));
     await settle(1);
     expect(expo.sent).toEqual([
@@ -257,8 +390,9 @@ describe('PushNotifier', () => {
         {
           to: TOKEN,
           title: 'MacBook Pro',
-          body: '4 problems need attention',
+          body: '4 things need a look',
           sound: 'default',
+          interruptionLevel: 'active',
           data: { ref: 'mac-1', target: 'home' },
         },
       ],
@@ -278,7 +412,7 @@ describe('PushNotifier', () => {
     expo.receipts = { t1: { status: 'error', message: 'gone', details: { error: 'DeviceNotRegistered' } } };
     t.emit(status());
     t.at(1000);
-    t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:00Z') })));
+    t.emit(status(env(looping(T0 + 1000))));
     for (let i = 0; i < 500 && t.dropped.length < 2; i++) await tick();
     expect(expo.receiptQueries).toEqual([['t1']]);
     expect(t.dropped).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
@@ -293,12 +427,12 @@ describe('PushNotifier', () => {
       ];
       t.emit(status());
       t.at(1000);
-      t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:00Z') })));
+      t.emit(status(env(looping(T0 + 1000))));
       for (let i = 0; i < 500 && logged.mock.calls.length < 1; i++) await tick();
       expo.tickets = () => [{ status: 'ok', id: 't0' }];
       expo.receipts = { t0: { status: 'error', message: `Rate exceeded for ${TOKEN}` } };
       t.at(2000);
-      t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:01Z') })));
+      t.emit(status(env({ path: '/u/app/.worktrees/other', worktree: undefined, ...looping(T0 + 2000) })));
       for (let i = 0; i < 500 && logged.mock.calls.length < 2; i++) await tick();
       const lines = logged.mock.calls.map((call) => String(call[0]));
       expect(lines).toEqual([
@@ -319,7 +453,7 @@ describe('PushNotifier', () => {
     expect(expo.sent).toEqual([]);
   });
 
-  it('pushes a failure that arrives right after another device registers', async () => {
+  it('pushes a looping build that arrives right after another device registers', async () => {
     const t = (current = setup());
     t.emit(status(env()));
     t.at(1000);
@@ -327,7 +461,7 @@ describe('PushNotifier', () => {
       device(registration()),
       { ...device(registration({ token: 'ExponentPushToken[phone-b]' })), id: 'd2' },
     ]);
-    t.emit(status(env({ lastBuilds: failed('2026-09-26T12:00:01Z') })));
+    t.emit(status(env(looping(T0 + 1000))));
     await settle(2);
     expect(expo.sent.flat().map((m) => m.to)).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
   });
@@ -341,12 +475,25 @@ describe('PushNotifier', () => {
     expect(t.subscriptions).toEqual({ opened: 1, closed: 1 });
   });
 
+  it('keeps quiet pushes out of the hourly budget, so work started cannot crowd out a stuck agent', async () => {
+    const t = (current = setup({ limits: { perHour: 1 }, devices: [device(registration({ stuckMinutes: 5 }))] }));
+    t.emit(status());
+    t.at(1000);
+    t.emit(status(env(driven(T0 + 1000))));
+    t.at(6 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    await settle(2);
+    expect(expo.sent.flat().map((m) => m.interruptionLevel)).toEqual(['passive', 'active']);
+  });
+
   it('stops pushing to a device past its hourly budget', async () => {
     const t = (current = setup());
     t.emit(status());
+    const broken: JsonObject[] = [];
     for (let i = 1; i <= 25; i++) {
       t.at(i * 1000);
-      t.emit(status(env({ lastBuilds: failed(new Date(T0 + i * 1000).toISOString()) })));
+      broken.push(env({ path: `/u/app/.worktrees/w${i}`, worktree: undefined, ...looping(T0 + i * 1000) }));
+      t.emit(status(...broken));
     }
     await settle(20);
     expect(expo.sent.flat()).toHaveLength(20);

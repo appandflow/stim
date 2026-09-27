@@ -180,6 +180,7 @@ async function start(
     frameHelper?: string | null;
     foldHelper?: string;
     controlLimits?: ServerOptions['controlLimits'];
+    pushEndpoint?: string;
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -216,7 +217,8 @@ async function start(
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
     controlLimits: overrides.controlLimits,
-    pushEndpoint: 'http://127.0.0.1:9/push',
+    pushEndpoint: overrides.pushEndpoint ?? 'http://127.0.0.1:9/push',
+    pullRequests: async () => new Map(),
   });
   return server.addresses[0]!.port;
 }
@@ -598,7 +600,13 @@ describe('status.subscribe', () => {
 });
 
 describe('push.register', () => {
-  const PUSH = { token: 'ExponentPushToken[abc123]', events: ['build-failed', 'disk'], ref: 'mac-1' };
+  const PUSH = {
+    token: 'ExponentPushToken[abc123]',
+    events: ['stuck', 'machine'],
+    ref: 'mac-1',
+    stuckMinutes: 20,
+    quietHours: { start: 22 * 60, end: 7 * 60, timeZone: 'America/Toronto' },
+  };
 
   it('stores the registration with the pairing and keeps a status child until it is removed', async () => {
     const port = await start();
@@ -606,7 +614,7 @@ describe('push.register', () => {
     const client = await connect(port);
     await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
     expect(await client.request('push.register', PUSH)).toEqual({ id: 2, result: {} });
-    expect(readDevices()[0]!.push).toMatchObject({ ...PUSH, agentOnly: false });
+    expect(readDevices()[0]!.push).toMatchObject(PUSH);
     await until(() => childPids().length === 1);
     const [pid] = childPids();
     expect(readFileSync(join(pids, String(pid)), 'utf8')).toBe('status --watch --json');
@@ -642,6 +650,14 @@ describe('push.register', () => {
     await until(() => !alive(pid!));
   });
 
+  it('reads the events an older phone registers: disk as machine, the rest as nothing', async () => {
+    const port = await start();
+    const client = await authed(port);
+    const legacy = { token: PUSH.token, events: ['build-failed', 'disk'], agentOnly: true, ref: 'mac-1' };
+    expect(await client.request('push.register', legacy)).toEqual({ id: 2, result: {} });
+    expect(readDevices()[0]!.push).toMatchObject({ events: ['machine'], stuckMinutes: 15, quietHours: null });
+  });
+
   it('refuses a token that is not an Expo push token and unknown events', async () => {
     const port = await start();
     const client = await authed(port);
@@ -651,6 +667,10 @@ describe('push.register', () => {
       { ...PUSH, events: [] },
       { ...PUSH, ref: '' },
       { ...PUSH, agentOnly: 'yes' },
+      { ...PUSH, stuckMinutes: 0 },
+      { ...PUSH, stuckMinutes: 2.5 },
+      { ...PUSH, quietHours: { start: 1440, end: 0, timeZone: 'UTC' } },
+      { ...PUSH, quietHours: { start: 0, end: 60, timeZone: 'Mars/Olympus' } },
     ]) {
       expect(await client.request('push.register', params)).toMatchObject({ error: { code: 'bad-request' } });
     }
@@ -1881,7 +1901,11 @@ describe('frames.subscribe', () => {
 
   const OWNED_EMULATOR = { name: 'stim-app', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' };
 
-  async function startControl(env: Record<string, string> = {}, controlLimits?: ServerOptions['controlLimits']) {
+  async function startControl(
+    env: Record<string, string> = {},
+    controlLimits?: ServerOptions['controlLimits'],
+    pushEndpoint?: string,
+  ) {
     const bin = join(root, 'bin');
     mkdirSync(bin);
     for (const tool of ['xcrun', 'sips', 'adb']) {
@@ -1906,6 +1930,7 @@ describe('frames.subscribe', () => {
       frameHelper: fakeHelper(),
       foldHelper: join(root, 'sim-fold'),
       controlLimits,
+      pushEndpoint,
     });
   }
 
@@ -2231,6 +2256,45 @@ describe('frames.subscribe', () => {
       second.socket.close();
       await until(() => lockCalls().includes('device unlock ios --json'));
       expect(lockCalls().filter((args) => args.startsWith('device unlock'))).toHaveLength(1);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'pushes a take-over to the phone that lost the device when it registered for control',
+    async () => {
+      const bodies: { to: string; body: string; data: unknown }[] = [];
+      const expo = createHttpServer((request, response) => {
+        let text = '';
+        request.on('data', (chunk) => (text += chunk));
+        request.on('end', () => {
+          const messages = request.url?.endsWith('/send') ? (JSON.parse(text) as typeof bodies) : [];
+          bodies.push(...messages);
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ data: messages.map(() => ({ status: 'ok', id: 't' })) }));
+        });
+      });
+      await new Promise<void>((resolve) => expo.listen(0, '127.0.0.1', resolve));
+      try {
+        const address = expo.address() as { port: number };
+        const port = await startControl({}, undefined, `http://127.0.0.1:${address.port}/push`);
+        const first = await authed(port, true);
+        const second = await authed(port, true);
+        const token = 'ExponentPushToken[first]';
+        await first.request('push.register', { token, events: ['control'], ref: 'mac-1' });
+        await first.request('control.begin', { workspace, platform: 'ios' });
+        await second.request('control.begin', { workspace, platform: 'ios', takeOver: true });
+        await until(() => bodies.length > 0);
+        expect(bodies).toEqual([
+          expect.objectContaining({
+            to: token,
+            body: 'Test phone took over the iOS device you were controlling',
+            data: { ref: 'mac-1', target: 'device', path: workspace, platform: 'ios', slot: 'default' },
+          }),
+        ]);
+      } finally {
+        await new Promise((resolve) => expo.close(resolve));
+      }
     },
     10_000,
   );

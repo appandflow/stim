@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -6,7 +6,7 @@ import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import type { ActivityDriver, DeviceActivity } from '@stim-cli/core/state';
+import type { ActivityDriver, ActivityRecencyBasis, DeviceActivity } from '@stim-cli/core/state';
 
 export type { DeviceActivity } from '@stim-cli/core/state';
 
@@ -16,7 +16,7 @@ const LOG_TAIL_BYTES = 256 * 1024;
 export interface ActivityEvidence {
   drivers: (ActivityDriver & { basis: string })[];
   unknown: string[];
-  recency: { basis: string; at: number }[];
+  recency: { basis: ActivityRecencyBasis; at: number }[];
 }
 
 export function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
@@ -24,7 +24,11 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
     (best, entry) => (Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best),
     null,
   );
-  const lastActivityAt = last ? { lastActivityAt: new Date(last.at).toISOString() } : {};
+  const recent: Partial<Record<ActivityRecencyBasis, string>> = {};
+  for (const { basis, at } of evidence.recency) {
+    if (Number.isFinite(at) && !(Date.parse(recent[basis] ?? '') >= at)) recent[basis] = new Date(at).toISOString();
+  }
+  const lastActivityAt = last ? { lastActivityAt: new Date(last.at).toISOString(), recent } : {};
   const [first] = evidence.drivers;
   if (first) {
     const { basis: _basis, ...driver } = first;
@@ -36,9 +40,9 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
     };
   }
   if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
-  const recent = Boolean(last && now - last.at < ACTIVE_WINDOW_MS);
+  const active = Boolean(last && now - last.at < ACTIVE_WINDOW_MS);
   return {
-    state: recent ? 'active' : 'idle',
+    state: active ? 'active' : 'idle',
     ...lastActivityAt,
     basis: [...new Set(evidence.recency.map((entry) => entry.basis))],
   };
@@ -257,6 +261,19 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
   ];
 }
 
+/**
+ * When an agent-device session last recorded an event: its events file's modification time. agent-device names a
+ * session's directory after the session with every character outside `[a-zA-Z0-9._-]` replaced by `_`.
+ */
+function agentSessionActedAt(home: string, session: string): number | null {
+  const root = envDir('AGENT_DEVICE_STATE_DIR') ?? join(home, '.agent-device');
+  try {
+    return statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
   return agentDeviceDirs(home).flatMap(({ kind, dir }) => {
     let names: string[];
@@ -368,6 +385,8 @@ export function createActivityReader({
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
+        const actedAt = record.session ? agentSessionActedAt(home, record.session) : null;
+        if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);
       }

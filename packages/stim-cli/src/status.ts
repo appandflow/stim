@@ -22,6 +22,7 @@ import type {
   WorktreeFacts,
   WorktreeGit,
 } from '@stim-cli/core/state';
+import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
 
 export type {
   AndroidRuntimeFacts,
@@ -468,6 +469,11 @@ function issueText(issue: StatusIssue): string {
   return `${issue.slot ? `${issue.slot}: ` : ''}${issue.message}; run \`${issue.remedy}\``;
 }
 
+function toMinute(iso: string): string {
+  const time = Date.parse(iso);
+  return new Date(time - (time % 60_000)).toISOString();
+}
+
 /**
  * Activity as status reports it: `lastActivityAt` rounded down to the minute, the precision its readers show, so a
  * new log record within the same minute does not change the payload.
@@ -475,7 +481,20 @@ function issueText(issue: StatusIssue): string {
 export function statusActivity(activity: DeviceActivity): DeviceActivity {
   const at = Date.parse(activity.lastActivityAt ?? '');
   if (!Number.isFinite(at)) return activity;
-  return { ...activity, lastActivityAt: new Date(at - (at % 60_000)).toISOString() };
+  return {
+    ...activity,
+    lastActivityAt: toMinute(activity.lastActivityAt!),
+    ...(activity.recent
+      ? {
+          recent: Object.fromEntries(
+            ACTIVITY_RECENCY_BASES.flatMap((basis) => {
+              const iso = activity.recent?.[basis];
+              return iso ? [[basis, toMinute(iso)]] : [];
+            }),
+          ),
+        }
+      : {}),
+  };
 }
 
 export function activityLabel(activity: DeviceActivity | undefined, now: number): string | null {
