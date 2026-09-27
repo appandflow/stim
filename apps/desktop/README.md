@@ -416,6 +416,17 @@ session -- a remote session has no per-slot teardown, so its Stop always
 targets the whole workspace, unlike a local device's `stim stop --slot <name>`.
 A session with no recorded preview URL shows a message instead of the page.
 
+## Physical devices
+
+A physical iPhone, iPad or Android phone the workspace leases with
+`stim ios --device`, `stim android --device` or `stim device lock` shows as its
+own tile, from the environment's `physicalDevices` in `stim status --json`, next
+to any simulator or emulator in the same slot. The tile names the device and
+its model, carries a **Physical** pill and the time the lease ends, and counts
+as running while the Mac reaches the device. Stim does not stream a physical
+device, so the tile shows no screen, no Take over and no Stop. A lease alone
+puts the workspace under Live.
+
 ## Phones
 
 **Stim > Settings > Phones** serves Stim to the phone app through

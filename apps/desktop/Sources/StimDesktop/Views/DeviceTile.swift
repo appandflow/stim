@@ -80,7 +80,7 @@ struct DeviceTile: View {
           remoteControls
         } else if case .web(let browser) = device, let workspace {
           webControls(browser, workspace: workspace)
-        } else if device.isRunning, let workspace {
+        } else if device.isRunning, !isPhysical, let workspace {
           stopButton(workspace: workspace)
         }
         if interactive, device.platform != "web" {
@@ -122,6 +122,14 @@ struct DeviceTile: View {
           Pill(tone: .warning) { Text("Page failed to load") }
             .help(browser.page?.error ?? "The page's latest load failed.")
         }
+        if isPhysical {
+          Pill { Text("Physical") }
+            .help("A device Stim uses through this workspace's lease and never owns.")
+          if let expires = device.leaseExpiresAt {
+            Text("Leased until \(expires.formatted(date: .omitted, time: .shortened))")
+              .font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+          }
+        }
         Text(source).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
           Pill { Text(posture) }
@@ -149,10 +157,7 @@ struct DeviceTile: View {
     }
   }
 
-  private var isPhysical: Bool {
-    if case .android(_, let avd) = device { return avd.physical }
-    return false
-  }
+  private var isPhysical: Bool { device.isPhysical }
 
   private var showsStoppedBar: Bool {
     if case .remote = device { return false }
@@ -354,8 +359,8 @@ struct DeviceTile: View {
 
   private var source: String {
     switch device {
-    case .ios: return "iOS Simulator"
-    case .android: return "Android Emulator"
+    case .ios(_, let d): return d.physical ? "iOS device" : "iOS Simulator"
+    case .android(_, let d): return d.physical ? "Android device" : "Android Emulator"
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
     }
@@ -363,7 +368,7 @@ struct DeviceTile: View {
 
   @ViewBuilder private var screen: some View {
     switch device {
-    case .ios(_, let sim) where device.isRunning:
+    case .ios(_, let sim) where device.isRunning && !sim.physical:
       HStack(alignment: .bottom, spacing: screenPadding) {
         ForEach(screenIDs, id: \.self) { screenID in
           SimulatorDisplayView(
@@ -415,7 +420,7 @@ struct DeviceTile: View {
         placeholder("No preview URL was recorded for session \(remote.sessionId).")
       }
     default:
-      placeholder(device.state)
+      placeholder(isPhysical && device.isRunning ? "Stim does not stream physical devices." : device.state)
     }
   }
 
@@ -427,7 +432,7 @@ struct DeviceTile: View {
 extension DeviceRef {
   var isInteractive: Bool {
     switch self {
-    case .ios: return isRunning
+    case .ios(_, let sim): return isRunning && !sim.physical
     case .android(_, let avd): return isRunning && avd.owned && !avd.physical && avd.serial != nil
     case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
     case .remote: return false
