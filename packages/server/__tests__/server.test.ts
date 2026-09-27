@@ -2467,6 +2467,30 @@ describe('frames.subscribe', () => {
     },
   );
 
+  test.skipIf(!fakeTailscale)(
+    'ends control of a phone once its lease expires, without another status update',
+    async () => {
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC', expiresAt: new Date(Date.now() + 1500).toISOString() }]),
+      });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session } = begun.result as { session: string };
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      const replies = [
+        await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 }),
+        await client.next(),
+      ];
+      expect(replies).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ event: 'control-ended', session, reason: 'device-gone' }),
+          expect.objectContaining({ error: expect.objectContaining({ code: 'unknown-session' }) }),
+        ]),
+      );
+    },
+  );
+
   test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
     const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
     const client = await authed(port);

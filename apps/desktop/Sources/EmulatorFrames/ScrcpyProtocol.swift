@@ -71,9 +71,6 @@ enum Scrcpy {
     return data
   }
 
-  /// Asks the server to restart its encoder, which starts the stream again with a config packet and a keyframe.
-  static let resetVideo = Data([17])
-
   private static func append<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
     withUnsafeBytes(of: value.bigEndian) { data.append(contentsOf: $0) }
   }

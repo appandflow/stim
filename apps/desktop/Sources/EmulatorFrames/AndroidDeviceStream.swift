@@ -28,11 +28,12 @@ final class AndroidDeviceStream {
   private let writes = DispatchQueue(label: "stim.android-device.control")
   private lazy var decoder = H264Decoder { [weak self] image in self?.onFrame(image) }
 
-  /// The size of the video frames the server sends now; touches are in these pixels.
-  private(set) var size: (width: Int, height: Int)?
-  var onSession: (Int, Int) -> Void = { _, _ in }
+  private var frameSize: (width: Int, height: Int)?
   var onFrame: (CVPixelBuffer) -> Void = { _ in }
   var onEnd: (String) -> Void = { _ in }
+
+  /// The size of the video frames the server sends now; touches are in these pixels.
+  var size: (width: Int, height: Int)? { lock.withLock { frameSize } }
 
   private var remoteJar: String { "/data/local/tmp/stim-scrcpy-\(scid).jar" }
 
@@ -93,6 +94,7 @@ final class AndroidDeviceStream {
   }
 
   private var isStopped: Bool { lock.withLock { stopped } }
+  private let stoppedFailure = Failure(description: "The stream was stopped.")
 
   private func end(_ message: String) {
     guard !isStopped else { return }
@@ -110,8 +112,12 @@ final class AndroidDeviceStream {
       if !stopped { pushed = true }
       return pushed
     }
-    guard pushing else { throw Failure(description: "The stream was stopped.") }
+    guard pushing else { throw stoppedFailure }
     try run(["push", serverJar.path, remoteJar], timeout: 30)
+    if isStopped {
+      _ = try? run(["shell", "rm", "-f", remoteJar], timeout: 5)
+      throw stoppedFailure
+    }
     let shell = adbProcess(
       ["shell", "CLASSPATH=\(remoteJar)", "app_process", "/", "com.genymobile.scrcpy.Server"]
         + Scrcpy.serverArguments(scid: scid))
@@ -121,29 +127,39 @@ final class AndroidDeviceStream {
     shell.standardInput = FileHandle.nullDevice
     output.fileHandleForReading.readabilityHandler = { [weak self] handle in
       let text = String(decoding: handle.availableData, as: UTF8.self)
+      if text.isEmpty { handle.readabilityHandler = nil }
       guard let self, !text.isEmpty else { return }
       self.lock.withLock { self.shellOutput = String((self.shellOutput + text).suffix(1000)) }
     }
-    lock.withLock { self.shell = shell }
-    guard !isStopped else { throw Failure(description: "The stream was stopped.") }
-    try shell.run()
+    try lock.withLock {
+      guard !stopped else { throw stoppedFailure }
+      try shell.run()
+      self.shell = shell
+    }
     let forwarded = try run(["forward", "tcp:0", "localabstract:scrcpy_\(scid)"], timeout: 10)
     guard let port = Int(forwarded.trimmingCharacters(in: .whitespacesAndNewlines)) else {
       throw Failure(description: "adb forward printed no port: \(forwarded.prefix(200))")
     }
-    lock.withLock { self.port = port }
+    let kept = lock.withLock { () -> Bool in
+      if !stopped { self.port = port }
+      return !stopped
+    }
+    guard kept else {
+      _ = try? run(["forward", "--remove", "tcp:\(port)"], timeout: 5)
+      throw stoppedFailure
+    }
     let video = try connect(port: port, dummyByte: true)
     let control = try connect(port: port, dummyByte: false)
-    let kept = lock.withLock { () -> Bool in
+    let connected = lock.withLock { () -> Bool in
       guard !stopped else { return false }
       videoSocket = video
       controlSocket = control
       return true
     }
-    if !kept {
+    if !connected {
       close(video)
       close(control)
-      throw Failure(description: "The stream was stopped.")
+      throw stoppedFailure
     }
   }
 
@@ -186,8 +202,7 @@ final class AndroidDeviceStream {
           case .codec(let codec):
             guard codec == ScrcpyVideoDemuxer.h264 else { return end("The scrcpy server did not stream H.264.") }
           case .session(let width, let height):
-            lock.withLock { size = (width, height) }
-            onSession(width, height)
+            lock.withLock { frameSize = (width, height) }
           case .packet(let config, _, let data):
             if config {
               if !decoder.configure(data) { return end("The device's H.264 parameter sets could not be decoded.") }
@@ -213,7 +228,6 @@ final class AndroidDeviceStream {
     }
   }
 
-  /// `adb` without a slash is looked up on PATH.
   private func adbProcess(_ arguments: [String]) -> Process {
     let process = Process()
     let lookup = !adb.contains("/")

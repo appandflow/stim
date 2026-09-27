@@ -284,15 +284,11 @@ interface Lease {
   mine: boolean;
 }
 
-/**
- * A physical device is controlled only under the lease its workspace already holds: the session never takes,
- * renews or releases it, so `mine` is false.
- */
-async function heldLease(
+function heldLease(
   status: StatusPayload,
   target: ControlBeginParams,
   options: { adbEmulators: boolean },
-): Promise<Lease | Refusal> {
+): Lease | Refusal {
   const lease = workspaceLease(status, target, options);
   if (!lease) {
     return { code: 'forbidden', message: `${target.workspace} does not hold the lease on this device.` };
@@ -420,7 +416,9 @@ export class ControlHub {
     try {
       [lease, postures] = await this.pending.track(
         Promise.all([
-          target.physical ? heldLease(status, target, resolve) : this.lock(device, target, cwd, beganAt),
+          target.physical
+            ? Promise.resolve(heldLease(status, target, resolve))
+            : this.lock(device, target, cwd, beganAt),
           devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
         ]),
       );

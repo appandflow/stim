@@ -1576,13 +1576,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   and the remedy is the cable. Metro is unaffected: a Debug app reaches it
   over the LAN either way.
 
-  WATCHING A LEASED ANDROID PHONE: while this workspace holds the phone's lease,
-  stim-server can stream its screen to paired clients that ask for the
+  WATCHING A LEASED ANDROID PHONE: while this workspace holds the phone's
+  lease, stim-server can stream its screen to paired clients that ask for the
   physical device, and let one with control tap and type on it. stim-server
-  pushes the scrcpy server to
-  /data/local/tmp for the stream and deletes it when the stream stops; it
-  installs nothing and changes no setting. Control ends when the lease is
-  released or expires, and stim-server never takes a phone's lease itself.
+  pushes the scrcpy server to /data/local/tmp for the stream and deletes it
+  when the stream stops; it installs nothing and changes no setting. Control
+  ends when the lease is released or expires, and stim-server never takes a
+  phone's lease itself.
 
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns

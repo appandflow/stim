@@ -65,7 +65,7 @@ final class H264Decoder {
 
   func decode(_ annexB: Data) {
     guard let session, let format else { return }
-    let units = AnnexB.units(annexB).filter { !$0.isEmpty && [7, 8].contains($0[0] & 0x1f) == false }
+    let units = AnnexB.units(annexB).filter { !$0.isEmpty && ![7, 8].contains($0[0] & 0x1f) }
     guard !units.isEmpty else { return }
     let sample = AnnexB.lengthPrefixed(units)
     var block: CMBlockBuffer?
