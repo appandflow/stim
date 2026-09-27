@@ -10,7 +10,7 @@ struct WallView: View {
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
 
   var body: some View {
-    let live = store.environments(in: project).filter { $0.live || $0.build?.isRunning == true }
+    let live = store.environments(in: project).filter(\.isActive)
     if store.payload == nil {
       if let error = store.error {
         EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
@@ -20,7 +20,7 @@ struct WallView: View {
     } else if live.isEmpty {
       EmptyState(
         title: project.map { "Nothing running in \($0.name)" } ?? "Nothing running",
-        message: "Devices appear here when an agent runs stim ios or stim android in a workspace.",
+        message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true)
     } else {
       ScrollView {
@@ -67,6 +67,8 @@ struct WorkspaceHeader: View {
       row
       if let build = env.build, build.isRunning {
         BuildProgressBar(build: build).frame(maxWidth: 520)
+      } else if !env.live, env.isSettingUp {
+        SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
       }
     }
     .contentShape(Rectangle())

@@ -237,6 +237,40 @@ struct Sparkline: View {
   }
 }
 
+struct SetupBadge: View {
+  var env: Workspace
+  var compact = false
+
+  var body: some View {
+    if env.isWarming {
+      if compact {
+        HStack(spacing: Space.xs) {
+          ProgressView().controlSize(.mini)
+          Text("Warming\u{2026}").font(.stim(.caption2)).foregroundStyle(Palette.accent)
+        }
+        .fixedSize()
+        .help(help)
+      } else {
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("Warming\u{2026}").foregroundStyle(Palette.text)
+            + Text(env.warmStep.map { "  \($0)" } ?? "").font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary)
+          ProgressView().progressViewStyle(.linear).tint(Palette.accent)
+        }
+        .font(.stim(.footnote))
+        .help(help)
+      }
+    } else if env.phase == "ready" {
+      Text("Ready").font(.stim(compact ? .caption2 : .footnote)).foregroundStyle(Palette.accent).fixedSize().help(help)
+    }
+  }
+
+  private var help: String {
+    env.isWarming
+      ? "stim worktree warm is running in this workspace\(env.warmStep.map { " (\($0))" } ?? "")."
+      : "Warmed and ready: nothing has run in this workspace yet."
+  }
+}
+
 struct BuildProgressBar: View {
   var build: Build
   var compact = false

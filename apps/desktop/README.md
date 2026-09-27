@@ -50,13 +50,15 @@ in the workspace directory:
 the sidebar; only the list below them scrolls. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
-with a live workspace start expanded, and the app remembers each project you
+with a live, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
 worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: All, Live or Idle workspaces.
+- **Status**: All, Live or Idle workspaces. Live also shows a workspace with a
+  running build, and one that `stim worktree warm` is preparing ("Warming...",
+  with an activity indicator) or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
