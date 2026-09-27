@@ -15,6 +15,7 @@ struct UsageHistory {
   mutating func append(_ usage: ResourceUsage, footprintBytes: Int64?) {
     latest = usage
     memoryBytes = footprintBytes ?? usage.residentBytes
+    if (footprintBytes != nil) != isFootprint { memory = [] }
     isFootprint = footprintBytes != nil
     if let percent = usage.cpuPercent { cpu = Array((cpu + [percent]).suffix(Self.limit)) }
     memory = Array((memory + [Double(memoryBytes)]).suffix(Self.limit))
