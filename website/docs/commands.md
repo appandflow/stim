@@ -440,7 +440,8 @@ adb ties a reverse to its transport, so an emulator whose adb connection drops
 and reconnects loses it silently, and the app stops reaching Metro and Fast
 Refresh. After restoring one, Stim waits up to 8 seconds, sending nothing,
 until the app on every emulator it checked is connected again, then sends the
-reload once; `reverseRestored` names the serials it
+reload once (a bare React Native dev server cannot name its clients, so there
+it waits a fixed 2.5 seconds); `reverseRestored` names the serials it
 restored. `stim status` reports the same loss as the `android-reverse-missing`
 issue, with `stim reload android` as the remedy.
 

@@ -415,10 +415,11 @@ export async function runReload({
   }
 
   const request = { role: target.platform, appId: target.record.appId };
+  const expectedPeers = reverseChecked.filter((c) => c.record.appId === target.record.appId).length;
   for (let poll = 0; reverseRestored.length && poll < RECONNECT_POLLS; poll++) {
     const peers = await d.reloadMetro(port, { ...request, peersOnly: true });
     if (peers.broadcast) await d.sleep(RECONNECT_UNOBSERVED_MS);
-    if (peers.unreachable || peers.broadcast || (peers.ok && peers.targets >= reverseChecked.length)) break;
+    if (peers.unreachable || peers.broadcast || (peers.ok && peers.targets >= expectedPeers)) break;
     await d.sleep(RECONNECT_POLL_MS);
   }
   const reloaded = await d.reloadMetro(port, request);
