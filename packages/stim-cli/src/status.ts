@@ -11,6 +11,7 @@ import type {
   DeviceLeaseState,
   EnvironmentState,
   IdleStopRecord,
+  MachineUsageState,
   MetroLastStop,
   RemoteDeviceState,
   StatusCapacity,
@@ -265,6 +266,7 @@ export function environmentState(
     ...(slots.length ? { slots } : {}),
     live,
     memoryMb,
+    memorySource: 'estimate',
     warnings: issues.map(issueText),
     issues,
     ios: ios
@@ -297,6 +299,18 @@ export function environmentState(
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
   };
+}
+
+/** Sets each environment's `memoryMb` to the sum of its owners' footprints; without footprints it keeps the estimate. */
+export function applyMachineMemory(states: EnvironmentState[], machine: MachineUsageState): void {
+  if (machine.memorySource !== 'footprint') return;
+  for (const state of states) {
+    state.memoryMb = machine.owners.reduce(
+      (sum, owner) => (owner.workspace === state.path ? sum + owner.memoryMb : sum),
+      0,
+    );
+    state.memorySource = machine.memorySource;
+  }
 }
 
 /** Adds the workspace's owned Chrome to its status: the web entry, its memory, and an unverifiable browser. */

@@ -919,13 +919,29 @@ RULES
   There is no completion fraction: a compile's log volume depends on what
   is already built, so it does not measure progress.
 
-  An environment's memoryMb is an estimate, not a measurement: a fixed amount
-  per booted simulator, detected emulator, running Metro and running Chrome.
-  capacity.committedMb sums it, and the memory budget uses the same estimate.
-  What is using CPU and memory now is the top-level machine section:
+  memorySource says how a memory figure was obtained:
 
-  machine   null, or { owners: [{ kind, name, workspace, slot?, id, owned,
-            cpuPercent, residentMb, processes }] }
+  footprint  physical footprint, the figure Activity Monitor's Memory
+             column shows, read by a small helper Stim compiles with the
+             Xcode command line tools into $STIM_HOME/helpers on first use
+  rss        summed resident set size, for machine owners when the helper
+             cannot be built (no Xcode command line tools, Linux). It
+             overstates a simulator many times over.
+  estimate   a fixed amount per booted simulator, detected emulator,
+             running Metro and running Chrome
+
+  An environment's memoryMb is what its own processes use now, the sum of
+  memoryMb over the machine owners whose workspace is that environment,
+  builds included, when machine.memorySource is footprint. Otherwise it is
+  the estimate, with memorySource estimate.
+
+  capacity.committedMb sums memoryMb. The memory budget plans before a boot
+  and always uses the estimate. What is using CPU and memory now is the
+  top-level machine section:
+
+  machine   null, or { memorySource, owners: [{ kind, name, workspace,
+            slot?, id, owned, cpuPercent, residentMb, memoryMb,
+            processes }] }
 
   kind         simulator  a booted simulator's launchd_sim tree
                emulator   an emulator's launcher and qemu tree, by its -avd
@@ -949,14 +965,19 @@ RULES
   residentMb   summed resident set size. Pages shared between processes
                count once per process, so a simulator reports well above
                its physical footprint.
+  memoryMb     summed physical footprint when machine.memorySource is
+               footprint; a process the helper cannot read, another user's
+               or one that just exited, counts its resident size. Equals
+               residentMb when memorySource is rss.
 
   Each process counts in exactly one owner, the one whose root process is
   its nearest ancestor, so the supervisor a build started counts as Metro,
   not as the build, and a Gradle or Kotlin daemon counts in the build that
   started it until that build exits, then as shared. Processes with no owner
   are left out. machine comes from one host ps, the one status reads for
-  device activity, and is null when no simulator is booted, no workspace is
-  live and no build runs: status then reads no process table. \`status --watch --json\` rereads it every 15 seconds while
+  device activity, and one run of the footprint helper. It is null when no
+  simulator is booted, no workspace is live and no build runs: status then
+  runs neither. \`status --watch --json\` rereads both every 15 seconds while
   machine is not null, with no other subprocess.`,
     },
     plan: {
