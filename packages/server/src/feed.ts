@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { isJsonObject } from '@stim-cli/core/state';
-import { terminate } from './stim-command.ts';
+import { Pending, terminate } from './stim-command.ts';
 
 export type JsonObject = Record<string, unknown>;
 
@@ -25,9 +25,9 @@ class Feed {
   private readonly kept: { value: JsonObject; text: string }[] = [];
   private child: ChildProcess | null;
 
-  private readonly ended: () => void;
+  private readonly ended: (stopped?: Promise<void>) => void;
 
-  constructor(spec: FeedSpec, stimCli: string, env: NodeJS.ProcessEnv, ended: () => void) {
+  constructor(spec: FeedSpec, stimCli: string, env: NodeJS.ProcessEnv, ended: (stopped?: Promise<void>) => void) {
     this.ended = ended;
     const child = spawn(process.execPath, [stimCli, ...spec.args], {
       cwd: spec.cwd,
@@ -79,13 +79,15 @@ class Feed {
     if (!child) return Promise.resolve();
     this.child = null;
     this.listeners.clear();
-    this.ended();
-    return terminate(child);
+    const stopped = terminate(child);
+    this.ended(stopped);
+    return stopped;
   }
 }
 
 export class FeedPool {
   private readonly feeds = new Map<string, Feed>();
+  private readonly stopping = new Pending();
   private readonly stimCli: string;
   private readonly env: NodeJS.ProcessEnv;
 
@@ -98,8 +100,9 @@ export class FeedPool {
     const key = JSON.stringify([spec.cwd, spec.args]);
     let feed = this.feeds.get(key);
     if (!feed) {
-      const created: Feed = new Feed(spec, this.stimCli, this.env, () => {
+      const created: Feed = new Feed(spec, this.stimCli, this.env, (stopped) => {
         if (this.feeds.get(key) === created) this.feeds.delete(key);
+        if (stopped) void this.stopping.track(stopped);
       });
       this.feeds.set(key, created);
       feed = created;
@@ -109,5 +112,6 @@ export class FeedPool {
 
   async close(): Promise<void> {
     await Promise.all([...this.feeds.values()].map((feed) => feed.stop()));
+    await this.stopping.settled();
   }
 }

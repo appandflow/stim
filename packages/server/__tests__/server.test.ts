@@ -803,6 +803,21 @@ describe('logs.subscribe', () => {
     },
   );
 
+  test.skipIf(process.platform === 'win32')(
+    'waits on close for a follow child it is still stopping after its last subscriber left',
+    async () => {
+      const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
+      const client = await authed(port);
+      await client.request('logs.subscribe', { workspace });
+      await records(client, 3);
+      const [pid] = childPids();
+      expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+      await server!.close();
+      server = null;
+      expect(alive(pid!)).toBe(false);
+    },
+  );
+
   it('drops a client that stops reading and stops the child it no longer needs', async () => {
     const port = await start({
       env: { FAKE_STIM_FLOOD: '1' },
@@ -2329,6 +2344,8 @@ describe('frames.subscribe', () => {
     const { session } = (begun as { result: { session: string } }).result;
     grantDevice(id, capabilitiesFor(false));
     expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
+    await server!.close();
+    expect(lockCalls()).toContain('device unlock ios --json');
   });
 
   test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {

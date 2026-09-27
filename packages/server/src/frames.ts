@@ -7,7 +7,7 @@ import type { StatusPayload } from '@stim-cli/core/state';
 import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
-import { terminate } from './stim-command.ts';
+import { Pending, terminate } from './stim-command.ts';
 import type { AccessUnit } from './video.ts';
 import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
@@ -613,9 +613,9 @@ class FrameSource {
   private readonly capturer: Capturer;
   private readonly limiter: Limiter;
   private readonly limits: FrameLimits;
-  private readonly ended: () => void;
+  private readonly ended: (stopped: Promise<void>) => void;
 
-  constructor(capturer: Capturer, limiter: Limiter, limits: FrameLimits, ended: () => void) {
+  constructor(capturer: Capturer, limiter: Limiter, limits: FrameLimits, ended: (stopped: Promise<void>) => void) {
     this.capturer = capturer;
     this.limiter = limiter;
     this.limits = limits;
@@ -637,8 +637,9 @@ class FrameSource {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.listeners.clear();
-    this.ended();
-    return this.capturer.close();
+    const stopped = this.capturer.close();
+    this.ended(stopped);
+    return stopped;
   }
 
   private setDelayed(delayed: boolean): void {
@@ -705,6 +706,7 @@ class FrameSource {
  */
 export class FramePool {
   private readonly sources = new Map<string, FrameSource | HelperSource>();
+  private readonly stopping = new Pending();
   private readonly limiter = new Limiter(MAX_CAPTURES);
   private readonly litPanels = new Map<string, DuoPanel>();
   private readonly env: NodeJS.ProcessEnv;
@@ -815,8 +817,9 @@ export class FramePool {
       helper,
       device,
       this.env,
-      () => {
+      (stopped) => {
         if (this.sources.get(key) === created) this.sources.delete(key);
+        void this.stopping.track(stopped);
       },
       this.limits.lingerMs,
       lit,
@@ -835,8 +838,9 @@ export class FramePool {
         : device.platform === 'web'
           ? webCapturer(device, this.limits)
           : emulatorCapturer(device.serial, this.env, this.limits);
-    const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, () => {
+    const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, (stopped) => {
       if (this.sources.get(key) === created) this.sources.delete(key);
+      void this.stopping.track(stopped);
     });
     this.sources.set(key, created);
     return created;
@@ -844,5 +848,6 @@ export class FramePool {
 
   async close(): Promise<void> {
     await Promise.all([...this.sources.values()].map((source) => source.stop()));
+    await this.stopping.settled();
   }
 }
