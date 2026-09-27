@@ -82,7 +82,9 @@ export async function connectOwnedPage(
   const port = /^http:\/\/127\.0\.0\.1:(\d+)$/.exec(endpoint)?.[1];
   if (!port) throw new Error(`${endpoint} is not a loopback DevTools endpoint.`);
   const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(timeoutMs) });
-  const { webSocketDebuggerUrl } = (await response.json()) as { webSocketDebuggerUrl?: unknown };
+  const { webSocketDebuggerUrl } = ((await response.json().catch(() => null)) ?? {}) as {
+    webSocketDebuggerUrl?: unknown;
+  };
   if (typeof webSocketDebuggerUrl !== 'string' || !webSocketDebuggerUrl.startsWith(`ws://127.0.0.1:${port}/`)) {
     throw new Error(`Port ${port} does not serve a browser DevTools endpoint.`);
   }

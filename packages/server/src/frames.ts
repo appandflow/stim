@@ -558,12 +558,13 @@ function webCapturer(device: Extract<Device, { platform: 'web' }>, limits: Frame
   let page: Promise<OwnedPage> | null = null;
   return {
     capture: async () => {
-      page ??= connectOwnedPage(device.endpoint, device.pid, device.targetId, limits.toolTimeoutMs);
+      const current = (page ??= connectOwnedPage(device.endpoint, device.pid, device.targetId, limits.toolTimeoutMs));
       let reply: Record<string, unknown>;
       try {
-        reply = await (await page).send('Page.captureScreenshot', { format: 'jpeg', quality: JPEG_QUALITY });
+        reply = await (await current).send('Page.captureScreenshot', { format: 'jpeg', quality: JPEG_QUALITY });
       } catch (error) {
-        page = null;
+        if (page === current) page = null;
+        (await current.catch(() => null))?.close();
         throw error;
       }
       const jpeg = Buffer.from(String(reply.data ?? ''), 'base64');

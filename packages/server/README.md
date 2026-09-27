@@ -404,10 +404,10 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   as fractions of the upright screen, and `display` (0, the main display).
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
-  and on Android also `back` or `app-switch`; a web page takes only `back`,
-  its history back, and refuses `input.rotate` and `input.posture`. `input.rotate` takes
+  and on Android also `back` or `app-switch`. `input.rotate` takes
   `direction` (`left` or `right`) and turns the device a quarter turn.
-  `input.posture` takes one of the session's `postures`. Each answers `{}` once the input
+  `input.posture` takes one of the session's `postures`. A web page takes
+  only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
   helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a

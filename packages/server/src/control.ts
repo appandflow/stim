@@ -118,7 +118,7 @@ export function parseInput(
       return { code: 'bad-request', message: 'display must be a display index from 0 to 3.' };
     }
     if (platform !== 'ios' && display !== 0) {
-      return { code: 'bad-request', message: `An ${platform} device takes input on its main display (0) only.` };
+      return { code: 'bad-request', message: 'An emulator or a web page takes input on its main display (0) only.' };
     }
     return {
       value: {
@@ -146,7 +146,8 @@ export function parseInput(
   const { button } = params;
   const allowed = platform === 'ios' ? IOS_BUTTONS : platform === 'web' ? WEB_BUTTONS : INPUT_BUTTONS;
   if (!allowed.includes(button as InputButton)) {
-    return { code: 'bad-request', message: `An ${platform} device takes these buttons: ${allowed.join(', ')}.` };
+    const device = { ios: 'An iOS device', android: 'An Android device', web: 'A web page' }[platform];
+    return { code: 'bad-request', message: `${device} takes these buttons: ${allowed.join(', ')}.` };
   }
   return { value: { session, command: { input: 'button', button: button as InputButton } } };
 }
