@@ -40,12 +40,7 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
       basis: [...new Set(evidence.drivers.map((entry) => entry.basis))],
     };
   }
-  if (evidence.unknown.length)
-    return {
-      state: 'unknown',
-      ...lastActivityAt,
-      basis: [...new Set(evidence.unknown)],
-    };
+  if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
   const active = Boolean(last && now - last.at < ACTIVE_WINDOW_MS);
   return {
     state: active ? 'active' : 'idle',
@@ -244,14 +239,8 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
     join(root, 'ios-runner', 'leases'),
   ];
   return [
-    {
-      kind: 'claim',
-      dir: envDir('AGENT_DEVICE_CLAIMS_DIR') ?? join(root, 'device-claims'),
-    },
-    ...[...new Set(leaseDirs)].map((dir) => ({
-      kind: 'runner-lease' as const,
-      dir,
-    })),
+    { kind: 'claim', dir: envDir('AGENT_DEVICE_CLAIMS_DIR') ?? join(root, 'device-claims') },
+    ...[...new Set(leaseDirs)].map((dir) => ({ kind: 'runner-lease' as const, dir })),
   ];
 }
 
@@ -363,11 +352,7 @@ export function createActivityReader({
   };
 
   return (target) => {
-    const evidence: ActivityEvidence = {
-      drivers: [],
-      unknown: [],
-      recency: [],
-    };
+    const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
 
     agentDevice ??= readAgentDeviceRecords(home).map((record) => ({
       record,
@@ -412,25 +397,14 @@ export function createActivityReader({
     if (processes === null) evidence.unknown.push('driver-process');
     for (const row of processes ?? []) {
       const tool = hostDriverTool(row.command, target.platform, target.id);
-      if (tool)
-        evidence.drivers.push({
-          basis: 'driver-process',
-          tool,
-          pid: row.pid,
-          since: row.startedAt,
-        });
+      if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
     }
 
     if (target.platform === 'android') {
       const output = tables.android(target.id);
       if (output === null) evidence.unknown.push('instrumentation');
       for (const { pid, tool } of parseAndroidInstrumentation(output ?? '')) {
-        evidence.drivers.push({
-          basis: 'instrumentation',
-          tool,
-          pid,
-          since: null,
-        });
+        evidence.drivers.push({ basis: 'instrumentation', tool, pid, since: null });
       }
     }
 
@@ -517,13 +491,7 @@ export function readWebActivity(
     for (const pid of clients) {
       const row = processes.find((candidate) => candidate.pid === pid);
       const tool = row ? cdpClientTool(row.command) : 'unknown DevTools client';
-      if (tool)
-        evidence.drivers.push({
-          basis: 'cdp-client',
-          tool,
-          pid,
-          since: row?.startedAt ?? null,
-        });
+      if (tool) evidence.drivers.push({ basis: 'cdp-client', tool, pid, since: row?.startedAt ?? null });
     }
   }
   const pageAt = latestRecordAt(tailLines(join(workspaceLogsDir(target.workspace), 'web.ndjson')) ?? [], () => true);

@@ -824,8 +824,9 @@ RULES
                  agent-device, argent, playwright, puppeteer,
                  chrome-devtools-mcp, or the executable's name); Stim's own
                  connections (the browser supervisor, stim-server, Stim
-                 Desktop, the stim CLI) are not drivers. basis: cdp-client (one lsof of the DevTools port),
-                 page-log (the newest web.ndjson record) for recency
+                 Desktop, the stim CLI) are not drivers. basis: cdp-client
+                 (one lsof of the DevTools port), page-log (the newest
+                 web.ndjson record) for recency
 
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:
