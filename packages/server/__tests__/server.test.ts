@@ -1302,6 +1302,7 @@ const message = (kind, body) => {
   process.stdout.write(Buffer.concat([header, body]));
 };
 if (env.FAKE_HELPER_KEYBOARD) message(2, Buffer.from(JSON.stringify({ keyboard: env.FAKE_HELPER_KEYBOARD })));
+if (env.FAKE_HELPER_STALLED) message(2, Buffer.from(JSON.stringify({ stalled: env.FAKE_HELPER_STALLED })));
 appendFileSync(env.FAKE_TOOL_CALLS + '.started', process.pid + '\\n');
 if (env.FAKE_HELPER_FAIL && !env.FAKE_HELPER_FAIL_AFTER) {
   message(2, Buffer.from(JSON.stringify({ error: env.FAKE_HELPER_FAIL })));
@@ -1741,6 +1742,74 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
+  function leasedPhonePayload(): string {
+    const lease = { platform: 'ios', deviceName: null, grantedAt: null, expiresAt: null, mine: false, parsed: true };
+    return JSON.stringify([
+      {
+        ...(statusPayload({ ios: OWNED_SIM }) as object),
+        deviceLeases: [
+          { ...lease, path: '/locks/other', id: 'PHONE-OTHER', holder: '/elsewhere', expired: false },
+          { ...lease, path: '/locks/old', id: 'PHONE-OLD', holder: workspace, expired: true },
+          { ...lease, path: '/locks/sim', id: 'SIM-1', holder: workspace, expired: false },
+          { ...lease, path: '/locks/phone', id: 'PHONE-1', holder: workspace, expired: false },
+        ],
+      },
+    ]);
+  }
+
+  test.skipIf(!fakeTailscale)(
+    "streams the physical iPhone the workspace leases, not its simulator's lock, with the helper's stall reason",
+    async () => {
+      const locked = 'The iPhone PHONE-1 is locked. Unlock it to see its screen.';
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_STALLED: locked },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true, reason: locked });
+      client.socket.close();
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1']);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'ends a physical iPhone subscription when the helper fails, without falling back to simctl',
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_FAIL: 'not cabled on purpose' },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('not cabled on purpose') },
+      });
+      expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)('refuses a physical iPhone the workspace holds no lease on', async () => {
+    const port = await startWithTools(
+      { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' },
+      undefined,
+      fakeHelper(),
+    );
+    const client = await authed(port);
+    await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+    expect(await client.next()).toMatchObject({
+      event: 'error',
+      error: { code: 'frames-failed', message: expect.stringContaining('leases no physical iPhone') },
+    });
+    expect(helperRuns()).toEqual([]);
+  });
+
   async function fakeChrome(browserPid: number): Promise<{ endpoint: string; close: () => Promise<void> }> {
     const http = createHttpServer((_, response) => {
       const { port } = http.address() as { port: number };
@@ -2030,6 +2099,15 @@ describe('frames.subscribe', () => {
       error: { code: 'unknown-session' },
     });
     expect(readAudit()).toEqual([expect.objectContaining({ action: 'control.begin', ok: false })]);
+    expect(lockCalls()).toEqual([]);
+  });
+
+  test.skipIf(!fakeTailscale)('refuses control of a physical iPhone, which is view only', async () => {
+    const port = await startControl();
+    const client = await authed(port, true);
+    expect(await client.request('control.begin', { workspace, platform: 'ios', physical: true })).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('view only') },
+    });
     expect(lockCalls()).toEqual([]);
   });
 

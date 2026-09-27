@@ -179,7 +179,9 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
 /**
  * A device `stim status` lists as owned by `workspace`, in `slot` (`default` when absent). Frames come only
  * from a booted simulator or a running emulator Stim created, or from the page of the workspace's running
- * Stim-owned Chrome (`web`, default slot only). `fps` caps how many frames a second this
+ * Stim-owned Chrome (`web`, default slot only). With `physical`, frames come from the physical device the workspace
+ * leases in `slot` instead, as `stim status` lists it under `deviceLeases`; an iPhone streams only over a USB
+ * cable. `fps` caps how many frames a second this
  * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
  * frames, and larger ones while another subscriber of the same device asks for more.
  */
@@ -187,6 +189,7 @@ export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
+  physical?: boolean;
   fps?: number;
   maxEdge?: number;
   /** The codecs this client decodes. The server picks one when it can encode video; see {@link FramesSubscribeResult}. */
@@ -352,10 +355,12 @@ export interface ActionResult {
  * `control`. Refused with `device-busy` while an agent, a device lock or another client drives the device,
  * unless `takeOver` is true.
  */
+/** `physical` picks the physical device the workspace leases; a physical iPhone is view only, so it is refused. */
 export interface ControlBeginParams {
   workspace: string;
   platform: Platform;
   slot?: string;
+  physical?: boolean;
   takeOver?: boolean;
 }
 
@@ -650,12 +655,14 @@ export interface FrameEvent {
 
 /**
  * Captures for a `frames.subscribe` subscription are slow or a timed-out capture is being retried; the
- * client keeps showing its last frame. Followed by `delayed: false` once captures recover.
+ * client keeps showing its last frame. Followed by `delayed: false` once captures recover. `reason` says why
+ * frames stopped when the server knows, such as a locked iPhone or one another app captures.
  */
 export interface FrameDelayedEvent {
   event: 'frame-delayed';
   subscription: string;
   delayed: boolean;
+  reason?: string;
 }
 
 export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbidden', 'failed'] as const;
@@ -827,6 +834,7 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
+          physical: { type: 'boolean', default: false },
           fps: {
             type: 'integer',
             minimum: 1,
@@ -886,6 +894,7 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
+          physical: { type: 'boolean', default: false },
           takeOver: { type: 'boolean', default: false },
         },
       },
@@ -1297,6 +1306,7 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'frame-delayed' },
               subscription: { type: 'string' },
               delayed: { type: 'boolean' },
+              reason: { type: 'string' },
             },
           },
           {

@@ -688,7 +688,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, fps, maxEdge, video, at, rate } = target;
+      const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate } = target;
       if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
         return error(
           id,
@@ -698,6 +698,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
         return error(id, 'bad-request', 'slot must be 1-64 letters, digits, underscores or hyphens.');
+      }
+      if (physical !== undefined && typeof physical !== 'boolean') {
+        return error(id, 'bad-request', 'physical must be true or false.');
       }
       if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
         return error(id, 'bad-request', 'video must be a list of codec names.');
@@ -729,12 +732,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       if (!workspaceDir(id, workspace, true)) return;
       const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
-      if (replayAt && !hasFootage(replayDir)) {
-        return error(id, 'no-recording', `Nothing was recorded for ${platform} in ${workspace}.`);
+      if (replayAt && (physical || !hasFootage(replayDir))) {
+        return error(id, 'no-recording', `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${workspace}.`);
       }
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
-      const frameTarget: FrameTarget = { workspace, platform: platform as Platform, ...(slot ? { slot } : {}) };
+      const frameTarget: FrameTarget = {
+        workspace,
+        platform: platform as Platform,
+        ...(slot ? { slot } : {}),
+        ...(physical ? { physical } : {}),
+      };
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let sequence = 0;
       let streamed: Device | null = null;
@@ -799,8 +807,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           pending = frame;
           if (!retry) flush();
         },
-        delayed: (delayed: boolean) => {
-          if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed });
+        delayed: (delayed: boolean, reason?: string) => {
+          if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
         },
         failed: end,
         ...(offersVideo
@@ -860,7 +868,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         });
         replays.set(subscription, {
           seek: (seekAt, seekRate) => {
-            if (!hasFootage(replayDir)) return null;
+            if (physical || !hasFootage(replayDir)) return null;
             const wasLive = player === null;
             const shown = replay().seek(seekAt, seekRate);
             if (shown === null && wasLive) goLive();
@@ -872,7 +880,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
         send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
       }
-      const stopViewing = recorder?.viewing(frameTarget);
+      const stopViewing = physical ? undefined : recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
         item: (payload) => {

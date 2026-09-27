@@ -13,11 +13,12 @@ import type { DeviceViewers } from './viewers.ts';
 import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
 /**
- * `foldable` marks an iPhone Duo, whose posture lights one of two panels. A web device is the owned page
- * `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
+ * `foldable` marks an iPhone Duo, whose posture lights one of two panels, and `physical` a leased iPhone, which
+ * streams over USB and takes no input. A web device is the owned page `targetId` of the Chrome `pid` serving
+ * DevTools at `endpoint`.
  */
 export type Device =
-  | { platform: 'ios'; udid: string; foldable: boolean }
+  | { platform: 'ios'; udid: string; foldable: boolean; physical?: true }
   | { platform: 'android'; serial: string }
   | { platform: 'web'; endpoint: string; pid: number; targetId: string };
 
@@ -50,8 +51,11 @@ export interface FrameListener {
    * units here, and the listener gets no JPEG frames.
    */
   record?: (unit: AccessUnit) => void;
-  /** A capture is taking longer than usual, or a timed-out capture is being retried; the last frame stays valid. */
-  delayed: (delayed: boolean) => void;
+  /**
+   * A capture is taking longer than usual, or a timed-out capture is being retried, or the device cannot send
+   * frames for `reason`; the last frame stays valid.
+   */
+  delayed: (delayed: boolean, reason?: string) => void;
   failed: (message: string) => void;
 }
 
@@ -88,6 +92,28 @@ export function deviceKey(device: Device): string {
   return device.platform === 'ios' ? `ios:${device.udid}` : `android:${device.serial}`;
 }
 
+/**
+ * The id of the physical device `target.workspace` leases for `target.platform` in its slot. A workspace can also
+ * lock its own simulator or emulator, so a lease on the slot's owned device is skipped.
+ */
+function leasedDeviceId(
+  payload: StatusPayload,
+  target: FrameTarget,
+  owned: string | null | undefined,
+): string | null {
+  const slot = target.slot ?? 'default';
+  const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
+    (candidate) =>
+      candidate.holder === target.workspace &&
+      candidate.platform === target.platform &&
+      (candidate.slot ?? 'default') === slot &&
+      !candidate.expired &&
+      candidate.id !== null &&
+      candidate.id !== owned,
+  );
+  return lease?.id ?? null;
+}
+
 export function ownedDevice(payload: StatusPayload, target: FrameTarget, attached: string | null): Device | string {
   const slot = target.slot ?? 'default';
   if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
@@ -98,6 +124,12 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget, attache
       ? { ios: environment.ios, android: environment.android }
       : environment.slots?.find((candidate) => candidate.slot === slot);
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
+  if (target.physical) {
+    if (target.platform !== 'ios') return `Stim does not stream a physical ${target.platform} device.`;
+    const udid = leasedDeviceId(payload, target, devices?.ios?.udid);
+    if (!udid) return `${target.workspace} leases no physical iPhone in slot ${slot}. Run stim ios --device there.`;
+    return { platform: 'ios', udid, foldable: false, physical: true };
+  }
   if (target.platform === 'web') {
     if (slot !== 'default') return `A workspace has one Stim-owned Chrome, in the default slot, not in slot ${slot}.`;
     const web = environment.web;
@@ -743,6 +775,11 @@ export class FramePool {
 
   private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
     const helper = this.helper();
+    const physical = device.platform === 'ios' && device.physical === true;
+    if (helper === null && physical) {
+      queueMicrotask(() => listener.failed('A physical iPhone streams through the stim-frames helper, which this Mac has not built.'));
+      return () => {};
+    }
     if (helper === null) return this.screenshots(device).add(listener);
     let streamed = false;
     let cancelled = false;
@@ -763,7 +800,7 @@ export class FramePool {
           : {}),
         delayed: listener.delayed,
         failed: (message) => {
-          if (streamed || cancelled) return listener.failed(message);
+          if (streamed || cancelled || physical) return listener.failed(message);
           console.error(`stim-server: ${message} Falling back to screenshots.`);
           detach = this.screenshots(device).add(listener);
         },

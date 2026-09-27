@@ -34,7 +34,8 @@ const KEYFRAME_INTERVAL_MS = 250;
 
 function helperArgs(device: Device): string[] {
   if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
-  return device.platform === 'ios' ? ['ios', device.udid] : ['android', device.serial];
+  if (device.platform === 'ios') return [device.physical ? 'iphone' : 'ios', device.udid];
+  return ['android', device.serial];
 }
 
 /** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
@@ -172,6 +173,7 @@ export class HelperSource {
   private stopped = false;
   private notice: string | null = null;
   keyboard: boolean | null = null;
+  private stalled: string | null = null;
   private stderr = '';
   private readonly ended: (stopped: Promise<void>) => void;
   private readonly bitrate = new Bitrate(DEFAULT_VIDEO_LIMITS, Date.now());
@@ -215,6 +217,7 @@ export class HelperSource {
     this.configure();
     if (listener.video) this.keyframe();
     else if (this.last && !listener.record) listener.frame(this.last);
+    if (this.stalled) listener.delayed(true, this.stalled);
     return () => {
       if (!this.listeners.delete(listener)) return;
       if (this.listeners.size > 0) this.configure();
@@ -348,6 +351,15 @@ export class HelperSource {
     for (const listener of this.listeners.keys()) listener.record?.(unit);
   }
 
+  private stall(reason: string | null): void {
+    if (this.stopped || reason === this.stalled) return;
+    this.stalled = reason;
+    for (const listener of this.listeners.keys()) {
+      if (reason) listener.delayed(true, reason);
+      else listener.delayed(false);
+    }
+  }
+
   private readNotice(text: string): void {
     try {
       const notice: unknown = JSON.parse(text);
@@ -357,6 +369,8 @@ export class HelperSource {
       if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
       if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
+      const stalled = (notice as { stalled?: unknown } | null)?.stalled;
+      if (stalled === null || typeof stalled === 'string') this.stall(stalled);
       const display = (notice as { display?: unknown } | null)?.display;
       if (this.lit && typeof display === 'number') this.posture = this.lit(display);
     } catch {}

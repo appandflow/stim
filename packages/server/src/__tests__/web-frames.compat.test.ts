@@ -39,6 +39,7 @@ function sources(): string {
   for (const source of [
     join(HELPER_DIR, 'main.swift'),
     join(HELPER_DIR, 'VideoEncoder.swift'),
+    join(HELPER_DIR, 'PhoneSource.swift'),
     ...desktop.map((path) => join(DESKTOP_DIR, path)),
   ]) {
     copyFileSync(source, join(dir, basename(source)));
