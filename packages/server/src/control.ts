@@ -8,7 +8,6 @@ import type { FeedPool, FeedSpec } from './feed.ts';
 import { deviceKey, devicePostures, ownedDevice, type Device, type DeviceInput, type FramePool } from './frames.ts';
 import {
   INPUT_BUTTONS,
-  PLATFORMS,
   MAX_INPUT_TEXT,
   ROTATE_DIRECTIONS,
   TOUCH_PHASES,
@@ -42,8 +41,8 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (typeof workspace !== 'string') {
     return { code: 'bad-request', message: 'params.workspace must be an environment path from a status payload.' };
   }
-  if (!PLATFORMS.includes(platform as Platform)) {
-    return { code: 'bad-request', message: 'params.platform must be ios, android or web.' };
+  if (platform !== 'ios' && platform !== 'android') {
+    return { code: 'bad-request', message: 'params.platform must be ios or android.' };
   }
   if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
     return { code: 'bad-request', message: 'params.slot must be 1-64 letters, digits, underscores or hyphens.' };
@@ -51,9 +50,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (takeOver !== undefined && typeof takeOver !== 'boolean') {
     return { code: 'bad-request', message: 'params.takeOver must be true or false.' };
   }
-  return {
-    value: { workspace, platform: platform as Platform, ...(slot ? { slot } : {}), ...(takeOver ? { takeOver } : {}) },
-  };
+  return { value: { workspace, platform, ...(slot ? { slot } : {}), ...(takeOver ? { takeOver } : {}) } };
 }
 
 export type InputCommand =
@@ -72,7 +69,6 @@ export interface SessionTarget {
 }
 
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
-const WEB_BUTTONS: readonly InputButton[] = ['back'];
 
 function fraction(value: unknown): boolean {
   return typeof value === 'number' && value >= 0 && value <= 1;
@@ -91,9 +87,6 @@ export function parseInput(
   if (!target) return { code: 'unknown-session', message: `No control session ${params.session} on this connection.` };
   const { platform, postures } = target;
   const session = params.session;
-  if (platform === 'web' && (method === 'input.rotate' || method === 'input.posture')) {
-    return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
-  }
   if (method === 'input.rotate') {
     const { direction } = params;
     if (!ROTATE_DIRECTIONS.includes(direction as RotateDirection)) {
@@ -117,8 +110,8 @@ export function parseInput(
     if (!Number.isInteger(display) || (display as number) < 0 || (display as number) > 3) {
       return { code: 'bad-request', message: 'display must be a display index from 0 to 3.' };
     }
-    if (platform !== 'ios' && display !== 0) {
-      return { code: 'bad-request', message: `An ${platform} device takes input on its main display (0) only.` };
+    if (platform === 'android' && display !== 0) {
+      return { code: 'bad-request', message: 'An emulator takes input on its main display (0) only.' };
     }
     return {
       value: {
@@ -144,7 +137,7 @@ export function parseInput(
     return { value: { session, command: { input: 'text', text } } };
   }
   const { button } = params;
-  const allowed = platform === 'ios' ? IOS_BUTTONS : platform === 'web' ? WEB_BUTTONS : INPUT_BUTTONS;
+  const allowed = platform === 'ios' ? IOS_BUTTONS : INPUT_BUTTONS;
   if (!allowed.includes(button as InputButton)) {
     return { code: 'bad-request', message: `An ${platform} device takes these buttons: ${allowed.join(', ')}.` };
   }
@@ -230,7 +223,6 @@ function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceA
   const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
   const slot = target.slot ?? 'default';
   const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
-  if (target.platform === 'web') return slot === 'default' ? environment?.web?.activity : undefined;
   return target.platform === 'ios' ? devices?.ios?.activity : devices?.android?.activity;
 }
 
@@ -344,7 +336,7 @@ export class ControlHub {
       return { code: 'device-busy', message: `This device is driven by ${driver}. Take over to control it anyway.` };
     }
     this.starting.add(key);
-    let lease: Lease | Refusal | null;
+    let lease: Lease | Refusal;
     let postures: DevicePosture[];
     try {
       [lease, postures] = await Promise.all([
@@ -354,8 +346,8 @@ export class ControlHub {
     } finally {
       this.starting.delete(key);
     }
-    const granted = lease === null || 'code' in lease ? null : lease;
-    if (lease !== null && !granted && !target.takeOver) return lease as Refusal;
+    const granted = 'code' in lease ? null : lease;
+    if (!granted && !target.takeOver) return lease as Refusal;
     const current = this.byDevice.get(key);
     const refuse = (refusal: Refusal): Refusal => {
       if (granted?.mine && !current?.lease?.mine) void this.unlock(target, cwd);
@@ -426,7 +418,6 @@ export class ControlHub {
     if (session.ended || !session.lease?.mine) return;
     session.renewing = (async () => {
       const renewed = await this.lock(session.device, session.target, session.cwd, beganAt);
-      if (renewed === null) return;
       if ('code' in renewed) console.error(`stim-server: could not renew the device lease: ${renewed.message}`);
       else if (session.lease) session.lease.expiresAt = renewed.expiresAt;
     })();
@@ -442,7 +433,7 @@ export class ControlHub {
       return this.fold(session, session.device.udid, command.posture);
     }
     if (
-      session.device.platform !== 'android' ||
+      session.device.platform === 'ios' ||
       command.input === 'touch' ||
       command.input === 'rotate' ||
       command.input === 'posture' ||
@@ -571,8 +562,7 @@ export class ControlHub {
     target: ControlBeginParams,
     cwd: string,
     beganAt: number,
-  ): Promise<Lease | Refusal | null> {
-    if (device.platform === 'web') return null;
+  ): Promise<Lease | Refusal> {
     const id = device.platform === 'ios' ? device.udid : device.serial;
     const slot = target.slot && target.slot !== 'default' ? ['--slot', target.slot] : [];
     const args = [

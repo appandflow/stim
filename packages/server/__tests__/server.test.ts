@@ -1278,20 +1278,6 @@ function statusWith(devices: Record<string, unknown>): string {
 
 const OWNED_SIM = { name: 'stim-app (iPhone 17 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
 
-const OWNED_WEB = {
-  browser: 'chrome',
-  version: 'Chrome/153.0.8010.49',
-  running: true,
-  pid: 4242,
-  supervisorPid: 4241,
-  url: 'http://localhost:8081/',
-  headless: true,
-  viewport: 'desktop',
-  profile: '/stim/web/profile',
-  cdpEndpoint: 'http://127.0.0.1:8900',
-  targetId: 'PAGE-1',
-};
-
 describe('frames.subscribe', () => {
   let toolCalls: string;
 
@@ -1405,18 +1391,7 @@ describe('frames.subscribe', () => {
         error: { code: 'frames-failed', message: expect.stringContaining(message) },
       });
     }
-    for (const [target, message] of [
-      [{ platform: 'web' }, 'No Stim-owned Chrome runs'],
-      [{ platform: 'web', slot: 'tablet' }, 'in the default slot'],
-    ] as const) {
-      const reply = await client.request('frames.subscribe', { workspace, ...target });
-      if (!('result' in reply)) throw new Error(JSON.stringify(reply));
-      expect(await client.next()).toMatchObject({
-        event: 'error',
-        error: { message: expect.stringContaining(message) },
-      });
-    }
-    expect(await client.request('frames.subscribe', { workspace, platform: 'tv' })).toMatchObject({
+    expect(await client.request('frames.subscribe', { workspace, platform: 'web' })).toMatchObject({
       error: { code: 'bad-request' },
     });
     expect(await client.request('frames.subscribe', { workspace: join(root, 'other'), platform: 'ios' })).toMatchObject(
@@ -1615,28 +1590,6 @@ describe('frames.subscribe', () => {
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
-    },
-    10_000,
-  );
-
-  test.skipIf(!fakeTailscale)(
-    'streams the owned Chrome page through the helper with its verified DevTools target',
-    async () => {
-      const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: statusWith({ web: OWNED_WEB }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
-        undefined,
-        fakeHelper(),
-      );
-      const client = await authed(port);
-      expect(
-        await client.request('frames.subscribe', { workspace, platform: 'web', fps: 60, video: ['h264'] }),
-      ).toMatchObject({
-        result: { video: 'h264' },
-      });
-      await new Promise((resolve) => client.socket.once('message', resolve));
-      client.socket.close();
-      await until(() => helperRuns().length === 1);
-      expect(helperRuns()[0]!.args).toEqual(['web', 'http://127.0.0.1:8900', '4242', 'PAGE-1']);
     },
     10_000,
   );
@@ -1944,54 +1897,6 @@ describe('frames.subscribe', () => {
     },
     10_000,
   );
-
-  test.skipIf(!fakeTailscale)(
-    'drives the owned Chrome page through the helper without a device lease',
-    async () => {
-      const port = await startControl({ FAKE_STIM_PAYLOADS: statusWith({ web: OWNED_WEB }) });
-      const client = await authed(port, true);
-      const begun = await client.request('control.begin', { workspace, platform: 'web' });
-      expect(begun).toMatchObject({ result: { platform: 'web', lease: null, postures: [] } });
-      const { session } = (begun as { result: { session: string } }).result;
-      await until(() => existsSync(`${toolCalls}.started`));
-      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
-        result: {},
-      });
-      expect(await client.request('input.text', { session, text: 'hi\n' })).toMatchObject({ result: {} });
-      expect(await client.request('input.button', { session, button: 'back' })).toMatchObject({ result: {} });
-      expect(await client.request('input.button', { session, button: 'home' })).toMatchObject({
-        error: { code: 'bad-request' },
-      });
-      expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({
-        error: { code: 'bad-request', message: 'A web page does not rotate or fold.' },
-      });
-      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
-      await until(() => helperRuns().length === 1);
-      expect(helperRuns()[0]!.args).toEqual(['web', 'http://127.0.0.1:8900', '4242', 'PAGE-1']);
-      expect(helperRuns()[0]!.configs.slice(1)).toEqual([
-        { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
-        { input: 'text', text: 'hi\n' },
-        { input: 'button', button: 'back' },
-      ]);
-      expect(lockCalls()).toEqual([]);
-    },
-    10_000,
-  );
-
-  test.skipIf(!fakeTailscale)('refuses a page that another DevTools client drives, unless taken over', async () => {
-    const driven = {
-      ...OWNED_WEB,
-      activity: { state: 'driven', driver: { tool: 'playwright', pid: 77, since: null }, basis: ['cdp-client'] },
-    };
-    const port = await startControl({ FAKE_STIM_PAYLOADS: statusWith({ web: driven }) });
-    const client = await authed(port, true);
-    expect(await client.request('control.begin', { workspace, platform: 'web' })).toMatchObject({
-      error: { code: 'device-busy', message: expect.stringContaining('playwright') },
-    });
-    expect(await client.request('control.begin', { workspace, platform: 'web', takeOver: true })).toMatchObject({
-      result: { platform: 'web' },
-    });
-  });
 
   test.skipIf(!fakeTailscale)(
     'folds an iPhone Duo with sim-fold only when its frames show the other posture',

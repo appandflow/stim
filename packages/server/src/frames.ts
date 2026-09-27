@@ -9,16 +9,9 @@ import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
 import { terminate } from './stim-command.ts';
 import type { AccessUnit } from './video.ts';
-import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
-/**
- * `foldable` marks an iPhone Duo, whose posture lights one of two panels. A web device is the owned page
- * `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
- */
-export type Device =
-  | { platform: 'ios'; udid: string; foldable: boolean }
-  | { platform: 'android'; serial: string }
-  | { platform: 'web'; endpoint: string; pid: number; targetId: string };
+/** `foldable` marks an iPhone Duo, whose posture lights one of two panels. */
+export type Device = { platform: 'ios'; udid: string; foldable: boolean } | { platform: 'android'; serial: string };
 
 export type Posture = 'folded' | 'unfolded';
 
@@ -78,7 +71,6 @@ const MAX_EDGE = 1280;
 const JPEG_QUALITY = 70;
 
 export function deviceKey(device: Device): string {
-  if (device.platform === 'web') return `web:${device.pid}:${device.targetId}`;
   return device.platform === 'ios' ? `ios:${device.udid}` : `android:${device.serial}`;
 }
 
@@ -92,14 +84,6 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget, attache
       ? { ios: environment.ios, android: environment.android }
       : environment.slots?.find((candidate) => candidate.slot === slot);
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
-  if (target.platform === 'web') {
-    if (slot !== 'default') return `A workspace has one Stim-owned Chrome, in the default slot, not in slot ${slot}.`;
-    const web = environment.web;
-    if (!web?.running || !web.cdpEndpoint || !web.pid || !web.targetId) {
-      return `No Stim-owned Chrome runs for ${target.workspace}. Run stim web there.`;
-    }
-    return { platform: 'web', endpoint: web.cdpEndpoint, pid: web.pid, targetId: web.targetId };
-  }
   if (target.platform === 'ios') {
     const sim = devices?.ios;
     if (!sim?.owned) return `No simulator Stim owns runs ${where}.`;
@@ -494,7 +478,6 @@ export async function devicePostures(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ): Promise<DevicePosture[]> {
-  if (device.platform === 'web') return [];
   if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
   const endpoint = emulatorEndpoint(env, device.serial);
   if (!endpoint) return [];
@@ -549,30 +532,6 @@ function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameL
     close: () => {
       session?.close();
       return stopTools(running, tmp);
-    },
-  };
-}
-
-/** Screenshots of the owned page, through a DevTools connection verified to reach its Chrome. */
-function webCapturer(device: Extract<Device, { platform: 'web' }>, limits: FrameLimits): Capturer {
-  let page: Promise<OwnedPage> | null = null;
-  return {
-    capture: async () => {
-      page ??= connectOwnedPage(device.endpoint, device.pid, device.targetId, limits.toolTimeoutMs);
-      let reply: Record<string, unknown>;
-      try {
-        reply = await (await page).send('Page.captureScreenshot', { format: 'jpeg', quality: JPEG_QUALITY });
-      } catch (error) {
-        page = null;
-        throw error;
-      }
-      const jpeg = Buffer.from(String(reply.data ?? ''), 'base64');
-      return { raw: jpeg, jpeg: async () => jpeg };
-    },
-    close: async () => {
-      const open = page;
-      page = null;
-      (await open?.catch(() => null))?.close();
     },
   };
 }
@@ -831,9 +790,7 @@ export class FramePool {
     const capturer =
       device.platform === 'ios'
         ? simulatorCapturer(device, this.env, this.limits, this.litPanels)
-        : device.platform === 'web'
-          ? webCapturer(device, this.limits)
-          : emulatorCapturer(device.serial, this.env, this.limits);
+        : emulatorCapturer(device.serial, this.env, this.limits);
     const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, () => {
       if (this.sources.get(key) === created) this.sources.delete(key);
     });

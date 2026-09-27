@@ -25,7 +25,6 @@ import {
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
-  PLATFORMS,
   PROTOCOL_VERSION,
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
@@ -33,7 +32,6 @@ import {
   type ErrorCode,
   type FrameTarget,
   type HelloResult,
-  type Platform,
   type Methods,
   type ProtocolError,
   type RequestId,
@@ -596,11 +594,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, fps, maxEdge, video } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || (platform !== 'ios' && platform !== 'android')) {
         return error(
           id,
           'bad-request',
-          'frames.subscribe needs params.workspace and params.platform (ios, android or web).',
+          'frames.subscribe needs params.workspace and params.platform (ios or android).',
         );
       }
       if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
@@ -632,7 +630,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!workspaceDir(id, workspace, true)) return;
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
-      const frameTarget: FrameTarget = { workspace, platform: platform as Platform, ...(slot ? { slot } : {}) };
+      const frameTarget: FrameTarget = { workspace, platform, ...(slot ? { slot } : {}) };
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let sequence = 0;
       let streamed: Device | null = null;
@@ -668,7 +666,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         send(socket, {
           event: 'frame',
           subscription,
-          platform: frameTarget.platform,
+          platform,
           slot: slot ?? 'default',
           mime: 'image/jpeg',
           ...frame,
