@@ -198,7 +198,7 @@ test('an unreadable index is rebuilt from the logs', () => {
   expect(count()).toBe(1);
 });
 
-test("counts what logs --errors counts when one slot's relaunch leaves another slot's Metro errors in its window", () => {
+test('counts what logs --errors counts when bundle markers and errors name their platform', () => {
   const launch = (ts: number, platform: string, slot?: string) => ({
     ts,
     src: 'build',
@@ -211,11 +211,23 @@ test("counts what logs --errors counts when one slot's relaunch leaves another s
   write('build-ios.ios18.ndjson', [launch(10, 'ios', 'ios18')]);
   write('build-android.ndjson', [launch(40, 'android')]);
   write('metro.ndjson', [
-    { ts: 20, src: 'metro', level: 'error', msg: 'iOS threw' },
-    { ts: 30, src: 'metro', level: 'error', platform: 'android', msg: 'android bundle failed' },
+    { ts: 12, src: 'metro', level: 'info', raw: true, marker: true, msg: 'iOS Bundled 812ms index.ts (2231 modules)' },
+    { ts: 20, src: 'metro', level: 'error', raw: true, msg: 'untagged error before the Android launch' },
+    { ts: 30, src: 'metro', level: 'error', platform: 'ios', msg: 'ios bundle failed' },
+    { ts: 31, src: 'metro', level: 'error', platform: 'android', msg: 'android bundle failed' },
+    {
+      ts: 45,
+      src: 'metro',
+      level: 'info',
+      raw: true,
+      marker: true,
+      msg: 'Android Bundled 640ms index.ts (2231 modules)',
+    },
   ]);
   expect(count()).toBe(1);
 
-  append('build-ios.ios18.ndjson', [launch(50, 'ios', 'ios18')]);
+  append('metro.ndjson', [
+    { ts: 50, src: 'metro', level: 'info', raw: true, marker: true, msg: 'iOS Bundled 90ms index.ts (2231 modules)' },
+  ]);
   expect(count()).toBe(0);
 });

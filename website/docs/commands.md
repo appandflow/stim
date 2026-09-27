@@ -490,13 +490,14 @@ result.
 - `--errors` selects errors and fatals from Metro, client, and build logs, plus
   confirmed native app-crash reports and the `stim web` page's failed requests
   and browser errors,
-  since the last launch marker. A launch resets its own slot's build and
-  device records. Metro and client output is shared by every slot and rarely
-  names a device, so it stays until every slot and platform has launched after
-  it; relaunching Android does not hide an iOS JS error. `--slot <name>`
-  includes those shared records, windowed by that slot's own launches. The
-  page's records start again at each page load instead, and a launch does not
-  reset them. A completed bundle attempt resets only older Metro errors. General device logs require
+  since the last launch marker. The page's records start again at each page
+  load instead, and a launch does not reset them. A completed
+  bundle attempt resets only older Metro errors. Metro and client output is
+  shared by every slot and names no device, so the newest launch of any slot
+  resets it. `--slot <name>` includes that shared output windowed by the
+  slot's own launch and the bundles of the platforms it launched, so after
+  `stim android` hides an iOS JS error from the unfiltered query,
+  `--slot <ios-slot>` still shows it. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
 - `--source agent` shows what agent-device did on this workspace's owned

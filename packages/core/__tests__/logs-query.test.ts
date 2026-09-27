@@ -741,6 +741,14 @@ describe('shared Metro and client errors across slots', () => {
     platform,
     ...(slot ? { slot } : {}),
   });
+  const bundled = (ts: number, platform: string) => ({
+    ts,
+    src: 'metro',
+    level: 'info',
+    raw: true,
+    marker: true,
+    msg: `${platform} Bundled 812ms index.ts (2231 modules)`,
+  });
   const errors = (slot?: string) =>
     queryLogs({ dir, errorsOnly: true, ...(slot ? { slot } : {}) }).map((record) => record.msg);
 
@@ -748,34 +756,39 @@ describe('shared Metro and client errors across slots', () => {
     writeLog('build-ios.ios18.ndjson', [launch(10, 'ios', 'ios18')]);
     writeLog('build-android.ndjson', [launch(40, 'android')]);
     writeLog('metro.ndjson', [
-      { ts: 20, src: 'metro', level: 'error', msg: 'iOS threw before the Android relaunch' },
-      { ts: 30, src: 'metro', level: 'error', msg: 'Android threw before its relaunch' },
+      bundled(12, 'iOS'),
+      { ts: 20, src: 'metro', level: 'error', raw: true, msg: 'iOS threw' },
+      { ts: 30, src: 'metro', level: 'error', raw: true, msg: 'Android threw' },
+      bundled(45, 'Android'),
     ]);
-    writeLog('web.ndjson', [{ ts: 45, src: 'client', platform: 'web', level: 'error', msg: 'page threw' }]);
+    writeLog('web.ndjson', [{ ts: 47, src: 'client', platform: 'web', level: 'error', msg: 'page threw' }]);
   });
 
-  test("another slot's relaunch does not hide an untagged Metro error from the unfiltered query", () => {
-    expect(errors()).toEqual([
-      'iOS threw before the Android relaunch',
-      'Android threw before its relaunch',
-      'page threw',
-    ]);
-  });
-
-  test("a slot query includes untagged Metro errors, windowed by that slot's own launch", () => {
-    expect(errors('ios18')).toEqual(['iOS threw before the Android relaunch', 'Android threw before its relaunch']);
+  test("a slot query shows shared Metro errors windowed by that slot's own launch and bundles", () => {
+    expect(errors('ios18')).toEqual(['iOS threw', 'Android threw']);
     expect(errors('default')).toEqual(['page threw']);
   });
 
-  test('once every slot has relaunched past it, the error is history', () => {
+  test('the unfiltered query keeps the newest launch and bundle as its window for untagged Metro output', () => {
+    expect(errors()).toEqual(['page threw']);
+  });
+
+  test("the slot's own relaunch makes its shared errors history", () => {
     writeLog('build-ios.ios18.ndjson', [launch(10, 'ios', 'ios18'), launch(50, 'ios', 'ios18')]);
-    expect(errors()).toEqual([]);
+    expect(errors('ios18')).toEqual([]);
+  });
+
+  test("an iOS bundle after the error closes the iOS slot's window", () => {
+    appendFileSync(join(dir, 'metro.ndjson'), `${JSON.stringify(bundled(46, 'iOS'))}\n`);
+    expect(errors('ios18')).toEqual([]);
   });
 
   test('a Metro record that names its platform follows only that platform', () => {
     writeLog('metro.ndjson', [
+      { ts: 12, src: 'metro', level: 'info', marker: true, platform: 'ios', msg: 'bundle build done' },
       { ts: 30, src: 'metro', level: 'error', platform: 'android', msg: 'android bundle failed' },
       { ts: 30, src: 'metro', level: 'error', platform: 'ios', msg: 'ios bundle failed' },
+      { ts: 45, src: 'metro', level: 'info', marker: true, platform: 'android', msg: 'bundle build done' },
     ]);
     expect(errors()).toEqual(['ios bundle failed', 'page threw']);
   });

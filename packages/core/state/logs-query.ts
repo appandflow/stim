@@ -90,9 +90,15 @@ function isSharedRecord(record: NdjsonRecord): boolean {
   return record.slot === undefined && (record.src === 'metro' || record.src === 'client') && !isWebPageRecord(record);
 }
 
-/** Whether `record` belongs to `slot`: its own slot, or no slot for Metro and client output, which every slot shares. */
 function inSlot(record: NdjsonRecord, slot: string): boolean {
   return isSharedRecord(record) || (record.slot ?? 'default') === slot;
+}
+
+/** The platform a bundle marker speaks for: its `platform` field, or Expo's "iOS Bundled" style line prefix. */
+export function bundleMarkerPlatform(record: NdjsonRecord): string | null {
+  if (typeof record.platform === 'string') return record.platform;
+  const prefix = /^\s*(iOS|Android|Web)\s+Bundl/.exec(String(record.msg ?? ''))?.[1];
+  return prefix ? prefix.toLowerCase() : null;
 }
 
 function isAppDeviceRecord(record: NdjsonRecord): boolean {
@@ -320,7 +326,7 @@ function expoContextFollower(onRecord: (record: NdjsonRecord) => void, into: Exp
 function includeBareErrorContext(
   all: NdjsonRecord[],
   matched: NdjsonRecord[],
-  launchTs: number | undefined,
+  launchTs: number | null,
   sinceTs: number | undefined,
 ): NdjsonRecord[] {
   const hasClientError = matched.some(
@@ -331,7 +337,7 @@ function includeBareErrorContext(
   for (const record of all) {
     if (record.src !== 'client' || record.event !== 'client_symbolication') continue;
     const ts = tsOf(record);
-    if (launchTs !== undefined && (ts === null || ts <= launchTs)) continue;
+    if (launchTs !== null && (ts === null || ts <= launchTs)) continue;
     if (sinceTs !== undefined && (ts === null || ts < sinceTs)) continue;
     renderedContext.push({
       ...record,
@@ -342,37 +348,21 @@ function includeBareErrorContext(
   return sortByTs([...matched, ...renderedContext]);
 }
 
-interface LaunchStream {
-  slot: unknown;
-  platform: unknown;
-  ts: number;
-}
-
-function latestLaunches(records: NdjsonRecord[]): LaunchStream[] {
-  const latest = new Map<string, LaunchStream>();
+function newestByPlatform(records: NdjsonRecord[], platformOf: (record: NdjsonRecord) => string | null) {
+  const newest = new Map<string | null, number>();
   for (const record of records) {
-    if (record.marker !== true || record.src === 'metro' || isWebPageRecord(record)) continue;
     const ts = tsOf(record);
     if (ts === null) continue;
-    const slot = record.slot ?? 'default';
-    const platform = record.platform ?? null;
-    const key = JSON.stringify([slot, platform]);
-    if (ts > (latest.get(key)?.ts ?? -Infinity)) latest.set(key, { slot, platform, ts });
+    const platform = platformOf(record);
+    if (ts > (newest.get(platform) ?? -Infinity)) newest.set(platform, ts);
   }
-  return [...latest.values()];
+  return newest;
 }
 
-/**
- * Metro and client output rarely names its device, so a launch hides it only once every launch it can belong to has
- * moved past it: the oldest of the latest launches in its slot and platform, for whichever of the two it names.
- */
-function sharedWindowStart(record: NdjsonRecord, launches: LaunchStream[]): number | undefined {
-  const named = record.platform === 'ios' || record.platform === 'android';
-  const own = launches.filter(
-    (launch) =>
-      (record.slot === undefined || launch.slot === record.slot) && (!named || launch.platform === record.platform),
-  );
-  return own.length ? Math.min(...own.map((launch) => launch.ts)) : undefined;
+function newestWhere(newest: Map<string | null, number>, include: (platform: string | null) => boolean) {
+  let ts: number | undefined;
+  for (const [platform, at] of newest) if (include(platform) && (ts === undefined || at > ts)) ts = at;
+  return ts;
 }
 
 function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
@@ -430,24 +420,41 @@ export function queryLogs({
   });
 
   const slotMarkers = launchMarkersBySlot(all);
-  const launches = errorsOnly ? latestLaunches(all) : [];
+  const markers = all.filter((record) => record.marker === true);
+  const launches = newestByPlatform(
+    markers.filter((record) => record.src !== 'metro' && !isWebPageRecord(record)),
+    (record) => (typeof record.platform === 'string' ? record.platform : null),
+  );
+  const bundles = newestByPlatform(
+    markers.filter((record) => record.src === 'metro'),
+    bundleMarkerPlatform,
+  );
+  const slotPlatforms = slot === undefined ? [] : [...launches.keys()].filter((platform) => platform !== null);
+  const nativePlatform = (record: NdjsonRecord) =>
+    record.platform === 'ios' || record.platform === 'android' ? record.platform : null;
   const windowStart = (record: NdjsonRecord): number | undefined => {
     if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
-    if (isWebPageRecord(record) && record.src === 'client') return criteria.markerTs;
-    if (record.src === 'metro' || record.src === 'client') return sharedWindowStart(record, launches);
-    return slotMarkers.get(record.slot ?? 'default');
+    if (record.src !== 'metro' && record.src !== 'client') return slotMarkers.get(record.slot ?? 'default');
+    const platform = nativePlatform(record);
+    return platform ? launches.get(platform) : criteria.markerTs;
   };
-  let matched = all.filter((record) => recordMatches(record, { ...criteria, markerTs: windowStart(record) }));
+  const bundleWindowStart = (record: NdjsonRecord): number | undefined => {
+    const platform = nativePlatform(record);
+    return newestWhere(
+      bundles,
+      (marker) =>
+        marker === null ||
+        (platform ? marker === platform : slotPlatforms.length === 0 || slotPlatforms.includes(marker)),
+    );
+  };
+  let matched = all.filter((record) =>
+    recordMatches(record, { ...criteria, markerTs: windowStart(record), bundleMarkerTs: bundleWindowStart(record) }),
+  );
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }
   return errorContext
-    ? includeBareErrorContext(
-        all,
-        attachExpoErrorContext(all, matched),
-        sharedWindowStart({ src: 'client' }, launches),
-        criteria.sinceTs,
-      )
+    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
     : matched;
 }
 
