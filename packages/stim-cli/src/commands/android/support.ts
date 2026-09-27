@@ -61,6 +61,30 @@ export function resolveSystemImage(
   return fromFlag || androidSystemImageSetting(settings);
 }
 
+export function remoteAvdFlagRefusal({
+  systemImageFlag,
+  deviceProfileFlag,
+  remoteBackend,
+}: {
+  systemImageFlag: string | null | undefined;
+  deviceProfileFlag: string | null | undefined;
+  remoteBackend: string | null;
+}): { code: string; message: string; remedy: string } | null {
+  if (!remoteBackend) return null;
+  const given = [
+    typeof systemImageFlag === 'string' && '--system-image',
+    typeof deviceProfileFlag === 'string' && '--device-profile',
+  ]
+    .filter(Boolean)
+    .join(' and ');
+  if (!given) return null;
+  return {
+    code: 'STIM_BAD_ARG',
+    message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned Android emulator; the ${remoteBackend} remote backend chooses its own device.`,
+    remedy: `Drop ${given} for a remote run. For a local owned emulator, drop --remote and unset android.remote with \`stim settings unset android.remote --scope <workspace|repo|committed>\`.`,
+  };
+}
+
 export function systemImageRefusal({
   slot,
   flag,

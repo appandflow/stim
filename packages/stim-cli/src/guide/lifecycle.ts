@@ -1480,7 +1480,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the local owned simulator only: with \`--remote\` or the ios.remote setting
   they refuse with STIM_BAD_ARG, because the remote backend picks its own
   device. The ios.deviceType and ios.runtime settings do not refuse there;
-  a remote run ignores them.
+  a remote run ignores them. \`android --system-image\` and
+  \`--device-profile\` follow the same rule with \`--remote\` or the
+  android.remote setting, and a remote run ignores android.systemImage and
+  android.deviceProfile.
 
   These flags describe a device that does not exist yet. When this workspace
   ALREADY owns a simulator and \`--device-type\` names a different model, or
