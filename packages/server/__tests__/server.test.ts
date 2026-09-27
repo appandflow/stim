@@ -2345,6 +2345,7 @@ describe('frames.subscribe', () => {
     grantDevice(id, capabilitiesFor(false));
     expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
     await server!.close();
+    server = null;
     expect(lockCalls()).toContain('device unlock ios --json');
   });
 

@@ -24,7 +24,7 @@ export function terminate(child: ChildProcess): Promise<void> {
   });
 }
 
-/** Work that has left its pool but may still run a child process, so `close()` can wait for it. */
+/** Work that may still run a child process after nothing else references it, so `close()` can wait for it. */
 export class Pending {
   private readonly promises = new Set<Promise<unknown>>();
 
