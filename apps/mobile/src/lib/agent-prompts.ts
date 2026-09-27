@@ -10,11 +10,11 @@ export const AGENT_PROMPTS = [
   'Show iOS build performance.',
 ];
 
-export function pickPrompts<T>(pool: readonly T[], count: number, random: () => number = Math.random): T[] {
+export function pickPrompts(pool: readonly string[], count: number): string[] {
   const items = [...pool];
   const n = Math.min(count, items.length);
   for (let i = 0; i < n; i++) {
-    const j = i + Math.floor(random() * (items.length - i));
+    const j = i + Math.floor(Math.random() * (items.length - i));
     [items[i], items[j]] = [items[j]!, items[i]!];
   }
   return items.slice(0, n);
