@@ -198,7 +198,7 @@ function physicalDevice(device: PhysicalDeviceState): DeviceRef {
     slot: device.slot,
     id: device.id,
     name: device.name ?? device.id,
-    model: device.model ?? (device.platform === 'ios' ? 'iPhone' : 'Android device'),
+    model: device.model ?? (device.platform === 'ios' ? 'iOS device' : 'Android device'),
     state: device.connection,
     running: device.connection === 'connected',
     owned: false,
@@ -264,9 +264,12 @@ export function livePlatforms(env: EnvironmentState): DevicePlatform[] {
   ];
 }
 
-export function runningBuild(env: EnvironmentState, device?: Pick<DeviceRef, 'platform' | 'slot'>): BuildReport | null {
+export function runningBuild(
+  env: EnvironmentState,
+  device?: Pick<DeviceRef, 'platform' | 'slot'> & { physical?: boolean },
+): BuildReport | null {
   const build = env.build;
-  if (!build || build.state !== 'running') return null;
+  if (!build || build.state !== 'running' || device?.physical) return null;
   if (device && (build.platform !== device.platform || build.slot !== device.slot)) return null;
   return build;
 }

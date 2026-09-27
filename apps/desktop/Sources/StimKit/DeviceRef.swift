@@ -188,8 +188,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var detail: String? {
     if slot != DeviceRef.defaultSlot { return physicalModel ?? model }
     switch self {
-    case .ios(_, let d) where d.physical: return d.model
-    case .android(_, let d) where d.physical: return d.model
+    case .ios(_, let d) where d.physical: return d.model == d.name ? nil : d.model
+    case .android(_, let d) where d.physical: return d.model == d.name ? nil : d.model
     case .ios: return iosModel.runtime.map { "iOS \($0)" }
     case .android(_, let d): return d.owned ? d.name : nil
     case .web(let d): return DeviceRef.shortURL(d.currentURL)
@@ -199,10 +199,15 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
 
   private var physicalModel: String? {
     switch self {
-    case .ios(_, let d) where d.physical: return d.model.map { "\(d.name) \u{00B7} \($0)" } ?? d.name
-    case .android(_, let d) where d.physical: return d.model.map { "\(d.name) \u{00B7} \($0)" } ?? d.name
+    case .ios(_, let d) where d.physical: return DeviceRef.nameAndModel(d.name, d.model)
+    case .android(_, let d) where d.physical: return DeviceRef.nameAndModel(d.name, d.model)
     default: return nil
     }
+  }
+
+  private static func nameAndModel(_ name: String, _ model: String?) -> String {
+    guard let model, model != name else { return name }
+    return "\(name) \u{00B7} \(model)"
   }
 
   /// A page URL without its scheme and trailing slash, as a browser's address bar shows it.

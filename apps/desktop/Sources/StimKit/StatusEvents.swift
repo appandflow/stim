@@ -50,6 +50,7 @@ public enum StatusEvents {
         for device in old.devices where device.isRunning && !running.contains(device.id) && stillServing {
           if case .remote = device { continue }
           if case .web = device { continue }
+          if device.isPhysical { continue }
           if env.build?.isRunning == true { continue }
           events.append(
             StatusEvent(

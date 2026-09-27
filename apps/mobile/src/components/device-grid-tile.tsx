@@ -100,7 +100,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         <Text variant="callout" weight="semibold" numberOfLines={1}>
           {device.physical ? device.name : device.model}
         </Text>
-        {device.physical ? (
+        {device.physical && device.name !== device.model ? (
           <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1}>
             {device.model}
           </Text>

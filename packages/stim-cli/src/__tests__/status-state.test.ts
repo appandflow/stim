@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import {
   activityLabel,
   addReverseMissingIssue,
-  androidPhysicalReading,
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
@@ -11,11 +10,8 @@ import {
   diskLine,
   environmentState,
   formatSpace,
-  iosPhysicalReading,
   metroReverseTargets,
   parseDfFree,
-  physicalDeviceLine,
-  physicalDeviceStates,
   poolLine,
   remoteDeviceLine,
   remoteDeviceState,
@@ -26,6 +22,12 @@ import {
   type EnvironmentState,
 } from '../status.ts';
 import type { LeaseFileEntry } from '../engine/device-lease.ts';
+import {
+  androidPhysicalReading,
+  iosPhysicalReading,
+  physicalDeviceLine,
+  physicalDeviceStates,
+} from '../physical-devices.ts';
 import { makeEnvironmentState } from './_factories.ts';
 import { metroLastStop } from '../supervisor/stop-cause.ts';
 
@@ -486,7 +488,13 @@ describe('physical device state', () => {
           expiresAt: new Date(now + 60_000).toISOString(),
         },
       },
-      expect.objectContaining({ platform: 'android', slot: 'pixel', id: 'R5', name: 'Leased name', model: null }),
+      expect.objectContaining({
+        platform: 'android',
+        slot: 'pixel',
+        id: 'R5',
+        name: 'Leased name',
+        model: 'Leased name',
+      }),
     ]);
   });
 
@@ -530,21 +538,15 @@ describe('physical device state', () => {
     });
   });
 
-  test('adb readings: only a serial adb lists as device is connected, and only then is its model read', () => {
+  test('adb readings: only a serial adb lists as device is connected, and the model comes from the lease', () => {
     const devices = {
       emulators: [],
       physical: [{ serial: 'R5' }],
       unhealthy: [{ serial: 'R6', kind: 'physical' as const, status: 'unauthorized' }],
     };
-    const model = vi.fn<(serial: string) => string | null>(() => 'Pixel 9');
-    expect(androidPhysicalReading(null, 'R5', model).connection).toBe('unknown');
-    expect(androidPhysicalReading(devices, 'R6', model).connection).toBe('disconnected');
-    expect(model).not.toHaveBeenCalled();
-    expect(androidPhysicalReading(devices, 'R5', model)).toEqual({
-      name: null,
-      model: 'Pixel 9',
-      connection: 'connected',
-    });
+    expect(androidPhysicalReading(null, 'R5').connection).toBe('unknown');
+    expect(androidPhysicalReading(devices, 'R6').connection).toBe('disconnected');
+    expect(androidPhysicalReading(devices, 'R5').connection).toBe('connected');
   });
 
   test('the plain line names the device, its model, the connection and the time left', () => {

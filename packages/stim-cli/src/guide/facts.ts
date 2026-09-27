@@ -113,14 +113,16 @@ workspace leases no physical device.
                    connection, lease }]
   id               the UDID or adb serial
   name             the device's own name, else the name the lease recorded
-  model            devicectl's marketing name ("iPhone 12 Pro") or the
-                   Android ro.product.model, or null when unread
+  model            devicectl's marketing name ("iPhone 12 Pro"), null when
+                   unread, or the Android model the lease recorded
   owned            always false: Stim uses a physical device, never owns it
   physical         always true
   connection       "connected"     devicectl can reach the phone, or adb lists
                                    the serial as device
                    "disconnected"  the tool answered without it
                    "unknown"       the tool could not be read in time
+                   status reuses one devicectl or adb listing for 30 s
+                   under \`status --watch\`
   lease            { holder, kind, grantedAt, expiresAt }: holder is the
                    workspace path, kind "declared" (device lock) or "run"
 

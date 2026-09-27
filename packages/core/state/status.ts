@@ -263,7 +263,7 @@ export type PhysicalDeviceConnection = (typeof PHYSICAL_DEVICE_CONNECTIONS)[numb
  * A physical iPhone, iPad or Android phone the workspace holds an unexpired lease on, from `ios --device`,
  * `android --device` or `device lock`. Stim uses it and never owns it, so `owned` is always false. `id` is the
  * UDID or adb serial. `name` is the device's own name, falling back to the name the lease recorded; `model` is the
- * marketing name devicectl reports or the Android `ro.product.model`, null when the device could not be read.
+ * marketing name devicectl reports, null when it could not be read, or the Android model the lease recorded.
  * `connection` is `connected` when devicectl can reach the phone or adb lists it as `device`, `disconnected` when
  * the tool answered without it, and `unknown` when the tool could not be read in time. `lease.holder` is the
  * workspace path that holds it.
