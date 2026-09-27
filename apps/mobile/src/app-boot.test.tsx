@@ -177,8 +177,11 @@ function olderStatus() {
   };
 }
 
+const PREVIOUS_MARKER = JSON.stringify(['0.1.0', '87cad17f256996c2023667c721a6115c4dcd0015', 'previous-update']);
+
 /** What the previous release left on a phone with a paired machine and notifications on. */
 function seedPreviousInstall() {
+  mockStore('stim.app').set('marker', PREVIOUS_MARKER);
   const secure = mockStore('secure-store');
   secure.set(
     'stim.macs',
@@ -219,7 +222,7 @@ function launchInactive() {
   };
 }
 
-it('boots on the state the previous release left and renders the live machine', async () => {
+it("clears the previous release's derived data before reading it, keeps the pairing, and renders the live machine", async () => {
   (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
   seedPreviousInstall();
   const activate = launchInactive();
@@ -237,6 +240,9 @@ it('boots on the state the previous release left and renders the live machine', 
 
   expect(errors).toEqual([]);
   expect(screen.getAllByText('Mock Mac').length).toBeGreaterThan(0);
+  expect(mockStore('stim.app').get('marker')).not.toBe(PREVIOUS_MARKER);
+  expect(mockStore('stim.status').has(`status:${MAC_ID}`)).toBe(false);
+  expect(JSON.parse(mockStore('stim.notifications').get('prefs')!)).toMatchObject({ enabled: true });
   const state = JSON.parse(mockStore('stim.notifications').get('state')!) as Record<string, { workspaces?: object }>;
   expect(state[`status:${MAC_ID}`]?.workspaces).toBeDefined();
 }, 60_000);
