@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { StatusPayload } from '@stim-cli/core/state';
 import { attentionCandidates, type AttentionCandidate } from './attention.ts';
 import type { FeedListener } from './feed.ts';
@@ -47,6 +48,21 @@ export interface PushMessage {
   body: string;
   sound: 'default';
   data: { ref: string; target: 'home' | 'machine' | 'workspace' | 'logs'; path?: string };
+}
+
+const PUSH_TOKEN = /(Expo|Exponent)PushToken\[([^\]\s]*)\]?/g;
+
+/** Replaces each Expo push token in `text` with its prefix and a short hash, so logs never carry a usable token. */
+export function maskPushTokens(text: string): string {
+  return text.replace(
+    PUSH_TOKEN,
+    (_, prefix: string, body: string) =>
+      `${prefix}PushToken[#${createHash('sha256').update(body).digest('hex').slice(0, 8)}]`,
+  );
+}
+
+function warn(text: string): void {
+  console.error(`stim-server: ${maskPushTokens(text)}`);
 }
 
 interface Registered {
@@ -143,7 +159,7 @@ export class PushNotifier {
         this.evaluate();
       },
       failed: (message) => {
-        console.error(`stim-server: push notifications paused: ${message}`);
+        warn(`push notifications paused: ${message}`);
         this.unsubscribe = null;
         this.status = null;
         this.resubscribe = setTimeout(() => {
@@ -248,7 +264,7 @@ export class PushNotifier {
     try {
       tickets = await this.post('send', messages);
     } catch (cause) {
-      console.error(`stim-server: could not send ${messages.length} push notifications: ${(cause as Error).message}`);
+      warn(`could not send ${messages.length} push notifications: ${(cause as Error).message}`);
       return;
     }
     if (!Array.isArray(tickets) || this.closed) return;
@@ -258,7 +274,7 @@ export class PushNotifier {
       if (!to) return;
       if (ticket?.status === 'ok' && typeof ticket.id === 'string') receipts.set(ticket.id, to);
       else if (ticket?.details?.error === 'DeviceNotRegistered') this.drop(to);
-      else if (ticket?.status === 'error') console.error(`stim-server: Expo refused a push: ${String(ticket.message)}`);
+      else if (ticket?.status === 'error') warn(`Expo refused a push: ${String(ticket.message)}`);
     });
     if (receipts.size > 0) this.later(() => void this.checkReceipts(receipts), this.limits.receiptDelayMs);
   }
@@ -267,7 +283,7 @@ export class PushNotifier {
     try {
       this.options.dropToken(token);
     } catch (cause) {
-      console.error(`stim-server: could not drop an unregistered push token: ${(cause as Error).message}`);
+      warn(`could not drop an unregistered push token: ${(cause as Error).message}`);
     }
   }
 
@@ -282,7 +298,7 @@ export class PushNotifier {
     for (const [id, receipt] of Object.entries(data as Record<string, Ticket | null>)) {
       const to = receipts.get(id);
       if (to && receipt?.details?.error === 'DeviceNotRegistered') this.drop(to);
-      else if (receipt?.status === 'error') console.error(`stim-server: a push failed: ${String(receipt.message)}`);
+      else if (receipt?.status === 'error') warn(`a push failed: ${String(receipt.message)}`);
     }
   }
 }
