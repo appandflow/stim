@@ -638,6 +638,20 @@ pnpm test
 `.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
 the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 
+`src/app-boot.test.tsx` is the boot test. It renders the whole app, from
+`src/app/_layout.tsx` down to home, in Jest. The phone starts from what the
+previous release stored: a paired machine, that machine's cached status from an
+older `stim`, and notification preferences and state in their old shapes. The
+machine then connects to a fake `stim-server` that serves
+`mock-server/fixtures/status.json`, and the app turns `active` the way iOS does
+after launch. The test fails when React reports an error or anything throws,
+so it catches JS that throws while launching over an earlier release's state,
+on the screens it renders. Reanimated, the drawer and Lottie are stubbed, so
+the test does not cover animations or native code.
+
+When a change stores something new on the phone, or reads a stored value in a
+new shape, add the previous shape to `seedPreviousInstall` in that test.
+
 ## Ship to TestFlight
 
 The app ships to TestFlight with EAS, under the App&Flow Expo account
@@ -732,8 +746,20 @@ or prefix each command with `npx`).
     JS-only; an update for a runtime no build has reaches no one.
   - `build`: builds with the `production` profile and submits to
     TestFlight (`eas build --auto-submit`).
+  - `rollback`: points channel `production` back at the JS embedded in the
+    build (`eas update:roll-back-to-embedded`). By default it uses the runtime
+    of the latest finished production build; the `runtime` input names
+    another one. See [Roll back a bad update](#roll-back-a-bad-update).
+  - `republish`: publishes the update group named by the `group` input again
+    on channel `production` (`eas update:republish`), so installed builds go
+    back to that update.
 - A `mobile-v<version>` tag on `main` always builds and submits. The version
   must equal `version` in `app.config.ts`, so raise it first.
+
+Every mode except `rollback` and `republish` runs the unit tests, the boot test
+included, before the step that loads `EXPO_TOKEN`. A failing test stops the run
+before anything is published or built. `rollback` and `republish` skip them
+because they must still work when `main` is broken.
 
 `eas build` records as the build's runtime the fingerprint computed on the
 machine that starts it, so a build from this workflow and the fingerprint
@@ -767,3 +793,65 @@ The build appears in TestFlight after Apple finishes processing it, usually
 within 30 minutes. Add testers under the app's **TestFlight** tab. Raise
 `version` in `app.config.ts` for a new marketing version; build numbers need no
 change.
+
+### Roll back a bad update
+
+An update reaches every installed build on its runtime the next time the app
+launches, and it runs on the launch after that. A bad update shows up as:
+
+- the app closing at launch, or showing an error screen, on phones that were
+  fine before;
+- crashes in `eas update:view <group> --insights` for the newest group.
+
+Find the newest groups and the one that was good before the bad one:
+
+```bash
+cd apps/mobile
+eas update:list --branch production --limit 10
+eas update:view <group> --insights
+```
+
+Roll back to the JS embedded in the build. This works whatever is on the
+channel, and needs no group id:
+
+```bash
+gh workflow run mobile-release.yml --ref main -f mode=rollback
+gh workflow run mobile-release.yml --ref main -f mode=rollback -f runtime=<runtime>
+```
+
+Or go back to a specific update that worked:
+
+```bash
+gh workflow run mobile-release.yml --ref main -f mode=republish -f group=<group>
+```
+
+Both runs wait for approval in the `release` environment. Approve them as in
+step 7 of [RELEASE.md](../../RELEASE.md#4-cut-the-release), with the run id
+from `gh run list --workflow mobile-release.yml --limit 1`. The run log's
+notice names the runtime and group it acted on. `republish` warns when the
+group's runtime is not the latest production build's, because only builds on
+that runtime get it. When the group is on a branch other than `production`,
+`republish` publishes it to channel `production` with `--destination-channel`.
+
+Phones pick up the rollback when a launch checks for updates, and run it on the
+launch after that. A phone that crashes at launch may need a few launches.
+
+After a rollback, fix the bug on `main`. The next `auto` run publishes the fix
+as a new update, which replaces the rollback. Build for TestFlight (`mode=build`)
+instead when the fix changes native code or dependencies. Do the same when the
+embedded JS itself is broken, because then a rollback cannot help: `auto` builds
+only when the runtime changes, so pick `build` explicitly.
+
+The workflow has no staging channel. Publishing to a staging branch first and
+promoting it with `republish` would need a build that reads that channel,
+installed on a phone someone checks before promoting. Without that build,
+staging adds a step and verifies nothing. A simulator run of each update on a
+macOS runner, using a production-runtime simulator build per runtime, would
+catch native and render crashes. It would also cost a macOS runner and an EAS
+simulator build for every runtime. The boot test catches JS errors on launch,
+which covers this class of crash, at no extra cost. To check an update by hand
+before publishing it, run a Release build of the same commit on a simulator
+with `stim ios --configuration Release`. Stim puts the current JS into the
+cached build, so this works without Metro. Then read `stim logs --errors`. A
+Release build ignores `.env.local`, so it starts with no paired machine unless
+you pair it.
