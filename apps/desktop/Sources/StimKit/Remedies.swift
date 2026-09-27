@@ -59,8 +59,9 @@ public struct AttentionGroup: Hashable, Sendable {
 }
 
 /// The workspaces with something to fix: live ones first, then those with an error, each in status order. Items
-/// come from `issues`, or from the `warnings` text when `stim` reports no issues, then from failed last runs, else
-/// from errors in the logs since the marker, which already count a failed run's build errors.
+/// come from `issues`, or from the `warnings` text when `stim` reports no issues, then from failed last runs and a
+/// failed web page load, else from errors in the logs since the marker, which already count a failed run's build
+/// errors and the failed page document.
 public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
   let groups = workspaces.compactMap { env -> AttentionGroup? in
     let items: [AttentionItem]
@@ -80,7 +81,7 @@ public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
         return AttentionItem(text: warning, isError: false, command: command, runnable: command != nil)
       }
     }
-    let failed = failedRunItems(env)
+    let failed = failedRunItems(env) + webPageItems(env)
     let all = items + failed + (failed.isEmpty ? logErrorItems(env) : [])
     return all.isEmpty ? nil : AttentionGroup(workspace: env, items: all)
   }
@@ -101,6 +102,15 @@ private func failedRunItems(_ env: Workspace) -> [AttentionItem] {
       command: StimCommand([platform], cwd: env.path), runnable: true, opensLogs: true,
       detail: build.diagnostics?.first?.text(workspace: env.path))
   }
+}
+
+private func webPageItems(_ env: Workspace) -> [AttentionItem] {
+  guard let web = env.web, web.pageFailed else { return [] }
+  return [
+    AttentionItem(
+      text: "Web page failed to load", isError: true, command: StimCommand(["web"], cwd: env.path), runnable: true,
+      opensLogs: true, detail: web.page?.error)
+  ]
 }
 
 private func logErrorItems(_ env: Workspace) -> [AttentionItem] {
@@ -130,6 +140,8 @@ public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {
     return StimCommand(["stop", "--slot", slot], cwd: cwd)
   case .remote:
     return StimCommand(["stop"], cwd: cwd)
+  case .web:
+    return StimCommand(["stop", "--slot", DeviceRef.webSlot], cwd: cwd)
   }
 }
 
@@ -138,12 +150,13 @@ public func shellQuote(_ s: String) -> String {
 }
 
 /// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one
-/// Stim-owned simulator or emulator, naming its slot unless it is the default one. Nil for a physical device or
-/// one Stim does not own, which that command does not target.
+/// Stim-owned simulator or emulator, naming its slot unless it is the default one, or `stim web` for the
+/// workspace's Chrome. Nil for a physical device or one Stim does not own, which that command does not target.
 public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   switch device {
   case .ios(_, let sim) where sim.owned: break
   case .android(_, let avd) where avd.owned && !avd.physical: break
+  case .web: return StimCommand(["web"], cwd: cwd)
   default: return nil
   }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]

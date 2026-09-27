@@ -2,21 +2,25 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   case ios(slot: String, IosDevice)
   case android(slot: String, AndroidDevice)
   case remote(RemoteDevice)
+  case web(WebBrowser)
 
   public static let defaultSlot = "default"
+  /// The slot `stim stop --slot web` names to close only the workspace's Chrome.
+  public static let webSlot = "web"
 
   public var id: String {
     switch self {
     case .ios(_, let d): return "ios:\(d.udid)"
     case .android(let slot, let d): return "android:\(slot):\(d.name)"
     case .remote(let d): return "remote:\(d.sessionId)"
+    case .web(let d): return "web:\(d.profile)"
     }
   }
 
   public var slot: String {
     switch self {
     case .ios(let s, _), .android(let s, _): return s
-    case .remote: return DeviceRef.defaultSlot
+    case .remote, .web: return DeviceRef.defaultSlot
     }
   }
 
@@ -25,6 +29,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios: return "ios"
     case .android: return "android"
     case .remote(let d): return d.platform ?? ""
+    case .web: return "web"
     }
   }
 
@@ -33,6 +38,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(_, let d): return d.state
     case .android(_, let d): return d.state
     case .remote(let d): return d.state
+    case .web(let d): return d.running ? "running" : "closed"
     }
   }
 
@@ -40,6 +46,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): return d.activity
     case .android(_, let d): return d.activity
+    case .web(let d): return d.activity
     case .remote: return nil
     }
   }
@@ -48,18 +55,26 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): return d.app
     case .android(_, let d): return d.app
-    case .remote: return nil
+    case .remote, .web: return nil
     }
   }
 
   /// The device is up and `stim status` saw no process of the workspace's app on it.
   public var appStopped: Bool { isRunning && app?.state == "stopped" }
 
-  /// The key `ScreenActivity` records screen changes under: the simulator UDID or the emulator serial.
+  /// The Stim-owned Chrome runs and its page's latest load failed.
+  public var pageFailed: Bool {
+    if case .web(let d) = self { return d.pageFailed }
+    return false
+  }
+
+  /// The key `ScreenActivity` records screen changes under: the simulator UDID, the emulator serial, or the page's
+  /// DevTools target.
   public var activityKey: String? {
     switch self {
     case .ios(_, let d): return d.udid
     case .android(_, let d): return d.serial
+    case .web(let d): return d.targetId
     case .remote: return nil
     }
   }
@@ -71,6 +86,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(_, let d): return d.state == "Booted"
     case .android(_, let d): return d.state == "detected"
     case .remote: return true
+    case .web(let d): return d.running
     }
   }
 
@@ -86,6 +102,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.name
     case .remote(let d):
       return d.platform == "android" ? "Android" : "iOS"
+    case .web:
+      return "Chrome"
     }
   }
 
@@ -119,6 +137,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       guard d.owned else { return d.name }
       return d.deviceProfile.map(DeviceRef.readableDeviceProfile) ?? "Android emulator"
     case .remote(let d): return "\(d.backend.uppercased()) \(model)"
+    case .web: return "Web"
     }
   }
 
@@ -136,6 +155,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios: return "\(own) \u{00B7} iOS"
     case .android: return "\(own) \u{00B7} Android"
     case .remote: return "\(own) \u{00B7} remote"
+    case .web: return "\(own) \u{00B7} Chrome"
     }
   }
 
@@ -146,8 +166,17 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios: return iosModel.runtime.map { "iOS \($0)" }
     case .android(_, let d): return d.owned ? d.name : nil
+    case .web(let d): return DeviceRef.shortURL(d.currentURL)
     case .remote: return nil
     }
+  }
+
+  /// A page URL without its scheme and trailing slash, as a browser's address bar shows it.
+  static func shortURL(_ url: String) -> String {
+    var short = url
+    for scheme in ["https://", "http://"] where short.hasPrefix(scheme) { short.removeFirst(scheme.count) }
+    if short.hasSuffix("/") { short.removeLast() }
+    return short
   }
 
   /// Only splits off a trailing numeric runtime from a name Stim itself formatted as `<model> <runtime>` inside
@@ -168,6 +197,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       if d.name.contains("iPad") { return .tablet }
       if d.name.contains("Duo") { return .dual }
       return .phone
+    case .web(let d):
+      return d.viewport == "phone" ? .phone : .desktop
     case .android, .remote:
       return .phone
     }
@@ -178,4 +209,6 @@ public enum FormFactor: Sendable {
   case phone
   case tablet
   case dual
+  /// A landscape desktop browser page.
+  case desktop
 }

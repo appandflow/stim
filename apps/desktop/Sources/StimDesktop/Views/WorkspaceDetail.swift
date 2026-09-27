@@ -219,6 +219,8 @@ struct Inspector: View {
             Spacer()
             if device.appStopped {
               Text("App stopped").foregroundStyle(Palette.warning).lineLimit(1).layoutPriority(1)
+            } else if device.pageFailed {
+              Text("Page failed").foregroundStyle(Palette.warning).lineLimit(1).layoutPriority(1)
             } else {
               Text(device.state).foregroundStyle(Palette.tertiary).lineLimit(1)
             }
@@ -274,7 +276,8 @@ struct Inspector: View {
   @ViewBuilder
   private func deviceStopButton(_ device: DeviceRef) -> some View {
     let isRemote = { if case .remote = device { return true } else { return false } }()
-    Button("Stop") {
+    let isWeb = device.platform == "web"
+    Button(isWeb ? "Close" : "Stop") {
       if isRemote {
         confirmingStopDevice = device
       } else {
@@ -287,7 +290,9 @@ struct Inspector: View {
     .help(
       isRemote
         ? "stim stop: ends the billable remote session with the rest of the workspace"
-        : "stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running"
+        : isWeb
+          ? "stim stop --slot web: closes Stim's Chrome and keeps its profile, Metro and every device"
+          : "stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running"
     )
   }
 
