@@ -1,12 +1,13 @@
 import type { Breadcrumb, ErrorEvent } from '@sentry/react-native';
 
+const LONGER_THAN_A_FINGERPRINT = /(?<![\w-])[\w-]{41,}(?![\w-])/g;
+
 const RULES: [RegExp, string][] = [
   [/\bExpo(?:nent)?PushToken\[[^\]]*\]/g, '[push-token]'],
   [/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]*[^\s"'<>`.,;:!?)\]]/gi, '[url]'],
   [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]'],
   [/(?<![\w.-])(?:[a-z0-9-]+\.)+(?:ts\.net|local)\b/gi, '[host]'],
-  // Stim tokens are 32 random bytes in base64url (43 characters); UUIDs (36) and fingerprints (40) stay readable.
-  [/(?<![\w-])[\w-]{41,}(?![\w-])/g, '[token]'],
+  [LONGER_THAN_A_FINGERPRINT, '[token]'],
   [/\/Users\/[^/\s"'`]+/g, '~'],
 ];
 
@@ -31,7 +32,6 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
   };
 }
 
-/** Tags and contexts are left alone: the SDK fills them with update ids and device facts, not app data. */
 export function scrubEvent(event: ErrorEvent): ErrorEvent {
   return {
     ...event,
