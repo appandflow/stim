@@ -1155,6 +1155,16 @@ captured"  (in metro.ndjson, bare RN)
   Matching this workspace's port or directory does not authorize cleanup,
   and stop has no override for process ownership.
 
+"port <n> is in use by <holder>; stim start will choose a free port"  (status)
+  A note, not a problem: no supervisor of this workspace runs, and
+  \`stim start\` reserves a free port when its own is taken. The holder's pid
+  and directory are in \`status --json\` under metro.heldBy.
+
+"port <n> is in use by <holder>, so this workspace's Metro cannot serve on
+it"  (status)
+  This workspace's supervisor runs but another process answers its port.
+  Run \`stim stop\`, then \`stim start\`, which reserves a free port.
+
 "stop        refusing to signal supervisor pid <n>: ..."  (stop)
   The records disagree, the saved OS identity is unavailable, or it records a
   port this project did not reserve. If process inspection is denied, retry

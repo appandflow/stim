@@ -253,6 +253,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
               ),
             ),
             now: leaseNow,
+            workspaces: projects.map(([other]) => other),
           },
         ),
         web,
@@ -469,6 +470,9 @@ function renderStatus(
     }
     for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
     for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));
+    for (const note of state.issues.filter((issue) => issue.severity === 'info')) {
+      out.push(chalk.dim(`  - ${note.message}`));
+    }
   }
 
   for (const pool of pools) {
