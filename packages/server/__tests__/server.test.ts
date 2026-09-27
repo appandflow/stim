@@ -1768,7 +1768,12 @@ describe('frames.subscribe', () => {
       );
       const client = await authed(port);
       await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
-      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true, reason: locked });
+      expect(await client.next()).toEqual({
+        event: 'frame-delayed',
+        subscription: 's1',
+        delayed: true,
+        reason: locked,
+      });
       client.socket.close();
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1']);

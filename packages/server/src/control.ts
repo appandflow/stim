@@ -57,7 +57,10 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
     return { code: 'bad-request', message: 'params.physical must be true or false.' };
   }
   if (physical && platform === 'ios') {
-    return { code: 'action-failed', message: 'A physical iPhone is view only: Stim shows its screen but sends it no input.' };
+    return {
+      code: 'action-failed',
+      message: 'A physical iPhone is view only: Stim shows its screen but sends it no input.',
+    };
   }
   return {
     value: {

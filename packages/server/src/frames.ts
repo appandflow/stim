@@ -96,11 +96,7 @@ export function deviceKey(device: Device): string {
  * The id of the physical device `target.workspace` leases for `target.platform` in its slot. A workspace can also
  * lock its own simulator or emulator, so a lease on the slot's owned device is skipped.
  */
-function leasedDeviceId(
-  payload: StatusPayload,
-  target: FrameTarget,
-  owned: string | null | undefined,
-): string | null {
+function leasedDeviceId(payload: StatusPayload, target: FrameTarget, owned: string | null | undefined): string | null {
   const slot = target.slot ?? 'default';
   const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
     (candidate) =>
@@ -777,7 +773,9 @@ export class FramePool {
     const helper = this.helper();
     const physical = device.platform === 'ios' && device.physical === true;
     if (helper === null && physical) {
-      queueMicrotask(() => listener.failed('A physical iPhone streams through the stim-frames helper, which this Mac has not built.'));
+      queueMicrotask(() =>
+        listener.failed('A physical iPhone streams through the stim-frames helper, which this Mac has not built.'),
+      );
       return () => {};
     }
     if (helper === null) return this.screenshots(device).add(listener);
