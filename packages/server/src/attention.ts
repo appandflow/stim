@@ -137,7 +137,7 @@ function workspaceCandidates(env: EnvironmentState, title: string, now: number):
   const items: AttentionCandidate[] = [];
   const active = isActive(env);
   const devices = devicesOf(env);
-  const driven = devices.some((device) => device.driven);
+  const driven = devices.some((device) => device.driven) || env.web?.activity?.state === 'driven';
   const add = (id: string, event: PushEvent, occurrence: string, reason: string, extra: Partial<AttentionCandidate>) =>
     items.push({
       key: `${env.path}\n${id}`,
@@ -184,6 +184,9 @@ function workspaceCandidates(env: EnvironmentState, title: string, now: number):
     for (const device of devices) {
       if (!device.running || !device.appStopped || runningBuild(env, device)) continue;
       add(`app-${device.platform}-${device.slot}`, 'app-stopped', '', `App not running on ${device.model}`, {});
+    }
+    if (env.web?.running && env.web.page?.state === 'failed') {
+      add('page-web', 'app-stopped', env.web.page.url, 'Web page failed to load', {});
     }
   }
   return items;

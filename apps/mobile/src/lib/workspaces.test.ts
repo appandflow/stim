@@ -2,6 +2,7 @@ import fixture from '../../mock-server/fixtures/status.json';
 
 import {
   attentionGroups,
+  deviceSource,
   deviceWarnings,
   devicesOf,
   livePlatforms,
@@ -10,10 +11,11 @@ import {
   projectOf,
   repositoryRoots,
   runningBuild,
+  shortUrl,
   workspaceTitle,
   workspaceTitleAt,
 } from '@/lib/workspaces';
-import type { EnvironmentState, StatusIssue, StatusPayload } from '@/protocol/types';
+import type { EnvironmentState, StatusIssue, StatusPayload, WebBrowserState } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
 const env = (path: string, extra: Partial<EnvironmentState> = {}): EnvironmentState => ({
@@ -100,6 +102,43 @@ describe('devicesOf', () => {
       ['default', 'iPhone 18 Pro 27.0', true],
       ['ipad', 'iPad Pro 11-inch (M5) 27.0', false],
     ]);
+  });
+});
+
+describe('the Stim-owned Chrome', () => {
+  it('is a Web device with its current page, its load failure and its driver', () => {
+    const web: WebBrowserState = {
+      browser: 'chrome',
+      version: null,
+      running: true,
+      pid: 1,
+      supervisorPid: 2,
+      url: 'http://localhost:5173/',
+      headless: true,
+      viewport: 'desktop',
+      profile: '/p',
+      cdpEndpoint: 'http://127.0.0.1:8900',
+      targetId: 'T',
+      page: {
+        url: 'http://localhost:5173/apps/groups/',
+        state: 'failed',
+        error: 'GET failed: net::ERR_CONNECTION_REFUSED',
+      },
+      activity: { state: 'driven', basis: ['cdp-client'] },
+    };
+    const [device] = devicesOf(env('/w', { live: true, web }));
+    expect(device).toMatchObject({
+      platform: 'web',
+      slot: 'default',
+      model: 'Web',
+      running: true,
+      owned: true,
+      page: { url: 'http://localhost:5173/apps/groups/', error: 'GET failed: net::ERR_CONNECTION_REFUSED' },
+      activity: { state: 'driven' },
+    });
+    expect(deviceSource(device!)).toBe('Chrome');
+    expect(shortUrl(device!.page!.url)).toBe('localhost:5173/apps/groups');
+    expect(livePlatforms(env('/w', { web }))).toEqual(['web']);
   });
 });
 

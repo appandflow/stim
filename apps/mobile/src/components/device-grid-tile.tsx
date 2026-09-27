@@ -6,11 +6,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActivityChip } from '@/components/activity-chip';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
+import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
+import { shortUrl } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -44,7 +46,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     visible && streams,
     REFRESH_MS,
   );
-  const aspect = frame && frame.height > 0 ? frame.width / frame.height : 0.46;
+  const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'web' ? 1.6 : 0.46;
   useEffect(() => {
     if (frame) onAspect(tile.key, aspect);
   }, [frame, aspect, tile.key, onAspect]);
@@ -88,6 +90,11 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         <Text variant="callout" weight="semibold" numberOfLines={1}>
           {device.model}
         </Text>
+        {device.page ? (
+          <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
+            {shortUrl(device.page.url)}
+          </Text>
+        ) : null}
         <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
           {item.title}
         </Text>
@@ -99,6 +106,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         </View>
         <View style={styles.badge}>
           <ActivityChip activity={device.activity} />
+          {device.page?.error ? <Pill tone="warning">Page failed to load</Pill> : null}
         </View>
       </View>
     </Card>
@@ -122,5 +130,5 @@ const styles = StyleSheet.create((theme) => ({
   stale: { paddingHorizontal: theme.space.md, paddingTop: theme.space.md },
   shrink: { flexShrink: 1 },
   mac: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
-  badge: { flexDirection: 'row', marginTop: theme.space.xs },
+  badge: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.xs, marginTop: theme.space.xs },
 }));

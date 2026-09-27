@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { tildeHome } from '@/lib/paths';
-import type { DeviceRef } from '@/lib/workspaces';
+import { deviceSource, shortUrl, type DeviceRef } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 420;
 const SCREEN_PADDING = 12;
@@ -47,9 +47,9 @@ export function DeviceTile({
             <StatusDot color={theme.colors.tertiary} filled={false} />
             <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1}>
               <Text variant="footnote" weight="semibold">
-                {device.slot}
+                {device.platform === 'web' ? 'Web' : device.slot}
               </Text>
-              {` \u00B7 ${device.model} \u00B7 ${device.state}`}
+              {device.platform === 'web' ? ` \u00B7 ${device.state}` : ` \u00B7 ${device.model} \u00B7 ${device.state}`}
             </Text>
           </View>
           {notes}
@@ -57,28 +57,35 @@ export function DeviceTile({
       </Card>
     );
   }
-  const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'ios' ? 0.46 : 0.45;
+  const fallbackAspect = device.platform === 'web' ? 1.6 : device.platform === 'ios' ? 0.46 : 0.45;
+  const aspect = frame && frame.height > 0 ? frame.width / frame.height : fallbackAspect;
   const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
   return (
     <Card>
       <View style={styles.header}>
         <StatusDot color={device.running ? theme.colors.success : theme.colors.tertiary} filled={device.running} />
         <Text variant="footnote" weight="semibold" style={styles.shrink} numberOfLines={1}>
-          {device.slot}
+          {device.platform === 'web' ? 'Web' : device.slot}
         </Text>
-        <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1}>
-          {device.model}
+        <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
+          {device.page ? shortUrl(device.page.url) : device.model}
         </Text>
         <View style={styles.spacer} />
         <Text variant="caption2" tone="tertiary" style={styles.shrink} numberOfLines={1}>
-          {device.platform === 'ios' ? 'iOS Simulator' : device.physical ? 'Android device' : 'Android Emulator'}
+          {deviceSource(device)}
         </Text>
       </View>
       <View style={styles.badges}>
         <ActivityChip activity={device.activity} />
+        {device.page?.error ? <Pill tone="warning">Page failed to load</Pill> : null}
         {streams && frame?.posture ? <Pill>{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Pill> : null}
         {streams && delayed ? <Pill tone="warning">Screen updates delayed</Pill> : null}
       </View>
+      {device.page?.error ? (
+        <Text variant="caption" tone="warning" style={styles.note} numberOfLines={2}>
+          {device.page.error}
+        </Text>
+      ) : null}
       {notes.length ? <View style={styles.notes}>{notes}</View> : null}
       <View
         onLayout={(event) => setScreenWidth(event.nativeEvent.layout.width)}
@@ -115,7 +122,9 @@ export function DeviceTile({
           </Text>
         )}
       </View>
-      {streams && device.id ? <AgentFeed workspace={workspace} slot={device.slot} deviceId={device.id} /> : null}
+      {streams && device.id && device.platform !== 'web' ? (
+        <AgentFeed workspace={workspace} slot={device.slot} deviceId={device.id} />
+      ) : null}
     </Card>
   );
 }

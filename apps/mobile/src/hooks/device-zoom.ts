@@ -14,12 +14,12 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import type { ScreenLens } from '@/hooks/screen-zoom';
 import { aspectOf, fitRect, zoomRect, type Rect } from '@/lib/zoom';
-import type { FrameEvent, Platform } from '@/protocol/types';
+import type { DevicePlatform, FrameEvent } from '@/protocol/types';
 
 export interface DeviceTarget {
   macId: string;
   workspace: string;
-  platform: Platform;
+  platform: DevicePlatform;
   slot: string;
 }
 

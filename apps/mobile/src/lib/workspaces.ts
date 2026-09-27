@@ -3,11 +3,12 @@ import type {
   BuildReport,
   DeviceActivity,
   DeviceAppProcess,
+  DevicePlatform,
   EnvironmentState,
-  Platform,
   SimState,
   StatusIssue,
   StatusPayload,
+  WebBrowserState,
 } from '@/protocol/types';
 
 export interface WorkspaceNames {
@@ -127,7 +128,7 @@ export function isShownLive(env: EnvironmentState): boolean {
 }
 
 export interface DeviceRef {
-  platform: Platform;
+  platform: DevicePlatform;
   slot: string;
   id: string | null;
   name: string;
@@ -138,6 +139,8 @@ export interface DeviceRef {
   physical: boolean;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** The Stim-owned Chrome's current page and, when its latest load failed, why. */
+  page?: { url: string; error: string | null };
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
@@ -173,6 +176,39 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
   };
 }
 
+function webDevice(web: WebBrowserState): DeviceRef {
+  return {
+    platform: 'web',
+    slot: 'default',
+    id: web.targetId ?? null,
+    name: shortUrl(web.page?.url ?? web.url),
+    model: 'Web',
+    state: web.running ? 'running' : 'closed',
+    running: web.running,
+    owned: true,
+    physical: false,
+    activity: web.activity,
+    page: {
+      url: web.page?.url ?? web.url,
+      error: web.running && web.page?.state === 'failed' ? (web.page.error ?? 'The page failed to load.') : null,
+    },
+  };
+}
+
+export function platformName(platform: DevicePlatform): string {
+  return platform === 'ios' ? 'iOS' : platform === 'web' ? 'Web' : 'Android';
+}
+
+export function deviceSource(device: DeviceRef): string {
+  if (device.platform === 'web') return 'Chrome';
+  if (device.platform === 'ios') return 'iOS Simulator';
+  return device.physical ? 'Android device' : 'Android Emulator';
+}
+
+export function shortUrl(url: string): string {
+  return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+}
+
 export function devicesOf(env: EnvironmentState): DeviceRef[] {
   const out: DeviceRef[] = [];
   const add = (slot: string, ios?: SimState | null, android?: AndroidState | null) => {
@@ -180,11 +216,12 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
     if (android) out.push(androidDevice(slot, android));
   };
   add('default', env.ios, env.android);
+  if (env.web) out.push(webDevice(env.web));
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
   return out;
 }
 
-export function livePlatforms(env: EnvironmentState): Platform[] {
+export function livePlatforms(env: EnvironmentState): DevicePlatform[] {
   return [
     ...new Set(
       devicesOf(env)

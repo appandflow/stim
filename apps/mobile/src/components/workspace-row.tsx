@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
 import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
-import { devicesOf, isActive, isSettingUp, runningBuild } from '@/lib/workspaces';
+import { devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
 
 export const WorkspaceRow = memo(function WorkspaceRow({
   item,
@@ -34,10 +34,10 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
   const activityAt = offline ? (lastSeenAt ?? now) : now;
-  const platformName = (d: (typeof running)[number]) =>
-    `${d.platform === 'ios' ? 'iOS' : 'Android'}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`;
+  const deviceName = (d: (typeof running)[number]) =>
+    `${platformName(d.platform)}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`;
   const drivenLabels = running.flatMap((d) =>
-    d.activity?.state === 'driven' ? [drivenLabel(platformName(d), d.activity, activityAt)] : [],
+    d.activity?.state === 'driven' ? [drivenLabel(deviceName(d), d.activity, activityAt)] : [],
   );
   const drivers = driversSummary(
     running.map((d) => d.activity),
@@ -117,7 +117,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
               return (
                 <Fragment key={`${d.platform}-${d.slot}`}>
                   <Pill tone={offline ? 'neutral' : driven ? 'accent' : 'success'} dot={driven}>
-                    {platformName(d)}
+                    {deviceName(d)}
                   </Pill>
                   {driven ? null : (
                     <ActivityChip activity={d.activity} frozenAt={offline ? (lastSeenAt ?? now) : null} />

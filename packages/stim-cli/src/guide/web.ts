@@ -182,8 +182,16 @@ over sends clicks, scrolls and keys to the page. The tile's buttons open the
 URL in your own browser (never the Stim profile), run stim reload web, and
 close the browser with stim stop --slot web.
 
+THE PHONE APP
+
+The phone app shows the page as a Web tile in the devices grid and the
+workspace screen, and opens it in the device viewer as H.264 video through
+stim-server. With Control on, taps click, drags scroll and the keyboard types;
+Back goes back in the page's history. Reload in the workspace menu runs stim
+reload web.
+
 LIMITS
 
-Chrome and Chromium only. No phone viewer yet. The owned page is one tab: a
-page the app opens in a new window is not captured.`,
+Chrome and Chromium only. The owned page is one tab: a page the app opens in
+a new window is not captured.`,
 };

@@ -2,7 +2,7 @@ import fixture from '../../mock-server/fixtures/status.json';
 
 import { homeAttention, type AttentionMachine } from '@/lib/attention';
 import type { ConnectionState } from '@/lib/connection';
-import type { BuildReport, EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
+import type { BuildReport, EnvironmentState, MachineUsage, StatusPayload, WebBrowserState } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-26T12:00:00Z');
 const OPEN: ConnectionState = {
@@ -198,6 +198,33 @@ describe('homeAttention', () => {
       summary([mac([env('installing', { live: true, ios: booted('stopped'), build: running(10_000, null) })])]),
     ).toEqual([]);
     expect(summary([mac([env('unsure', { live: true, ios: booted('unknown') })])])).toEqual([]);
+  });
+
+  it('flags a live workspace whose web page failed to load', () => {
+    const web: WebBrowserState = {
+      browser: 'chrome',
+      version: null,
+      running: true,
+      pid: 1,
+      supervisorPid: 2,
+      url: 'http://localhost:5173/',
+      headless: true,
+      viewport: 'desktop',
+      profile: '/p',
+      cdpEndpoint: 'http://127.0.0.1:8900',
+      targetId: 'T',
+      page: {
+        url: 'http://localhost:5173/apps/groups/',
+        state: 'failed',
+        error: 'GET failed: net::ERR_CONNECTION_REFUSED',
+      },
+    };
+    expect(summary([mac([env('vite', { live: true, web })])])).toEqual([
+      'warning vite: Web page failed to load -> workspace',
+    ]);
+    expect(
+      summary([mac([env('fine', { live: true, web: { ...web, page: { url: web.url, state: 'loaded' as const } } })])]),
+    ).toEqual([]);
   });
 
   it('flags disk below the critical floor on the machine', () => {

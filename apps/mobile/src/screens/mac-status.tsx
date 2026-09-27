@@ -19,7 +19,14 @@ import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/mac-conne
 import { pairingScope } from '@/lib/connection';
 import { budgetRows, formatBytes, LOW_DISK_BYTES, memoryGb, usageCharts, type BudgetRow } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
-import { attentionGroups, devicesOf, workspaceTitleAt, type AttentionGroup } from '@/lib/workspaces';
+import {
+  attentionGroups,
+  devicesOf,
+  platformName,
+  shortUrl,
+  workspaceTitleAt,
+  type AttentionGroup,
+} from '@/lib/workspaces';
 import type { StatusPayload } from '@/protocol/types';
 
 export function MacStatus({ id }: { id: string }) {
@@ -170,7 +177,7 @@ export function MacStatus({ id }: { id: string }) {
           {running.map(({ env, device }) => (
             <ListRow
               key={`${env.path}\n${device.platform}\n${device.slot}`}
-              title={`${device.platform === 'ios' ? 'iOS' : 'Android'} \u00B7 ${device.model}`}
+              title={`${platformName(device.platform)} \u00B7 ${device.page ? shortUrl(device.page.url) : device.model}`}
               value={workspaceTitleAt(env.path, status)}
             />
           ))}

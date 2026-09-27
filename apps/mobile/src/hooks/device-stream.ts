@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { useMacConnection } from '@/hooks/mac-connection';
 import { VideoMeter } from '@/lib/video';
-import type { FrameEvent, Platform } from '@/protocol/types';
+import type { DevicePlatform, FrameEvent } from '@/protocol/types';
 import { pushAccessUnit } from '../../modules/stim-video/src';
 
 export interface DeviceStream {
@@ -35,7 +35,7 @@ const EMPTY: Omit<StreamState, 'key'> = { frame: null, video: null, error: null,
  * empty, or the server has no H.264 to offer) come back as `frame`.
  */
 export function useDeviceStream(
-  target: { workspace: string; platform: Platform; slot: string },
+  target: { workspace: string; platform: DevicePlatform; slot: string },
   options: { enabled: boolean; fps: number; maxEdge: number; video: 'h264'[] },
 ): DeviceStream {
   const { connection } = useMacConnection();
