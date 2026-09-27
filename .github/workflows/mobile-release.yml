@@ -109,6 +109,20 @@ jobs:
           message="$(git log -1 --format=%s)"
           eas update --channel production --environment production --platform ios --message "$message" --non-interactive
 
+      - name: Upload the update's source maps to Sentry
+        if: steps.mode.outputs.mode == 'update'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: https://sentry.io/
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "SENTRY_AUTH_TOKEN is not set; skipping the Sentry source map upload."
+            exit 0
+          fi
+          npx sentry-expo-upload-sourcemaps dist
+
       - name: Roll back to the embedded update
         if: steps.mode.outputs.mode == 'rollback'
         env:

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@expo/ui": "~58.0.7",
+    "@sentry/react-native": "8.28.0",
     "expo": "~58.0.0-preview.7",
     "expo-camera": "~58.0.3",
     "expo-clipboard": "~58.0.1",
@@ -73,6 +74,11 @@
     "testPathIgnorePatterns": [
       "/node_modules/",
       "/mock-server/"
+    ],
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry|native-base|standard-navigation))",
+      "/node_modules/react-native-reanimated/plugin/",
+      "/node_modules/@react-native/babel-preset/"
     ]
   }
 }

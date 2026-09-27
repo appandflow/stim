@@ -628,6 +628,64 @@ APP_VARIANT=development eas update --channel development --environment developme
 `eas update` computes the runtime from the checked-out project, so run it on
 the commit the builds were made from, plus JS changes only.
 
+## Crash reporting
+
+The app reports JS errors and native crashes to Sentry
+(`@sentry/react-native`) only when its JS was bundled with
+`EXPO_PUBLIC_SENTRY_DSN` set. The DSN is not in the repository: EAS builds
+and updates read it from the EAS `production` and `preview` environments.
+Without it, as in local builds, `stim ios`, CI and forks, Sentry is not
+initialized and the app sends nothing. Sentry starts from JS in
+`src/lib/sentry.ts`, the first import of `index.ts`, so a native crash before
+the JS bundle runs is not reported. React Native sends an error thrown while
+rendering straight to its native exception handler rather than through
+`ErrorUtils`, so Sentry reports a render error only because the root
+`ErrorBoundary` in `src/app/_layout.tsx` is wrapped with
+`Sentry.wrapExpoRouterErrorBoundary`.
+
+Reports carry no personal data: `sendDefaultPii` is off, there are no
+screenshots, view hierarchy, session replay or performance tracing, and the
+native SDKs record no network breadcrumbs. Before an event or breadcrumb
+leaves the phone, `src/lib/sentry-scrub.ts` replaces URLs (the paired Mac's
+`wss://` endpoint among them), IP addresses, `*.ts.net` and `*.local` host
+names, Expo push tokens, pairing and device tokens, and `/Users/<name>` home
+folders. Events the native SDKs build themselves, such as native crashes and
+app hangs, skip that scrubbing, but carry only the JS breadcrumbs already
+scrubbed. Each report names the release
+(`com.appandflow.stim@<version>+<build>`), the build number as `dist`, and the
+running update in the tags `expo.updates.update_id`, `expo.updates.channel`
+and `expo.updates.runtime_version`.
+
+With `SENTRY_AUTH_TOKEN` set, a Release build uploads its JS source maps and,
+on iOS, its dSYMs; without it, the build prints
+`SENTRY_DISABLE_AUTO_UPLOAD=true, skipping ...` and succeeds.
+`plugins/sentry-upload-only-with-token.js` makes that decision when the build
+runs, not in `app.config.ts`, so the token does not change the fingerprint.
+The release workflow uploads an update's source maps after `eas update` when
+the `SENTRY_AUTH_TOKEN` secret exists, and skips that step otherwise.
+
+### Setup
+
+The Sentry organization is `stim-rn` and the project `stim-mobile`.
+
+1. From `apps/mobile`, store the DSN, the slugs and an organization auth token
+   (Sentry **Settings**, **Developer Settings**, **Organization Tokens**) in
+   the EAS `production` and `preview` environments. The token is `secret`,
+   which only EAS builds read; `eas update` reads the plaintext DSN:
+
+   ```bash
+   eas env:set --environment production --environment preview --name EXPO_PUBLIC_SENTRY_DSN --value '<dsn>' --visibility plaintext
+   eas env:set --environment production --environment preview --name SENTRY_ORG --value stim-rn --visibility plaintext
+   eas env:set --environment production --environment preview --name SENTRY_PROJECT --value stim-mobile --visibility plaintext
+   eas env:set --environment production --environment preview --name SENTRY_AUTH_TOKEN --value '<auth token>' --visibility secret
+   ```
+
+2. In the GitHub repository, **Settings**, **Secrets and variables**,
+   **Actions**: add the secret `SENTRY_AUTH_TOKEN` and the variables
+   `SENTRY_ORG` (`stim-rn`) and `SENTRY_PROJECT` (`stim-mobile`).
+3. Build and submit a new TestFlight build. The DSN reaches only builds and
+   updates bundled after step 1.
+
 ## Checks
 
 ```bash
