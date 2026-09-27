@@ -13,14 +13,20 @@ export function liveWebRecord(record: WebRecord | null): (WebRecord & { targetId
 // sensible wait; the owned supervisor observes the load either way.
 const NAVIGATE_ACK_MS = 1000;
 
-/** Sends one page-level DevTools command to the owned page, through a connection verified to reach its Chrome. */
+/**
+ * Sends one page-level DevTools command to the owned page, through a connection verified to reach its Chrome.
+ * Resolves to the URL the page was on when the command was sent.
+ */
 export async function sendToOwnedPage(
   record: WebRecord & { targetId: string },
   method: string,
   params: Record<string, unknown> = {},
-): Promise<void> {
+): Promise<string> {
   const cdp = await connectOwnedBrowser(record.cdpPort, record.chromeProcess!.pid);
   try {
+    const { targetInfo } = (await cdp.send('Target.getTargetInfo', { targetId: record.targetId })) as {
+      targetInfo: { url: string };
+    };
     const { sessionId } = (await cdp.send('Target.attachToTarget', { targetId: record.targetId, flatten: true })) as {
       sessionId: string;
     };
@@ -31,6 +37,7 @@ export async function sendToOwnedPage(
     } else {
       await reply;
     }
+    return targetInfo.url;
   } finally {
     cdp.close();
   }

@@ -62,7 +62,7 @@ export interface ReloadDeps {
   resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
   reloadMetro: typeof reloadThroughMetro;
   readBrowser: (root: string) => (WebRecord & { targetId: string }) | 'unverified' | null;
-  reloadPage: (record: WebRecord & { targetId: string }) => Promise<void>;
+  reloadPage: (record: WebRecord & { targetId: string }) => Promise<string>;
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
@@ -95,8 +95,9 @@ async function reloadBrowser(
   metroPort: number | null,
   d: ReloadDeps,
 ): Promise<ReloadResult> {
+  let pageUrl: string;
   try {
-    await d.reloadPage(browser);
+    pageUrl = await d.reloadPage(browser);
   } catch (error) {
     return {
       ok: false,
@@ -113,7 +114,7 @@ async function reloadBrowser(
       platform: 'web',
       deviceId: cdpEndpoint(browser.cdpPort),
       deviceName: browser.version ?? 'Chrome',
-      appId: browser.url,
+      appId: pageUrl,
       metroPort: metroPort !== null && new URL(browser.url).port === String(metroPort) ? metroPort : null,
       strategy: 'cdp',
       targets: 1,

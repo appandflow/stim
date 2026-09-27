@@ -422,7 +422,8 @@ or emulator, or reloads its owned Chrome page. It never builds, installs, boots,
 or cold-launches. Omit the platform when exactly one owned app or page is live;
 name it when more than one is live. A bare reload picks the Chrome page only when
 no native launch is recorded. A web reload sends `Page.reload` to the owned page
-and reports `strategy: "cdp"`.
+and reports `strategy: "cdp"`, with `appId` set to the URL the page was on when
+Stim sent the reload.
 
 Every native reload goes over the workspace Metro websocket, on both platforms. It never
 reopens a development-client URL, because that restarts the app rather than
