@@ -84,10 +84,7 @@ final class AndroidDeviceStream {
       controlSocket = -1
       return (setupStep, self.shell, self.pushed, sockets)
     }
-    for socket in sockets where socket >= 0 {
-      shutdown(socket, SHUT_RDWR)
-      close(socket)
-    }
+    for socket in sockets where socket >= 0 { shutdown(socket, SHUT_RDWR) }
     if let shell, shell.isRunning { shell.terminate() }
     if let step, step.isRunning {
       step.terminate()
@@ -176,6 +173,8 @@ final class AndroidDeviceStream {
           Darwin.connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
         }
       }
+      var noSigpipe: Int32 = 1
+      setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
       var byte: UInt8 = 0
       if connected == 0, !dummyByte || read(socket, &byte, 1) == 1 { return socket }
       close(socket)
@@ -185,12 +184,15 @@ final class AndroidDeviceStream {
     throw Failure(description: "The scrcpy server on \(serial) did not accept a connection\(output.isEmpty ? "." : ": \(output)")")
   }
 
+  /// The reader threads close the sockets: `stop` only shuts them down, so no thread reads a descriptor number
+  /// that another file has reused.
   private func readVideo() {
+    let socket = lock.withLock { videoSocket }
+    guard socket >= 0 else { return }
+    defer { close(socket) }
     var demuxer = ScrcpyVideoDemuxer()
     var chunk = [UInt8](repeating: 0, count: 1 << 16)
     while true {
-      let socket = lock.withLock { videoSocket }
-      guard socket >= 0 else { return }
       let count = read(socket, &chunk, chunk.count)
       guard count > 0 else { break }
       do {
@@ -218,11 +220,11 @@ final class AndroidDeviceStream {
 
   /// Device messages (clipboard, acknowledgements) are not used, but must be read so the server never blocks.
   private func drainControl() {
+    let socket = lock.withLock { controlSocket }
+    guard socket >= 0 else { return }
+    defer { close(socket) }
     var chunk = [UInt8](repeating: 0, count: 4096)
-    while true {
-      let socket = lock.withLock { controlSocket }
-      guard socket >= 0, read(socket, &chunk, chunk.count) > 0 else { return }
-    }
+    while read(socket, &chunk, chunk.count) > 0 {}
   }
 
   private func adbProcess(_ arguments: [String]) -> Process {
