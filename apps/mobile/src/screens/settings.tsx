@@ -20,18 +20,21 @@ import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { useNotificationPrefs } from '@/hooks/notifications';
-import type { NotifyEvent } from '@/lib/attention';
-import { NOTIFY_EVENTS } from '@/lib/notifications';
+import { NOTIFY_CATEGORIES } from '@/lib/notifications';
+import type { OversightCategory } from '@/lib/oversight';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope } from '@/lib/connection';
 import {
-  AGENT_ONLY_LABEL,
   APPEARANCE_OPTIONS,
   HOME_FOOTER,
   NOTIFICATIONS_FOOTER,
-  NOTIFY_EVENT_LABELS,
+  NOTIFY_CATEGORY_LABELS,
   HOME_VIEW_OPTIONS,
   labelOf,
+  parseQuietHoursValue,
+  QUIET_HOURS_OPTIONS,
+  quietHoursValue,
+  STUCK_MINUTES_OPTIONS,
   READ_ONLY_FOOTER,
   VIDEO_QUALITY_FOOTER,
   VIDEO_QUALITY_OPTIONS,
@@ -57,8 +60,10 @@ export function Settings() {
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
   const { prefs, enable, update: updateNotifications } = useNotificationPrefs();
-  const toggleEvent = (event: NotifyEvent, on: boolean) =>
-    updateNotifications({ events: on ? [...prefs.events, event] : prefs.events.filter((e) => e !== event) });
+  const toggleCategory = (category: OversightCategory, on: boolean) =>
+    updateNotifications({
+      categories: on ? [...prefs.categories, category] : prefs.categories.filter((c) => c !== category),
+    });
   const switchColors = { checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary };
   const showIdle = filters.activity !== 'live';
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
@@ -118,34 +123,40 @@ export function Settings() {
             }
           />
           {prefs.enabled
-            ? NOTIFY_EVENTS.map((event) => (
+            ? NOTIFY_CATEGORIES.map((category) => (
                 <Row
-                  key={event}
+                  key={category}
                   colors={colors}
-                  title={NOTIFY_EVENT_LABELS[event]}
-                  onPress={() => toggleEvent(event, !prefs.events.includes(event))}
+                  title={NOTIFY_CATEGORY_LABELS[category]}
+                  onPress={() => toggleCategory(category, !prefs.categories.includes(category))}
                   trailing={
                     <Switch
-                      value={prefs.events.includes(event)}
-                      onCheckedChange={(on) => toggleEvent(event, on)}
+                      value={prefs.categories.includes(category)}
+                      onCheckedChange={(on) => toggleCategory(category, on)}
                       colors={switchColors}
                     />
                   }
                 />
               ))
             : null}
-          {prefs.enabled ? (
-            <Row
+          {prefs.enabled && prefs.categories.includes('stuck') ? (
+            <Choice
               colors={colors}
-              title={AGENT_ONLY_LABEL}
-              onPress={() => updateNotifications({ agentOnly: !prefs.agentOnly })}
-              trailing={
-                <Switch
-                  value={prefs.agentOnly}
-                  onCheckedChange={(agentOnly) => updateNotifications({ agentOnly })}
-                  colors={switchColors}
-                />
-              }
+              title="Stuck after"
+              icon={ICONS.notifications}
+              options={STUCK_MINUTES_OPTIONS}
+              value={String(prefs.stuckMinutes)}
+              onChange={(value) => updateNotifications({ stuckMinutes: Number(value) })}
+            />
+          ) : null}
+          {prefs.enabled ? (
+            <Choice
+              colors={colors}
+              title="Quiet hours"
+              icon={ICONS.idle}
+              options={QUIET_HOURS_OPTIONS}
+              value={quietHoursValue(prefs.quietHours)}
+              onChange={(value) => updateNotifications({ quietHours: parseQuietHoursValue(value) })}
             />
           ) : null}
         </Section>

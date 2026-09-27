@@ -270,35 +270,56 @@ reconnects on its own, so a revoked grant shows as read-only everywhere.
 
 ## Notifications
 
-**Settings > Notifications** turns on notifications for the problems the
-**Needs attention** strip shows, with a switch per event: a failed build, new
-log errors, disk below Stim's floor, a machine going offline or refusing the
-pairing, a live device's app stopping, and a build running more than twice its
-median. **Only workspaces an agent drives** keeps workspace notifications to
-workspaces with a device an agent drives at that moment, so a workspace whose
-devices are gone, such as after a failed first build, does not notify. The app
-asks for notification permission when you first turn them on, never at launch;
-when it is refused, the switch stays off and the app offers the system
-settings.
+**Settings > Notifications** turns on notifications for what a person
+overseeing agents needs: your attention changes the outcome, or work you wait
+on started or finished. Each category has its own switch:
 
-Each problem notifies once: a later failed build, or a problem that cleared
-for two minutes and came back, notifies again. What is already wrong when you
-turn notifications on does not notify. New log errors notify once their count
-has held for 10 seconds (at most a minute after the first), then at most every
-5 minutes. A machine notifies as offline after a minute offline while the app
-is open. Four or more notifications at once become one that opens home.
-Tapping a notification opens the workspace, its logs with **Errors only**, or
-the machine sheet.
+- **Work started**: a workspace began warming, or an agent first drove one of
+  its devices. It arrives silently (iOS `passive`, Android's low-importance
+  "Work started" channel), grouped per Mac, and opens the workspace or the
+  device viewer.
+- **Agent looks stuck**: an agent drove the workspace, a device is still up,
+  and nothing happened for the **Stuck after** time (15 minutes by default):
+  no agent action, build, reload or new log error. App log records do not
+  count, since an idle app keeps logging. It opens the device viewer.
+- **Agent repeats the same failure**: three or more builds in a row failed at
+  the same first compiler error (`Same Swift error 3x at
+AppDelegate.swift:71`), or with the same error code, such as an app that
+  exits at launch. It opens the build details with their diagnostics.
+- **Work finished or PR ready**: the agent stopped after a green build, or the
+  workspace's pull request became ready for review or merged. A pull request
+  opens on GitHub.
+- **Machine in trouble**: disk below Stim's floor, critical memory pressure,
+  or a machine that went offline or refuses the pairing. It opens the machine
+  sheet.
+- **Someone takes over your device**: another phone took over a device you
+  control, or an agent started driving it. It opens the device viewer.
+
+A single failed build, new log errors, a stopped app and a slow build do not
+notify; they stay in the **Needs attention** strip. Each notification names the
+workspace, or the Mac, and gives a one-line cause. A workspace notifies once
+per episode, and a later notification of the same category replaces the
+earlier one instead of stacking. What is already true when you turn
+notifications on does not notify. **Quiet hours** hold notifications: a
+problem that still holds when they end notifies then, and work that started
+or finished during them does not. Four or more notifications at once become
+one that opens home. The app asks for notification permission when you first
+turn them on, never at launch; when it is refused, the switch stays off and
+the app offers the system settings.
+
+The app and `stim-server` run the same rules, `src/lib/oversight.ts`, a copy of
+`packages/server/src/oversight.ts` that a server test keeps identical.
 
 When notifications can arrive:
 
-- **iPhone, from a Mac whose `stim-server` pushes** (#1577): failed builds, log
-  errors, low disk, stopped apps and slow builds arrive while the app is open,
-  in the background or closed, as long as `stim-server` runs on the Mac and
-  the phone has a network connection. The app registers its Expo push token
-  with each Mac over the existing connection; the Mac sends through Expo's push
-  service and Apple, with the workspace title, a short reason, the screen to
-  open and the workspace's path. The app then does not notify those events
+- **iPhone, from a Mac whose `stim-server` pushes** (#1577): every category
+  but a machine going offline arrives while the app is open, in the background
+  or closed, as long as `stim-server` runs on the Mac and the phone has a
+  network connection. The app registers its Expo push token, its categories,
+  its stuck time and its quiet hours in the phone's time zone with each Mac
+  over the existing connection; the Mac sends through Expo's push service and
+  Apple, with the workspace title, a one-line cause, the screen to open and the
+  workspace's path. The app then does not notify those categories
   itself, so nothing arrives twice. Push needs the production app and an
   APNs key in the EAS credentials for `com.appandflow.stim` (`eas credentials
 --platform ios`, **Push Notifications**); without one Expo refuses every
@@ -312,6 +333,9 @@ When notifications can arrive:
   more. Android push needs FCM credentials the
   app does not have yet. A machine going offline or refusing the pairing is
   only ever noticed by the phone, so it notifies only while the app is open.
+  Only a Mac that pushes looks up pull requests and sees control conflicts;
+  without push, a branch counts as merged when git finds it merged into the
+  default branch.
 
 A background check was not added: `expo-background-task` runs at most every
 15 minutes on Android, and on iOS it schedules a `BGProcessingTask` that the
@@ -428,9 +452,9 @@ node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Develope
 `--overlay <file>` changes the status while the server runs, to try
 notifications. The server rereads the JSON file for each status push (every 5
 seconds) and `machine.get`: `freeGb` replaces `--free-gb`, and `environments`
-maps a workspace path to fields that replace the fixture's, such as
-`{ "logs": { "dir": "/l", "errorsSinceMarker": 3 } }` or a failed
-`lastBuilds` entry.
+maps a workspace path to fields that replace the fixture's, such as a
+`phase` of `warming`, an `ios` device whose `activity` is `driven`, or a
+`builds` history with three failed runs.
 
 ## Design system
 

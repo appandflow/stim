@@ -389,15 +389,19 @@ export interface MachineHistory {
 
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
-/** The attention events stim-server can push. */
-export type PushEvent = 'build-failed' | 'log-errors' | 'disk' | 'app-stopped' | 'slow-build';
+/** What stim-server can push, the categories of `@/lib/oversight`. */
+export type PushEvent = 'started' | 'stuck' | 'looping' | 'finished' | 'machine' | 'control';
 
-/** `ref` comes back as `data.ref` in every push, naming the Mac that sent it. */
+/**
+ * `ref` comes back as `data.ref` in every push, naming the Mac that sent it. `quietHours` are minutes after midnight
+ * in the phone's IANA `timeZone`.
+ */
 export interface PushRegisterParams {
   token: string;
   events: PushEvent[];
-  agentOnly?: boolean;
   ref: string;
+  stuckMinutes?: number;
+  quietHours?: { start: number; end: number; timeZone: string };
 }
 
 export interface Methods {
