@@ -35,7 +35,7 @@ function emulatorAvd(command: string): string | null {
   return EMULATOR.exec(command)?.[1] ?? null;
 }
 
-type Owner = Omit<MachineOwner, 'cpuPercent' | 'residentMb' | 'processes'>;
+type Owner = Omit<MachineOwner, 'cpuPercent' | 'residentMb' | 'memoryMb' | 'processes'>;
 
 function workspaceOwner(kind: MachineOwnerKind, env: EnvironmentState, name: string, id: string | null): Owner {
   return { kind, name, workspace: env.path, id, owned: true };
@@ -50,15 +50,19 @@ function rank(owner: MachineOwner): number {
  * that is a root. Roots are each booted simulator's `launchd_sim`, each emulator launcher and qemu process, and each
  * workspace's verified supervisor and Metro, running build and Chrome. Only a process under none of those falls back
  * to stim-server or a machine-wide service in `SHARED`, so a `simctl` a workspace's log collector runs stays with the
- * workspace. A process with no root ancestor is left out.
+ * workspace. A process with no root ancestor is left out. `footprints` holds physical footprint bytes by pid, or is
+ * null when they could not be read, and the owners' `memoryMb` then sums resident sizes. A process missing from
+ * `footprints`, another user's or one that exited between the two reads, counts its resident size.
  */
 export function attributeMachineUsage({
   processes,
+  footprints,
   environments,
   roots,
   simNames,
 }: {
   processes: readonly HostProcess[];
+  footprints: ReadonlyMap<number, number> | null;
   environments: readonly EnvironmentState[];
   roots: readonly WorkspaceProcessRoots[];
   simNames: Readonly<Record<string, string | undefined>>;
@@ -162,7 +166,7 @@ export function attributeMachineUsage({
   }
 
   const parentOf = new Map(processes.map((p) => [p.pid, p.ppid]));
-  const totals = new Map<string, { rssKb: number; cpu: number; processes: number }>();
+  const totals = new Map<string, { rssKb: number; memoryKb: number; cpu: number; processes: number }>();
   for (const p of processes) {
     let pid: number | undefined = p.pid;
     let key: string | undefined;
@@ -175,8 +179,10 @@ export function attributeMachineUsage({
     }
     key ??= fallback;
     if (!key) continue;
-    const total = totals.get(key) ?? { rssKb: 0, cpu: 0, processes: 0 };
+    const total = totals.get(key) ?? { rssKb: 0, memoryKb: 0, cpu: 0, processes: 0 };
     total.rssKb += p.rssKb;
+    const footprint = footprints?.get(p.pid);
+    total.memoryKb += footprint === undefined ? p.rssKb : footprint / 1024;
     total.cpu += p.cpuPercent;
     total.processes += 1;
     totals.set(key, total);
@@ -190,6 +196,7 @@ export function attributeMachineUsage({
         ...owner,
         cpuPercent: Math.round(total.cpu),
         residentMb: Math.round(total.rssKb / 1024),
+        memoryMb: Math.round(total.memoryKb / 1024),
         processes: total.processes,
       });
   }
@@ -197,5 +204,5 @@ export function attributeMachineUsage({
     (x, y) =>
       rank(x) - rank(y) || (x.workspace ?? '~').localeCompare(y.workspace ?? '~') || x.name.localeCompare(y.name),
   );
-  return { owners: list };
+  return { memorySource: footprints ? 'footprint' : 'rss', owners: list };
 }

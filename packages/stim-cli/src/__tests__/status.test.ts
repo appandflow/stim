@@ -257,7 +257,7 @@ async function runStatusJson() {
   return JSON.parse(line);
 }
 
-function setBootedSims(ps: string | null, calls: string[] = [], state = 'Booted') {
+function setBootedSims(ps: string | null, calls: string[] = [], state = 'Booted', footprints: string | null = null) {
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ['UDID-ABC', 'UDID-DEF'].map((udid) => ({
@@ -271,11 +271,20 @@ function setBootedSims(ps: string | null, calls: string[] = [], state = 'Booted'
   });
   setExecutor({
     runFile: (_file, args = []) => (args.join(' ').includes('simctl list devices --json') ? listJson : ''),
-    runFileAsync: async (_file, args = []) => (args.join(' ').includes('simctl list devices --json') ? listJson : ''),
+    runFileAsync: async (file, args = []) => {
+      if (file === 'xcrun' && args[0] === 'swiftc') {
+        calls.push('swiftc');
+        writeFileSync(args[args.indexOf('-o') + 1]!, '');
+      }
+      return args.join(' ').includes('simctl list devices --json') ? listJson : '';
+    },
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
     runFileQuiet: (file) => {
-      calls.push(file);
-      return file === 'ps' ? ps : null;
+      calls.push(file.includes('stim-footprint-') ? 'stim-footprint' : file);
+      if (file === 'ps') return ps;
+      if (footprints === null) return null;
+      if (file === 'xcode-select') return '/Applications/Xcode.app/Contents/Developer';
+      return file.includes('stim-footprint-') ? footprints : null;
     },
     spawn() {
       throw new Error('spawn should not be called from status');
@@ -283,19 +292,18 @@ function setBootedSims(ps: string | null, calls: string[] = [], state = 'Booted'
   });
 }
 
-test('status --json attributes each simulator tree to its workspace and keeps memoryMb as the estimate', async () => {
-  const start = 'Sat Sep 26 15:33:49 2026';
-  const sim = (udid: string) =>
-    `/Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`;
-  setBootedSims(
-    [
-      `  10     1  51200  9.0 ${start} /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/XPCServices/com.apple.CoreSimulator.CoreSimulatorService.xpc/Contents/MacOS/com.apple.CoreSimulator.CoreSimulatorService`,
-      ` 100     1  10240  0.0 ${start} launchd_sim ${sim('UDID-ABC')}`,
-      ` 101   100 512000  5.0 ${start} /runtime/SpringBoard`,
-      ` 110     1  10240  0.0 ${start} launchd_sim ${sim('UDID-DEF')}`,
-      ` 111   110 204800  1.0 ${start} /runtime/SpringBoard`,
-    ].join('\n'),
-  );
+const START = 'Sat Sep 26 15:33:49 2026';
+const simPlist = (udid: string) =>
+  `/Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`;
+const TWO_SIMS_PS = [
+  `  10     1  51200  9.0 ${START} /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/XPCServices/com.apple.CoreSimulator.CoreSimulatorService.xpc/Contents/MacOS/com.apple.CoreSimulator.CoreSimulatorService`,
+  ` 100     1  10240  0.0 ${START} launchd_sim ${simPlist('UDID-ABC')}`,
+  ` 101   100 512000  5.0 ${START} /runtime/SpringBoard`,
+  ` 110     1  10240  0.0 ${START} launchd_sim ${simPlist('UDID-DEF')}`,
+  ` 111   110 204800  1.0 ${START} /runtime/SpringBoard`,
+].join('\n');
+
+function saveTwoSimProjects() {
   saveConfig(
     makeConfig({
       version: 2,
@@ -305,10 +313,38 @@ test('status --json attributes each simulator tree to its workspace and keeps me
       },
     }),
   );
+}
+
+test('status --json sets memoryMb from the footprint helper, compiling it once into STIM_HOME', async () => {
+  const MB = 1024 * 1024;
+  const calls: string[] = [];
+  setBootedSims(TWO_SIMS_PS, calls, 'Booted', [`100 ${4 * MB}`, `101 ${96 * MB}`, `111 ${50 * MB}`].join('\n'));
+  saveTwoSimProjects();
 
   const payload = await runStatusJson();
 
-  expect(payload.environments.map((e: { memoryMb: number }) => e.memoryMb)).toEqual([1500, 1500]);
+  expect(payload.machine.memorySource).toBe('footprint');
+  expect(
+    payload.environments.map((e: { memoryMb: number; memorySource: string }) => [e.memoryMb, e.memorySource]),
+  ).toEqual([
+    [100, 'footprint'],
+    [60, 'footprint'],
+  ]);
+  expect(payload.capacity.committedMb).toBe(160);
+  await runStatusJson();
+  expect(calls.filter((call) => call === 'swiftc')).toHaveLength(1);
+  expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
+});
+
+test('status --json attributes each simulator tree to its workspace and sums RSS without the helper', async () => {
+  setBootedSims(TWO_SIMS_PS);
+  saveTwoSimProjects();
+
+  const payload = await runStatusJson();
+
+  expect(payload.machine.memorySource).toBe('rss');
+  expect(payload.environments.map((e: { memoryMb: number }) => e.memoryMb)).toEqual([510, 210]);
+  expect(payload.environments.map((e: { memorySource: string }) => e.memorySource)).toEqual(['rss', 'rss']);
   expect(
     payload.machine.owners.map(
       (o: { name: string; workspace: string | null; residentMb: number; cpuPercent: number }) => [

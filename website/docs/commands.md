@@ -703,14 +703,19 @@ In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and
 `stim web` Chrome, stim-server, and a shared bucket for machine-wide processes
 such as CoreSimulator services, the adb server and Gradle daemons. Each owner
-carries `cpuPercent`, `residentMb` and `processes`, and every process counts in
-exactly one owner. `owned` marks what Stim can stop: a workspace's owned device
-with `stim stop --slot <name>`, and its Metro with `stim stop`. Resident memory
-counts pages shared between processes once per process, so a simulator reads
-well above its physical footprint. An environment's `memoryMb` stays the fixed
-estimate the memory budget uses. `machine` is `null` when nothing runs, and
-status then reads no process table. `stim guide facts status` lists every
-field.
+carries `cpuPercent`, `memoryMb`, `residentMb` and `processes`, and every
+process counts in exactly one owner. `owned` marks what Stim can stop: a
+workspace's owned device with `stim stop --slot <name>`, and its Metro with
+`stim stop`. `memoryMb` is the physical footprint Activity Monitor shows, read
+by a small helper that Stim compiles with the Xcode command line tools on
+first use. Without them, and on Linux and Windows, `machine.memorySource` is
+`rss` and `memoryMb` falls back to resident memory, which counts pages shared
+between processes once per process, so a simulator reads up to three times its
+footprint. An environment's `memoryMb` sums its own owners, and its
+`memorySource` says which figure that is. `machine` is `null` when nothing
+runs; status then reads no process table, and `memoryMb` is the fixed estimate
+the memory budget uses (`memorySource: "estimate"`). `stim guide facts status`
+lists every field.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then

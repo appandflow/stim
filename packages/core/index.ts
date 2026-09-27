@@ -7,6 +7,7 @@ import { withDirLock } from './dir-lock.ts';
 export { withDirLock, type DirLockOptions } from './dir-lock.ts';
 export { quotedPath } from './quoted-path.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
+export { compiledHelper } from './compiled-helper.ts';
 
 const warnedRelative = new Set<string>();
 

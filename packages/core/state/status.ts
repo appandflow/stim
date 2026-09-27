@@ -250,10 +250,13 @@ export interface EnvironmentState {
   path: string;
   live: boolean;
   /**
-   * A fixed estimate, not a measurement: a set amount per booted simulator, detected emulator, running Metro and
-   * running Chrome. `capacity.committedMb` sums it. What the workspace's processes use now is in `machine`.
+   * The memory this workspace's processes use, as `memorySource` says: the sum of its `machine` owners' `memoryMb`
+   * when status read the process table, or else a fixed estimate per booted simulator, detected emulator, running
+   * Metro and running Chrome. `capacity.committedMb` sums it.
    */
   memoryMb: number;
+  /** How `memoryMb` was obtained; absent from payloads written before it existed, which carry the estimate. */
+  memorySource?: MemorySource;
   warnings: string[];
   issues: StatusIssue[];
   ios?: {
@@ -292,7 +295,7 @@ export interface EnvironmentState {
   builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
 }
 
-/** `committedMb` sums the environments' estimated `memoryMb`; `overCapacity` is that sum over 60% of `totalMemoryMb`. */
+/** `committedMb` sums the environments' `memoryMb`; `overCapacity` is that sum over 60% of `totalMemoryMb`. */
 export interface StatusCapacity {
   liveCount: number;
   committedMb: number;
@@ -314,6 +317,16 @@ export interface DeviceLeaseState {
   parsed: boolean;
 }
 
+/**
+ * Where a memory figure comes from. `footprint` is each process's physical footprint, which Activity Monitor's Memory
+ * column shows. `rss` sums resident set sizes, which count pages shared between processes once per process, so a
+ * simulator reports well above its footprint; status falls back to it when the footprint helper cannot be built.
+ * `estimate` is a fixed amount per running thing, used when status read no process table.
+ */
+export const MEMORY_SOURCES = ['footprint', 'rss', 'estimate'] as const;
+
+export type MemorySource = (typeof MEMORY_SOURCES)[number];
+
 /** Every kind of process owner the status machine section reports. */
 export const MACHINE_OWNER_KINDS = ['simulator', 'emulator', 'metro', 'build', 'browser', 'server', 'shared'] as const;
 
@@ -328,6 +341,8 @@ export type MachineOwnerKind = (typeof MACHINE_OWNER_KINDS)[number];
  * Metro, build or Chrome. `cpuPercent` is `ps` %CPU summed over the owner's processes, where 100 is one core.
  * `residentMb` sums their resident set sizes; pages shared between processes count once per process, so a
  * simulator, whose processes all map the runtime's shared libraries, reports well above its physical footprint.
+ * `memoryMb` sums their physical footprints when `MachineUsageState.memorySource` is `footprint`, taking the resident
+ * size of a process the footprint helper could not read, and equals `residentMb` when it is `rss`.
  */
 export interface MachineOwner {
   kind: MachineOwnerKind;
@@ -338,11 +353,13 @@ export interface MachineOwner {
   owned: boolean;
   cpuPercent: number;
   residentMb: number;
+  memoryMb: number;
   processes: number;
 }
 
-/** Where this machine's CPU and resident memory go, from one pass over the host process table. */
+/** Where this machine's CPU and memory go, from one pass over the host process table. */
 export interface MachineUsageState {
+  memorySource: Exclude<MemorySource, 'estimate'>;
   owners: MachineOwner[];
 }
 

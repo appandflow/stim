@@ -6,6 +6,7 @@ import {
   SETTINGS,
   STATUS_ISSUE_CODES,
   MACHINE_OWNER_KINDS,
+  MEMORY_SOURCES,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -647,6 +648,12 @@ test('the facts topic documents every machine owner kind', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const kind of MACHINE_OWNER_KINDS) expect(body).toMatch(new RegExp(`^ +(kind +)?${kind} `, 'm'));
+});
+
+test('the facts topic documents every memory source', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const source of MEMORY_SOURCES) expect(body).toMatch(new RegExp(`^ +${source} `, 'm'));
 });
 
 test('the facts topic documents every app process state', () => {
