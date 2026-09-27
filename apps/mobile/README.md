@@ -66,7 +66,7 @@ reload and stop a workspace:
   are saved on the phone; a dot on the button shows that some are on. Live only
   is the default.
 - **Machine status**: tapping a chip shows that machine's capacity, with Stim's
-  share of memory (what live workspaces commit), charts of CPU, memory used and
+  share of memory (what live workspaces use, or an estimate from an older `stim`), charts of CPU, memory used and
   startup-volume free space over the last hour, load average, memory used and
   pressure, free disk per volume, Stim budgets, running devices and
   device leases, **Needs attention**, and its server and `stim` versions.

@@ -16,7 +16,11 @@ public struct MachineUsage: Decodable, Hashable, Sendable {
 /// How `stim status` measured a memory figure: each process's physical footprint, as Activity Monitor shows it; summed
 /// resident size, which counts shared pages once per process; or a fixed estimate when it read no process table.
 public enum MemorySource: String, Decodable, Hashable, Sendable {
-  case footprint, rss, estimate
+  case footprint, rss, estimate, other
+
+  public init(from decoder: Decoder) throws {
+    self = MemorySource(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+  }
 }
 
 public struct MachineOwner: Decodable, Hashable, Sendable {

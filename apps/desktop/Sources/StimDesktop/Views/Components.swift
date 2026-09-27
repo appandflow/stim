@@ -62,7 +62,7 @@ struct GitIndicator: View {
   }
 }
 
-/// The workspace's committed memory estimate from `stim status`, which is a fixed budget rather than a measurement.
+/// The workspace's memory from `stim status`: its processes' footprint, or a fixed estimate as `source` says.
 struct MemoryPill: View {
   var mb: Int
   var source: MemorySource?
@@ -75,15 +75,15 @@ struct MemoryPill: View {
     .help(help)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
-      source == .footprint
-        ? "Uses \(formatGigabytes(mb: mb)) of memory" : "Estimated to use about \(formatGigabytes(mb: mb)) of memory")
+      source != .footprint && source != .rss
+        ? "Estimated to use about \(formatGigabytes(mb: mb)) of memory" : "Uses \(formatGigabytes(mb: mb)) of memory")
   }
 
   private var help: String {
     switch source {
     case .footprint: return "Memory the workspace's processes use, as Activity Monitor counts it"
     case .rss: return "Resident memory of the workspace's processes, which overstates simulators"
-    case .estimate, nil: return "Committed memory estimate from stim status"
+    case .estimate, .other, nil: return "Committed memory estimate from stim status"
     }
   }
 }

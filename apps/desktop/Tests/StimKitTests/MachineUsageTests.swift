@@ -18,6 +18,8 @@ import Testing
     #expect(owners[1].kind == .other && owners[1].memory == 2)
     #expect(payload.machine?.memorySource == .footprint && payload.environments[0].memorySource == .footprint)
     #expect(try JSONDecoder().decode(StatusPayload.self, from: Data(#"{"environments":[]}"#.utf8)).machine == nil)
+    let future = #"{"environments":[],"machine":{"memorySource":"sampled","owners":[]}}"#
+    #expect(try JSONDecoder().decode(StatusPayload.self, from: Data(future.utf8)).machine?.memorySource == .other)
   }
 
   @Test func onlyAWorkspacesOwnedDeviceOrMetroGetsAStopAction() {
