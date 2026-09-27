@@ -136,20 +136,20 @@ Set these on the `release` environment (Settings > Environments > release), so
 only approved runs can read them. Each group is optional; a missing group skips
 its step with a notice, and a partly set group fails the run.
 
-| Name                      | Kind     | Content                                                                              |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| `DESKTOP_CERT_P12_BASE64` | secret   | `base64 -i cert.p12` of the Developer ID Application certificate and its private key |
-| `DESKTOP_CERT_PASSWORD`   | secret   | The password of that `.p12`                                                          |
-| `ASC_KEY_P8_BASE64`       | secret   | `base64 -i AuthKey_<id>.p8` of an App Store Connect API key                          |
-| `ASC_KEY_ID`              | secret   | That key's ID                                                                        |
-| `ASC_ISSUER_ID`           | secret   | The issuer ID shown above the keys list in App Store Connect                         |
-| `SPARKLE_ED_PRIVATE_KEY`  | secret   | The private EdDSA key from Sparkle's `generate_keys -x <file>`                       |
-| `SPARKLE_PUBLIC_ED_KEY`   | variable | The matching public key that `generate_keys` prints                                  |
-| `STIM_DESKTOP_SENTRY_DSN` | variable | The Sentry project's DSN; unset builds report no crashes                             |
-| `SENTRY_AUTH_TOKEN`       | secret   | A Sentry organization auth token, used only for the dSYM upload                      |
-| `SENTRY_ORG`              | variable | The Sentry organization slug                                                         |
-| `SENTRY_PROJECT`          | variable | The Sentry project slug                                                              |
-| `HOMEBREW_TAP_DEPLOY_KEY` | secret   | The private half of a write deploy key on `appandflow/homebrew-tap`                  |
+| Name                      | Kind     | Content                                                                                    |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| `DESKTOP_CERT_P12_BASE64` | secret   | `base64 -i cert.p12` of the Developer ID Application certificate and its private key       |
+| `DESKTOP_CERT_PASSWORD`   | secret   | The password of that `.p12`                                                                |
+| `ASC_KEY_P8_BASE64`       | secret   | `base64 -i AuthKey_<id>.p8` of an App Store Connect API key                                |
+| `ASC_KEY_ID`              | secret   | That key's ID                                                                              |
+| `ASC_ISSUER_ID`           | secret   | The issuer ID shown above the keys list in App Store Connect                               |
+| `SPARKLE_ED_PRIVATE_KEY`  | secret   | The private EdDSA key from Sparkle's `generate_keys -x <file>`                             |
+| `SPARKLE_PUBLIC_ED_KEY`   | variable | The matching public key that `generate_keys` prints                                        |
+| `STIM_DESKTOP_SENTRY_DSN` | variable | The Sentry project's DSN; unset builds report no crashes                                   |
+| `SENTRY_AUTH_TOKEN`       | secret   | A Sentry organization auth token, used only for the dSYM upload                            |
+| `SENTRY_ORG`              | variable | The Sentry organization slug                                                               |
+| `SENTRY_DESKTOP_PROJECT`  | variable | The Desktop Sentry project slug; the workflow passes it to `bundle.sh` as `SENTRY_PROJECT` |
+| `HOMEBREW_TAP_DEPLOY_KEY` | secret   | The private half of a write deploy key on `appandflow/homebrew-tap`                        |
 
 ### Apple artifacts
 
