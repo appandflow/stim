@@ -450,10 +450,14 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   it.
 - `input.touch` takes `session`, `phase` (`down`, `move`, `up`), `x` and `y`
   as fractions of the upright screen, and `display` (0, the main display).
+  Without `display`, a touch on an iPhone Duo goes to the panel its latest
+  frame showed, and before any frame to the cover.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. `input.rotate` takes
-  `direction` (`left` or `right`) and turns the device a quarter turn.
+  `direction` (`left` or `right`) and turns the device a quarter turn. An
+  iPhone Duo refuses it with `bad-request`: its iOS 27.1 runtime receives the
+  orientation event but keeps the orientation its posture sets.
   `input.posture` takes one of the session's `postures`. A web page takes
   only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the

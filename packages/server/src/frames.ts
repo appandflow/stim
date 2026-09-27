@@ -762,6 +762,12 @@ export class FramePool {
     return lit ? POSTURES[lit] : null;
   }
 
+  /** The index `input.touch` takes for the panel an iPhone Duo's last frame showed; 0 for other devices. */
+  litDisplay(device: Device): number {
+    const lit = device.platform === 'ios' && device.foldable ? this.litPanels.get(device.udid) : undefined;
+    return lit ? DUO_PANELS.indexOf(lit) : 0;
+  }
+
   /** Records the panel a finished fold lit, so a request before the next frame sees the new posture. */
   folded(udid: string, posture: Posture): void {
     this.litPanels.set(udid, posture === 'folded' ? 'primary' : 'primary-1');

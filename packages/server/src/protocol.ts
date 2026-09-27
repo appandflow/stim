@@ -288,7 +288,8 @@ export type TouchPhase = (typeof TOUCH_PHASES)[number];
 
 /**
  * `x` and `y` are fractions of the upright screen, origin top-left; on a web page, of its viewport, where a
- * drag scrolls. `display` is 0 for the main display.
+ * drag scrolls. `display` is 0 for the main display; without it, an iPhone Duo's touch goes to the panel its
+ * frames show.
  */
 export interface InputTouchParams {
   session: string;
@@ -905,7 +906,7 @@ export function protocolJsonSchema(): JsonSchema {
                 phase: { enum: [...TOUCH_PHASES] },
                 x: { type: 'number', minimum: 0, maximum: 1 },
                 y: { type: 'number', minimum: 0, maximum: 1 },
-                display: { type: 'integer', minimum: 0, maximum: 3, default: 0 },
+                display: { type: 'integer', minimum: 0, maximum: 3 },
               },
               ['phase', 'x', 'y'],
             ),

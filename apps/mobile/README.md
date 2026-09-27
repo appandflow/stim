@@ -211,10 +211,12 @@ Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. While the keyboard is open, a bar above it shows what you typed
 since the last Return, with **Done** to close it, and the screen keeps its
 size and moves up until its bottom meets that bar, stopping below the title.
-It continues with **Rotate left** and **Rotate right**, and, when the device
-has a hinge, posture buttons: **Fold** or **Unfold** on an iPhone Duo,
+It continues with **Rotate left** and **Rotate right**, except on an iPhone
+Duo, whose simulator keeps the orientation its posture sets. When the device
+has a hinge, posture buttons follow: **Fold** or **Unfold** on an iPhone Duo,
 whichever its latest frame or video shows it is not, and **Fold**, **Half
-open** and **Unfold** on a foldable emulator. The session ends when you turn
+open** and **Unfold** on a foldable emulator. On an unfolded Duo, touches go
+to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why.
 
