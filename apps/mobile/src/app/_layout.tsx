@@ -1,12 +1,15 @@
 import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { EmptyState } from '@/components/empty-state';
 import { MenuDrawer } from '@/components/menu-drawer';
+import { SplashOverlay } from '@/components/splash-overlay';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { MacsProvider } from '@/hooks/mac-connection';
@@ -14,12 +17,17 @@ import { NotificationsProvider } from '@/hooks/notifications';
 import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+/** expo-splash-screen fades the Android splash out over `duration` after `hide()`, over the overlay's animation. */
+SplashScreen.setOptions({ duration: 0 });
+
 /** On iPad every screen keeps the orientations the system allows, as iPad multitasking requires. */
 function phoneOrientation(orientation: 'portrait_up' | 'default') {
   return Platform.OS === 'ios' && Platform.isPad ? undefined : orientation;
 }
 
 function RootErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  useEffect(() => SplashScreen.hide(), []);
   return (
     <View style={styles.error}>
       <EmptyState title="Something went wrong" message={error.message}>
@@ -120,6 +128,7 @@ function RootLayoutContent() {
           </HomeFiltersProvider>
         </NotificationsProvider>
       </MacsProvider>
+      <SplashOverlay />
     </ThemeProvider>
   );
 }
