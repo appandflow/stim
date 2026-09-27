@@ -45,13 +45,14 @@ describe('scrubBreadcrumb', () => {
 });
 
 describe('scrubEvent', () => {
-  it('scrubs messages, exception values, breadcrumbs and extra, and leaves tags alone', () => {
+  it('scrubs messages, exception values, breadcrumbs, extra and the route context, and leaves tags alone', () => {
     const event: ErrorEvent = {
       type: undefined,
       message: `pairing ${DEVICE_TOKEN}`,
       exception: { values: [{ type: 'Error', value: 'Cannot reach wss://mac.tail1a2b3.ts.net:7433.' }] },
       breadcrumbs: [{ category: 'navigation', data: { to: '/mac/abc/workspace?path=/Users/janic/app' } }],
       extra: { endpoint: 'wss://mac.tail1a2b3.ts.net:7433' },
+      contexts: { route: { path: '/mac/abc/workspace', params: { path: '/Users/janic/app' } } },
       tags: { 'expo.updates.update_id': UPDATE_ID },
     };
     expect(scrubEvent(event)).toEqual({
@@ -60,6 +61,7 @@ describe('scrubEvent', () => {
       exception: { values: [{ type: 'Error', value: 'Cannot reach [url].' }] },
       breadcrumbs: [{ category: 'navigation', data: { to: '/mac/abc/workspace?path=~/app' } }],
       extra: { endpoint: '[url]' },
+      contexts: { route: { path: '/mac/abc/workspace', params: { path: '~/app' } } },
       tags: { 'expo.updates.update_id': UPDATE_ID },
     });
   });

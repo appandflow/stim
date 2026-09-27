@@ -48,5 +48,6 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
       : null),
     ...(event.breadcrumbs ? { breadcrumbs: event.breadcrumbs.map(scrubBreadcrumb) } : null),
     ...(event.extra ? { extra: scrubValue(event.extra) } : null),
+    ...(event.contexts?.route ? { contexts: { ...event.contexts, route: scrubValue(event.contexts.route) } } : null),
   };
 }
