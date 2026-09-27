@@ -172,6 +172,33 @@ describe('oversee', () => {
       ]);
     });
 
+    it("counts the Chrome page's log as activity only while an agent drives the page", () => {
+      const page = (agent: boolean, logAt: number) => ({
+        running: true,
+        activity: {
+          state: agent ? 'driven' : 'active',
+          ...(agent ? { driver: { tool: 'agent-browser', since: iso(T0 + MIN) } } : {}),
+          lastActivityAt: iso(logAt),
+          recent: { 'page-log': iso(logAt) },
+        },
+      });
+      const stalled = run([
+        { at: T0, input: input([env({ ios: sim(null) })]) },
+        { at: T0 + MIN, input: input([env({ ios: driven(T0 + MIN, T0 + MIN), web: page(false, T0 + MIN) })]) },
+        {
+          at: T0 + 16 * MIN,
+          input: input([env({ ios: driven(T0 + MIN, T0 + MIN), web: page(false, T0 + 16 * MIN) })]),
+        },
+      ]);
+      expect(stalled.texts.at(-1)).toBe('wide-insets: No agent activity for 15 min; iPhone 18 Pro 27.0 still up');
+      const browsing = run([
+        { at: T0, input: input([env({ web: page(false, T0) })]) },
+        { at: T0 + MIN, input: input([env({ web: page(true, T0 + MIN) })]) },
+        { at: T0 + 16 * MIN, input: input([env({ web: page(true, T0 + 16 * MIN) })]) },
+      ]);
+      expect(browsing.texts).toEqual(['wide-insets: agent-browser started driving Chrome on MacBook Pro']);
+    });
+
     it('counts an agent driving the owned Chrome page, and opens it in the device viewer', () => {
       const web = (state: string) => ({
         running: true,

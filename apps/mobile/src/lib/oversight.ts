@@ -20,9 +20,9 @@ interface Activity {
 /**
  * What counts as someone working on a device: agent actions, reloads and Stim runs. App log records do not, because an
  * idle app keeps logging; a new log error counts through the error count instead. The owned Chrome page records no
- * agent actions, so its page log counts.
+ * agent actions, so its page log counts while an agent drives it.
  */
-const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use', 'page-log'];
+const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
 interface Device {
   name?: string | null;
@@ -276,8 +276,11 @@ function lastActivityAt(env: OversightEnvironment, devices: SlotDevice[], seen: 
   const times = seen.map((at) => at ?? Number.NaN);
   for (const device of devices) {
     const recent = device.activity?.recent;
-    if (recent) times.push(...WORK_EVIDENCE.map((basis) => time(recent[basis])));
-    else times.push(time(device.activity?.lastActivityAt));
+    if (!recent) times.push(time(device.activity?.lastActivityAt));
+    else {
+      times.push(...WORK_EVIDENCE.map((basis) => time(recent[basis])));
+      if (device.platform === 'web' && device.activity?.state === 'driven') times.push(time(recent['page-log']));
+    }
     times.push(time(device.activity?.driver?.since));
   }
   for (const build of [env.lastBuilds?.ios, env.lastBuilds?.android]) {
