@@ -512,6 +512,12 @@ appends a line to the action log, with `action` set to `control.begin`,
 `control.take-over` or `control.end`, and a `reason` that says why the session
 ended or whom it took the device from. Inputs are not logged.
 
+The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
+refuse the client until it pairs again or updates; clients retry the others.
+
+The package exports the message types, and the build writes their JSON Schema
+to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.
+
 ## Physical Android devices
 
 A phone reached with `stim android --device <serial>` (or held with
@@ -555,9 +561,3 @@ screen off also shows nothing until it is woken.
 For testing without a phone, `STIM_SERVER_TEST_ADB_EMULATORS=1` in the
 server's environment lets a `physical: true` target resolve to an emulator the
 workspace leases, which then streams and takes input over adb the same way.
-
-The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
-refuse the client until it pairs again or updates; clients retry the others.
-
-The package exports the message types, and the build writes their JSON Schema
-to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.

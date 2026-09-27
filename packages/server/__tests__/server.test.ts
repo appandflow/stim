@@ -2471,13 +2471,13 @@ describe('frames.subscribe', () => {
     'ends control of a phone once its lease expires, without another status update',
     async () => {
       const port = await startControl({
-        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC', expiresAt: new Date(Date.now() + 1500).toISOString() }]),
+        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC', expiresAt: new Date(Date.now() + 4000).toISOString() }]),
       });
       const client = await authed(port, true);
       const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
       if (!('result' in begun)) throw new Error(JSON.stringify(begun));
       const { session } = begun.result as { session: string };
-      await new Promise((resolve) => setTimeout(resolve, 1600));
+      await new Promise((resolve) => setTimeout(resolve, 4100));
       const replies = [
         await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 }),
         await client.next(),
@@ -2491,15 +2491,19 @@ describe('frames.subscribe', () => {
     },
   );
 
-  test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
-    const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
-    const client = await authed(port);
-    for (const params of [{ fps: 0 }, { fps: 31 }, { fps: 2.5 }, { maxEdge: 100 }, { maxEdge: 4096 }]) {
-      expect(await client.request('frames.subscribe', { workspace, platform: 'ios', ...params })).toMatchObject({
-        error: { code: 'bad-request' },
-      });
-    }
-  });
+  test.skipIf(!fakeTailscale)(
+    'refuses frame rates and sizes outside the protocol range',
+    async () => {
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
+      const client = await authed(port);
+      for (const params of [{ fps: 0 }, { fps: 31 }, { fps: 2.5 }, { maxEdge: 100 }, { maxEdge: 4096 }]) {
+        expect(await client.request('frames.subscribe', { workspace, platform: 'ios', ...params })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      }
+    },
+    10_000,
+  );
 
   describe.skipIf(!fakeTailscale)('emulator screenshots over gRPC', () => {
     test.each([

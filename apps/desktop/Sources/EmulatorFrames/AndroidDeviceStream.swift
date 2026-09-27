@@ -19,7 +19,7 @@ final class AndroidDeviceStream {
   private let lock = NSLock()
   private var stopped = false
   private let cleaned = DispatchGroup()
-  private var port: Int?
+  private var setupStep: Process?
   private var shell: Process?
   private var pushed = false
   private var shellOutput = ""
@@ -78,19 +78,28 @@ final class AndroidDeviceStream {
       return
     }
     defer { cleaned.leave() }
-    let (port, shell, pushed, sockets) = lock.withLock { () -> (Int?, Process?, Bool, [Int32]) in
+    let (step, shell, pushed, sockets) = lock.withLock { () -> (Process?, Process?, Bool, [Int32]) in
       let sockets = [videoSocket, controlSocket]
       videoSocket = -1
       controlSocket = -1
-      return (self.port, self.shell, self.pushed, sockets)
+      return (setupStep, self.shell, self.pushed, sockets)
     }
     for socket in sockets where socket >= 0 {
       shutdown(socket, SHUT_RDWR)
       close(socket)
     }
     if let shell, shell.isRunning { shell.terminate() }
-    if let port { _ = try? run(["forward", "--remove", "tcp:\(port)"], timeout: 5) }
-    if pushed { _ = try? run(["shell", "rm", "-f", remoteJar], timeout: 5) }
+    if let step, step.isRunning {
+      step.terminate()
+      step.waitUntilExit()
+    }
+    guard pushed else { return }
+    let forwards = (try? run(["forward", "--list"], timeout: 2)) ?? ""
+    for line in forwards.split(separator: "\n") where line.hasSuffix(" localabstract:scrcpy_\(scid)") {
+      let fields = line.split(separator: " ")
+      if fields.count == 3 { _ = try? run(["forward", "--remove", String(fields[1])], timeout: 2) }
+    }
+    _ = try? run(["shell", "rm", "-f", remoteJar], timeout: 2)
   }
 
   private var isStopped: Bool { lock.withLock { stopped } }
@@ -113,11 +122,7 @@ final class AndroidDeviceStream {
       return pushed
     }
     guard pushing else { throw stoppedFailure }
-    try run(["push", serverJar.path, remoteJar], timeout: 30)
-    if isStopped {
-      _ = try? run(["shell", "rm", "-f", remoteJar], timeout: 5)
-      throw stoppedFailure
-    }
+    try run(["push", serverJar.path, remoteJar], timeout: 30, setup: true)
     let shell = adbProcess(
       ["shell", "CLASSPATH=\(remoteJar)", "app_process", "/", "com.genymobile.scrcpy.Server"]
         + Scrcpy.serverArguments(scid: scid))
@@ -136,17 +141,9 @@ final class AndroidDeviceStream {
       try shell.run()
       self.shell = shell
     }
-    let forwarded = try run(["forward", "tcp:0", "localabstract:scrcpy_\(scid)"], timeout: 10)
+    let forwarded = try run(["forward", "tcp:0", "localabstract:scrcpy_\(scid)"], timeout: 10, setup: true)
     guard let port = Int(forwarded.trimmingCharacters(in: .whitespacesAndNewlines)) else {
       throw Failure(description: "adb forward printed no port: \(forwarded.prefix(200))")
-    }
-    let kept = lock.withLock { () -> Bool in
-      if !stopped { self.port = port }
-      return !stopped
-    }
-    guard kept else {
-      _ = try? run(["forward", "--remove", "tcp:\(port)"], timeout: 5)
-      throw stoppedFailure
     }
     let video = try connect(port: port, dummyByte: true)
     let control = try connect(port: port, dummyByte: false)
@@ -236,8 +233,10 @@ final class AndroidDeviceStream {
     return process
   }
 
+  /// A `setup` step is one `stop` kills and waits for before it cleans up, so a push or forward it overtakes
+  /// cannot land after the cleanup.
   @discardableResult
-  private func run(_ arguments: [String], timeout: TimeInterval) throws -> String {
+  private func run(_ arguments: [String], timeout: TimeInterval, setup: Bool = false) throws -> String {
     let process = adbProcess(arguments)
     let output = Pipe()
     process.standardOutput = output
@@ -246,10 +245,19 @@ final class AndroidDeviceStream {
     let done = DispatchSemaphore(value: 0)
     process.terminationHandler = { _ in done.signal() }
     do {
-      try process.run()
+      try lock.withLock {
+        if setup {
+          guard !stopped else { throw stoppedFailure }
+          setupStep = process
+        }
+        try process.run()
+      }
+    } catch let failure as Failure {
+      throw failure
     } catch {
       throw Failure(description: "adb could not start (\(error.localizedDescription)).")
     }
+    defer { if setup { lock.withLock { setupStep = nil } } }
     let read = DispatchGroup()
     var data = Data()
     read.enter()
