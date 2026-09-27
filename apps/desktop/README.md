@@ -385,6 +385,20 @@ Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
 emulator without a gRPC endpoint cannot be taken over.
 
+## Web
+
+A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web** tile
+on the wall and in the inspector's device list, labelled with the page's URL.
+Desktop reads the page's frames itself, over the loopback DevTools endpoint
+`stim status --json` reports, and connects only when Chrome reports the pid
+status names. **Take over** sends clicks, drags, hover, trackpad scrolls and
+keys to the page; Command shortcuts stay with the Mac. The tile's buttons open
+the URL in your default browser (never the Stim profile), run `stim reload web`,
+and **Close** runs `stim stop --slot web`, which keeps Metro, the devices and the
+profile. A failed page load shows a "Page failed to load" pill and a Needs
+attention item that reruns `stim web`, and a tool attached to the DevTools
+endpoint, such as Playwright MCP, shows as the driver.
+
 ## Remote sessions
 
 A workspace with a recorded EAS Simulator session from `stim ios --remote eas`
