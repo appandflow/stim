@@ -3275,6 +3275,23 @@ describe('--remote', () => {
     });
   });
 
+  test('a new EAS session records the model --device-type asked for', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'eas', deviceType: 'iPhone 17 Pro' },
+      {
+        ...remote.deps,
+        remoteIosDeps: () => {
+          const deps = remote.deps.remoteIosDeps();
+          return { ...deps, ctx: { ...deps.ctx, deviceType: 'iPhone 17 Pro' } };
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(readWorkspaceState(root)?.remoteDevice).toMatchObject({ sessionId: 'drs_42', deviceType: 'iPhone 17 Pro' });
+  });
+
   test('the build still happens locally -- only the device moved', async () => {
     const remote = remoteStub();
     reserve();

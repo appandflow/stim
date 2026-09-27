@@ -223,16 +223,16 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             remedy: 'Run `stim stop` for this workspace before selecting a different remote platform.',
           };
         }
-        if (recorded && ctx.deviceType && recorded.deviceType !== ctx.deviceType) {
-          return {
-            failed: true,
-            code: 'STIM_REMOTE_DEVICE_MISMATCH',
-            reason: `EAS Simulator session ${recorded.sessionId} runs ${recorded.deviceType ? `"${recorded.deviceType}"` : 'the model EAS chose'}, not "${ctx.deviceType}". Stim will not reuse a session on a different model.`,
-            remedy: `Run \`stim stop\` to end that session, then run \`stim ${ctx.platform ?? 'ios'} --remote eas --device-type "${ctx.deviceType}"\` again to start one on the requested model.`,
-          };
-        }
         if (recorded) {
           const existing = readLiveDaemon(ctx, recorded.sessionId);
+          if (existing && ctx.deviceType && recorded.deviceType !== ctx.deviceType) {
+            return {
+              failed: true,
+              code: 'STIM_REMOTE_DEVICE_MISMATCH',
+              reason: `EAS Simulator session ${recorded.sessionId} runs ${recorded.deviceType ? `"${recorded.deviceType}"` : 'the model EAS chose'}, not "${ctx.deviceType}". Stim will not reuse a session on a different model.`,
+              remedy: `Run \`stim stop\` to end that session, then run \`stim ${ctx.platform ?? 'ios'} --remote eas --device-type "${ctx.deviceType}"\` again to start one on the requested model.`,
+            };
+          }
           if (existing) {
             note(`Reusing EAS Simulator session ${recorded.sessionId}.`);
             daemon = existing;

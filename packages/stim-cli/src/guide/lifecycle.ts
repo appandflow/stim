@@ -1500,8 +1500,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   \`--device-type\`: Stim passes it to \`eas simulator:start --device\`,
   unchecked against local runtimes, and refuses with STIM_BAD_ARG when
   eas-cli is older than 22.2.0, the first release with that flag. A
-  recorded EAS session running another model refuses with
-  STIM_REMOTE_DEVICE_MISMATCH instead of being reused. The ios.deviceType and
+  recorded EAS session still running another model refuses with
+  STIM_REMOTE_DEVICE_MISMATCH instead of being reused; one that already
+  ended is replaced on the requested model. The ios.deviceType and
   ios.runtime settings do not refuse on a remote run; it ignores them.
   \`android --system-image\` and \`--device-profile\` refuse with
   STIM_BAD_ARG on every remote run (\`--remote\` or the android.remote

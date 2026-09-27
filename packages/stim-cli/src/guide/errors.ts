@@ -772,12 +772,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'the recorded EAS session runs another model than --device-type asks for; stop, then rerun',
       body: () => `STIM_REMOTE_DEVICE_MISMATCH
   \`stim ios --remote eas --device-type <name>\` found this workspace's
-  recorded EAS Simulator session running another model, or the model EAS
-  chose when no --device-type was given. EAS cannot change a running
+  recorded EAS Simulator session still running another model, or the model
+  EAS chose when no --device-type was given. EAS cannot change a running
   session's model, and Stim will not end the recorded session to make room --
   it may be mid-run for whoever started it. Run \`stim stop\` for this
-  workspace, then rerun with the model you want. Without --device-type the
-  recorded session is reused as it is. Nothing was created here.`,
+  workspace, then rerun with the model you want. A recorded session that has
+  already ended is replaced on the requested model instead, and without
+  --device-type a live one is reused as it is. Nothing was created here.`,
     },
     STIM_REMOTE_SESSION_STATE: {
       summary: 'the EAS session was created but its state could not be recorded, so Stim stopped it',

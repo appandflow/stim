@@ -1635,9 +1635,29 @@ describe('a re-run does not orphan the session it already has', () => {
       expect(booted).toMatchObject({ failed: true, code: 'STIM_REMOTE_DEVICE_MISMATCH' });
       expect(booted.reason).toContain(`runs ${named}, not "iPad Pro 13-inch (M5)"`);
       expect(booted.remedy).toContain('`stim stop`');
-      expect(exec.calls).toEqual([]);
+      expect(exec.calls.map((call) => call.args[0])).toEqual(['simulator:get']);
     },
   );
+
+  test('a recorded session on another model that already ended is replaced on the requested model', async () => {
+    ensureWorkspaceStorage(root);
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: 'drs_dead', deviceType: 'iPhone 17 Pro' } }),
+    );
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt', status: 'STOPPED' }),
+        sim: CREATED,
+      },
+    });
+
+    const booted = await remoteIosDeps(ctx({ deviceType: 'iPad Pro 13-inch (M5)' })).ensureBooted({});
+
+    expect(booted.ok).toBe(true);
+    const sim = exec.calls.find((call) => call.args[0] === 'sim');
+    expect(sim?.args[sim.args.indexOf('--device') + 1]).toBe('iPad Pro 13-inch (M5)');
+  });
 
   test('a recorded session on the requested model, or a run without --device-type, reuses it', async () => {
     ensureWorkspaceStorage(root);

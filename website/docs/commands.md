@@ -187,7 +187,7 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   does `--device-type` on the proxy backend. `--remote eas` honors
   `--device-type` by starting the EAS Simulator session with
   `eas simulator:start --device <name>`, which needs eas-cli 22.2.0 or later.
-  A recorded EAS session on another model refuses with
+  A recorded EAS session still running another model refuses with
   `STIM_REMOTE_DEVICE_MISMATCH`; run `stim stop`, then rerun. The
   `ios.deviceType` and `ios.runtime` settings are ignored on a remote run.
 - `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
