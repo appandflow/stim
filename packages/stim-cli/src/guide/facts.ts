@@ -830,7 +830,7 @@ RULES
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:
 
-  activity  { state, driver?, lastActivityAt?, basis }
+  activity  { state, driver?, lastActivityAt?, recent?, basis }
 
   state            "driven"   a live claim or driver holds the device now
                    "active"   no driver, but activity in the last 10 minutes
@@ -846,6 +846,9 @@ RULES
                    Stim run and, while agent-device drives it, the agent's
                    last recorded action, rounded down to the minute; absent
                    when none is recorded
+  recent           the newest time of each kind of evidence behind
+                   lastActivityAt: agent-action, device-log, metro-bundle,
+                   workspace-use, each rounded down to the minute
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive

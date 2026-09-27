@@ -110,6 +110,7 @@ test('recent activity is active, older activity is idle, and no evidence is idle
   expect(old).toEqual({
     state: 'idle',
     lastActivityAt: new Date(NOW - 3_600_000).toISOString(),
+    recent: { 'metro-bundle': new Date(NOW - 3_600_000).toISOString() },
     basis: ['metro-bundle'],
   });
   expect(classifyActivity({ drivers: [], unknown: [], recency: [] }, NOW)).toEqual({ state: 'idle', basis: [] });
@@ -186,6 +187,10 @@ describe('createActivityReader', () => {
     expect(read({ 100: OWNER_START })).toMatchObject({
       state: 'driven',
       lastActivityAt: new Date(actedAt).toISOString(),
+      recent: {
+        'agent-action': new Date(actedAt).toISOString(),
+        'device-log': new Date(NOW - 3_600_000).toISOString(),
+      },
     });
   });
 
@@ -203,6 +208,7 @@ describe('createActivityReader', () => {
     expect(read({ 100: OWNER_START })).toEqual({
       state: 'idle',
       lastActivityAt: new Date(at).toISOString(),
+      recent: { 'device-log': new Date(at).toISOString(), 'metro-bundle': new Date(at - 1000).toISOString() },
       basis: ['device-log', 'metro-bundle'],
     });
   });

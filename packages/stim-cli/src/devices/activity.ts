@@ -6,7 +6,7 @@ import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import type { ActivityDriver, DeviceActivity } from '@stim-cli/core/state';
+import type { ActivityDriver, ActivityRecencyBasis, DeviceActivity } from '@stim-cli/core/state';
 
 export type { DeviceActivity } from '@stim-cli/core/state';
 
@@ -24,7 +24,11 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
     (best, entry) => (Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best),
     null,
   );
-  const lastActivityAt = last ? { lastActivityAt: new Date(last.at).toISOString() } : {};
+  const recent: Partial<Record<ActivityRecencyBasis, string>> = {};
+  for (const { basis, at } of evidence.recency.toSorted((a, b) => a.at - b.at)) {
+    if (Number.isFinite(at)) recent[basis as ActivityRecencyBasis] = new Date(at).toISOString();
+  }
+  const lastActivityAt = last ? { lastActivityAt: new Date(last.at).toISOString(), recent } : {};
   const [first] = evidence.drivers;
   if (first) {
     const { basis: _basis, ...driver } = first;
@@ -36,9 +40,9 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
     };
   }
   if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
-  const recent = Boolean(last && now - last.at < ACTIVE_WINDOW_MS);
+  const active = Boolean(last && now - last.at < ACTIVE_WINDOW_MS);
   return {
-    state: recent ? 'active' : 'idle',
+    state: active ? 'active' : 'idle',
     ...lastActivityAt,
     basis: [...new Set(evidence.recency.map((entry) => entry.basis))],
   };

@@ -14,7 +14,14 @@ interface Activity {
   state: string;
   driver?: { tool: string; since: string | null };
   lastActivityAt?: string;
+  recent?: Partial<Record<string, string>>;
 }
+
+/**
+ * What counts as someone working on a device: agent actions, reloads and Stim runs. App log records do not, because an
+ * idle app keeps logging; a new log error counts through the error count instead.
+ */
+const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
 interface Device {
   name?: string | null;
@@ -255,7 +262,10 @@ function newestBuild(env: OversightEnvironment): Build | null {
 function lastActivityAt(env: OversightEnvironment, devices: SlotDevice[], seen: (number | null)[]): number | null {
   const times = seen.map((at) => at ?? Number.NaN);
   for (const device of devices) {
-    times.push(time(device.activity?.lastActivityAt), time(device.activity?.driver?.since));
+    const recent = device.activity?.recent;
+    if (recent) times.push(...WORK_EVIDENCE.map((basis) => time(recent[basis])));
+    else times.push(time(device.activity?.lastActivityAt));
+    times.push(time(device.activity?.driver?.since));
   }
   for (const build of [env.lastBuilds?.ios, env.lastBuilds?.android]) {
     times.push(time(build?.startedAt), time(build?.finishedAt));

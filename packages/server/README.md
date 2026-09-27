@@ -316,8 +316,10 @@ the events the device chose:
   once an agent drives it. An agent driving the workspace updates the warming
   notification in place.
 - `stuck`: an agent drove the workspace, its devices are still up, and nothing
-  happened for `stuckMinutes`: no agent action, build, Metro bundle request, app
-  log record or new log error. It opens the device viewer.
+  happened for `stuckMinutes`: no agent action, build, Metro bundle request or
+  new log error. App log records do not count, because an idle app keeps
+  logging: an idle Stim app writes about 200 UIKit info records a minute. It
+  opens the device viewer.
 - `looping`: the newest three or more iOS or Android builds failed the same
   way, at the same first compiler diagnostic `file:line`, or with the same
   error code when there is none, such as three failed launches
@@ -339,8 +341,9 @@ the events the device chose:
 Stuck and finished are read from device activity, so two cases blur them. An
 agent that finishes without closing its agent-device session still holds the
 device, so it gets `stuck`, whose text then names the green build it stopped
-after. An app that logs on a timer keeps its device active, so its workspace
-never looks stuck or finished.
+after. With a `stim` whose status has no `activity.recent`, every app log
+record counts as activity, so an app that keeps logging never looks stuck or
+finished.
 
 Each workspace notifies once per episode: a stuck agent notifies again only
 after new activity and a new quiet stretch, a loop only after a success or a

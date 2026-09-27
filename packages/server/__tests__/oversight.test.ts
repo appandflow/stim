@@ -265,6 +265,29 @@ describe('oversee', () => {
       );
     });
 
+    it('does not count app log records as activity, only agent actions, reloads and Stim runs', () => {
+      const chatty = (logAt: number, actedAt = T0 + MIN) => ({
+        ...driven(logAt, T0 + MIN),
+        activity: {
+          state: 'driven',
+          driver: { tool: 'agent-device', since: iso(T0 + MIN) },
+          lastActivityAt: iso(logAt),
+          recent: { 'device-log': iso(logAt), 'agent-action': iso(actedAt) },
+        },
+      });
+      const { texts } = run([
+        { at: T0, input: input([env({ ios: sim(null) })]) },
+        { at: T0 + MIN, input: input([env({ ios: chatty(T0 + MIN) })]) },
+        { at: T0 + 16 * MIN, input: input([env({ ios: chatty(T0 + 16 * MIN) })]) },
+        { at: T0 + 20 * MIN, input: input([env({ ios: chatty(T0 + 20 * MIN, T0 + 19 * MIN) })]) },
+        { at: T0 + 30 * MIN, input: input([env({ ios: chatty(T0 + 30 * MIN, T0 + 19 * MIN) })]) },
+      ]);
+      expect(texts).toEqual([
+        'wide-insets: agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro',
+        'wide-insets: No agent activity for 15 min; iPhone 18 Pro 27.0 still up',
+      ]);
+    });
+
     it('leaves a workspace alone once its devices are shut down', () => {
       const { texts } = run([
         { at: T0, input: input([env({ ios: sim(null) })]) },

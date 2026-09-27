@@ -863,7 +863,8 @@ that names the device (xcodebuild test runners, idb, Maestro, Appium,
 `lastActivityAt` is the newest of the device's app log records, the platform's
 Metro bundle requests, the workspace's last Stim run, and, while agent-device
 drives the device, the agent's last recorded action, rounded down to the
-minute. Stim reads
+minute; `recent` gives the newest time of each of those kinds of evidence, so a
+reader can tell agent actions and reloads from app log records. Stim reads
 agent-device state without changing it. `stim guide facts status` lists every
 field.
 
