@@ -8,7 +8,11 @@ import IOSurface
 //
 //   stim-frames ios <udid>
 //   stim-frames android <serial>
+//   stim-frames web <cdpEndpoint> <chromePid> <targetId>
 //
+// A web page streams Chrome's screencast of the owned page: its JPEGs pass through as
+// frames and are decoded for video. Input on a page takes touch, text and the "back"
+// button, as DevTools input events.
 // stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
 // "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second}, where fps 0
 // pauses frames; {"keyframe": true} to make the next video frame a keyframe; or an input:
@@ -395,6 +399,150 @@ final class EmulatorSource {
   }
 }
 
+final class WebSource {
+  let queue = DispatchQueue(label: "stim.frames.web")
+  private let endpoint: URL
+  private let chromePid: Int32
+  private let targetId: String
+  private var page: WebPage?
+  private var latest: ScreencastFrame?
+  private var screencast: (maxEdge: Int, quality: Int)?
+  private var config = Config()
+  private var pacer: Pacer!
+  private let video = videoEncoder()
+  private let jpegGate = JpegGate()
+  private var pixels: CVPixelBufferPool?
+  private var pixelSize = (width: 0, height: 0)
+
+  init(endpoint: URL, chromePid: Int32, targetId: String) {
+    self.endpoint = endpoint
+    self.chromePid = chromePid
+    self.targetId = targetId
+    pacer = Pacer { [unowned self] config in
+      guard let frame = self.queue.sync(execute: { self.latest }) else { return }
+      self.render(frame, config: config)
+    }
+  }
+
+  func start() {
+    WebPage.open(endpoint: endpoint, chromePid: chromePid, targetId: targetId) { result in
+      switch result {
+      case .failure(let failure):
+        fail(failure.description)
+      case .success(let page):
+        page.onEnd { fail($0) }
+        page.onFrame { frame in
+          self.queue.async { self.latest = frame }
+          self.pacer.changed()
+        }
+        self.queue.async {
+          self.page = page
+          self.updateScreencast()
+        }
+      }
+    }
+  }
+
+  func configure(_ config: Config) {
+    video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    queue.async {
+      self.config = config
+      self.updateScreencast()
+      self.pacer.queue.async {
+        self.pacer.config = config
+        self.pacer.changed()
+      }
+    }
+  }
+
+  /// A page that does not change sends no frame, so a keyframe re-encodes the last one.
+  func keyframe() {
+    video.requestKeyframe()
+    pacer.changed()
+  }
+
+  // Video gets JPEGs at a fixed high quality to encode from; JPEG subscribers get Chrome's own JPEG at theirs.
+  private func updateScreencast() {
+    guard let page else { return }
+    guard config.fps > 0 else {
+      if screencast != nil { page.stopScreencast() }
+      screencast = nil
+      return
+    }
+    let wanted = (maxEdge: config.maxEdge, quality: config.video ? 85 : Int(config.quality * 100))
+    guard screencast.map({ $0 != wanted }) ?? true else { return }
+    screencast = wanted
+    page.startScreencast(maxEdge: wanted.maxEdge, quality: wanted.quality)
+  }
+
+  private func render(_ frame: ScreencastFrame, config: Config) {
+    guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil) else { return }
+    if config.video, let image = CGImageSourceCreateImageAtIndex(source, 0, nil), let buffer = pixelBuffer(image) {
+      video.encode(buffer, quarterTurns: 0, capturedAt: frame.capturedAt)
+    }
+    guard config.jpeg, jpegGate.admit(config, pacer: pacer),
+      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+      let width = properties[kCGImagePropertyPixelWidth] as? Int,
+      let height = properties[kCGImagePropertyPixelHeight] as? Int
+    else { return }
+    Output.frame(jpeg: frame.jpeg, width: width, height: height)
+  }
+
+  private func pixelBuffer(_ image: CGImage) -> CVPixelBuffer? {
+    let size = (width: image.width, height: image.height)
+    if pixels == nil || pixelSize != size {
+      let attributes: [CFString: Any] = [
+        kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey: size.width,
+        kCVPixelBufferHeightKey: size.height,
+        kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+      ]
+      pixels = nil
+      CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pixels)
+      pixelSize = size
+    }
+    var buffer: CVPixelBuffer?
+    guard let pixels, CVPixelBufferPoolCreatePixelBuffer(nil, pixels, &buffer) == kCVReturnSuccess, let buffer else {
+      return nil
+    }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+    guard
+      let context = CGContext(
+        data: CVPixelBufferGetBaseAddress(buffer), width: size.width, height: size.height, bitsPerComponent: 8,
+        bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    else { return nil }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+    return buffer
+  }
+}
+
+extension WebSource: Source {
+  func input(_ command: Command) {
+    queue.async {
+      guard let page = self.page else {
+        return Output.notice(["inputError": "The page is not attached yet."])
+      }
+      switch command {
+      case .touch(let phase, let point, _):
+        let phases: [TouchPhase: WebTouchPhase] = [.down: .down, .move: .move, .up: .up]
+        guard let web = phases[phase] else { return }
+        page.touch(web, x: point.x, y: point.y)
+      case .text(let text):
+        page.type(text)
+      case .button(let name):
+        guard name == "back" else { return Output.notice(["inputError": "A web page has no \(name) button."]) }
+        page.back()
+      case .rotate, .posture:
+        Output.notice(["inputError": "A web page does not rotate or fold."])
+      case .config, .keyframe:
+        break
+      }
+    }
+  }
+}
+
 enum Command {
   case config(Config)
   case keyframe
@@ -632,7 +780,8 @@ extension EmulatorSource: Source {
 setvbuf(stdout, nil, _IONBF, 0)
 signal(SIGPIPE, SIG_IGN)
 let arguments = CommandLine.arguments
-guard arguments.count == 3 else { fail("usage: stim-frames ios <udid> | android <serial>") }
+let usage = "usage: stim-frames ios <udid> | android <serial> | web <cdpEndpoint> <chromePid> <targetId>"
+guard arguments.count == (arguments.count > 1 && arguments[1] == "web" ? 5 : 3) else { fail(usage) }
 switch arguments[1] {
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
@@ -646,7 +795,13 @@ case "android":
   Output.requestKeyframe = source.keyframe
   readCommands(source)
   source.start()
+case "web":
+  guard let endpoint = URL(string: arguments[2]), let pid = Int32(arguments[3]) else { fail(usage) }
+  let source = WebSource(endpoint: endpoint, chromePid: pid, targetId: arguments[4])
+  Output.requestKeyframe = source.keyframe
+  readCommands(source)
+  source.start()
 default:
-  fail("usage: stim-frames ios <udid> | android <serial>")
+  fail(usage)
 }
 dispatchMain()
