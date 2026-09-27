@@ -29,7 +29,6 @@ import {
   listAdbDevices,
   ownedAvdDeviceProfile,
   ownedAvdSerialResolver,
-  physicalDeviceModel,
   type AdbDevices,
   type ResolvedAvdSerial,
 } from '../devices/android.ts';
@@ -76,7 +75,6 @@ import { hasMetroReverse } from '../engine/app-install.ts';
 import {
   activityLabel,
   addReverseMissingIssue,
-  androidPhysicalReading,
   applyMachineMemory,
   capacity,
   deviceLeaseLines,
@@ -84,11 +82,8 @@ import {
   diskLine,
   environmentState,
   gitSummaryText,
-  iosPhysicalReading,
   metroReverseTargets,
   parseDfFree,
-  physicalDeviceLine,
-  physicalDeviceStates,
   poolLine,
   remoteDeviceLine,
   remoteDeviceState,
@@ -101,13 +96,14 @@ import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/stat
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
 import { readFootprints } from '../footprint.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
-import type {
-  AndroidRuntimeFacts,
-  EnvironmentState,
-  PhysicalDeviceReading,
-  VolumeInfo,
-  WorktreeFacts,
-} from '../status.ts';
+import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
+import {
+  androidPhysicalReading,
+  iosPhysicalReading,
+  physicalDeviceLine,
+  physicalDeviceStates,
+  type PhysicalDeviceReading,
+} from '../physical-devices.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -743,24 +739,35 @@ function workspaceBuild(
   return buildReport(record, { state: activeBuildState(record.claim), history: history?.[projectKey] });
 }
 
-const PHYSICAL_DEVICE_LIST_TIMEOUT_MS = 10_000;
+const PHYSICAL_DEVICE_LIST_TIMEOUT_MS = 5000;
+const PHYSICAL_DEVICE_LIST_MAX_AGE_MS = 30_000;
+
+const physicalDeviceLists: {
+  ios?: { at: number; devices: IosDeviceEntry[] | null };
+  android?: { at: number; devices: AdbDevices | null };
+} = {};
+
+function freshList<T>(entry: { at: number; devices: T } | undefined, read: () => T): { at: number; devices: T } {
+  const now = Date.now();
+  return entry && now - entry.at < PHYSICAL_DEVICE_LIST_MAX_AGE_MS ? entry : { at: now, devices: read() };
+}
 
 function physicalDeviceReader(): (platform: 'ios' | 'android', id: string) => PhysicalDeviceReading {
-  let ios: IosDeviceEntry[] | null | undefined;
-  let adb: AdbDevices | null | undefined;
   return (platform, id) => {
     if (platform === 'ios') {
-      if (ios === undefined) ios = readIosDevices({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS });
-      return iosPhysicalReading(ios, id);
+      physicalDeviceLists.ios = freshList(physicalDeviceLists.ios, () =>
+        readIosDevices({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+      );
+      return iosPhysicalReading(physicalDeviceLists.ios.devices, id);
     }
-    if (adb === undefined) {
+    physicalDeviceLists.android = freshList(physicalDeviceLists.android, () => {
       try {
-        adb = listAdbDevices({ timeoutMs: 5000 });
+        return listAdbDevices({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS });
       } catch {
-        adb = null;
+        return null;
       }
-    }
-    return androidPhysicalReading(adb, id, physicalDeviceModel);
+    });
+    return androidPhysicalReading(physicalDeviceLists.android.devices, id);
   };
 }
 

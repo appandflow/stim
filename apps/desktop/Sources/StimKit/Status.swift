@@ -115,6 +115,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// whether a run targets a remote session, so remote devices get none.
   public func runningBuild(for device: DeviceRef) -> Build? {
     if case .remote = device { return nil }
+    if device.isPhysical { return nil }
     guard let build, build.isRunning, build.platform == device.platform, build.slot == device.slot else { return nil }
     return build
   }

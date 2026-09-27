@@ -79,7 +79,7 @@ export function DeviceTile({
         <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
           {device.page
             ? shortUrl(device.page.url)
-            : device.physical
+            : device.physical && device.name !== device.model
               ? `${device.name} \u00B7 ${device.model}`
               : device.model}
         </Text>

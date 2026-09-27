@@ -228,6 +228,16 @@ private let schema = Data(
     #expect(events(workspace(build: build(phase: "compile")), workspace(build: build(phase: "install"))).isEmpty)
   }
 
+  @Test func saysNothingWhenALeasedPhoneDisconnectsOrItsLeaseEnds() {
+    let leased = { (connection: String) in
+      workspace(
+        remote: #"[],"physicalDevices":[{"platform":"ios","slot":"default","id":"P1","name":"Old iPhone","connection":"\#(connection)","lease":{"holder":"/w/app","kind":"declared","expiresAt":"2026-09-24T21:00:00Z"}}]"#
+      )
+    }
+    #expect(events(leased("connected"), leased("disconnected")).isEmpty)
+    #expect(events(leased("connected"), workspace()).isEmpty)
+  }
+
   @Test func reportsNewErrorsAndADeviceThatStoppedUnderARunningDevServer() {
     #expect(events(workspace(errors: 2), workspace(errors: 5)).map(\.title) == ["app: 3 new errors"])
     #expect(events(workspace(), workspace(ios: "Shutdown")).map(\.kind) == [.crash])
