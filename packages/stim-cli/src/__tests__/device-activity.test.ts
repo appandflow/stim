@@ -9,7 +9,10 @@ import {
   driverTool,
   parseAgentDeviceRecord,
   parseProcessTable,
+  readWebActivity,
   type ActivityTarget,
+  type DeviceProcessTables,
+  type HostProcess,
 } from '../devices/activity.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -224,5 +227,86 @@ describe('createActivityReader', () => {
       ],
     });
     expect(reader(target)).toMatchObject({ state: 'driven', driver: { tool: 'stim device lock' } });
+  });
+});
+
+describe('readWebActivity', () => {
+  const PORT = 9391;
+  const CHROME = 77807;
+  const SUPERVISOR = 66500;
+  let stimHome: string;
+  const workspace = '/projects/web';
+
+  beforeEach(() => {
+    stimHome = mkdtempSync(join(tmpdir(), 'stim-web-activity-'));
+    process.env.STIM_HOME = stimHome;
+  });
+
+  afterEach(() => {
+    rmSync(stimHome, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  const row = (pid: number, command: string): HostProcess => ({
+    pid,
+    ppid: 1,
+    rssKb: 0,
+    cpuPercent: 0,
+    startedAt: '2026-09-24T22:00:00.000Z',
+    command,
+  });
+
+  function client(pid: number, localPort: number): string {
+    return `p${pid}\nf12\nn127.0.0.1:${localPort}->127.0.0.1:${PORT}\n`;
+  }
+
+  function tables(connections: string | null, host: HostProcess[] | null): DeviceProcessTables {
+    return { host: () => host, android: () => null, tcpConnections: () => connections };
+  }
+
+  const target = { port: PORT, ownPids: [CHROME, SUPERVISOR], workspace };
+  const chromeSide = `p${CHROME}\nf157\nn127.0.0.1:${PORT}->127.0.0.1:49288\nf158\nn127.0.0.1:${PORT}->127.0.0.1:49300\n`;
+
+  test('a DevTools client that is not Stim makes the browser driven by its tool', () => {
+    const connections =
+      chromeSide + client(SUPERVISOR, 49288) + client(700, 49290) + client(800, 49300) + client(900, 49310);
+    const activity = readWebActivity(
+      target,
+      tables(connections, [
+        row(SUPERVISOR, 'stim-web'),
+        row(700, '/Users/me/.stim/server/helpers/stim-frames-0123456789abcdef web http://127.0.0.1:9391 77807 ABC'),
+        row(800, '/Applications/Stim.app/Contents/MacOS/StimDesktop'),
+        row(
+          900,
+          'node /Users/me/.npm/_npx/1/node_modules/.bin/mcp-server-playwright --cdp-endpoint http://127.0.0.1:9391',
+        ),
+      ]),
+      NOW,
+    );
+    expect(activity).toMatchObject({
+      state: 'driven',
+      driver: { tool: 'playwright', pid: 900, since: '2026-09-24T22:00:00.000Z' },
+      basis: ['cdp-client'],
+    });
+  });
+
+  test('only Stim connections leave the browser undriven, with recency from the page log', () => {
+    const dir = workspaceLogsDir(workspace);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'web.ndjson'), `${JSON.stringify({ ts: NOW - 60_000, src: 'client', msg: 'hi' })}\n`);
+    const activity = readWebActivity(
+      target,
+      tables(chromeSide + client(SUPERVISOR, 49288), [row(SUPERVISOR, 'stim-web')]),
+      NOW,
+    );
+    expect(activity).toEqual({
+      state: 'active',
+      lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      basis: ['page-log'],
+    });
+  });
+
+  test('an unreadable connection list is unknown, never idle', () => {
+    expect(readWebActivity(target, tables(null, []), NOW)).toMatchObject({ state: 'unknown', basis: ['cdp-client'] });
   });
 });

@@ -57,6 +57,7 @@ import {
 } from '@stim-cli/core/state';
 import {
   createActivityReader,
+  readWebActivity,
   createDeviceProcessTables,
   type ActivityTarget,
   type DeviceActivity,
@@ -84,7 +85,7 @@ import {
   unprovisionedWorktrees,
   withWebFacts,
 } from '../status.ts';
-import { readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
+import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
 import { readFootprints } from '../footprint.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
@@ -335,10 +336,13 @@ async function readMachineUsage({
  * machine usage, it reads the host process table again; it reuses every other subprocess fact of the full read.
  */
 async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Promise<void> {
-  if (machine && snapshot.machine) {
-    const fresh = createDeviceProcessTables();
-    snapshot.tables = { host: fresh.host, android: snapshot.tables.android };
-  }
+  const fresh = createDeviceProcessTables();
+  snapshot.tables = {
+    host: machine && snapshot.machine ? fresh.host : snapshot.tables.host,
+    android: snapshot.tables.android,
+    tcpConnections: fresh.tcpConnections,
+    clients: fresh.host,
+  };
   withStateReadCache(() => {
     for (const state of snapshot.states) state.logs = logFacts(state.path);
     readDeviceProcesses(snapshot.states, snapshot.tables, null);
@@ -466,7 +470,11 @@ function renderStatus(
       const browser = state.web.running
         ? chalk.green(`running (pid ${state.web.pid}, DevTools ${state.web.cdpEndpoint})`)
         : chalk.dim('not running');
-      out.push(`  web: ${chalk.cyan(state.web.url)} ${browser}${state.web.headless ? '' : chalk.dim(' (headed)')}`);
+      const page = state.web.page;
+      const failed = page?.state === 'failed' ? ` -- ${chalk.yellow(`page failed: ${page.error}`)}` : '';
+      out.push(
+        `  web: ${chalk.cyan(page?.url ?? state.web.url)} ${browser}${state.web.headless ? '' : chalk.dim(' (headed)')}${activitySuffix(state.web.activity)}${failed}`,
+      );
     }
     for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
     for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));
@@ -635,6 +643,13 @@ function readDeviceProcesses(
         const appId = device.android.owned ? appIdOn('android', device.slot, id) : undefined;
         if (appId) device.android.app = readAppProcess({ platform: 'android', id, appId });
       }
+    }
+    const web = state.web;
+    const port = web?.cdpEndpoint ? Number(new URL(web.cdpEndpoint).port) : null;
+    if (web?.running && port) {
+      web.page = readWebPage(state.path);
+      const ownPids = [web.pid, web.supervisorPid].filter((pid): pid is number => pid !== null);
+      web.activity = statusActivity(readWebActivity({ port, ownPids, workspace: state.path }, tables));
     }
   }
 }

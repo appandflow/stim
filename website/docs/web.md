@@ -201,6 +201,17 @@ agent-browser takes `--cdp <port>`. The endpoint only reaches the Stim profile.
 Chrome refuses remote debugging on your default profile, and Stim never
 attaches to a browser it did not start.
 
+While a tool is connected, `stim status` names it as the browser's driver
+(`web.activity`, "driven by playwright"), the way it names agent-device on a
+simulator. `web.targetId` is the owned page; a tab another tool opens is not
+captured.
+
+`web.page` reports the document the page loaded last and how that load went:
+`{ url, state, error? }`, with `state` one of `loading`, `loaded` or `failed`.
+In-app routes that load no document are not tracked. A failed load (the dev
+server is down, a certificate error, a crash) shows on the `web:` line of
+`stim status`.
+
 ## Cleanup
 
 - `stim stop` closes Chrome and keeps the profile, so cookies and storage

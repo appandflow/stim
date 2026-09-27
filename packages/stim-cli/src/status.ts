@@ -368,6 +368,7 @@ function webBrowserState({ record, status }: WebFacts): WebBrowserState {
     viewport: record.viewport,
     profile: record.profile,
     cdpEndpoint: running ? cdpEndpoint(record.cdpPort) : null,
+    targetId: running ? (record.targetId ?? null) : null,
   };
 }
 

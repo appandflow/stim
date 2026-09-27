@@ -18,6 +18,7 @@ function tables(host: string[] | null, adb: string | null = null): DeviceProcess
         command,
       })) ?? null,
     android: () => adb,
+    tcpConnections: () => null,
   };
 }
 

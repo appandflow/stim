@@ -229,10 +229,26 @@ export interface StatusIssue {
   slot?: string;
 }
 
+/** Every state the owned page's latest load can report. */
+export const WEB_PAGE_STATES = ['loading', 'loaded', 'failed'] as const;
+
+/**
+ * The owned page's latest load, from the page-load marker in the workspace's web log: `url` is the document it
+ * loaded, `state` is `failed` when that document did not load or the page crashed, with the log message as
+ * `error`.
+ */
+export interface WebPageState {
+  url: string;
+  state: (typeof WEB_PAGE_STATES)[number];
+  error?: string;
+}
+
 /**
  * The workspace's Stim-owned Chrome. `pid` is Chrome's process and `supervisorPid` the Stim process that holds
- * its DevTools session. `cdpEndpoint` is the loopback DevTools HTTP endpoint agents can attach to, null when the
- * browser is not running. `profile` is the Stim-owned user data directory.
+ * its DevTools session. `cdpEndpoint` is the loopback DevTools HTTP endpoint agents can attach to, and `targetId`
+ * the DevTools target of the owned page; both are null when the browser is not running. `profile` is the
+ * Stim-owned user data directory. `page` is null before the page's first load. `activity` names DevTools clients
+ * other than Stim's as drivers.
  */
 export interface WebBrowserState {
   browser: 'chrome';
@@ -245,6 +261,9 @@ export interface WebBrowserState {
   viewport: WebViewport;
   profile: string;
   cdpEndpoint: string | null;
+  targetId: string | null;
+  page?: WebPageState | null;
+  activity?: DeviceActivity;
 }
 
 /** The steps of `stim worktree warm`: `refresh` fast-forwards and installs in the source checkout, `copy` carries ignored entries. */

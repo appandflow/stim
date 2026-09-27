@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import {
   APP_PROCESS_STATES,
+  WEB_PAGE_STATES,
   BUILD_HISTORY_LIMIT,
   BUILD_RESULTS,
   SETTINGS,
@@ -667,6 +668,12 @@ test('the facts topic documents every app process state', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const state of APP_PROCESS_STATES) expect(body).toMatch(new RegExp(`^ +(state +)?"${state}" `, 'm'));
+});
+
+test('the facts topic documents every web page state', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const state of WEB_PAGE_STATES) expect(body).toMatch(new RegExp(`^ +"${state}" `, 'm'));
 });
 
 test('the facts topic documents every build result and the history length status can report', () => {

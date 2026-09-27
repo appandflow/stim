@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { WEB_VIEWPORTS, type WebViewport } from '@stim-cli/core/state';
+import { rotatedLogPath } from '@stim-cli/core';
+import { WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 import { chromeProcessState } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -140,4 +142,59 @@ export function webFacts(record: WebRecord | null): WebFacts | null {
   if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
   if (chrome === 'gone') return { record, status: 'stopped' };
   return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };
+}
+
+const PAGE_FAILURES = new Set(['web_document_failed', 'web_page_crashed']);
+const NAVIGATION = Buffer.from('"event":"web_navigation"');
+const PAGE_EVENT = '"event":"web_';
+
+/**
+ * The latest page load in the web log's `lines`: the newest `web_navigation` marker, and whether a document
+ * failure, a crash or the load event followed it. Null before the first navigation.
+ */
+export function latestPageLoad(lines: readonly string[]): WebPageState | null {
+  let failure: string | null = null;
+  let loaded = false;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let record: { event?: unknown; msg?: unknown; url?: unknown };
+    try {
+      record = JSON.parse(lines[i]!) as typeof record;
+    } catch {
+      continue;
+    }
+    if (record.event === 'web_navigation' && typeof record.url === 'string') {
+      if (failure !== null) return { url: record.url, state: 'failed', error: failure };
+      return { url: record.url, state: loaded ? 'loaded' : 'loading' };
+    }
+    if (typeof record.event !== 'string') continue;
+    if (PAGE_FAILURES.has(record.event)) failure = typeof record.msg === 'string' ? record.msg : record.event;
+    else if (record.event === 'web_page_loaded') loaded = true;
+  }
+  return null;
+}
+
+/** The page lines from the newest navigation on, in the web log or, right after a rotation, its previous file. */
+function pageLines(file: string): string[] | null {
+  for (const path of [file, rotatedLogPath(file)]) {
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(path);
+    } catch {
+      continue;
+    }
+    const at = bytes.lastIndexOf(NAVIGATION);
+    if (at < 0) continue;
+    const start = bytes.lastIndexOf(0x0a, at) + 1;
+    return bytes
+      .subarray(start)
+      .toString('utf8')
+      .split('\n')
+      .filter((line) => line.includes(PAGE_EVENT));
+  }
+  return null;
+}
+
+export function readWebPage(root: string): WebPageState | null {
+  const lines = pageLines(webLogFile(root));
+  return lines ? latestPageLoad(lines) : null;
 }
