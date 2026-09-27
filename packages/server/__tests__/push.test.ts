@@ -1,7 +1,13 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { FeedListener, JsonObject } from '../src/feed.ts';
-import { maskPushTokens, PushNotifier, type PushMessage, type PushNotifierOptions } from '../src/push.ts';
+import {
+  maskPushTokens,
+  PushNotifier,
+  type PushLimits,
+  type PushMessage,
+  type PushNotifierOptions,
+} from '../src/push.ts';
 import type { PairedDevice, PushRegistration } from '../src/registry.ts';
 
 const T0 = Date.parse('2026-09-26T12:00:00Z');
@@ -120,6 +126,7 @@ const driven = (lastAt: number) => ({
 const status = (...environments: JsonObject[]): JsonObject => ({ environments, unprovisionedWorktrees: [] });
 
 interface Setup {
+  limits?: Partial<PushLimits>;
   devices?: PairedDevice[];
   replay?: JsonObject;
   freeGb?: number;
@@ -151,7 +158,7 @@ function setup(options: Setup = {}) {
     ownLeases: () => [],
     devices: () => devices,
     dropToken: (token) => dropped.push(token),
-    limits: { receiptDelayMs: 0, diskMs: 10 },
+    limits: { receiptDelayMs: 0, diskMs: 10, ...options.limits },
     now: () => now,
   });
   notifier.refresh();
@@ -466,6 +473,17 @@ describe('PushNotifier', () => {
     expect(t.subscriptions).toEqual({ opened: 1, closed: 0 });
     t.setDevices([device()]);
     expect(t.subscriptions).toEqual({ opened: 1, closed: 1 });
+  });
+
+  it('keeps quiet pushes out of the hourly budget, so work started cannot crowd out a stuck agent', async () => {
+    const t = (current = setup({ limits: { perHour: 1 }, devices: [device(registration({ stuckMinutes: 5 }))] }));
+    t.emit(status());
+    t.at(1000);
+    t.emit(status(env(driven(T0 + 1000))));
+    t.at(6 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    await settle(2);
+    expect(expo.sent.flat().map((m) => m.interruptionLevel)).toEqual(['passive', 'active']);
   });
 
   it('stops pushing to a device past its hourly budget', async () => {
