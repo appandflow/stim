@@ -858,3 +858,36 @@ test('Android serial reuse before shutdown keeps the device', () => {
   expect(result.reason).toMatch(/changed before shutdown/);
   expect(exec.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
 });
+
+test('a stopped AVD closes its stale sessions unless another device now holds their serial', () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\nemulator-5556\tdevice\n' });
+  const session = { name: 'stale', platform: 'android', device: 'stim-app', id: 'emulator-5554', createdAt: 1 };
+  const sessions = [
+    { ...session, name: 'reused', id: 'emulator-5556' },
+    session,
+    { ...session, name: 'other-avd', device: 'stim-other' },
+  ];
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runFile: (file, args) => {
+      if (file !== 'agent-device') return exec.runFile(file, args);
+      exec.calls.push([file, ...args].join(' '));
+      if (args[0] === 'close') return '{"success":true}';
+      return JSON.stringify({ success: true, data: { sessions } });
+    },
+  });
+  try {
+    const result = teardownOwnedAvd('stim-app', {
+      resolveAvd: () => ({ notRunning: true }),
+      waitForShutdown: () => {},
+    });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.filter((command) => command.startsWith('agent-device close'))).toEqual([
+      'agent-device close --session stale --session-lock reject --platform android --serial emulator-5554 --json --daemon-transport socket',
+    ]);
+  } finally {
+    write.mockRestore();
+  }
+});
