@@ -498,6 +498,13 @@ describe('physical device state', () => {
     ]);
   });
 
+  test('an Android lease that recorded only the serial has no model', () => {
+    const [device] = states([lease('android', 'R7', { deviceName: 'R7' })], {
+      android: { id: 'R7', token: 't-R7', kind: 'run' },
+    });
+    expect(device).toMatchObject({ name: 'R7', model: null });
+  });
+
   test('a lease another holder took over, an expired one, or a simulator or emulator lease is left out', () => {
     const devices = states(
       [

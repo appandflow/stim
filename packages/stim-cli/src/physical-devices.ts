@@ -49,7 +49,8 @@ export function physicalDeviceStates(
       slot: parsed.slot,
       id: lease.id,
       name: reading.name ?? lease.deviceName,
-      model: reading.model ?? (parsed.platform === 'android' ? lease.deviceName : null),
+      model:
+        reading.model ?? (parsed.platform === 'android' && lease.deviceName !== lease.id ? lease.deviceName : null),
       owned: false,
       physical: true,
       connection: reading.connection,
@@ -72,7 +73,7 @@ export function iosPhysicalReading(devices: readonly IosDeviceEntry[] | null, ud
 }
 
 /**
- * A phone's reading from `adb devices`; null `devices` means adb could not be read. `ios --device` and `device lock`
+ * A phone's reading from `adb devices`; null `devices` means adb could not be read. `android --device` and `device lock`
  * record the phone's model as the lease's device name, so the model comes from there.
  */
 export function androidPhysicalReading(devices: AdbDevices | null, serial: string): PhysicalDeviceReading {
