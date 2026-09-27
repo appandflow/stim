@@ -27,6 +27,11 @@ const VIDEO_MESSAGE = 3;
 const VIDEO_HEADER_BYTES = 14;
 const KEYFRAME_INTERVAL_MS = 250;
 
+function helperArgs(device: Device): string[] {
+  if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
+  return device.platform === 'ios' ? ['ios', device.udid] : ['android', device.serial];
+}
+
 /** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
 function run(
   file: string,
@@ -193,8 +198,7 @@ export class HelperSource {
     this.ended = ended;
     this.lingerMs = lingerMs;
     this.lit = lit;
-    const id = device.platform === 'ios' ? device.udid : device.serial;
-    this.child = spawn(helper, [device.platform, id], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(helper, helperArgs(device), { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
     this.child.stderr!.setEncoding('utf8');
     this.child.stderr!.on('data', (chunk: string) => {

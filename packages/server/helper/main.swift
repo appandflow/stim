@@ -414,6 +414,7 @@ final class WebSource {
   private var pixels: CVPixelBufferPool?
   private var pixelSize = (width: 0, height: 0)
   private var encodedAt: Double?
+  private var waiting: [Command] = []
 
   init(endpoint: URL, chromePid: Int32, targetId: String) {
     self.endpoint = endpoint
@@ -439,6 +440,9 @@ final class WebSource {
         self.queue.async {
           self.page = page
           self.updateScreencast()
+          let waiting = self.waiting
+          self.waiting = []
+          for command in waiting { self.apply(command, on: page) }
         }
       }
     }
@@ -523,24 +527,28 @@ final class WebSource {
 extension WebSource: Source {
   func input(_ command: Command) {
     queue.async {
-      guard let page = self.page else {
-        return Output.notice(["inputError": "The page is not attached yet."])
+      guard let page = self.page else { return self.waiting.append(command) }
+      self.apply(command, on: page)
+    }
+  }
+
+  private func apply(_ command: Command, on page: WebPage) {
+    switch command {
+    case .touch(let phase, let point, _):
+      switch phase {
+      case .down: page.touch(.down, x: point.x, y: point.y)
+      case .move: page.touch(.move, x: point.x, y: point.y)
+      case .up: page.touch(.up, x: point.x, y: point.y)
       }
-      switch command {
-      case .touch(let phase, let point, _):
-        let phases: [TouchPhase: WebTouchPhase] = [.down: .down, .move: .move, .up: .up]
-        guard let web = phases[phase] else { return }
-        page.touch(web, x: point.x, y: point.y)
-      case .text(let text):
-        page.type(text)
-      case .button(let name):
-        guard name == "back" else { return Output.notice(["inputError": "A web page has no \(name) button."]) }
-        page.back()
-      case .rotate, .posture:
-        Output.notice(["inputError": "A web page does not rotate or fold."])
-      case .config, .keyframe:
-        break
-      }
+    case .text(let text):
+      page.type(text)
+    case .button(let name):
+      guard name == "back" else { return Output.notice(["inputError": "A web page has no \(name) button."]) }
+      page.back()
+    case .rotate, .posture:
+      Output.notice(["inputError": "A web page does not rotate or fold."])
+    case .config, .keyframe:
+      break
     }
   }
 }

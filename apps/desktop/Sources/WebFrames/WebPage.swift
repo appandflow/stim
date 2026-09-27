@@ -54,7 +54,8 @@ public struct WebModifiers: OptionSet, Sendable {
 }
 
 /// The owned page, attached through a verified `DevToolsClient`: its screencast and its input. Points are
-/// fractions of the screencast frame, which shows the page's viewport.
+/// fractions of the screencast frame, which shows the page's viewport; before the first frame, of the viewport
+/// the page reported when it attached.
 public final class WebPage: @unchecked Sendable {
   public let targetId: String
   private let client: DevToolsClient
@@ -91,7 +92,17 @@ public final class WebPage: @unchecked Sendable {
           client.onClose { page.end("The DevTools connection closed.") }
           client.send("Target.setDiscoverTargets", ["discover": true])
           client.send("Page.enable", sessionId: sessionId)
-          completion(.success(page))
+          client.send(
+            "Runtime.evaluate", ["expression": "[innerWidth, innerHeight]", "returnByValue": true],
+            sessionId: sessionId
+          ) { measured in
+            if case .success(let reply) = measured,
+              let size = (reply["result"] as? [String: Any])?["value"] as? [Double], size.count == 2
+            {
+              page.queue.async { page.viewport = page.viewport ?? (size[0], size[1]) }
+            }
+            completion(.success(page))
+          }
         }
       }
     }
