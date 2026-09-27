@@ -287,7 +287,7 @@ export function DeviceView({
           <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
         ) : null}
         {platform !== 'web' ? <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} /> : null}
-        {platform === 'android' || (platform === 'ios' && !postures.length) ? (
+        {platform === 'android' || (platform === 'ios' && !postures.length && !shown) ? (
           <>
             <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
             <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />

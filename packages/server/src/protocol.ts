@@ -906,7 +906,7 @@ export function protocolJsonSchema(): JsonSchema {
                 phase: { enum: [...TOUCH_PHASES] },
                 x: { type: 'number', minimum: 0, maximum: 1 },
                 y: { type: 'number', minimum: 0, maximum: 1 },
-                display: { type: 'integer', minimum: 0, maximum: 3, default: 0 },
+                display: { type: 'integer', minimum: 0, maximum: 3 },
               },
               ['phase', 'x', 'y'],
             ),
