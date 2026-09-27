@@ -4,7 +4,7 @@ import { forgetCreatedDevice, readCreatedDevices, recordCreatedDevice } from './
 import { isStimOwnedAvd } from './device-ownership.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { existsSync, lstatSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { getProject, loadConfig, withConfigLock } from '../workspace/config.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -21,6 +21,7 @@ import {
   type OwnedProcess,
 } from '../web/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { getExecutor } from '../exec.ts';
 import { repoRoot } from '../workspace/worktree.ts';
 import {
   deleteParkedIosSim,
@@ -122,6 +123,16 @@ export function teardownParkedIosSim(
 
 const IOS_SHUTDOWN_SETTLE_MS = 15_000;
 const ADB_RELEASE_WAIT_MS = 3_000;
+
+function repoRootAbove(workspace: string | undefined): string | undefined {
+  if (workspace === undefined || !getExecutor().findExecutable('agent-device')) return undefined;
+  const root = repoRoot(workspace);
+  try {
+    return root && realpathSync(root) !== realpathSync(workspace) ? root : undefined;
+  } catch {
+    return undefined;
+  }
+}
 const IOS_SHUTDOWN_POLL_MS = 250;
 const IOS_SHUTDOWN_ATTEMPTS = 2;
 
@@ -250,12 +261,13 @@ export function teardownOwnedIosSim(
         reason: iosShutdownFailureReason(udid, settled.sim.state),
       };
     }
-    if (workspace !== undefined && settled.sim) {
+    const root = sim.state === 'Shutdown' ? undefined : repoRootAbove(workspace);
+    if (root && settled.sim) {
       closeOwnedDeviceSessions(
         { platform: 'ios', id: udid },
         () => resolveOwnedIosSim(udid).sim?.state === 'Shutdown',
         workspace,
-        repoRoot(workspace) ?? undefined,
+        root,
       );
     }
     return { status: 'torn-down', label: label ?? sim.name ?? udid };
@@ -461,16 +473,12 @@ function teardownClaimedAvd(
           clearClaimChild(claim);
         }
       });
-      if (workspace !== undefined) {
+      const root = repoRootAbove(workspace);
+      if (root) {
         // adb keeps listing an emulator as offline for a moment after its process exits.
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
         while (!serialFree(serial) && Date.now() < deadline) sleepSync(250);
-        closeOwnedDeviceSessions(
-          { platform: 'android', id: serial, avdName },
-          stillStopped,
-          workspace,
-          repoRoot(workspace) ?? undefined,
-        );
+        closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillStopped, workspace, root);
       }
     } else {
       closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);

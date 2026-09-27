@@ -341,7 +341,8 @@ sibling directories under the git root, sessions on other devices, and physical
 devices stay open. The integration is optional: a
 missing binary skips cleanup; failures print a warning and device teardown
 continues. Agent-device calls have
-a combined 15-second budget per device and require local socket transport and
+a combined 15-second budget per device and pass (the pass `stop` makes after
+shutdown has its own), and require local socket transport and
 support for `--session-lock reject`. Remote daemons are never used.
 
 An owned emulator counts as stopped only when no emulator process launched for

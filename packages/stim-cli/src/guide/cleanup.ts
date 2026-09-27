@@ -62,7 +62,8 @@ device ownership and uses agent-device's rejecting session target guard;
 sessions on other devices stay open. Physical devices are outside
 this cleanup. agent-device is optional: a missing binary skips this step, and a
 failed or timed-out list/close prints a device line on stderr while teardown
-continues. Cleanup allows at most 15 seconds of agent-device calls per device.
+continues. Each cleanup pass allows at most 15 seconds of agent-device calls
+per device; the pass \`stop\` makes after shutdown has its own budget.
 A local daemon that cannot use socket transport or a CLI without the target guard
 skips cleanup with a warning; no remote daemon is used.
 

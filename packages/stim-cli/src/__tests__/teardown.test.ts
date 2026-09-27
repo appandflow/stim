@@ -893,11 +893,12 @@ test('a stopped AVD closes its stale sessions unless another device now holds th
 });
 
 test.each([
-  [true, ['agent-device close --session root-task']],
-  [false, []],
+  ['Booted', true, ['agent-device close --session root-task']],
+  ['Booted', false, []],
+  ['Shutdown', true, []],
 ])(
-  'stop closes a session claimed from the repository root only once the simulator is shut down (settles: %s)',
-  (shutdownSettles, expected) => {
+  'stop closes a session claimed from the repository root only once it shuts the simulator down (%s, settles: %s)',
+  (state, shutdownSettles, expected) => {
     const repo = join(avdHome, 'repo');
     mkdirSync(join(repo, 'app'), { recursive: true });
     const claims = join(avdHome, 'claims');
@@ -911,7 +912,7 @@ test.each([
       { ...session, name: 'root-task', createdAt: 1 },
       { ...session, name: 'sibling-task', createdAt: 2 },
     ];
-    const exec = iosExecutor({ sims: [OWNED], shutdownSettles });
+    const exec = iosExecutor({ sims: [{ ...OWNED, state }], shutdownSettles });
     const events: string[] = [];
     setExecutor({
       ...exec,
