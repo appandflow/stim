@@ -13,9 +13,9 @@ It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
 processes through `devicectl`. It launches the installed Chrome headless with a
 temporary profile, against a local page, and closes it; it also compiles the
-`stim-frames` helper and streams, taps and types that page through it. It does not install an
-app, alter the keychain, create or boot a simulator, or change an Apple
-Developer account.
+`stim-frames` helper and streams, taps and types that page through it. It does
+not install an app, alter the keychain, create or boot a simulator, or change
+an Apple Developer account.
 
 Compatibility tests live beside the unit tests as `*.compat.test.ts`. Ordinary
 unit discovery excludes them. Missing tools, no phone, a locked or disconnected

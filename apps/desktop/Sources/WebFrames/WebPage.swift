@@ -109,9 +109,10 @@ public final class WebPage: @unchecked Sendable {
     }
   }
 
-  /// `maxEdge` bounds both sides of the JPEG, in device pixels; `quality` is 0-100. Restarting replaces the
-  /// previous screencast's settings.
+  /// `maxEdge` bounds both sides of the JPEG, in pixels; `quality` is 0-100. A running screencast stops first:
+  /// Chrome sends no frame for a restart with new settings until the page changes.
   public func startScreencast(maxEdge: Int, quality: Int) {
+    command("Page.stopScreencast")
     command(
       "Page.startScreencast",
       ["format": "jpeg", "quality": quality, "maxWidth": maxEdge, "maxHeight": maxEdge, "everyNthFrame": 1])
@@ -174,20 +175,27 @@ public final class WebPage: @unchecked Sendable {
 
   /// Types printable text as key presses; `\n` presses Enter, `\t` Tab and `\u{8}` Backspace.
   public func type(_ text: String) {
-    for character in text {
-      switch character {
-      case "\n", "\r": press(.enter)
-      case "\t": press(.tab)
-      case "\u{8}": press(.backspace)
-      default:
-        let value = String(character)
-        command("Input.dispatchKeyEvent", ["type": "keyDown", "key": value, "text": value, "unmodifiedText": value])
-        command("Input.dispatchKeyEvent", ["type": "keyUp", "key": value])
+    queue.async {
+      for character in text {
+        switch character {
+        case "\n", "\r": self.sendKey(.enter, [])
+        case "\t": self.sendKey(.tab, [])
+        case "\u{8}": self.sendKey(.backspace, [])
+        default:
+          let value = String(character)
+          self.command(
+            "Input.dispatchKeyEvent", ["type": "keyDown", "key": value, "text": value, "unmodifiedText": value])
+          self.command("Input.dispatchKeyEvent", ["type": "keyUp", "key": value])
+        }
       }
     }
   }
 
   public func press(_ key: WebKey, modifiers: WebModifiers = []) {
+    queue.async { self.sendKey(key, modifiers) }
+  }
+
+  private func sendKey(_ key: WebKey, _ modifiers: WebModifiers) {
     let fields = key.fields
     var down: [String: Any] = [
       "type": fields.text == nil ? "rawKeyDown" : "keyDown", "key": fields.key, "code": fields.code,
@@ -205,6 +213,10 @@ public final class WebPage: @unchecked Sendable {
 
   /// Goes back one entry in the page's history, when it has one.
   public func back() {
+    queue.async { self.goBack() }
+  }
+
+  private func goBack() {
     client.send("Page.getNavigationHistory", sessionId: sessionId) { result in
       guard case .success(let history) = result, let index = history["currentIndex"] as? Int, index > 0,
         let entries = history["entries"] as? [[String: Any]], let id = entries[index - 1]["id"] as? Int
@@ -214,7 +226,7 @@ public final class WebPage: @unchecked Sendable {
   }
 
   public func reload() {
-    command("Page.reload")
+    queue.async { self.command("Page.reload") }
   }
 
   private func command(_ method: String, _ params: [String: Any] = [:]) {

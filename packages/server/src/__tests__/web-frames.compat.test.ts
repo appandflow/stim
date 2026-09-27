@@ -10,7 +10,7 @@ import { buildFrameHelper } from '../frame-helper.ts';
 
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width">
 <body style="margin:0"><button id="b" style="position:fixed;left:0;top:0;width:50vw;height:50vh"
-onclick="window.taps=(window.taps||0)+1">tap</button>
+onclick="window.taps=(window.taps||0)+1;this.textContent='tapped '+window.taps">tap</button>
 <input id="i" style="position:fixed;left:0;top:60vh;width:90vw"></body>`;
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -157,11 +157,13 @@ test('stim-frames streams H.264 and JPEG from real Chrome, types and taps, and r
   video.child.stdin!.write('{"keyframe":true}\n');
   await until(() => video.messages.slice(units).some((message) => message.kind === 3 && message.keyframe));
 
+  const beforeTap = video.messages.length;
   video.child.stdin!.write(
     '{"input":"touch","phase":"down","x":0.25,"y":0.25}\n{"input":"touch","phase":"up","x":0.25,"y":0.25}\n',
   );
   await new Promise((resolve) => setTimeout(resolve, 300));
   expect(await evaluate('window.taps')).toBe(1);
+  await until(() => video.messages.slice(beforeTap).some((message) => message.kind === 3));
   await evaluate('document.getElementById("i").focus()');
   video.child.stdin!.write('{"input":"text","text":"Stim wa\\beb\\n"}\n');
   await new Promise((resolve) => setTimeout(resolve, 300));

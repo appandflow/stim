@@ -413,6 +413,7 @@ final class WebSource {
   private let jpegGate = JpegGate()
   private var pixels: CVPixelBufferPool?
   private var pixelSize = (width: 0, height: 0)
+  private var encodedAt: Double?
 
   init(endpoint: URL, chromePid: Int32, targetId: String) {
     self.endpoint = endpoint
@@ -461,7 +462,6 @@ final class WebSource {
     pacer.changed()
   }
 
-  // Video gets JPEGs at a fixed high quality to encode from; JPEG subscribers get Chrome's own JPEG at theirs.
   private func updateScreencast() {
     guard let page else { return }
     guard config.fps > 0 else {
@@ -478,7 +478,9 @@ final class WebSource {
   private func render(_ frame: ScreencastFrame, config: Config) {
     guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil) else { return }
     if config.video, let image = CGImageSourceCreateImageAtIndex(source, 0, nil), let buffer = pixelBuffer(image) {
-      video.encode(buffer, quarterTurns: 0, capturedAt: frame.capturedAt)
+      let repeated = frame.capturedAt == encodedAt
+      encodedAt = frame.capturedAt
+      video.encode(buffer, quarterTurns: 0, capturedAt: repeated ? now() : frame.capturedAt)
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer),
       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

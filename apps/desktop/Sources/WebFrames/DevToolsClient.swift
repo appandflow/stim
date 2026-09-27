@@ -152,6 +152,7 @@ public final class DevToolsClient: @unchecked Sendable {
   private func finish() {
     guard !closed else { return }
     closed = true
+    eventHandler = nil
     task.cancel(with: .normalClosure, reason: nil)
     session.invalidateAndCancel()
     let replies = pending.values
