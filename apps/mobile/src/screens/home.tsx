@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
@@ -6,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AttentionStrip } from '@/components/attention-strip';
 import { Button } from '@/components/button';
+import { Card } from '@/components/card';
 import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
@@ -37,6 +39,11 @@ const FUNNEL_ICON = require('@/assets/icons/funnel.png');
 const PLUS_ICON = require('@/assets/icons/plus.png');
 const WORDMARK = require('@/assets/images/wordmark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
+const AGENT_PROMPTS = [
+  'Run the app on iOS.',
+  'Make this change in a separate worktree and validate it on iOS.',
+  'Show app errors from the last 10 minutes.',
+];
 
 export function Home() {
   const { theme } = useUnistyles();
@@ -288,6 +295,7 @@ function HomeEmpty({
 }) {
   const { theme } = useUnistyles();
   const { macs, connections } = useMacs();
+  const [copied, setCopied] = useState<string | null>(null);
   const loading =
     macs === null ||
     (items === 0 &&
@@ -304,23 +312,45 @@ function HomeEmpty({
       </View>
     );
   }
+  if (items && noFilterSet) {
+    return (
+      <View style={styles.empty}>
+        <StimJar playing={focused} />
+        <Text variant="headline">No live workspaces</Text>
+        <Text tone="secondary" style={styles.emptyMessage}>
+          Tap a prompt to copy it for your coding agent.
+        </Text>
+        <View style={styles.prompts}>
+          {AGENT_PROMPTS.map((prompt) => (
+            <Card
+              key={prompt}
+              onPress={() => void Clipboard.setStringAsync(prompt).then(() => setCopied(prompt))}
+              accessibilityLabel={`Copy prompt: ${prompt}`}
+              style={styles.prompt}
+            >
+              <Text style={styles.promptText}>{prompt}</Text>
+              <Text variant="footnote" weight="semibold" tone="brand">
+                {copied === prompt ? 'Copied' : 'Copy'}
+              </Text>
+            </Card>
+          ))}
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.empty}>
       <StimJar playing={focused} />
       <Text variant="headline">
         {items
-          ? noFilterSet
-            ? 'No live workspaces'
-            : 'Nothing matches the filters'
+          ? 'Nothing matches the filters'
           : connections.some((c) => c.state.kind === 'open')
             ? 'Nothing running'
             : 'No machine connected'}
       </Text>
       <Text tone="secondary" style={styles.emptyMessage}>
         {items
-          ? noFilterSet
-            ? 'Start one with `stim ios` or `stim android` in a worktree.'
-            : 'Change the filters to see more workspaces.'
+          ? 'Change the filters to see more workspaces.'
           : !connections.some((c) => c.state.kind === 'open')
             ? 'The chips above show why each machine is offline.'
             : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
@@ -346,6 +376,15 @@ const styles = StyleSheet.create((theme) => ({
   loading: { marginTop: 48 },
   empty: { alignItems: 'center', padding: theme.space.huge, gap: theme.space.md },
   emptyMessage: { textAlign: 'center' },
+  prompts: { alignSelf: 'stretch', gap: theme.space.md, marginTop: theme.space.xs },
+  prompt: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.xl,
+    paddingVertical: theme.space.lg,
+  },
+  promptText: { flex: 1 },
   footer: { paddingHorizontal: theme.space.xxl, paddingVertical: theme.space.xl },
   primaryButton: { marginTop: theme.space.md },
 }));
