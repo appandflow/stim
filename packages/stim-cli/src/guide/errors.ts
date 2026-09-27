@@ -860,6 +860,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   relaunches that app on that device with this workspace's Metro port and loses
   in-memory state. Keep the existing --session flag and verify afterward.
 
+  ADB COULD NOT LIST OR RESTORE THE REVERSE. Before an Android reload Stim
+  checks the emulator's adb reverse for the Metro port. When adb cannot list
+  or re-apply it, nothing was reloaded; the remedy names the adb reverse
+  command to run before reloading again.
+
   MORE THAN ONE MATCHING PEER IS NOT A FAILURE. A workspace Metro serves one
   app, so several matching peers are that app on several devices. Stim reloads
   every one of them and reports the count in the facts as targets.`,

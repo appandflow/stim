@@ -385,6 +385,41 @@ function androidIssues(
   return issues;
 }
 
+/**
+ * The owned emulators worth an `adb reverse --list`: each runs this workspace's debug app, launched onto that serial
+ * against the Metro port that is serving now.
+ */
+export function metroReverseTargets(
+  state: EnvironmentState,
+  launches: Readonly<Record<string, { deviceId: string; metroPort: number | null; release: boolean }>>,
+): { slot: string; serial: string; metroPort: number }[] {
+  const metroPort = state.metro?.running ? state.metro.port : null;
+  if (!metroPort) return [];
+  return [{ slot: 'default', android: state.android }, ...(state.slots ?? [])].flatMap(({ slot, android }) => {
+    const launch = launches[deviceSlotKey('android', slot)];
+    if (!android?.owned || android.physical || !android.serial || android.app?.state !== 'running') return [];
+    if (!launch || launch.release || launch.metroPort !== metroPort || launch.deviceId !== android.serial) return [];
+    return [{ slot, serial: android.serial, metroPort }];
+  });
+}
+
+/** Adds the issue for a running debug app whose emulator lost the adb reverse to the workspace Metro port. */
+export function addReverseMissingIssue(
+  state: EnvironmentState,
+  { slot, serial, metroPort }: { slot: string; serial: string; metroPort: number },
+): void {
+  const issue: StatusIssue = {
+    code: 'android-reverse-missing',
+    severity: 'warning',
+    message: `the adb reverse for Metro port ${metroPort} is missing on ${serial}, so the app cannot reach Metro`,
+    remedy: 'stim reload android',
+    workspace: state.path,
+    ...(slot === 'default' ? {} : { slot }),
+  };
+  state.issues.push(issue);
+  state.warnings.push(issueText(issue));
+}
+
 function issueText(issue: StatusIssue): string {
   return `${issue.slot ? `${issue.slot}: ` : ''}${issue.message}; run \`${issue.remedy}\``;
 }

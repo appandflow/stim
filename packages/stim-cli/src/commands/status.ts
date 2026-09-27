@@ -62,8 +62,10 @@ import {
   type DeviceProcessTables,
 } from '../devices/activity.ts';
 import { createAppProcessReader } from '../devices/app-process.ts';
+import { hasMetroReverse } from '../engine/app-install.ts';
 import {
   activityLabel,
+  addReverseMissingIssue,
   applyMachineMemory,
   capacity,
   deviceLeaseLines,
@@ -71,6 +73,7 @@ import {
   diskLine,
   environmentState,
   gitSummaryText,
+  metroReverseTargets,
   parseDfFree,
   poolLine,
   remoteDeviceLine,
@@ -263,6 +266,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
 
   const tables = createDeviceProcessTables();
   readDeviceProcesses(states, tables, { projects, launchesByState });
+  readMetroReverses(states, launchesByState);
   const sims = Object.values(simsByUdid);
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
@@ -620,6 +624,20 @@ function readDeviceProcesses(
         const appId = device.android.owned ? appIdOn('android', device.slot, id) : undefined;
         if (appId) device.android.app = readAppProcess({ platform: 'android', id, appId });
       }
+    }
+  }
+}
+
+function readMetroReverses(
+  states: EnvironmentState[],
+  launchesByState: ReturnType<typeof readWorkspaceLaunches>[],
+): void {
+  for (const [i, state] of states.entries()) {
+    for (const target of metroReverseTargets(state, launchesByState[i]!)) {
+      const listing = getExecutor().runFileQuiet('adb', ['-s', target.serial, 'reverse', '--list'], {
+        timeoutMs: 5000,
+      });
+      if (listing !== null && !hasMetroReverse(listing, target.metroPort)) addReverseMissingIssue(state, target);
     }
   }
 }

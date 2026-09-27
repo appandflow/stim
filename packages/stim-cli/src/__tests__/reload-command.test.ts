@@ -43,6 +43,8 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
     reloadMetro: async () => ({ ok: true, peers: 1, targets: 1 }),
     readBrowser: () => null,
+    ensureReverse: () => ({ restored: false }),
+    sleep: async () => {},
     ...overrides,
   };
 }
@@ -87,6 +89,7 @@ test('reload auto-selects the sole live owned app and reports its strategy', asy
       metroPort: 8082,
       strategy: 'metro-websocket',
       targets: 1,
+      reverseRestored: [],
     },
   });
 });
@@ -116,9 +119,116 @@ test('reload addresses Metro with the target platform and app', async () => {
   });
 
   expect(calls).toEqual([
-    [8082, { role: 'android', appId: 'com.example.android' }],
-    [8082, { role: 'ios', appId: 'com.example.ios' }],
+    [8082, { role: 'android', appId: 'com.example.android', broadcastOnMiss: true }],
+    [8082, { role: 'ios', appId: 'com.example.ios', broadcastOnMiss: true }],
   ]);
+});
+
+describe('the adb reverse for the workspace Metro port', () => {
+  const noPeer = { failed: true as const, noPeer: true as const, peers: 0, reason: 'No Android app connected.' };
+
+  test('an Android reload checks the reverse on the launch device and leaves a present one alone', async () => {
+    const checked: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: (serial, port) => {
+          checked.push([serial, port]);
+          return { restored: false };
+        },
+      }),
+    });
+    expect(checked).toEqual([['emulator-5554', 8082]]);
+    expect(result).toMatchObject({ ok: true, facts: { reverseRestored: [] } });
+  });
+
+  test('a restored reverse waits for the app to reconnect without broadcasting, then reloads it', async () => {
+    const calls: unknown[] = [];
+    let polls = 0;
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ restored: true }),
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.broadcastOnMiss);
+          return ++polls < 3 ? noPeer : { ok: true, peers: 1, targets: 1 };
+        },
+      }),
+    });
+    expect(calls).toEqual([false, false, false]);
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { reverseRestored: ['emulator-5554'], strategy: 'metro-websocket' },
+    });
+  });
+
+  test('an app that never reconnects gets one final broadcast and the no-peer remedy', async () => {
+    const calls: unknown[] = [];
+    const slept: number[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ restored: true }),
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.broadcastOnMiss);
+          return noPeer;
+        },
+      }),
+    });
+    expect(calls.filter((broadcast) => broadcast)).toHaveLength(1);
+    expect(calls.at(-1)).toBe(true);
+    expect(slept.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(5000);
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
+  });
+
+  test('an unreadable reverse list refuses before reloading, naming the manual command', async () => {
+    let reloaded = false;
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ failed: true, reason: 'adb reverse --list failed on emulator-5554' }),
+        reloadMetro: async () => {
+          reloaded = true;
+          return { ok: true, peers: 1, targets: 1 };
+        },
+      }),
+    });
+    expect(reloaded).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_RELOAD_FAILED',
+        remedy: expect.stringContaining('adb -s emulator-5554 reverse tcp:8082 tcp:8082'),
+      },
+    });
+  });
+
+  test('an iOS reload and a release launch never touch adb reverse', async () => {
+    const ensureReverse = () => {
+      throw new Error('adb reverse must not run');
+    };
+    expect(
+      await runReload({
+        root: '/project',
+        platform: 'ios',
+        deps: reloadDeps({ readLaunches: () => ({ ios: iosLaunch }), ensureReverse }),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await runReload({
+        root: '/project',
+        platform: 'android',
+        deps: reloadDeps({ readLaunches: () => ({ android: { ...androidLaunch, release: true } }), ensureReverse }),
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_RELEASE' } });
+  });
 });
 
 test('reload requires a platform when both owned apps are live', async () => {
@@ -174,6 +284,7 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
       metroPort: 8082,
       strategy: 'cdp',
       targets: 1,
+      reverseRestored: [],
     },
   });
   expect(reloaded).toEqual(['PAGE']);
@@ -510,6 +621,7 @@ test('reload --json prints exactly one parseable facts line', async () => {
     metroPort: 8082,
     strategy: 'metro-websocket',
     targets: 1,
+    reverseRestored: [],
   });
 });
 
@@ -547,7 +659,32 @@ test('multiple live slots of the same platform use one platform reload', async (
     }),
   });
   expect(result.ok).toBe(true);
-  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId }]]);
+  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId, broadcastOnMiss: true }]]);
+});
+
+test('an Android reload restores the reverse on every live slot that lost it', async () => {
+  const checked: string[] = [];
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      getProject: () => ({
+        ...project,
+        deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+      }),
+      readLaunches: () => ({
+        android: androidLaunch,
+        'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+      }),
+      resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      ensureReverse: (serial) => {
+        checked.push(serial);
+        return { restored: serial === 'emulator-5556' };
+      },
+    }),
+  });
+  expect(checked).toEqual(['emulator-5554', 'emulator-5556']);
+  expect(result).toMatchObject({ ok: true, facts: { reverseRestored: ['emulator-5556'] } });
 });
 
 test.each([true, false])(

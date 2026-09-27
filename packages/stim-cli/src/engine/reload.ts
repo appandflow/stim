@@ -51,9 +51,18 @@ function peerMatches(query: URLSearchParams, role: MetroReloadRole, appId: strin
   return query.get('app') === appId;
 }
 
+/**
+ * Asks Metro for its peers and reloads the ones matching `role` and `appId`. With `broadcastOnMiss: false`, a miss
+ * returns `noPeer` without the fallback broadcast, so a caller can wait for the app to connect.
+ */
 export function reloadThroughMetro(
   port: number,
-  { role, appId, timeoutMs = METRO_TIMEOUT_MS }: { role: MetroReloadRole; appId: string; timeoutMs?: number },
+  {
+    role,
+    appId,
+    timeoutMs = METRO_TIMEOUT_MS,
+    broadcastOnMiss = true,
+  }: { role: MetroReloadRole; appId: string; timeoutMs?: number; broadcastOnMiss?: boolean },
 ): Promise<MetroReloadResult> {
   const roleName = ROLE_NAMES[role];
   return new Promise((resolve) => {
@@ -90,6 +99,15 @@ export function reloadThroughMetro(
           const query = peerQuery(metadata);
           return query ? peerMatches(query, role, appId) : false;
         });
+        if (rolePeers.length === 0 && !broadcastOnMiss) {
+          finish({
+            failed: true,
+            noPeer: true,
+            peers,
+            reason: `No ${roleName} React Native app is connected to Metro on port ${port}.`,
+          });
+          return;
+        }
         if (rolePeers.length === 0) {
           // Matching is best-effort -- a peer can carry no query at all, or a
           // shape these matchers do not read -- so an unmatched app may still be

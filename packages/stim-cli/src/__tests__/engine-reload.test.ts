@@ -100,6 +100,20 @@ test('Metro reload reports no peer when another package is connected on Android'
   });
 });
 
+test('with broadcastOnMiss off, a missing peer sends no reload at all', async () => {
+  const harness = peerServer(peers({ 'client#1': IOS_PEER }));
+
+  await withServer(harness, async (port) => {
+    const result = await reloadThroughMetro(port, {
+      role: 'android',
+      appId: 'com.example.android',
+      broadcastOnMiss: false,
+    });
+    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 1 });
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
+  });
+});
+
 // An iOS app whose first bundle fails never opens a packager connection at all:
 // bridgeless RCTInstance resolves DevSettings only in _loadJSBundle's success
 // callback, and RCTDevSettings.initialize is what both opens the /message socket

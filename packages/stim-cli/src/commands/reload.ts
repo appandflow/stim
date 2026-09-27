@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
-import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
+import { androidAppProcess, ensureMetroReverse, iosAppProcess } from '../engine/app-install.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
@@ -29,6 +29,7 @@ interface ReloadFacts {
   metroPort: number | null;
   strategy: 'metro-websocket' | 'metro-broadcast' | 'cdp';
   targets: number | null;
+  reverseRestored: string[];
 }
 
 interface ReloadFailure {
@@ -63,6 +64,8 @@ export interface ReloadDeps {
   reloadMetro: typeof reloadThroughMetro;
   readBrowser: (root: string) => (WebRecord & { targetId: string }) | 'unverified' | null;
   reloadPage: (record: WebRecord & { targetId: string }) => Promise<string>;
+  ensureReverse: (serial: string, metroPort: number) => ReturnType<typeof ensureMetroReverse>;
+  sleep: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
@@ -80,7 +83,13 @@ const DEFAULT_DEPS: ReloadDeps = {
     return facts?.status === 'unverified' ? 'unverified' : liveWebRecord(facts?.record ?? null);
   },
   reloadPage: (record) => sendToOwnedPage(record, 'Page.reload'),
+  ensureReverse: (serial, metroPort) => ensureMetroReverse({ serial, metroPort }),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
+
+// React Native's Android packager connection retries every 2 seconds, so a restored reverse is picked up within a few.
+const RECONNECT_POLL_MS = 500;
+const RECONNECT_POLLS = 16;
 
 function failure(code: string, message: string, remedy: string | null): ReloadFailure {
   return { code, message, remedy };
@@ -118,6 +127,7 @@ async function reloadBrowser(
       metroPort: metroPort !== null && new URL(browser.url).port === String(metroPort) ? metroPort : null,
       strategy: 'cdp',
       targets: 1,
+      reverseRestored: [],
     },
   };
 }
@@ -382,7 +392,32 @@ export async function runReload({
   const stopped = processFailure(target.platform, target.record, d, target.slot);
   if (stopped) return { ok: false, error: stopped };
 
-  const reloaded = await d.reloadMetro(port, { role: target.platform, appId: target.record.appId });
+  const reverseRestored: string[] = [];
+  if (target.platform === 'android') {
+    for (const candidate of live) {
+      if (candidate.platform !== 'android' || candidate.record.release || candidate.record.metroPort !== port) continue;
+      const serial = candidate.record.deviceId;
+      const ensured = d.ensureReverse(serial, port);
+      if (ensured.failed) {
+        return {
+          ok: false,
+          error: failure(
+            'STIM_RELOAD_FAILED',
+            `Stim could not check or restore the adb reverse for Metro port ${port} on ${serial}: ${ensured.reason}`,
+            `Run \`adb -s ${serial} reverse tcp:${port} tcp:${port}\`, then \`stim reload android\` again.`,
+          ),
+        };
+      }
+      if (ensured.restored) reverseRestored.push(serial);
+    }
+  }
+
+  const request = { role: target.platform, appId: target.record.appId };
+  let reloaded = await d.reloadMetro(port, { ...request, broadcastOnMiss: reverseRestored.length === 0 });
+  for (let poll = 1; reverseRestored.length && reloaded.noPeer && poll < RECONNECT_POLLS; poll++) {
+    await d.sleep(RECONNECT_POLL_MS);
+    reloaded = await d.reloadMetro(port, { ...request, broadcastOnMiss: poll === RECONNECT_POLLS - 1 });
+  }
   if (!reloaded.ok) {
     const stoppedAfterMetro = processFailure(target.platform, target.record, d, target.slot);
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
@@ -413,6 +448,7 @@ export async function runReload({
       metroPort: port,
       strategy,
       targets: reloaded.targets ?? null,
+      reverseRestored,
     },
   };
 }
@@ -475,8 +511,11 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
             : facts.targets && facts.targets > 1
               ? ` ${facts.targets} devices are running this app on that Metro and the reload request addressed all of them, not only ${facts.deviceId}.`
               : '';
+        const restored = facts.reverseRestored.length
+          ? ` The adb reverse for tcp:${facts.metroPort} was missing on ${facts.reverseRestored.join(', ')}, so Stim restored it first.`
+          : '';
         console.log(
-          `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}.${scope} Completion is not observed; verify the expected UI and run stim logs --errors.`,
+          `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}.${restored}${scope} Completion is not observed; verify the expected UI and run stim logs --errors.`,
         );
       }
     });
