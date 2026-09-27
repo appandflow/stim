@@ -21,6 +21,7 @@ import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
 import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
 import {
   filtersActive,
@@ -39,11 +40,6 @@ const FUNNEL_ICON = require('@/assets/icons/funnel.png');
 const PLUS_ICON = require('@/assets/icons/plus.png');
 const WORDMARK = require('@/assets/images/wordmark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
-const AGENT_PROMPTS = [
-  'Run the app on iOS.',
-  'Make this change in a separate worktree and validate it on iOS.',
-  'Show app errors from the last 10 minutes.',
-];
 
 export function Home() {
   const { theme } = useUnistyles();
@@ -295,6 +291,7 @@ function HomeEmpty({
 }) {
   const { theme } = useUnistyles();
   const { macs, connections } = useMacs();
+  const [prompts] = useState(() => pickPrompts(AGENT_PROMPTS, 3));
   const [copied, setCopied] = useState<string | null>(null);
   const loading =
     macs === null ||
@@ -321,7 +318,7 @@ function HomeEmpty({
           Tap a prompt to copy it for your coding agent.
         </Text>
         <View style={styles.prompts}>
-          {AGENT_PROMPTS.map((prompt) => (
+          {prompts.map((prompt) => (
             <Card
               key={prompt}
               onPress={() => void Clipboard.setStringAsync(prompt).then(() => setCopied(prompt))}
