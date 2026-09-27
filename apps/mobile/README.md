@@ -280,8 +280,8 @@ on started or finished. Each category has its own switch:
   device viewer.
 - **Agent looks stuck**: an agent drove the workspace, a device is still up,
   and nothing happened for the **Stuck after** time (15 minutes by default):
-  no agent action, build, reload, app log record or new log error. It opens the
-  device viewer.
+  no agent action, build, reload or new log error. App log records do not
+  count, since an idle app keeps logging. It opens the device viewer.
 - **Agent repeats the same failure**: three or more builds in a row failed at
   the same first compiler error (`Same Swift error 3x at
 AppDelegate.swift:71`), or with the same error code, such as an app that

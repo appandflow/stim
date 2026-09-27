@@ -42,6 +42,18 @@ Notifications.setNotificationHandler({
   },
 });
 
+async function createChannels(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(CHANNEL, {
+    name: 'Needs attention',
+    importance: AndroidImportance.HIGH,
+  });
+  await Notifications.setNotificationChannelAsync(QUIET_CHANNEL, {
+    name: 'Work started',
+    importance: AndroidImportance.LOW,
+  });
+}
+
 const localMinuteOfDay = (now: number) => {
   const date = new Date(now);
   return date.getHours() * 60 + date.getMinutes();
@@ -78,16 +90,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const enable = useCallback(async () => {
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync(CHANNEL, {
-        name: 'Needs attention',
-        importance: AndroidImportance.HIGH,
-      });
-      await Notifications.setNotificationChannelAsync(QUIET_CHANNEL, {
-        name: 'Work started',
-        importance: AndroidImportance.LOW,
-      });
-    }
+    await createChannels();
     let permission = await Notifications.getPermissionsAsync();
     if (!permission.granted && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
     if (!permission.granted) {
@@ -167,6 +170,7 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
   const [active, setActive] = useState(AppState.currentState === 'active');
 
   useEffect(() => {
+    void createChannels().catch(() => {});
     awakeSince.current = Date.now();
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active') awakeSince.current = Date.now();
