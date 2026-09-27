@@ -139,7 +139,7 @@ export function Settings() {
                 />
               ))
             : null}
-          {prefs.enabled ? (
+          {prefs.enabled && prefs.categories.includes('stuck') ? (
             <Choice
               colors={colors}
               title="Stuck after"

@@ -309,6 +309,7 @@ function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
           if (!current() || !(cause instanceof RequestError)) return;
           storage.remove(`${PUSHED_PREFIX}${mac.id}`);
           setPushed(mac.id, false);
+          if (cause.error.code === 'bad-request') connection.request('push.unregister', {}).catch(() => {});
         },
       );
     }
@@ -325,7 +326,7 @@ function NotificationTaps() {
   useEffect(() => {
     if (!response || macs === null) return;
     if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
-    const id = response.notification.request.identifier;
+    const id = `${response.notification.request.identifier}@${response.notification.date}`;
     if (storage.getString(HANDLED_KEY) === id) return;
     storage.set(HANDLED_KEY, id);
     const route = notificationRoute(
