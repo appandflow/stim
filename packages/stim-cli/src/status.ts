@@ -301,8 +301,9 @@ export function environmentState(
   };
 }
 
-/** Sets each environment's `memoryMb` to the sum of its owners in `machine`, replacing the estimate. */
+/** Sets each environment's `memoryMb` to the sum of its owners' footprints; without footprints it keeps the estimate. */
 export function applyMachineMemory(states: EnvironmentState[], machine: MachineUsageState): void {
+  if (machine.memorySource !== 'footprint') return;
   for (const state of states) {
     state.memoryMb = machine.owners.reduce(
       (sum, owner) => (owner.workspace === state.path ? sum + owner.memoryMb : sum),

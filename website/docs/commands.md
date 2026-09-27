@@ -708,13 +708,13 @@ process counts in exactly one owner. `owned` marks what Stim can stop: a
 workspace's owned device with `stim stop --slot <name>`, and its Metro with
 `stim stop`. `memoryMb` is the physical footprint Activity Monitor shows, read
 by a small helper that Stim compiles with the Xcode command line tools on
-first use. Without them, and on Linux and Windows, `machine.memorySource` is
-`rss` and `memoryMb` falls back to resident memory, which counts pages shared
-between processes once per process, so a simulator reads up to three times its
-footprint. An environment's `memoryMb` sums its own owners, and its
-`memorySource` says which figure that is. `machine` is `null` when nothing
-runs; status then reads no process table, and `memoryMb` is the fixed estimate
-the memory budget uses (`memorySource: "estimate"`). `stim guide facts status`
+first use. Without them, and on Linux, `machine.memorySource` is `rss` and
+owners' `memoryMb` falls back to resident memory, which counts pages shared
+between processes once per process, so a simulator reads many times its
+footprint. An environment's `memoryMb` sums its own owners' footprints, builds
+included, with `memorySource: "footprint"`. Without a footprint, or when
+nothing runs and `machine` is `null`, it is the fixed estimate the memory
+budget uses, with `memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
 `--watch` keeps running and prints the status again each time it changes.

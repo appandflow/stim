@@ -251,12 +251,12 @@ export interface EnvironmentState {
   live: boolean;
   /**
    * The memory this workspace's processes use, as `memorySource` says: the sum of its `machine` owners' `memoryMb`
-   * when status read the process table, or else a fixed estimate per booted simulator, detected emulator, running
+   * when status read their footprints, or else a fixed estimate per booted simulator, detected emulator, running
    * Metro and running Chrome. `capacity.committedMb` sums it.
    */
   memoryMb: number;
   /** How `memoryMb` was obtained; absent from payloads written before it existed, which carry the estimate. */
-  memorySource?: MemorySource;
+  memorySource?: Exclude<MemorySource, 'rss'>;
   warnings: string[];
   issues: StatusIssue[];
   ios?: {
@@ -320,8 +320,8 @@ export interface DeviceLeaseState {
 /**
  * Where a memory figure comes from. `footprint` is each process's physical footprint, which Activity Monitor's Memory
  * column shows. `rss` sums resident set sizes, which count pages shared between processes once per process, so a
- * simulator reports well above its footprint; status falls back to it when the footprint helper cannot be built.
- * `estimate` is a fixed amount per running thing, used when status read no process table.
+ * simulator reports well above its footprint; the machine owners fall back to it when the footprint helper cannot be
+ * built. `estimate` is a fixed amount per running thing, which an environment reports whenever it has no footprint.
  */
 export const MEMORY_SOURCES = ['footprint', 'rss', 'estimate'] as const;
 

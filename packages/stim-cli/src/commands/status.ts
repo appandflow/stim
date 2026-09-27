@@ -478,8 +478,8 @@ function renderStatus(
 
   out.push(
     chalk.dim(
-      machine
-        ? `\n${cap.liveCount} live environment(s) use ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)}${machine.memorySource === 'rss' ? ' (summed resident size, which overstates simulators)' : ''}.`
+      machine?.memorySource === 'footprint'
+        ? `\n${cap.liveCount} live environment(s) use ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)}.`
         : `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );

@@ -336,15 +336,15 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
 });
 
-test('status --json attributes each simulator tree to its workspace and sums RSS without the helper', async () => {
+test('without the helper, owners carry RSS and environments keep the estimate', async () => {
   setBootedSims(TWO_SIMS_PS);
   saveTwoSimProjects();
 
   const payload = await runStatusJson();
 
   expect(payload.machine.memorySource).toBe('rss');
-  expect(payload.environments.map((e: { memoryMb: number }) => e.memoryMb)).toEqual([510, 210]);
-  expect(payload.environments.map((e: { memorySource: string }) => e.memorySource)).toEqual(['rss', 'rss']);
+  expect(payload.environments.map((e: { memoryMb: number }) => e.memoryMb)).toEqual([1500, 1500]);
+  expect(payload.environments.map((e: { memorySource: string }) => e.memorySource)).toEqual(['estimate', 'estimate']);
   expect(
     payload.machine.owners.map(
       (o: { name: string; workspace: string | null; residentMb: number; cpuPercent: number }) => [

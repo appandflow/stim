@@ -18,8 +18,6 @@ async function buildHelper(): Promise<string | null> {
   if (!exec.runFileQuiet('xcode-select', ['-p'], { timeoutMs: READ_TIMEOUT_MS })) return null;
   const source = helperSource();
   try {
-    // The version is left out of the cache key: the helper calls only libproc, so a binary built by an older
-    // compiler keeps working, and probing `swiftc --version` would cost more than the read on every status.
     return await compiledHelper({
       dir: join(configDir(), 'helpers'),
       name: 'stim-footprint',

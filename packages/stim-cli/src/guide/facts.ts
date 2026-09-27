@@ -918,19 +918,21 @@ RULES
   There is no completion fraction: a compile's log volume depends on what
   is already built, so it does not measure progress.
 
-  An environment's memoryMb is what its own processes use now: the sum of
-  memoryMb over the machine owners whose workspace is that environment.
-  memorySource says how it was obtained:
+  memorySource says how a memory figure was obtained:
 
   footprint  physical footprint, the figure Activity Monitor's Memory
              column shows, read by a small helper Stim compiles with the
              Xcode command line tools into $STIM_HOME/helpers on first use
-  rss        summed resident set size, when the helper cannot be built
-             (no Xcode command line tools, Linux, Windows). It overstates
-             a simulator up to three times.
+  rss        summed resident set size, for machine owners when the helper
+             cannot be built (no Xcode command line tools, Linux). It
+             overstates a simulator many times over.
   estimate   a fixed amount per booted simulator, detected emulator,
-             running Metro and running Chrome, when status read no process
-             table because nothing runs or ps failed
+             running Metro and running Chrome
+
+  An environment's memoryMb is what its own processes use now, the sum of
+  memoryMb over the machine owners whose workspace is that environment,
+  builds included, when machine.memorySource is footprint. Otherwise it is
+  the estimate, with memorySource estimate.
 
   capacity.committedMb sums memoryMb. The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
