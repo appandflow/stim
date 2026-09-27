@@ -37,9 +37,9 @@ relaunch hides a Metro error from the unfiltered query, --slot <name> for the
 slot that printed it still shows it.
 
 FLAGS
-  --slot <name>   only this slot's records plus the shared untagged Metro and
-                  client records (default also includes untagged legacy
-                  records)
+  --slot <name>   only this slot's records plus, once it has launched, the
+                  shared untagged Metro and app client records (not the web
+                  page's); default also includes untagged legacy records
   --source <s...>  metro, client, device, build, agent (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
@@ -110,10 +110,12 @@ FLAGS
       it, and the newest bundle of any platform resets Metro errors; with
       --slot <name>, that slot's newest launch and the newest bundle of a
       platform it launched do. Metro records that name their platform (bare
-      React Native bundle records; Expo's "iOS Bundled" / "Android Bundled"
-      lines for bundle markers) follow only that platform. A single slot that
-      runs both iOS and Android still shares one window for untagged Metro
-      errors.
+      React Native bundle records; the "iOS Bundled" / "Android Bundled" /
+      "RSC(iOS) Bundled" tag Expo prints for bundle markers, so a "DOM
+      Bundled" line does not close a native slot's window) follow only that
+      platform, and a slot query leaves out those of a platform it never
+      launched. A single slot that runs both iOS and Android still shares one
+      window for untagged Metro errors.
     a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
       load of the page's top-level document) resets only the page's records,
       those with platform web. It is written when the load starts, so a

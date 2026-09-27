@@ -783,6 +783,34 @@ describe('shared Metro and client errors across slots', () => {
     expect(errors('ios18')).toEqual([]);
   });
 
+  test('a slot that never launched gets no shared records', () => {
+    expect(errors('ipad')).toEqual([]);
+  });
+
+  test('a slot query leaves out shared records tagged with a platform the slot never launched', () => {
+    appendFileSync(
+      join(dir, 'metro.ndjson'),
+      `${JSON.stringify({ ts: 50, src: 'metro', level: 'error', platform: 'android', msg: 'bundle response failed' })}\n`,
+    );
+    expect(errors('ios18')).toEqual(['iOS threw', 'Android threw']);
+    expect(errors('default')).toEqual(['page threw', 'bundle response failed']);
+  });
+
+  test('an Expo environment bundle tag closes only its own platform', () => {
+    appendFileSync(join(dir, 'metro.ndjson'), `${JSON.stringify(bundled(46, 'DOM'))}\n`);
+    expect(errors('ios18')).toEqual(['iOS threw', 'Android threw']);
+    appendFileSync(join(dir, 'metro.ndjson'), `${JSON.stringify(bundled(48, 'RSC(iOS)'))}\n`);
+    expect(errors('ios18')).toEqual([]);
+  });
+
+  test('a record tagged with a platform that never launched keeps the newest launch as its window', () => {
+    writeLog('build-android.ndjson', []);
+    writeLog('metro.ndjson', [
+      { ts: 5, src: 'metro', level: 'error', platform: 'android', msg: 'android failed before any android launch' },
+    ]);
+    expect(errors()).toEqual(['page threw']);
+  });
+
   test('a Metro record that names its platform follows only that platform', () => {
     writeLog('metro.ndjson', [
       { ts: 12, src: 'metro', level: 'info', marker: true, platform: 'ios', msg: 'bundle build done' },
