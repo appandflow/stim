@@ -289,6 +289,16 @@ export interface DeviceProcessTables {
   clients?(): HostProcess[] | null;
 }
 
+function lsofArgs(port: number): string[] {
+  return ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED', '-Fpn'];
+}
+
+// lsof exits 1 with empty output when no connection matches.
+function lsofNoMatch(error: unknown): string | null {
+  const stdout = (error as { status?: unknown; stdout?: unknown }).stdout;
+  return (error as { status?: unknown }).status === 1 && (stdout === '' || stdout === undefined) ? '' : null;
+}
+
 export function createDeviceProcessTables(): DeviceProcessTables {
   const exec = getExecutor();
   let host: HostProcess[] | null | undefined;
@@ -299,11 +309,9 @@ export function createDeviceProcessTables(): DeviceProcessTables {
       if (!tcp.has(port)) {
         let output: string | null;
         try {
-          output = exec.runFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED', '-Fpn'], { timeoutMs: 5000 });
+          output = exec.runFile('lsof', lsofArgs(port), { timeoutMs: 5000 });
         } catch (error) {
-          // lsof exits 1 with empty output when no connection matches.
-          const stdout = (error as { status?: unknown; stdout?: unknown }).stdout;
-          output = (error as { status?: unknown }).status === 1 && (stdout === '' || stdout === undefined) ? '' : null;
+          output = lsofNoMatch(error);
         }
         tcp.set(port, output);
       }
@@ -470,9 +478,46 @@ export interface WebActivityTarget {
   workspace: string;
 }
 
+function webClientPids(connections: string, target: Omit<WebActivityTarget, 'workspace'>): number[] {
+  return parseTcpClients(connections, target.port).filter((pid) => !target.ownPids.includes(pid));
+}
+
+function webDrivers(clients: readonly number[], processes: readonly HostProcess[]): ActivityDriver[] {
+  return clients.flatMap((pid) => {
+    const row = processes.find((candidate) => candidate.pid === pid);
+    const tool = row ? cdpClientTool(row.command) : 'unknown DevTools client';
+    return tool ? [{ tool, pid, since: row?.startedAt ?? null }] : [];
+  });
+}
+
 /**
- * The owned browser's activity: a DevTools client other than Stim's is a driver (basis `cdp-client`), and the page's
- * newest log record gives recency (basis `page-log`).
+ * The DevTools clients of the owned browser that are not Stim's, read without blocking the event loop; null when
+ * lsof or ps could not be read.
+ */
+export async function probeWebDrivers(target: Omit<WebActivityTarget, 'workspace'>): Promise<ActivityDriver[] | null> {
+  const exec = getExecutor();
+  let connections: string | null;
+  try {
+    connections = await exec.runFileAsync('lsof', lsofArgs(target.port), { timeoutMs: 5000 });
+  } catch (error) {
+    connections = lsofNoMatch(error);
+  }
+  if (connections === null) return null;
+  const clients = webClientPids(connections, target);
+  if (!clients.length) return [];
+  let table: string;
+  try {
+    table = await exec.runFileAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 5000 });
+  } catch {
+    return null;
+  }
+  return webDrivers(clients, parseProcessTable(table));
+}
+
+/**
+ * The owned browser's activity: a DevTools client other than Stim's is a driver (basis `cdp-client`). Recency comes
+ * from the newest agent action the browser supervisor recorded (basis `agent-action`) and the newest other page
+ * record (basis `page-log`).
  */
 export function readWebActivity(
   target: WebActivityTarget,
@@ -481,20 +526,14 @@ export function readWebActivity(
 ): DeviceActivity {
   const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
   const connections = tables.tcpConnections(target.port);
-  const clients =
-    connections === null
-      ? []
-      : parseTcpClients(connections, target.port).filter((pid) => !target.ownPids.includes(pid));
+  const clients = connections === null ? [] : webClientPids(connections, target);
   const processes = clients.length ? (tables.clients ?? tables.host)() : [];
   if (connections === null || processes === null) evidence.unknown.push('cdp-client');
-  else {
-    for (const pid of clients) {
-      const row = processes.find((candidate) => candidate.pid === pid);
-      const tool = row ? cdpClientTool(row.command) : 'unknown DevTools client';
-      if (tool) evidence.drivers.push({ basis: 'cdp-client', tool, pid, since: row?.startedAt ?? null });
-    }
-  }
-  const pageAt = latestRecordAt(tailLines(join(workspaceLogsDir(target.workspace), 'web.ndjson')) ?? [], () => true);
+  else for (const driver of webDrivers(clients, processes)) evidence.drivers.push({ ...driver, basis: 'cdp-client' });
+  const lines = tailLines(join(workspaceLogsDir(target.workspace), 'web.ndjson')) ?? [];
+  const actionAt = latestRecordAt(lines, (record) => record.src === 'agent');
+  if (actionAt !== null) evidence.recency.push({ basis: 'agent-action', at: actionAt });
+  const pageAt = latestRecordAt(lines, (record) => record.src !== 'agent');
   if (pageAt !== null) evidence.recency.push({ basis: 'page-log', at: pageAt });
   return classifyActivity(evidence, now);
 }

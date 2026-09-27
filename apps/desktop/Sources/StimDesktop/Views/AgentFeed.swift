@@ -65,11 +65,11 @@ struct AgentFeed: View {
         .padding(Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
-        .help("stim logs --source agent: what agent-device did on this device")
+        .help("stim logs --source agent: what an agent did on this device")
       }
     }
     .task(id: device.activityKey.map { RunKey(workspace: workspace, slot: device.slot, deviceID: $0) }) {
-      guard device.platform != "web", let deviceID = device.activityKey else { return }
+      guard let deviceID = device.activityKey else { return }
       let cli = await cli.value
       guard !Task.isCancelled else { return }
       model.start(cli: cli, workspace: workspace, slot: device.slot, deviceID: deviceID)

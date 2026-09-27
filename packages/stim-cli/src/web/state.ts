@@ -149,12 +149,14 @@ const NAVIGATION = Buffer.from('"event":"web_navigation"');
 const PAGE_EVENT = '"event":"web_';
 
 /**
- * The latest page load in the web log's `lines`: the newest `web_navigation` marker, and whether a document
- * failure, a crash or the load event followed it. Null before the first navigation.
+ * The latest page load in the web log's `lines`: the newest `web_navigation` marker, whether a document failure, a
+ * crash or the load event followed it, and the newest in-app route change after it. Null before the first
+ * navigation.
  */
 export function latestPageLoad(lines: readonly string[]): WebPageState | null {
   let failure: string | null = null;
   let loaded = false;
+  let route: string | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
     let record: { event?: unknown; msg?: unknown; url?: unknown };
     try {
@@ -163,10 +165,12 @@ export function latestPageLoad(lines: readonly string[]): WebPageState | null {
       continue;
     }
     if (record.event === 'web_navigation' && typeof record.url === 'string') {
-      if (failure !== null) return { url: record.url, state: 'failed', error: failure };
-      return { url: record.url, state: loaded ? 'loaded' : 'loading' };
+      const moved = route !== null && route !== record.url ? { route } : {};
+      if (failure !== null) return { url: record.url, state: 'failed', error: failure, ...moved };
+      return { url: record.url, state: loaded ? 'loaded' : 'loading', ...moved };
     }
     if (typeof record.event !== 'string') continue;
+    if (record.event === 'web_route' && typeof record.url === 'string') route ??= record.url;
     if (PAGE_FAILURES.has(record.event)) failure = typeof record.msg === 'string' ? record.msg : record.event;
     else if (record.event === 'web_page_loaded') loaded = true;
   }

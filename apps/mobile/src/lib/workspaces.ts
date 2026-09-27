@@ -177,11 +177,12 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
 }
 
 function webDevice(web: WebBrowserState): DeviceRef {
+  const url = web.page?.route ?? web.page?.url ?? web.url;
   return {
     platform: 'web',
     slot: 'default',
     id: web.targetId ?? null,
-    name: shortUrl(web.page?.url ?? web.url),
+    name: shortUrl(url),
     model: 'Web',
     state: web.running ? 'running' : 'closed',
     running: web.running,
@@ -189,7 +190,7 @@ function webDevice(web: WebBrowserState): DeviceRef {
     physical: false,
     activity: web.activity,
     page: {
-      url: web.page?.url ?? web.url,
+      url,
       error: web.running && web.page?.state === 'failed' ? (web.page.error ?? 'The page failed to load.') : null,
     },
   };

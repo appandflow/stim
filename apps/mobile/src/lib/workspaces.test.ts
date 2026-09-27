@@ -140,6 +140,28 @@ describe('the Stim-owned Chrome', () => {
     expect(shortUrl(device!.page!.url)).toBe('localhost:5173/apps/groups');
     expect(livePlatforms(env('/w', { web }))).toEqual(['web']);
   });
+
+  it('shows the in-app route the page moved to after its document loaded', () => {
+    const web: WebBrowserState = {
+      browser: 'chrome',
+      version: null,
+      running: true,
+      pid: 1,
+      supervisorPid: 2,
+      url: 'http://localhost:5173/',
+      headless: true,
+      viewport: 'desktop',
+      profile: '/p',
+      cdpEndpoint: 'http://127.0.0.1:8900',
+      targetId: 'T',
+      page: { url: 'http://localhost:5173/', state: 'loaded', route: 'http://localhost:5173/apps/groups/' },
+    };
+    const [device] = devicesOf(env('/w', { live: true, web }));
+    expect(device).toMatchObject({
+      name: 'localhost:5173/apps/groups',
+      page: { url: 'http://localhost:5173/apps/groups/', error: null },
+    });
+  });
 });
 
 describe('livePlatforms', () => {

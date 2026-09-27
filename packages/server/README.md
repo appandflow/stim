@@ -319,8 +319,9 @@ the events the device chose:
   happened for `stuckMinutes`: no agent action, build, Stim run, Metro bundle
   request or new log error. App log records do not count, because an idle app keeps
   logging: an idle Stim app writes about 200 UIKit info records a minute. The
-  owned Chrome page counts as a device, and while an agent drives it its page
-  log counts as activity, since Stim sees no agent actions there. It opens the device viewer.
+  owned Chrome page counts as a device: an attached tool's input there is an
+  agent action, and while an agent drives it its page log also counts, since an
+  agent's navigations and scripts are not agent actions. It opens the device viewer.
 - `looping`: the newest three or more iOS or Android builds failed the same
   way, at the same first compiler diagnostic `file:line`, or with the same
   error code when there is none, such as three failed launches

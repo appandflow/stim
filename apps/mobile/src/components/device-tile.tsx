@@ -122,9 +122,7 @@ export function DeviceTile({
           </Text>
         )}
       </View>
-      {streams && device.id && device.platform !== 'web' ? (
-        <AgentFeed workspace={workspace} slot={device.slot} deviceId={device.id} />
-      ) : null}
+      {streams && device.id ? <AgentFeed workspace={workspace} slot={device.slot} deviceId={device.id} /> : null}
     </Card>
   );
 }

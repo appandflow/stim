@@ -337,6 +337,28 @@ describe('readWebActivity', () => {
     });
   });
 
+  test('agent input the supervisor recorded dates agent-action, and page-log keeps to page records', () => {
+    const dir = workspaceLogsDir(workspace);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'web.ndjson'),
+      [
+        { ts: NOW - 120_000, src: 'client', msg: 'hi' },
+        { ts: NOW - 60_000, src: 'agent', event: 'agent_action', msg: 'Clicked button "Save"' },
+      ]
+        .map((record) => `${JSON.stringify(record)}\n`)
+        .join(''),
+    );
+    const activity = readWebActivity(target, tables(chromeSide, []), NOW);
+    expect(activity).toMatchObject({
+      lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      recent: {
+        'agent-action': new Date(NOW - 60_000).toISOString(),
+        'page-log': new Date(NOW - 120_000).toISOString(),
+      },
+    });
+  });
+
   test('an unreadable connection list is unknown, never idle', () => {
     expect(readWebActivity(target, tables(null, []), NOW)).toMatchObject({ state: 'unknown', basis: ['cdp-client'] });
   });

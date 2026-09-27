@@ -173,7 +173,7 @@ export default function logsCommand(program: Command): void {
   program
     .command('logs')
     .description(
-      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build, agent-device actions). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
+      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build, agent actions). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
     )
     .option(
       '--slot <name>',
