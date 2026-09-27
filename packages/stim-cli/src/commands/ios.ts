@@ -528,6 +528,7 @@ async function runIos(
       root,
       backend: remoteBackend,
       easBin: d.resolveEasCliBin(root)?.file ?? null,
+      deviceType: opts.deviceType?.trim() || null,
     });
     if ('failed' in resolved) {
       return fail({ code: resolved.code ?? REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
@@ -771,6 +772,7 @@ async function runIos(
               platform: PLATFORM,
               sessionName: ownedSessionName(remoteDevice.ctx.label),
               startedAt: new Date(d.now()).toISOString(),
+              deviceType: remoteDevice.ctx.deviceType ?? null,
               boot,
               createdSessionId: remoteDevice.createdSessionId,
               abandonCreatedSession: remoteDevice.abandonCreatedSession,

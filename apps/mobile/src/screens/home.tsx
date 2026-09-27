@@ -29,7 +29,7 @@ import {
   type DeviceTileItem,
   type HomeItem,
 } from '@/lib/home';
-import { isActive } from '@/lib/workspaces';
+import { isShownLive } from '@/lib/workspaces';
 import { MacList } from '@/screens/mac-list';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
@@ -71,8 +71,8 @@ export function Home() {
   );
   const { shown, hiddenByActivity } = useMemo(() => filterWorkspaces(items, filters, macIds), [items, filters, macIds]);
   const sections = useMemo(() => {
-    const live = shown.filter((item) => isActive(item.env));
-    const idle = shown.filter((item) => !isActive(item.env));
+    const live = shown.filter((item) => isShownLive(item.env));
+    const idle = shown.filter((item) => !isShownLive(item.env));
     return [
       { title: 'Live', data: live },
       { title: 'Idle', data: idle },

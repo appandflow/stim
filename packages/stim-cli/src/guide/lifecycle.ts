@@ -108,6 +108,17 @@ ambiguous no-platform request. Every reload goes over this workspace's Metro
 websocket, on both platforms. It never reopens a development-client URL,
 because that restarts the app rather than reloading its JavaScript.
 
+An Android reload first lists \`adb reverse\` on each live owned emulator
+launched against this Metro and re-applies the Metro port's reverse where it is
+missing. adb ties a reverse to its transport, and a transport that drops and
+reconnects comes back without it and without any error, which leaves the app
+cut off from Metro and Fast Refresh. After restoring one, Stim waits up to 8
+seconds, sending nothing, until the app on every emulator it checked is
+connected again, then sends the reload once. A dev server that cannot name
+its clients (bare React Native) gets a fixed 2.5-second wait instead. \`reverseRestored\` in the
+facts names the serials it restored. \`stim status\` reports the same loss as
+the android-reverse-missing issue.
+
 How the message is addressed depends on the dev server, and \`strategy\` in
 the facts reports which you got. Where Metro can name its clients, Stim
 addresses every peer matching the platform and reports \`metro-websocket\`. A
@@ -1317,6 +1328,12 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   worktrees of the same Git repository; the source checkout must be available.
   Running it in the source checkout refuses.
 
+  Warm registers the app it prepares, so \`stim status\` lists the workspace
+  with phase "warming" while it runs and "ready" once it succeeds, until the
+  first start, ios, android, web or reload there or for 2 hours
+  (\`guide facts status\`). In a monorepo worktree root, that app is the one
+  the source checkout has registered.
+
   \`stim doctor\` reports the source checkout's fitness as a seed -- how far
   behind its upstream it is, uncommitted tracked changes, an interrupted rebase
   or merge, a detached HEAD, a diverged branch, a branch that is not the
@@ -1476,13 +1493,20 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   runtime when \`--runtime\` also resolved, which is what catches a pair like
   \`--device-type "iPhone 8" --runtime 26.5\` that each half would pass alone.
   \`--runtime\` takes a version (\`26.5\`) or a runtime's full name
-  (\`iOS 26.5\`), exactly; no prefix or suffix matches. Both flags choose
-  the local owned simulator only: with \`--remote\` or the ios.remote setting
-  they refuse with STIM_BAD_ARG, because the remote backend picks its own
-  device. The ios.deviceType and ios.runtime settings do not refuse there;
-  a remote run ignores them. \`android --system-image\` and
-  \`--device-profile\` follow the same rule with \`--remote\` or the
-  android.remote setting, and a remote run ignores android.systemImage and
+  (\`iOS 26.5\`), exactly; no prefix or suffix matches. On a remote run
+  (\`--remote\` or the ios.remote setting) \`--runtime\` refuses with
+  STIM_BAD_ARG, because the remote backend picks the iOS version. So does
+  \`--device-type\` on the proxy backend. The eas backend honors
+  \`--device-type\`: Stim passes it to \`eas simulator:start --device\`,
+  unchecked against local runtimes, and refuses with STIM_BAD_ARG when
+  eas-cli is older than 22.2.0, the first release with that flag. A
+  recorded EAS session still running another model refuses with
+  STIM_REMOTE_DEVICE_MISMATCH instead of being reused; one that already
+  ended is replaced on the requested model. The ios.deviceType and
+  ios.runtime settings do not refuse on a remote run; it ignores them.
+  \`android --system-image\` and \`--device-profile\` refuse with
+  STIM_BAD_ARG on every remote run (\`--remote\` or the android.remote
+  setting), and a remote run ignores android.systemImage and
   android.deviceProfile.
 
   These flags describe a device that does not exist yet. When this workspace

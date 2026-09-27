@@ -53,6 +53,7 @@ const TERMINAL_SESSION_STATUSES = new Set(['STOPPED', 'ERRORED']);
 const SESSION_PLATFORMS = new Set(['ios', 'android']);
 
 export const MIN_EAS_CLI_SIMULATOR_VERSION: string = '21.6.0';
+export const MIN_EAS_CLI_DEVICE_VERSION: string = '22.2.0';
 
 export function easCliUpgradeRemedy(minimum: string): string {
   return `Upgrade eas-cli to ${minimum} or later (\`npm install --global eas-cli@latest\`, or the project's eas-cli dependency)`;
@@ -80,10 +81,12 @@ export function createSessionArgs({
   label,
   platform,
   maxDurationMinutes = null,
+  device = null,
 }: {
   label: string;
   platform: 'ios' | 'android';
   maxDurationMinutes?: number | null;
+  device?: string | null;
 }): string[] {
   // eas-cli's default output writes .env.eas-simulator; env output keeps project files unchanged.
   const args = [
@@ -99,6 +102,7 @@ export function createSessionArgs({
   ];
   // EAS duration limits vary by account, so omit the flag unless the caller sets a limit.
   if (maxDurationMinutes) args.push('--max-duration-minutes', String(maxDurationMinutes));
+  if (device) args.push('--device', device);
   return args;
 }
 

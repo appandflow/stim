@@ -103,7 +103,8 @@ struct AttentionView: View {
       Text(env.names.title).font(.stim(.body, weight: .semibold))
       Text(store.project(of: env).name).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       Spacer()
-      Text(env.live ? "live" : "idle").font(.stim(.footnote)).foregroundStyle(env.live ? Palette.success : Palette.tertiary)
+      Text(env.live ? "live" : env.isSettingUp ? (env.phase ?? "idle") : "idle").font(.stim(.footnote))
+        .foregroundStyle(env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary)
     }
     .padding(.horizontal, Space.xl)
     .padding(.top, Space.lg)
