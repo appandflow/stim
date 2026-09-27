@@ -71,6 +71,7 @@ struct StimDesktopApp: App {
   private let cli: Task<StimCLI, Never>
 
   init() {
+    CrashReporter.start()
     BrandAssets.registerFonts()
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
     AppPreferences.migrate(.standard)

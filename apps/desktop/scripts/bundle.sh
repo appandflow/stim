@@ -28,6 +28,7 @@ codesign --force --sign - "$app/Contents/Frameworks/Lottie.framework"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 cp Support/Info.plist "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${SPARKLE_PUBLIC_ED_KEY:-}" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :StimSentryDSN ${STIM_DESKTOP_SENTRY_DSN:-}" "$app/Contents/Info.plist"
 cp Support/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \
@@ -39,4 +40,14 @@ xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simul
   -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist
 codesign --force --sign - "$app/Contents/Resources/sim-fold"
 codesign --force --sign - "$app"
+if [ -n "${SENTRY_AUTH_TOKEN:-}" ] && [ -n "${SENTRY_ORG:-}" ] && [ -n "${SENTRY_PROJECT:-}" ] &&
+  command -v sentry-cli >/dev/null; then
+  rm -rf build/StimDesktop.dSYM
+  if ! { dsymutil "$app/Contents/MacOS/StimDesktop" -o build/StimDesktop.dSYM &&
+    sentry-cli debug-files upload build/StimDesktop.dSYM; } >&2; then
+    echo "bundle.sh: the Sentry dSYM upload failed; the bundle is unaffected." >&2
+  fi
+else
+  echo "bundle.sh: skipping the Sentry dSYM upload; it needs SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT and sentry-cli." >&2
+fi
 echo "$PWD/$app"

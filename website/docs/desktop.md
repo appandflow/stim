@@ -24,6 +24,11 @@ from source with `apps/desktop/scripts/bundle.sh` in the meantime.
 The app checks for newer releases with Sparkle; **Stim > Check for Updates…**
 checks right away.
 
+Release builds report the app's crashes and uncaught exceptions to Sentry, with
+file paths, host names, IP addresses and credentials removed first. They send no
+screenshots, performance traces or personal data. A build from source reports
+nothing.
+
 That link always serves the newest stable release. Desktop releases are tagged
 `desktop-v<version>`, apart from the CLI's `v<version>` releases, so GitHub's
 "latest release" page shows the CLI. Every desktop version, release candidates

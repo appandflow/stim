@@ -10,6 +10,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
+    .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.29.2"),
   ],
   targets: [
     .target(name: "StimKit"),
@@ -20,7 +21,7 @@ let package = Package(
       name: "StimDesktop",
       dependencies: [
         "StimKit", "SimulatorFrames", "EmulatorFrames", "WebFrames", .product(name: "Lottie", package: "lottie-spm"),
-        .product(name: "Sparkle", package: "Sparkle"),
+        .product(name: "Sparkle", package: "Sparkle"), .product(name: "Sentry", package: "sentry-cocoa"),
       ],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
