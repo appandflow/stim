@@ -31,6 +31,7 @@ import {
   getSessionArgs,
   inspectSessionForTeardown,
   isDefinitiveMissingSessionError,
+  MIN_EAS_CLI_DEVICE_VERSION,
   MIN_EAS_CLI_SIMULATOR_VERSION,
   ownedSessionName,
   parseCreatedSession,
@@ -140,6 +141,7 @@ export interface RemoteContext {
   agentDeviceBin: string;
   platform?: 'ios' | 'android';
   maxDurationMinutes?: number | null;
+  deviceType?: string | null;
   publicMetroUrl?: string | null;
   tunnelMode?: TunnelMode;
   isExpo?: boolean;
@@ -223,6 +225,14 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         }
         if (recorded) {
           const existing = readLiveDaemon(ctx, recorded.sessionId);
+          if (existing && ctx.deviceType && recorded.deviceType !== ctx.deviceType) {
+            return {
+              failed: true,
+              code: 'STIM_REMOTE_DEVICE_MISMATCH',
+              reason: `EAS Simulator session ${recorded.sessionId} runs ${recorded.deviceType ? `"${recorded.deviceType}"` : 'the model EAS chose'}, not "${ctx.deviceType}". Stim will not reuse a session on a different model.`,
+              remedy: `Run \`stim stop\` to end that session, then run \`stim ${ctx.platform ?? 'ios'} --remote eas --device-type "${ctx.deviceType}"\` again to start one on the requested model.`,
+            };
+          }
           if (existing) {
             note(`Reusing EAS Simulator session ${recorded.sessionId}.`);
             daemon = existing;
@@ -253,6 +263,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
               label: ctx.label,
               platform: ctx.platform ?? 'ios',
               maxDurationMinutes: ctx.maxDurationMinutes ?? null,
+              device: ctx.deviceType ?? null,
             }),
             { ...easEnv, timeoutMs: EAS_SESSION_CREATE_TIMEOUT_MS, killSignal: 'SIGKILL' },
           );
@@ -444,6 +455,7 @@ export async function resolveRemoteContext({
   lookupAgentDevice = defaultLookupAgentDevice,
   readEasCliVersion = readInstalledEasCliVersion,
   maxDurationMinutes = null,
+  deviceType = null,
 }: {
   root: string;
   backend: RemoteDeviceBackend;
@@ -458,6 +470,7 @@ export async function resolveRemoteContext({
   lookupAgentDevice?: () => string | null;
   readEasCliVersion?: (easBin: string, root: string) => string | null;
   maxDurationMinutes?: number | null;
+  deviceType?: string | null;
 }): Promise<{ ctx: RemoteContext } | { failed: string; remedy: string; code?: string }> {
   const agentDeviceBin = lookupAgentDevice();
   if (!agentDeviceBin) {
@@ -501,7 +514,8 @@ export async function resolveRemoteContext({
       code: 'STIM_REMOTE_EAS_UNAVAILABLE',
     };
   } else {
-    const { supported, version } = easCliSupport(readEasCliVersion(easBin, root), MIN_EAS_CLI_SIMULATOR_VERSION);
+    const versionOutput = readEasCliVersion(easBin, root);
+    const { supported, version } = easCliSupport(versionOutput, MIN_EAS_CLI_SIMULATOR_VERSION);
     if (!supported) {
       return {
         failed: version
@@ -509,6 +523,13 @@ export async function resolveRemoteContext({
           : `Could not read an eas-cli version from \`${easBin} --version\`; the eas backend needs eas-cli ${MIN_EAS_CLI_SIMULATOR_VERSION} or later.`,
         remedy: `${easCliUpgradeRemedy(MIN_EAS_CLI_SIMULATOR_VERSION)}, then run the device command with \`--remote eas\` again.`,
         code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+      };
+    }
+    if (deviceType && !easCliSupport(versionOutput, MIN_EAS_CLI_DEVICE_VERSION).supported) {
+      return {
+        failed: `eas-cli ${version} (${easBin}) cannot choose the EAS Simulator model; --device-type on the eas backend needs eas-cli ${MIN_EAS_CLI_DEVICE_VERSION} or later.`,
+        remedy: `${easCliUpgradeRemedy(MIN_EAS_CLI_DEVICE_VERSION)}, or drop --device-type to let EAS pick the model.`,
+        code: 'STIM_BAD_ARG',
       };
     }
   }
@@ -523,6 +544,7 @@ export async function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       maxDurationMinutes,
+      deviceType: backend === 'eas' ? deviceType : null,
       publicMetroUrl: null,
       existingDaemon,
     },
@@ -641,6 +663,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   platform,
   sessionName,
   startedAt,
+  deviceType = null,
   boot,
   createdSessionId,
   abandonCreatedSession,
@@ -658,6 +681,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   platform: 'ios' | 'android';
   sessionName: string;
   startedAt: string;
+  deviceType?: string | null;
   boot: () => Promise<T>;
   createdSessionId: () => string | null;
   abandonCreatedSession: () => AbandonCreatedSessionResult;
@@ -700,7 +724,13 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
             );
             const preview = webPreviewUrl();
             writeState(root, {
-              remoteDevice: { platform, sessionId, startedAt, ...(preview ? { webPreviewUrl: preview } : {}) },
+              remoteDevice: {
+                platform,
+                sessionId,
+                startedAt,
+                ...(preview ? { webPreviewUrl: preview } : {}),
+                ...(deviceType ? { deviceType } : {}),
+              },
             });
             return booted;
           } catch (err) {
