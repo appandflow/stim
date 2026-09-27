@@ -1642,7 +1642,7 @@ describe('frames.subscribe', () => {
   );
 
   async function fakeChrome(browserPid: number): Promise<{ endpoint: string; close: () => Promise<void> }> {
-    const http = createHttpServer((request, response) => {
+    const http = createHttpServer((_, response) => {
       const { port } = http.address() as { port: number };
       response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/B` }));
     });
