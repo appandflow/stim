@@ -9,7 +9,7 @@ import IOSurface
 //   stim-frames ios <udid>
 //   stim-frames android <serial>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
-//   stim-frames iphone <udid>
+//   stim-frames iphone <udid> [name]
 //
 // A web page streams Chrome's screencast of the owned page: its JPEGs pass through as
 // frames and are decoded for video. Input on a page takes touch, text and the "back"
@@ -883,8 +883,9 @@ setvbuf(stdout, nil, _IONBF, 0)
 signal(SIGPIPE, SIG_IGN)
 let arguments = CommandLine.arguments
 let usage =
-  "usage: stim-frames ios <udid> | android <serial> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid>"
-guard arguments.count == (arguments.count > 1 && arguments[1] == "web" ? 5 : 3) else { fail(usage) }
+  "usage: stim-frames ios <udid> | android <serial> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
+let counts = ["web": [5], "iphone": [3, 4]]
+guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
@@ -905,7 +906,7 @@ case "web":
   readCommands(source)
   source.start()
 case "iphone":
-  let source = PhoneSource(udid: arguments[2])
+  let source = PhoneSource(udid: arguments[2], name: arguments.count > 3 ? arguments[3] : nil)
   Output.requestKeyframe = source.keyframe
   readCommands(source)
   source.queue.async { source.start() }

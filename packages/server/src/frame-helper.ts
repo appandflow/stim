@@ -34,7 +34,9 @@ const KEYFRAME_INTERVAL_MS = 250;
 
 function helperArgs(device: Device): string[] {
   if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
-  if (device.platform === 'ios') return [device.physical ? 'iphone' : 'ios', device.udid];
+  if (device.platform === 'ios' && device.physical)
+    return ['iphone', device.udid, ...(device.name ? [device.name] : [])];
+  if (device.platform === 'ios') return ['ios', device.udid];
   return ['android', device.serial];
 }
 

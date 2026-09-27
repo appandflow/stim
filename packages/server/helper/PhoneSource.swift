@@ -2,17 +2,23 @@ import AVFoundation
 import CoreImage
 import CoreMediaIO
 import Foundation
+import IOKit
 
 /// The screen of a USB-cabled iPhone, view only. macOS lists a cabled iPhone as an external muxed capture device,
 /// the one QuickTime's New Movie Recording shows, only after a process sets
-/// `kCMIOHardwarePropertyAllowScreenCaptureDevices`, and the device appears some seconds later. Its unique ID is
-/// the UDID without dashes. Capture runs only while a subscriber asks for frames, so the phone is free for
-/// QuickTime otherwise.
+/// `kCMIOHardwarePropertyAllowScreenCaptureDevices`, and the device appears some seconds later. Capture runs only
+/// while a subscriber asks for frames, so the phone is free for QuickTime otherwise.
+///
+/// The capture device's unique ID is a random UUID (macOS 27), and none of its CoreMediaIO properties names the
+/// UDID. The USB device does: its serial number is the UDID without dashes. So the UDID must be cabled, and the
+/// capture device is the only iOS one while one iPhone is cabled, or else the one named `name`; any other case
+/// refuses rather than guess.
 final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
   static let searchSeconds = 15.0
   static let retrySeconds = 2.0
 
   let udid: String
+  let name: String?
   let queue = DispatchQueue(label: "stim.frames.phone")
   private let captureQueue = DispatchQueue(label: "stim.frames.phone-capture")
   private var pacer: Pacer!
@@ -29,8 +35,9 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   private var observers: [NSObjectProtocol] = []
   private var watches: [NSKeyValueObservation] = []
 
-  init(udid: String) {
+  init(udid: String, name: String?) {
     self.udid = udid
+    self.name = name
     super.init()
     pacer = Pacer { [unowned self] config in
       guard let pixels = self.queue.sync(execute: { self.latest }) else { return }
@@ -38,9 +45,26 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     }
   }
 
-  static func matches(uniqueID: String, udid: String) -> Bool {
-    let normalized = { (id: String) in id.replacingOccurrences(of: "-", with: "").uppercased() }
-    return normalized(uniqueID) == normalized(udid)
+  /// The serial numbers of the iOS devices on USB, which are their UDIDs without dashes. The registry is walked
+  /// instead of matched, because macOS leaves a cabled iPhone's USB device unregistered.
+  static func cabledSerials() -> Set<String> {
+    var iterator: io_iterator_t = 0
+    guard
+      IORegistryEntryCreateIterator(
+        IORegistryGetRootEntry(kIOMainPortDefault), "IOUSB", IOOptionBits(kIORegistryIterateRecursively), &iterator)
+        == KERN_SUCCESS
+    else { return [] }
+    defer { IOObjectRelease(iterator) }
+    var serials: Set<String> = []
+    while case let entry = IOIteratorNext(iterator), entry != 0 {
+      defer { IOObjectRelease(entry) }
+      let property = { (key: String) in
+        IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+      }
+      guard property("UsbAppleDeviceECID") != nil, let serial = property("USB Serial Number") as? String else { continue }
+      serials.insert(serial.uppercased())
+    }
+    return serials
   }
 
   func start() {
@@ -58,24 +82,45 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         self?.queue.async { self?.find(until: nil) }
       })
     observers.append(
-      center.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil) { [weak self] note in
-        guard let self, let gone = note.object as? AVCaptureDevice, Self.matches(uniqueID: gone.uniqueID, udid: self.udid)
-        else { return }
-        fail("The iPhone \(self.udid) was disconnected from this Mac.")
+      center.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil) {
+        [weak self] note in
+        guard let gone = note.object as? AVCaptureDevice else { return }
+        self?.queue.async {
+          guard let self, let device = self.device, device.uniqueID == gone.uniqueID else { return }
+          fail("The iPhone \(self.udid) was disconnected from this Mac.")
+        }
       })
     find(until: Date().addingTimeInterval(Self.searchSeconds))
   }
 
   private func find(until deadline: Date?) {
     guard device == nil else { return }
-    let found = AVCaptureDevice.DiscoverySession(deviceTypes: [.external], mediaType: .muxed, position: .unspecified)
-      .devices.first { Self.matches(uniqueID: $0.uniqueID, udid: udid) }
+    let cabled = Self.cabledSerials()
+    guard cabled.contains(udid.replacingOccurrences(of: "-", with: "").uppercased()) else {
+      fail(
+        "The iPhone \(udid) is not cabled to this Mac. Stim shows a physical iPhone's screen only over a USB cable.")
+    }
+    let screens = AVCaptureDevice.DiscoverySession(deviceTypes: [.external], mediaType: .muxed, position: .unspecified)
+      .devices.filter { $0.modelID == "iOS Device" }
+    let found: AVCaptureDevice?
+    if cabled.count == 1 && screens.count <= 1 {
+      found = screens.first
+    } else {
+      guard let name else {
+        fail("Several iPhones are cabled to this Mac, and Stim has no name to tell \(udid) apart from them.")
+      }
+      let named = screens.filter { $0.localizedName == name }
+      if named.count > 1 {
+        fail(
+          "Several cabled iPhones are named \(name), so Stim cannot tell which one is \(udid). Rename one in "
+            + "Settings > General > About > Name.")
+      }
+      found = named.first
+    }
     guard let found else {
       guard let deadline else { return }
       if Date() > deadline {
-        fail(
-          "The iPhone \(udid) is not cabled to this Mac. Stim shows a physical iPhone's screen only over a USB cable, "
-            + "once the iPhone trusts this Mac.")
+        fail("macOS shows no screen for the iPhone \(udid). Unlock it, and tap Trust if it asks to trust this Mac.")
       }
       queue.asyncAfter(deadline: .now() + 1) { self.find(until: deadline) }
       return
@@ -92,8 +137,12 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     switch AVCaptureDevice.authorizationStatus(for: .video) {
     case .authorized:
       authorized = true
+      failure = nil
+      reportStall()
       apply()
     case .notDetermined:
+      failure = "macOS is asking on the Mac whether the app that runs stim-server may use the camera."
+      reportStall()
       AVCaptureDevice.requestAccess(for: .video) { granted in
         self.queue.async {
           if !granted { self.denied() }
@@ -105,10 +154,12 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     }
   }
 
+  /// macOS denies without a prompt when the responsible app has no camera usage description, or runs with the
+  /// hardened runtime and lacks the camera entitlement, such as a bare `node`.
   private func denied() -> Never {
     fail(
-      "macOS denied Camera access, which capturing an iPhone screen needs. Allow the app that runs stim-server "
-        + "in System Settings > Privacy & Security > Camera, then restart stim-server.")
+      "macOS denied Camera access, which capturing an iPhone screen needs. Run stim-server from Stim, and allow Stim "
+        + "in System Settings > Privacy & Security > Camera.")
   }
 
   func configure(_ config: Config) {

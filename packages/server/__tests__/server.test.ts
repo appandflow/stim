@@ -1751,7 +1751,14 @@ describe('frames.subscribe', () => {
           { ...lease, path: '/locks/other', id: 'PHONE-OTHER', holder: '/elsewhere', expired: false },
           { ...lease, path: '/locks/old', id: 'PHONE-OLD', holder: workspace, expired: true },
           { ...lease, path: '/locks/sim', id: 'SIM-1', holder: workspace, expired: false },
-          { ...lease, path: '/locks/phone', id: 'PHONE-1', holder: workspace, expired: false },
+          {
+            ...lease,
+            path: '/locks/phone',
+            id: 'PHONE-1',
+            deviceName: 'Old iPhone',
+            holder: workspace,
+            expired: false,
+          },
         ],
       },
     ]);
@@ -1776,7 +1783,7 @@ describe('frames.subscribe', () => {
       });
       client.socket.close();
       await until(() => helperRuns().length === 1);
-      expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1']);
+      expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1', 'Old iPhone']);
     },
     10_000,
   );

@@ -14,11 +14,11 @@ import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
 /**
  * `foldable` marks an iPhone Duo, whose posture lights one of two panels, and `physical` a leased iPhone, which
- * streams over USB and takes no input. A web device is the owned page `targetId` of the Chrome `pid` serving
+ * streams over USB and takes no input; `name` is its device name, which tells it apart when several are cabled. A web device is the owned page `targetId` of the Chrome `pid` serving
  * DevTools at `endpoint`.
  */
 export type Device =
-  | { platform: 'ios'; udid: string; foldable: boolean; physical?: true }
+  | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
   | { platform: 'android'; serial: string }
   | { platform: 'web'; endpoint: string; pid: number; targetId: string };
 
@@ -93,10 +93,14 @@ export function deviceKey(device: Device): string {
 }
 
 /**
- * The id of the physical device `target.workspace` leases for `target.platform` in its slot. A workspace can also
+ * The id and name of the physical device `target.workspace` leases for `target.platform` in its slot. A workspace can also
  * lock its own simulator or emulator, so a lease on the slot's owned device is skipped.
  */
-function leasedDeviceId(payload: StatusPayload, target: FrameTarget, owned: string | null | undefined): string | null {
+function leasedDevice(
+  payload: StatusPayload,
+  target: FrameTarget,
+  owned: string | null | undefined,
+): { id: string; name: string | null } | null {
   const slot = target.slot ?? 'default';
   const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
     (candidate) =>
@@ -107,7 +111,7 @@ function leasedDeviceId(payload: StatusPayload, target: FrameTarget, owned: stri
       candidate.id !== null &&
       candidate.id !== owned,
   );
-  return lease?.id ?? null;
+  return lease?.id ? { id: lease.id, name: lease.deviceName } : null;
 }
 
 export function ownedDevice(payload: StatusPayload, target: FrameTarget, attached: string | null): Device | string {
@@ -122,9 +126,15 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget, attache
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
   if (target.physical) {
     if (target.platform !== 'ios') return `Stim does not stream a physical ${target.platform} device.`;
-    const udid = leasedDeviceId(payload, target, devices?.ios?.udid);
-    if (!udid) return `${target.workspace} leases no physical iPhone in slot ${slot}. Run stim ios --device there.`;
-    return { platform: 'ios', udid, foldable: false, physical: true };
+    const lease = leasedDevice(payload, target, devices?.ios?.udid);
+    if (!lease) return `${target.workspace} leases no physical iPhone in slot ${slot}. Run stim ios --device there.`;
+    return {
+      platform: 'ios',
+      udid: lease.id,
+      foldable: false,
+      physical: true,
+      ...(lease.name ? { name: lease.name } : {}),
+    };
   }
   if (target.platform === 'web') {
     if (slot !== 'default') return `A workspace has one Stim-owned Chrome, in the default slot, not in slot ${slot}.`;
