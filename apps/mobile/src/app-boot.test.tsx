@@ -222,12 +222,14 @@ function launchInactive() {
   };
 }
 
-it("clears the previous release's derived data before reading it, keeps the pairing, and renders the live machine", async () => {
+it("clears the previous release's derived data, keeps the pairing, and renders the live machine", async () => {
   (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
   seedPreviousInstall();
   const activate = launchInactive();
-  const errors: unknown[][] = [];
-  const consoleError = jest.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args));
+  const errors: string[] = [];
+  const consoleError = jest
+    .spyOn(console, 'error')
+    .mockImplementation((...args) => void errors.push(args.map(String).join(' ')));
 
   await renderRouter('./src/app', { initialUrl: '/' });
   await act(() => jest.advanceTimersByTimeAsync(1000));

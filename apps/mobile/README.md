@@ -645,7 +645,7 @@ the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 previous release stored: a paired machine, that machine's cached status from an
 older `stim`, notification preferences and state in their old shapes, and that
 release's marker. The test checks that the launch clears the cached status and
-the notification state before reading them, and keeps the pairing and the
+the notification state, and keeps the pairing and the
 preferences. The machine then connects to a fake `stim-server` that serves
 `mock-server/fixtures/status.json`, and the app turns `active` the way iOS does
 after launch. The test fails when React reports an error or anything throws,
