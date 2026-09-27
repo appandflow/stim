@@ -231,3 +231,21 @@ test('counts what logs --errors counts when bundle markers and errors name their
   ]);
   expect(count()).toBe(0);
 });
+
+test('counts an Expo bundling failure under its own platform, as logs --errors does', () => {
+  write('build-android.ndjson', [{ ts: 10, src: 'build', level: 'info', marker: true, platform: 'android' }]);
+  write('build-ios.ios18.ndjson', [
+    { ts: 20, src: 'build', level: 'info', marker: true, platform: 'ios', slot: 'ios18' },
+  ]);
+  write('metro.ndjson', [
+    { ts: 12, src: 'metro', level: 'info', raw: true, marker: true, msg: 'Android Bundled 640ms index.ts' },
+    { ts: 25, src: 'metro', level: 'error', raw: true, marker: true, msg: 'iOS Bundling failed 90ms index.ts' },
+  ]);
+  append('build-android.ndjson', [{ ts: 27, src: 'build', level: 'info', marker: true, platform: 'android' }]);
+  expect(count()).toBe(1);
+
+  append('metro.ndjson', [
+    { ts: 30, src: 'metro', level: 'info', raw: true, marker: true, msg: 'iOS Bundled 90ms index.ts' },
+  ]);
+  expect(count()).toBe(0);
+});

@@ -811,6 +811,17 @@ describe('shared Metro and client errors across slots', () => {
     expect(errors()).toEqual(['page threw']);
   });
 
+  test("an Expo bundling failure counts as its tag's platform, and its own platform's bundle clears it", () => {
+    writeLog('metro.ndjson', [
+      bundled(45, 'Android'),
+      { ts: 48, src: 'metro', level: 'error', raw: true, marker: true, msg: 'iOS Bundling failed 90ms index.ts' },
+    ]);
+    expect(errors('ios18')).toEqual(['iOS Bundling failed 90ms index.ts']);
+    expect(errors('default')).toEqual(['page threw']);
+    appendFileSync(join(dir, 'metro.ndjson'), `${JSON.stringify(bundled(49, 'iOS'))}\n`);
+    expect(errors('ios18')).toEqual([]);
+  });
+
   test('a Metro record that names its platform follows only that platform', () => {
     writeLog('metro.ndjson', [
       { ts: 12, src: 'metro', level: 'info', marker: true, platform: 'ios', msg: 'bundle build done' },

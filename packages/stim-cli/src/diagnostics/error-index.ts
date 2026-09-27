@@ -4,7 +4,7 @@ import { join } from 'path';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
 import { bundleMarkerPlatform, ERROR_SOURCES, logFiles, queryLogs, recordMatches } from '@stim-cli/core/state';
 
-const INDEX_VERSION = 5;
+const INDEX_VERSION = 6;
 const HEAD_BYTES = 1024;
 const TAIL_BYTES = 256;
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -157,7 +157,7 @@ function collect(record: NdjsonRecord, markers: Record<string, NdjsonRecord>, er
       src: record.src,
       level: record.level,
       event: record.event,
-      platform: record.platform,
+      platform: record.src === 'metro' && record.marker === true ? bundleMarkerPlatform(record) : record.platform,
       ts: ts ?? undefined,
       slot: record.slot,
     });

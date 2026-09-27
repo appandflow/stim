@@ -353,7 +353,8 @@ function includeBareErrorContext(
 }
 
 function nativePlatform(record: NdjsonRecord): string | null {
-  return record.platform === 'ios' || record.platform === 'android' ? record.platform : null;
+  const platform = record.src === 'metro' && record.marker === true ? bundleMarkerPlatform(record) : record.platform;
+  return platform === 'ios' || platform === 'android' ? platform : null;
 }
 
 function newestByPlatform(records: NdjsonRecord[], platformOf: (record: NdjsonRecord) => string | null) {
