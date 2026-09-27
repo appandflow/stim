@@ -10,7 +10,9 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
-    .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.29.2"),
+    // 9.29.2, pinned by revision: its Package@swift-6.1 manifest depends on KSCrash by revision, which Swift 6.1's
+    // SwiftPM rejects under a version requirement ("depends on an unstable-version package").
+    .package(url: "https://github.com/getsentry/sentry-cocoa", revision: "8689e780a295dfdc6501ac0dbb502461e16d6551"),
   ],
   targets: [
     .target(name: "StimKit"),

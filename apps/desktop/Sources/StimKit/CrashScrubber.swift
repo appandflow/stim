@@ -61,7 +61,7 @@ private struct Pattern: Sendable {
 
   static let scheme = Pattern(#"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+"#)
   static let keyValue = Pattern(
-    #"(?i)\b([\w-]*(?:token|secret|password|passwd|key|signature|authorization|dsn))(["']?\s*[=:]\s*["']?)[^\s&"',;}]+"#
+    #"(?i)\b([\w-]*(?:token|secret|password|passwd|(?:api|private|secret|access|signing)[_-]?key|signature|authorization|dsn))(["']?\s*[=:]\s*["']?)[^\s&"',;}]+"#
   )
   static let vendorToken = Pattern(
     #"\b(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]+|npm_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]+)"#)

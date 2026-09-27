@@ -58,6 +58,8 @@ final class CrashScrubberTests: XCTestCase {
   func testLeavesOrdinaryTextAlone() {
     let text = "NSInvalidArgumentException: exit code 1 in apps/mobile, stim 1.2.3, port 8084, 12:30:45"
     XCTAssertEqual(scrubber.scrub(text), text)
+    let selector = "*** -[__NSDictionaryM setObject:forKey:]: key cannot be nil, hotkey=cmd-r"
+    XCTAssertEqual(scrubber.scrub(selector), selector)
   }
 
   func testScrubsNestedValues() {
