@@ -168,9 +168,29 @@ registered environment, plus the repository you run it from. A worktree whose
 app lives in a subdirectory, such as `apps/mobile`, counts as having an
 environment once that app is registered.
 `stim status --json` lists the others under `unprovisionedWorktrees`, each
-with its `path`, `branch`, and `repository`. `worktree warm` copies
-dependencies but does not create an environment, so a warmed worktree stays in
-that list until `start`, `ios`, `android`, or `doctor` registers it.
+with its `path`, `branch`, and `repository`.
+
+`worktree warm` registers the app it prepares, so the workspace shows in
+`stim status`, Stim Desktop and the phone app from the moment warm starts.
+That app is the nearest React Native or Expo app where warm runs when it is
+below the worktree root. Otherwise it is the one app the source checkout has
+registered, at the same path in the worktree, or else the worktree root when
+that is the app. From a monorepo's worktree root, warm finds `apps/mobile`
+this way when the source checkout's `apps/mobile` is registered, even if the
+root `package.json` also lists `react-native`. Status reports each
+environment's `phase`:
+
+- `warming` while warm runs, with `warmStep` `refresh` or `copy`.
+- `ready` after it succeeds, until the first `start`, `ios`, `android`, `web`
+  or `reload` there, or for 2 hours.
+- `live` when Metro, a device, Chrome or a remote session runs.
+- `idle` otherwise.
+
+`phaseSince` is when the warm started or finished. A warm that fails or is
+killed reads as `idle`, never as `warming`. Plain `stim status` marks the
+workspace `[warming: copy]`, `[ready]` or `[idle]`. A warm that finds no app
+registers nothing, and the worktree stays in `unprovisionedWorktrees` until
+`start`, `ios`, `android`, or `doctor` registers it.
 
 Each worktree also reports its git state: the number of changed and untracked
 files, its upstream with commits ahead and behind, and whether its branch is

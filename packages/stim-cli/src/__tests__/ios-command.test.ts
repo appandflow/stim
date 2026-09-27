@@ -3275,6 +3275,23 @@ describe('--remote', () => {
     });
   });
 
+  test('a new EAS session records the model --device-type asked for', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'eas', deviceType: 'iPhone 17 Pro' },
+      {
+        ...remote.deps,
+        remoteIosDeps: () => {
+          const deps = remote.deps.remoteIosDeps();
+          return { ...deps, ctx: { ...deps.ctx, deviceType: 'iPhone 17 Pro' } };
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(readWorkspaceState(root)?.remoteDevice).toMatchObject({ sessionId: 'drs_42', deviceType: 'iPhone 17 Pro' });
+  });
+
   test('the build still happens locally -- only the device moved', async () => {
     const remote = remoteStub();
     reserve();
@@ -6056,6 +6073,26 @@ describe('the simulator model and runtime flags', () => {
     expect(payload.code).toBe('STIM_BAD_ARG');
     expect(payload.message).toMatch(new RegExp(`^${given} appl(y|ies) only to a local owned iOS simulator`));
     expect(calls.order).toEqual(['ensureWorkspaceStorage']);
+  });
+
+  test('--remote eas passes --device-type to the EAS context, and still refuses --runtime', async () => {
+    const asked: unknown[] = [];
+    reserve();
+    await run(
+      { remote: 'eas', deviceType: ' iPhone 17 Pro ', json: true },
+      {
+        resolveRemoteContext: (args: { deviceType?: unknown }) => {
+          asked.push(args.deviceType);
+          return { failed: 'stop here', remedy: '' };
+        },
+      },
+    );
+    expect(asked).toEqual(['iPhone 17 Pro']);
+
+    reserve();
+    const { logs, exitCode } = await run({ remote: 'eas', deviceType: 'iPhone 17 Pro', runtime: '18.6', json: true });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).message).toMatch(/^--runtime applies only to a local owned iOS simulator; the eas remote/);
   });
 
   test('ios.deviceType and ios.runtime settings do not block a remote run', () => {

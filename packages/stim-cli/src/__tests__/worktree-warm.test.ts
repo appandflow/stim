@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
@@ -21,6 +22,11 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
 import { Command } from 'commander';
 import { registerWarm } from '../commands/worktree.ts';
+import { workspacePhase } from '../engine/warm-progress.ts';
+import { loadConfig, upsertProject } from '../workspace/config.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 let base: string;
 let root: string;
@@ -599,3 +605,96 @@ test('warm refuses a deleted source worktree with the prune and re-add commands 
     `git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${main} main`,
   );
 }, 30_000);
+
+const APP_PACKAGE = '{"name":"warm-app","dependencies":{"react-native":"0.80.0"}}\n';
+
+test('warm registers the app it prepares and leaves it ready until the workspace is next used', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  git(root, 'commit', '-qam', 'app');
+  git(target, 'merge', '-q', 'main');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([target]);
+  const state = readWorkspaceState(target);
+  const record = readWarmRecord(state);
+  assert(record?.phase === 'ready');
+  expect(workspacePhase(false, state)).toEqual({ phase: 'ready', phaseSince: record.at });
+  recordWorkspaceUse(target, new Date(Date.now() + 1000));
+  expect(workspacePhase(false, readWorkspaceState(target))).toEqual({ phase: 'idle', phaseSince: null });
+}, 30_000);
+
+test('warm from a monorepo worktree root registers the app the source checkout registered', async () => {
+  write(root, 'apps/mobile/package.json', APP_PACKAGE);
+  write(root, 'apps/web/package.json', '{"name":"web"}\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'apps');
+  git(target, 'merge', '-q', 'main');
+  upsertProject(join(root, 'apps/mobile'), {});
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(Object.keys(loadConfig()?.projects ?? {}).toSorted()).toEqual([
+    join(target, 'apps/mobile'),
+    join(root, 'apps/mobile'),
+  ]);
+  expect(workspacePhase(false, readWorkspaceState(join(target, 'apps/mobile'))).phase).toBe('ready');
+}, 30_000);
+
+test('warm from a monorepo root that declares react-native still registers the registered app', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  write(root, 'apps/mobile/package.json', APP_PACKAGE);
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'apps');
+  git(target, 'merge', '-q', 'main');
+  upsertProject(join(root, 'apps/mobile'), {});
+  expect((await runWarm(target)).code).toBe(0);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toContain(join(target, 'apps/mobile'));
+  expect(Object.keys(loadConfig()?.projects ?? {})).not.toContain(target);
+}, 30_000);
+
+test('status reads a warm as warming while it copies and as idle once it fails', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  git(root, 'commit', '-qam', 'app');
+  git(target, 'merge', '-q', 'main');
+  write(root, '.env', 'source env');
+  const during: unknown[] = [];
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFile(file, args, opts) {
+      if (file === 'cp') {
+        during.push(workspacePhase(false, readWorkspaceState(target)));
+        throw new Error('disk full');
+      }
+      return real.runFile(file, args, opts);
+    },
+  });
+  const result = await runWarm(target);
+  expect(result.code).toBe(1);
+  expect(during[0]).toMatchObject({ phase: 'warming', warmStep: 'copy' });
+  expect(readWarmRecord(readWorkspaceState(target))).toBeNull();
+  expect(workspacePhase(false, readWorkspaceState(target)).phase).toBe('idle');
+}, 30_000);
+
+test('a warming record counts only while its claim holder lives, and ready lasts two hours', () => {
+  const warming = (claimId: string) => ({
+    warm: {
+      phase: 'warming',
+      step: 'refresh',
+      startedAt: '2026-09-26T10:00:00.000Z',
+      claim: { root: join(base, `${claimId}.lock`), claimId },
+    },
+  });
+  plantClaim(join(base, 'live.lock'), 'shared', liveClaimOwner(), { claimId: 'live' });
+  plantClaim(join(base, 'killed.lock'), 'shared', goneClaimOwner(), { claimId: 'killed' });
+  expect(workspacePhase(false, warming('live'))).toEqual({
+    phase: 'warming',
+    phaseSince: '2026-09-26T10:00:00.000Z',
+    warmStep: 'refresh',
+  });
+  expect(workspacePhase(false, warming('killed')).phase).toBe('idle');
+  const ready = { warm: { phase: 'ready', at: '2026-09-26T10:00:00.000Z' } };
+  const at = Date.parse('2026-09-26T10:00:00.000Z');
+  expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS - 1 }).phase).toBe('ready');
+  expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS }).phase).toBe('idle');
+});

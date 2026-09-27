@@ -85,7 +85,8 @@ Windows in Program Files. Stim never installs a browser. Expo web also needs
 ## Optional remote devices
 
 - The `proxy` backend needs an Agent Device daemon URL and token.
-- The `eas` backend needs EAS CLI 21.6.0 or later, an authenticated Expo
+- The `eas` backend needs EAS CLI 21.6.0 or later (22.2.0 or later for
+  `stim ios --device-type`), an authenticated Expo
   account, and a configured EAS project. EAS simulator use can be billable.
 
 ## EAS development builds

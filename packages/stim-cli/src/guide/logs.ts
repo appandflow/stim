@@ -31,10 +31,15 @@ The only exit-1 paths are a malformed query and no project.
 Device collectors and build records carry their named slot. Use --slot phone
 for that slot's timeline; its launch marker cannot hide a sibling's errors.
 Untagged legacy records belong to default. Metro/client records are shared and
-usually untagged: use an unfiltered workspace query to inspect those errors.
+usually untagged, so every --slot query includes them, windowed by that slot's
+own launch and by bundles of the platforms it launched. When another slot's
+relaunch hides a Metro error from the unfiltered query, --slot <name> for the
+slot that printed it still shows it.
 
 FLAGS
-  --slot <name>   only this slot's records (default includes untagged records)
+  --slot <name>   only this slot's records plus, once it has launched, the
+                  shared untagged Metro and app client records (not the web
+                  page's); default also includes untagged legacy records
   --source <s...>  metro, client, device, build, agent (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
@@ -98,9 +103,19 @@ FLAGS
       errors are reported -- and nothing else. A failed attempt's own summary
       and details land at or after its marker, so they stay reported.
     a LAUNCH marker (src build, written before \`ios\` / \`android\` attempts
-      launch) resets EVERYTHING except the web page's records. It precedes the
-      tool call so an immediate native crash is not hidden by a marker written
-      after the process died.
+      launch) resets EVERYTHING in its slot except the web page's records. It
+      precedes the tool call so an immediate native crash is not hidden by a
+      marker written after the process died. Metro and client output names no
+      device, so in the unfiltered query the newest launch of any slot resets
+      it, and the newest bundle of any platform resets Metro errors; with
+      --slot <name>, that slot's newest launch and the newest bundle of a
+      platform it launched do. Metro records that name their platform (bare
+      React Native bundle records; the "iOS Bundled" / "Android Bundled" /
+      "RSC(iOS) Bundled" tag Expo prints for bundle markers, so a "DOM
+      Bundled" line does not close a native slot's window) follow only that
+      platform, and a slot query leaves out iOS or Android ones when it never
+      launched that platform. A single slot that runs both iOS and Android still shares one
+      window for untagged Metro errors.
     a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
       load of the page's top-level document) resets only the page's records,
       those with platform web. It is written when the load starts, so a

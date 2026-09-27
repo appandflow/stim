@@ -1,6 +1,8 @@
 import {
   devicesOf,
   isActive,
+  isSettingUp,
+  isShownLive,
   pathInCheckout,
   projectOf,
   repositoryRoots,
@@ -25,9 +27,13 @@ export interface HomeItem {
   env: EnvironmentState;
 }
 
-const activityRank = (env: EnvironmentState) => (env.build?.state === 'running' ? 2 : isActive(env) ? 1 : 0);
+const activityRank = (env: EnvironmentState) =>
+  env.build?.state === 'running' || isSettingUp(env) ? 2 : isActive(env) ? 1 : 0;
 
-/** Every workspace of every Mac: building first, then live, then idle; by project and name inside each. */
+/**
+ * Every workspace of every Mac: building or being set up first, then live, then idle; by project and name inside
+ * each.
+ */
 export function mergeWorkspaces(macs: MacSnapshot[]): HomeItem[] {
   const items: HomeItem[] = [];
   for (const mac of macs) {
@@ -128,7 +134,7 @@ export function filterWorkspaces(
     if (projects.length && !projects.includes(item.project)) continue;
     if (filters.errorsOnly && !hasErrors(item.env)) continue;
     if (filters.remoteOnly && !hasRemote(item.env)) continue;
-    const active = isActive(item.env);
+    const active = isShownLive(item.env);
     if ((filters.activity === 'live' && !active) || (filters.activity === 'idle' && active)) {
       hiddenByActivity += 1;
       continue;

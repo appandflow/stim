@@ -8,6 +8,11 @@ simulators and emulators, build progress, logs and settings. It runs `stim`
 commands for you and reads Stim's state only through the CLI, so it needs
 `stim` installed as described in [Getting started](./getting-started.md).
 
+A workspace appears from the moment `stim worktree warm` starts in it: the
+sidebar and the wall show it as **Warming…** with an activity indicator, then
+**Ready** until its first run, even under the Live filter. Under the default
+Last activity sort, new workspaces sort first.
+
 ## Download
 
 [Download Stim.dmg](https://github.com/appandflow/stim/releases/download/desktop-latest/Stim.dmg),

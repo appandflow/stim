@@ -43,6 +43,8 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
     reloadMetro: async () => ({ ok: true, peers: 1, targets: 1 }),
     readBrowser: () => null,
+    ensureReverse: () => ({ restored: false }),
+    sleep: async () => {},
     ...overrides,
   };
 }
@@ -87,6 +89,7 @@ test('reload auto-selects the sole live owned app and reports its strategy', asy
       metroPort: 8082,
       strategy: 'metro-websocket',
       targets: 1,
+      reverseRestored: [],
     },
   });
 });
@@ -119,6 +122,136 @@ test('reload addresses Metro with the target platform and app', async () => {
     [8082, { role: 'android', appId: 'com.example.android' }],
     [8082, { role: 'ios', appId: 'com.example.ios' }],
   ]);
+});
+
+describe('the adb reverse for the workspace Metro port', () => {
+  const noPeer = { failed: true as const, noPeer: true as const, peers: 0, reason: 'No Android app connected.' };
+
+  test('an Android reload checks the reverse on the launch device and leaves a present one alone', async () => {
+    const checked: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: (serial, port) => {
+          checked.push([serial, port]);
+          return { restored: false };
+        },
+      }),
+    });
+    expect(checked).toEqual([['emulator-5554', 8082]]);
+    expect(result).toMatchObject({ ok: true, facts: { reverseRestored: [] } });
+  });
+
+  test('a restored reverse waits, sending nothing, until the app reconnects, then reloads once', async () => {
+    const calls: unknown[] = [];
+    let probes = 0;
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ restored: true }),
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          if (!options?.peersOnly) return { ok: true, peers: 1, targets: 1 };
+          return ++probes < 3 ? noPeer : { ok: true, peers: 1, targets: 1 };
+        },
+      }),
+    });
+    expect(calls).toEqual([true, true, true, 'reload']);
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { reverseRestored: ['emulator-5554'], strategy: 'metro-websocket' },
+    });
+  });
+
+  test('an app that never reconnects gets one reload after the wait, with the no-peer remedy', async () => {
+    const calls: unknown[] = [];
+    const slept: number[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ restored: true }),
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          return noPeer;
+        },
+      }),
+    });
+    expect(calls.filter((call) => call === 'reload')).toEqual(['reload']);
+    expect(calls.at(-1)).toBe('reload');
+    expect(slept.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(5000);
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
+  });
+
+  test('a Metro that cannot name its peers gets one reconnect interval before the broadcast reload', async () => {
+    const slept: number[] = [];
+    const calls: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ restored: true }),
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          return { ok: true, broadcast: true };
+        },
+      }),
+    });
+    expect(calls).toEqual([true, 'reload']);
+    expect(slept).toEqual([2500]);
+    expect(result).toMatchObject({ ok: true, facts: { strategy: 'metro-broadcast' } });
+  });
+
+  test('an unreadable reverse list refuses before reloading, naming the manual command', async () => {
+    let reloaded = false;
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ failed: true, reason: 'adb reverse --list failed on emulator-5554' }),
+        reloadMetro: async () => {
+          reloaded = true;
+          return { ok: true, peers: 1, targets: 1 };
+        },
+      }),
+    });
+    expect(reloaded).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_RELOAD_FAILED',
+        remedy: expect.stringContaining('adb -s emulator-5554 reverse tcp:8082 tcp:8082'),
+      },
+    });
+  });
+
+  test('an iOS reload and a release launch never touch adb reverse', async () => {
+    const ensureReverse = () => {
+      throw new Error('adb reverse must not run');
+    };
+    expect(
+      await runReload({
+        root: '/project',
+        platform: 'ios',
+        deps: reloadDeps({ readLaunches: () => ({ ios: iosLaunch }), ensureReverse }),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await runReload({
+        root: '/project',
+        platform: 'android',
+        deps: reloadDeps({ readLaunches: () => ({ android: { ...androidLaunch, release: true } }), ensureReverse }),
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_RELEASE' } });
+  });
 });
 
 test('reload requires a platform when both owned apps are live', async () => {
@@ -174,6 +307,7 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
       metroPort: 8082,
       strategy: 'cdp',
       targets: 1,
+      reverseRestored: [],
     },
   });
   expect(reloaded).toEqual(['PAGE']);
@@ -510,6 +644,7 @@ test('reload --json prints exactly one parseable facts line', async () => {
     metroPort: 8082,
     strategy: 'metro-websocket',
     targets: 1,
+    reverseRestored: [],
   });
 });
 
@@ -548,6 +683,59 @@ test('multiple live slots of the same platform use one platform reload', async (
   });
   expect(result.ok).toBe(true);
   expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId }]]);
+});
+
+test('an Android reload restores the reverse on every live slot that lost it', async () => {
+  const checked: string[] = [];
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      getProject: () => ({
+        ...project,
+        deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+      }),
+      readLaunches: () => ({
+        android: androidLaunch,
+        'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+      }),
+      resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      ensureReverse: (serial) => {
+        checked.push(serial);
+        return { restored: serial === 'emulator-5556' };
+      },
+    }),
+  });
+  expect(checked).toEqual(['emulator-5554', 'emulator-5556']);
+  expect(result).toMatchObject({ ok: true, facts: { reverseRestored: ['emulator-5556'] } });
+});
+
+test('with one slot still connected, the reload waits for the restored slot before reloading both', async () => {
+  const calls: unknown[] = [];
+  let probes = 0;
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      getProject: () => ({
+        ...project,
+        deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+      }),
+      readLaunches: () => ({
+        android: androidLaunch,
+        'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+      }),
+      resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      ensureReverse: (serial) => ({ restored: serial === 'emulator-5556' }),
+      reloadMetro: async (_port, options) => {
+        calls.push(options?.peersOnly ?? 'reload');
+        if (!options?.peersOnly) return { ok: true, peers: 2, targets: 2 };
+        return { ok: true, peers: 2, targets: ++probes < 3 ? 1 : 2 };
+      },
+    }),
+  });
+  expect(calls).toEqual([true, true, true, 'reload']);
+  expect(result).toMatchObject({ ok: true, facts: { targets: 2 } });
 });
 
 test.each([true, false])(
