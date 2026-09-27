@@ -96,13 +96,18 @@ import {
   tightVolumes,
   unprovisionedWorktrees,
   withWebFacts,
-  type PhysicalDeviceReading,
 } from '../status.ts';
 import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
 import { readFootprints } from '../footprint.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
-import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
+import type {
+  AndroidRuntimeFacts,
+  EnvironmentState,
+  PhysicalDeviceReading,
+  VolumeInfo,
+  WorktreeFacts,
+} from '../status.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 

@@ -452,7 +452,11 @@ describe('physical device state', () => {
     },
   });
   const connected = { name: 'Old iPhone', model: 'iPhone 12 Pro', connection: 'connected' as const };
-  const states = (entries: LeaseFileEntry[], held: Parameters<typeof physicalDeviceStates>[1], simulatorUdids = []) =>
+  const states = (
+    entries: LeaseFileEntry[],
+    held: Parameters<typeof physicalDeviceStates>[1],
+    simulatorUdids: string[] = [],
+  ) =>
     physicalDeviceStates(entries, held, {
       root: '/w/a',
       now,
@@ -532,7 +536,7 @@ describe('physical device state', () => {
       physical: [{ serial: 'R5' }],
       unhealthy: [{ serial: 'R6', kind: 'physical' as const, status: 'unauthorized' }],
     };
-    const model = vi.fn(() => 'Pixel 9');
+    const model = vi.fn<(serial: string) => string | null>(() => 'Pixel 9');
     expect(androidPhysicalReading(null, 'R5', model).connection).toBe('unknown');
     expect(androidPhysicalReading(devices, 'R6', model).connection).toBe('disconnected');
     expect(model).not.toHaveBeenCalled();
