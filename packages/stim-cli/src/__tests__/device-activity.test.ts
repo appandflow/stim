@@ -6,7 +6,6 @@ import {
   agentDeviceLiveness,
   classifyActivity,
   createActivityReader,
-  driverTool,
   parseAgentDeviceRecord,
   parseProcessTable,
   readWebActivity,
@@ -14,6 +13,7 @@ import {
   type DeviceProcessTables,
   type HostProcess,
 } from '../devices/activity.ts';
+import { hostDriverTool } from '../devices/automation-tools.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 
@@ -85,7 +85,7 @@ describe('driver processes', () => {
         ' 18201     1    512   0.0 Thu Sep 24 22:00:05 2026     adb -s emulator-5554 logcat --pid 42',
       ].join('\n'),
     );
-    expect(rows.map((row) => [row.pid, driverTool(row.command, UDID)])).toEqual([
+    expect(rows.map((row) => [row.pid, hostDriverTool(row.command, 'ios', UDID)])).toEqual([
       [3503, 'xcodebuild'],
       [18172, null],
       [18200, null],

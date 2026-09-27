@@ -2,6 +2,7 @@ import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, st
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { cdpClientTool, hostDriverTool, instrumentationTool } from './automation-tools.ts';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -165,31 +166,13 @@ export function parseProcessTable(output: string): HostProcess[] {
   return rows;
 }
 
-function namesDevice(command: string, id: string): boolean {
-  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(command);
-}
-
-export function driverTool(command: string, id: string): string | null {
-  if (!namesDevice(command, id)) return null;
-  if (/\bsimctl\s+spawn\b.*\blog\s+stream\b/.test(command) || /\blogcat\b/.test(command)) return null;
-  if (/agent-device/i.test(command)) return 'agent-device';
-  if (/idb_companion/.test(command)) return 'idb';
-  if (/maestro/i.test(command)) return 'maestro';
-  if (/appium|WebDriverAgent/i.test(command)) return 'appium';
-  if (/\bxcodebuild\b.*\btest(-without-building)?\b/.test(command)) return 'xcodebuild';
-  if (/\bsimctl\s+(io|spawn)\b/.test(command)) return 'simctl';
-  return null;
-}
-
 function parseAndroidInstrumentation(output: string): { pid: number; tool: string }[] {
   const found: { pid: number; tool: string }[] = [];
   for (const line of output.split('\n')) {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
     if (!match) continue;
-    const args = match[2]!;
-    if (/uiautomator/.test(args)) found.push({ pid: Number(match[1]), tool: 'uiautomator' });
-    else if (/androidx\.test|\binstrument\b/.test(args)) found.push({ pid: Number(match[1]), tool: 'instrumentation' });
+    const tool = instrumentationTool(match[2]!);
+    if (tool) found.push({ pid: Number(match[1]), tool });
   }
   return found;
 }
@@ -413,7 +396,7 @@ export function createActivityReader({
     const processes = tables.host();
     if (processes === null) evidence.unknown.push('driver-process');
     for (const row of processes ?? []) {
-      const tool = driverTool(row.command, target.id);
+      const tool = hostDriverTool(row.command, target.platform, target.id);
       if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
     }
 
@@ -480,25 +463,6 @@ function parseTcpClients(output: string, port: number): number[] {
   return [...pids];
 }
 
-/**
- * The tool a DevTools client's command line names, or null for Stim's own clients: the browser supervisor,
- * `stim-frames` in stim-server, Stim Desktop, and the `stim` CLI's short-lived connections.
- */
-function webDriverTool(command: string): string | null {
-  if (
-    /\bstim-(frames|server|web)\b|StimDesktop|\/stim(-cli)?\/(dist|bin)\/|\/bin\/stim(\s|$)|^stim(\s|$)/.test(command)
-  )
-    return null;
-  if (/agent-browser/i.test(command)) return 'agent-browser';
-  if (/agent-device/i.test(command)) return 'agent-device';
-  if (/chrome-devtools-mcp/i.test(command)) return 'chrome-devtools-mcp';
-  if (/playwright/i.test(command)) return 'playwright';
-  if (/puppeteer/i.test(command)) return 'puppeteer';
-  const [executable = '', script] = command.trim().split(/\s+/);
-  const name = basename(executable);
-  return (/^(node|bun|deno|python3?)$/.test(name) && script ? basename(script) : name) || 'unknown DevTools client';
-}
-
 export interface WebActivityTarget {
   port: number;
   /** The supervisor's and Chrome's pids, which hold the page's own connections. */
@@ -526,7 +490,7 @@ export function readWebActivity(
   else {
     for (const pid of clients) {
       const row = processes.find((candidate) => candidate.pid === pid);
-      const tool = row ? webDriverTool(row.command) : 'unknown DevTools client';
+      const tool = row ? cdpClientTool(row.command) : 'unknown DevTools client';
       if (tool) evidence.drivers.push({ basis: 'cdp-client', tool, pid, since: row?.startedAt ?? null });
     }
   }

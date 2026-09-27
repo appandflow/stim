@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
+import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
@@ -668,6 +669,12 @@ test('the facts topic documents every app process state', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const state of APP_PROCESS_STATES) expect(body).toMatch(new RegExp(`^ +(state +)?"${state}" `, 'm'));
+});
+
+test('the facts topic names every detected automation tool', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const { tool } of AUTOMATION_TOOLS) expect(body).toMatch(new RegExp(`(^|[\\s(,])${tool}[\\s,;)]`));
 });
 
 test('the facts topic documents every web page state', () => {

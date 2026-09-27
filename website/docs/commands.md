@@ -858,8 +858,9 @@ minutes, `idle` otherwise, and `unknown` when a claim or driver check could not
 be read. Stim counts as drivers a live agent-device session (its recorded
 processes must still be alive with their recorded start times, so a stale or
 reused pid does not count), an unexpired `stim device lock`, a host process
-that names the device (xcodebuild test runners, idb, Maestro, Appium,
-`simctl io|spawn`), and on Android a `uiautomator` or `androidx.test` process.
+that names the device (Argent, xcodebuild test runners, idb, Maestro, Appium,
+`simctl io|spawn`), and on Android a `uiautomator`, `androidx.test` or Argent
+helper process.
 `lastActivityAt` is the newest of the device's app log records, the platform's
 Metro bundle requests, the workspace's last Stim run, and, while agent-device
 drives the device, the agent's last recorded action, rounded down to the
