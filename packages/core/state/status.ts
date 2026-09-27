@@ -216,12 +216,13 @@ export const STATUS_ISSUE_CODES = [
 export type StatusIssueCode = (typeof STATUS_ISSUE_CODES)[number];
 
 /**
- * One thing in a workspace that needs the user. `remedy` is a command to run from `workspace`; `slot` is absent
- * for the default device slot. `warnings` carries the same issues as text.
+ * One thing in a workspace that needs the user, or with severity `info` a note that needs nothing. `remedy` is a
+ * command to run from `workspace`; `slot` is absent for the default device slot. `warnings` carries the `error` and
+ * `warning` issues as text.
  */
 export interface StatusIssue {
   code: StatusIssueCode;
-  severity: 'error' | 'warning';
+  severity: 'error' | 'warning' | 'info';
   message: string;
   remedy: string;
   workspace: string;
@@ -301,6 +302,8 @@ export interface EnvironmentState {
     pid: number | null;
     idleStop?: IdleStopRecord;
     lastStop?: MetroLastStop;
+    /** The other process that answers Metro on `port`; `cwd` is null when its directory could not be read. */
+    heldBy?: { pid: number; cwd: string | null };
   } | null;
   web?: WebBrowserState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;

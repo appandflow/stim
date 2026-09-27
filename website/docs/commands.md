@@ -705,7 +705,12 @@ that fixes it:
 
 In `--json`, each environment's `issues` array holds
 `{ code, severity, message, remedy, workspace, slot? }`, and `warnings` holds
-the same issues as text. Run `remedy` from `workspace`. An idle workspace's
+the `error` and `warning` issues as text. Run `remedy` from `workspace`. An
+`info` issue is a note that blocks nothing: when another app holds an idle
+workspace's reserved port, plain `status` prints
+`- port 8083 is in use by a dev server in scratchpad/web-phase2/expo-web; stim start will choose a free port`,
+and `metro.heldBy` carries that process's `pid` and `cwd`. The same port
+taken while the workspace's supervisor runs is a `warning`. An idle workspace's
 shut-down emulator is not an issue: Stim warns that adb does not see an owned
 emulator only when the workspace holds a lease on it, or launched onto it and
 has not stopped it since while its dev server runs or within the last 30

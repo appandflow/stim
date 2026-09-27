@@ -171,6 +171,7 @@ export interface MetroResolution {
   notOurs?: string;
   kind?: string;
   pid?: number;
+  cwd?: string;
   metro?: { pid: number; leader: number; cwd: string; processToken?: string };
 }
 
@@ -224,6 +225,7 @@ export async function resolveProjectMetro(
       notOurs: `pid ${pid} on port ${port} runs from ${cwd}, outside ${projectPath}`,
       kind: NOT_OURS_FOREIGN_CWD,
       pid,
+      cwd,
     };
   }
   const owner = ownedSupervisor(projectPath, port);

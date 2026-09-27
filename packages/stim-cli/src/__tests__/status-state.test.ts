@@ -54,15 +54,46 @@ test('a booted sim with Metro running is live, and counts both', () => {
   expect(s.metro.pid).toBe(42);
 });
 
-test('a port answered by something that is not our Metro is warned about once, not per slot', () => {
+test("another process on an idle workspace's port is an info note, left out of warnings", () => {
+  const s = environmentState(project({ platforms: {} }), {
+    metro: {
+      notOurs: 'pid 99 runs from /tmp/scratch/web-phase2/expo-web',
+      pid: 99,
+      cwd: '/tmp/scratch/web-phase2/expo-web',
+    },
+    supervisor: { pid: 4242, status: 'stale', healthy: false },
+  });
+  expect(s.issues).toEqual([
+    expect.objectContaining({
+      code: 'port-not-ours',
+      severity: 'info',
+      message: 'port 8082 is in use by a dev server in scratch/web-phase2/expo-web; stim start will choose a free port',
+      remedy: 'stim start',
+    }),
+  ]);
+  expect(s.warnings).toEqual([]);
+  assert(s.metro);
+  expect(s.metro.heldBy).toEqual({ pid: 99, cwd: '/tmp/scratch/web-phase2/expo-web' });
+});
+
+test("another process on a running workspace's port is warned about once, not per slot", () => {
   const s = environmentState(project({ deviceSlots: { tablet: { ios: { deviceUdid: 'U1', owned: true } } } }), {
     simsByUdid: { U1: BOOTED },
-    metro: { notOurs: 'pid 99 runs from /somewhere/else' },
+    metro: { notOurs: 'pid 99 runs from /other/app', pid: 99, cwd: '/other/app' },
+    supervisor: { pid: 4242, status: 'ours', healthy: false },
   });
   assert(s.metro);
   expect(s.metro.running).toBe(false);
-  expect(s.issues.filter((i) => i.code === 'port-not-ours')).toHaveLength(1);
-  expect(s.warnings.join(' ')).toMatch(/somewhere\/else/);
+  const issues = s.issues.filter((i) => i.code === 'port-not-ours');
+  expect(issues).toEqual([expect.objectContaining({ severity: 'warning', remedy: 'stim stop' })]);
+});
+
+test("a port held by another workspace's Metro names that workspace", () => {
+  const s = environmentState(project(), {
+    metro: { notOurs: 'pid 99 runs from /proj/b/app', pid: 99, cwd: '/proj/b/app' },
+    workspaces: ['/proj/a', '/proj/b'],
+  });
+  expect(s.issues[0]?.message).toMatch(/^port 8082 is in use by Metro for workspace b;/);
 });
 
 test('a booted sim with no Metro is called out as abandoned', () => {
