@@ -80,6 +80,14 @@ test('with an owner, closes only a session its claim on that device places insid
   expect(
     isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app', deviceId: 'U2' }])),
   ).toBe(false);
+  const fromRoot = (workspace: string) => ({
+    ...owner([{ session: 'ios-task', workspace }]),
+    workspace: '/w/repo/app',
+    repoRoot: '/w/repo',
+  });
+  expect(isOwnDeviceSession(session, device, fromRoot('/w/repo'))).toBe(true);
+  expect(isOwnDeviceSession(session, device, fromRoot('/w/repo/other'))).toBe(false);
+  expect(isOwnDeviceSession(session, device, fromRoot('/w'))).toBe(false);
 });
 
 test('for an AVD without a serial, matches its sessions on any serial by AVD name alone', () => {

@@ -330,13 +330,19 @@ next emulator on a console port reuses the serial. For an emulator that is
 already shut down, Stim closes the sessions that name its AVD on any serial
 that no connected device now holds. `stim stop` (including
 `stop --slot`) closes a session only when agent-device's claim on the device
-names that session and was taken inside the workspace being stopped. Stim
+names that session and was taken inside the workspace being stopped. A session
+claimed from the workspace's git root, such as the worktree root when the app
+lives in a subdirectory, is closed too, but only after `stop` has shut its
+device down and Stim has checked that the device is still stopped and that no
+other device holds its serial. Stim
 rechecks ownership and asks agent-device to reject a close if the session now
-targets another device. Sessions from another workspace or claim, sessions on
-other devices, and physical devices stay open. The integration is optional: a
+targets another device. Sessions from another workspace or claim, including
+sibling directories under the git root, sessions on other devices, and physical
+devices stay open. The integration is optional: a
 missing binary skips cleanup; failures print a warning and device teardown
 continues. Agent-device calls have
-a combined 15-second budget per device and require local socket transport and
+a combined 15-second budget per device and pass (the pass `stop` makes after
+shutdown has its own), and require local socket transport and
 support for `--session-lock reject`. Remote daemons are never used.
 
 An owned emulator counts as stopped only when no emulator process launched for
