@@ -60,7 +60,12 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
       accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
       style={[styles.tile, wide && styles.wide]}
     >
-      <View style={styles.screen}>
+      {/*
+        Fabric flattens a View with only a background into the Card, a Gesture Handler button on iOS. The button keeps
+        its underlay CALayer at sublayer index 0, and UIKit's insertSubview:atIndex: counts that layer, so a frame
+        mounted after the placeholder lands below this background. collapsable={false} keeps the frame inside.
+      */}
+      <View style={styles.screen} collapsable={false}>
         {frame ? (
           <Touch
             ref={thumbnail}
