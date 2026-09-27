@@ -209,6 +209,5 @@ public enum FormFactor: Sendable {
   case phone
   case tablet
   case dual
-  /// A landscape desktop browser page.
   case desktop
 }

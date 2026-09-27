@@ -108,9 +108,14 @@ private func webPageItems(_ env: Workspace) -> [AttentionItem] {
   guard let web = env.web, web.pageFailed else { return [] }
   return [
     AttentionItem(
-      text: "Web page failed to load", isError: true, command: StimCommand(["web"], cwd: env.path), runnable: true,
+      text: "Web page failed to load", isError: true, command: webCommand(web, cwd: env.path), runnable: true,
       opensLogs: true, detail: web.page?.error)
   ]
+}
+
+/// `stim web` with the running browser's launch options, which it reuses; a different `--headed` restarts Chrome.
+private func webCommand(_ browser: WebBrowser, cwd: String) -> StimCommand {
+  StimCommand(browser.headless ? ["web"] : ["web", "--headed"], cwd: cwd)
 }
 
 private func logErrorItems(_ env: Workspace) -> [AttentionItem] {
@@ -156,7 +161,7 @@ public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   switch device {
   case .ios(_, let sim) where sim.owned: break
   case .android(_, let avd) where avd.owned && !avd.physical: break
-  case .web: return StimCommand(["web"], cwd: cwd)
+  case .web(let browser): return webCommand(browser, cwd: cwd)
   default: return nil
   }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]

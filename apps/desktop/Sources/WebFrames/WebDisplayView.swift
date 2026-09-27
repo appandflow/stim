@@ -67,6 +67,7 @@ public final class WebDisplayNSView: NSView {
   private var retryTimer: Timer?
   private var status: WebStreamStatus?
   private var shownSize: CGSize?
+  private var cssWidth: CGFloat?
   private var interactive = false
   private var pressed = false
   private var lastShown: CFTimeInterval = 0
@@ -143,7 +144,10 @@ public final class WebDisplayNSView: NSView {
       guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
       else { return }
-      DispatchQueue.main.async { self?.frameArrived(image, generation: current) }
+      DispatchQueue.main.async {
+        self?.cssWidth = frame.cssWidth
+        self?.frameArrived(image, generation: current)
+      }
     }
     page.onEnd { [weak self] _ in
       DispatchQueue.main.async {
@@ -213,9 +217,15 @@ public final class WebDisplayNSView: NSView {
     if interactive {
       window?.makeFirstResponder(self)
     } else {
-      pressed = false
+      releaseMouse()
     }
     updateTrackingAreas()
+  }
+
+  private func releaseMouse() {
+    guard pressed else { return }
+    pressed = false
+    page?.mouse(.released, x: 0, y: 0, pressed: false)
   }
 
   public override func updateTrackingAreas() {
@@ -278,19 +288,18 @@ public final class WebDisplayNSView: NSView {
     let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: shownSize)
     guard fitted.width > 0 else { return }
     let lines: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 40
-    let cssPerPoint = 1 / (fitted.width / shownSize.width)
+    let cssPerPoint = (cssWidth ?? shownSize.width) / fitted.width
     page.wheel(
       x: at.x, y: at.y, deltaX: -event.scrollingDeltaX * lines * cssPerPoint,
       deltaY: -event.scrollingDeltaY * lines * cssPerPoint, modifiers: modifiers(event))
   }
 
-  // Command shortcuts stay with the Mac, as they do for the simulators and emulators.
   public override func keyDown(with event: NSEvent) {
     guard interactive, let page, !event.modifierFlags.contains(.command) else { return super.keyDown(with: event) }
     if let key = Self.keys[event.keyCode] {
       page.press(key, modifiers: modifiers(event))
     } else if let text = event.characters, !text.isEmpty,
-      text.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 }),
+      text.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 && !(0xF700...0xF8FF).contains($0.value) }),
       !event.modifierFlags.contains(.control)
     {
       page.type(text)

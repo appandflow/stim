@@ -162,15 +162,17 @@ struct DeviceTile: View {
   private func stoppedBar(_ run: StimCommand?) -> some View {
     HStack(spacing: Space.md) {
       Text(
-        run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
-          ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
+        device.platform == "web"
+          ? "Closed. Run stim web to open the page again."
+          : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+            ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
       )
       .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
       if let run {
-        Button("Run") { actions.run("Run \(device.slot)", run) }
+        Button("Run") { actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run) }
           .buttonStyle(.stim())
           .fixedSize()
           .disabled(actions.active(for: run.cwd) != nil)
