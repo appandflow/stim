@@ -52,7 +52,6 @@ export interface PushMessage {
 
 const PUSH_TOKEN = /(Expo|Exponent)PushToken\[([^\]\s]*)\]?/g;
 
-/** Replaces each Expo push token in `text` with its prefix and a short hash, so logs never carry a usable token. */
 export function maskPushTokens(text: string): string {
   return text.replace(
     PUSH_TOKEN,
