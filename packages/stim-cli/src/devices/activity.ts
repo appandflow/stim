@@ -257,11 +257,14 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
   ];
 }
 
-/** When an agent-device session last recorded an event: its events file's modification time. */
+/**
+ * When an agent-device session last recorded an event: its events file's modification time. agent-device names a
+ * session's directory after the session with every character outside `[a-zA-Z0-9._-]` replaced by `_`.
+ */
 function agentSessionActedAt(home: string, session: string): number | null {
   const root = envDir('AGENT_DEVICE_STATE_DIR') ?? join(home, '.agent-device');
   try {
-    return statSync(join(root, 'sessions', session, 'events.ndjson')).mtimeMs;
+    return statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
   } catch {
     return null;
   }

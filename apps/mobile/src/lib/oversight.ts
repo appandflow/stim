@@ -137,6 +137,8 @@ export interface OversightState {
   workspaces: Record<string, WorkspaceEntry>;
   disk?: Held;
   memory?: Held;
+  /** Whether memory pressure was ever read, so the first reading records what is true without notifying. */
+  memoryKnown?: boolean;
   link?: Held & { kind: string };
 }
 
@@ -149,6 +151,8 @@ export interface OversightResult {
 
 const LOW_DISK_BYTES = 20e9;
 const DISK_CRITICAL_BYTES = LOW_DISK_BYTES / 4;
+/** Free space a low-disk episode needs back before it ends, so space hovering at the floor notifies once. */
+const DISK_RECOVERED_BYTES = DISK_CRITICAL_BYTES + 1e9;
 const MEMORY_SETTLE_MS = 60_000;
 const OFFLINE_SETTLE_MS = 60_000;
 /** How long an agent must be gone, with nothing happening, before its green work counts as finished. */
@@ -386,15 +390,21 @@ function overseeMachine(run: Run, previous: OversightState | null, state: Oversi
   );
   if (input.volumes === null) {
     if (previous?.disk) state.disk = previous.disk;
-  } else if (lowest !== null && lowest !== undefined && lowest < DISK_CRITICAL_BYTES) {
+  } else if (
+    lowest !== null &&
+    lowest !== undefined &&
+    lowest < (previous?.disk ? DISK_RECOVERED_BYTES : DISK_CRITICAL_BYTES)
+  ) {
     const held = { ...heldFor(previous?.disk, now) };
     const body = `${formatBytes(lowest)} free, below Stim's floor`;
     if (!held.notified) held.notified = lasting(run, machineNotification(run, 'disk', body));
     state.disk = held;
   }
 
+  state.memoryKnown = input.memoryPressure !== null || previous?.memoryKnown === true;
   if (input.memoryPressure === 'critical') {
     const held = { ...heldFor(previous?.memory, now) };
+    if (!previous?.memoryKnown) held.notified = true;
     const due = held.since + MEMORY_SETTLE_MS;
     if (!held.notified && now < due && !run.baseline) wake(run, due);
     else if (!held.notified)
@@ -474,7 +484,8 @@ function overseeProgress(run: Run, { env, entry, notify, devices, driven }: Work
   const due = quietSince + run.prefs.stuckMinutes * 60_000;
   if (now < due) return wake(run, due);
   const minutes = Math.floor((now - quietSince) / 60_000);
-  const body = `No agent activity for ${minutes} min; ${device.model} still up`;
+  const after = green && newest ? ` after a green ${platformName(newest.platform)} build` : '';
+  const body = `No agent activity for ${minutes} min${after}; ${device.model} still up`;
   if (lasting(run, notify('stuck', body, deviceTarget(env, device)))) entry.stuckAt = quietSince;
 }
 

@@ -405,10 +405,11 @@ export class ControlHub {
     const inherited = granted !== null && current?.lease?.mine === true;
     if (current) {
       void this.end(current, 'taken-over', `${owner.device.name} took over this device.`, !inherited);
-      this.options.conflict(current.owner.device.id, {
-        ...conflictAbout(status, target),
-        body: `${owner.device.name} took over the ${platformName(target.platform)} device you were controlling`,
-      });
+      if (current.owner.device.id !== owner.device.id)
+        this.options.conflict(current.owner.device.id, {
+          ...conflictAbout(status, target),
+          body: `${owner.device.name} took over the ${platformName(target.platform)} device you were controlling`,
+        });
     }
     const id = `c${this.next++}`;
     session = {

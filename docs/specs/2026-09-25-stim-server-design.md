@@ -366,8 +366,8 @@ out: it carries notification text, never status or frames.
   finished (including the pull request), a machine in trouble and control
   conflicts. Single failed builds, log errors, stopped apps and slow builds no
   longer notify. `src/oversight.ts` replaces `src/attention.ts` and
-  `src/notify.ts`, keeps per-workspace episode state, and is mirrored
-  byte-for-byte in the phone app.
+  `src/notify.ts`, keeps per-workspace episode state, and is mirrored in
+  the phone app, identical below its header comment.
 - Payload: the workspace title or Mac name, a short reason, and in `data` the
   screen to open and the workspace's absolute path, which the phone needs to
   open it from a cold start. No logs.

@@ -383,7 +383,7 @@ describe('PushNotifier', () => {
         {
           to: TOKEN,
           title: 'MacBook Pro',
-          body: '4 workspaces need a look',
+          body: '4 things need a look',
           sound: 'default',
           interruptionLevel: 'active',
           data: { ref: 'mac-1', target: 'home' },

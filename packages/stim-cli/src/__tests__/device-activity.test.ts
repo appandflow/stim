@@ -170,9 +170,14 @@ describe('createActivityReader', () => {
     mkdirSync(claims, { recursive: true });
     writeFileSync(
       join(claims, 'claim.json'),
-      JSON.stringify({ session: 'a1', device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
+      JSON.stringify({
+        session: 'cwd:11fe14a563f7aed6:ios',
+        device: { id: UDID },
+        ownerPid: 100,
+        ownerStartTime: OWNER_START,
+      }),
     );
-    const events = join(home, '.agent-device', 'sessions', 'a1', 'events.ndjson');
+    const events = join(home, '.agent-device', 'sessions', 'cwd_11fe14a563f7aed6_ios', 'events.ndjson');
     mkdirSync(join(events, '..'), { recursive: true });
     writeFileSync(events, '{}\n');
     const actedAt = NOW - 120_000;

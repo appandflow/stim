@@ -248,6 +248,23 @@ describe('oversee', () => {
       ]);
     });
 
+    it('names the green build an agent went quiet after while still holding the device', () => {
+      const { texts } = run([
+        { at: T0, input: input([env({ ios: sim(null) })]) },
+        {
+          at: T0 + MIN,
+          input: input([env({ ios: driven(T0 + MIN, T0 + MIN), ...builds({ status: 'ok', at: T0 + MIN }) })]),
+        },
+        {
+          at: T0 + 16 * MIN,
+          input: input([env({ ios: driven(T0 + MIN, T0 + MIN), ...builds({ status: 'ok', at: T0 + MIN }) })]),
+        },
+      ]);
+      expect(texts.at(-1)).toBe(
+        'wide-insets: No agent activity for 15 min after a green iOS build; iPhone 18 Pro 27.0 still up',
+      );
+    });
+
     it('leaves a workspace alone once its devices are shut down', () => {
       const { texts } = run([
         { at: T0, input: input([env({ ios: sim(null) })]) },
@@ -434,6 +451,23 @@ describe('oversee', () => {
         [T0 + 5 * MIN, 'machine:link', 'MacBook Pro', 'Offline', 'machine'],
       ]);
     });
+  });
+
+  it('keeps one low-disk episode while free space hovers at the floor, and stays quiet about a first reading', () => {
+    const free = (gb: number, memoryPressure: OversightInput['memoryPressure'] = 'normal') =>
+      input([], { volumes: [{ freeBytes: gb * 1e9 }], memoryPressure });
+    const { sent } = run([
+      { at: T0, input: free(200, null) },
+      { at: T0 + MIN, input: free(4.9, 'critical') },
+      { at: T0 + 3 * MIN, input: free(5.1, 'critical') },
+      { at: T0 + 4 * MIN, input: free(4.9, 'critical') },
+      { at: T0 + 5 * MIN, input: free(6.5, 'critical') },
+      { at: T0 + 6 * MIN, input: free(4.9, 'critical') },
+    ]);
+    expect(sent.map((n) => [n.at, n.id])).toEqual([
+      [T0 + MIN, 'machine:disk'],
+      [T0 + 6 * MIN, 'machine:disk'],
+    ]);
   });
 
   describe('preferences', () => {

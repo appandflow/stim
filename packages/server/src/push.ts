@@ -23,7 +23,7 @@ export interface PushLimits {
   pullRequestMs: number;
   /** Expo keeps receipts for a day and may need minutes to produce them. */
   receiptDelayMs: number;
-  /** Pushes a device may receive per hour; later ones are dropped. */
+  /** Pushes that alert a device may receive per hour; later ones are dropped. Quiet ones do not count. */
   perHour: number;
   /** More notifications than this at once become one summary. */
   summarizeAbove: number;
@@ -174,7 +174,9 @@ export class PushNotifier {
   /** Rereads the registrations; a device whose token is new starts from what is already true. */
   refresh(): void {
     if (this.closed) return;
-    const current = new Map(this.options.devices().flatMap((d) => (d.push ? [[d.id, d.push] as const] : [])));
+    const current = new Map(
+      this.options.devices().flatMap((d) => (d.push?.events.length ? [[d.id, d.push] as const] : [])),
+    );
     for (const id of this.registered.keys()) if (!current.has(id)) this.registered.delete(id);
     let added = false;
     for (const [id, push] of current) {
@@ -326,7 +328,9 @@ export class PushNotifier {
         result.notifications.length > this.limits.summarizeAbove
           ? [this.summary(device, result.notifications)]
           : result.notifications.map((n) => this.message(device.push, n));
-      for (const message of due) if (this.take(device, now)) messages.push(message);
+      for (const message of due) {
+        if (message.interruptionLevel === 'passive' || this.take(device, now)) messages.push(message);
+      }
     }
     if (this.wake) clearTimeout(this.wake);
     this.wake = wakeAt === null ? null : setTimeout(() => this.evaluate(), Math.max(0, wakeAt - now));
@@ -364,7 +368,7 @@ export class PushNotifier {
     return {
       to: device.push.token,
       title: this.options.name,
-      body: `${notifications.length} workspaces need a look`,
+      body: `${notifications.length} things need a look`,
       sound: quiet ? null : 'default',
       interruptionLevel: quiet ? 'passive' : 'active',
       data: { ref: device.push.ref, target: 'home' },

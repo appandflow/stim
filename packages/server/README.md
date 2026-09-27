@@ -325,14 +325,22 @@ the events the device chose:
   for example, `Same Swift error 3x at AppDelegate.swift:71` and opens the
   build details.
 - `finished`: the agent stopped driving after a green build and nothing
-  happened for 5 minutes, or it stopped the workspace; the workspace's pull
+  happened for 5 minutes, or stopped the workspace after a green build; the
+  workspace's pull
   request became ready for review, or merged, which opens the pull request; or,
   when GitHub cannot be asked, git finds the branch merged into the default
   branch.
-- `machine`: a volume holding Stim state has less than 5 GB free, or memory
-  pressure stayed critical for a minute. It opens the machine sheet.
+- `machine`: a volume holding Stim state has less than 5 GB free (the episode
+  ends once 6 GB are free again), or memory pressure stayed critical for a
+  minute. It opens the machine sheet.
 - `control`: another client took over a device this phone controls, or an
   agent started driving it. It opens the device viewer.
+
+Stuck and finished are read from device activity, so two cases blur them. An
+agent that finishes without closing its agent-device session still holds the
+device, so it gets `stuck`, whose text then names the green build it stopped
+after. An app that logs on a timer keeps its device active, so its workspace
+never looks stuck or finished.
 
 Each workspace notifies once per episode: a stuck agent notifies again only
 after new activity and a new quiet stretch, a loop only after a success or a
@@ -349,10 +357,12 @@ reads the free space of Stim's volumes and the memory pressure every minute.
 While a device wants `finished`, it looks up the pull requests of worktree
 branches that have an upstream every 5 minutes, with one `gh api graphql` call
 per repository, the lookup `stim gc` uses. Without `gh`, or when it is signed
-out or does not answer, it stops asking and relies on git.
+out or does not answer, that round relies on git, and the next round asks
+again.
 
-A device gets at most 20 pushes an hour. More than three at once become one
-summary push that opens the phone's home screen.
+A device gets at most 20 alerting pushes an hour; quiet `started` pushes do
+not count. More than three at once become one summary push that opens the
+phone's home screen.
 
 Pushes go to the Expo push service, `https://exp.host/--/api/v2/push/send`,
 which forwards them to Apple. No APNs key or other secret lives on the Mac. A

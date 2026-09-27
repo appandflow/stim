@@ -338,7 +338,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
     readVolumes: readDiskVolumes,
     readPressure: readMemoryPressure,
-    pullRequests: options.pullRequests ?? worktreePullRequests(),
+    pullRequests: options.pullRequests ?? ((worktrees) => worktreePullRequests()(worktrees)),
     ownLeases: () => control.ownLeaseTimes(),
     devices: readDevices,
     dropToken: dropPushToken,
