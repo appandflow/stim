@@ -6,5 +6,5 @@
     "types": ["node", "vitest/globals"]
   },
   "include": ["bin/**/*.ts", "src/**/*.ts", "__tests__/**/*.ts"],
-  "exclude": ["__tests__/attention-agreement.test.ts"]
+  "exclude": ["__tests__/oversight-agreement.test.ts"]
 }

@@ -269,11 +269,16 @@ Events are `{ "event", "subscription", ... }`.
   cannot be read. `sinceMs` returns only the samples taken after it.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
-  [push notifications](#push-notifications) the phone wants (`build-failed`,
-  `log-errors`, `disk`, `app-stopped`, `slow-build`), an optional
-  `agentOnly`, and `ref`, an opaque string of up to 128 characters that every
-  push carries back as `data.ref`. It needs only `read`. Registering again
-  replaces the device's registration; `push.unregister` removes it.
+  [push notifications](#push-notifications) the phone wants (`started`,
+  `stuck`, `looping`, `finished`, `machine`, `control`), `ref`, an opaque
+  string of up to 128 characters that every push carries back as `data.ref`,
+  and optionally `stuckMinutes` (1 to 240, default 15) and `quietHours`
+  (`{ "start", "end", "timeZone" }`, minutes after midnight in an IANA time
+  zone). It needs only `read`. Registering again replaces the device's
+  registration; `push.unregister` removes it. Phones from before these events
+  may still send `build-failed`, `log-errors`, `disk`, `app-stopped`,
+  `slow-build` and `agentOnly`: `disk` counts as `machine`, and the rest are
+  accepted and ignored.
 - `action` runs an [action](#actions) and returns
   `{ "action", "workspace", "output" }`.
 - An `error` event ends a subscription whose source failed, or whose client
@@ -293,50 +298,79 @@ waiting records the server ends that subscription with `slow-client`.
 
 ## Push notifications
 
-A paired phone that sends `push.register` gets attention notifications while
-its app is in the background or closed. The server keeps the registration
-with the pairing in `devices.json`, so revoking the device drops it. A token
-belongs to one pairing: registering it from a new pairing of the same phone
-removes it from the old one.
+A paired phone that sends `push.register` gets notifications while its app is
+in the background or closed. The server keeps the registration with the
+pairing in `devices.json`, so revoking the device drops it. A token belongs to
+one pairing: registering it from a new pairing of the same phone removes it
+from the old one.
+
+A notification means that your attention changes the outcome, or that work you
+wait on started or finished. A failed build, new log errors, a stopped app or a
+slow build on their own are normal agent iteration and do not push; the phone
+shows them in its attention strip. The server pushes, per device and only for
+the events the device chose:
+
+- `started`: a workspace began warming (`phase` `warming`), or an agent first
+  drove one of its devices. It is delivered quietly, without sound (iOS
+  `passive`), grouped per Mac, and opens the workspace, or the device viewer
+  once an agent drives it. An agent driving the workspace updates the warming
+  notification in place.
+- `stuck`: an agent drove the workspace, its devices are still up, and nothing
+  happened for `stuckMinutes`: no agent action, build, Metro bundle request, app
+  log record or new log error. It opens the device viewer.
+- `looping`: the newest three or more iOS or Android builds failed the same
+  way, at the same first compiler diagnostic `file:line`, or with the same
+  error code when there is none, such as three failed launches
+  (`STIM_LAUNCH_FAILED`, which includes an app that exits at launch). It says,
+  for example, `Same Swift error 3x at AppDelegate.swift:71` and opens the
+  build details.
+- `finished`: the agent stopped driving after a green build and nothing
+  happened for 5 minutes, or it stopped the workspace; the workspace's pull
+  request became ready for review, or merged, which opens the pull request; or,
+  when GitHub cannot be asked, git finds the branch merged into the default
+  branch.
+- `machine`: a volume holding Stim state has less than 5 GB free, or memory
+  pressure stayed critical for a minute. It opens the machine sheet.
+- `control`: another client took over a device this phone controls, or an
+  agent started driving it. It opens the device viewer.
+
+Each workspace notifies once per episode: a stuck agent notifies again only
+after new activity and a new quiet stretch, a loop only after a success or a
+different failure. A push carries a collapse id for its workspace and
+category, so a later one replaces the earlier notification on the phone
+instead of stacking. What is already true when the server starts or a device
+registers does not push. During the phone's quiet hours nothing pushes: a
+problem that still holds when they end pushes then, and what started or
+finished during them does not.
 
 While at least one device is registered, the server keeps its own
-`stim status --watch --json` child running, even with no client connected,
-and reads the free space of Stim's volumes every minute. It pushes, per
-device and only for the events the device chose:
-
-- `build-failed`: a workspace's last iOS or Android build failed, in an
-  active workspace or within the last day;
-- `log-errors`: new errors in an active workspace's logs, once the count has
-  held for 10 seconds (at most a minute after the first), then at most every
-  5 minutes;
-- `disk`: a volume holding Stim state has less than 5 GB free;
-- `app-stopped`: the app is not running on a booted device of a live
-  workspace;
-- `slow-build`: a build has run more than twice its usual duration.
-
-These are the rules of the phone app's home attention strip
-(`apps/mobile/src/lib/attention.ts`), copied into `src/attention.ts`. Each problem pushes once; a later failed build or a
-problem that clears for two minutes and returns pushes again. What is already
-wrong when the server starts or a device registers does not push. With
-`agentOnly`, workspace events push only while a device of the workspace is
-driven by an agent, so a workspace whose devices are gone, such as after a
-failed first build, does not push.
+`stim status --watch --json` child running, even with no client connected, and
+reads the free space of Stim's volumes and the memory pressure every minute.
+While a device wants `finished`, it looks up the pull requests of worktree
+branches that have an upstream every 5 minutes, with one `gh api graphql` call
+per repository, the lookup `stim gc` uses. Without `gh`, or when it is signed
+out or does not answer, it stops asking and relies on git.
 
 A device gets at most 20 pushes an hour. More than three at once become one
 summary push that opens the phone's home screen.
 
 Pushes go to the Expo push service, `https://exp.host/--/api/v2/push/send`,
-which forwards them to Apple. No APNs key or other secret lives on the Mac.
-A workspace push carries the workspace title, a short reason such as `iOS
-build failed (STIM_BUILD_FAILED)` and the Mac's name as the subtitle; a disk
-or summary push has the Mac's name as its title. In `data` it carries the
-`ref`, the screen to open (`home`, `machine`, `workspace` or `logs`) and, for
-a workspace, its absolute path, which the phone needs to open that workspace
-before it has reconnected. It carries no logs and no other paths. The
-server checks the push receipts 15 minutes later and drops a token that Expo
-reports as `DeviceNotRegistered`, and prints any other refusal, such as
-missing APNs credentials, on stderr. Pushes are not retried, and nothing is
-pushed while the server is not running.
+which forwards them to Apple. No APNs key or other secret lives on the Mac. A
+workspace push carries the workspace title, a one-line cause and the Mac's name
+as the subtitle; a machine or summary push has the Mac's name as its title. In
+`data` it carries the `ref`, the screen to open (`home`, `machine`,
+`workspace`, `device`, `build` or `url`), and the workspace's absolute path,
+with the platform and slot for a device, the platform for build details and
+the pull request's URL for `url`. The phone needs the path to open a workspace
+before it has reconnected. It carries no logs. The server checks the push
+receipts 15 minutes later and drops a token that Expo reports as
+`DeviceNotRegistered`, and prints any other refusal, such as missing APNs
+credentials, on stderr. Pushes are not retried, and nothing is pushed while
+the server is not running.
+
+The rules live in `src/oversight.ts`, a pure module the phone app keeps an
+identical copy of (`apps/mobile/src/lib/oversight.ts`) for its local
+notifications; `__tests__/oversight-agreement.test.ts` fails when they differ.
 
 ## Actions
 

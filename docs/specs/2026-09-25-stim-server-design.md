@@ -361,6 +361,13 @@ out: it carries notification text, never status or frames.
   stopped apps and slow builds; `src/notify.ts` decides what notifies, once
   per occurrence, with settle and cooldown times. The phone's local
   notifications (#1578) keep copies of both.
+- Redesign (#1644): notifications now follow what a person overseeing agents
+  needs: work started, an agent that looks stuck or loops on one failure, work
+  finished (including the pull request), a machine in trouble and control
+  conflicts. Single failed builds, log errors, stopped apps and slow builds no
+  longer notify. `src/oversight.ts` replaces `src/attention.ts` and
+  `src/notify.ts`, keeps per-workspace episode state, and is mirrored
+  byte-for-byte in the phone app.
 - Payload: the workspace title or Mac name, a short reason, and in `data` the
   screen to open and the workspace's absolute path, which the phone needs to
   open it from a cold start. No logs.

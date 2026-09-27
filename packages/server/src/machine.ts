@@ -58,7 +58,7 @@ function readVolumes(locations: DiskLocation[]): MachineVolume[] {
   return [...byDevice.values()];
 }
 
-function readMemoryPressure(): Promise<MemoryPressure | null> {
+export function readMemoryPressure(): Promise<MemoryPressure | null> {
   if (process.platform !== 'darwin') return Promise.resolve(null);
   return new Promise((resolve) => {
     execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeout: 2000 }, (error, stdout) => {

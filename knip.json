@@ -11,9 +11,6 @@
   "workspaces": {
     ".": {
       "entry": ["apps/desktop/scripts/*.mjs"]
-    },
-    "packages/server": {
-      "ignoreDependencies": ["stim"]
     }
   }
 }

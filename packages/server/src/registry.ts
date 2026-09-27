@@ -3,7 +3,15 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { configDir, withDirLock } from '@stim-cli/core';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
-import { CAPABILITIES, PUSH_EVENTS, PUSH_TOKEN_PATTERN, type Capability, type PushEvent } from './protocol.ts';
+import {
+  CAPABILITIES,
+  PUSH_EVENTS,
+  PUSH_TOKEN_PATTERN,
+  type Capability,
+  type PushEvent,
+  type QuietHours,
+} from './protocol.ts';
+import { DEFAULT_STUCK_MINUTES } from './oversight.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
@@ -24,9 +32,38 @@ export interface PairedDevice {
 export interface PushRegistration {
   token: string;
   events: PushEvent[];
-  agentOnly: boolean;
   ref: string;
   registeredAt: string;
+  stuckMinutes: number;
+  quietHours: QuietHours | null;
+}
+
+/** The events a registration asks for, with the legacy `disk` read as `machine` and other legacy names dropped. */
+export function pushEvents(events: readonly unknown[]): PushEvent[] {
+  return PUSH_EVENTS.filter((event) => events.includes(event) || (event === 'machine' && events.includes('disk')));
+}
+
+function validTimeZone(timeZone: string): boolean {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const minuteOfDay = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440;
+
+/** Quiet hours as `push.register` takes them, or null when `value` is not valid. */
+export function parseQuietHours(value: unknown): QuietHours | null {
+  if (!isJsonObject(value)) return null;
+  const { start, end, timeZone } = value;
+  if (!minuteOfDay(start) || !minuteOfDay(end) || typeof timeZone !== 'string' || !validTimeZone(timeZone)) return null;
+  return { start: start as number, end: end as number, timeZone };
+}
+
+/** Whether `value` is a stuck threshold `push.register` takes: whole minutes from 1 to 240. */
+export function validStuckMinutes(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 240;
 }
 
 interface PairingRecord {
@@ -85,15 +122,16 @@ const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
 
 function parsePush(value: unknown): PushRegistration | null {
   if (!isJsonObject(value)) return null;
-  const { token, events, agentOnly, ref, registeredAt } = value;
+  const { token, events, ref, registeredAt, stuckMinutes } = value;
   if (typeof token !== 'string' || !pushToken.test(token) || typeof ref !== 'string') return null;
   if (!Array.isArray(events) || typeof registeredAt !== 'string') return null;
   return {
     token,
-    events: PUSH_EVENTS.filter((event) => events.includes(event)),
-    agentOnly: agentOnly === true,
+    events: pushEvents(events),
     ref,
     registeredAt,
+    stuckMinutes: validStuckMinutes(stuckMinutes) ? stuckMinutes : DEFAULT_STUCK_MINUTES,
+    quietHours: parseQuietHours(value.quietHours),
   };
 }
 

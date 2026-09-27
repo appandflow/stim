@@ -1,17 +1,26 @@
 import { createHash } from 'node:crypto';
 import type { StatusPayload } from '@stim-cli/core/state';
-import { attentionCandidates, type AttentionCandidate } from './attention.ts';
 import type { FeedListener } from './feed.ts';
-import { diffAttention, type NotifyEntries } from './notify.ts';
-import type { MachineVolume } from './protocol.ts';
+import {
+  inQuietHours,
+  oversee,
+  type OversightCategory,
+  type OversightNotification,
+  type OversightPullRequest,
+  type OversightState,
+  type OversightTarget,
+} from './oversight.ts';
+import type { MachineVolume, MemoryPressure, QuietHours } from './protocol.ts';
 import type { PairedDevice, PushRegistration } from './registry.ts';
 
 export const EXPO_PUSH_API: string = 'https://exp.host/--/api/v2/push';
 
 export interface PushLimits {
-  /** How often overruns are rechecked while status is unchanged. */
+  /** How often timed rules and overruns are rechecked while status is unchanged. */
   tickMs: number;
   diskMs: number;
+  /** How often the workspaces' pull requests are looked up while a device wants `finished`. */
+  pullRequestMs: number;
   /** Expo keeps receipts for a day and may need minutes to produce them. */
   receiptDelayMs: number;
   /** Pushes a device may receive per hour; later ones are dropped. */
@@ -24,30 +33,64 @@ export interface PushLimits {
 const DEFAULT_PUSH_LIMITS: PushLimits = {
   tickMs: 30_000,
   diskMs: 60_000,
+  pullRequestMs: 5 * 60_000,
   receiptDelayMs: 15 * 60_000,
   perHour: 20,
   summarizeAbove: 3,
   resubscribeMs: 30_000,
 };
 
+/** A linked worktree whose pull request the notifier asks about. */
+interface PullRequestWorktree {
+  path: string;
+  branch: string;
+  repository: string;
+}
+
 export interface PushNotifierOptions {
   name: string;
   endpoint: string;
   subscribeStatus: (listener: FeedListener) => () => void;
   readVolumes: () => MachineVolume[];
+  readPressure: () => Promise<MemoryPressure | null>;
+  /** Each worktree's pull request by path, null for none; a worktree left out could not be looked up. */
+  pullRequests: (worktrees: PullRequestWorktree[]) => Promise<Map<string, OversightPullRequest | null>>;
+  /** `grantedAt` of the device leases this server holds for phones that control a device. */
+  ownLeases: () => readonly string[];
   devices: () => PairedDevice[];
   dropToken: (token: string) => void;
   limits?: Partial<PushLimits>;
   now?: () => number;
 }
 
+type PushTarget =
+  | { target: 'home' }
+  | { target: 'machine' }
+  | { target: 'workspace'; path: string }
+  | { target: 'device'; path: string; platform: 'ios' | 'android'; slot: string }
+  | { target: 'build'; path: string; platform: 'ios' | 'android' }
+  | { target: 'url'; path: string; url: string };
+
 export interface PushMessage {
   to: string;
   title: string;
   subtitle?: string;
   body: string;
-  sound: 'default';
-  data: { ref: string; target: 'home' | 'machine' | 'workspace' | 'logs'; path?: string };
+  sound: 'default' | null;
+  interruptionLevel: 'active' | 'passive';
+  /** Replaces a notification the phone still shows for the same workspace and category. */
+  collapseId?: string;
+  threadId?: string;
+  data: { ref: string } & PushTarget;
+}
+
+/** A conflict over a device a phone controls, pushed to that phone. */
+export interface ControlConflict {
+  workspace: string;
+  title: string;
+  body: string;
+  platform: 'ios' | 'android';
+  slot: string;
 }
 
 const PUSH_TOKEN = /(Expo|Exponent)PushToken\[([^\]\s]*)\]?/g;
@@ -64,9 +107,30 @@ function warn(text: string): void {
   console.error(`stim-server: ${maskPushTokens(text)}`);
 }
 
+/** The minutes after midnight in `timeZone` at `now`. */
+function minuteOfDay(now: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+    .formatToParts(now)
+    .reduce<Record<string, string>>((all, part) => ({ ...all, [part.type]: part.value }), {});
+  return Number(parts.hour) * 60 + Number(parts.minute);
+}
+
+const quietNow = (quietHours: QuietHours | null, now: number) =>
+  quietHours !== null && inQuietHours(quietHours, minuteOfDay(now, quietHours.timeZone));
+
+/** APNs caps a collapse id at 64 bytes, and a workspace path can be longer. */
+const collapseId = (id: string) => createHash('sha256').update(id).digest('hex').slice(0, 32);
+
+function targetData(target: OversightTarget): PushTarget {
+  const { kind, ...rest } = target;
+  return { target: kind, ...rest } as PushTarget;
+}
+
+const wants = (device: Registered, category: OversightCategory) => device.push.events.includes(category);
+
 interface Registered {
   push: PushRegistration;
-  entries: NotifyEntries | null;
+  state: OversightState | null;
   bucket: { tokens: number; at: number };
 }
 
@@ -78,8 +142,9 @@ interface Ticket {
 }
 
 /**
- * Pushes attention notifications to the devices that asked with `push.register`. While any device is
- * registered it keeps its own `stim status --watch --json` subscription and reads the disks every minute.
+ * Pushes notifications to the devices that asked with `push.register`. While any device is registered it keeps its
+ * own `stim status --watch --json` subscription, reads the disks and memory pressure every minute, and, while a
+ * device wants `finished`, looks up the pushed worktrees' pull requests every few minutes.
  */
 export class PushNotifier {
   private readonly options: PushNotifierOptions;
@@ -89,11 +154,15 @@ export class PushNotifier {
   private unsubscribe: (() => void) | null = null;
   private status: StatusPayload | null = null;
   private volumes: MachineVolume[] | null = null;
+  private pressure: MemoryPressure | null = null;
+  private pullRequests: Record<string, OversightPullRequest | null> = {};
   private readonly timers = new Set<NodeJS.Timeout>();
   private tick: NodeJS.Timeout | null = null;
   private disk: NodeJS.Timeout | null = null;
+  private lookups: NodeJS.Timeout | null = null;
   private wake: NodeJS.Timeout | null = null;
   private resubscribe: NodeJS.Timeout | null = null;
+  private lookingUp = false;
   private closed = false;
 
   constructor(options: PushNotifierOptions) {
@@ -102,7 +171,7 @@ export class PushNotifier {
     this.now = options.now ?? Date.now;
   }
 
-  /** Rereads the registrations; a device whose token is new starts from what is already wrong. */
+  /** Rereads the registrations; a device whose token is new starts from what is already true. */
   refresh(): void {
     if (this.closed) return;
     const current = new Map(this.options.devices().flatMap((d) => (d.push ? [[d.id, d.push] as const] : [])));
@@ -114,12 +183,32 @@ export class PushNotifier {
         known.push = push;
         continue;
       }
-      this.registered.set(id, { push, entries: null, bucket: { tokens: this.limits.perHour, at: this.now() } });
+      this.registered.set(id, { push, state: null, bucket: { tokens: this.limits.perHour, at: this.now() } });
       added = true;
     }
     if (this.registered.size > 0) this.watch();
     else this.unwatch();
     if (added) this.evaluate();
+  }
+
+  /** Pushes a control conflict to the device `deviceId`, when it registered for `control`. */
+  control(deviceId: string, conflict: ControlConflict): void {
+    const device = this.registered.get(deviceId);
+    const now = this.now();
+    if (this.closed || !device || !wants(device, 'control') || quietNow(device.push.quietHours, now)) return;
+    if (!this.take(device, now)) return;
+    const { workspace, platform, slot } = conflict;
+    void this.send([
+      this.message(device.push, {
+        id: `control:${workspace}:${platform}:${slot}`,
+        category: 'control',
+        title: conflict.title,
+        body: conflict.body,
+        quiet: false,
+        thread: null,
+        target: { kind: 'device', path: workspace, platform, slot },
+      }),
+    ]);
   }
 
   close(): void {
@@ -131,31 +220,36 @@ export class PushNotifier {
 
   private watch(): void {
     if (!this.disk) {
-      this.readDisk();
-      this.disk = setInterval(() => {
-        this.readDisk();
-        this.evaluate();
-      }, this.limits.diskMs);
+      void this.readMachine();
+      this.disk = setInterval(() => void this.readMachine(), this.limits.diskMs);
     }
     if (!this.tick) this.tick = setInterval(() => this.evaluate(), this.limits.tickMs);
+    if (!this.lookups) this.lookups = setInterval(() => void this.lookUpPullRequests(), this.limits.pullRequestMs);
     if (!this.unsubscribe && !this.resubscribe) this.subscribe();
   }
 
   private unwatch(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
-    for (const timer of [this.tick, this.disk]) if (timer) clearInterval(timer);
+    for (const timer of [this.tick, this.disk, this.lookups]) if (timer) clearInterval(timer);
     for (const timer of [this.wake, this.resubscribe]) if (timer) clearTimeout(timer);
-    this.tick = this.disk = this.wake = this.resubscribe = null;
+    this.tick = this.disk = this.lookups = this.wake = this.resubscribe = null;
     this.status = null;
     this.volumes = null;
+    this.pressure = null;
+    this.pullRequests = {};
   }
 
   private subscribe(): void {
+    let first = true;
     this.unsubscribe = this.options.subscribeStatus({
       item: (value) => {
         this.status = value as unknown as StatusPayload;
         this.evaluate();
+        if (first) {
+          first = false;
+          void this.lookUpPullRequests();
+        }
       },
       failed: (message) => {
         warn(`push notifications paused: ${message}`);
@@ -169,11 +263,41 @@ export class PushNotifier {
     });
   }
 
-  private readDisk(): void {
+  private async readMachine(): Promise<void> {
     try {
       this.volumes = this.options.readVolumes();
     } catch {
       this.volumes = null;
+    }
+    try {
+      this.pressure = await this.options.readPressure();
+    } catch {
+      this.pressure = null;
+    }
+    this.evaluate();
+  }
+
+  /** Asks GitHub about the pushed worktrees' branches, only while a device wants `finished`. */
+  private async lookUpPullRequests(): Promise<void> {
+    const status = this.status;
+    if (!status || this.lookingUp || this.closed) return;
+    if (![...this.registered.values()].some((device) => wants(device, 'finished'))) return;
+    const worktrees = status.environments.flatMap(({ path, worktree }) =>
+      worktree?.branch && worktree.repository && worktree.git?.upstream
+        ? [{ path, branch: worktree.branch, repository: worktree.repository }]
+        : [],
+    );
+    if (worktrees.length === 0) return;
+    this.lookingUp = true;
+    try {
+      const found = await this.options.pullRequests(worktrees);
+      if (this.closed || this.registered.size === 0) return;
+      this.pullRequests = Object.fromEntries(found);
+      this.evaluate();
+    } catch (cause) {
+      warn(`could not look up pull requests: ${(cause as Error).message}`);
+    } finally {
+      this.lookingUp = false;
     }
   }
 
@@ -181,17 +305,27 @@ export class PushNotifier {
     const status = this.status;
     if (!status || this.closed) return;
     const now = this.now();
-    const candidates = attentionCandidates(status, this.volumes, this.options.name, now);
+    const input = {
+      machine: this.options.name,
+      status,
+      volumes: this.volumes,
+      memoryPressure: this.pressure,
+      link: null,
+      pullRequests: this.pullRequests,
+      ownLeases: this.options.ownLeases(),
+    };
     const messages: PushMessage[] = [];
     let wakeAt: number | null = null;
     for (const device of this.registered.values()) {
-      const diff = diffAttention(device.entries, candidates, device.push, now);
-      device.entries = diff.entries;
-      if (diff.wakeAt !== null) wakeAt = wakeAt === null ? diff.wakeAt : Math.min(wakeAt, diff.wakeAt);
+      const { events, stuckMinutes, quietHours } = device.push;
+      const prefs = { categories: events, stuckMinutes, quiet: quietNow(quietHours, now) };
+      const result = oversee(device.state, input, prefs, now);
+      device.state = result.state;
+      if (result.wakeAt !== null) wakeAt = wakeAt === null ? result.wakeAt : Math.min(wakeAt, result.wakeAt);
       const due =
-        diff.notify.length > this.limits.summarizeAbove
-          ? [this.summary(device, diff.notify)]
-          : diff.notify.map((c) => this.message(device.push, c));
+        result.notifications.length > this.limits.summarizeAbove
+          ? [this.summary(device, result.notifications)]
+          : result.notifications.map((n) => this.message(device.push, n));
       for (const message of due) if (this.take(device, now)) messages.push(message);
     }
     if (this.wake) clearTimeout(this.wake);
@@ -211,28 +345,28 @@ export class PushNotifier {
     return true;
   }
 
-  private message(push: PushRegistration, candidate: AttentionCandidate): PushMessage {
-    const machine = candidate.target.kind === 'machine';
+  private message(push: PushRegistration, notification: OversightNotification): PushMessage {
     return {
       to: push.token,
-      title: candidate.title,
-      ...(machine ? {} : { subtitle: this.options.name }),
-      body: candidate.reason,
-      sound: 'default',
-      data: {
-        ref: push.ref,
-        target: candidate.target.kind,
-        ...(candidate.target.kind === 'machine' ? {} : { path: candidate.target.path }),
-      },
+      title: notification.title,
+      ...(notification.target.kind === 'machine' ? {} : { subtitle: this.options.name }),
+      body: notification.body,
+      sound: notification.quiet ? null : 'default',
+      interruptionLevel: notification.quiet ? 'passive' : 'active',
+      collapseId: collapseId(`${push.ref}\n${notification.id}`),
+      ...(notification.thread ? { threadId: notification.thread } : {}),
+      data: { ref: push.ref, ...targetData(notification.target) },
     };
   }
 
-  private summary(device: Registered, candidates: AttentionCandidate[]): PushMessage {
+  private summary(device: Registered, notifications: OversightNotification[]): PushMessage {
+    const quiet = notifications.every((n) => n.quiet);
     return {
       to: device.push.token,
       title: this.options.name,
-      body: `${candidates.length} problems need attention`,
-      sound: 'default',
+      body: `${notifications.length} workspaces need a look`,
+      sound: quiet ? null : 'default',
+      interruptionLevel: quiet ? 'passive' : 'active',
       data: { ref: device.push.ref, target: 'home' },
     };
   }
