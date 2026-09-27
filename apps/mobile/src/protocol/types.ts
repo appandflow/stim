@@ -143,10 +143,13 @@ export interface WorktreeFacts {
   git?: WorktreeGit | null;
 }
 
-/** One thing in a workspace that needs the user; `remedy` is a command to run from `workspace`. */
+/**
+ * One thing in a workspace that needs the user, or with severity `info` a note that needs nothing; `remedy` is a
+ * command to run from `workspace`.
+ */
 export interface StatusIssue {
   code: string;
-  severity: 'error' | 'warning';
+  severity: 'error' | 'warning' | 'info';
   message: string;
   remedy: string;
   workspace: string;

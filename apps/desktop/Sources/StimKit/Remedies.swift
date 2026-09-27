@@ -59,13 +59,13 @@ public struct AttentionGroup: Hashable, Sendable {
 }
 
 /// The workspaces with something to fix: live ones first, then those with an error, each in status order. Items
-/// come from `issues`, or from the `warnings` text when `stim` reports no issues, then from failed last runs, else
-/// from errors in the logs since the marker, which already count a failed run's build errors.
+/// come from `issues` other than `info` notes, or from the `warnings` text when `stim` reports no issues, then from
+/// failed last runs, else from errors in the logs since the marker, which already count a failed run's build errors.
 public func attentionGroups(_ workspaces: [Workspace]) -> [AttentionGroup] {
   let groups = workspaces.compactMap { env -> AttentionGroup? in
     let items: [AttentionItem]
     if let issues = env.issues {
-      items = issues.map { issue in
+      items = issues.filter { $0.severity != "info" }.map { issue in
         let words = issue.remedy.split(separator: " ").map(String.init)
         let command = words.first == "stim" ? StimCommand(Array(words.dropFirst()), cwd: issue.workspace) : nil
         return AttentionItem(

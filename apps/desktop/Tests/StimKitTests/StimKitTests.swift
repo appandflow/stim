@@ -375,6 +375,7 @@ import Testing
       try env("/idle"),
       try env("/err", severity: "error", remedy: "stim guide errors teardown"),
       try env("/live", live: true, remedy: "stim android --slot fold", slot: "fold"),
+      try env("/note", live: true, severity: "info", remedy: "stim start"),
     ])
     #expect(groups.map(\.workspace.path) == ["/live", "/err", "/idle"])
     #expect(

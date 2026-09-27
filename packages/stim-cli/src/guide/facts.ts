@@ -734,13 +734,23 @@ RULES
   marks the workspace [warming: <step>], [ready] or [idle].
 
   Each environment carries issues, the things in that workspace that need
-  the user, and warnings, the same issues as text ("<slot>: " when not the
-  default slot, then "<message>; run \`<remedy>\`"):
+  the user, and warnings, its error and warning issues as text ("<slot>: "
+  when not the default slot, then "<message>; run \`<remedy>\`"):
 
   issues   [{ code, severity, message, remedy, workspace, slot? }]
 
-  code       port-not-ours          something other than this workspace's
-                                    Metro answers its reserved port
+  code       port-not-ours          another process answers Metro on this
+                                    workspace's reserved port. "info" with
+                                    remedy stim start when no supervisor
+                                    runs: start reserves a free port.
+                                    "warning" when this workspace's
+                                    supervisor runs and cannot serve there
+                                    (remedy stim stop), or its supervisor is
+                                    unverified. The message names the holder:
+                                    "Metro for workspace <name>" when it runs
+                                    inside another workspace, else "a dev
+                                    server in <last dirs>"; metro.heldBy
+                                    carries its pid and cwd
              sim-missing            the recorded simulator no longer exists
              sim-without-metro      the simulator is booted and no Metro
                                     serves the workspace
@@ -772,8 +782,9 @@ RULES
              browser-orphaned       the owned Chrome runs but its supervisor
                                     exited, so page logs are not captured;
                                     stim stop closes it
-  severity   "error" when stop or start refuses until it is resolved, else
-             "warning"
+  severity   "error" when stop or start refuses until it is resolved,
+             "info" for a note that blocks nothing (not in warnings, and
+             not shown as a problem), else "warning"
   remedy     a command to run from workspace, such as "stim android --slot
              fold"
   slot       absent for the default slot
@@ -884,6 +895,8 @@ RULES
     { reason: "vanished", pid, startedAt }   the recorded supervisor is gone
                                              and recorded no cause
   (\`guide metro\`, WHY IT STOPPED).
+  When another process answers Metro on the port, metro carries
+  heldBy { pid, cwd }, cwd null when its directory could not be read.
 
   Each entry of environments also carries build: null, or the ios or android
   run that holds this workspace's native-run.lock:
