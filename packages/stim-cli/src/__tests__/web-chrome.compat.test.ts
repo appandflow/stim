@@ -15,7 +15,8 @@ import { readWebPage, readWebRecord, webLogFile } from '../web/state.ts';
 import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 
 const PAGE = `<!doctype html><title>stim web compat</title><body>ok
-<button id="go" onclick="history.pushState({}, '', '/next')">Go</button><input id="field" aria-label="Field"><script>
+<button id="go" onclick="history.pushState({}, '', '/next')">Go</button><input id="field" aria-label="Field">
+<a id="away" href="/away">Away</a><script>
 console.error('compat console error', { answer: 42 });
 setTimeout(() => { throw new Error('compat uncaught'); }, 20);
 </script>`;
@@ -32,7 +33,7 @@ beforeEach(async () => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'web-compat' }));
   process.env.STIM_HOME = join(home, 'stim');
   server = createServer((request, response) => {
-    if (request.url === '/' || request.url === '/next') {
+    if (request.url === '/' || request.url === '/next' || request.url === '/away') {
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(PAGE);
     } else {
@@ -100,6 +101,14 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
     await cdp.send('Runtime.evaluate', { expression: "window.dispatchEvent(new Event('stim-takeover'))" }, sessionId);
     await click('#go');
     await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(readWebPage(root)).toMatchObject({
+      url: `http://127.0.0.1:${port}/`,
+      route: `http://127.0.0.1:${port}/next`,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await click('#away');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   } finally {
     cdp.close();
   }
@@ -109,10 +118,11 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
     'Clicked button#go "Go"',
     'Clicked input#field[type=text] "Field"',
     'Typed 6 characters into input#field[type=text] "Field"',
+    'Clicked a#away "Away"',
   ]);
   expect(actions[0]).toMatchObject({ event: 'agent_action', platform: 'web', deviceId: record.targetId });
   expect(typeof actions[0]!.driver).toBe('string');
-  expect(readWebPage(root)).toMatchObject({ url: `http://127.0.0.1:${port}/`, route: `http://127.0.0.1:${port}/next` });
+  expect(readWebPage(root)).toEqual({ url: `http://127.0.0.1:${port}/away`, state: 'loaded' });
   expect(record.profile.startsWith(process.env.STIM_HOME!)).toBe(true);
 
   const deadline = Date.now() + 5000;

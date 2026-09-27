@@ -78,6 +78,7 @@ export const INPUT_LISTENER: string = `(() => {
     add({ command: 'type', target, characters }, (last) => last.target === target && (last.characters += characters, true));
   const origin = (event) => event.composedPath()[0] || event.target;
   addEventListener('stim-takeover', () => marks.push(performance.now()), true);
+  addEventListener('beforeunload', flush, true);
   addEventListener('click', (event) => {
     if (!event.isTrusted) return;
     add({ command: 'click', target: describe(origin(event), true), x: Math.round(event.clientX), y: Math.round(event.clientY) }, () => false);
@@ -86,7 +87,7 @@ export const INPUT_LISTENER: string = `(() => {
     if (!event.isTrusted || event.isComposing) return;
     const key = event.key;
     if (!key || key === 'Shift' || key === 'Control' || key === 'Alt' || key === 'Meta' || key === 'CapsLock') return;
-    lastKeyAt = performance.now();
+    if ([...key].length === 1 || key === 'Enter') lastKeyAt = performance.now();
     const target = describe(origin(event), false);
     const modifiers = (event.ctrlKey ? 'Control+' : '') + (event.metaKey ? 'Meta+' : '');
     if ([...key].length === 1 && !modifiers) {

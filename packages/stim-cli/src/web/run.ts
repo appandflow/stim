@@ -354,7 +354,7 @@ export async function runWebSupervisor(
         case 'Runtime.bindingCalled': {
           if (params.name !== INPUT_BINDING) return;
           if (params.payload === INPUT_STARTED) {
-            batchDriver ??= driver();
+            batchDriver = driver();
             return;
           }
           const batch = parseInputBatch(String(params.payload ?? ''));
