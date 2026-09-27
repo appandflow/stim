@@ -38,6 +38,7 @@ import {
   assertOwnedAvdStopped,
   avdPathExists,
   avdStorageRoots,
+  listAdbDevices,
   listOrphanedAvdDirectories,
   ownedAvdDirectory,
   type OrphanedAvdDirectory,
@@ -442,6 +443,13 @@ function teardownClaimedAvd(
         }
       });
     } else {
+      const stillStopped = (sessionSerial: string) => {
+        const current = resolveAvd(avdName);
+        if (current.notOwned || current.missing || current.serial) return false;
+        const adb = listAdbDevices();
+        return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === sessionSerial);
+      };
+      closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);
       waitForShutdown(avdName, null);
     }
     if (del) {

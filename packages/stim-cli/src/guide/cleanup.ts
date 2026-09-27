@@ -49,7 +49,9 @@ boot rather than a create, a provision and a reinstall.
 Before shutting down, parking or deleting an owned device, Stim best-effort
 closes local agent-device sessions bound to its exact iOS UDID or live Android
 serial. An Android session must also name the owned AVD, because the next
-emulator on a console port reuses its serial. \`stop\` closes a session only
+emulator on a console port reuses its serial. For an emulator that is already
+shut down, Stim closes the sessions that name its AVD on any serial that no
+connected device now holds. \`stop\` closes a session only
 when agent-device's claim on the device names it and was taken inside this
 workspace; sessions from another workspace or claim stay open. Stim rechecks
 device ownership and uses agent-device's rejecting session target guard;

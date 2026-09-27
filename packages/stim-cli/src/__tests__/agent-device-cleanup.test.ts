@@ -64,16 +64,36 @@ test('closes an Android session only when it names the AVD now on that serial', 
   expect(isOwnDeviceSession({ ...android, id: 'emulator-5556' }, device)).toBe(false);
 });
 
-test('with an owner, closes only a session its claim places inside that workspace', () => {
+test('with an owner, closes only a session its claim on that device places inside that workspace', () => {
   const device = { platform: 'ios' as const, id: 'U1' };
   const session = ios;
-  const owner = (claims: { session: string | null; workspace: string | null }[]) => ({ workspace: '/w/app', claims });
+  const owner = (claims: { session: string | null; workspace: string | null; deviceId?: string }[]) => ({
+    workspace: '/w/app',
+    claims: claims.map((claim) => ({ deviceId: 'U1', ...claim })),
+  });
   expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app' }]))).toBe(true);
   expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app/src' }]))).toBe(true);
   expect(isOwnDeviceSession(session, device, owner([]))).toBe(false);
   expect(isOwnDeviceSession(session, device, owner([{ session: 'other', workspace: '/w/app' }]))).toBe(false);
   expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app-2' }]))).toBe(false);
   expect(isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: null }]))).toBe(false);
+  expect(
+    isOwnDeviceSession(session, device, owner([{ session: 'ios-task', workspace: '/w/app', deviceId: 'U2' }])),
+  ).toBe(false);
+});
+
+test('for an AVD without a serial, matches its sessions on any serial by AVD name alone', () => {
+  const device = { platform: 'android' as const, id: null, avdName: 'stim-app_fold' };
+  expect(isOwnDeviceSession(android, device)).toBe(true);
+  expect(isOwnDeviceSession({ ...android, id: 'emulator-5556' }, device)).toBe(true);
+  expect(isOwnDeviceSession({ ...android, device: 'stim-other' }, device)).toBe(false);
+  expect(isOwnDeviceSession({ ...android, device: null }, device)).toBe(false);
+  expect(isOwnDeviceSession(ios, device)).toBe(false);
+  const claim = { deviceId: 'emulator-5554', session: android.name, workspace: '/w/app' };
+  expect(isOwnDeviceSession(android, device, { workspace: '/w/app', claims: [claim] })).toBe(true);
+  expect(
+    isOwnDeviceSession(android, device, { workspace: '/w/app', claims: [{ ...claim, deviceId: 'emulator-5556' }] }),
+  ).toBe(false);
 });
 
 function executor(lists: string[], close?: (args: string[]) => string) {
