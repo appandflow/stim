@@ -162,12 +162,12 @@ slots are not supported for remote sessions. Local runs using an
 
 <StimTabs
 code={`stim logs --slot tablet --errors
-stim logs --source metro --errors
 stim stop --slot tablet`}
 />
 
-The slot filter selects that target's attributed records. Shared Metro logs
-need a workspace-wide query. `status` lists the named assignments and leases.
+The slot filter selects that target's attributed records plus the shared Metro
+and app client output, windowed by that slot's own launch, so another slot's
+relaunch does not hide the tablet's JS errors there. `status` lists the named assignments and leases.
 `stop --slot tablet` stops that slot's owned devices and collectors and releases
 its leases, while keeping Metro and sibling slots running. The assignment stays
 available for another run. Plain `stim stop` handles every slot in the workspace.

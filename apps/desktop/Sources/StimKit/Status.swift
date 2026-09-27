@@ -28,7 +28,15 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
   public var live: Bool
+  /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
+  public var phase: String?
+  /// When the warm started (`warming`) or finished (`ready`).
+  public var phaseSince: String?
+  /// `refresh` or `copy` while `phase` is `warming`.
+  public var warmStep: String?
   public var memoryMb: Int?
+  /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
+  public var memorySource: MemorySource?
   public var warnings: [String]
   /// Absent from a `stim` that reports only `warnings`.
   public var issues: [StatusIssue]?
@@ -48,11 +56,26 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
-    case path, live, memoryMb, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
+    case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, metro, supervisor
+    case logs, slots, remoteDevices, build
     case lastBuilds, builds, worktree
   }
 
   public var id: String { path }
+
+  /// The physical footprint of the workspace's processes in bytes, when `stim status` measured it.
+  public var footprintBytes: Int64? {
+    guard memorySource == .footprint, let memoryMb else { return nil }
+    return Int64(memoryMb) * 1_048_576
+  }
+
+  public var isWarming: Bool { phase == "warming" }
+
+  /// A workspace `stim worktree warm` is preparing or has just prepared, before its first run.
+  public var isSettingUp: Bool { isWarming || phase == "ready" }
+
+  /// Whether the Live views show the workspace: something runs, a build runs, or it is being set up.
+  public var isActive: Bool { live || build?.isRunning == true || isSettingUp }
 
   /// The workspace's default devices followed by each named slot's devices.
   public var devices: [DeviceRef] {

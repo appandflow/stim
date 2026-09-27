@@ -478,6 +478,32 @@ export function reverseMetroPorts(
   return { ok: true, reversed: pairs.map(([device, host]) => `tcp:${device}->tcp:${host}`) };
 }
 
+export function hasMetroReverse(listing: unknown, metroPort: number): boolean {
+  return String(listing ?? '')
+    .split('\n')
+    .some((line) => {
+      const cols = line.trim().split(/\s+/);
+      return cols[1] === `tcp:${metroPort}` && cols[2] === `tcp:${metroPort}`;
+    });
+}
+
+/** Re-applies the launch's `metroPort` reverse when the device no longer has it. */
+export function ensureMetroReverse(
+  { serial, metroPort }: { serial: string; metroPort: number },
+  { exec = null }: ExecOpt = {},
+): { restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string } {
+  const e = exec || getExecutor();
+  let listing: string;
+  try {
+    listing = e.runFile('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
+  } catch {
+    return { failed: true, reason: `adb reverse --list failed on ${serial}` };
+  }
+  if (hasMetroReverse(listing, metroPort)) return { restored: false };
+  const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
+  return reversed.failed ? { failed: true, reason: reversed.reason ?? 'adb reverse failed' } : { restored: true };
+}
+
 const EMULATOR_HOST_LOOPBACK = '127.0.0.1';
 const PHYSICAL_HOST_LOOPBACK = 'localhost';
 

@@ -62,18 +62,29 @@ struct GitIndicator: View {
   }
 }
 
-/// The workspace's committed memory estimate from `stim status`, which is a fixed budget rather than a measurement.
-struct MemoryEstimatePill: View {
+/// The workspace's memory from `stim status`: its processes' footprint, or a fixed estimate as `source` says.
+struct MemoryPill: View {
   var mb: Int
+  var source: MemorySource?
 
   var body: some View {
     Pill {
       Image(systemName: "memorychip")
       Text(formatGigabytes(mb: mb))
     }
-    .help("Committed memory estimate from stim status")
+    .help(help)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel("Estimated to use about \(formatGigabytes(mb: mb)) of memory")
+    .accessibilityLabel(
+      source != .footprint && source != .rss
+        ? "Estimated to use about \(formatGigabytes(mb: mb)) of memory" : "Uses \(formatGigabytes(mb: mb)) of memory")
+  }
+
+  private var help: String {
+    switch source {
+    case .footprint: return "Memory the workspace's processes use, as Activity Monitor counts it"
+    case .rss: return "Resident memory of the workspace's processes, which overstates simulators"
+    case .estimate, .other, nil: return "Committed memory estimate from stim status"
+    }
   }
 }
 
@@ -223,6 +234,40 @@ struct Sparkline: View {
         }
       }
     }
+  }
+}
+
+struct SetupBadge: View {
+  var env: Workspace
+  var compact = false
+
+  var body: some View {
+    if env.isWarming {
+      if compact {
+        HStack(spacing: Space.xs) {
+          ProgressView().controlSize(.mini)
+          Text("Warming\u{2026}").font(.stim(.caption2)).foregroundStyle(Palette.accent)
+        }
+        .fixedSize()
+        .help(help)
+      } else {
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("Warming\u{2026}").foregroundStyle(Palette.text)
+            + Text(env.warmStep.map { "  \($0)" } ?? "").font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary)
+          ProgressView().progressViewStyle(.linear).tint(Palette.accent)
+        }
+        .font(.stim(.footnote))
+        .help(help)
+      }
+    } else if env.phase == "ready" {
+      Text("Ready").font(.stim(compact ? .caption2 : .footnote)).foregroundStyle(Palette.accent).fixedSize().help(help)
+    }
+  }
+
+  private var help: String {
+    env.isWarming
+      ? "stim worktree warm is running in this workspace\(env.warmStep.map { " (\($0))" } ?? "")."
+      : "Warmed and ready: nothing has run in this workspace yet."
   }
 }
 

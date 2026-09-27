@@ -66,8 +66,8 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
 
   public var id: String { path }
 
-  public var live: Bool {
-    if case .workspace(let env) = self { return env.live }
+  var active: Bool {
+    if case .workspace(let env) = self { return env.isActive }
     return false
   }
 
@@ -91,9 +91,10 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
 
 extension Workspace {
   /// The newest time `stim status` records for this workspace: device activity, a driver attaching, the
-  /// supervisor or a remote session starting, or a build starting, changing phase, or ending.
+  /// supervisor or a remote session starting, a build starting, changing phase, or ending, or a warm starting or
+  /// finishing.
   public var lastActivityAt: Date? {
-    var stamps: [String?] = [supervisor?.startedAt, build?.startedAt, build?.phaseStartedAt]
+    var stamps: [String?] = [supervisor?.startedAt, build?.startedAt, build?.phaseStartedAt, phaseSince]
     for device in devices { stamps += [device.activity?.lastActivityAt, device.activity?.driver?.since] }
     stamps += (remoteDevices ?? []).map(\.startedAt)
     stamps += [lastBuilds?.ios, lastBuilds?.android].compactMap { $0.map { $0.finishedAt ?? $0.startedAt } }
@@ -149,8 +150,8 @@ private func visibleEntries(
     guard !options.hiddenProjects.contains(project(entry.path).root) else { return false }
     switch options.status {
     case .all: return true
-    case .live: return entry.live
-    case .idle: return !entry.live
+    case .live: return entry.active
+    case .idle: return !entry.active
     }
   }
 }
