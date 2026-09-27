@@ -13,6 +13,8 @@ final class CrashScrubberTests: XCTestCase {
     XCTAssertEqual(scrubber.scrub("open ~/Developer/app (branch feat/x)"), "open <path> (branch feat/x)")
     XCTAssertEqual(scrubber.scrub("/Volumes/SSD/work/app"), "<path>")
     XCTAssertEqual(scrubber.scrub("file:///Users/janic/app/index.js"), "file://<path>")
+    XCTAssertEqual(scrubber.scrub("PATH=/usr/bin:/Users/janic/.local/bin"), "PATH=/usr/bin:<path>")
+    XCTAssertEqual(scrubber.scrub("/Volumes/Macintosh HD/Users/janic/app"), "<path> HD/Users/<user>/app")
   }
 
   func testKeepsSystemPathsAndTheAppBundleTail() {
@@ -38,16 +40,17 @@ final class CrashScrubberTests: XCTestCase {
   func testRemovesURLHostsAndQueriesButKeepsLocalhost() {
     XCTAssertEqual(
       scrubber.scrub("GET https://user:pw@api.example.com:8443/v1/pairs?token=abc&x=1 failed"),
-      "GET https://<host>:8443/v1/pairs?<redacted> failed")
+      "GET https://<host>:8443/<path>?<redacted> failed")
     XCTAssertEqual(
-      scrubber.scrub("http://localhost:8081/index.bundle?platform=ios"),
-      "http://localhost:8081/index.bundle?<redacted>")
+      scrubber.scrub("http://localhost:8081/Users/janic/app/index.bundle?platform=ios"),
+      "http://localhost:8081/<path>?<redacted>")
   }
 
   func testRemovesCredentials() {
     XCTAssertEqual(scrubber.scrub("Authorization: Bearer eyJhbGciOi.abc"), "Authorization: <redacted> <redacted>")
     XCTAssertEqual(scrubber.scrub("pairingToken=s3cr3t other"), "pairingToken=<redacted> other")
     XCTAssertEqual(scrubber.scrub(#"{"pushToken":"abc123"}"#), #"{"pushToken":"<redacted>"}"#)
+    XCTAssertEqual(scrubber.scrub("privateKey=abc sk_live_51Hx npm_abcdefghij0123456789"), "privateKey=<redacted> <redacted> <redacted>")
     XCTAssertEqual(
       scrubber.scrub("key 9f8e7d6c5b4a39281706f5e4d3c2b1a0ZYXWVUTSRQ ok"), "key <redacted> ok")
   }

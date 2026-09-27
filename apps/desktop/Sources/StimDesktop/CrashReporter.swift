@@ -4,11 +4,6 @@ import Sentry
 import StimKit
 import SystemConfiguration
 
-/// Sentry crash reporting, started only in a bundle whose Info.plist carries a DSN in `StimSentryDSN`.
-/// `scripts/bundle.sh` writes it from `STIM_DESKTOP_SENTRY_DSN`; every other build reports nothing.
-///
-/// `STIM_DESKTOP_CRASH_TEST=exception` raises an uncaught NSException and `=crash` traps, 3 seconds after
-/// launch, to check the reporting of a bundled app.
 enum CrashReporter {
   static func start() {
     let dsn = (Bundle.main.object(forInfoDictionaryKey: "StimSentryDSN") as? String ?? "")
@@ -62,9 +57,10 @@ enum CrashReporter {
     event.serverName = nil
     event.request = nil
     if let message = event.message {
-      message.message = message.message.map(scrubber.scrub)
-      message.params = message.params?.map(scrubber.scrub)
-      event.message = message
+      let scrubbed = SentryMessage(formatted: scrubber.scrub(message.formatted))
+      scrubbed.message = message.message.map(scrubber.scrub)
+      scrubbed.params = message.params?.map(scrubber.scrub)
+      event.message = scrubbed
     }
     event.transaction = event.transaction.map(scrubber.scrub)
     event.tags = event.tags?.mapValues(scrubber.scrub)
