@@ -234,6 +234,34 @@ describe('explicit backend selection', () => {
     expect('ctx' in resolved).toBe(true);
   });
 
+  const resolveEas = (output: string, deviceType: string | null = null) =>
+    resolveRemoteContext({
+      root,
+      backend: 'eas',
+      easBin: '/bin/eas',
+      env,
+      lookupAgentDevice: () => '/bin/agent-device',
+      readEasCliVersion: () => output,
+      deviceType,
+    });
+
+  test('--device-type on eas refuses an eas-cli without simulator:start --device, which a plain run still accepts', async () => {
+    expect(await resolveEas('eas-cli/22.0.0 darwin-arm64 node-v22.22.2', 'iPhone 17 Pro')).toEqual({
+      failed:
+        'eas-cli 22.0.0 (/bin/eas) cannot choose the EAS Simulator model; --device-type on the eas backend needs eas-cli 22.2.0 or later.',
+      remedy:
+        "Upgrade eas-cli to 22.2.0 or later (`npm install --global eas-cli@latest`, or the project's eas-cli dependency), or drop --device-type to let EAS pick the model.",
+      code: 'STIM_BAD_ARG',
+    });
+    expect(await resolveEas('eas-cli/22.0.0 darwin-arm64 node-v22.22.2')).toMatchObject({ ctx: { deviceType: null } });
+  });
+
+  test('--device-type on eas reaches the context from the first eas-cli with simulator:start --device', async () => {
+    expect(await resolveEas('eas-cli/22.2.0 darwin-arm64 node-v22.22.2', 'iPhone 17 Pro')).toMatchObject({
+      ctx: { deviceType: 'iPhone 17 Pro' },
+    });
+  });
+
   test('eas ignores proxy variables and creates an EAS session', async () => {
     const resolved = await resolveRemoteContext({
       root,
@@ -751,6 +779,7 @@ describe('session creation', () => {
       platform: 'ios',
       sessionName: 'stim-wt',
       startedAt: '2026-08-28T00:00:00.000Z',
+      deviceType: 'iPhone 17 Pro',
       boot: async () => ({ ok: true, udid: 'drs_claimed' }),
       createdSessionId: () => 'drs_claimed',
       abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
@@ -772,6 +801,7 @@ describe('session creation', () => {
         sessionId: 'drs_claimed',
         startedAt: '2026-08-28T00:00:00.000Z',
         webPreviewUrl: 'https://preview.example/drs_claimed',
+        deviceType: 'iPhone 17 Pro',
       },
     });
   });
@@ -1573,6 +1603,53 @@ describe('a re-run does not orphan the session it already has', () => {
     const get = exec.calls.find((c) => c.args[0] === 'simulator:get');
     expect(get?.timeoutMs).toBe(30_000);
     expect(get?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
+  });
+
+  test('a new session is created on the requested model', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    await remoteIosDeps(ctx({ deviceType: 'iPad Pro 13-inch (M5)' })).ensureBooted({});
+    const sim = exec.calls.find((call) => call.args[0] === 'sim');
+    expect(sim?.args.slice(sim.args.indexOf('--device'), sim.args.indexOf('--device') + 2)).toEqual([
+      '--device',
+      'iPad Pro 13-inch (M5)',
+    ]);
+  });
+
+  test.each([
+    ['another model', 'iPhone 17 Pro', '"iPhone 17 Pro"'],
+    ['the model EAS chose', null, 'the model EAS chose'],
+  ])(
+    'a recorded session on %s refuses a different --device-type without stopping it',
+    async (_label, recorded, named) => {
+      ensureWorkspaceStorage(root);
+      writeFileSync(
+        workspaceStateFile(root),
+        JSON.stringify({
+          remoteDevice: { platform: 'ios', sessionId: 'drs_old', ...(recorded ? { deviceType: recorded } : {}) },
+        }),
+      );
+      const exec = mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
+
+      const booted = await remoteIosDeps(ctx({ deviceType: 'iPad Pro 13-inch (M5)' })).ensureBooted({});
+
+      expect(booted).toMatchObject({ failed: true, code: 'STIM_REMOTE_DEVICE_MISMATCH' });
+      expect(booted.reason).toContain(`runs ${named}, not "iPad Pro 13-inch (M5)"`);
+      expect(booted.remedy).toContain('`stim stop`');
+      expect(exec.calls).toEqual([]);
+    },
+  );
+
+  test('a recorded session on the requested model, or a run without --device-type, reuses it', async () => {
+    ensureWorkspaceStorage(root);
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: 'drs_old', deviceType: 'iPhone 17 Pro' } }),
+    );
+    for (const deviceType of ['iPhone 17 Pro', null]) {
+      const exec = mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
+      expect((await remoteIosDeps(ctx({ deviceType })).ensureBooted({})).ok).toBe(true);
+      expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
+    }
   });
 
   test('ios refuses an Android session without stopping or replacing it', async () => {

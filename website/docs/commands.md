@@ -182,10 +182,14 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   installed version, `stim ios` refuses instead of booting it: remove the
   simulator with `stim worktree remove` or `stim gc --delete`, or pass
   `--slot <name>` to create one beside it.
-- `--device-type` and `--runtime` apply only to the local owned simulator. With
-  `--remote` or the `ios.remote` setting they refuse with `STIM_BAD_ARG`: the
-  remote backend chooses its own device. The `ios.deviceType` and `ios.runtime`
-  settings are ignored on a remote run.
+- On a remote run (`--remote` or the `ios.remote` setting), `--runtime` refuses
+  with `STIM_BAD_ARG` because the remote backend chooses the iOS version, and so
+  does `--device-type` on the proxy backend. `--remote eas` honors
+  `--device-type` by starting the EAS Simulator session with
+  `eas simulator:start --device <name>`, which needs eas-cli 22.2.0 or later.
+  A recorded EAS session on another model refuses with
+  `STIM_REMOTE_DEVICE_MISMATCH`; run `stim stop`, then rerun. The
+  `ios.deviceType` and `ios.runtime` settings are ignored on a remote run.
 - `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
   preference for this run. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators

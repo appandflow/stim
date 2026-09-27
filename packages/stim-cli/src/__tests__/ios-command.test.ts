@@ -6058,6 +6058,26 @@ describe('the simulator model and runtime flags', () => {
     expect(calls.order).toEqual(['ensureWorkspaceStorage']);
   });
 
+  test('--remote eas passes --device-type to the EAS context, and still refuses --runtime', async () => {
+    const asked: unknown[] = [];
+    reserve();
+    await run(
+      { remote: 'eas', deviceType: ' iPhone 17 Pro ', json: true },
+      {
+        resolveRemoteContext: (args: { deviceType?: unknown }) => {
+          asked.push(args.deviceType);
+          return { failed: 'stop here', remedy: '' };
+        },
+      },
+    );
+    expect(asked).toEqual(['iPhone 17 Pro']);
+
+    reserve();
+    const { logs, exitCode } = await run({ remote: 'eas', deviceType: 'iPhone 17 Pro', runtime: '18.6', json: true });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).message).toMatch(/^--runtime applies only to a local owned iOS simulator; the eas remote/);
+  });
+
   test('ios.deviceType and ios.runtime settings do not block a remote run', () => {
     expect(
       deviceModelRefusal({

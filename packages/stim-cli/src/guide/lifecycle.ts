@@ -1493,13 +1493,19 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   runtime when \`--runtime\` also resolved, which is what catches a pair like
   \`--device-type "iPhone 8" --runtime 26.5\` that each half would pass alone.
   \`--runtime\` takes a version (\`26.5\`) or a runtime's full name
-  (\`iOS 26.5\`), exactly; no prefix or suffix matches. Both flags choose
-  the local owned simulator only: with \`--remote\` or the ios.remote setting
-  they refuse with STIM_BAD_ARG, because the remote backend picks its own
-  device. The ios.deviceType and ios.runtime settings do not refuse there;
-  a remote run ignores them. \`android --system-image\` and
-  \`--device-profile\` follow the same rule with \`--remote\` or the
-  android.remote setting, and a remote run ignores android.systemImage and
+  (\`iOS 26.5\`), exactly; no prefix or suffix matches. On a remote run
+  (\`--remote\` or the ios.remote setting) \`--runtime\` refuses with
+  STIM_BAD_ARG, because the remote backend picks the iOS version. So does
+  \`--device-type\` on the proxy backend. The eas backend honors
+  \`--device-type\`: Stim passes it to \`eas simulator:start --device\`,
+  unchecked against local runtimes, and refuses with STIM_BAD_ARG when
+  eas-cli is older than 22.2.0, the first release with that flag. A
+  recorded EAS session running another model refuses with
+  STIM_REMOTE_DEVICE_MISMATCH instead of being reused. The ios.deviceType and
+  ios.runtime settings do not refuse on a remote run; it ignores them.
+  \`android --system-image\` and \`--device-profile\` refuse with
+  STIM_BAD_ARG on every remote run (\`--remote\` or the android.remote
+  setting), and a remote run ignores android.systemImage and
   android.deviceProfile.
 
   These flags describe a device that does not exist yet. When this workspace
