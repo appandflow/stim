@@ -19,6 +19,7 @@ minimumReleaseAgeExclude:
   - '@stim-cli/*'
   - unique-pid@0.1.1
 allowBuilds:
+  '@sentry/cli': false
   '@swc/core': false
   core-js: false
   esbuild: false

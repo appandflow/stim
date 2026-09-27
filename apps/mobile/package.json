@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@expo/ui": "~58.0.7",
+    "@sentry/react-native": "8.28.0",
     "expo": "~58.0.0-preview.7",
     "expo-camera": "~58.0.3",
     "expo-clipboard": "~58.0.1",
