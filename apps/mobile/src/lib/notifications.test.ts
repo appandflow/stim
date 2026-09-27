@@ -313,6 +313,12 @@ describe('notificationRoute', () => {
       pathname: '/mac/[id]/build',
       params: { id: 'a', path: '/w', platform: 'ios' },
     });
+    expect(
+      notificationRoute({ ref: 'a', target: 'device', path: '/w', platform: 'web', slot: 'default' }, macs),
+    ).toEqual({
+      pathname: '/mac/[id]/device',
+      params: { id: 'a', path: '/w', platform: 'web', slot: 'default' },
+    });
     expect(notificationRoute({ ref: 'gone', target: 'machine' }, macs)).toEqual({ pathname: '/' });
     expect(notificationRoute({ ref: 'a', target: 'home' }, macs)).toEqual({ pathname: '/' });
     expect(notificationRoute(undefined, macs)).toEqual({ pathname: '/' });

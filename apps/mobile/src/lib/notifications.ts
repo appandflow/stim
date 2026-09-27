@@ -8,6 +8,7 @@ import {
   type OversightNotification,
   type OversightState,
 } from '@/lib/oversight';
+import type { DevicePlatform } from '@/protocol/types';
 
 export const NOTIFY_CATEGORIES: readonly OversightCategory[] = OVERSIGHT_CATEGORIES;
 
@@ -61,7 +62,7 @@ export interface NotificationData {
   ref: string;
   target: 'home' | 'machine' | 'workspace' | 'logs' | 'device' | 'build' | 'url';
   path?: string;
-  platform?: 'ios' | 'android';
+  platform?: DevicePlatform;
   slot?: string;
   url?: string;
 }
@@ -181,7 +182,7 @@ export type NotificationRoute =
   | { pathname: '/mac/[id]'; params: { id: string } }
   | { pathname: '/mac/[id]/workspace'; params: { id: string; path: string } }
   | { pathname: '/mac/[id]/logs'; params: { id: string; path: string; errors: '1' } }
-  | { pathname: '/mac/[id]/device'; params: { id: string; path: string; platform: 'ios' | 'android'; slot: string } }
+  | { pathname: '/mac/[id]/device'; params: { id: string; path: string; platform: DevicePlatform; slot: string } }
   | { pathname: '/mac/[id]/build'; params: { id: string; path: string; platform: 'ios' | 'android' } }
   | { url: string };
 
@@ -198,13 +199,16 @@ export function notificationRoute(data: unknown, macIds: readonly string[]): Not
   if (value.target === 'machine') return { pathname: '/mac/[id]', params: { id } };
   if (typeof value.path !== 'string') return { pathname: '/' };
   const path = value.path;
-  const platform = value.platform === 'ios' || value.platform === 'android' ? value.platform : null;
+  const platform =
+    value.platform === 'ios' || value.platform === 'android' || value.platform === 'web' ? value.platform : null;
   if (value.target === 'url' && typeof value.url === 'string' && GITHUB_PULL.test(value.url)) return { url: value.url };
   if (value.target === 'device' && platform) {
     const slot = typeof value.slot === 'string' ? value.slot : 'default';
     return { pathname: '/mac/[id]/device', params: { id, path, platform, slot } };
   }
-  if (value.target === 'build' && platform) return { pathname: '/mac/[id]/build', params: { id, path, platform } };
+  if (value.target === 'build' && platform && platform !== 'web') {
+    return { pathname: '/mac/[id]/build', params: { id, path, platform } };
+  }
   if (value.target === 'logs') return { pathname: '/mac/[id]/logs', params: { id, path, errors: '1' } };
   return { pathname: '/mac/[id]/workspace', params: { id, path } };
 }

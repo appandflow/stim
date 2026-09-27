@@ -127,8 +127,7 @@ function workspaceItems(
       add(`app-${device.platform}-${device.slot}`, 'warning', `App not running on ${device.model}`);
     }
     if (env.web?.running && env.web.page?.state === 'failed') {
-      const detail = 'Web page failed to load';
-      add('page-web', 'warning', detail, { event: 'app-stopped', occurrence: env.web.page.url, reason: detail });
+      add('page-web', 'warning', 'Web page failed to load');
     }
   }
   return items;
