@@ -245,12 +245,14 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
 }
 
 /// The workspace's Stim-owned Chrome from `stim web`. `pid`, `cdpEndpoint` and `targetId` are set only while it
-/// runs; `page` is the document it loaded last and whether that load failed.
+/// runs; `page` is the document it loaded last, whether that load failed, and the in-app route it shows now when one
+/// moved it off that document.
 public struct WebBrowser: Decodable, Hashable, Sendable {
   public struct Page: Decodable, Hashable, Sendable {
     public var url: String
     public var state: String
     public var error: String?
+    public var route: String?
   }
 
   public var running: Bool
@@ -265,7 +267,7 @@ public struct WebBrowser: Decodable, Hashable, Sendable {
   public var activity: DeviceActivity?
 
   /// The page it shows now, or the one `stim web` opened before the first load.
-  public var currentURL: String { page?.url ?? url }
+  public var currentURL: String { page?.route ?? page?.url ?? url }
 
   public var pageFailed: Bool { running && page?.state == "failed" }
 }

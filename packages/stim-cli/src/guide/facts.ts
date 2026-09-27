@@ -803,8 +803,8 @@ RULES
                  pid, supervisorPid, cdpEndpoint and targetId are null when
                  false, and page and activity are absent
   url            the page stim web opened; page.url is the document the page
-                 loaded last (in-app routes that do not load a document are
-                 not tracked)
+                 loaded last, and page.route the URL an in-app route change
+                 (history API or fragment) moved it to since
   cdpEndpoint    http://127.0.0.1:<port>, the reserved loopback DevTools
                  endpoint of that Chrome. Attach Playwright MCP
                  (--cdp-endpoint) or agent-browser (--cdp <port>) to it; it
@@ -812,8 +812,10 @@ RULES
   targetId       the DevTools target id of the owned page, the one Stim
                  Desktop and the phone stream; other tabs are not the page
   profile        the Stim-owned user data directory under STIM_HOME
-  page           { url, state, error? }: the page's latest load, from the
-                 newest page-load marker in web.ndjson; null before the first
+  page           { url, state, error?, route? }: the page's latest load, from
+                 the newest page-load marker in web.ndjson; null before the
+                 first. route is absent until an in-app route change after
+                 that load
                  "loading"  the document was requested; no load event yet
                  "loaded"   the load event fired
                  "failed"   the document failed (connection refused, HTTP
@@ -825,7 +827,9 @@ RULES
                  chrome-devtools-mcp, or the executable's name); Stim's own
                  connections (the browser supervisor, stim-server, Stim
                  Desktop, the stim CLI) are not drivers. basis: cdp-client
-                 (one lsof of the DevTools port), page-log (the newest
+                 (one lsof of the DevTools port); agent-action (the newest
+                 agent input the browser supervisor recorded in web.ndjson)
+                 and page-log (the newest other
                  web.ndjson record) for recency
 
   Each booted simulator and detected emulator in environments (and in

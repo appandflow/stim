@@ -318,8 +318,10 @@ WHAT WRITES WHAT
   archive rather than a stream. Streaming with full fidelity needs
   libimobiledevice or pymobiledevice3, which are third-party installs Stim
   does not require. See appandflow/stim#179.
-  agent                no file. Each query reads agent-device's session
-                       records (~/.agent-device/sessions, or
+  agent                agent input on the owned Chrome page is in
+                       web.ndjson (\`guide web\`). For simulators and
+                       emulators, no file: each query reads agent-device's
+                       session records (~/.agent-device/sessions, or
                        AGENT_DEVICE_STATE_DIR) for this workspace's owned
                        simulators and emulators, read-only. An action is
                        info (msg is agent-device's summary, e.g. "Tapped

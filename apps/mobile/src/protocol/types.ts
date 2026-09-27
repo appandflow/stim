@@ -175,7 +175,7 @@ export interface WebBrowserState {
   profile: string;
   cdpEndpoint: string | null;
   targetId?: string | null;
-  page?: { url: string; state: 'loading' | 'loaded' | 'failed'; error?: string } | null;
+  page?: { url: string; state: 'loading' | 'loaded' | 'failed'; error?: string; route?: string } | null;
   activity?: DeviceActivity;
 }
 

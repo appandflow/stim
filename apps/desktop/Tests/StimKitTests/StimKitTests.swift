@@ -484,6 +484,14 @@ import Testing
     #expect(items.map(\.text) == ["Web page failed to load"])
     #expect(items.first?.command == StimCommand(["web"], cwd: "/w"))
   }
+
+  @Test func titlesTheWebDeviceWithTheInAppRouteAfterTheLoadedDocument() throws {
+    let env = try workspace(
+      #"{"path":"/w","live":true,"warnings":[],"web":{"browser":"chrome","version":null,"running":true,"pid":42,"supervisorPid":41,"url":"http://localhost:8081/","headless":true,"viewport":"desktop","profile":"/s/web/profile","cdpEndpoint":"http://127.0.0.1:8900","targetId":"T","page":{"url":"http://localhost:8081/","state":"loaded","route":"http://localhost:8081/apps/groups/"}}}"#
+    )
+    let web = try #require(env.devices.last)
+    #expect(web.detail == "localhost:8081/apps/groups")
+  }
 }
 
 @Suite struct LineBufferTests {

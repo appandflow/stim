@@ -119,7 +119,8 @@ reload and stop a workspace:
   Duo or an Android foldable emulator, a stopped one as a single row. Tapping
   the frame opens the [device view](#device-view). Under a running simulator or
   emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
-  (taps, typing, app opens, screenshots, failed commands), from
+  (taps, typing, app opens, screenshots, failed commands), and under the Web device
+  the clicks, typing and scrolls an attached tool sent to the page, from
   `logs.subscribe` with `sources: ["agent"]`. **All** opens the logs on the Agent
   source and that slot; an action opens them with that action expanded, which for a
   failed command shows its error code, diagnostic id and duration. The **...** menu opens the logs, copies the
@@ -181,7 +182,7 @@ ends a session because the Mac took control away.
 
 A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web**
 tile, in the devices grid and on the workspace screen, labelled with the page's
-URL, with a "Page failed to load" pill when its latest load failed. It opens in
+URL (the in-app route when one moved it after the load, `web.page.route`), with a "Page failed to load" pill when its latest load failed. It opens in
 the same viewer, streamed from the page's DevTools screencast as H.264 through
 `stim-server`. With Control on, a tap clicks, a drag scrolls, and **Keyboard**
 types into the page; the toolbar has **Keyboard** and **Back** (the page's

@@ -125,11 +125,28 @@ platform "web":
                page document is error whatever its
                status; another request's network failure or HTTP 5xx is
                error, a 4xx warn, a canceled request debug; browser messages such
-               as CSP violations; the browser's own lifecycle
+               as CSP violations; the browser's own lifecycle; in-app
+               route changes (history API or fragment) as web_route with
+               url, at most four a second
+  src agent    input a DevTools client other than Stim's sent to the page
+               while connected, as agent_action with driver (the tool),
+               command click, type, press or scroll, msg (e.g. 'Clicked
+               button "Save"', "Typed 12 characters into input#email"),
+               deviceId (web.targetId) and details. Typed text is never
+               recorded, only its length. Clicks, key presses, text input
+               and wheel scrolls in the top frame are observed; pointer
+               moves and iframes are not, and a typing, key or scroll burst
+               is one record. Input from Stim Desktop's or the phone's Take
+               over is not recorded, nor is other input within 3 seconds of
+               it, nor input while no other client is connected. A person
+               clicking a headed window while a tool is connected counts as
+               that tool, and a script that disconnects within a few hundred
+               milliseconds of its first input goes unrecorded
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).
 Each load of the page's top-level document is a page-load marker: stim web,
-stim reload, and a reload or navigation the page makes itself. logs --errors
+stim reload, and a reload or navigation the page makes itself. A reload's
+marker carries reload: true. logs --errors
 and the status error count report the page's records (platform web) from the
 latest load only, the way Chrome DevTools clears its console when the page
 navigates. A page load does not hide the native app's errors, and an ios or
@@ -147,11 +164,16 @@ your default profile, and Stim never attaches to a browser it did not start.
 The port is managed like metro: stim ports lists it as web-cdp (managed),
 and ports get, stop and release refuse it. While a tool is connected,
 status reports it as the browser's driver (web.activity, "driven by
-playwright"), the way it names agent-device on a simulator. web.targetId is
-the owned page; a tab another tool opens is not captured.
+playwright"), the way it names agent-device on a simulator, and its clicks,
+typing and scrolls are agent actions: stim logs --source agent lists them,
+web.activity.recent["agent-action"] dates the newest, and Stim Desktop and
+the phone show them in the Web device's agent feed. web.targetId is the
+owned page; a tab another tool opens is not captured.
 
 stim status also reports the document the page loaded last and how that
-load went: web.page { url, state: loading | loaded | failed, error? }. A failed
+load went: web.page { url, state: loading | loaded | failed, error?, route? }.
+route is the URL the page shows after an in-app route change since that
+load, and is absent when none moved it. A failed
 load (the dev server is down, a certificate error, a crash) shows on status's
 web line.
 

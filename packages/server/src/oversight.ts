@@ -19,8 +19,8 @@ interface Activity {
 
 /**
  * What counts as someone working on a device: agent actions, reloads and Stim runs. App log records do not, because an
- * idle app keeps logging; a new log error counts through the error count instead. The owned Chrome page records no
- * agent actions, so its page log counts while an agent drives it.
+ * idle app keeps logging; a new log error counts through the error count instead. The owned Chrome page records only
+ * an agent's input as agent actions, not its navigations or scripts, so its page log counts while an agent drives it.
  */
 const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
