@@ -15,6 +15,7 @@ let package = Package(
     .target(name: "StimKit"),
     .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "WebFrames", swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",
       dependencies: [

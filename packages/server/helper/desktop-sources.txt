@@ -9,3 +9,5 @@ EmulatorFrames/EmulatorInput.swift
 SimulatorFrames/SimulatorRotation.swift
 EmulatorFrames/EmulatorRotation.swift
 EmulatorFrames/EmulatorPosture.swift
+WebFrames/DevToolsClient.swift
+WebFrames/WebPage.swift
