@@ -27,7 +27,7 @@ import {
 import { oversightTitle } from './oversight.ts';
 import type { ControlConflict } from './push.ts';
 import type { PairedDevice } from './registry.ts';
-import { runStim, terminate, type CommandLimits } from './stim-command.ts';
+import { Pending, runStim, terminate, type CommandLimits } from './stim-command.ts';
 
 type Refusal = { code: ErrorCode; message: string };
 type Parsed<T> = { value: T } | Refusal;
@@ -328,6 +328,7 @@ export class ControlHub {
   private readonly ownLeases = new Set<string>();
   private readonly starting = new Set<string>();
   private readonly folding = new Set<string>();
+  private readonly pending = new Pending();
   private closing = false;
   private next = 1;
 
@@ -378,10 +379,12 @@ export class ControlHub {
     let lease: Lease | Refusal | null;
     let postures: DevicePosture[];
     try {
-      [lease, postures] = await Promise.all([
-        this.lock(device, target, cwd, beganAt),
-        devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
-      ]);
+      [lease, postures] = await this.pending.track(
+        Promise.all([
+          this.lock(device, target, cwd, beganAt),
+          devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
+        ]),
+      );
     } finally {
       this.starting.delete(key);
     }
@@ -389,7 +392,7 @@ export class ControlHub {
     if (lease !== null && !granted && !target.takeOver) return lease as Refusal;
     const current = this.byDevice.get(key);
     const refuse = (refusal: Refusal): Refusal => {
-      if (granted?.mine && !current?.lease?.mine) void this.unlock(target, cwd);
+      if (granted?.mine && !current?.lease?.mine) void this.pending.track(this.unlock(target, cwd));
       return refusal;
     };
     if (this.closing || !stillAllowed()) {
@@ -475,12 +478,14 @@ export class ControlHub {
 
   private renew(session: Session, beganAt: number): void {
     if (session.ended || !session.lease?.mine) return;
-    session.renewing = (async () => {
-      const renewed = await this.lock(session.device, session.target, session.cwd, beganAt);
-      if (renewed === null) return;
-      if ('code' in renewed) console.error(`stim-server: could not renew the device lease: ${renewed.message}`);
-      else if (session.lease) session.lease.expiresAt = renewed.expiresAt;
-    })();
+    session.renewing = this.pending.track(
+      (async () => {
+        const renewed = await this.lock(session.device, session.target, session.cwd, beganAt);
+        if (renewed === null) return;
+        if ('code' in renewed) console.error(`stim-server: could not renew the device lease: ${renewed.message}`);
+        else if (session.lease) session.lease.expiresAt = renewed.expiresAt;
+      })(),
+    );
   }
 
   input(owner: Controller, id: string, command: InputCommand): Promise<Refusal | null> {
@@ -521,7 +526,7 @@ export class ControlHub {
       }
     })();
     session.adb = run.then(() => undefined);
-    return run;
+    return this.pending.track(run);
   }
 
   /**
@@ -539,12 +544,14 @@ export class ControlHub {
     try {
       const helper = await this.options.foldHelper();
       if (session.ended) return null;
-      await runQuietly(
-        this.options.env,
-        'xcrun',
-        ['simctl', 'spawn', udid, helper],
-        'sim-fold',
-        this.options.foldTimeoutMs,
+      await this.pending.track(
+        runQuietly(
+          this.options.env,
+          'xcrun',
+          ['simctl', 'spawn', udid, helper],
+          'sim-fold',
+          this.options.foldTimeoutMs,
+        ),
       );
       this.options.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');
       return null;
@@ -570,8 +577,8 @@ export class ControlHub {
 
   async close(): Promise<void> {
     this.closing = true;
-    const releases = [...this.sessions.values()].map((session) => this.end(session, null, 'stim-server stopped.'));
-    await Promise.all(releases);
+    for (const session of this.sessions.values()) void this.end(session, null, 'stim-server stopped.');
+    await this.pending.settled();
   }
 
   private end(
@@ -595,7 +602,7 @@ export class ControlHub {
       reason: `${reason ?? 'ended'}: ${message}`,
     });
     if (!release || !session.lease?.mine) return Promise.resolve();
-    return session.renewing.then(() => this.unlock(session.target, session.cwd));
+    return this.pending.track(session.renewing.then(() => this.unlock(session.target, session.cwd)));
   }
 
   private status(): Promise<StatusPayload | Refusal> {

@@ -58,7 +58,7 @@ import {
   type PeerIdentity,
   validStuckMinutes,
 } from './registry.ts';
-import { runStim, type CommandLimits } from './stim-command.ts';
+import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 
@@ -307,6 +307,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return foldBuild;
   };
   const running = new Set<() => Promise<void>>();
+  const cancelling = new Pending();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
@@ -1069,7 +1070,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.clear();
       for (const cancel of commands) {
         running.delete(cancel);
-        void cancel();
+        void cancelling.track(cancel());
       }
       commands.clear();
     });
@@ -1112,7 +1113,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
     await control.close();
-    await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel())]);
+    await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
   };

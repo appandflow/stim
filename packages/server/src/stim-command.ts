@@ -24,6 +24,22 @@ export function terminate(child: ChildProcess): Promise<void> {
   });
 }
 
+/** Work that may still run a child process after nothing else references it, so `close()` can wait for it. */
+export class Pending {
+  private readonly promises = new Set<Promise<unknown>>();
+
+  track<T>(promise: Promise<T>): Promise<T> {
+    this.promises.add(promise);
+    const forget = () => this.promises.delete(promise);
+    promise.then(forget, forget);
+    return promise;
+  }
+
+  async settled(): Promise<void> {
+    while (this.promises.size) await Promise.allSettled(this.promises);
+  }
+}
+
 export function runStim(
   stimCli: string,
   env: NodeJS.ProcessEnv,

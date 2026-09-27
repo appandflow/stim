@@ -168,7 +168,7 @@ export class HelperSource {
   private notice: string | null = null;
   keyboard: boolean | null = null;
   private stderr = '';
-  private readonly ended: () => void;
+  private readonly ended: (stopped: Promise<void>) => void;
   private readonly bitrate = new Bitrate(DEFAULT_VIDEO_LIMITS, Date.now());
   private keyframeAt = -Infinity;
   private keyframeTimer: NodeJS.Timeout | null = null;
@@ -181,7 +181,7 @@ export class HelperSource {
     helper: string,
     device: Device,
     env: NodeJS.ProcessEnv,
-    ended: () => void,
+    ended: (stopped: Promise<void>) => void,
     lingerMs: number,
     lit?: (display: number) => Posture | undefined,
   ) {
@@ -223,9 +223,10 @@ export class HelperSource {
     if (this.keyframeTimer) clearTimeout(this.keyframeTimer);
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.listeners.clear();
-    this.ended();
     this.child.stdin!.end();
-    return terminate(this.child);
+    const stopped = terminate(this.child);
+    this.ended(stopped);
+    return stopped;
   }
 
   /** Asks for at most one keyframe per {@link KEYFRAME_INTERVAL_MS}; a request inside the interval is sent at its end. */
