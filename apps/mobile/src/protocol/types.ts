@@ -173,6 +173,8 @@ export interface EnvironmentState {
   slots?: { slot: string; ios?: SimState | null; android?: AndroidState | null }[];
   live: boolean;
   memoryMb: number;
+  /** How `memoryMb` was obtained; absent from a `stim` whose `memoryMb` is always the estimate. */
+  memorySource?: 'footprint' | 'rss' | 'estimate';
   warnings: string[];
   /** Absent from a `stim` that reports only `warnings`. */
   issues?: StatusIssue[];

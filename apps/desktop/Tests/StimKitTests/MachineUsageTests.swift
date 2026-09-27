@@ -6,15 +6,17 @@ import Testing
 @Suite struct MachineUsageTests {
   @Test func decodesTheStatusMachineSectionAndToleratesUnknownKinds() throws {
     let json = """
-      {"environments":[],"machine":{"owners":[
-        {"kind":"simulator","name":"stim-app (iPhone 17)","workspace":"/w/a","slot":"tablet","id":"UDID","owned":true,"cpuPercent":12,"residentMb":2071,"processes":310},
+      {"environments":[{"path":"/w/a","live":true,"memoryMb":1200,"memorySource":"footprint","warnings":[]}],
+       "machine":{"memorySource":"footprint","owners":[
+        {"kind":"simulator","name":"stim-app (iPhone 17)","workspace":"/w/a","slot":"tablet","id":"UDID","owned":true,"cpuPercent":12,"residentMb":2071,"memoryMb":1200,"processes":310},
         {"kind":"gpu","name":"future","workspace":null,"id":null,"owned":false,"cpuPercent":1,"residentMb":2,"processes":1}
       ]}}
       """
     let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(json.utf8))
     let owners = try #require(payload.machine?.owners)
-    #expect(owners[0].kind == .simulator && owners[0].slot == "tablet" && owners[0].residentMb == 2071)
-    #expect(owners[1].kind == .other)
+    #expect(owners[0].kind == .simulator && owners[0].slot == "tablet" && owners[0].memory == 1200)
+    #expect(owners[1].kind == .other && owners[1].memory == 2)
+    #expect(payload.machine?.memorySource == .footprint && payload.environments[0].memorySource == .footprint)
     #expect(try JSONDecoder().decode(StatusPayload.self, from: Data(#"{"environments":[]}"#.utf8)).machine == nil)
   }
 
@@ -46,9 +48,9 @@ import Testing
       MachineOwner(kind: .shared, name: "b", cpuPercent: 5, residentMb: 10),
       MachineOwner(kind: .shared, name: "a", cpuPercent: 5, residentMb: 10),
       MachineOwner(kind: .build, name: "build", cpuPercent: 220, residentMb: 1960),
-      MachineOwner(kind: .simulator, name: "sim", cpuPercent: 5, residentMb: 8000),
+      MachineOwner(kind: .simulator, name: "sim", cpuPercent: 5, residentMb: 8000, memoryMb: 1500),
     ])
-    #expect(usage.ranked.map(\.name) == ["sim", "build", "a", "b"])
+    #expect(usage.ranked.map(\.name) == ["build", "sim", "a", "b"])
     #expect(usage.cpuPercent == 235)
   }
 }

@@ -130,7 +130,7 @@ struct WorkspaceHeader: View {
         .help("Resident memory of the workspace's processes, simulators and emulators")
       }
       if let mb = env.memoryMb, mb > 0 {
-        MemoryEstimatePill(mb: mb)
+        MemoryPill(mb: mb, source: env.memorySource)
       }
       if let errors = env.logs?.errorsSinceMarker {
         Button(action: openLogs) {

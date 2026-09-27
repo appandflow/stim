@@ -29,6 +29,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
   public var live: Bool
   public var memoryMb: Int?
+  /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
+  public var memorySource: MemorySource?
   public var warnings: [String]
   /// Absent from a `stim` that reports only `warnings`.
   public var issues: [StatusIssue]?
@@ -48,7 +50,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
-    case path, live, memoryMb, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
+    case path, live, memoryMb, memorySource, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
     case lastBuilds, builds, worktree
   }
 

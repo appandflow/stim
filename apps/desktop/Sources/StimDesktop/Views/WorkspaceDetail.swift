@@ -317,7 +317,7 @@ struct Inspector: View {
         }
         GitIndicator(git: env.worktree?.git, chips: true)
         if let mb = env.memoryMb, mb > 0 {
-          MemoryEstimatePill(mb: mb)
+          MemoryPill(mb: mb, source: env.memorySource)
         }
         if env.logs != nil {
           Button(action: openLogs) {
