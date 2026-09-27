@@ -503,7 +503,12 @@ result.
   and browser errors,
   since the last launch marker. The page's records start again at each page
   load instead, and a launch does not reset them. A completed
-  bundle attempt resets only older Metro errors. General device logs require
+  bundle attempt resets only older Metro errors. Metro and client output is
+  shared by every slot and names no device, so the newest launch of any slot
+  resets it. `--slot <name>` includes that shared output windowed by the
+  slot's own launch and the bundles of the platforms it launched, so after
+  `stim android` hides an iOS JS error from the unfiltered query,
+  `--slot <ios-slot>` still shows it. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
 - `--source agent` shows what agent-device did on this workspace's owned

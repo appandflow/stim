@@ -175,7 +175,11 @@ export default function logsCommand(program: Command): void {
     .description(
       "Query this workspace's merged NDJSON log timeline (bundler, client, device, build, agent-device actions). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
     )
-    .option('--slot <name>', 'Only records attributed to this device slot', parseDeviceSlotOption)
+    .option(
+      '--slot <name>',
+      "Only this device slot's records, plus the shared Metro and app client records once it has launched",
+      parseDeviceSlotOption,
+    )
     .option('--source <s...>', 'Only these sources: metro, client, device, build, agent, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
