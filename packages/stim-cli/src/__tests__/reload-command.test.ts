@@ -119,8 +119,8 @@ test('reload addresses Metro with the target platform and app', async () => {
   });
 
   expect(calls).toEqual([
-    [8082, { role: 'android', appId: 'com.example.android', broadcastOnMiss: true }],
-    [8082, { role: 'ios', appId: 'com.example.ios', broadcastOnMiss: true }],
+    [8082, { role: 'android', appId: 'com.example.android' }],
+    [8082, { role: 'ios', appId: 'com.example.ios' }],
   ]);
 });
 
@@ -143,28 +143,29 @@ describe('the adb reverse for the workspace Metro port', () => {
     expect(result).toMatchObject({ ok: true, facts: { reverseRestored: [] } });
   });
 
-  test('a restored reverse waits for the app to reconnect without broadcasting, then reloads it', async () => {
+  test('a restored reverse waits, sending nothing, until the app reconnects, then reloads once', async () => {
     const calls: unknown[] = [];
-    let polls = 0;
+    let probes = 0;
     const result = await runReload({
       root: '/project',
       platform: 'android',
       deps: reloadDeps({
         ensureReverse: () => ({ restored: true }),
         reloadMetro: async (_port, options) => {
-          calls.push(options?.broadcastOnMiss);
-          return ++polls < 3 ? noPeer : { ok: true, peers: 1, targets: 1 };
+          calls.push(options?.peersOnly ?? 'reload');
+          if (!options?.peersOnly) return { ok: true, peers: 1, targets: 1 };
+          return ++probes < 3 ? noPeer : { ok: true, peers: 1, targets: 1 };
         },
       }),
     });
-    expect(calls).toEqual([false, false, false]);
+    expect(calls).toEqual([true, true, true, 'reload']);
     expect(result).toMatchObject({
       ok: true,
       facts: { reverseRestored: ['emulator-5554'], strategy: 'metro-websocket' },
     });
   });
 
-  test('an app that never reconnects gets one final broadcast and the no-peer remedy', async () => {
+  test('an app that never reconnects gets one reload after the wait, with the no-peer remedy', async () => {
     const calls: unknown[] = [];
     const slept: number[] = [];
     const result = await runReload({
@@ -176,15 +177,37 @@ describe('the adb reverse for the workspace Metro port', () => {
           slept.push(ms);
         },
         reloadMetro: async (_port, options) => {
-          calls.push(options?.broadcastOnMiss);
+          calls.push(options?.peersOnly ?? 'reload');
           return noPeer;
         },
       }),
     });
-    expect(calls.filter((broadcast) => broadcast)).toHaveLength(1);
-    expect(calls.at(-1)).toBe(true);
+    expect(calls.filter((call) => call === 'reload')).toEqual(['reload']);
+    expect(calls.at(-1)).toBe('reload');
     expect(slept.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(5000);
     expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
+  });
+
+  test('a Metro that cannot name its peers gets one reconnect interval before the broadcast reload', async () => {
+    const slept: number[] = [];
+    const calls: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: () => ({ restored: true }),
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          return { ok: true, broadcast: true };
+        },
+      }),
+    });
+    expect(calls).toEqual([true, 'reload']);
+    expect(slept).toEqual([2500]);
+    expect(result).toMatchObject({ ok: true, facts: { strategy: 'metro-broadcast' } });
   });
 
   test('an unreadable reverse list refuses before reloading, naming the manual command', async () => {
@@ -659,7 +682,7 @@ test('multiple live slots of the same platform use one platform reload', async (
     }),
   });
   expect(result.ok).toBe(true);
-  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId, broadcastOnMiss: true }]]);
+  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId }]]);
 });
 
 test('an Android reload restores the reverse on every live slot that lost it', async () => {
@@ -685,6 +708,34 @@ test('an Android reload restores the reverse on every live slot that lost it', a
   });
   expect(checked).toEqual(['emulator-5554', 'emulator-5556']);
   expect(result).toMatchObject({ ok: true, facts: { reverseRestored: ['emulator-5556'] } });
+});
+
+test('with one slot still connected, the reload waits for the restored slot before reloading both', async () => {
+  const calls: unknown[] = [];
+  let probes = 0;
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      getProject: () => ({
+        ...project,
+        deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+      }),
+      readLaunches: () => ({
+        android: androidLaunch,
+        'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+      }),
+      resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      ensureReverse: (serial) => ({ restored: serial === 'emulator-5556' }),
+      reloadMetro: async (_port, options) => {
+        calls.push(options?.peersOnly ?? 'reload');
+        if (!options?.peersOnly) return { ok: true, peers: 2, targets: 2 };
+        return { ok: true, peers: 2, targets: ++probes < 3 ? 1 : 2 };
+      },
+    }),
+  });
+  expect(calls).toEqual([true, true, true, 'reload']);
+  expect(result).toMatchObject({ ok: true, facts: { targets: 2 } });
 });
 
 test.each([true, false])(

@@ -90,6 +90,7 @@ const DEFAULT_DEPS: ReloadDeps = {
 // React Native's Android packager connection retries every 2 seconds, so a restored reverse is picked up within a few.
 const RECONNECT_POLL_MS = 500;
 const RECONNECT_POLLS = 16;
+const RECONNECT_UNOBSERVED_MS = 2_500;
 
 function failure(code: string, message: string, remedy: string | null): ReloadFailure {
   return { code, message, remedy };
@@ -393,31 +394,34 @@ export async function runReload({
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
-  if (target.platform === 'android') {
-    for (const candidate of live) {
-      if (candidate.platform !== 'android' || candidate.record.release || candidate.record.metroPort !== port) continue;
-      const serial = candidate.record.deviceId;
-      const ensured = d.ensureReverse(serial, port);
-      if (ensured.failed) {
-        return {
-          ok: false,
-          error: failure(
-            'STIM_RELOAD_FAILED',
-            `Stim could not check or restore the adb reverse for Metro port ${port} on ${serial}: ${ensured.reason}`,
-            `Run \`adb -s ${serial} reverse tcp:${port} tcp:${port}\`, then \`stim reload android\` again.`,
-          ),
-        };
-      }
-      if (ensured.restored) reverseRestored.push(serial);
+  const reverseChecked =
+    target.platform === 'android'
+      ? live.filter((c) => c.platform === 'android' && !c.record.release && c.record.metroPort === port)
+      : [];
+  for (const candidate of reverseChecked) {
+    const serial = candidate.record.deviceId;
+    const ensured = d.ensureReverse(serial, port);
+    if (ensured.failed) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_RELOAD_FAILED',
+          `Stim could not check or restore the adb reverse for Metro port ${port} on ${serial}: ${ensured.reason}`,
+          `Run \`adb -s ${serial} reverse tcp:${port} tcp:${port}\`, then \`stim reload android\` again.`,
+        ),
+      };
     }
+    if (ensured.restored) reverseRestored.push(serial);
   }
 
   const request = { role: target.platform, appId: target.record.appId };
-  let reloaded = await d.reloadMetro(port, { ...request, broadcastOnMiss: reverseRestored.length === 0 });
-  for (let poll = 1; reverseRestored.length && reloaded.noPeer && poll < RECONNECT_POLLS; poll++) {
+  for (let poll = 0; reverseRestored.length && poll < RECONNECT_POLLS; poll++) {
+    const peers = await d.reloadMetro(port, { ...request, peersOnly: true });
+    if (peers.broadcast) await d.sleep(RECONNECT_UNOBSERVED_MS);
+    if (peers.unreachable || peers.broadcast || (peers.ok && peers.targets >= reverseChecked.length)) break;
     await d.sleep(RECONNECT_POLL_MS);
-    reloaded = await d.reloadMetro(port, { ...request, broadcastOnMiss: poll === RECONNECT_POLLS - 1 });
   }
+  const reloaded = await d.reloadMetro(port, request);
   if (!reloaded.ok) {
     const stoppedAfterMetro = processFailure(target.platform, target.record, d, target.slot);
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };

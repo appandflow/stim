@@ -52,8 +52,8 @@ function peerMatches(query: URLSearchParams, role: MetroReloadRole, appId: strin
 }
 
 /**
- * Asks Metro for its peers and reloads the ones matching `role` and `appId`. With `broadcastOnMiss: false`, a miss
- * returns `noPeer` without the fallback broadcast, so a caller can wait for the app to connect.
+ * Asks Metro for its peers and reloads the ones matching `role` and `appId`. With `peersOnly`, it sends nothing and
+ * only reports the outcome a reload would have, so a caller can wait for the app to connect.
  */
 export function reloadThroughMetro(
   port: number,
@@ -61,8 +61,8 @@ export function reloadThroughMetro(
     role,
     appId,
     timeoutMs = METRO_TIMEOUT_MS,
-    broadcastOnMiss = true,
-  }: { role: MetroReloadRole; appId: string; timeoutMs?: number; broadcastOnMiss?: boolean },
+    peersOnly = false,
+  }: { role: MetroReloadRole; appId: string; timeoutMs?: number; peersOnly?: boolean },
 ): Promise<MetroReloadResult> {
   const roleName = ROLE_NAMES[role];
   return new Promise((resolve) => {
@@ -99,7 +99,7 @@ export function reloadThroughMetro(
           const query = peerQuery(metadata);
           return query ? peerMatches(query, role, appId) : false;
         });
-        if (rolePeers.length === 0 && !broadcastOnMiss) {
+        if (rolePeers.length === 0 && peersOnly) {
           finish({
             failed: true,
             noPeer: true,
@@ -129,7 +129,8 @@ export function reloadThroughMetro(
         // A Stim Metro serves one app, so several matching peers are that app on
         // several devices, not several apps. Reload each of them. iOS could not
         // pick one anyway: its peers carry only `role`.
-        for (const [id] of rolePeers) socket.send(JSON.stringify({ version: 2, method: 'reload', target: id }));
+        if (!peersOnly)
+          for (const [id] of rolePeers) socket.send(JSON.stringify({ version: 2, method: 'reload', target: id }));
         finish({ ok: true, peers, targets: rolePeers.length });
         return;
       }
@@ -139,7 +140,7 @@ export function reloadThroughMetro(
       // broadcast path never touches that property. Note what this costs: the
       // throw only happens when some other client exists, so it proves a client
       // is connected but not which, and the target app may not be among them.
-      socket.send(JSON.stringify({ version: 2, method: 'reload' }));
+      if (!peersOnly) socket.send(JSON.stringify({ version: 2, method: 'reload' }));
       finish({ ok: true, broadcast: true });
     });
     socket.once('error', (error) =>

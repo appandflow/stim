@@ -438,8 +438,9 @@ An Android reload first checks `adb reverse` on each live owned emulator launche
 against this Metro and re-applies the Metro port's reverse where it is missing.
 adb ties a reverse to its transport, so an emulator whose adb connection drops
 and reconnects loses it silently, and the app stops reaching Metro and Fast
-Refresh. After restoring one, Stim waits up to 8 seconds for the app to
-reconnect before reloading, and `reverseRestored` names the serials it
+Refresh. After restoring one, Stim waits up to 8 seconds, sending nothing,
+until the app on every emulator it checked is connected again, then sends the
+reload once; `reverseRestored` names the serials it
 restored. `stim status` reports the same loss as the `android-reverse-missing`
 issue, with `stim reload android` as the remedy.
 

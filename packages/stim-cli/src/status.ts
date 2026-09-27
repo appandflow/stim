@@ -403,7 +403,6 @@ export function metroReverseTargets(
   });
 }
 
-/** Adds the issue for a running debug app whose emulator lost the adb reverse to the workspace Metro port. */
 export function addReverseMissingIssue(
   state: EnvironmentState,
   { slot, serial, metroPort }: { slot: string; serial: string; metroPort: number },

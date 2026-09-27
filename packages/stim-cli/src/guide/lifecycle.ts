@@ -113,7 +113,8 @@ launched against this Metro and re-applies the Metro port's reverse where it is
 missing. adb ties a reverse to its transport, and a transport that drops and
 reconnects comes back without it and without any error, which leaves the app
 cut off from Metro and Fast Refresh. After restoring one, Stim waits up to 8
-seconds for the app to reconnect before reloading. \`reverseRestored\` in the
+seconds, sending nothing, until the app on every emulator it checked is
+connected again, then sends the reload once. \`reverseRestored\` in the
 facts names the serials it restored. \`stim status\` reports the same loss as
 the android-reverse-missing issue.
 

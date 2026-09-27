@@ -100,16 +100,15 @@ test('Metro reload reports no peer when another package is connected on Android'
   });
 });
 
-test('with broadcastOnMiss off, a missing peer sends no reload at all', async () => {
-  const harness = peerServer(peers({ 'client#1': IOS_PEER }));
+test.each([
+  ['a matching peer', { 'client#1': ANDROID_PEER }, { ok: true, peers: 1, targets: 1 }],
+  ['no matching peer', { 'client#1': IOS_PEER }, { failed: true, noPeer: true, peers: 1 }],
+])('peersOnly reports %s and sends no reload', async (_label, connected, expected) => {
+  const harness = peerServer(peers(connected));
 
   await withServer(harness, async (port) => {
-    const result = await reloadThroughMetro(port, {
-      role: 'android',
-      appId: 'com.example.android',
-      broadcastOnMiss: false,
-    });
-    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 1 });
+    const result = await reloadThroughMetro(port, { role: 'android', appId: 'com.example.android', peersOnly: true });
+    expect(result).toMatchObject(expected);
     expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
   });
 });

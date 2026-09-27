@@ -487,29 +487,19 @@ export function hasMetroReverse(listing: unknown, metroPort: number): boolean {
     });
 }
 
-/** Whether the device maps `metroPort` to the same host port, or undefined when adb cannot list its reverses. */
-function metroReversePresent(
-  serial: string,
-  metroPort: number,
-  { exec = null }: ExecOpt = {},
-): boolean | undefined {
-  const e = exec || getExecutor();
-  try {
-    return hasMetroReverse(e.runFile('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS), metroPort);
-  } catch {
-    return undefined;
-  }
-}
-
 /** Re-applies the launch's `metroPort` reverse when the device no longer has it. */
 export function ensureMetroReverse(
   { serial, metroPort }: { serial: string; metroPort: number },
   { exec = null }: ExecOpt = {},
 ): { restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string } {
   const e = exec || getExecutor();
-  const present = metroReversePresent(serial, metroPort, { exec: e });
-  if (present === undefined) return { failed: true, reason: `adb reverse --list failed on ${serial}` };
-  if (present) return { restored: false };
+  let listing: string;
+  try {
+    listing = e.runFile('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
+  } catch {
+    return { failed: true, reason: `adb reverse --list failed on ${serial}` };
+  }
+  if (hasMetroReverse(listing, metroPort)) return { restored: false };
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   return reversed.failed ? { failed: true, reason: reversed.reason ?? 'adb reverse failed' } : { restored: true };
 }
