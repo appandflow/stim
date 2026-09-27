@@ -26,9 +26,13 @@ environment when one is registered at it or inside it. Each entry is
 directory of a bare repository. status lists worktrees from git's own worktree
 records, and on macOS runs no git in a worktree with no environment under a
 protected folder such as ~/Documents, so listing it raises no privacy prompt.
-\`worktree warm\` does not create an environment; \`start\`, \`ios\`,
-\`android\` and \`doctor\` register it. An environment's worktree is the
-linked worktree it is registered at or inside.
+\`worktree warm\` registers the app it prepares, before it copies: the
+nearest React Native or Expo app above where it runs when that is below the
+worktree root; else the one app the source checkout has registered, at the
+same path in this worktree; else the worktree root when it is the app. A warm
+that finds none registers nothing and says so on stderr, and \`start\`, \`ios\`,
+\`android\` and \`doctor\` register the app later. An environment's worktree is the linked worktree it is
+registered at or inside.
 
 Each worktree entry, in unprovisionedWorktrees and in an environment's
 worktree, carries git:
@@ -344,6 +348,9 @@ per session, with the preview URL.`,
                   broadcast. Greater than 1 means several devices are running
                   this app on that Metro and the request addressed all of
                   them, not only deviceId. Completion is not observed
+  reverseRestored the Android serials whose adb reverse for metroPort was
+                  missing and that Stim re-applied before reloading; [] when
+                  none was, and always [] for iOS and web
 
   stim web --json
 
@@ -705,8 +712,26 @@ RULES
     },
     status: {
       summary:
-        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
+        "the status payload's lifecycle phase, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
+
+  Each environment carries phase, where the workspace is in its lifecycle:
+
+  phase       "warming"  stim worktree warm runs in it now
+              "ready"    its last warm succeeded and nothing has run there
+                         since: no start, ios, android, web or reload, for
+                         at most 2 hours
+              "live"     live is true: Metro, a device, Chrome or a remote
+                         session of it runs
+              "idle"     none of these
+  phaseSince  when the warm started ("warming") or finished ("ready"); null
+              for "live" and "idle"
+  warmStep    "refresh" or "copy", the step a warming workspace is in;
+              absent in other phases
+
+  A warm records warming under its own ownership claim, so a warm that was
+  killed or failed reads as idle, never as warming. Plain \`stim status\`
+  marks the workspace [warming: <step>], [ready] or [idle].
 
   Each environment carries issues, the things in that workspace that need
   the user, and warnings, the same issues as text ("<slot>: " when not the
@@ -722,6 +747,12 @@ RULES
              avd-serial-changed     the owned emulator came back on another
                                     serial, so Metro forwarding is lost
              avd-missing            the recorded AVD no longer exists
+             android-reverse-missing the owned emulator runs this
+                                    workspace's debug app against its live
+                                    Metro, but the adb reverse for that Metro
+                                    port is gone, so the app cannot reach
+                                    Metro; the remedy stim reload android
+                                    restores it
              avd-not-detected       adb does not see the owned emulator while
                                     the workspace expects it: it holds an
                                     unexpired lease on its serial, or it
@@ -941,13 +972,29 @@ RULES
   There is no completion fraction: a compile's log volume depends on what
   is already built, so it does not measure progress.
 
-  An environment's memoryMb is an estimate, not a measurement: a fixed amount
-  per booted simulator, detected emulator, running Metro and running Chrome.
-  capacity.committedMb sums it, and the memory budget uses the same estimate.
-  What is using CPU and memory now is the top-level machine section:
+  memorySource says how a memory figure was obtained:
 
-  machine   null, or { owners: [{ kind, name, workspace, slot?, id, owned,
-            cpuPercent, residentMb, processes }] }
+  footprint  physical footprint, the figure Activity Monitor's Memory
+             column shows, read by a small helper Stim compiles with the
+             Xcode command line tools into $STIM_HOME/helpers on first use
+  rss        summed resident set size, for machine owners when the helper
+             cannot be built (no Xcode command line tools, Linux). It
+             overstates a simulator many times over.
+  estimate   a fixed amount per booted simulator, detected emulator,
+             running Metro and running Chrome
+
+  An environment's memoryMb is what its own processes use now, the sum of
+  memoryMb over the machine owners whose workspace is that environment,
+  builds included, when machine.memorySource is footprint. Otherwise it is
+  the estimate, with memorySource estimate.
+
+  capacity.committedMb sums memoryMb. The memory budget plans before a boot
+  and always uses the estimate. What is using CPU and memory now is the
+  top-level machine section:
+
+  machine   null, or { memorySource, owners: [{ kind, name, workspace,
+            slot?, id, owned, cpuPercent, residentMb, memoryMb,
+            processes }] }
 
   kind         simulator  a booted simulator's launchd_sim tree
                emulator   an emulator's launcher and qemu tree, by its -avd
@@ -971,14 +1018,19 @@ RULES
   residentMb   summed resident set size. Pages shared between processes
                count once per process, so a simulator reports well above
                its physical footprint.
+  memoryMb     summed physical footprint when machine.memorySource is
+               footprint; a process the helper cannot read, another user's
+               or one that just exited, counts its resident size. Equals
+               residentMb when memorySource is rss.
 
   Each process counts in exactly one owner, the one whose root process is
   its nearest ancestor, so the supervisor a build started counts as Metro,
   not as the build, and a Gradle or Kotlin daemon counts in the build that
   started it until that build exits, then as shared. Processes with no owner
   are left out. machine comes from one host ps, the one status reads for
-  device activity, and is null when no simulator is booted, no workspace is
-  live and no build runs: status then reads no process table. \`status --watch --json\` rereads it every 15 seconds while
+  device activity, and one run of the footprint helper. It is null when no
+  simulator is booted, no workspace is live and no build runs: status then
+  runs neither. \`status --watch --json\` rereads both every 15 seconds while
   machine is not null, with no other subprocess.`,
     },
     plan: {

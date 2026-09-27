@@ -182,10 +182,14 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   installed version, `stim ios` refuses instead of booting it: remove the
   simulator with `stim worktree remove` or `stim gc --delete`, or pass
   `--slot <name>` to create one beside it.
-- `--device-type` and `--runtime` apply only to the local owned simulator. With
-  `--remote` or the `ios.remote` setting they refuse with `STIM_BAD_ARG`: the
-  remote backend chooses its own device. The `ios.deviceType` and `ios.runtime`
-  settings are ignored on a remote run.
+- On a remote run (`--remote` or the `ios.remote` setting), `--runtime` refuses
+  with `STIM_BAD_ARG` because the remote backend chooses the iOS version, and so
+  does `--device-type` on the proxy backend. `--remote eas` honors
+  `--device-type` by starting the EAS Simulator session with
+  `eas simulator:start --device <name>`, which needs eas-cli 22.2.0 or later.
+  A recorded EAS session still running another model refuses with
+  `STIM_REMOTE_DEVICE_MISMATCH`; run `stim stop`, then rerun. The
+  `ios.deviceType` and `ios.runtime` settings are ignored on a remote run.
 - `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
   preference for this run. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators
@@ -434,6 +438,17 @@ Every native reload goes over the workspace Metro websocket, on both platforms. 
 reopens a development-client URL, because that restarts the app rather than
 reloading its JavaScript.
 
+An Android reload first checks `adb reverse` on each live owned emulator launched
+against this Metro and re-applies the Metro port's reverse where it is missing.
+adb ties a reverse to its transport, so an emulator whose adb connection drops
+and reconnects loses it silently, and the app stops reaching Metro and Fast
+Refresh. After restoring one, Stim waits up to 8 seconds, sending nothing,
+until the app on every emulator it checked is connected again, then sends the
+reload once (a bare React Native dev server cannot name its clients, so there
+it waits a fixed 2.5 seconds); `reverseRestored` names the serials it
+restored. `stim status` reports the same loss as the `android-reverse-missing`
+issue, with `stim reload android` as the remedy.
+
 How the message is addressed depends on the dev server, and `strategy` reports
 which you got. Where Metro can name its clients, Stim addresses every peer
 matching the platform and reports `metro-websocket`. A workspace Metro serves one
@@ -492,7 +507,12 @@ result.
   and browser errors,
   since the last launch marker. The page's records start again at each page
   load instead, and a launch does not reset them. A completed
-  bundle attempt resets only older Metro errors. General device logs require
+  bundle attempt resets only older Metro errors. Metro and client output is
+  shared by every slot and names no device, so the newest launch of any slot
+  resets it. `--slot <name>` includes that shared output windowed by the
+  slot's own launch and the bundles of the platforms it launched, so after
+  `stim android` hides an iOS JS error from the unfiltered query,
+  `--slot <ios-slot>` still shows it. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
 - `--source agent` shows what agent-device did on this workspace's owned
@@ -673,6 +693,13 @@ behind its upstream, and whether its branch is merged, as a
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
 
+Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
+`stim worktree warm` runs in it, `[ready]` after a warm until its first run,
+or `[idle]`. A live workspace has no marker. In `--json`, each environment
+carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
+warming, `warmStep`; see
+[Parallel environments](./worktrees.md#parallel-environments).
+
 A workspace that needs attention prints each issue under it with the command
 that fixes it:
 
@@ -709,14 +736,19 @@ In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and
 `stim web` Chrome, stim-server, and a shared bucket for machine-wide processes
 such as CoreSimulator services, the adb server and Gradle daemons. Each owner
-carries `cpuPercent`, `residentMb` and `processes`, and every process counts in
-exactly one owner. `owned` marks what Stim can stop: a workspace's owned device
-with `stim stop --slot <name>`, and its Metro with `stim stop`. Resident memory
-counts pages shared between processes once per process, so a simulator reads
-well above its physical footprint. An environment's `memoryMb` stays the fixed
-estimate the memory budget uses. `machine` is `null` when nothing runs, and
-status then reads no process table. `stim guide facts status` lists every
-field.
+carries `cpuPercent`, `memoryMb`, `residentMb` and `processes`, and every
+process counts in exactly one owner. `owned` marks what Stim can stop: a
+workspace's owned device with `stim stop --slot <name>`, and its Metro with
+`stim stop`. `memoryMb` is the physical footprint Activity Monitor shows, read
+by a small helper that Stim compiles with the Xcode command line tools on
+first use. Without them, and on Linux, `machine.memorySource` is `rss` and
+owners' `memoryMb` falls back to resident memory, which counts pages shared
+between processes once per process, so a simulator reads many times its
+footprint. An environment's `memoryMb` sums its own owners' footprints, builds
+included, with `memorySource: "footprint"`. Without a footprint, or when
+nothing runs and `machine` is `null`, it is the fixed estimate the memory
+budget uses, with `memorySource: "estimate"`. `stim guide facts status`
+lists every field.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then

@@ -26,7 +26,9 @@ struct NowBand: View {
           }
         }
         Text(
-          "Each process counts in one row. Resident memory counts memory shared between processes once per process, so simulators read high."
+          machine.memorySource == .footprint
+            ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
+            : "Each process counts in one row. Resident memory counts memory shared between processes once per process, so simulators read high."
         )
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
@@ -94,7 +96,7 @@ struct NowBand: View {
       Text(formatPercent(owner.cpuPercent))
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
-      Text(formatMemory(Int64(owner.residentMb) * 1_048_576))
+      Text(formatMemory(Int64(owner.memory) * 1_048_576))
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
       if actionWidth > 0 { action(owner).frame(width: actionWidth, alignment: .trailing) }

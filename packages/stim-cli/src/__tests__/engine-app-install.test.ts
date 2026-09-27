@@ -32,6 +32,8 @@ import {
   launchIosApp,
   parseLaunchedPid,
   parseResolvedActivity,
+  ensureMetroReverse,
+  hasMetroReverse,
   reverseMetroPorts,
   writeDebugHttpHost,
   clearOtherUserApps,
@@ -765,6 +767,32 @@ describe('android: install and launch', () => {
     const result = reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082']]);
+  });
+
+  test('hasMetroReverse matches the port mapped to itself on any transport, and nothing looser', () => {
+    expect(hasMetroReverse('host-19 tcp:8082 tcp:8082\n', 8082)).toBe(true);
+    expect(hasMetroReverse('host-21 tcp:8081 tcp:8082\nhost-21 tcp:18082 tcp:18082\n', 8082)).toBe(false);
+    expect(hasMetroReverse('', 8082)).toBe(false);
+  });
+
+  test('ensureMetroReverse leaves a present reverse alone and re-applies a missing one', () => {
+    const present = recordingExec({ outputs: { '--list': 'host-19 tcp:8082 tcp:8082\n' } });
+    expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: present })).toEqual({
+      restored: false,
+    });
+    expect(present.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', '--list']]);
+
+    const missing = recordingExec({ outputs: { '--list': '' } });
+    expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: missing })).toEqual({
+      restored: true,
+    });
+    expect(missing.calls.at(-1)).toEqual(['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082']);
+
+    const unreadable = recordingExec({ fail: '--list' });
+    expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: unreadable })).toMatchObject({
+      failed: true,
+    });
+    expect(unreadable.calls).toHaveLength(1);
   });
 
   test('reverseMetroPorts maps an explicit device port to the reserved one', () => {

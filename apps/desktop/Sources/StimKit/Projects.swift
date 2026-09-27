@@ -66,22 +66,29 @@ public struct ProjectSummary: Hashable, Sendable {
   public var project: Project
   public var live: Int
   public var total: Int
+  /// Workspaces `stim worktree warm` is preparing or has just prepared.
+  public var settingUp = 0
+  /// Workspaces the Live filter shows: live, building or setting up.
+  public var active = 0
+
+  public var hasActive: Bool { active > 0 }
 }
 
 /// Groups workspaces and worktrees with no environment by project, the ones
-/// with live workspaces first, then by name.
+/// with workspaces the Live filter shows first, then by name.
 public func projectSummaries(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project
 ) -> [ProjectSummary] {
   var summaries: [Project: ProjectSummary] = [:]
-  func add(_ path: String, live: Bool) {
+  func add(_ path: String, live: Bool, settingUp: Bool = false, active: Bool = false) {
     let key = project(path)
     summaries[key, default: ProjectSummary(project: key, live: 0, total: 0)].total += 1
-    if live { summaries[key]?.live += 1 }
+    if live { summaries[key]?.live += 1 } else if settingUp { summaries[key]?.settingUp += 1 }
+    if active { summaries[key]?.active += 1 }
   }
-  for env in environments { add(env.path, live: env.live) }
+  for env in environments { add(env.path, live: env.live, settingUp: env.isSettingUp, active: env.isActive) }
   for worktree in unprovisioned { add(worktree.path, live: false) }
   return summaries.values.sorted {
-    ($0.live > 0 ? 0 : 1, $0.project.name.lowercased()) < ($1.live > 0 ? 0 : 1, $1.project.name.lowercased())
+    ($0.hasActive ? 0 : 1, $0.project.name.lowercased()) < ($1.hasActive ? 0 : 1, $1.project.name.lowercased())
   }
 }

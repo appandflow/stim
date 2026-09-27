@@ -3,7 +3,8 @@
 A macOS app for supervising Stim workspaces: every worktree on the machine,
 grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
-and resident memory.
+and memory (the physical footprint `stim status` measures, or resident memory
+from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
 `stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
@@ -49,13 +50,15 @@ in the workspace directory:
 the sidebar; only the list below them scrolls. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
-with a live workspace start expanded, and the app remembers each project you
+with a live, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
 worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: All, Live or Idle workspaces.
+- **Status**: All, Live or Idle workspaces. Live also shows a workspace with a
+  running build, and one that `stim worktree warm` is preparing ("Warming...",
+  with an activity indicator) or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
@@ -174,7 +177,7 @@ every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
 build or `stim web` Chrome, stim-server, or a machine-wide process such as
 CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
-is one core) and resident memory, largest memory first so rows stay in place
+is one core) and memory, largest memory first so rows stay in place
 as CPU changes; each process counts in one row only. A workspace's owned simulator or emulator has **Shut down**, which
 runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
 `stim stop`. Nothing Stim does not own has an action. Two sparklines above the

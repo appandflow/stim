@@ -13,6 +13,7 @@ import {
   type BuildResult,
   type LastBuildReport,
   type StatsPlatform,
+  type WarmStep,
 } from './status.ts';
 
 export interface WorkspaceState {
@@ -333,4 +334,39 @@ export function workspaceLastUsed(root: string): number {
     });
   } catch {}
   return lastUseFrom(readWorkspaceState(root), mtimes);
+}
+
+export const WARM_KEY = 'warm';
+
+/** How long a successful warm keeps a workspace `ready` when nothing runs in it. */
+export const READY_PHASE_MS: number = 2 * 60 * 60 * 1000;
+
+/**
+ * What `stim worktree warm` last recorded in a workspace: a warm in progress, held by the ownership claim
+ * `claim` names, or a successful warm that finished at `at`.
+ */
+export type WarmRecord =
+  | { phase: 'warming'; step: WarmStep; startedAt: string; claim: { root: string; claimId: string } }
+  | { phase: 'ready'; at: string };
+
+export function readWarmRecord(state: WorkspaceState | null | undefined): WarmRecord | null {
+  const record = state?.[WARM_KEY] as Record<string, unknown> | undefined;
+  if (!record || typeof record !== 'object') return null;
+  if (record.phase === 'ready') return typeof record.at === 'string' ? { phase: 'ready', at: record.at } : null;
+  const claim = record.claim as Record<string, unknown> | undefined;
+  if (
+    record.phase !== 'warming' ||
+    (record.step !== 'refresh' && record.step !== 'copy') ||
+    typeof record.startedAt !== 'string' ||
+    typeof claim?.root !== 'string' ||
+    typeof claim.claimId !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    phase: 'warming',
+    step: record.step,
+    startedAt: record.startedAt,
+    claim: { root: claim.root, claimId: claim.claimId },
+  };
 }

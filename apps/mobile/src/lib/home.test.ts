@@ -73,6 +73,35 @@ describe('mergeWorkspaces', () => {
   });
 });
 
+describe('warming and ready workspaces', () => {
+  const setup = [
+    {
+      id: 'a',
+      name: 'MacBook Pro',
+      status: status([
+        env('/u/app/.worktrees/idle-one'),
+        env('/u/app/.worktrees/live-one', { live: true, phase: 'live' }),
+        env('/u/app/.worktrees/warming', { phase: 'warming', phaseSince: '2026-09-26T10:00:00Z', warmStep: 'copy' }),
+        env('/u/app/.worktrees/ready', { phase: 'ready', phaseSince: '2026-09-26T09:00:00Z' }),
+        env('/u/app/.worktrees/killed', { phase: 'idle', phaseSince: null }),
+      ]),
+    },
+  ];
+
+  it('shows them under the live filter, above live workspaces', () => {
+    const items = mergeWorkspaces(setup);
+    expect(filterWorkspaces(items, DEFAULT_FILTERS, ['a']).shown.map((i) => i.title)).toEqual([
+      'ready',
+      'warming',
+      'live-one',
+    ]);
+    expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, activity: 'idle' }, ['a']).shown.map((i) => i.title)).toEqual([
+      'idle-one',
+      'killed',
+    ]);
+  });
+});
+
 describe('filterWorkspaces', () => {
   const items = mergeWorkspaces(macs);
   const ids = ['a', 'b', 'c'];
