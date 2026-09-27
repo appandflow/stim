@@ -842,9 +842,10 @@ RULES
                    uiautomator or instrumentation; pid and since are null when
                    the claim does not record them
   lastActivityAt   the newest of this device's app log records, this
-                   platform's Metro bundle requests and the workspace's last
-                   Stim run, rounded down to the minute; absent when none is
-                   recorded
+                   platform's Metro bundle requests, the workspace's last
+                   Stim run and, while agent-device drives it, the agent's
+                   last recorded action, rounded down to the minute; absent
+                   when none is recorded
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
@@ -853,7 +854,8 @@ RULES
                    driver-process       a host process naming the UDID or serial
                    instrumentation      an on-device uiautomator or androidx.test
                                         process (one adb shell ps per emulator)
-                   device-log, metro-bundle, workspace-use   recency
+                   device-log, metro-bundle, workspace-use, agent-action
+                                        recency
 
   Plain \`stim status\` appends it to each device line: "driven by
   agent-device for 12m", "active", "idle 3h", or "activity unknown (...)".

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProcessStart } from '../process-identity.ts';
@@ -162,6 +162,25 @@ describe('createActivityReader', () => {
     expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
       state: 'driven',
       driver: { tool: 'agent-device', pid: 100, since: new Date(RUNNER_START).toISOString() },
+    });
+  });
+
+  test("a live claim's agent actions count as activity, so an agent working without app logs is not quiet", () => {
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({ session: 'a1', device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
+    );
+    const events = join(home, '.agent-device', 'sessions', 'a1', 'events.ndjson');
+    mkdirSync(join(events, '..'), { recursive: true });
+    writeFileSync(events, '{}\n');
+    const actedAt = NOW - 120_000;
+    utimesSync(events, actedAt / 1000, actedAt / 1000);
+    writeLogs([{ ts: NOW - 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
+    expect(read({ 100: OWNER_START })).toMatchObject({
+      state: 'driven',
+      lastActivityAt: new Date(actedAt).toISOString(),
     });
   });
 

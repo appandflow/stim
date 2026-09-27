@@ -861,7 +861,8 @@ reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (xcodebuild test runners, idb, Maestro, Appium,
 `simctl io|spawn`), and on Android a `uiautomator` or `androidx.test` process.
 `lastActivityAt` is the newest of the device's app log records, the platform's
-Metro bundle requests, and the workspace's last Stim run, rounded down to the
+Metro bundle requests, the workspace's last Stim run, and, while agent-device
+drives the device, the agent's last recorded action, rounded down to the
 minute. Stim reads
 agent-device state without changing it. `stim guide facts status` lists every
 field.

@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -257,6 +257,16 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
   ];
 }
 
+/** When an agent-device session last recorded an event: its events file's modification time. */
+function agentSessionActedAt(home: string, session: string): number | null {
+  const root = envDir('AGENT_DEVICE_STATE_DIR') ?? join(home, '.agent-device');
+  try {
+    return statSync(join(root, 'sessions', session, 'events.ndjson')).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
   return agentDeviceDirs(home).flatMap(({ kind, dir }) => {
     let names: string[];
@@ -368,6 +378,8 @@ export function createActivityReader({
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
+        const actedAt = record.session ? agentSessionActedAt(home, record.session) : null;
+        if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);
       }
