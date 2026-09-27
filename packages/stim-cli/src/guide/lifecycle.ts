@@ -1476,7 +1476,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   runtime when \`--runtime\` also resolved, which is what catches a pair like
   \`--device-type "iPhone 8" --runtime 26.5\` that each half would pass alone.
   \`--runtime\` takes a version (\`26.5\`) or a runtime's full name
-  (\`iOS 26.5\`), exactly; no prefix or suffix matches.
+  (\`iOS 26.5\`), exactly; no prefix or suffix matches. Both flags choose
+  the local owned simulator only: with \`--remote\` or the ios.remote setting
+  they refuse with STIM_BAD_ARG, because the remote backend picks its own
+  device. The ios.deviceType and ios.runtime settings do not refuse there;
+  a remote run ignores them.
 
   These flags describe a device that does not exist yet. When this workspace
   ALREADY owns a simulator and \`--device-type\` names a different model, or

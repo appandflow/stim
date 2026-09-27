@@ -55,6 +55,7 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_fac
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
+import { deviceModelRefusal } from '../commands/ios/support.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
@@ -6040,6 +6041,39 @@ describe('--simulator-app', () => {
 });
 
 describe('the simulator model and runtime flags', () => {
+  test.each([
+    { opts: { remote: 'eas', runtime: '18.6' }, settings: {}, given: '--runtime' },
+    {
+      opts: { deviceType: 'iPhone 17 Pro', runtime: '18.6' },
+      settings: { ios: { remote: 'proxy' } },
+      given: '--device-type and --runtime',
+    },
+  ])('a remote run refuses $given before any remote work', async ({ opts, settings, given }) => {
+    reserve();
+    const { calls, logs, exitCode } = await run({ ...opts, json: true }, { resolveSettings: () => settings });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(new RegExp(`^${given} appl(y|ies) only to a local owned iOS simulator`));
+    expect(calls.order).toEqual(['ensureWorkspaceStorage']);
+  });
+
+  test('ios.deviceType and ios.runtime settings do not block a remote run', () => {
+    expect(
+      deviceModelRefusal({
+        deviceTypeFlag: undefined,
+        runtimeFlag: undefined,
+        deviceType: 'iPhone 17 Pro',
+        runtime: '26.2',
+        physical: false,
+        remoteBackend: 'eas',
+        listRuntimes: () => {
+          throw new Error('a remote run lists no local runtimes');
+        },
+      }),
+    ).toBe(null);
+  });
+
   test('resolveDeviceType and resolveRuntime put the flag over the setting', () => {
     const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } };
     expect(resolveDeviceType('iPad Pro 13-inch (M4)', settings)).toBe('iPad Pro 13-inch (M4)');
