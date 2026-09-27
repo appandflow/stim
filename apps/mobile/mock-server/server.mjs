@@ -217,8 +217,9 @@ server.on('connection', (socket) => {
       if (values.read) return { error: ['forbidden', 'This device can only read (mock server started with --read).'] };
       if (!ACTIONS.includes(params.action)) return { error: ['unknown-action', `Unknown action ${params.action}.`] };
       const platformOk =
-        params.platform === undefined || (params.action === 'reload' && ['ios', 'android'].includes(params.platform));
-      if (!platformOk) return { error: ['bad-request', 'platform must be ios or android, and only for reload.'] };
+        params.platform === undefined ||
+        (params.action === 'reload' && ['ios', 'android', 'web'].includes(params.platform));
+      if (!platformOk) return { error: ['bad-request', 'platform must be ios, android or web, and only for reload.'] };
       const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
       if (!env) return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
       if (params.action === 'reload' && params.platform === undefined && runsBothPlatforms(env)) {

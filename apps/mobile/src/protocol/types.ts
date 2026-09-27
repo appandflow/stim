@@ -156,7 +156,10 @@ export interface StatusIssue {
   slot?: string;
 }
 
-/** The workspace's Stim-owned Chrome; `cdpEndpoint` is null while it is not running. */
+/**
+ * The workspace's Stim-owned Chrome; `cdpEndpoint` and `targetId` are null while it is not running. `page` is the
+ * document it loaded last, absent from a `stim` that does not report it.
+ */
 export interface WebBrowserState {
   browser: 'chrome';
   version: string | null;
@@ -168,6 +171,9 @@ export interface WebBrowserState {
   viewport: 'desktop' | 'phone';
   profile: string;
   cdpEndpoint: string | null;
+  targetId?: string | null;
+  page?: { url: string; state: 'loading' | 'loaded' | 'failed'; error?: string } | null;
+  activity?: DeviceActivity;
 }
 
 export interface EnvironmentState {

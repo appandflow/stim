@@ -22,12 +22,17 @@ import { useAction, useHasStatus, useMacConnection, useWorkspace } from '@/hooks
 import { useRecents } from '@/hooks/recents';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
-import { deviceWarnings, devicesOf, livePlatforms, orderDevices, workspaceTitleAt } from '@/lib/workspaces';
-import type { ActionName, Platform as DevicePlatform } from '@/protocol/types';
+import {
+  deviceWarnings,
+  devicesOf,
+  livePlatforms,
+  orderDevices,
+  platformName,
+  workspaceTitleAt,
+} from '@/lib/workspaces';
+import type { ActionName, DevicePlatform } from '@/protocol/types';
 
 const ELLIPSIS_ICON = require('@/assets/icons/ellipsis.png');
-
-const PLATFORM_NAMES: Record<DevicePlatform, string> = { ios: 'iOS', android: 'Android' };
 
 export function WorkspaceDetail({ path }: { path: string }) {
   const { theme } = useUnistyles();
@@ -50,7 +55,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   }, [macId, path, touch]);
 
   const perform = async (action: ActionName, platform?: DevicePlatform) => {
-    const app = platform ? ` the ${PLATFORM_NAMES[platform]} app` : '';
+    const app = platform ? (platform === 'web' ? ' the web page' : ` the ${platformName(platform)} app`) : '';
     setToast({ kind: 'pending', message: action === 'stop' ? `Stopping ${title}` : `Reloading${app}` });
     const error = await actions.run(action, platform ? { platform } : {});
     setToast(
@@ -61,11 +66,14 @@ export function WorkspaceDetail({ path }: { path: string }) {
   };
 
   const reload = () => {
-    if (!env || livePlatforms(env).length < 2) return void perform('reload');
-    Alert.alert('Reload which app?', 'Both the iOS and Android apps are running.', [
-      { text: 'iOS', onPress: () => void perform('reload', 'ios') },
-      { text: 'Android', onPress: () => void perform('reload', 'android') },
-      { text: 'Cancel', style: 'cancel' },
+    const platforms = env ? livePlatforms(env) : [];
+    if (platforms.length < 2) return void perform('reload', platforms[0] === 'web' ? 'web' : undefined);
+    Alert.alert('Reload which app?', `${platforms.map(platformName).join(', ')} are running.`, [
+      ...platforms.map((platform) => ({
+        text: platformName(platform),
+        onPress: () => void perform('reload', platform),
+      })),
+      { text: 'Cancel', style: 'cancel' as const },
     ]);
   };
 

@@ -971,7 +971,29 @@
             "remedy": "stim android",
             "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile"
           }
-        ]
+        ],
+        "web": {
+          "browser": "chrome",
+          "version": "Chrome/153.0.8010.49",
+          "running": true,
+          "pid": 48211,
+          "supervisorPid": 48210,
+          "url": "https://localhost:8931/apps/groups/",
+          "headless": true,
+          "viewport": "desktop",
+          "profile": "/Users/dev/.stim/workspaces/tlon-mobile--4b1c2e9d0f7a6e21/web/profile",
+          "cdpEndpoint": "http://127.0.0.1:8912",
+          "targetId": "9C3F0E2A7B1D4C58A6E0F3B2D1C4A7E9",
+          "page": {
+            "url": "https://localhost:8931/apps/groups/",
+            "state": "loaded"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-26T11:40:00.000Z",
+            "basis": ["page-log"]
+          }
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
@@ -1183,6 +1205,7 @@
     "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard",
     "environments[path*=wide-insets|wide-split-layout|chat-perf-demo|ios27-uiscene|1123-mobile-app].worktree: added by hand with a WorktreeGit git field; the capture predates nested worktree matching and the field",
     "environments[].warnings and environments[].issues: rewritten by hand in the StatusIssue shape; the capture predates issues and listed not-detected emulators on idle workspaces, which status no longer reports. wide-insets and wide-split-layout keep avd-not-detected as if they had launched on Android, ios27-uiscene has an unverified supervisor, and react-native-hinges/example a missing fold3-camera AVD",
-    "environments[path*=react-native-reserved-regions].builds: copied from a real stim status --json build history (hits, misses after an app config change, compile failures, a cancelled and an interrupted run) with paths rewritten; its lastBuilds were replaced with the matching newest entries"
+    "environments[path*=react-native-reserved-regions].builds: copied from a real stim status --json build history (hits, misses after an app config change, compile failures, a cancelled and an interrupted run) with paths rewritten; its lastBuilds were replaced with the matching newest entries",
+    "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome"
   ]
 }

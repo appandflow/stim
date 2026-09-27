@@ -23,6 +23,8 @@ import type {
   LogRecord,
   MachineUsage,
   Methods,
+  DevicePlatform,
+  ReloadPlatform,
   Platform,
   RotateDirection,
   StatusPayload,
@@ -304,7 +306,7 @@ const EMPTY_FRAME_STATE: Omit<FrameState, 'key'> = { frame: null, error: null, d
 /** `hint` asks for up to `fps` frames a second, scaled to fit `maxEdge` pixels; the server defaults to 5 and 1280. */
 export function useFrame(
   workspace: string,
-  platform: 'ios' | 'android',
+  platform: DevicePlatform,
   slot: string,
   enabled: boolean,
   hint: { fps?: number; maxEdge?: number } = {},
@@ -334,14 +336,14 @@ export interface WorkspaceActions {
   available: ActionName[] | null;
   pending: ActionName | null;
   /** Resolves null when the action succeeded, and the error message when it failed. */
-  run: (action: ActionName, options?: { platform?: Platform }) => Promise<string | null>;
+  run: (action: ActionName, options?: { platform?: ReloadPlatform }) => Promise<string | null>;
 }
 
 export function useAction(workspace: string): WorkspaceActions {
   const { connection, state } = useMacConnection();
   const [pending, setPending] = useState<ActionName | null>(null);
   const run = useCallback(
-    async (action: ActionName, options: { platform?: Platform } = {}) => {
+    async (action: ActionName, options: { platform?: ReloadPlatform } = {}) => {
       if (!connection) return 'Not connected.';
       const params: ActionParams =
         action === 'reload'
@@ -371,7 +373,7 @@ export function useAction(workspace: string): WorkspaceActions {
 export function useFrameSnapshot(
   connection: StimConnection | null,
   workspace: string,
-  platform: 'ios' | 'android',
+  platform: DevicePlatform,
   slot: string,
   enabled: boolean,
   intervalMs: number,
@@ -505,7 +507,7 @@ type HeldState =
  * ends a disconnected client's sessions), and when the server ends it; input sent while no session is on is
  * dropped.
  */
-export function useDeviceControl(workspace: string, platform: Platform, slot: string): DeviceControl {
+export function useDeviceControl(workspace: string, platform: DevicePlatform, slot: string): DeviceControl {
   const { connection, state: link } = useMacConnection();
   const allowed = link.kind === 'open' ? link.capabilities.includes('control') : null;
   const [held, setHeld] = useState<HeldState>({ kind: 'off' });

@@ -173,6 +173,10 @@ function workspaceItems(
         reason: detail,
       });
     }
+    if (env.web?.running && env.web.page?.state === 'failed') {
+      const detail = 'Web page failed to load';
+      add('page-web', 'warning', detail, { event: 'app-stopped', occurrence: env.web.page.url, reason: detail });
+    }
   }
   return items;
 }

@@ -25,7 +25,10 @@ const failed = (platform: 'ios' | 'android', at: number) => ({
   errorCode: 'STIM_BUILD_FAILED',
 });
 
-/** Changes every fixture workspace in turn: failures, log errors, stopped apps, long builds, a driven device. */
+/**
+ * Changes every fixture workspace in turn: failures, log errors, stopped apps, long builds, a driven device, a
+ * failed web page.
+ */
 function step(index: number, now: number): PhoneStatus {
   const environments = base.environments.map((env, i): Env => {
     const phase = (index + i) % 6;
@@ -48,6 +51,23 @@ function step(index: number, now: number): PhoneStatus {
       };
     }
     if (phase === 5 && env.ios) next.ios = { ...env.ios, activity: { state: 'driven', basis: [] } };
+    if (phase === 0 && i % 2 === 0) {
+      next.web = {
+        browser: 'chrome',
+        version: null,
+        running: true,
+        pid: 1,
+        supervisorPid: 2,
+        url: 'http://localhost:8081/',
+        headless: true,
+        viewport: 'desktop',
+        profile: '/p',
+        cdpEndpoint: 'http://127.0.0.1:8900',
+        targetId: 'T',
+        page: { url: `http://localhost:8081/${index}`, state: 'failed', error: 'net::ERR_CONNECTION_REFUSED' },
+        activity: { state: i % 4 === 0 ? 'driven' : 'idle', basis: [] },
+      };
+    }
     return next;
   });
   return { ...base, environments };

@@ -42,8 +42,8 @@ import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-conne
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, workspaceTitleAt } from '@/lib/workspaces';
-import type { DevicePosture, InputButton, Platform, RotateDirection } from '@/protocol/types';
+import { devicesOf, shortUrl, workspaceTitleAt } from '@/lib/workspaces';
+import type { DevicePlatform, DevicePosture, InputButton, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
 const MAX_EDGE = 1600;
@@ -71,7 +71,15 @@ const POSTURE_LABELS: Record<DevicePosture, string> = {
   unfolded: 'Unfold',
 };
 
-export function DeviceView({ workspace, platform, slot }: { workspace: string; platform: Platform; slot: string }) {
+export function DeviceView({
+  workspace,
+  platform,
+  slot,
+}: {
+  workspace: string;
+  platform: DevicePlatform;
+  slot: string;
+}) {
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
   const landscape = window.width > window.height;
@@ -106,7 +114,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
     aspectOf(source),
-    platform === 'ios' ? 0.46 : 0.45,
+    platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !(landscape && readOnly) && !screenZoom.zoomed,
     root,
     stage,
@@ -273,14 +281,18 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
           disabled={readOnly}
           onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
         />
-        <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} />
-        {platform === 'android' ? <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} /> : null}
+        {platform !== 'web' ? <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} /> : null}
+        {platform !== 'ios' ? <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} /> : null}
         {platform === 'android' ? (
           <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
         ) : null}
-        <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
-        <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
-        <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
+        {platform !== 'web' ? (
+          <>
+            <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} />
+            <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
+            <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
+          </>
+        ) : null}
         {postures
           .filter((posture) => platform === 'android' || posture !== shown)
           .map((posture) => (
@@ -307,7 +319,9 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
       </ScrollView>
     )
   ) : null;
-  const model = device?.model ?? (platform === 'ios' ? 'iOS Simulator' : 'Android Emulator');
+  const model = device?.page
+    ? shortUrl(device.page.url)
+    : (device?.model ?? (platform === 'ios' ? 'iOS Simulator' : platform === 'web' ? 'Web' : 'Android Emulator'));
   const title = workspaceTitleAt(workspace, status);
 
   return (
@@ -439,7 +453,7 @@ export function DeviceView({ workspace, platform, slot }: { workspace: string; p
                 </Text>
                 <View style={styles.subtitleRow}>
                   <Text variant="caption" style={styles.subtitle} numberOfLines={1}>
-                    {`${model} \u00B7 ${slot}`}
+                    {platform === 'web' ? `Web \u00B7 ${model}` : `${model} \u00B7 ${slot}`}
                   </Text>
                   {driver ? (
                     <View
