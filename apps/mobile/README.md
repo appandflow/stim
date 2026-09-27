@@ -15,8 +15,9 @@ reload and stop a workspace:
   building, warming and ready ones first, then live ones. A workspace
   `stim worktree warm` is preparing shows **Warming…** with its step and an
   activity indicator, and one it has prepared shows **Ready** until its first
-  run; both count as live for the filters. Each is titled by its worktree's branch, or the
-  worktree's folder when it has no branch, or the project for a main checkout,
+  run; both count as live for the filters. Each is titled by its worktree's
+  branch, or the worktree's folder when it has no branch, or the project for a
+  main checkout,
   truncated in the middle when long. Under the title are the project, the app's
   folder in its checkout, the machine's name and the
   git state (a dot with the count of uncommitted files, arrows for commits ahead

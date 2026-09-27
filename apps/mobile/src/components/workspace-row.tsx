@@ -63,7 +63,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
       accessibilityLabel={[
         `Workspace ${item.title} on ${item.macName}`,
         lastSeen,
-        settingUp ? (env.phase === 'warming' ? 'Warming' : 'Ready') : null,
+        settingUp ? (env.phase === 'ready' ? 'Ready' : ['Warming', env.warmStep].filter(Boolean).join(', ')) : null,
         gitBadges(env.worktree?.git)?.label,
         ...drivenLabels,
       ]
