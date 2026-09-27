@@ -821,10 +821,10 @@ RULES
                             is the log message
   activity       like a device's activity below. driver.tool names a
                  DevTools client connected to cdpEndpoint (agent-browser,
-                 playwright, puppeteer, chrome-devtools-mcp, or the
-                 executable's name); Stim's own connections (the browser
-                 supervisor, stim-server, Stim Desktop, the stim CLI) are not
-                 drivers. basis: cdp-client (one lsof of the DevTools port),
+                 agent-device, argent, playwright, puppeteer,
+                 chrome-devtools-mcp, or the executable's name); Stim's own
+                 connections (the browser supervisor, stim-server, Stim
+                 Desktop, the stim CLI) are not drivers. basis: cdp-client (one lsof of the DevTools port),
                  page-log (the newest web.ndjson record) for recency
 
   Each booted simulator and detected emulator in environments (and in
@@ -838,7 +838,7 @@ RULES
                    "unknown"  a claim or driver check could not be read;
                               never treated as idle
   driver           { tool, pid, since } for "driven": agent-device, stim device
-                   lock, xcodebuild, idb, maestro, appium, simctl,
+                   lock, argent, xcodebuild, idb, maestro, appium, simctl,
                    uiautomator or instrumentation; pid and since are null when
                    the claim does not record them
   lastActivityAt   the newest of this device's app log records, this
@@ -856,8 +856,9 @@ RULES
                      with its recorded start time, so a reused pid is dead
                    device-lock          an unexpired \`stim device lock\` lease
                    driver-process       a host process naming the UDID or serial
-                   instrumentation      an on-device uiautomator or androidx.test
-                                        process (one adb shell ps per emulator)
+                   instrumentation      an on-device uiautomator, androidx.test or
+                                        argent helper process (one adb shell ps
+                                        per emulator)
                    device-log, metro-bundle, workspace-use, agent-action
                                         recency
 
