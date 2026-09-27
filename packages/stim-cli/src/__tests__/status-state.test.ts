@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import {
   activityLabel,
   addReverseMissingIssue,
+  androidPhysicalReading,
   capacity,
   deviceLeaseLines,
   deviceLeaseStates,
@@ -10,8 +11,11 @@ import {
   diskLine,
   environmentState,
   formatSpace,
+  iosPhysicalReading,
   metroReverseTargets,
   parseDfFree,
+  physicalDeviceLine,
+  physicalDeviceStates,
   poolLine,
   remoteDeviceLine,
   remoteDeviceState,
@@ -425,6 +429,125 @@ describe('device lease state', () => {
 
   test('no lease file prints no section', () => {
     expect(deviceLeaseLines([], now)).toEqual([]);
+  });
+});
+
+describe('physical device state', () => {
+  const now = Date.parse('2026-09-02T12:00:00.000Z');
+  const lease = (platform: 'ios' | 'android', id: string, over: Record<string, unknown> = {}): LeaseFileEntry => ({
+    path: `/h/device-locks/${platform}-${id}.json`,
+    name: `${platform}-${id}.json`,
+    platform,
+    id,
+    lease: {
+      version: 1,
+      platform,
+      id,
+      deviceName: 'Leased name',
+      holder: '/w/a',
+      token: `t-${id}`,
+      grantedAt: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+      ...over,
+    },
+  });
+  const connected = { name: 'Old iPhone', model: 'iPhone 12 Pro', connection: 'connected' as const };
+  const states = (entries: LeaseFileEntry[], held: Parameters<typeof physicalDeviceStates>[1], simulatorUdids = []) =>
+    physicalDeviceStates(entries, held, {
+      root: '/w/a',
+      now,
+      simulatorUdids: new Set(simulatorUdids),
+      read: (platform) => (platform === 'ios' ? connected : { name: null, model: null, connection: 'disconnected' }),
+    });
+
+  test('each lease the workspace holds is a physical device in its slot, with the lease facts', () => {
+    const devices = states([lease('ios', 'PHONE'), lease('android', 'R5')], {
+      ios: { id: 'PHONE', token: 't-PHONE', kind: 'declared' },
+      'android:pixel': { id: 'R5', token: 't-R5', kind: 'run' },
+    });
+    expect(devices).toEqual([
+      {
+        platform: 'ios',
+        slot: 'default',
+        id: 'PHONE',
+        name: 'Old iPhone',
+        model: 'iPhone 12 Pro',
+        owned: false,
+        physical: true,
+        connection: 'connected',
+        lease: {
+          holder: '/w/a',
+          kind: 'declared',
+          grantedAt: new Date(now - 60_000).toISOString(),
+          expiresAt: new Date(now + 60_000).toISOString(),
+        },
+      },
+      expect.objectContaining({ platform: 'android', slot: 'pixel', id: 'R5', name: 'Leased name', model: null }),
+    ]);
+  });
+
+  test('a lease another holder took over, an expired one, or a simulator or emulator lease is left out', () => {
+    const devices = states(
+      [
+        lease('ios', 'TAKEN', { holder: '/w/b', token: 't-other' }),
+        lease('ios', 'OLD', { expiresAt: new Date(now).toISOString() }),
+        lease('ios', 'SIM-UDID'),
+        lease('android', 'emulator-5554'),
+      ],
+      {
+        ios: { id: 'TAKEN', token: 't-TAKEN', kind: 'declared' },
+        'ios:old': { id: 'OLD', token: 't-OLD', kind: 'declared' },
+        'ios:sim': { id: 'SIM-UDID', token: 't-SIM-UDID', kind: 'declared' },
+        android: { id: 'emulator-5554', token: 't-emulator-5554', kind: 'declared' },
+      },
+      ['SIM-UDID'],
+    );
+    expect(devices).toEqual([]);
+  });
+
+  test('devicectl readings: unreadable is unknown, absent or unreachable is disconnected', () => {
+    const phone = {
+      udid: 'ABC',
+      name: 'Old iPhone',
+      bootState: 'booted',
+      developerModeStatus: 'enabled',
+      pairingState: 'paired',
+      transportType: 'localNetwork',
+      tunnelState: 'connected',
+      model: 'iPhone 12 Pro',
+    };
+    expect(iosPhysicalReading(null, 'ABC').connection).toBe('unknown');
+    expect(iosPhysicalReading([], 'ABC').connection).toBe('disconnected');
+    expect(iosPhysicalReading([{ ...phone, tunnelState: 'unavailable' }], 'abc').connection).toBe('disconnected');
+    expect(iosPhysicalReading([phone], 'abc')).toEqual({
+      name: 'Old iPhone',
+      model: 'iPhone 12 Pro',
+      connection: 'connected',
+    });
+  });
+
+  test('adb readings: only a serial adb lists as device is connected, and only then is its model read', () => {
+    const devices = {
+      emulators: [],
+      physical: [{ serial: 'R5' }],
+      unhealthy: [{ serial: 'R6', kind: 'physical' as const, status: 'unauthorized' }],
+    };
+    const model = vi.fn(() => 'Pixel 9');
+    expect(androidPhysicalReading(null, 'R5', model).connection).toBe('unknown');
+    expect(androidPhysicalReading(devices, 'R6', model).connection).toBe('disconnected');
+    expect(model).not.toHaveBeenCalled();
+    expect(androidPhysicalReading(devices, 'R5', model)).toEqual({
+      name: null,
+      model: 'Pixel 9',
+      connection: 'connected',
+    });
+  });
+
+  test('the plain line names the device, its model, the connection and the time left', () => {
+    const [device] = states([lease('ios', 'PHONE')], { 'ios:phone': { id: 'PHONE', token: 't-PHONE', kind: 'run' } });
+    expect(physicalDeviceLine(device!, now)).toMatch(
+      /^ios \[phone\]: Old iPhone \(physical, iPhone 12 Pro\) connected -- leased until \d\d:\d\d:\d\d \(1m00s left\)$/,
+    );
   });
 });
 

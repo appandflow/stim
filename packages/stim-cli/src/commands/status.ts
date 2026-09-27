@@ -25,7 +25,14 @@ import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts'
 import { readSupervisorState } from './stop.ts';
 import { detectIsExpo, findServerWorkspace, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync, parseSimctlList } from '../devices/ios.ts';
-import { ownedAvdDeviceProfile, ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
+import {
+  listAdbDevices,
+  ownedAvdDeviceProfile,
+  ownedAvdSerialResolver,
+  physicalDeviceModel,
+  type AdbDevices,
+  type ResolvedAvdSerial,
+} from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from '../workspace/git-summary.ts';
@@ -42,7 +49,8 @@ import {
 import { volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { formatDuration } from '../command-output.ts';
-import { listLeaseFiles } from '../engine/device-lease.ts';
+import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
+import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
@@ -68,6 +76,7 @@ import { hasMetroReverse } from '../engine/app-install.ts';
 import {
   activityLabel,
   addReverseMissingIssue,
+  androidPhysicalReading,
   applyMachineMemory,
   capacity,
   deviceLeaseLines,
@@ -75,8 +84,11 @@ import {
   diskLine,
   environmentState,
   gitSummaryText,
+  iosPhysicalReading,
   metroReverseTargets,
   parseDfFree,
+  physicalDeviceLine,
+  physicalDeviceStates,
   poolLine,
   remoteDeviceLine,
   remoteDeviceState,
@@ -84,6 +96,7 @@ import {
   tightVolumes,
   unprovisionedWorktrees,
   withWebFacts,
+  type PhysicalDeviceReading,
 } from '../status.ts';
 import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
@@ -215,6 +228,15 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
   const leaseFiles = listLeaseFiles();
   const leases = deviceLeaseStates(leaseFiles, { root: cwdRoot, now: leaseNow });
   const roots: WorkspaceProcessRoots[] = [];
+  const readPhysicalDevice = physicalDeviceReader();
+  const simulatorUdids = new Set(
+    [
+      ...Object.keys(simsByUdid),
+      ...projects.flatMap(([, proj]) =>
+        projectDeviceSlots(proj).flatMap(({ platforms }) => platforms.ios?.deviceUdid ?? []),
+      ),
+    ].map((udid) => udid.toUpperCase()),
+  );
   for (const [i, [path, proj]] of projects.entries()) {
     const { metro, supervisor } = running[i]!;
     const saved = readWorkspaceState(path);
@@ -262,6 +284,13 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     );
     const state = states[states.length - 1];
     if (state) Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }));
+    const physicalDevices = physicalDeviceStates(leaseFiles, parseWorkspaceLeases(saved?.deviceLeases), {
+      root: path,
+      now: leaseNow,
+      simulatorUdids,
+      read: readPhysicalDevice,
+    });
+    if (state && physicalDevices.length) state.physicalDevices = physicalDevices;
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android && !state?.web),
     );
@@ -476,6 +505,7 @@ function renderStatus(
         `  web: ${chalk.cyan(page?.url ?? state.web.url)} ${browser}${state.web.headless ? '' : chalk.dim(' (headed)')}${activitySuffix(state.web.activity)}${failed}`,
       );
     }
+    for (const device of state.physicalDevices ?? []) out.push(`  ${physicalDeviceLine(device, leaseNow)}`);
     for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
     for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));
     for (const note of state.issues.filter((issue) => issue.severity === 'info')) {
@@ -706,6 +736,27 @@ function workspaceBuild(
   if (!record) return null;
   const projectKey = statsProjectKey({ root: path, commonDir: gitCommonDir(path), repoRoot: repoRoot(path) });
   return buildReport(record, { state: activeBuildState(record.claim), history: history?.[projectKey] });
+}
+
+const PHYSICAL_DEVICE_LIST_TIMEOUT_MS = 10_000;
+
+function physicalDeviceReader(): (platform: 'ios' | 'android', id: string) => PhysicalDeviceReading {
+  let ios: IosDeviceEntry[] | null | undefined;
+  let adb: AdbDevices | null | undefined;
+  return (platform, id) => {
+    if (platform === 'ios') {
+      if (ios === undefined) ios = readIosDevices({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS });
+      return iosPhysicalReading(ios, id);
+    }
+    if (adb === undefined) {
+      try {
+        adb = listAdbDevices({ timeoutMs: 5000 });
+      } catch {
+        adb = null;
+      }
+    }
+    return androidPhysicalReading(adb, id, physicalDeviceModel);
+  };
 }
 
 function androidRuntimeReader(): (avdName: string) => AndroidRuntimeFacts {

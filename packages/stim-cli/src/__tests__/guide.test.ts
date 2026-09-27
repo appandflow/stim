@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import {
   APP_PROCESS_STATES,
+  PHYSICAL_DEVICE_CONNECTIONS,
   WEB_PAGE_STATES,
   BUILD_HISTORY_LIMIT,
   BUILD_RESULTS,
@@ -358,6 +359,12 @@ test('the facts topic documents the status remote device fields and states', () 
     expect(body).toContain(field);
   }
   for (const state of ['"claimed"', '"unclaimed"', '"unknown"']) expect(body).toContain(state);
+});
+
+test('the facts topic documents every physical device connection state', () => {
+  const body = renderTopic('facts');
+  expect(body).toContain('physicalDevices');
+  for (const state of PHYSICAL_DEVICE_CONNECTIONS) expect(body).toMatch(new RegExp(`^ +(connection +)?"${state}" `, 'm'));
 });
 
 test('the facts topic documents every gc verdict reason code and inventory owner', () => {
