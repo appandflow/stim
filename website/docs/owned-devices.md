@@ -47,6 +47,16 @@ for the run, then releases the lease. Use `stim device lock` to hold it across
 runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
+While a workspace holds an Android phone's lease, the phone app can show the
+phone's screen live through `stim-server`, and a phone paired with control can
+tap, swipe, type and press Home, Back, Apps and Lock on it. The stream runs over
+adb with the [scrcpy](https://github.com/Genymobile/scrcpy) server, which
+`stim-server` pushes to `/data/local/tmp` and deletes when the stream stops. It
+installs nothing, changes no setting, and cannot rotate the phone. Control ends
+when the workspace releases the lease or it expires. Some Android 15 and 16
+phones send no picture until their screen changes, and a phone with its screen
+off shows nothing until you wake it. Physical iPhones are not streamed yet.
+
 Each workspace keeps its owned-device assignments for later runs.
 After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
 Simulator on older Xcode. Stim passes the workspace's simulator ID to Device Hub
