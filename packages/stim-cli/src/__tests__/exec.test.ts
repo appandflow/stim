@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { setExecutor, getExecutor, resetExecutor } from '../exec.ts';
 
 test('default executor runs commands and returns stdout trimmed', () => {
@@ -94,9 +95,9 @@ test('a missing executable throws ENOENT', () => {
   expect(failure.code).toBe('ENOENT');
 });
 
-test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', { timeout: 30_000 }, () => {
+test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', () => {
   resetExecutor();
-  const npm = getExecutor().findExecutable('npm');
-  expect(npm).toMatch(/\.cmd$/i);
-  expect(getExecutor().runFile(npm!, ['--version'])).toMatch(/^\d+\.\d+/);
+  expect(getExecutor().findExecutable('npm')).toMatch(/\.cmd$/i);
+  const shim = fileURLToPath(new URL('./fixtures/cmd-shim/echo-first-arg.cmd', import.meta.url));
+  expect(getExecutor().runFile(shim, ['--version'])).toBe('--version');
 });
