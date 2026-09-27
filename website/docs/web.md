@@ -233,8 +233,15 @@ with live frames of the page, its URL, a "Page failed to load" pill, and
 keys to the page. The tile opens the URL in your own browser, reloads the page
 (`stim reload web`), and closes Chrome (`stim stop --slot web`).
 
-Chrome and Chromium are the only engines. The phone app does not show the
-browser yet.
+## The phone app
+
+The phone app shows the page as a **Web** tile in the devices grid and on the
+workspace screen. Tapping it opens the device viewer, streamed as H.264 video
+through `stim-server`. With **Control** on, taps click, drags scroll, the
+keyboard types, and **Back** goes back in the page's history. **Reload** in the
+workspace menu runs `stim reload web`.
+
+Chrome and Chromium are the only engines.
 
 Try it with an agent:
 

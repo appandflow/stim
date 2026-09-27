@@ -65,7 +65,7 @@ export function DeviceTile({
       <View style={styles.header}>
         <StatusDot color={device.running ? theme.colors.success : theme.colors.tertiary} filled={device.running} />
         <Text variant="footnote" weight="semibold" style={styles.shrink} numberOfLines={1}>
-          {device.slot}
+          {device.platform === 'web' ? 'Web' : device.slot}
         </Text>
         <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
           {device.page ? shortUrl(device.page.url) : device.model}

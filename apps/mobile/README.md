@@ -173,6 +173,18 @@ and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
 
+A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web**
+tile, in the devices grid and on the workspace screen, labelled with the page's
+URL, with a "Page failed to load" pill when its latest load failed. It opens in
+the same viewer, streamed from the page's DevTools screencast as H.264 through
+`stim-server`. With Control on, a tap clicks, a drag scrolls, and **Keyboard**
+types into the page; the toolbar has **Keyboard** and **Back** (the page's
+history back) only, since a page has no home, lock, rotation or hinge. A web
+session holds no `stim device lock` lease; a browser tool attached to the
+page, such as Playwright MCP, shows as its driver, and Control asks before
+taking over from it. Reload in the workspace menu reloads the page with
+`stim reload web`.
+
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
 top, and the Control toolbars and the read-only banner move to a column right
