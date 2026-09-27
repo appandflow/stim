@@ -157,6 +157,7 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
   const reloaded: string[] = [];
   const reloadPage = async (record: { targetId: string }) => {
     reloaded.push(record.targetId);
+    return 'http://localhost:8082/settings';
   };
   expect(
     await runReload({
@@ -169,7 +170,7 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
       platform: 'web',
       deviceId: 'http://127.0.0.1:8901',
       deviceName: 'Chrome/153.0.8010.49',
-      appId: 'http://localhost:8082/',
+      appId: 'http://localhost:8082/settings',
       metroPort: 8082,
       strategy: 'cdp',
       targets: 1,
@@ -208,6 +209,7 @@ test('a bare reload keeps reporting a stopped native app instead of switching to
       readBrowser: () => browser,
       reloadPage: async (record) => {
         reloaded.push(record.targetId);
+        return record.url;
       },
     }),
   });

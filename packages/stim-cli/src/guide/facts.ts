@@ -325,7 +325,8 @@ per session, with the preview URL.`,
   deviceId        the exact owned simulator UDID or emulator serial targeted;
                   for web, the owned Chrome's DevTools endpoint
   deviceName      the owned simulator or AVD name; for web, the Chrome version
-  appId           the live bundle id or Android package; for web, the page URL
+  appId           the live bundle id or Android package; for web, the URL the
+                  owned page was on when Stim sent the reload
   metroPort       the workspace's verified Metro port; for web, the reserved
                   Metro port or null
   strategy        how the reload was addressed.
