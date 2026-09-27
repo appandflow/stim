@@ -137,7 +137,18 @@ export function deviceModelRefusal({
       remedy: 'Pass `--runtime <version>` with a runtime `xcrun simctl list runtimes` reports, e.g. "18.5".',
     };
   }
-  if (physical || remoteBackend) return null;
+  if (remoteBackend) {
+    const given = [deviceTypeFlag && '--device-type', runtimeFlag && '--runtime'].filter(Boolean).join(' and ');
+    if (given) {
+      return {
+        code: 'STIM_BAD_ARG',
+        message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned iOS simulator; the ${remoteBackend} remote backend chooses its own device.`,
+        remedy: `Drop ${given} for a remote run. For a local owned simulator, drop --remote and unset ios.remote with \`stim settings unset ios.remote --scope <workspace|repo|committed>\`.`,
+      };
+    }
+    return null;
+  }
+  if (physical) return null;
   if (!deviceType && !runtime) return null;
   let runtimes;
   try {

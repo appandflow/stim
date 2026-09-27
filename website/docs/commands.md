@@ -182,6 +182,10 @@ app, opens it, and checks launch logs. Native builds run locally by default;
   installed version, `stim ios` refuses instead of booting it: remove the
   simulator with `stim worktree remove` or `stim gc --delete`, or pass
   `--slot <name>` to create one beside it.
+- `--device-type` and `--runtime` apply only to the local owned simulator. With
+  `--remote` or the `ios.remote` setting they refuse with `STIM_BAD_ARG`: the
+  remote backend chooses its own device. The `ios.deviceType` and `ios.runtime`
+  settings are ignored on a remote run.
 - `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
   preference for this run. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators
