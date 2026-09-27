@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
-import { shortUrl } from '@/lib/workspaces';
+import { shortUrl, streamsFrames } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -37,7 +37,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const { theme } = useUnistyles();
   const { connection } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
-  const streams = device.owned && !device.physical;
+  const streams = streamsFrames(device);
   const { frame, error } = useFrameSnapshot(
     connection,
     item.env.path,
@@ -45,6 +45,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     device.slot,
     visible && streams,
     REFRESH_MS,
+    device.physical,
   );
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'web' ? 1.6 : 0.46;
   useEffect(() => {
@@ -52,7 +53,13 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   }, [frame, aspect, tile.key, onAspect]);
   const where = [...new Set([item.title, item.project])].join(' \u00B7 ');
   const thumbnail = useRef<ViewInstance>(null);
-  const target = { macId: item.macId, workspace: item.env.path, platform: device.platform, slot: device.slot };
+  const target = {
+    macId: item.macId,
+    workspace: item.env.path,
+    platform: device.platform,
+    slot: device.slot,
+    physical: device.physical,
+  };
   const zoomedAway = useZoomedAway(zoomKey(target));
   return (
     <Card
@@ -86,7 +93,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
             {streams
               ? (error ?? 'Waiting for a frame')
               : device.physical
-                ? 'Stim does not stream physical devices.'
+                ? 'Stim does not stream physical Android devices.'
                 : 'Frames are only served for devices Stim owns.'}
           </Text>
         )}

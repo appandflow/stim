@@ -45,7 +45,7 @@ import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { buildTimeline } from '@/lib/replay';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, shortUrl, workspaceTitleAt } from '@/lib/workspaces';
+import { devicesOf, shortUrl, streamsFrames, workspaceTitleAt } from '@/lib/workspaces';
 import type { DevicePlatform, DevicePosture, InputButton, ReplayRate, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
@@ -78,10 +78,12 @@ export function DeviceView({
   workspace,
   platform,
   slot,
+  physical = false,
 }: {
   workspace: string;
   platform: DevicePlatform;
   slot: string;
+  physical?: boolean;
 }) {
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
@@ -92,11 +94,19 @@ export function DeviceView({
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
   const status = useStatus();
   const env = status?.environments.find((candidate) => candidate.path === workspace);
-  const device = env ? devicesOf(env).find((entry) => entry.platform === platform && entry.slot === slot) : undefined;
-  const running = Boolean(device?.running && device.owned && !device.physical);
+  const device = env
+    ? devicesOf(env).find(
+        (entry) => entry.platform === platform && entry.slot === slot && Boolean(entry.physical) === physical,
+      )
+    : undefined;
+  const running = Boolean(device?.running && streamsFrames(device));
+  const viewOnly = physical && platform === 'ios';
   const range = useReplayRange({ workspace, platform, slot });
   const replayOff = env?.recording?.enabled === false;
-  const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
+  const timeline = useMemo(
+    () => (range && !replayOff && !physical ? buildTimeline(range.spans) : null),
+    [range, replayOff, physical],
+  );
   const hasFootage = timeline !== null && preset.video.length > 0;
   const [startAt, setStartAt] = useState<number | null>(null);
   const replayStart = hasFootage ? startAt : null;
@@ -106,7 +116,7 @@ export function DeviceView({
     () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video, startAt: replayStart }),
     [streams, preset.fps, maxEdge, preset.video, replayStart],
   );
-  const stream = useDeviceStream({ workspace, platform, slot }, streamOptions);
+  const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
   const replaying = stream.replay !== null;
   const [lastReplay, setLastReplay] = useState<{ running: boolean; at: number | null } | null>(null);
@@ -121,7 +131,7 @@ export function DeviceView({
   const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot);
   const { mac, state: link, connection } = useMacConnection();
-  const readOnly = control.allowed === false;
+  const readOnly = !viewOnly && control.allowed === false;
   const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
@@ -134,7 +144,7 @@ export function DeviceView({
   const stage = useRef<ViewInstance>(null);
   const screenZoom = useScreenZoom(!controlling && streams);
   const zoom = useDeviceZoom(
-    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
+    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
     platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !(landscape && readOnly) && !screenZoom.zoomed && !scrubbing,
@@ -388,7 +398,9 @@ export function DeviceView({
                 />
                 {stream.delayed || replayOff ? (
                   <View style={styles.chips}>
-                    {stream.delayed ? <Pill tone="warning">Screen updates delayed</Pill> : null}
+                    {stream.delayed ? (
+                      <Pill tone="warning">{stream.delayedReason ?? 'Screen updates delayed'}</Pill>
+                    ) : null}
                     {replayOff ? <Pill>Replay off</Pill> : null}
                   </View>
                 ) : null}
@@ -529,7 +541,7 @@ export function DeviceView({
                   setBarSides(([left]) => [left, width]);
                 }}
               >
-                {control.allowed !== null ? (
+                {!viewOnly && control.allowed !== null ? (
                   <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
                 ) : null}
               </View>

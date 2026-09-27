@@ -157,6 +157,11 @@ export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physica
   return `${device.platform}\n${device.slot}${device.physical ? '\nphysical' : ''}`;
 }
 
+/** Whether stim-server serves the device's screen: an owned one, or a connected physical iPhone, view only. */
+export function streamsFrames(device: Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running'>): boolean {
+  return device.physical ? device.platform === 'ios' && device.running : device.owned;
+}
+
 function iosDevice(slot: string, sim: SimState): DeviceRef {
   const model = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(sim.name ?? '')?.[1] ?? 'iOS Simulator';
   return {

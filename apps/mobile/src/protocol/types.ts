@@ -445,6 +445,8 @@ export interface FrameTarget {
   workspace: string;
   platform: DevicePlatform;
   slot?: string;
+  /** The physical device the workspace leases in `slot`, instead of its simulator or emulator. */
+  physical?: boolean;
   /** Frames a second, 1 to 30; the server's default is 5. */
   fps?: number;
   /** Pixels on the longer edge, 240 to 2048; the server's default is 1280. */
@@ -678,6 +680,8 @@ export interface FrameDelayedEvent {
   event: 'frame-delayed';
   subscription: string;
   delayed: boolean;
+  /** Why frames stopped, such as a locked iPhone, when the server knows. */
+  reason?: string;
 }
 
 export interface ErrorEvent {

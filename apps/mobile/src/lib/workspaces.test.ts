@@ -10,6 +10,7 @@ import {
   livePlatforms,
   orderDevices,
   pathInCheckout,
+  streamsFrames,
   projectOf,
   repositoryRoots,
   runningBuild,
@@ -211,6 +212,13 @@ describe('physical devices', () => {
     ]);
     expect(deviceSource(phones[0]!)).toBe('iOS device');
     expect(livePlatforms(env('/w', { physicalDevices: leased.physicalDevices }))).toEqual([]);
+  });
+
+  it('streams a connected leased iPhone, view only through stim-server, but not a leased Android phone', () => {
+    const [iphone, android] = devicesOf(leased).filter((d) => d.physical);
+    expect(streamsFrames(iphone!)).toBe(true);
+    expect(streamsFrames({ ...iphone!, running: false })).toBe(false);
+    expect(streamsFrames(android!)).toBe(false);
   });
 
   it('keys a leased phone apart from the simulator in its slot, and a lease alone makes the workspace active', () => {

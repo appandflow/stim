@@ -307,35 +307,51 @@ interface FrameState {
   frame: FrameEvent | null;
   error: string | null;
   delayed: boolean;
+  delayedReason: string | null;
 }
 
-const EMPTY_FRAME_STATE: Omit<FrameState, 'key'> = { frame: null, error: null, delayed: false };
+const EMPTY_FRAME_STATE: Omit<FrameState, 'key'> = { frame: null, error: null, delayed: false, delayedReason: null };
 
-/** `hint` asks for up to `fps` frames a second, scaled to fit `maxEdge` pixels; the server defaults to 5 and 1280. */
+/**
+ * `hint` asks for up to `fps` frames a second, scaled to fit `maxEdge` pixels; the server defaults to 5 and 1280.
+ * `physical` asks for the physical device the workspace leases in `slot`.
+ */
 export function useFrame(
   workspace: string,
   platform: DevicePlatform,
   slot: string,
   enabled: boolean,
-  hint: { fps?: number; maxEdge?: number } = {},
-): { frame: FrameEvent | null; error: string | null; delayed: boolean } {
+  hint: { fps?: number; maxEdge?: number; physical?: boolean } = {},
+): Omit<FrameState, 'key'> {
   const { connection } = useMacConnection();
   const [latest, setLatest] = useState<FrameState | null>(null);
-  const { fps, maxEdge } = hint;
-  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}` : null;
+  const { fps, maxEdge, physical } = hint;
+  const key =
+    connection && enabled
+      ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}\n${physical ? 'physical' : ''}`
+      : null;
   useEffect(() => {
     if (!connection || key === null) return;
-    const params = { workspace, platform, slot, ...(fps ? { fps } : {}), ...(maxEdge ? { maxEdge } : {}) };
+    const params = {
+      workspace,
+      platform,
+      slot,
+      ...(physical ? { physical } : {}),
+      ...(fps ? { fps } : {}),
+      ...(maxEdge ? { maxEdge } : {}),
+    };
     return connection.subscribe('frames.subscribe', params, (event) => {
       setLatest((prev) => {
         const base = prev && prev.key === key ? prev : { key, ...EMPTY_FRAME_STATE };
-        if (event.event === 'frame') return { key, frame: event, error: null, delayed: false };
-        if (event.event === 'frame-delayed') return { ...base, key, delayed: event.delayed };
-        if (event.event === 'error') return { key, frame: null, error: event.error.message, delayed: false };
+        if (event.event === 'frame') return { key, ...EMPTY_FRAME_STATE, frame: event };
+        if (event.event === 'frame-delayed') {
+          return { ...base, key, delayed: event.delayed, delayedReason: event.delayed ? (event.reason ?? null) : null };
+        }
+        if (event.event === 'error') return { key, ...EMPTY_FRAME_STATE, error: event.error.message };
         return base;
       });
     });
-  }, [connection, key, workspace, platform, slot, fps, maxEdge]);
+  }, [connection, key, workspace, platform, slot, fps, maxEdge, physical]);
   return latest && latest.key === key ? latest : EMPTY_FRAME_STATE;
 }
 
@@ -385,9 +401,10 @@ export function useFrameSnapshot(
   slot: string,
   enabled: boolean,
   intervalMs: number,
+  physical = false,
 ): { frame: FrameEvent | null; error: string | null } {
   const [latest, setLatest] = useState<{ key: string; frame: FrameEvent | null; error: string | null } | null>(null);
-  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
+  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}\n${physical ? 'physical' : ''}` : null;
   useEffect(() => {
     if (!connection || key === null) return;
     let unsubscribe: (() => void) | null = null;
@@ -397,7 +414,7 @@ export function useFrameSnapshot(
     const refresh = () => {
       unsubscribe = connection.subscribe(
         'frames.subscribe',
-        { workspace, platform, slot, maxEdge: SNAPSHOT_EDGE },
+        { workspace, platform, slot, ...(physical ? { physical } : {}), maxEdge: SNAPSHOT_EDGE },
         (event) => {
           if (event.event !== 'frame' && event.event !== 'error') return;
           if (event.event === 'frame') {
@@ -419,7 +436,7 @@ export function useFrameSnapshot(
       unsubscribe?.();
       if (timer) clearTimeout(timer);
     };
-  }, [connection, key, workspace, platform, slot, intervalMs]);
+  }, [connection, key, workspace, platform, slot, intervalMs, physical]);
   return latest && latest.key === key ? latest : { frame: null, error: null };
 }
 
