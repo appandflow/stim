@@ -2,6 +2,7 @@ import EmulatorFrames
 import SimulatorFrames
 import StimKit
 import SwiftUI
+import WebFrames
 import WebKit
 
 struct DeviceTile: View {
@@ -77,10 +78,12 @@ struct DeviceTile: View {
         takeOverButton
         if case .remote = device {
           remoteControls
+        } else if case .web(let browser) = device, let workspace {
+          webControls(browser, workspace: workspace)
         } else if device.isRunning, let workspace {
           stopButton(workspace: workspace)
         }
-        if interactive {
+        if interactive, device.platform != "web" {
           rotateButton(clockwise: false)
           rotateButton(clockwise: true)
         }
@@ -114,6 +117,10 @@ struct DeviceTile: View {
             .disabled(actions.active(for: workspace) != nil || build != nil)
             .help((["stim"] + run.arguments).joined(separator: " "))
           }
+        }
+        if case .web(let browser) = device, browser.pageFailed {
+          Pill(tone: .warning) { Text("Page failed to load") }
+            .help(browser.page?.error ?? "The page's latest load failed.")
         }
         Text(source).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
@@ -155,15 +162,17 @@ struct DeviceTile: View {
   private func stoppedBar(_ run: StimCommand?) -> some View {
     HStack(spacing: Space.md) {
       Text(
-        run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
-          ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
+        device.platform == "web"
+          ? "Closed. Run stim web to open the page again."
+          : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+            ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
       )
       .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
       if let run {
-        Button("Run") { actions.run("Run \(device.slot)", run) }
+        Button("Run") { actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run) }
           .buttonStyle(.stim())
           .fixedSize()
           .disabled(actions.active(for: run.cwd) != nil)
@@ -205,6 +214,30 @@ struct DeviceTile: View {
     }
   }
 
+  @ViewBuilder private func webControls(_ browser: WebBrowser, workspace: String) -> some View {
+    let busy = actions.active(for: workspace) != nil
+    if let url = URL(string: browser.currentURL), ["http", "https"].contains(url.scheme) {
+      Button("Open in browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.stim())
+        .help("Open \(browser.currentURL) in your default browser. Stim's Chrome and its profile are not involved.")
+    }
+    if browser.running {
+      Button("Reload", systemImage: "arrow.clockwise") {
+        actions.run("Reload web", StimCommand(["reload", "web"], cwd: workspace))
+      }
+      .labelStyle(.iconOnly)
+      .buttonStyle(.stim())
+      .disabled(busy)
+      .help("stim reload web: reloads the page in Stim's Chrome")
+      Button("Close") { actions.run("Close web", stopCommand(for: device, cwd: workspace)) }
+        .buttonStyle(.stim(.destructive))
+        .fixedSize()
+        .disabled(busy)
+        .help("stim stop --slot web: closes Stim's Chrome and keeps its profile, Metro and every device")
+    }
+  }
+
   @ViewBuilder private func activityChip(_ badge: ActivityBadge) -> some View {
     let basis = device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? ""
     switch badge {
@@ -231,7 +264,7 @@ struct DeviceTile: View {
         case .android(_, let avd):
           guard let serial = avd.serial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
-        case .remote: break
+        case .remote, .web: break
         }
       }
     } label: {
@@ -315,6 +348,7 @@ struct DeviceTile: View {
     case .phone: return max(240, screenHeight * 0.52)
     case .tablet: return screenHeight * 0.78
     case .dual: return screenHeight * 1.4
+    case .desktop: return screenHeight * 1.6
     }
   }
 
@@ -323,6 +357,7 @@ struct DeviceTile: View {
     case .ios: return "iOS Simulator"
     case .android: return "Android Emulator"
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
+    case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
     }
   }
 
@@ -363,6 +398,16 @@ struct DeviceTile: View {
       } else {
         placeholder(device.state)
       }
+    case .web(let browser) where browser.running:
+      if let endpoint = browser.cdpEndpoint.flatMap(URL.init(string:)), let pid = browser.pid, let target = browser.targetId {
+        WebScreen(endpoint: endpoint, chromePid: Int32(pid), targetId: target, interactive: interactive) {
+          pixelSizes[1] = $0
+        }
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+      } else {
+        placeholder("Chrome runs, but stim status reports no page to show yet.")
+      }
     case .remote(let remote):
       if let url = remote.webPreviewUrl.flatMap(URL.init(string:)), ["http", "https"].contains(url.scheme) {
         RemotePreview(url: url).padding(screenPadding)
@@ -384,6 +429,7 @@ extension DeviceRef {
     switch self {
     case .ios: return isRunning
     case .android(_, let avd): return isRunning && avd.owned && !avd.physical && avd.serial != nil
+    case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
     case .remote: return false
     }
   }
@@ -457,6 +503,29 @@ private struct EmulatorScreen: View {
       switch status {
       case .connecting: ScreenMessage(text: "Connecting to the emulator")
       case .noEndpoint: ScreenMessage(text: "This emulator has no gRPC endpoint. Frames appear after Stim next boots it.")
+      case .streaming: EmptyView()
+      }
+    }
+  }
+}
+
+private struct WebScreen: View {
+  var endpoint: URL
+  var chromePid: Int32
+  var targetId: String
+  var interactive: Bool
+  var onPixelSizeChange: (CGSize) -> Void
+  @State private var status = WebStreamStatus.connecting
+
+  var body: some View {
+    WebDisplayView(
+      endpoint: endpoint, chromePid: chromePid, targetId: targetId, interactive: interactive,
+      onStatus: { status in DispatchQueue.main.async { self.status = status } },
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } })
+    .overlay {
+      switch status {
+      case .connecting: ScreenMessage(text: "Connecting to Chrome")
+      case .refused(let reason): ScreenMessage(text: reason)
       case .streaming: EmptyView()
       }
     }

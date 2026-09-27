@@ -173,8 +173,17 @@ which would otherwise block the next launch. status reports
 browser-unverified when an identity cannot be proven; follow stim guide
 errors teardown.
 
+STIM DESKTOP
+
+Stim Desktop shows the owned Chrome as a Web tile next to the simulators,
+with live frames of the page read from its DevTools endpoint, the page's URL,
+a "Page failed to load" pill and "Driven by" when a tool is attached. Take
+over sends clicks, scrolls and keys to the page. The tile's buttons open the
+URL in your own browser (never the Stim profile), run stim reload web, and
+close the browser with stim stop --slot web.
+
 LIMITS
 
-Chrome and Chromium only. No Stim Desktop or phone viewer yet. The owned page
-is one tab: a page the app opens in a new window is not captured.`,
+Chrome and Chromium only. No phone viewer yet. The owned page is one tab: a
+page the app opens in a new window is not captured.`,
 };

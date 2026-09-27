@@ -69,7 +69,7 @@ struct AgentFeed: View {
       }
     }
     .task(id: device.activityKey.map { RunKey(workspace: workspace, slot: device.slot, deviceID: $0) }) {
-      guard let deviceID = device.activityKey else { return }
+      guard device.platform != "web", let deviceID = device.activityKey else { return }
       let cli = await cli.value
       guard !Task.isCancelled else { return }
       model.start(cli: cli, workspace: workspace, slot: device.slot, deviceID: deviceID)

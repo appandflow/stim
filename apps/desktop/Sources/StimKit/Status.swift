@@ -42,6 +42,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var issues: [StatusIssue]?
   public var ios: IosDevice?
   public var android: AndroidDevice?
+  public var web: WebBrowser?
   public var metro: Metro?
   public var supervisor: Supervisor?
   public var logs: Logs?
@@ -56,8 +57,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
-    case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, metro, supervisor
-    case logs, slots, remoteDevices, build
+    case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
+    case supervisor, logs, slots, remoteDevices, build
     case lastBuilds, builds, worktree
   }
 
@@ -77,11 +78,12 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// Whether the Live views show the workspace: something runs, a build runs, or it is being set up.
   public var isActive: Bool { live || build?.isRunning == true || isSettingUp }
 
-  /// The workspace's default devices followed by each named slot's devices.
+  /// The workspace's default devices, its Stim-owned Chrome, then each named slot's devices.
   public var devices: [DeviceRef] {
     var out: [DeviceRef] = []
     if let ios { out.append(.ios(slot: DeviceRef.defaultSlot, ios)) }
     if let android { out.append(.android(slot: DeviceRef.defaultSlot, android)) }
+    if let web { out.append(.web(web)) }
     for slot in slots ?? [] {
       if let ios = slot.ios { out.append(.ios(slot: slot.slot, ios)) }
       if let android = slot.android { out.append(.android(slot: slot.slot, android)) }
@@ -240,6 +242,32 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var deviceProfile: String?
   public var activity: DeviceActivity?
   public var app: AppProcess?
+}
+
+/// The workspace's Stim-owned Chrome from `stim web`. `pid`, `cdpEndpoint` and `targetId` are set only while it
+/// runs; `page` is the document it loaded last and whether that load failed.
+public struct WebBrowser: Decodable, Hashable, Sendable {
+  public struct Page: Decodable, Hashable, Sendable {
+    public var url: String
+    public var state: String
+    public var error: String?
+  }
+
+  public var running: Bool
+  public var pid: Int?
+  public var url: String
+  public var headless: Bool
+  public var viewport: String
+  public var profile: String
+  public var cdpEndpoint: String?
+  public var targetId: String?
+  public var page: Page?
+  public var activity: DeviceActivity?
+
+  /// The page it shows now, or the one `stim web` opened before the first load.
+  public var currentURL: String { page?.url ?? url }
+
+  public var pageFailed: Bool { running && page?.state == "failed" }
 }
 
 /// A billable remote session recorded for the workspace, such as an EAS Simulator.

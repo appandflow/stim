@@ -15,11 +15,11 @@ let package = Package(
     .target(name: "StimKit"),
     .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
-    .target(name: "WebFrames", swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "WebFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",
       dependencies: [
-        "StimKit", "SimulatorFrames", "EmulatorFrames", .product(name: "Lottie", package: "lottie-spm"),
+        "StimKit", "SimulatorFrames", "EmulatorFrames", "WebFrames", .product(name: "Lottie", package: "lottie-spm"),
         .product(name: "Sparkle", package: "Sparkle"),
       ],
       swiftSettings: [.swiftLanguageMode(.v5)]

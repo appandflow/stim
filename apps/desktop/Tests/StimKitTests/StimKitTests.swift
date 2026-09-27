@@ -464,6 +464,26 @@ import Testing
     let remote = RemoteDevice(platform: "ios", backend: "eas", sessionId: "drs_9", state: "running")
     #expect(stopCommand(for: .remote(remote), cwd: "/w") == StimCommand(["stop"], cwd: "/w"))
   }
+
+  @Test func showsTheOwnedChromeAsAWebDeviceWithItsPageAndCommands() throws {
+    let env = try workspace(
+      #"{"path":"/w","live":true,"warnings":[],"ios":{"name":"stim-a (iPhone 17 27.0)","udid":"U","owned":true,"state":"Booted"},"web":{"browser":"chrome","version":null,"running":true,"pid":42,"supervisorPid":41,"url":"http://localhost:8081/","headless":true,"viewport":"desktop","profile":"/s/web/profile","cdpEndpoint":"http://127.0.0.1:8900","targetId":"T","page":{"url":"https://localhost:5173/apps/groups/","state":"failed","error":"GET https://localhost:5173/apps/groups/ failed: net::ERR_CONNECTION_REFUSED"},"activity":{"state":"driven","driver":{"tool":"playwright","pid":7,"since":null},"basis":["cdp-client"]}},"logs":{"dir":"/l","errorsSinceMarker":1}}"#
+    )
+    let web = try #require(env.devices.last)
+    #expect(env.devices.map(\.platform) == ["ios", "web"])
+    #expect(web.label == "Web")
+    #expect(web.detail == "localhost:5173/apps/groups")
+    #expect(web.isRunning && web.pageFailed && !web.appStopped)
+    #expect(web.formFactor == .desktop)
+    #expect(web.activity?.driver?.tool == "playwright")
+    #expect(stopCommand(for: web, cwd: "/w") == StimCommand(["stop", "--slot", "web"], cwd: "/w"))
+    #expect(runCommand(for: web, cwd: "/w") == StimCommand(["web"], cwd: "/w"))
+    #expect(env.usedPlatforms == ["ios"])
+    #expect(platformName("web") == "Web")
+    let items = try #require(attentionGroups([env]).first).items
+    #expect(items.map(\.text) == ["Web page failed to load"])
+    #expect(items.first?.command == StimCommand(["web"], cwd: "/w"))
+  }
 }
 
 @Suite struct LineBufferTests {

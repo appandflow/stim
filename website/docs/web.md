@@ -225,8 +225,16 @@ server is down, a certificate error, a crash) shows on the `web:` line of
 Stim signals Chrome only after it verifies the process identity it recorded,
 and deletes a profile only when its ledger lists it.
 
-Chrome and Chromium are the only engines. Stim Desktop and the phone app do
-not show the browser yet.
+## Stim Desktop
+
+Stim Desktop shows the owned Chrome as a **Web** tile next to the simulators,
+with live frames of the page, its URL, a "Page failed to load" pill, and
+"Driven by" when a tool is attached. **Take over** sends clicks, scrolls and
+keys to the page. The tile opens the URL in your own browser, reloads the page
+(`stim reload web`), and closes Chrome (`stim stop --slot web`).
+
+Chrome and Chromium are the only engines. The phone app does not show the
+browser yet.
 
 Try it with an agent:
 
