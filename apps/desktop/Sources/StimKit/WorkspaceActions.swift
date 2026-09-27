@@ -63,11 +63,11 @@ public func worktreeRemovalAllowed(git: WorktreeGit?) -> Bool {
 }
 
 extension Workspace {
-  /// The platforms with a device or a last build, and `web` when `stim web` ran in the workspace.
+  /// The platforms with a device or a last build.
   public var usedPlatforms: [String] {
     ["ios", "android"].filter { platform in
       devices.contains { $0.platform == platform } || lastBuilds?.build(for: platform) != nil
-    } + (web == nil ? [] : ["web"])
+    }
   }
 
   /// The platforms Run offers: `usedPlatforms`, or both when neither is recorded.
