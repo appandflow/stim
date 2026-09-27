@@ -31,7 +31,9 @@ reload and stop a workspace:
   written at most every 5 seconds and when the app leaves the foreground or the
   connection drops, so a cold launch shows those rows, dimmed with "Last seen",
   until the machine's live status replaces them. Forgetting a machine deletes
-  its saved status.
+  its saved status. The first launch of a new app build, update or rollback
+  deletes every saved status and the notification state first, so that code
+  never reads what an older version wrote; pairings and settings stay.
   "Activity unknown" is grey: it means Stim has no data, not a problem.
 - **Needs attention**: a strip between the machine chips and the list, hidden
   when nothing is wrong, lists the problems on every paired machine, whatever

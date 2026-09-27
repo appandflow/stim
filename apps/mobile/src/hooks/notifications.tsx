@@ -7,7 +7,7 @@ import { Alert, AppState, Linking, Platform } from 'react-native';
 
 import { toAttentionMachine, useMacs } from '@/hooks/mac-connection';
 import { RequestError, type StimConnection } from '@/lib/connection';
-import { NOTIFY_STATE_KEY, PUSHED_PREFIX } from '@/lib/derived-data';
+import { NOTIFY_STATE_KEY } from '@/lib/derived-data';
 import {
   DEFAULT_PREFS,
   localNotifications,
@@ -127,6 +127,7 @@ export function useNotificationPrefs(): NotificationsValue {
   return useContext(Context);
 }
 
+const PUSHED_PREFIX = 'pushed:';
 const TOKEN_KEY = 'pushToken';
 
 /** Starts from the Macs that accepted a registration before, so a relaunch does not notify what they push. */

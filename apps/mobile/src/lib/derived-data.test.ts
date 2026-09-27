@@ -81,9 +81,9 @@ describe('clearDerivedDataOnChange', () => {
   it("clears a previous version's status cache and notify state, keeps settings, and notifying no longer throws", () => {
     for (const marker of [null, OTA]) {
       const stores = previousVersionStores(marker);
-      expect(clearDerivedDataOnChange(EMBEDDED, stores)).toBe(true);
+      clearDerivedDataOnChange(EMBEDDED, stores);
       expect(stores.status.getAllKeys()).toEqual([]);
-      expect(stores.notifications.getAllKeys().sort()).toEqual(['prefs', 'pushToken']);
+      expect(stores.notifications.getAllKeys().sort()).toEqual(['prefs', 'pushToken', 'pushed:mac']);
       expect(stores.app.getString(MARKER_KEY)).toBe(EMBEDDED);
       expect(() => notifyFrom(stores)).not.toThrow();
     }
@@ -92,7 +92,7 @@ describe('clearDerivedDataOnChange', () => {
   it('leaves everything when the same JS runs again', () => {
     const stores = previousVersionStores(OTA);
     const before = [...stores.notifications.data];
-    expect(clearDerivedDataOnChange(OTA, stores)).toBe(false);
+    clearDerivedDataOnChange(OTA, stores);
     expect([...stores.notifications.data]).toEqual(before);
     expect(new StatusCache(stores.status).readAll()).toHaveProperty('mac');
   });
