@@ -154,7 +154,13 @@ export type StatsResult = Record<string, unknown>;
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
 
-export type Platform = 'ios' | 'android';
+/** `web` is the workspace's Stim-owned Chrome page, from `stim web`; it has only the default slot. */
+export const PLATFORMS = ['ios', 'android', 'web'] as const;
+
+export type Platform = (typeof PLATFORMS)[number];
+
+/** The platforms `build.plan` predicts builds for. */
+export type BuildPlatform = Exclude<Platform, 'web'>;
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
 export const RELOAD_PLATFORMS = ['ios', 'android', 'web'] as const;
@@ -167,7 +173,8 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
 
 /**
  * A device `stim status` lists as owned by `workspace`, in `slot` (`default` when absent). Frames come only
- * from a booted simulator or a running emulator Stim created. `fps` caps how many frames a second this
+ * from a booted simulator or a running emulator Stim created, or from the page of the workspace's running
+ * Stim-owned Chrome (`web`, default slot only). `fps` caps how many frames a second this
  * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
  * frames, and larger ones while another subscriber of the same device asks for more.
  */
@@ -259,7 +266,8 @@ export interface ControlBeginParams {
 
 /**
  * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
- * as after taking over a device another workspace leases. `postures` lists what `input.posture` accepts for
+ * as after taking over a device another workspace leases, and always for a web page, which `stim device lock`
+ * does not cover. `postures` lists what `input.posture` accepts for
  * the device: `folded` and `unfolded` for an iPhone Duo, all three for an emulator with a hinge, and none
  * otherwise.
  */
@@ -278,7 +286,10 @@ export const TOUCH_PHASES = ['down', 'move', 'up'] as const;
 
 export type TouchPhase = (typeof TOUCH_PHASES)[number];
 
-/** `x` and `y` are fractions of the upright screen, origin top-left. `display` is 0 for the main display. */
+/**
+ * `x` and `y` are fractions of the upright screen, origin top-left; on a web page, of its viewport, where a
+ * drag scrolls. `display` is 0 for the main display.
+ */
 export interface InputTouchParams {
   session: string;
   phase: TouchPhase;
@@ -295,7 +306,7 @@ export interface InputTextParams {
   text: string;
 }
 
-/** `home` and `lock` on both platforms; `back` and `app-switch` on Android only. */
+/** `home` and `lock` on iOS and Android; `back` on Android and web, where it goes back in the page's history; `app-switch` on Android only. */
 export const INPUT_BUTTONS = ['home', 'lock', 'back', 'app-switch'] as const;
 
 export type InputButton = (typeof INPUT_BUTTONS)[number];
@@ -328,7 +339,7 @@ export interface InputPostureParams {
 /** Predicts the next `ios` or `android` build of `workspace` in `slot` (`default` when absent). */
 export interface BuildPlanParams {
   workspace: string;
-  platform: Platform;
+  platform: BuildPlatform;
   slot?: string;
 }
 
@@ -657,7 +668,7 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
-          platform: { enum: ['ios', 'android'] },
+          platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           fps: {
             type: 'integer',
@@ -714,7 +725,7 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
-          platform: { enum: ['ios', 'android'] },
+          platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           takeOver: { type: 'boolean', default: false },
         },
@@ -725,7 +736,7 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: {
           session: { type: 'string' },
-          platform: { enum: ['ios', 'android'] },
+          platform: { enum: [...PLATFORMS] },
           lease: {
             oneOf: [
               { type: 'null' },
@@ -975,7 +986,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               event: { const: 'frame' },
               subscription: { type: 'string' },
-              platform: { enum: ['ios', 'android'] },
+              platform: { enum: [...PLATFORMS] },
               slot: { type: 'string' },
               mime: { const: 'image/jpeg' },
               width: { type: 'integer' },

@@ -147,12 +147,14 @@ Events are `{ "event", "subscription", ... }`.
 - `stats.get` and `settings.get` return the payload of `stim stats --json` and
   `stim settings --json`, which masks sensitive values. Without `workspace`,
   they run in the home directory and cover the machine only.
-- `frames.subscribe` takes `workspace`, `platform` (`ios` or `android`),
+- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android` or `web`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
   (240 to 2048 pixels, 1280 by default), and sends `frame` events: a JPEG,
   base64 in `data`, with `width`, `height` and `capturedAt`, at most `fps` a
   second and only when the screen changed. It serves only a booted simulator
-  or a running emulator that `stim status` lists as owned by that workspace;
+  or a running emulator that `stim status` lists as owned by that workspace,
+  or with `web` the page of the workspace's running Stim-owned Chrome from
+  `stim web` (default slot only);
   any other device ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
@@ -191,8 +193,8 @@ Events are `{ "event", "subscription", ... }`.
   the encoder, and the next access unit is a keyframe with the new SPS and
   PPS. The helper encodes with VideoToolbox in real time: Main
   profile, a keyframe at least every 2 seconds, straight from the
-  simulator's IOSurface or from the emulator's RGBA frames, only when the
-  screen changed. A subscriber starts at a keyframe, and `frames.keyframe`
+  simulator's IOSurface, from the emulator's RGBA frames, or from the page's
+  screencast JPEGs, only when the screen changed. A subscriber starts at a keyframe, and `frames.keyframe`
   with its `subscription` asks for another one, such as after its decoder
   lost state; a device sends at most one requested keyframe every 250 ms.
   A subscriber whose socket holds more than 256 KB unsent drops frames
@@ -224,7 +226,17 @@ Events are `{ "event", "subscription", ... }`.
   second while it changes, backing off to one capture per second while it
   does not, with capturing taking at most half of each device's time, and at
   most two captures run at once. An emulator Stim booted before it passed
-  `-grpc` has no endpoint on either path.
+  `-grpc` has no endpoint on either path. A web page is captured with
+  `Page.captureScreenshot`.
+
+  A web page's frames and input go through the owned Chrome's DevTools
+  endpoint, `web.cdpEndpoint` in `stim status`. Both the helper and the
+  screenshot path connect only when `SystemInfo.getProcessInfo` names the
+  Chrome pid status reports, then attach to the page's `targetId`. The
+  helper runs `Page.startScreencast` sized to `maxEdge` and acks every
+  frame; JPEG subscribers get Chrome's JPEG as is, and video decodes it for
+  the encoder. Chrome draws a frame only when the page changes, so a
+  keyframe request re-encodes the last one.
 
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
@@ -394,7 +406,8 @@ lists as owned by a workspace. Nothing it sends reaches any other device.
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. `input.rotate` takes
   `direction` (`left` or `right`) and turns the device a quarter turn.
-  `input.posture` takes one of the session's `postures`. Each answers `{}` once the input
+  `input.posture` takes one of the session's `postures`. A web page takes
+  only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
   helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
@@ -417,6 +430,13 @@ streams its frames:
   Hub does, and from then until the simulator reboots it ignores tools that
   still use SimulatorKit's legacy HID client. Text is typed key by key on a US
   layout. `lock` is the side button.
+- A web page takes DevTools input on the page's `targetId`: touches as
+  `Input.dispatchTouchEvent` (a drag scrolls, on a desktop page too), text as
+  key events, `\n`, `\t` and `\b` as Enter, Tab and Backspace. A web
+  session holds no lease, since `stim device lock` covers devices; a
+  DevTools client other than Stim's attached to the browser (`web.activity`
+  in status, such as Playwright MCP) makes `control.begin` answer
+  `device-busy` unless it takes over.
 - Emulators take touches through the emulator's gRPC `sendTouch`. Text and
   buttons go through gRPC `sendKey` when the emulator reports a hardware
   keyboard, which AVDs Stim creates have. An emulator without one drops key

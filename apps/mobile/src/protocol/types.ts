@@ -8,8 +8,11 @@ export const PROTOCOL_VERSION = 1;
 
 export type Platform = 'ios' | 'android';
 
+/** The platforms a device can stream and take input on: `web` is the workspace's Stim-owned Chrome page. */
+export type DevicePlatform = Platform | 'web';
+
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
-export type ReloadPlatform = Platform | 'web';
+export type ReloadPlatform = DevicePlatform;
 
 /** The JSON a Stim Desktop pairing QR code encodes. */
 export interface PairingPayload {
@@ -298,7 +301,7 @@ export interface LogFilter {
 
 export interface FrameTarget {
   workspace: string;
-  platform: Platform;
+  platform: DevicePlatform;
   slot?: string;
   /** Frames a second, 1 to 30; the server's default is 5. */
   fps?: number;
@@ -311,7 +314,7 @@ export interface FrameTarget {
 /** Needs `control`. The server refuses with `device-busy` while something else drives the device. */
 export interface ControlBeginParams {
   workspace: string;
-  platform: Platform;
+  platform: DevicePlatform;
   slot?: string;
   takeOver?: boolean;
 }
@@ -319,7 +322,7 @@ export interface ControlBeginParams {
 /** `postures` lists what `input.posture` takes: none for a device without a hinge. */
 export interface ControlBeginResult {
   session: string;
-  platform: Platform;
+  platform: DevicePlatform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
   postures: DevicePosture[];
 }
@@ -467,7 +470,7 @@ export interface LogsEvent {
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
-  platform: Platform;
+  platform: DevicePlatform;
   slot: string;
   mime: 'image/jpeg' | 'image/png';
   width: number;
