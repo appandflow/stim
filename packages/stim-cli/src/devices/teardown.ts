@@ -21,6 +21,7 @@ import {
   type OwnedProcess,
 } from '../web/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 import {
   deleteParkedIosSim,
   deleteIosSim,
@@ -120,6 +121,7 @@ export function teardownParkedIosSim(
 }
 
 const IOS_SHUTDOWN_SETTLE_MS = 15_000;
+const ADB_RELEASE_WAIT_MS = 3_000;
 const IOS_SHUTDOWN_POLL_MS = 250;
 const IOS_SHUTDOWN_ATTEMPTS = 2;
 
@@ -247,6 +249,14 @@ export function teardownOwnedIosSim(
         label: label ?? sim.name ?? udid,
         reason: iosShutdownFailureReason(udid, settled.sim.state),
       };
+    }
+    if (workspace !== undefined && settled.sim) {
+      closeOwnedDeviceSessions(
+        { platform: 'ios', id: udid },
+        () => resolveOwnedIosSim(udid).sim?.state === 'Shutdown',
+        workspace,
+        repoRoot(workspace) ?? undefined,
+      );
     }
     return { status: 'torn-down', label: label ?? sim.name ?? udid };
   } catch (e) {
@@ -397,6 +407,11 @@ export function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = 
   }
 }
 
+function serialFree(serial: string): boolean {
+  const adb = listAdbDevices();
+  return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === serial);
+}
+
 function teardownClaimedAvd(
   avdName: string,
   claim: ClaimHandle,
@@ -427,6 +442,10 @@ function teardownClaimedAvd(
     if (onlyIfMissing) return { status: 'skipped', reason: 'AVD registration appeared; its record was kept.' };
     if (orphanedDirectory) return { status: 'skipped', reason: 'AVD registration appeared; its data was kept.' };
     const serial = resolved.serial;
+    const stillStopped = (sessionSerial: string) => {
+      const current = resolveAvd(avdName);
+      return !current.notOwned && !current.missing && !current.serial && serialFree(sessionSerial);
+    };
     if (serial) {
       const stillOwned = () => {
         const current = resolveAvd(avdName);
@@ -442,13 +461,18 @@ function teardownClaimedAvd(
           clearClaimChild(claim);
         }
       });
+      if (workspace !== undefined) {
+        // adb keeps listing an emulator as offline for a moment after its process exits.
+        const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
+        while (!serialFree(serial) && Date.now() < deadline) sleepSync(250);
+        closeOwnedDeviceSessions(
+          { platform: 'android', id: serial, avdName },
+          stillStopped,
+          workspace,
+          repoRoot(workspace) ?? undefined,
+        );
+      }
     } else {
-      const stillStopped = (sessionSerial: string) => {
-        const current = resolveAvd(avdName);
-        if (current.notOwned || current.missing || current.serial) return false;
-        const adb = listAdbDevices();
-        return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === sessionSerial);
-      };
       closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);
       waitForShutdown(avdName, null);
     }

@@ -1,6 +1,6 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -891,3 +891,56 @@ test('a stopped AVD closes its stale sessions unless another device now holds th
     write.mockRestore();
   }
 });
+
+test.each([
+  [true, ['agent-device close --session root-task']],
+  [false, []],
+])(
+  'stop closes a session claimed from the repository root only once the simulator is shut down (settles: %s)',
+  (shutdownSettles, expected) => {
+    const repo = join(avdHome, 'repo');
+    mkdirSync(join(repo, 'app'), { recursive: true });
+    const claims = join(avdHome, 'claims');
+    mkdirSync(claims);
+    const claim = (session: string, workspace: string) =>
+      writeFileSync(join(claims, `${session}.json`), JSON.stringify({ session, workspace, device: { id: 'U1' } }));
+    claim('root-task', repo);
+    claim('sibling-task', join(repo, 'other'));
+    const session = { platform: 'ios', device: 'stim-app', device_udid: 'U1', id: 'U1' };
+    let sessions = [
+      { ...session, name: 'root-task', createdAt: 1 },
+      { ...session, name: 'sibling-task', createdAt: 2 },
+    ];
+    const exec = iosExecutor({ sims: [OWNED], shutdownSettles });
+    const events: string[] = [];
+    setExecutor({
+      ...exec,
+      findExecutable: () => '/bin/agent-device',
+      runFileQuiet: (file: string, args: string[]) =>
+        file === 'git' && args.includes('--show-toplevel') ? `${repo}\n` : null,
+      runFile: (file: string, args: string[] = []) => {
+        if (file !== 'agent-device') return exec.runFile(file, args);
+        if (args[0] !== 'close') return JSON.stringify({ success: true, data: { sessions } });
+        events.push(`agent-device close --session ${args[2]}`);
+        sessions = sessions.filter((entry) => entry.name !== args[2]);
+        return '{"success":true}';
+      },
+      runQuiet: (cmd: string) => {
+        if (/simctl shutdown/.test(cmd)) events.push('shutdown');
+        return exec.runQuiet(cmd);
+      },
+    });
+    const previous = process.env.AGENT_DEVICE_CLAIMS_DIR;
+    process.env.AGENT_DEVICE_CLAIMS_DIR = claims;
+    const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      teardownOwnedIosSim('U1', { del: false, workspace: join(repo, 'app'), shutdownClock: fakeClock() });
+      expect(events.filter((event) => event !== 'shutdown')).toEqual(expected);
+      expect(events[0]).toBe('shutdown');
+    } finally {
+      write.mockRestore();
+      if (previous === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+      else process.env.AGENT_DEVICE_CLAIMS_DIR = previous;
+    }
+  },
+);

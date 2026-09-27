@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../workspace/config.ts';
@@ -1490,7 +1490,7 @@ test('stop --slot default never ends the workspace remote session', async () => 
   expect(result.outcomes.device.remote).toBeUndefined();
 });
 
-test('stop --slot closes only the agent-device session this workspace holds on the slot emulator', async () => {
+test('stop --slot closes only the slot emulator sessions claimed in this workspace, or from its repository root after shutdown', async () => {
   const claims = join(tmpHome, 'agent-device-claims');
   mkdirSync(claims);
   const other = mkdtempSync(join(tmpdir(), 'stim-other-'));
@@ -1499,7 +1499,10 @@ test('stop --slot closes only the agent-device session this workspace holds on t
   claim('fold.json', 'emulator-5554', 'cwd:a504:android', join(tmpRoot, 'app'));
   claim('phone.json', 'emulator-5556', 'phone-task', other);
   claim('fold-other.json', 'emulator-5554', 'cwd:bbbb:android', other);
-  const sessions = [
+  const repo = dirname(tmpRoot);
+  claim('fold-root.json', 'emulator-5554', 'root-task', repo);
+  claim('phone-root.json', 'emulator-5556', 'phone-root', repo);
+  let sessions = [
     {
       name: 'default',
       address: 'cwd:a504:android',
@@ -1518,21 +1521,29 @@ test('stop --slot closes only the agent-device session this workspace holds on t
       id: 'emulator-5554',
       createdAt: 3,
     },
+    { name: 'root-task', platform: 'android', device: 'stim-app-fold', id: 'emulator-5554', createdAt: 4 },
+    { name: 'phone-root', platform: 'android', device: 'stim-other', id: 'emulator-5556', createdAt: 5 },
   ];
   const closed: string[] = [];
+  let running = true;
+  let offlineListings = 1;
   const previousClaims = process.env.AGENT_DEVICE_CLAIMS_DIR;
   process.env.AGENT_DEVICE_CLAIMS_DIR = claims;
   mkdirSync(join(tmpRoot, 'app'));
   recordCreatedDevice('android', 'stim-app-fold');
   setExecutor({
-    run: () => '',
+    run: (cmd: string) =>
+      /adb\S* devices$/.test(cmd) && offlineListings-- > 0 ? 'List of devices attached\nemulator-5554\toffline\n' : '',
     runQuiet: () => '',
     spawn: () => {},
     findExecutable: () => '/bin/agent-device',
+    runFileQuiet: (file: string, args: string[] = []) =>
+      file === 'git' && args.includes('--show-toplevel') ? `${repo}\n` : null,
     runFile: (file: string, args: string[] = []) => {
       if (file !== 'agent-device') return '';
       if (args[0] === 'close') {
         closed.push(args[2]!);
+        sessions = sessions.filter((session) => (session.address ?? session.name) !== args[2]);
         return '{"success":true}';
       }
       return JSON.stringify({ success: true, data: { sessions } });
@@ -1550,13 +1561,16 @@ test('stop --slot closes only the agent-device session this workspace holds on t
       teardownAvd: (name: string, options: { del?: boolean; workspace?: string }) =>
         teardownOwnedAvd(name, {
           ...options,
-          resolveAvd: () => ({ serial: 'emulator-5554' }),
-          waitForShutdown: () => {},
+          resolveAvd: () => (running ? { serial: 'emulator-5554' } : { notRunning: true }),
+          waitForShutdown: () => {
+            running = false;
+            closed.push('shutdown');
+          },
         }),
     });
     const result = await runStop({ ...opts, slot: 'fold' });
     expect(result.outcomes.device.android?.status).toBe('shut-down');
-    expect(closed).toEqual(['cwd:a504:android']);
+    expect(closed).toEqual(['cwd:a504:android', 'shutdown', 'root-task']);
   } finally {
     if (previousClaims === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaims;

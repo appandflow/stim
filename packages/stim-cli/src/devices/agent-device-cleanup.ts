@@ -59,7 +59,7 @@ export function parseAgentDeviceSessions(output: string): Session[] {
 export function isOwnDeviceSession(
   session: Session,
   device: Device,
-  owner?: { workspace: string; claims: readonly SessionClaim[] },
+  owner?: { workspace: string; repoRoot?: string; claims: readonly SessionClaim[] },
 ): boolean {
   if (session.platform !== device.platform || (device.id !== null && session.id !== device.id)) return false;
   if (device.platform === 'android' && session.device !== device.avdName.replaceAll('_', ' ')) return false;
@@ -69,7 +69,7 @@ export function isOwnDeviceSession(
       claim.deviceId === session.id &&
       claim.session === session.name &&
       claim.workspace !== null &&
-      within(owner.workspace, claim.workspace),
+      (within(owner.workspace, claim.workspace) || claim.workspace === owner.repoRoot),
   );
 }
 
@@ -104,6 +104,7 @@ export function closeOwnedDeviceSessions(
   device: Device,
   stillOwned: (id: string) => boolean,
   workspace?: string,
+  repoRoot?: string,
 ): void {
   const exec = getExecutor();
   const deadline = Date.now() + 15000;
@@ -120,7 +121,10 @@ export function closeOwnedDeviceSessions(
     if (!exec.findExecutable('agent-device')) return;
     const root = workspace === undefined ? undefined : canonical(workspace);
     if (root === null) return;
-    const owner = root === undefined ? undefined : { workspace: root, claims: deviceClaims(device) };
+    const owner =
+      root === undefined
+        ? undefined
+        : { workspace: root, repoRoot: repoRoot && (canonical(repoRoot) ?? undefined), claims: deviceClaims(device) };
     const sessions = list().filter((session) => isOwnDeviceSession(session, device, owner));
     for (const session of sessions) {
       try {
