@@ -114,7 +114,7 @@ struct Sidebar: View {
     let root = summary.project.root
     let choices = (try? JSONDecoder().decode([String: Bool].self, from: expandedProjects)) ?? [:]
     return Binding(
-      get: { choices[root] ?? (summary.live > 0) },
+      get: { choices[root] ?? summary.hasActive },
       set: { expanded in
         var updated = choices
         updated[root] = expanded
@@ -170,11 +170,13 @@ struct ProjectRow: View {
   var body: some View {
     HStack(spacing: Space.md) {
       Image(systemName: "folder")
-        .foregroundStyle(selected || summary.live > 0 ? Palette.primary : Palette.tertiary)
+        .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
       Text(summary.project.name).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
         Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
+      } else if summary.settingUp > 0 {
+        Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
       } else {
         Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
       }
@@ -229,11 +231,14 @@ struct WorkspaceRow: View {
 
   var body: some View {
     HStack(spacing: Space.md) {
-      StatusDot(color: env.live ? Palette.success : Palette.tertiary, filled: env.live)
+      StatusDot(
+        color: env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary,
+        filled: env.live || env.isSettingUp)
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: Space.sm) {
           Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
           Spacer(minLength: 0)
+          if !env.live { SetupBadge(env: env, compact: true) }
           if showsGit { GitIndicator(git: env.worktree?.git) }
           if let errors = env.logs?.errorsSinceMarker, errors > 0 {
             HStack(spacing: Space.xxs) {

@@ -285,6 +285,32 @@ import Testing
     #expect(list { $0.hiddenProjects = ["/r/app"] } == ["/r/new/.worktrees/c", "/r/zed"])
   }
 
+  @Test func showsWarmingAndReadyWorkspacesAsLiveAndNewestFirst() throws {
+    let json = #"""
+      [{"path":"/r/app/.worktrees/live","live":true,"phase":"live","phaseSince":null,"warnings":[],
+        "supervisor":{"startedAt":"2026-09-25T09:00:00Z"}},
+       {"path":"/r/app/.worktrees/ready","live":false,"phase":"ready","phaseSince":"2026-09-25T10:00:00Z",
+        "warnings":[]},
+       {"path":"/r/app/.worktrees/killed","live":false,"phase":"idle","phaseSince":null,"warnings":[]},
+       {"path":"/r/new/.worktrees/warming","live":false,"phase":"warming","phaseSince":"2026-09-25T11:00:00Z",
+        "warmStep":"copy","warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    var options = SidebarOptions()
+    options.status = .live
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
+        .map(\.path) == ["/r/new/.worktrees/warming", "/r/app/.worktrees/ready", "/r/app/.worktrees/live"])
+    #expect(envs.filter(\.isActive).map(\.path).count == 3)
+    #expect(envs[3].isWarming && envs[3].warmStep == "copy")
+    let summaries = projectSummaries(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:))
+    #expect(
+      summaries == [
+        ProjectSummary(project: Project(root: "/r/app"), live: 1, total: 3, settingUp: 1),
+        ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1, settingUp: 1),
+      ])
+  }
+
   @Test func countsOnlyExistingHiddenProjectsAsAChangedOption() {
     var options = SidebarOptions()
     options.hiddenProjects = ["/r/gone"]
