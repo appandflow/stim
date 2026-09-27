@@ -174,7 +174,9 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
 /**
  * A device `stim status` lists as owned by `workspace`, in `slot` (`default` when absent). Frames come only
  * from a booted simulator or a running emulator Stim created, or from the page of the workspace's running
- * Stim-owned Chrome (`web`, default slot only). `fps` caps how many frames a second this
+ * Stim-owned Chrome (`web`, default slot only). With `physical`, frames come instead from the physical device
+ * `workspace` holds an unexpired `stim device lock` or `android --device` lease on in `slot`; only Android
+ * phones stream today. `fps` caps how many frames a second this
  * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
  * frames, and larger ones while another subscriber of the same device asks for more.
  */
@@ -182,6 +184,8 @@ export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
+  /** Picks the physical device the workspace leases in `slot` over the Stim-owned one. */
+  physical?: boolean;
   fps?: number;
   maxEdge?: number;
   /** The codecs this client decodes. The server picks one when it can encode video; see {@link FramesSubscribeResult}. */
@@ -255,19 +259,22 @@ export interface ActionResult {
 /**
  * Starts a control session on the device `stim status` lists as owned by `workspace` in `slot`. Needs
  * `control`. Refused with `device-busy` while an agent, a device lock or another client drives the device,
- * unless `takeOver` is true.
+ * unless `takeOver` is true. With `physical`, the session controls the physical device `workspace` leases in
+ * `slot`, and only while that lease lasts: the server never takes or renews a physical device's lease, so
+ * `takeOver` cannot move one between workspaces.
  */
 export interface ControlBeginParams {
   workspace: string;
   platform: Platform;
   slot?: string;
   takeOver?: boolean;
+  physical?: boolean;
 }
 
 /**
  * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
  * as after taking over a device another workspace leases, and always for a web page, which `stim device lock`
- * does not cover. `postures` lists what `input.posture` accepts for
+ * does not cover. For a physical device it is the workspace's own lease, which the session ends with. `postures` lists what `input.posture` accepts for
  * the device: `folded` and `unfolded` for an iPhone Duo, all three for an emulator with a hinge, and none
  * otherwise.
  */
@@ -694,6 +701,7 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
+          physical: { type: 'boolean', default: false },
           fps: {
             type: 'integer',
             minimum: 1,
@@ -752,6 +760,7 @@ export function protocolJsonSchema(): JsonSchema {
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           takeOver: { type: 'boolean', default: false },
+          physical: { type: 'boolean', default: false },
         },
       },
       ControlBeginResult: {

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledHelper } from '@stim-cli/core';
@@ -18,6 +19,8 @@ export interface FrameHint {
 export const DEFAULT_FRAME_HINT: FrameHint = { fps: FRAME_FPS.default, maxEdge: FRAME_EDGE.default };
 
 const SOURCES_DIR = fileURLToPath(new URL('./stim-frames/', import.meta.url));
+/** The scrcpy server jar (Apache-2.0) the helper pushes to a physical Android device; see `dist/scrcpy/NOTICE`. */
+const SCRCPY_SERVER = fileURLToPath(new URL('./scrcpy/scrcpy-server', import.meta.url));
 const BUILD_TIMEOUT_MS = 180_000;
 const VERSION_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
@@ -27,9 +30,17 @@ const VIDEO_MESSAGE = 3;
 const VIDEO_HEADER_BYTES = 14;
 const KEYFRAME_INTERVAL_MS = 250;
 
-function helperArgs(device: Device): string[] {
+export function adbPath(env: NodeJS.ProcessEnv): string {
+  for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, join(env.HOME ?? homedir(), 'Library/Android/sdk')]) {
+    if (sdk && existsSync(join(sdk, 'platform-tools/adb'))) return join(sdk, 'platform-tools/adb');
+  }
+  return 'adb';
+}
+
+function helperArgs(device: Device, env: NodeJS.ProcessEnv): string[] {
   if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
-  return device.platform === 'ios' ? ['ios', device.udid] : ['android', device.serial];
+  if (device.platform === 'ios') return ['ios', device.udid];
+  return device.physical ? ['android-device', device.serial, adbPath(env), SCRCPY_SERVER] : ['android', device.serial];
 }
 
 /** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
@@ -188,7 +199,7 @@ export class HelperSource {
     this.ended = ended;
     this.lingerMs = lingerMs;
     this.lit = lit;
-    this.child = spawn(helper, helperArgs(device), { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(helper, helperArgs(device, env), { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
     this.child.stderr!.setEncoding('utf8');
     this.child.stderr!.on('data', (chunk: string) => {

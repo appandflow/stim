@@ -11,3 +11,6 @@ EmulatorFrames/EmulatorRotation.swift
 EmulatorFrames/EmulatorPosture.swift
 WebFrames/DevToolsClient.swift
 WebFrames/WebPage.swift
+EmulatorFrames/ScrcpyProtocol.swift
+EmulatorFrames/H264Decoder.swift
+EmulatorFrames/AndroidDeviceStream.swift

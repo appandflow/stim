@@ -154,7 +154,9 @@ Events are `{ "event", "subscription", ... }`.
   second and only when the screen changed. It serves only a booted simulator
   or a running emulator that `stim status` lists as owned by that workspace,
   or with `web` the page of the workspace's running Stim-owned Chrome from
-  `stim web` (default slot only);
+  `stim web` (default slot only), or with `physical: true` the physical
+  Android phone the workspace leases in that slot (see
+  [Physical Android devices](#physical-android-devices));
   any other device ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
@@ -237,6 +239,49 @@ Events are `{ "event", "subscription", ... }`.
   frame; JPEG subscribers get Chrome's JPEG as is, and video decodes it for
   the encoder. Chrome draws a frame only when the page changes, so a
   keyframe request re-encodes the last one.
+
+## Physical Android devices
+
+A phone reached with `stim android --device <serial>` (or held with
+`stim device lock android <serial>`) is used, not owned. With `physical: true`,
+`frames.subscribe` and `control.begin` pick the phone the workspace holds an
+unexpired lease on in `slot`, as `deviceLeases` in `stim status` reports it,
+instead of the Stim-owned emulator. A workspace without that lease gets
+`frames-failed` or `action-failed`, and so does a slot whose leased device is
+an emulator. Watching needs `read`, as for an emulator. Control needs
+`control` and that lease: the session never takes, renews or releases a
+phone's lease, `takeOver` cannot move one between workspaces, and the session
+and its frames end with `device-gone` when the lease is released or expires.
+Physical iPhones are refused for now.
+
+The `stim-frames` helper reaches the phone over adb only, with the scrcpy
+server 4.1 (Apache-2.0), shipped in `dist/scrcpy/` with its `LICENSE` and a
+`NOTICE`. Before every push, the helper checks the jar's sha256 against the one
+pinned in its source. It then pushes the jar to
+`/data/local/tmp/stim-scrcpy-<id>.jar`, starts it with `app_process` as the
+shell user, and connects through an `adb forward` port. The server's cleanup
+process deletes the jar as soon as it runs; when the helper stops, it removes
+the forward and deletes the jar again. It installs nothing, and it asks
+scrcpy for no settings change: no `show_touches`, no `stay_awake` and no
+screen power change (`power_on=false`), with clipboard sync off. The phone
+encodes H.264 of its screen, rotated upright and scaled to fit 2048 pixels;
+the helper decodes it with VideoToolbox and feeds the same encoder, JPEG path,
+keyframe requests and bitrate adaptation as a simulator or emulator. The
+stream has no time limit and restarts only with the helper.
+
+Input goes over scrcpy's control socket: touches as finger events in the
+current frame's pixels, text as injected text, and `\n`, `\t`, `\b`,
+`home`, `back`, `app-switch` and `lock` as key events. `input.rotate` and
+`input.posture` fail with `bad-request`, because a phone turns only in hand.
+
+Some Android 15 and 16 devices send no frame until their screen changes
+(scrcpy #6500, #6546), so a tile can stay blank until then. A phone with its
+screen off also shows nothing until it is woken.
+
+Setting `STIM_SERVER_TEST_ADB_EMULATORS=1` in the server's environment lets a
+`physical: true` target resolve to an emulator the workspace leases, which
+then streams and takes input over adb the same way. It exists to test this
+path without a phone.
 
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
@@ -425,10 +470,12 @@ replaced by `?`.
 ## Control
 
 A device with `control` can drive a simulator or emulator that `stim status`
-lists as owned by a workspace. Nothing it sends reaches any other device.
+lists as owned by a workspace, or a physical Android phone the workspace
+leases (see [Physical Android devices](#physical-android-devices)). Nothing it
+sends reaches any other device.
 
 - `control.begin` takes `workspace`, `platform`, `slot` (`default` when
-  absent) and `takeOver`, and returns `{ "session", "platform", "lease",
+  absent), `takeOver` and `physical`, and returns `{ "session", "platform", "lease",
 "postures" }`. `postures` lists what `input.posture` takes for the device:
   `folded` and `unfolded` for an iPhone Duo, `folded`, `half-open` and
   `unfolded` for an emulator with a hinge, such as a `pixel_fold` AVD, and

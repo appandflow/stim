@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
-import type { StatusPayload } from '@stim-cli/core/state';
+import type { DeviceLeaseState, StatusPayload } from '@stim-cli/core/state';
 import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
@@ -12,12 +12,13 @@ import type { AccessUnit } from './video.ts';
 import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
 /**
- * `foldable` marks an iPhone Duo, whose posture lights one of two panels. A web device is the owned page
- * `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
+ * `foldable` marks an iPhone Duo, whose posture lights one of two panels. A `physical` Android device is one the
+ * workspace leases, streamed and driven over adb instead of the emulator's gRPC API. A web device is the owned
+ * page `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
  */
 export type Device =
   | { platform: 'ios'; udid: string; foldable: boolean }
-  | { platform: 'android'; serial: string }
+  | { platform: 'android'; serial: string; physical?: true }
   | { platform: 'web'; endpoint: string; pid: number; targetId: string };
 
 export type Posture = 'folded' | 'unfolded';
@@ -71,6 +72,9 @@ export const DEFAULT_FRAME_LIMITS: FrameLimits = {
   lingerMs: 10_000,
 };
 
+const PHYSICAL_NEEDS_HELPER =
+  'A physical device streams only through the stim-frames helper, which this Mac has not built.';
+
 const MIN_INTERVAL_MS = 200;
 const MAX_INTERVAL_MS = 1000;
 const MAX_CAPTURES = 2;
@@ -79,14 +83,62 @@ const JPEG_QUALITY = 70;
 
 export function deviceKey(device: Device): string {
   if (device.platform === 'web') return `web:${device.pid}:${device.targetId}`;
-  return device.platform === 'ios' ? `ios:${device.udid}` : `android:${device.serial}`;
+  if (device.platform === 'ios') return `ios:${device.udid}`;
+  return device.physical ? `android-device:${device.serial}` : `android:${device.serial}`;
 }
 
-export function ownedDevice(payload: StatusPayload, target: FrameTarget, attached: string | null): Device | string {
+const EMULATOR_SERIAL = /^emulator-\d+$/;
+
+/**
+ * The unexpired lease `target.workspace` holds on a physical device in `slot`. An emulator's serial is refused
+ * unless `adbEmulators`, the server's test switch that drives an emulator the workspace leases through the
+ * physical-device path.
+ */
+export function workspaceLease(
+  payload: StatusPayload,
+  target: FrameTarget,
+  { now = Date.now(), adbEmulators = false }: { now?: number; adbEmulators?: boolean } = {},
+): (DeviceLeaseState & { id: string; expiresAt: string }) | null {
+  const slot = target.slot ?? 'default';
+  const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
+    (candidate) =>
+      candidate.holder === target.workspace &&
+      candidate.platform === target.platform &&
+      (candidate.slot ?? 'default') === slot &&
+      !candidate.expired &&
+      candidate.expiresAt !== null &&
+      Date.parse(candidate.expiresAt) > now &&
+      candidate.id !== null &&
+      (adbEmulators || !EMULATOR_SERIAL.test(candidate.id)),
+  );
+  return lease ? (lease as DeviceLeaseState & { id: string; expiresAt: string }) : null;
+}
+
+function leasedDevice(
+  payload: StatusPayload,
+  target: FrameTarget,
+  options: { now?: number; adbEmulators?: boolean },
+): Device | string {
+  if (target.platform === 'web') return 'A web page has no physical device.';
+  const lease = workspaceLease(payload, target, options);
+  if (!lease) {
+    return `${target.workspace} holds no lease on a physical ${target.platform} device in slot ${target.slot ?? 'default'}.`;
+  }
+  if (target.platform === 'ios') return 'Live video and control of a physical iPhone are not supported yet.';
+  return { platform: 'android', serial: lease.id, physical: true };
+}
+
+export function ownedDevice(
+  payload: StatusPayload,
+  target: FrameTarget,
+  attached: string | null,
+  options: { now?: number; adbEmulators?: boolean } = {},
+): Device | string {
   const slot = target.slot ?? 'default';
   if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
   const environment = payload.environments.find((candidate) => candidate.path === target.workspace);
   if (!environment) return `${target.workspace} is not a Stim workspace on this Mac.`;
+  if (target.physical) return leasedDevice(payload, target, options);
   const devices =
     slot === 'default'
       ? { ios: environment.ios, android: environment.android }
@@ -496,6 +548,7 @@ export async function devicePostures(
 ): Promise<DevicePosture[]> {
   if (device.platform === 'web') return [];
   if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
+  if (device.physical) return [];
   const endpoint = emulatorEndpoint(env, device.serial);
   if (!endpoint) return [];
   const session = grpcSession(endpoint);
@@ -725,6 +778,10 @@ export class FramePool {
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
     const helper = this.helper();
+    if (helper === null && device.platform === 'android' && device.physical) {
+      queueMicrotask(() => listener.failed(PHYSICAL_NEEDS_HELPER));
+      return () => {};
+    }
     if (helper === null) return this.screenshots(device).add(listener);
     let streamed = false;
     let cancelled = false;
@@ -745,7 +802,9 @@ export class FramePool {
           : {}),
         delayed: listener.delayed,
         failed: (message) => {
-          if (streamed || cancelled) return listener.failed(message);
+          if (streamed || cancelled || (device.platform === 'android' && device.physical)) {
+            return listener.failed(message);
+          }
           console.error(`stim-server: ${message} Falling back to screenshots.`);
           detach = this.screenshots(device).add(listener);
         },

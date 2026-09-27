@@ -148,6 +148,12 @@ const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRec
 const FRAME_BUFFER_FRAMES = 2;
 const FRAME_RETRY_MS = 50;
 const HELPER_RETRY_MS = 5 * 60_000;
+/**
+ * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
+ * lock`, which then streams and takes input over adb as a phone does. It exists to exercise the physical-device
+ * path without a phone.
+ */
+const ADB_EMULATORS_SWITCH = 'STIM_SERVER_TEST_ADB_EMULATORS';
 const CONTROL_LIMITS: ControlLimits = {
   idleMs: 5 * 60_000,
   renewMs: 60_000,
@@ -317,6 +323,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const sampler = new UsageSampler();
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
+  const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -331,6 +338,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     foldHelper,
     foldTimeoutMs: controlLimits.foldTimeoutMs,
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
+    adbEmulators,
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const push = new PushNotifier({
@@ -608,7 +616,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, fps, maxEdge, video } = target;
+      const { workspace, platform, slot, fps, maxEdge, video, physical } = target;
       if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
         return error(
           id,
@@ -618,6 +626,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
         return error(id, 'bad-request', 'slot must be a slot name.');
+      }
+      if (physical !== undefined && typeof physical !== 'boolean') {
+        return error(id, 'bad-request', 'physical must be true or false.');
       }
       if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
         return error(id, 'bad-request', 'video must be a list of codec names.');
@@ -645,7 +656,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!workspaceDir(id, workspace, true)) return;
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
-      const frameTarget: FrameTarget = { workspace, platform: platform as Platform, ...(slot ? { slot } : {}) };
+      const frameTarget: FrameTarget = {
+        workspace,
+        platform: platform as Platform,
+        ...(slot ? { slot } : {}),
+        ...(physical ? { physical } : {}),
+      };
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let sequence = 0;
       let streamed: Device | null = null;
@@ -732,7 +748,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
         item: (payload) => {
           if (ended) return;
-          const resolved = ownedDevice(payload as unknown as StatusPayload, frameTarget, attached);
+          const resolved = ownedDevice(payload as unknown as StatusPayload, frameTarget, attached, { adbEmulators });
           if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
           if (deviceKey(resolved) === attached) return;
           detach?.();

@@ -2365,6 +2365,108 @@ describe('frames.subscribe', () => {
     expect(lockCalls()).toContain('device unlock ios --json');
   });
 
+  function leasedPhone(leases: Record<string, unknown>[]): string {
+    const lease = {
+      path: '/stim/device-locks/android.json',
+      platform: 'android',
+      deviceName: 'Pixel 8',
+      grantedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      mine: false,
+      expired: false,
+      parsed: true,
+    };
+    const payload = statusPayload({ android: OWNED_EMULATOR }) as Record<string, unknown>;
+    return JSON.stringify([
+      { ...payload, deviceLeases: leases.map((entry) => ({ ...lease, holder: workspace, ...entry })) },
+    ]);
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'streams the phone its workspace leases through the adb helper, and never another workspace or an emulator',
+    async () => {
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: leasedPhone([
+          { id: 'R58M1234ABC' },
+          { id: 'OTHERPHONE', holder: '/work/other', slot: 'tablet' },
+          { id: 'emulator-5556', slot: 'tablet', holder: workspace },
+          { id: 'EXPIREDPHONE', slot: 'old', expired: true },
+        ]),
+      });
+      const client = await authed(port);
+      const subscribed = await client.request('frames.subscribe', { workspace, platform: 'android', physical: true });
+      expect(subscribed).toMatchObject({ result: { subscription: expect.any(String) } });
+      await until(() => existsSync(`${toolCalls}.started`));
+      for (const slot of ['tablet', 'old']) {
+        await client.request('frames.subscribe', { workspace, platform: 'android', physical: true, slot });
+        expect(await client.next()).toMatchObject({
+          event: 'error',
+          error: { code: 'frames-failed', message: expect.stringContaining('holds no lease on a physical android') },
+        });
+      }
+      await server!.close();
+      server = null;
+      await until(() => helperRuns().length === 1);
+      const [run] = helperRuns();
+      expect(run!.args.slice(0, 2)).toEqual(['android-device', 'R58M1234ABC']);
+      expect(run!.args[2]).toBe('adb');
+      expect(run!.args[3]).toMatch(/scrcpy\/scrcpy-server$/);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'controls a phone only under the lease its workspace holds, and never takes or releases that lease',
+    async () => {
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC' }, { id: 'OTHERPHONE', slot: 'tablet', holder: '/w/b' }]),
+      });
+      const client = await authed(port, true);
+      for (const takeOver of [false, true]) {
+        expect(
+          await client.request('control.begin', {
+            workspace,
+            platform: 'android',
+            physical: true,
+            slot: 'tablet',
+            takeOver,
+          }),
+        ).toMatchObject({ error: { code: 'action-failed', message: expect.stringContaining('holds no lease') } });
+      }
+      const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session, lease, postures } = begun.result as {
+        session: string;
+        lease: { expiresAt: string };
+        postures: [];
+      };
+      expect(lease.expiresAt).toEqual(expect.any(String));
+      expect(postures).toEqual([]);
+      await until(() => existsSync(`${toolCalls}.started`));
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
+        result: {},
+      });
+      expect(await client.request('input.text', { session, text: 'hi\n' })).toMatchObject({ result: {} });
+      for (const [method, params] of [
+        ['input.rotate', { direction: 'left' }],
+        ['input.posture', { posture: 'folded' }],
+      ] as const) {
+        expect(await client.request(method, { session, ...params })).toMatchObject({
+          error: { code: 'bad-request', message: 'A physical device rotates and folds only in hand.' },
+        });
+      }
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+      await server!.close();
+      server = null;
+      expect(lockCalls()).toEqual([]);
+      await until(() => helperRuns().length === 1);
+      const run = helperRuns().find((entry) => entry.args[0] === 'android-device');
+      expect(run?.configs.slice(1)).toEqual([
+        { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
+        { input: 'text', text: 'hi\n' },
+      ]);
+    },
+  );
+
   test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
     const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });
     const client = await authed(port);
