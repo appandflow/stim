@@ -134,14 +134,14 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_DESKTOP_PROJECT }}
         run: |
-          if [ -z "$SENTRY_AUTH_TOKEN" ] && [ -z "$SENTRY_ORG" ] && [ -z "$SENTRY_PROJECT" ]; then
-            echo "::notice::SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT are not set; no dSYM is uploaded to Sentry."
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::notice::SENTRY_AUTH_TOKEN is not set; no dSYM is uploaded to Sentry."
             exit 0
           fi
-          if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$SENTRY_ORG" ] || [ -z "$SENTRY_PROJECT" ]; then
-            echo "::error::Set all of SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT, or none."
+          if [ -z "$SENTRY_ORG" ] || [ -z "$SENTRY_PROJECT" ]; then
+            echo "::error::SENTRY_AUTH_TOKEN is set; also set the SENTRY_ORG and SENTRY_DESKTOP_PROJECT variables."
             exit 1
           fi
           npm install --global @sentry/cli@3.8.0
@@ -151,7 +151,7 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_DESKTOP_PROJECT }}
         run: scripts/release.sh "$VERSION"
 
       - name: Sign the update for Sparkle
