@@ -171,7 +171,7 @@ function webDevice(web: WebBrowserState): DeviceRef {
     platform: 'web',
     slot: 'default',
     id: web.targetId ?? null,
-    name: 'Web',
+    name: shortUrl(web.page?.url ?? web.url),
     model: 'Web',
     state: web.running ? 'running' : 'closed',
     running: web.running,
@@ -189,14 +189,12 @@ export function platformName(platform: DevicePlatform): string {
   return platform === 'ios' ? 'iOS' : platform === 'web' ? 'Web' : 'Android';
 }
 
-/** What kind of device it is, as the tiles caption it. */
 export function deviceSource(device: DeviceRef): string {
   if (device.platform === 'web') return 'Chrome';
   if (device.platform === 'ios') return 'iOS Simulator';
   return device.physical ? 'Android device' : 'Android Emulator';
 }
 
-/** A page URL without its scheme and trailing slash, as a browser's address bar shows it. */
 export function shortUrl(url: string): string {
   return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }

@@ -68,13 +68,20 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const reload = () => {
     const platforms = env ? livePlatforms(env) : [];
     if (platforms.length < 2) return void perform('reload', platforms[0] === 'web' ? 'web' : undefined);
-    Alert.alert('Reload which app?', `${platforms.map(platformName).join(', ')} are running.`, [
-      ...platforms.map((platform) => ({
-        text: platformName(platform),
-        onPress: () => void perform('reload', platform),
-      })),
-      { text: 'Cancel', style: 'cancel' as const },
-    ]);
+    const names = platforms.map(platformName);
+    Alert.alert(
+      'Reload which app?',
+      `${names.slice(0, -1).join(', ')} and ${names.at(-1)} are running.`,
+      [
+        ...platforms.map((platform) => ({
+          text: platformName(platform),
+          onPress: () => void perform('reload', platform),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+      // Android's Alert shows at most three buttons, so with three platforms it drops Cancel; tapping outside closes it.
+      { cancelable: true },
+    );
   };
 
   const stop = () =>

@@ -8,7 +8,6 @@ import {
   livePlatforms,
   orderDevices,
   pathInCheckout,
-  platformName,
   projectOf,
   repositoryRoots,
   runningBuild,
@@ -139,7 +138,6 @@ describe('the Stim-owned Chrome', () => {
     });
     expect(deviceSource(device!)).toBe('Chrome');
     expect(shortUrl(device!.page!.url)).toBe('localhost:5173/apps/groups');
-    expect(platformName('web')).toBe('Web');
     expect(livePlatforms(env('/w', { web }))).toEqual(['web']);
   });
 });

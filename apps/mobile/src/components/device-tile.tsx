@@ -47,9 +47,9 @@ export function DeviceTile({
             <StatusDot color={theme.colors.tertiary} filled={false} />
             <Text variant="footnote" tone="secondary" style={styles.shrink} numberOfLines={1}>
               <Text variant="footnote" weight="semibold">
-                {device.slot}
+                {device.platform === 'web' ? 'Web' : device.slot}
               </Text>
-              {` \u00B7 ${device.model} \u00B7 ${device.state}`}
+              {device.platform === 'web' ? ` \u00B7 ${device.state}` : ` \u00B7 ${device.model} \u00B7 ${device.state}`}
             </Text>
           </View>
           {notes}
@@ -81,6 +81,11 @@ export function DeviceTile({
         {streams && frame?.posture ? <Pill>{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Pill> : null}
         {streams && delayed ? <Pill tone="warning">Screen updates delayed</Pill> : null}
       </View>
+      {device.page?.error ? (
+        <Text variant="caption" tone="warning" style={styles.note} numberOfLines={2}>
+          {device.page.error}
+        </Text>
+      ) : null}
       {notes.length ? <View style={styles.notes}>{notes}</View> : null}
       <View
         onLayout={(event) => setScreenWidth(event.nativeEvent.layout.width)}
