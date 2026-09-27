@@ -18,6 +18,8 @@ import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+/** expo-splash-screen fades the Android splash out over `duration` after `hide()`, over the overlay's animation. */
+SplashScreen.setOptions({ duration: 0 });
 
 /** On iPad every screen keeps the orientations the system allows, as iPad multitasking requires. */
 function phoneOrientation(orientation: 'portrait_up' | 'default') {
