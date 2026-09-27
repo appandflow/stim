@@ -113,8 +113,8 @@ FLAGS
       React Native bundle records; the "iOS Bundled" / "Android Bundled" /
       "RSC(iOS) Bundled" tag Expo prints for bundle markers, so a "DOM
       Bundled" line does not close a native slot's window) follow only that
-      platform, and a slot query leaves out those of a platform it never
-      launched. A single slot that runs both iOS and Android still shares one
+      platform, and a slot query leaves out iOS or Android ones when it never
+      launched that platform. A single slot that runs both iOS and Android still shares one
       window for untagged Metro errors.
     a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
       load of the page's top-level document) resets only the page's records,
