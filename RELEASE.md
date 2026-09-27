@@ -6,6 +6,9 @@ real workflow at the same time.
 
 Stim Desktop has its own tags and workflow; see
 [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
+The phone app ships with its own workflow, which also rolls back a bad update;
+see [Each release](./apps/mobile/README.md#each-release) and
+[Roll back a bad update](./apps/mobile/README.md#roll-back-a-bad-update).
 
 ## 0. The six packages
 

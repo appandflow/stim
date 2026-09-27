@@ -6,16 +6,24 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: auto publishes an update when the latest production build has the same runtime, and builds and submits otherwise.
+        description: auto publishes an update when the latest production build has the same runtime, and builds and submits otherwise. rollback and republish change what channel production serves.
         type: choice
-        options: [auto, update, build]
+        options: [auto, update, build, rollback, republish]
         default: auto
+      runtime:
+        description: rollback only. The runtime to roll back to its embedded update; empty takes the latest finished production build's.
+        type: string
+        default: ''
+      group:
+        description: republish only. The update group to publish again on channel production.
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: mobile-release
+  group: ${{ (inputs.mode == 'rollback' || inputs.mode == 'republish') && 'mobile-rollback' || 'mobile-release' }}
   cancel-in-progress: false
 
 jobs:
@@ -53,6 +61,10 @@ jobs:
 
       - name: Install before any secret is loaded
         run: pnpm install --frozen-lockfile --filter stim-mobile
+
+      - name: The app boots in the tests before anything is published
+        if: inputs.mode != 'rollback' && inputs.mode != 'republish'
+        run: pnpm test --ci
 
       - name: The tag matches the app version
         if: github.event_name == 'push'
@@ -96,6 +108,53 @@ jobs:
         run: |
           message="$(git log -1 --format=%s)"
           eas update --channel production --environment production --platform ios --message "$message" --non-interactive
+
+      - name: Roll back to the embedded update
+        if: steps.mode.outputs.mode == 'rollback'
+        env:
+          INPUT_RUNTIME: ${{ inputs.runtime }}
+        run: |
+          runtime="$INPUT_RUNTIME"
+          if [ -z "$runtime" ]; then
+            build="$(eas build:list --platform ios --build-profile production --status finished --limit 1 --json --non-interactive | jq -c '.[0] // {}')"
+            runtime="$(jq -r '.runtime.version // empty' <<<"$build")"
+            echo "Latest finished production build: $(jq -r '"\(.id // "none") build \(.appBuildVersion // "?") from \(.gitCommitHash // "?")"' <<<"$build")"
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No runtime given and no finished production build has one. Pass -f runtime=<runtime>."
+            exit 1
+          fi
+          eas update:roll-back-to-embedded --channel production --runtime-version "$runtime" --platform ios \
+            --message "Roll back to embedded (run $GITHUB_RUN_ID)" --non-interactive --json > rollback.json
+          group="$(jq -r '.[0].group' rollback.json)"
+          echo "::notice::Channel production on runtime $runtime now serves the embedded update (group $group)."
+
+      - name: Republish an update group
+        if: steps.mode.outputs.mode == 'republish'
+        env:
+          INPUT_GROUP: ${{ inputs.group }}
+        run: |
+          if ! [[ "$INPUT_GROUP" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "::error::group must be an update group id, not '$INPUT_GROUP'. List them with eas update:list --branch production."
+            exit 1
+          fi
+          update="$(eas update:view "$INPUT_GROUP" --json | jq -c '[.[] | select(.platform == "ios")][0] // empty')"
+          if [ -z "$update" ]; then
+            echo "::error::Update group $INPUT_GROUP has no iOS update."
+            exit 1
+          fi
+          branch="$(jq -r .branch <<<"$update")"
+          runtime="$(jq -r .runtimeVersion <<<"$update")"
+          echo "Group $INPUT_GROUP: branch $branch, runtime $runtime, rollback to embedded $(jq -r .isRollBackToEmbedded <<<"$update"), message: $(jq -r .message <<<"$update")"
+          latest="$(eas build:list --platform ios --build-profile production --status finished --limit 1 --json --non-interactive | jq -r '.[0].runtime.version // empty')"
+          if [ "$runtime" != "$latest" ]; then
+            echo "::warning::Runtime $runtime is not the latest production build's runtime (${latest:-none}); only builds on $runtime get this update."
+          fi
+          destination=()
+          if [ "$branch" != production ]; then destination=(--destination-channel production); fi
+          eas update:republish --group "$INPUT_GROUP" "${destination[@]}" --platform ios \
+            --message "Republish $INPUT_GROUP (run $GITHUB_RUN_ID)" --non-interactive --json > republish.json
+          echo "::notice::Channel production on runtime $runtime now serves group $INPUT_GROUP, republished as $(jq -r '.[0].group' republish.json)."
 
       - name: Build and submit to TestFlight
         if: steps.mode.outputs.mode == 'build'
