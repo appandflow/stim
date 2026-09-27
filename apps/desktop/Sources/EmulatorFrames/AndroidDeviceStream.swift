@@ -18,6 +18,7 @@ final class AndroidDeviceStream {
   private let scid = String(format: "%08x", UInt32.random(in: 0..<0x8000_0000))
   private let lock = NSLock()
   private var stopped = false
+  private let cleaned = DispatchGroup()
   private var port: Int?
   private var shell: Process?
   private var pushed = false
@@ -62,12 +63,21 @@ final class AndroidDeviceStream {
     }
   }
 
-  /// Ends the stream and removes what it left on the device and in adb. Blocks until adb answered, so it can
-  /// run right before the process exits.
+  /// Ends the stream and removes what it left on the device and in adb. Blocks until adb answered, also when
+  /// another thread already started it, so it can run right before the process exits.
   func stop() {
-    let (port, shell, pushed, sockets) = lock.withLock { () -> (Int?, Process?, Bool, [Int32]) in
-      if stopped { return (nil, nil, false, []) }
+    let first = lock.withLock { () -> Bool in
+      if stopped { return false }
       stopped = true
+      cleaned.enter()
+      return true
+    }
+    guard first else {
+      cleaned.wait()
+      return
+    }
+    defer { cleaned.leave() }
+    let (port, shell, pushed, sockets) = lock.withLock { () -> (Int?, Process?, Bool, [Int32]) in
       let sockets = [videoSocket, controlSocket]
       videoSocket = -1
       controlSocket = -1
