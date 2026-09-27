@@ -254,6 +254,32 @@ export interface AndroidRuntimeFacts {
   error?: string;
 }
 
+/** Every connection state a physical device can report. */
+export const PHYSICAL_DEVICE_CONNECTIONS = ['connected', 'disconnected', 'unknown'] as const;
+
+export type PhysicalDeviceConnection = (typeof PHYSICAL_DEVICE_CONNECTIONS)[number];
+
+/**
+ * A physical iPhone, iPad or Android phone the workspace holds an unexpired lease on, from `ios --device`,
+ * `android --device` or `device lock`. Stim uses it and never owns it, so `owned` is always false. `id` is the
+ * UDID or adb serial. `name` is the device's own name, falling back to the name the lease recorded; `model` is the
+ * marketing name devicectl reports or the Android `ro.product.model`, null when the device could not be read.
+ * `connection` is `connected` when devicectl can reach the phone or adb lists it as `device`, `disconnected` when
+ * the tool answered without it, and `unknown` when the tool could not be read in time. `lease.holder` is the
+ * workspace path that holds it.
+ */
+export interface PhysicalDeviceState {
+  platform: StatsPlatform;
+  slot: string;
+  id: string;
+  name: string | null;
+  model: string | null;
+  owned: false;
+  physical: true;
+  connection: PhysicalDeviceConnection;
+  lease: { holder: string; kind: 'declared' | 'run'; grantedAt: string | null; expiresAt: string };
+}
+
 export interface RemoteDeviceState {
   platform: 'ios' | 'android' | null;
   backend: 'eas';
@@ -441,6 +467,8 @@ export interface EnvironmentState {
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
+  /** The physical devices this workspace leases, in every slot; absent when it leases none. */
+  physicalDevices?: PhysicalDeviceState[];
   build?: BuildReport | null;
   lastBuilds?: Partial<Record<StatsPlatform, LastBuildReport>>;
   /** Each platform's recent runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */

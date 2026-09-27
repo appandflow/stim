@@ -16,6 +16,7 @@ import {
   listIosDevices,
   localNetworkPending,
   parseDevicectlDevices,
+  readIosDevices,
   parseDeviceProcesses,
   iosPoolNoCandidatesRefusal,
   resolveIosPhysicalDevice,
@@ -37,7 +38,7 @@ function payload(devices: unknown[]): string {
 
 function device(udid: string, overrides: Record<string, unknown> = {}): unknown {
   return {
-    hardwareProperties: { udid, platform: 'iOS', reality: 'physical' },
+    hardwareProperties: { udid, platform: 'iOS', reality: 'physical', marketingName: 'iPhone 12 Pro' },
     deviceProperties: { name: `Phone ${udid.slice(-4)}`, bootState: 'booted', developerModeStatus: 'enabled' },
     connectionProperties: { pairingState: 'paired', transportType: 'wired', tunnelState: 'disconnected' },
     ...overrides,
@@ -68,6 +69,7 @@ test('parseDevicectlDevices reads the fields devicectl -j actually nests', () =>
       platform: 'iOS',
       reality: 'physical',
       tunnelState: 'disconnected',
+      model: 'iPhone 12 Pro',
     },
   ]);
 });
@@ -332,6 +334,7 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
         platform: 'iOS',
         reality: 'physical',
         tunnelState: 'disconnected',
+        model: 'iPhone 12 Pro',
       },
     ]);
   } finally {
@@ -346,7 +349,7 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
   expect(existsSync(unrelated)).toBe(true);
 });
 
-test('listIosDevices reports no devices when devicectl fails, and still cleans up', () => {
+test('listIosDevices reports no devices when devicectl fails, readIosDevices reports null, and both clean up', () => {
   let outPath = '';
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -356,6 +359,7 @@ test('listIosDevices reports no devices when devicectl fails, and still cleans u
   });
   try {
     expect(listIosDevices()).toEqual([]);
+    expect(readIosDevices()).toBeNull();
   } finally {
     resetExecutor();
   }
