@@ -1317,6 +1317,12 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   worktrees of the same Git repository; the source checkout must be available.
   Running it in the source checkout refuses.
 
+  Warm registers the app it prepares, so \`stim status\` lists the workspace
+  with phase "warming" while it runs and "ready" once it succeeds, until the
+  first start, ios, android, web or reload there or for 2 hours
+  (\`guide facts status\`). In a monorepo worktree root, that app is the one
+  the source checkout has registered.
+
   \`stim doctor\` reports the source checkout's fitness as a seed -- how far
   behind its upstream it is, uncommitted tracked changes, an interrupted rebase
   or merge, a detached HEAD, a diverged branch, a branch that is not the

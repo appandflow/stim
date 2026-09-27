@@ -26,9 +26,13 @@ environment when one is registered at it or inside it. Each entry is
 directory of a bare repository. status lists worktrees from git's own worktree
 records, and on macOS runs no git in a worktree with no environment under a
 protected folder such as ~/Documents, so listing it raises no privacy prompt.
-\`worktree warm\` does not create an environment; \`start\`, \`ios\`,
-\`android\` and \`doctor\` register it. An environment's worktree is the
-linked worktree it is registered at or inside.
+\`worktree warm\` registers the app it prepares, before it copies: the
+nearest React Native or Expo app above where it runs when that is below the
+worktree root; else the one app the source checkout has registered, at the
+same path in this worktree; else the worktree root when it is the app. A warm
+that finds none registers nothing and says so on stderr, and \`start\`, \`ios\`,
+\`android\` and \`doctor\` register the app later. An environment's worktree is the linked worktree it is
+registered at or inside.
 
 Each worktree entry, in unprovisionedWorktrees and in an environment's
 worktree, carries git:
@@ -703,8 +707,26 @@ RULES
     },
     status: {
       summary:
-        "the status payload's issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
+        "the status payload's lifecycle phase, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
+
+  Each environment carries phase, where the workspace is in its lifecycle:
+
+  phase       "warming"  stim worktree warm runs in it now
+              "ready"    its last warm succeeded and nothing has run there
+                         since: no start, ios, android, web or reload, for
+                         at most 2 hours
+              "live"     live is true: Metro, a device, Chrome or a remote
+                         session of it runs
+              "idle"     none of these
+  phaseSince  when the warm started ("warming") or finished ("ready"); null
+              for "live" and "idle"
+  warmStep    "refresh" or "copy", the step a warming workspace is in;
+              absent in other phases
+
+  A warm records warming under its own ownership claim, so a warm that was
+  killed or failed reads as idle, never as warming. Plain \`stim status\`
+  marks the workspace [warming: <step>], [ready] or [idle].
 
   Each environment carries issues, the things in that workspace that need
   the user, and warnings, the same issues as text ("<slot>: " when not the

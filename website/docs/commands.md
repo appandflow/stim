@@ -673,6 +673,13 @@ behind its upstream, and whether its branch is merged, as a
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
 
+Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
+`stim worktree warm` runs in it, `[ready]` after a warm until its first run,
+or `[idle]`. A live workspace has no marker. In `--json`, each environment
+carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
+warming, `warmStep`; see
+[Parallel environments](./worktrees.md#parallel-environments).
+
 A workspace that needs attention prints each issue under it with the command
 that fixes it:
 

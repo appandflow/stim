@@ -5,6 +5,7 @@ import {
   BUILD_RESULTS,
   SETTINGS,
   STATUS_ISSUE_CODES,
+  WORKSPACE_PHASES,
   MACHINE_OWNER_KINDS,
   MEMORY_SOURCES,
 } from '@stim-cli/core/state';
@@ -642,6 +643,12 @@ test('the facts topic documents every status issue code', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const code of STATUS_ISSUE_CODES) expect(body).toMatch(new RegExp(`^ +(code +)?${code} `, 'm'));
+});
+
+test('the facts topic documents every workspace phase', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const phase of WORKSPACE_PHASES) expect(body).toMatch(new RegExp(`^ +(phase +)?"${phase}" `, 'm'));
 });
 
 test('the facts topic documents every machine owner kind', () => {
