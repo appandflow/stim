@@ -172,6 +172,12 @@ export interface EnvironmentState {
   labelOnly?: boolean;
   slots?: { slot: string; ios?: SimState | null; android?: AndroidState | null }[];
   live: boolean;
+  /** Absent from a `stim` that does not report lifecycle phases. */
+  phase?: 'warming' | 'ready' | 'live' | 'idle';
+  /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
+  phaseSince?: string | null;
+  /** The step a `warming` workspace's warm is in. */
+  warmStep?: 'refresh' | 'copy';
   memoryMb: number;
   /** How `memoryMb` was obtained; absent from a `stim` whose `memoryMb` is always the estimate. */
   memorySource?: 'footprint' | 'rss' | 'estimate';

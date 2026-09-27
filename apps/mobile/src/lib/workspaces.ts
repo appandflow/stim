@@ -116,6 +116,16 @@ export function isActive(env: EnvironmentState): boolean {
   return env.live || env.build?.state === 'running' || (env.remoteDevices?.length ?? 0) > 0;
 }
 
+/** A workspace `stim worktree warm` is preparing, or has prepared and nothing has run in yet. */
+export function isSettingUp(env: EnvironmentState): boolean {
+  return !env.live && (env.phase === 'warming' || env.phase === 'ready');
+}
+
+/** Whether the home list shows the workspace under Live: it is active or being set up. */
+export function isShownLive(env: EnvironmentState): boolean {
+  return isActive(env) || isSettingUp(env);
+}
+
 export interface DeviceRef {
   platform: Platform;
   slot: string;
