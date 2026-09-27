@@ -245,10 +245,27 @@ export interface WebBrowserState {
   cdpEndpoint: string | null;
 }
 
+/** The steps of `stim worktree warm`: `refresh` fast-forwards and installs in the source checkout, `copy` carries ignored entries. */
+export type WarmStep = 'refresh' | 'copy';
+
+/**
+ * Where a workspace is in its lifecycle: `warming` while `stim worktree warm` runs in it, `ready` after a warm
+ * succeeded and before any `start`, `ios`, `android`, `web` or `reload` there, for at most two hours; `live` when
+ * anything it owns runs, else `idle`.
+ */
+export const WORKSPACE_PHASES = ['warming', 'ready', 'live', 'idle'] as const;
+
+export type WorkspacePhase = (typeof WORKSPACE_PHASES)[number];
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
   live: boolean;
+  phase?: WorkspacePhase;
+  /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
+  phaseSince?: string | null;
+  /** The step a `warming` workspace's warm is in; absent in every other phase. */
+  warmStep?: WarmStep;
   /**
    * The memory this workspace's processes use, as `memorySource` says: the sum of its `machine` owners' `memoryMb`
    * when status read their footprints, or else a fixed estimate per booted simulator, detected emulator, running

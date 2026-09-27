@@ -13,7 +13,7 @@ import {
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { findProjectRoot } from '../workspace/project.ts';
+import { appProjectProblem, findProjectRoot } from '../workspace/project.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
@@ -21,6 +21,7 @@ import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
+import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
@@ -121,6 +122,33 @@ function mainCheckoutAppDir(root: string, target: string): string {
   return resolve(root, rel);
 }
 
+/**
+ * The app workspace a warm prepares: the nearest app, or else the one app registered in the source checkout,
+ * at the same place in this worktree. A monorepo's worktree root is not the app.
+ */
+export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
+  const nearest = findProjectRoot(cwd);
+  if (nearest && isPathPrefix(target, nearest) && appProjectProblem(nearest) === null) return nearest;
+  const apps = new Set<string>();
+  for (const path of Object.keys(loadConfig()?.projects ?? {})) {
+    const rel = relative(root, path);
+    if (rel.startsWith('..') || isAbsolute(rel)) continue;
+    const mapped = resolve(target, rel);
+    if (appProjectProblem(mapped) === null) apps.add(mapped);
+  }
+  return apps.size === 1 ? [...apps][0]! : null;
+}
+
+function registerWarmedWorkspace(workspace: string): void {
+  try {
+    if (!getProject(workspace)) upsertProject(workspace, {});
+  } catch (error) {
+    console.error(
+      chalk.yellow(`Could not register ${workspace} for status: ${(error as Error)?.message || String(error)}`),
+    );
+  }
+}
+
 export function registerWarm(worktree: Command): void {
   worktree
     .command('warm')
@@ -130,10 +158,18 @@ export function registerWarm(worktree: Command): void {
       'Before copying, fast-forward the source checkout to its upstream and install what the new commits moved.',
     )
     .action(async (opts: { refresh?: boolean }) => {
+      let progress: WarmProgress | null = null;
       try {
         const { root, target, common } = warmWorktreePaths(process.cwd());
         const app = findProjectRoot(process.cwd());
         if (app) recordWorkspaceUse(app);
+        const workspace = warmedWorkspace(root, target, process.cwd());
+        if (workspace) {
+          registerWarmedWorkspace(workspace);
+          progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
+            note: (line) => console.error(chalk.yellow(line)),
+          });
+        }
         const readSettings = (): SettingsObject | null => {
           const settings = resolveSettings({ gitCommonDir: common, repoRoot: root });
           const shapeErrors = settingShapeErrors(settings);
@@ -148,6 +184,7 @@ export function registerWarm(worktree: Command): void {
           return settings;
         };
         const copy = (wait: WarmClaimWait | null): void => {
+          progress?.step('copy');
           if (wait?.holder) console.error(warmClaimAcquiredLine(wait));
           const incomplete = incompleteInstallRefusal(root, mainCheckoutAppDir(root, target));
           if (incomplete) {
@@ -247,6 +284,8 @@ export function registerWarm(worktree: Command): void {
         if (claim) console.error(chalk.dim(claim.remedy));
         if (typeof code === 'string' && code.startsWith('STIM_')) console.error(chalk.red(`failed: ${code}`));
         process.exitCode = 1;
+      } finally {
+        progress?.finish(!process.exitCode);
       }
     });
 }
