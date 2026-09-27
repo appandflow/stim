@@ -31,7 +31,9 @@ reload and stop a workspace:
   written at most every 5 seconds and when the app leaves the foreground or the
   connection drops, so a cold launch shows those rows, dimmed with "Last seen",
   until the machine's live status replaces them. Forgetting a machine deletes
-  its saved status.
+  its saved status. The first launch of a new app build, update or rollback
+  deletes every saved status and the notification state first, so that code
+  never reads what an older version wrote; pairings and settings stay.
   "Activity unknown" is grey: it means Stim has no data, not a problem.
 - **Needs attention**: a strip between the machine chips and the list, hidden
   when nothing is wrong, lists the problems on every paired machine, whatever
@@ -641,16 +643,20 @@ the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 `src/app-boot.test.tsx` is the boot test. It renders the whole app, from
 `src/app/_layout.tsx` down to home, in Jest. The phone starts from what the
 previous release stored: a paired machine, that machine's cached status from an
-older `stim`, and notification preferences and state in their old shapes. The
-machine then connects to a fake `stim-server` that serves
+older `stim`, notification preferences and state in their old shapes, and that
+release's marker. The test checks that the launch clears the cached status and
+the notification state, and keeps the pairing and the
+preferences. The machine then connects to a fake `stim-server` that serves
 `mock-server/fixtures/status.json`, and the app turns `active` the way iOS does
 after launch. The test fails when React reports an error or anything throws,
 so it catches JS that throws while launching over an earlier release's state,
 on the screens it renders. Reanimated, the drawer and Lottie are stubbed, so
 the test does not cover animations or native code.
 
-When a change stores something new on the phone, or reads a stored value in a
-new shape, add the previous shape to `seedPreviousInstall` in that test.
+When a change stores something new on the phone, decide whether it is derived
+data, which `clearDerivedDataOnChange` in `src/lib/derived-data.ts` must clear
+on a new build or update, or user data, which must stay; then seed the previous
+shape in `seedPreviousInstall`.
 
 ## Ship to TestFlight
 

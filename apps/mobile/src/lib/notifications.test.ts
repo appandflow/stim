@@ -6,7 +6,6 @@ import {
   DEFAULT_PREFS,
   localNotifications,
   notificationRoute,
-  parseNotifyState,
   parsePrefs,
   type LocalNotification,
   type NotificationPrefs,
@@ -286,21 +285,6 @@ describe('parsePrefs', () => {
       ),
     ).toEqual({ enabled: true, categories: ['stuck'], stuckMinutes: 30, quietHours: { start: 1, end: 2 } });
     expect(parsePrefs(JSON.stringify({ stuckMinutes: 0, quietHours: { start: 1440, end: 0 } }))).toEqual(DEFAULT_PREFS);
-  });
-});
-
-describe('parseNotifyState', () => {
-  it('starts over on the state the previous release saved, whose scopes have no workspaces', () => {
-    const previous = JSON.stringify({
-      'link:a': {},
-      'status:a': {
-        [`build-failed:${env().path}`]: { occurrence: 'a', since: 0, seenAt: T0, done: false },
-      },
-    });
-    expect(parseNotifyState(previous)).toEqual({});
-    const current = { 'status:a': { workspaces: {}, memoryKnown: true } };
-    expect(parseNotifyState(JSON.stringify(current))).toEqual(current);
-    expect(parseNotifyState('not json')).toEqual({});
   });
 });
 

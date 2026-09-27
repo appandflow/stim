@@ -81,22 +81,6 @@ export interface LocalNotification {
 /** Each machine's rule state, under `link:<id>` for its connection and `status:<id>` for what its status reports. */
 export type NotifyState = Record<string, OversightState>;
 
-/** Stored rule state; a scope saved in another shape, such as the previous release's, starts over. */
-export function parseNotifyState(raw: string | undefined): NotifyState {
-  try {
-    const value: unknown = JSON.parse(raw ?? '{}');
-    if (!value || typeof value !== 'object') return {};
-    const state: NotifyState = {};
-    for (const [scope, entry] of Object.entries(value)) {
-      const workspaces = (entry as Partial<OversightState> | null)?.workspaces;
-      if (workspaces && typeof workspaces === 'object') state[scope] = entry as OversightState;
-    }
-    return state;
-  } catch {
-    return {};
-  }
-}
-
 export interface NotifyMachine {
   mac: AttentionMachine;
   /** Whether this phone has the machine's current status, so what it lacks is really gone. */
