@@ -47,9 +47,20 @@ jest.mock('react-native-reanimated/mock', () => {
 });
 
 jest.mock('react-native-drawer-layout', () => ({
-  Drawer: ({ children }: { children: React.ReactNode }) => {
+  Drawer: ({
+    children,
+    renderDrawerContent,
+  }: {
+    children: React.ReactNode;
+    renderDrawerContent: () => React.ReactNode;
+  }) => {
     const { GestureHandlerRootView } = jest.requireActual('react-native-gesture-handler');
-    return <GestureHandlerRootView>{children}</GestureHandlerRootView>;
+    return (
+      <GestureHandlerRootView>
+        {renderDrawerContent()}
+        {children}
+      </GestureHandlerRootView>
+    );
   },
   useDrawerProgress: () => ({ value: 0 }),
 }));
@@ -226,4 +237,6 @@ it('boots on the state the previous release left and renders the live machine', 
 
   expect(errors).toEqual([]);
   expect(screen.getAllByText('Mock Mac').length).toBeGreaterThan(0);
-});
+  const state = JSON.parse(mockStore('stim.notifications').get('state')!) as Record<string, { workspaces?: object }>;
+  expect(state[`status:${MAC_ID}`]?.workspaces).toBeDefined();
+}, 60_000);

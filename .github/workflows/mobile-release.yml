@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mobile-release
+  group: ${{ (inputs.mode == 'rollback' || inputs.mode == 'republish') && 'mobile-rollback' || 'mobile-release' }}
   cancel-in-progress: false
 
 jobs:
