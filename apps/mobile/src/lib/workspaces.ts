@@ -269,7 +269,7 @@ export function deviceWarnings(
 
 export interface AttentionItem {
   message: string;
-  severity: StatusIssue['severity'];
+  severity: Exclude<StatusIssue['severity'], 'info'>;
   remedy: string | null;
   /** `remedy` as a line to paste in a terminal, `cd` into the workspace included. */
   command: string | null;
@@ -285,17 +285,23 @@ const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 
 /**
  * The workspaces with something to fix: live ones first, then those with an error, each in status order. Items come
- * from `issues`, or from the `warnings` text when the Mac's `stim` reports no issues.
+ * from `issues` other than `info` notes, or from the `warnings` text when the Mac's `stim` reports no issues.
  */
 export function attentionGroups(environments: EnvironmentState[]): AttentionGroup[] {
   const groups = environments.flatMap((env): AttentionGroup[] => {
     const items: AttentionItem[] = env.issues
-      ? env.issues.map((issue) => ({
-          message: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
-          severity: issue.severity,
-          remedy: issue.remedy,
-          command: `cd ${shellQuote(issue.workspace)} && ${issue.remedy}`,
-        }))
+      ? env.issues.flatMap((issue) =>
+          issue.severity === 'info'
+            ? []
+            : [
+                {
+                  message: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
+                  severity: issue.severity,
+                  remedy: issue.remedy,
+                  command: `cd ${shellQuote(issue.workspace)} && ${issue.remedy}`,
+                },
+              ],
+        )
       : env.warnings.map((message) => ({ message, severity: 'warning', remedy: null, command: null }));
     return items.length ? [{ path: env.path, live: env.live, items }] : [];
   });

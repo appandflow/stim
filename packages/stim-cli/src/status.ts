@@ -1,4 +1,5 @@
-import { sep } from 'path';
+import { basename, sep } from 'path';
+import { isInsideProject } from './metro.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
@@ -45,6 +46,8 @@ export interface MetroFacts {
   missing?: true;
   metro?: { pid: number } | null;
   notOurs?: string;
+  pid?: number;
+  cwd?: string;
 }
 
 interface SupervisorFacts {
@@ -166,6 +169,7 @@ export function environmentState(
     now = Date.now(),
     slot = 'default',
     workspaceRunning = false,
+    workspaces,
   }: {
     simsByUdid?: Record<string, SimFacts>;
     metro?: MetroFacts | null;
@@ -185,6 +189,7 @@ export function environmentState(
     now?: number;
     slot?: string;
     workspaceRunning?: boolean;
+    workspaces?: readonly string[];
   } = {},
 ): EnvironmentState {
   const ios = project.platforms?.ios;
@@ -214,7 +219,10 @@ export function environmentState(
     });
   const slotFlag = slot === 'default' ? '' : ` --slot ${slot}`;
   if (metro?.notOurs && slot === 'default') {
-    add('port-not-ours', `port ${project.metroPort}: ${metro.notOurs}`, 'stim guide errors teardown', 'error');
+    add(
+      'port-not-ours',
+      ...portNotOurs(project.metroPort, portHolder(metro.cwd, project.__path, workspaces), supervisor),
+    );
   }
   if (ios && !sim && simsAvailable) {
     add('sim-missing', `recorded sim ${ios.deviceUdid} no longer exists`, `stim ios${slotFlag}`);
@@ -267,7 +275,7 @@ export function environmentState(
     live,
     memoryMb,
     memorySource: 'estimate',
-    warnings: issues.map(issueText),
+    warnings: warningTexts(issues),
     issues,
     ios: ios
       ? {
@@ -284,6 +292,7 @@ export function environmentState(
           running: metroRunning,
           pid: metro?.metro?.pid ?? null,
           ...(metroRunning ? {} : stoppedMetroFacts(idleStop, lastStop)),
+          ...portHeldBy(metro),
         }
       : null,
     supervisor:
@@ -340,7 +349,7 @@ export function withWebFacts(state: EnvironmentState, web: WebFacts | null): Env
     ...state,
     live: state.live || running || web.status === 'orphaned',
     memoryMb: state.memoryMb + (running || web.status === 'orphaned' ? BROWSER_MB : 0),
-    warnings: issues.map(issueText),
+    warnings: warningTexts(issues),
     issues,
     web: webBrowserState(web),
   };
@@ -418,6 +427,41 @@ export function addReverseMissingIssue(
   };
   state.issues.push(issue);
   state.warnings.push(issueText(issue));
+}
+
+function portNotOurs(
+  port: number | null | undefined,
+  holder: string,
+  supervisor: SupervisorFacts | null,
+): [string, string, StatusIssue['severity']] {
+  if (supervisor?.status === 'ours') {
+    return [
+      `port ${port} is in use by ${holder}, so this workspace's Metro cannot serve on it`,
+      'stim stop',
+      'warning',
+    ];
+  }
+  if (supervisor?.status === 'unverified') {
+    return [`port ${port} is in use by ${holder}`, 'stim guide errors teardown', 'warning'];
+  }
+  return [`port ${port} is in use by ${holder}; stim start will choose a free port`, 'stim start', 'info'];
+}
+
+function portHeldBy(metro: MetroFacts | null): { heldBy?: { pid: number; cwd: string | null } } {
+  return metro?.notOurs && metro.pid ? { heldBy: { pid: metro.pid, cwd: metro.cwd ?? null } } : {};
+}
+
+function warningTexts(issues: StatusIssue[]): string[] {
+  return issues.filter((issue) => issue.severity !== 'info').map(issueText);
+}
+
+function portHolder(cwd: string | undefined, self: string, workspaces: readonly string[] = []): string {
+  if (!cwd) return 'another app';
+  const owner = workspaces
+    .filter((path) => path !== self && isInsideProject(cwd, path))
+    .toSorted((a, b) => b.length - a.length)[0];
+  if (owner) return `Metro for workspace ${basename(owner)}`;
+  return `a dev server in ${cwd.split(/[\\/]/).filter(Boolean).slice(-3).join('/')}`;
 }
 
 function issueText(issue: StatusIssue): string {
