@@ -134,12 +134,14 @@ platform "web":
                button "Save"', "Typed 12 characters into input#email"),
                deviceId (web.targetId) and details. Typed text is never
                recorded, only its length. Clicks, key presses, text input
-               and wheel scrolls are observed; pointer moves are not, and a
-               typing, key or scroll burst is one record. Input from Stim
-               Desktop's or the phone's Take over is not recorded, and nor
-               is input while no other client is connected. A person
+               and wheel scrolls in the top frame are observed; pointer
+               moves and iframes are not, and a typing, key or scroll burst
+               is one record. Input from Stim Desktop's or the phone's Take
+               over is not recorded, nor is other input within 3 seconds of
+               it, nor input while no other client is connected. A person
                clicking a headed window while a tool is connected counts as
-               that tool
+               that tool, and a script that disconnects within a few hundred
+               milliseconds of its first input goes unrecorded
 Expo also prints web console calls on Metro ("Web LOG"), so they can appear
 twice: once from the page (client), once from Metro (metro, level info).
 Each load of the page's top-level document is a page-load marker: stim web,

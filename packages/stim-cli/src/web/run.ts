@@ -22,7 +22,14 @@ import { probeWebDrivers } from '../devices/activity.ts';
 import { connectOwnedBrowser, type CdpConnection, type CdpEvent } from './cdp.ts';
 import { DESKTOP_PAGE, PHONE_SCREEN, chromeArgs } from './chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from './events.ts';
-import { INPUT_BINDING, INPUT_LISTENER, INPUT_WORLD, parseInputBatch, webAgentRecords } from './input.ts';
+import {
+  INPUT_BINDING,
+  INPUT_LISTENER,
+  INPUT_STARTED,
+  INPUT_WORLD,
+  parseInputBatch,
+  webAgentRecords,
+} from './input.ts';
 import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from './profile.ts';
 import {
   browserLogFile,
@@ -85,7 +92,6 @@ export function parseArgs(argv: string[]): WebSupervisorOptions | { error: strin
 }
 
 const DEVTOOLS_WAIT_MS = 20_000;
-const DRIVER_PROBE_MS = 5000;
 const ROUTE_THROTTLE_MS = 250;
 const CHROME_EXIT_WAIT_MS = 5_000;
 const POLL_MS = 50;
@@ -106,22 +112,14 @@ interface RequestFacts {
   document: boolean;
 }
 
-/**
- * The DevTools driver attached now, probed at most every `DRIVER_PROBE_MS` while a driver is attached. With no
- * driver the next input probes again: a client can connect and act within milliseconds.
- */
 function createDriverProbe(port: number, ownPids: number[]): () => Promise<ActivityDriver | null> {
-  let last: { at: number; driver: ActivityDriver | null } | null = null;
   let running: Promise<ActivityDriver | null> | null = null;
   return () => {
-    if (last?.driver && Date.now() - last.at < DRIVER_PROBE_MS) return Promise.resolve(last.driver);
     running ??= probeWebDrivers({ port, ownPids })
       .catch(() => null)
       .then((drivers) => {
-        const driver = drivers?.[0] ?? null;
-        last = { at: Date.now(), driver };
         running = null;
-        return driver;
+        return drivers?.[0] ?? null;
       });
     return running;
   };
@@ -315,6 +313,7 @@ export async function runWebSupervisor(
 
     const requests = new Map<string, RequestFacts>();
     const driver = createDriverProbe(options.port, [process.pid, pid]);
+    let batchDriver: Promise<ActivityDriver | null> | null = null;
     let reloading = false;
     let route: { written: string | null; latest: string | null; at: number; timer: NodeJS.Timeout | null } = {
       written: null,
@@ -354,10 +353,16 @@ export async function runWebSupervisor(
         }
         case 'Runtime.bindingCalled': {
           if (params.name !== INPUT_BINDING) return;
+          if (params.payload === INPUT_STARTED) {
+            batchDriver ??= driver();
+            return;
+          }
           const batch = parseInputBatch(String(params.payload ?? ''));
+          const attributed = batchDriver ?? driver();
+          batchDriver = null;
           if (!batch.actions.length && !batch.dropped) return;
           void (async () => {
-            const attached = await driver();
+            const attached = await attributed;
             if (!attached) return;
             for (const record of webAgentRecords(batch, targetId, attached.tool, Date.now())) writer.write(record);
           })();

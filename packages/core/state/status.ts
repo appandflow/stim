@@ -249,11 +249,8 @@ export const WEB_PAGE_STATES = ['loading', 'loaded', 'failed'] as const;
 /**
  * The owned page's latest load, from the page-load marker in the workspace's web log: `url` is the document it
  * loaded, `state` is `failed` when that document did not load or the page crashed, with the log message as
- * `error`.
- */
-/**
- * The page's latest document load. `url` is the document it loaded; `route`, present only when an in-app route change
- * (history API or fragment) moved the page off that URL since the load, is the URL it shows now.
+ * `error`. `route`, present only when an in-app route change (history API or fragment) moved the page off `url`
+ * since the load, is the URL it shows now.
  */
 export interface WebPageState {
   url: string;

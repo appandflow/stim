@@ -3,6 +3,8 @@ import type { NdjsonRecord } from '../ndjson.ts';
 /** The isolated world the input listener runs in, so the page's own scripts cannot see or replace it. */
 export const INPUT_WORLD = 'stim';
 export const INPUT_BINDING = '__stimInput';
+/** What the listener sends on the first input of a batch, so the supervisor checks for a driver while it acts. */
+export const INPUT_STARTED = 'started';
 
 /**
  * Observes trusted clicks, key presses, text input and wheel scrolls in the page and reports them through the
@@ -13,7 +15,7 @@ export const INPUT_BINDING = '__stimInput';
  */
 export const INPUT_LISTENER: string = `(() => {
   const send = globalThis.${INPUT_BINDING};
-  if (typeof send !== 'function') return;
+  if (typeof send !== 'function' || window !== window.top) return;
   const BURST_MS = 1000, FLUSH_MS = 1000, MAX_WAIT_MS = 3000, TAKEOVER_MS = 3000, MAX_ACTIONS = 50;
   let pending = [], marks = [], dropped = 0, lastKeyAt = -Infinity, timer = 0, firstAt = 0;
   const clip = (value, max) => {
@@ -35,9 +37,10 @@ export const INPUT_LISTENER: string = `(() => {
     const testId = el.getAttribute('data-testid');
     if (testId) out += '[data-testid=' + clip(testId, 40) + ']';
     const field = tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
+    const editable = node.isContentEditable || el.querySelector('input,textarea,select,[contenteditable]') !== null;
     const name = el.getAttribute('aria-label') || (field
       ? el.getAttribute('placeholder') || el.getAttribute('name')
-      : withText ? el.textContent : '');
+      : withText && !editable ? el.textContent : '');
     const label = clip(name, 40);
     return label ? out + ' "' + label.replace(/"/g, "'") + '"' : out;
   };
@@ -62,7 +65,10 @@ export const INPUT_LISTENER: string = `(() => {
     } else if (pending.length >= MAX_ACTIONS) {
       dropped += 1;
     } else {
-      if (!pending.length) firstAt = now;
+      if (!pending.length) {
+        firstAt = now;
+        send('${INPUT_STARTED}');
+      }
       pending.push({ ...action, start: now, end: now });
     }
     clearTimeout(timer);
@@ -80,14 +86,14 @@ export const INPUT_LISTENER: string = `(() => {
     if (!event.isTrusted || event.isComposing) return;
     const key = event.key;
     if (!key || key === 'Shift' || key === 'Control' || key === 'Alt' || key === 'Meta' || key === 'CapsLock') return;
+    lastKeyAt = performance.now();
     const target = describe(origin(event), false);
-    const modifiers = (event.ctrlKey ? 'Control+' : '') + (event.altKey ? 'Alt+' : '') + (event.metaKey ? 'Meta+' : '');
-    if (key.length === 1 && !modifiers) {
-      lastKeyAt = performance.now();
+    const modifiers = (event.ctrlKey ? 'Control+' : '') + (event.metaKey ? 'Meta+' : '');
+    if ([...key].length === 1 && !modifiers) {
       typed(target, 1);
       return;
     }
-    const name = modifiers + (key === ' ' ? 'Space' : key);
+    const name = modifiers + (event.altKey ? 'Alt+' : '') + (key === ' ' ? 'Space' : key);
     add({ command: 'press', target, key: name, count: 1 }, (last) => last.key === name && last.target === target && (last.count += 1, true));
   }, true);
   addEventListener('input', (event) => {

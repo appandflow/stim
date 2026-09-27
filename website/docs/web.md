@@ -221,12 +221,15 @@ agent-device's taps are on a simulator:
 `stim logs --source agent` lists them, with `driver` naming the tool in
 `--json`. `web.activity.recent["agent-action"]` in `stim status --json` dates
 the newest, and Stim Desktop and the phone show them under the Web device.
-Stim records clicks, key presses, text input and wheel scrolls; a burst of
-typing, of one key or of scrolling is one record, and pointer moves are not
-recorded. Typed text is never recorded, only its length. Input from **Take
-over** in Stim Desktop or the phone app is not an agent action, and input while
-no tool is connected is not recorded. A person clicking a headed Chrome window
-while a tool is connected counts as that tool. Navigations and reloads are page
+Stim records clicks, key presses, text input and wheel scrolls in the page's
+top frame; a burst of typing, of one key or of scrolling is one record, and
+pointer moves and iframes are not recorded. Typed text is never recorded, only
+its length. Input from **Take over** in Stim Desktop or the phone app is not an
+agent action, and neither is any other input within 3 seconds of it. Input
+while no tool is connected is not recorded. A person clicking a headed Chrome window
+while a tool is connected counts as that tool, and a script that disconnects
+within a few hundred milliseconds of its first input goes unrecorded, since
+Stim checks which tool is connected when the input starts. Navigations and reloads are page
 records, not agent actions.
 
 `web.page` reports the document the page loaded last and how that load went:
