@@ -245,6 +245,7 @@ export function deviceTitle(device: DeviceRef): DeviceTitle {
       detail: join(device.physical ? 'USB' : 'Emulator', slot),
     };
   }
+  if (device.physical) return { name: device.name, detail: join(device.model, slot) };
   const runtime = /^(.*\S)\s+(\d+(?:\.\d+)*)$/.exec(device.model);
   if (runtime) return { name: runtime[1]!, detail: join(`iOS ${runtime[2]}`, slot) };
   return device.model === 'iOS Simulator'

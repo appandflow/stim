@@ -83,7 +83,11 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           </Touch>
         ) : (
           <Text variant="caption" tone="tertiary" style={styles.placeholder}>
-            {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
+            {streams
+              ? (error ?? 'Waiting for a frame')
+              : device.physical
+                ? 'Stim does not stream physical devices.'
+                : 'Frames are only served for devices Stim owns.'}
           </Text>
         )}
       </View>
@@ -94,8 +98,13 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
       ) : null}
       <View style={styles.meta}>
         <Text variant="callout" weight="semibold" numberOfLines={1}>
-          {device.model}
+          {device.physical ? device.name : device.model}
         </Text>
+        {device.physical ? (
+          <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1}>
+            {device.model}
+          </Text>
+        ) : null}
         {device.page ? (
           <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
             {shortUrl(device.page.url)}
@@ -112,6 +121,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         </View>
         <View style={styles.badge}>
           <ActivityChip activity={device.activity} />
+          {device.physical ? <Pill>Physical</Pill> : null}
           {device.page?.error ? <Pill tone="warning">Page failed to load</Pill> : null}
         </View>
       </View>

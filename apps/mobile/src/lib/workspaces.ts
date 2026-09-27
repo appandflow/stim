@@ -5,6 +5,7 @@ import type {
   DeviceAppProcess,
   DevicePlatform,
   EnvironmentState,
+  PhysicalDeviceState,
   SimState,
   StatusIssue,
   StatusPayload,
@@ -114,7 +115,12 @@ export function workspaceTitleAt(
 }
 
 export function isActive(env: EnvironmentState): boolean {
-  return env.live || env.build?.state === 'running' || (env.remoteDevices?.length ?? 0) > 0;
+  return (
+    env.live ||
+    env.build?.state === 'running' ||
+    (env.remoteDevices?.length ?? 0) > 0 ||
+    (env.physicalDevices?.length ?? 0) > 0
+  );
 }
 
 /** A workspace `stim worktree warm` is preparing, or has prepared and nothing has run in yet. */
@@ -143,6 +149,12 @@ export interface DeviceRef {
   page?: { url: string; error: string | null };
   /** Bytes the device's data holds, when status measures it. */
   diskBytes?: number | null;
+  /** When the workspace's lease on a physical device ends. */
+  leaseExpiresAt?: string;
+}
+
+export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physical'>): string {
+  return `${device.platform}\n${device.slot}${device.physical ? '\nphysical' : ''}`;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
@@ -180,6 +192,21 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
   };
 }
 
+function physicalDevice(device: PhysicalDeviceState): DeviceRef {
+  return {
+    platform: device.platform,
+    slot: device.slot,
+    id: device.id,
+    name: device.name ?? device.id,
+    model: device.model ?? (device.platform === 'ios' ? 'iPhone' : 'Android device'),
+    state: device.connection,
+    running: device.connection === 'connected',
+    owned: false,
+    physical: true,
+    leaseExpiresAt: device.lease.expiresAt,
+  };
+}
+
 function webDevice(web: WebBrowserState): DeviceRef {
   const url = web.page?.route ?? web.page?.url ?? web.url;
   return {
@@ -206,7 +233,7 @@ export function platformName(platform: DevicePlatform): string {
 
 export function deviceSource(device: DeviceRef): string {
   if (device.platform === 'web') return 'Chrome';
-  if (device.platform === 'ios') return 'iOS Simulator';
+  if (device.platform === 'ios') return device.physical ? 'iOS device' : 'iOS Simulator';
   return device.physical ? 'Android device' : 'Android Emulator';
 }
 
@@ -223,6 +250,7 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
   add('default', env.ios, env.android);
   if (env.web) out.push(webDevice(env.web));
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
+  for (const device of env.physicalDevices ?? []) out.push(physicalDevice(device));
   return out;
 }
 

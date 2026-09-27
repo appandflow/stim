@@ -49,6 +49,7 @@ import {
 } from '@/lib/workspace-view';
 import {
   deviceWarnings,
+  deviceKey,
   devicesOf,
   livePlatforms,
   orderDevices,
@@ -284,7 +285,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
         ))}
         {devices.map((device) => (
           <DeviceTile
-            key={`${device.platform}-${device.slot}`}
+            key={deviceKey(device)}
             env={env}
             device={device}
             warnings={byDevice.get(device) ?? []}
