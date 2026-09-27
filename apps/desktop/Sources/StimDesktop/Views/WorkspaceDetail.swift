@@ -316,8 +316,8 @@ struct Inspector: View {
           DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
         }
         GitIndicator(git: env.worktree?.git, chips: true)
-        if let mb = env.memoryMb, mb > 0 {
-          MemoryEstimatePill(mb: mb)
+        if usage == nil, let mb = env.memoryMb, mb > 0 {
+          MemoryPill(mb: mb, source: env.memorySource)
         }
         if env.logs != nil {
           Button(action: openLogs) {
@@ -404,7 +404,8 @@ struct Inspector: View {
   @ViewBuilder private func usageCards(_ usage: UsageHistory) -> some View {
     usageCard("cpu", "CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
     usageCard(
-      "memorychip", "Resident memory", formatMemory(usage.latest.residentBytes), values: usage.resident,
+      "memorychip", usage.isFootprint ? "Memory" : "Resident memory", formatMemory(usage.memoryBytes),
+      values: usage.memory,
       minimumPeak: 1_073_741_824)
   }
 

@@ -29,6 +29,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
   public var live: Bool
   public var memoryMb: Int?
+  /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
+  public var memorySource: MemorySource?
   public var warnings: [String]
   /// Absent from a `stim` that reports only `warnings`.
   public var issues: [StatusIssue]?
@@ -48,11 +50,17 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
-    case path, live, memoryMb, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
+    case path, live, memoryMb, memorySource, warnings, issues, ios, android, metro, supervisor, logs, slots, remoteDevices, build
     case lastBuilds, builds, worktree
   }
 
   public var id: String { path }
+
+  /// The physical footprint of the workspace's processes in bytes, when `stim status` measured it.
+  public var footprintBytes: Int64? {
+    guard memorySource == .footprint, let memoryMb else { return nil }
+    return Int64(memoryMb) * 1_048_576
+  }
 
   /// The workspace's default devices followed by each named slot's devices.
   public var devices: [DeviceRef] {

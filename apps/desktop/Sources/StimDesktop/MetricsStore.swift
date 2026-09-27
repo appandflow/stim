@@ -6,13 +6,19 @@ struct UsageHistory {
   static let limit = 40
 
   var latest: ResourceUsage
+  /// The latest memory figure: the status footprint when `stim` measured one, else the sampled resident size.
+  var memoryBytes: Int64 = 0
+  var isFootprint = false
   var cpu: [Double] = []
-  var resident: [Double] = []
+  var memory: [Double] = []
 
-  mutating func append(_ usage: ResourceUsage) {
+  mutating func append(_ usage: ResourceUsage, footprintBytes: Int64?) {
     latest = usage
+    memoryBytes = footprintBytes ?? usage.residentBytes
+    if (footprintBytes != nil) != isFootprint { memory = [] }
+    isFootprint = footprintBytes != nil
     if let percent = usage.cpuPercent { cpu = Array((cpu + [percent]).suffix(Self.limit)) }
-    resident = Array((resident + [Double(usage.residentBytes)]).suffix(Self.limit))
+    memory = Array((memory + [Double(memoryBytes)]).suffix(Self.limit))
   }
 }
 
@@ -66,10 +72,6 @@ final class MetricsStore: ObservableObject {
     return cpu / (100 * Double(max(1, ProcessInfo.processInfo.activeProcessorCount)))
   }
 
-  var totalResident: Int64 {
-    usage.values.reduce(0) { $0 + $1.latest.residentBytes }
-  }
-
   private var onScreen: Bool {
     NSApp.isActive && NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) }
   }
@@ -97,9 +99,12 @@ final class MetricsStore: ObservableObject {
         self.sampling = false
         if let updated { self.sampler = updated }
         var next: [String: UsageHistory] = [:]
+        let footprints = Dictionary(
+          (self.status.payload?.environments ?? []).compactMap { env in env.footprintBytes.map { (env.path, $0) } },
+          uniquingKeysWith: { first, _ in first })
         for (path, value) in result {
           var history = self.usage[path] ?? UsageHistory(latest: value)
-          history.append(value)
+          history.append(value, footprintBytes: footprints[path])
           next[path] = history
         }
         self.usage = next

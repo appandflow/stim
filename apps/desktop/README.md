@@ -3,7 +3,8 @@
 A macOS app for supervising Stim workspaces: every worktree on the machine,
 grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
-and resident memory.
+and memory (the physical footprint `stim status` measures, or resident memory
+from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
 `stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
@@ -174,7 +175,7 @@ every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
 build or `stim web` Chrome, stim-server, or a machine-wide process such as
 CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
-is one core) and resident memory, largest memory first so rows stay in place
+is one core) and memory, largest memory first so rows stay in place
 as CPU changes; each process counts in one row only. A workspace's owned simulator or emulator has **Shut down**, which
 runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
 `stim stop`. Nothing Stim does not own has an action. Two sparklines above the

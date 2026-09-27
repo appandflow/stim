@@ -123,14 +123,17 @@ struct WorkspaceHeader: View {
           .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
         }
         Pill {
-          Sparkline(values: usage.resident, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
+          Sparkline(values: usage.memory, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
           Text("RAM")
-          Text(formatMemory(usage.latest.residentBytes)).font(.stim(.caption, mono: true))
+          Text(formatMemory(usage.memoryBytes)).font(.stim(.caption, mono: true))
         }
-        .help("Resident memory of the workspace's processes, simulators and emulators")
+        .help(
+          usage.isFootprint
+            ? "Memory the workspace's processes, simulators and emulators use, as Activity Monitor counts it"
+            : "Resident memory of the workspace's processes, simulators and emulators")
       }
-      if let mb = env.memoryMb, mb > 0 {
-        MemoryEstimatePill(mb: mb)
+      if usage == nil, let mb = env.memoryMb, mb > 0 {
+        MemoryPill(mb: mb, source: env.memorySource)
       }
       if let errors = env.logs?.errorsSinceMarker {
         Button(action: openLogs) {
