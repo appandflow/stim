@@ -25,6 +25,7 @@ enum CrashReporter {
         options.enableCaptureFailedRequests = false
         options.enableMetricKit = false
         options.enableAutoSessionTracking = false
+        options.sendClientReports = false
         options.enableUncaughtNSExceptionReporting = true
         options.beforeSend = { scrub($0, with: scrubber) }
         options.beforeBreadcrumb = { scrub($0, with: scrubber) }
