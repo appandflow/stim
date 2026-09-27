@@ -53,12 +53,12 @@ public enum PullRequestCleanup {
   }
 
   /// The worktrees of `removable` that the latest `stim status` still shows on a branch with a finished pull
-  /// request, not live and not building, so one that started Metro, a build or a device, or switched branches,
+  /// request, not live, building or warming, so one that started Metro, a build, a device or a warm, or switched branches,
   /// since `stim gc --json` judged it waits for the next `stim gc` verdict.
   public static func stillRemovable(
     _ removable: [GcReport.LinkedWorktree], environments: [Workspace], finished: [String: Set<String>]
   ) -> [GcReport.LinkedWorktree] {
-    let busy = environments.filter { $0.live || $0.build?.isRunning == true }
+    let busy = environments.filter { $0.live || $0.build?.isRunning == true || $0.isWarming }
     let current = candidates(environments, finished: finished)
     let live = Set(busy.compactMap { $0.worktree?.path })
     return removable.filter { current.contains($0.path) && !live.contains($0.path) }

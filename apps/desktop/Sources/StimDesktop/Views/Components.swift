@@ -237,7 +237,6 @@ struct Sparkline: View {
   }
 }
 
-/// "Warming..." with an activity indicator while `stim worktree warm` runs, or "Ready" after it until the first run.
 struct SetupBadge: View {
   var env: Workspace
   var compact = false

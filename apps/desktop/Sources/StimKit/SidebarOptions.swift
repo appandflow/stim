@@ -66,11 +66,6 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
 
   public var id: String { path }
 
-  public var live: Bool {
-    if case .workspace(let env) = self { return env.live }
-    return false
-  }
-
   var active: Bool {
     if case .workspace(let env) = self { return env.isActive }
     return false

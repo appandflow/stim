@@ -220,7 +220,7 @@ import Testing
     let summaries = projectSummaries(environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:))
     #expect(
       summaries == [
-        ProjectSummary(project: Project(root: "/r/zed"), live: 1, total: 1),
+        ProjectSummary(project: Project(root: "/r/zed"), live: 1, total: 1, active: 1),
         ProjectSummary(project: Project(root: "/r/app"), live: 0, total: 2),
         ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1),
       ])
@@ -306,8 +306,8 @@ import Testing
     let summaries = projectSummaries(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:))
     #expect(
       summaries == [
-        ProjectSummary(project: Project(root: "/r/app"), live: 1, total: 3, settingUp: 1),
-        ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1, settingUp: 1),
+        ProjectSummary(project: Project(root: "/r/app"), live: 1, total: 3, settingUp: 1, active: 2),
+        ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1, settingUp: 1, active: 1),
       ])
   }
 
