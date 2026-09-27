@@ -653,6 +653,50 @@ describe('explicit remote backend behavior', () => {
     },
   );
 
+  test.each([
+    {
+      backend: 'eas' as const,
+      opts: { systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
+      given: '--system-image',
+    },
+    {
+      backend: 'proxy' as const,
+      opts: { systemImage: 'system-images;android-36;google_apis;arm64-v8a', deviceProfile: 'pixel_fold' },
+      given: '--system-image and --device-profile',
+    },
+  ])('a $backend run refuses $given before any remote work', async ({ backend, opts, given }) => {
+    const { h, selected, remoteCalls } = remoteHarness(backend, {
+      json: true,
+      ...opts,
+      listSystemImages: never('the local system-image listing'),
+      listDeviceProfiles: never('the avdmanager profile listing'),
+    });
+    expect((await h.run()).ok).toBe(false);
+    const payload = JSON.parse(h.stdout[0] ?? '{}');
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(new RegExp(`^${given} appl(y|ies) only to a local owned Android emulator`));
+    expect(selected).toEqual([]);
+    expect(remoteCalls).toEqual([]);
+  });
+
+  test('the android.remote setting refuses --device-profile, and the AVD settings do not block a remote run', async () => {
+    const viaSetting = harness({
+      json: true,
+      deviceProfile: 'pixel_fold',
+      resolveSettingsFor: () => ({ android: { remote: 'proxy' } }),
+    });
+    expect((await viaSetting.run()).ok).toBe(false);
+    expect(JSON.parse(viaSetting.stdout[0] ?? '{}').message).toMatch(/^--device-profile applies only/);
+
+    const { h, remoteCalls } = remoteHarness('eas', {
+      resolveSettingsFor: () => ({
+        android: { systemImage: 'system-images;android-36;google_apis;arm64-v8a', deviceProfile: 'pixel_fold' },
+      }),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
+  });
+
   test('a remote ENOSPC boot failure keeps the remote-device remedy', async () => {
     const { h } = remoteHarness('proxy', {
       remoteDeviceDeps: () => ({

@@ -988,7 +988,9 @@ captured"  (in metro.ndjson, bare RN)
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, \`ios --device-type\`
   or \`--runtime\` on a remote run (\`--remote\` or ios.remote; the remote
-  backend picks its own device), a working directory
+  backend picks its own device), \`android --system-image\` or
+  \`--device-profile\` on a remote run (\`--remote\` or android.remote), a
+  working directory
   with no package.json above it, or one whose nearest package.json does not
   parse or depends on neither react-native nor expo, so the directory is not
   an app (the refusal names that package.json and says which of the two it

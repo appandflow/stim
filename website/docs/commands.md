@@ -300,6 +300,11 @@ the app, opens it, and checks launch logs.
     --system-image "system-images;android-36;google_apis;arm64-v8a"
   ```
 
+- `--system-image` and `--device-profile` apply only to the local owned
+  emulator. With `--remote` or the `android.remote` setting they refuse with
+  `STIM_BAD_ARG`: the remote backend chooses its own device. The
+  `android.systemImage` and `android.deviceProfile` settings are ignored on a
+  remote run.
 - `--device [serial]` installs and launches on a connected physical device.
   With no serial it selects a connected device this workspace can lease. It
   cannot be combined with `--remote`.

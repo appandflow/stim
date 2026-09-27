@@ -41,6 +41,7 @@ import {
   deviceProfileRefusal,
   foldableImageRefusal,
   isReleaseVariant,
+  remoteAvdFlagRefusal,
   resolveDeviceProfile,
   resolveSystemImage,
   resolveVariant,
@@ -308,6 +309,12 @@ export function resolveAndroidRunPlan(
     listProfiles: listDeviceProfiles,
   });
   if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
+  const avdFlagRefusal = remoteAvdFlagRefusal({
+    systemImageFlag,
+    deviceProfileFlag,
+    remoteBackend,
+  });
+  if (avdFlagRefusal) return fail(avdFlagRefusal.code, avdFlagRefusal.message, avdFlagRefusal.remedy);
   if (!physical && !remoteBackend) {
     const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
     const existing = ownedAvd(root, slot);
