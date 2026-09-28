@@ -80,6 +80,25 @@ Budget reclaim stops idle dev servers of other workspaces when a
 `stim ios`, `stim android` or `stim start` run finds the machine over its
 disk or memory budget. See [machine settings](./settings.md#machine-settings).
 
+## Watchman roots
+
+A Metro that uses [watchman](https://facebook.github.io/watchman/) registers a
+watch root in the shared watchman daemon and never removes it. Bare React
+Native Metro uses watchman whenever it is installed. Expo SDK 56 and later use
+it only when `metro.config.js` sets `resolver.useWatchman` to `true`.
+
+When the supervisor stops its dev server, it runs `watchman watch-del` on the
+root its Metro registered, once no other client subscribes to it. It only
+removes a root that appeared after the supervisor started, contains the
+workspace and carried this Metro's subscription. It never starts the watchman
+daemon and leaves other roots alone, including those jest registers. A
+supervisor that dies without stopping leaves its root; remove it with
+`watchman watch-del <root>`.
+
+Removing a root stops watchman from recrawling it. The daemon's memory
+footprint shrinks only when the daemon restarts, which also drops every other
+client's watches.
+
 ## Launch readiness
 
 `stim ios` and `stim android` open the installed app, then check launch

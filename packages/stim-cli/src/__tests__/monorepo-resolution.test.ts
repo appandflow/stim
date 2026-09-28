@@ -174,6 +174,7 @@ describe('detectIsExpo is the single source', () => {
       root: app,
       port: 8199,
       attachSignals: false,
+      watchman: async () => ({ roots: [] }),
       onExit: (code) => exited.push(code),
       startExpo: async () => {
         startedExpo = true;
@@ -209,6 +210,7 @@ describe('detectIsExpo is the single source', () => {
         root: bare,
         port: 8198,
         attachSignals: false,
+        watchman: async () => ({ roots: [] }),
         onExit: () => {},
         startBare: async () => {
           startedBare = true;

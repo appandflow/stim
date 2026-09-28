@@ -81,9 +81,18 @@ beforeEach(() => {
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: (file: string, args?: string[], opts?: object) =>
+      file === 'watchman'
+        ? Promise.reject(new Error('watchman is not used here'))
+        : real.runFileAsync(file, args, opts),
+  });
 });
 
 afterEach(() => {
+  resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -591,6 +600,37 @@ describe('runSupervisor', () => {
     await running.shutdown(0, 'supervisor_stopped', 'second');
     expect(server.state.closed).toBe(1);
     expect(exits).toEqual([0]);
+  });
+
+  test('shutdown removes the watchman root its Metro registered only after the server has closed', async () => {
+    const worktree = dirname(root);
+    const order: string[] = [];
+    let listed = 0;
+    const server = fakeServer({
+      async close() {
+        order.push('close');
+      },
+    });
+    const running = await runSupervisor({
+      root,
+      port: 8095,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      startBare: async () => server.handle,
+      watchman: async (args) => {
+        order.push(args[0] as string);
+        if (args[0] === 'watch-list') return { roots: listed++ === 0 ? [] : [worktree] };
+        if (args[0] === 'debug-get-subscriptions') {
+          return { subscribers: [{ info: { name: `metro-file-map-${process.pid}-ws-0cb4f16e` } }] };
+        }
+        return { 'watch-del': true };
+      },
+    });
+    assert(running);
+    await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
+    expect(order.slice(order.indexOf('close'))).toEqual(['close', 'debug-get-subscriptions', 'watch-del']);
+    expect(readMetroLog().map((r) => r.event)).toContain('watchman_root_removed');
   });
 
   test('a dev server that dies on its own takes the supervisor with it, exit 1', async () => {

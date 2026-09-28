@@ -39,6 +39,7 @@ import {
   vanishedSupervisorMessage,
   type SupervisorExitTrigger,
 } from './stop-cause.ts';
+import { runWatchman, trackMetroWatchRoots, type WatchmanCommand } from './watchman-roots.ts';
 
 export {
   MODE_BARE,
@@ -165,6 +166,7 @@ export interface RunSupervisorOptions {
   onExit?: (code: number) => void;
   attachSignals?: boolean;
   stderr?: (line: string) => void;
+  watchman?: WatchmanCommand;
 }
 
 export async function runSupervisor({
@@ -183,6 +185,7 @@ export async function runSupervisor({
   onExit = (code: number) => process.exit(code),
   attachSignals = true,
   stderr = (line: string) => console.error(line),
+  watchman = runWatchman,
 }: RunSupervisorOptions): Promise<{
   mode: string;
   server: ServerHandle | undefined;
@@ -267,16 +270,19 @@ export async function runSupervisor({
   };
 
   let server: ServerHandle | undefined;
+  const watchRoots = trackMetroWatchRoots({ workspaceRoot: root, writer, watchman });
   const shutdown = async (code: number, event: string, msg: string, stop?: DevServerStopRecord) => {
     if (stopping || !server) return;
     stopping = true;
     stopWatchingIdle?.();
     stopWatchingDevices?.();
+    await watchRoots.beforeClose();
     try {
       await server.close();
     } catch (err) {
       writer.write({ src: 'metro', level: 'warn', event: 'server_close_failed', msg: describeError(err) });
     }
+    await watchRoots.afterClose();
     finish(code, event, stop ? devServerStopLevel(stop) : code === 0 ? 'info' : 'error', msg, stop);
   };
 
@@ -362,6 +368,7 @@ export async function runSupervisor({
       }
     });
   }
+  watchRoots.started(serverPid ?? process.pid);
   writer.write({
     src: 'metro',
     level: 'info',
