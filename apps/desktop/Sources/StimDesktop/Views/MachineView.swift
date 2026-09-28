@@ -218,6 +218,28 @@ struct MachineView: View {
         .foregroundStyle(Palette.tertiary)
         ListSection(shown) { item in freeRow(item, selected: selected) }
       }
+      cleanup
+    }
+  }
+
+  private var cleanup: some View {
+    Card {
+      HStack(spacing: Space.lg) {
+        Image(systemName: "trash").foregroundStyle(Palette.accent)
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          Text("Reclaim what Stim left behind")
+          Text("Preview the stim gc report, then confirm before anything is deleted.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
+        Spacer()
+        let command = StimCommand(["gc", "--json"], cwd: NSHomeDirectory())
+        Button("Preview cleanup") { actions.run("Preview cleanup", command, key: ActionCenter.machineKey) }
+          .buttonStyle(.stim())
+          .disabled(actions.active(for: ActionCenter.machineKey) != nil)
+          .help(command.displayLine())
+      }
+      .padding(.horizontal, Space.xl)
+      .padding(.vertical, Space.lg)
     }
   }
 

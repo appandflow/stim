@@ -20,7 +20,6 @@ struct AttentionView: View {
           Text("Needs attention").font(.stim(.title))
           Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Palette.secondary)
         }
-        cleanup
         if !autopilot.finishedPullRequests.isEmpty {
           group("Finished pull requests", count: autopilot.finishedPullRequests.count) {
             ForEach(Array(autopilot.finishedPullRequests.enumerated()), id: \.element.path) { index, flag in
@@ -60,30 +59,9 @@ struct AttentionView: View {
     Rectangle().fill(Palette.border).frame(height: 1)
   }
 
-  private var cleanup: some View {
-    VStack(alignment: .leading, spacing: Space.md) {
-      Text("Machine cleanup").font(.stim(.headline))
-      Card {
-        HStack(spacing: Space.lg) {
-          Image(systemName: "trash").foregroundStyle(Palette.accent)
-          VStack(alignment: .leading, spacing: Space.xxs) {
-            Text("Reclaim what Stim left behind")
-            Text("Preview the stim gc report, then confirm before anything is deleted.")
-              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          }
-          Spacer()
-          runButton(
-            "Preview cleanup", StimCommand(["gc", "--json"], cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
-        }
-        .padding(.horizontal, Space.xl)
-        .padding(.vertical, Space.lg)
-      }
-    }
-  }
-
   @ViewBuilder
-  private func runButton(_ title: String, _ command: StimCommand, key: String? = nil, runTitle: String? = nil) -> some View {
-    if let active = actions.active(for: key ?? command.cwd) {
+  private func runButton(_ title: String, _ command: StimCommand, runTitle: String? = nil) -> some View {
+    if let active = actions.active(for: command.cwd) {
       Button {
         actions.presented = active
       } label: {
@@ -93,7 +71,7 @@ struct AttentionView: View {
         }
       }
     } else {
-      Button(title) { actions.run(runTitle ?? title, command, key: key) }
+      Button(title) { actions.run(runTitle ?? title, command) }
         .help(command.displayLine())
     }
   }
