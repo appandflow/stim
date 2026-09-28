@@ -49,12 +49,14 @@ public struct HelloResult: Decodable, Equatable, Sendable {
   public var protocolVersion: Int
   public var server: Server
   public var capabilities: [String]
+  /// What the server serves beyond the base protocol, such as `physical-android`; nil from a server older than it.
+  public var features: [String]?
   public var device: Device?
   /// Present only when the hello spent a pairing token.
   public var deviceToken: String?
 
   enum CodingKeys: String, CodingKey {
-    case server, capabilities, device, deviceToken
+    case server, capabilities, features, device, deviceToken
     case protocolVersion = "protocol"
   }
 }
@@ -176,5 +178,19 @@ public struct ServerEvent: Equatable, Sendable {
       return nil
     }
     return ServerError(code: code, message: error["message"]?.string ?? code)
+  }
+}
+
+/// The server ended a control session: `idle`, `taken-over`, `device-gone`, `forbidden` or `failed`, with its
+/// message. `session` is nil when the connection dropped, which ends every session it held.
+public struct ControlEnded: Equatable, Sendable {
+  public var session: String?
+  public var reason: String
+  public var message: String
+
+  public init(session: String?, reason: String, message: String) {
+    self.session = session
+    self.reason = reason
+    self.message = message
   }
 }

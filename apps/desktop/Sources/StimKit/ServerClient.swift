@@ -30,10 +30,16 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   ) -> () -> Void
 }
 
+/// A `ReplayServer` that also reports the control sessions the server ends.
+@MainActor public protocol DeviceServer: ReplayServer {
+  /// Runs `onEnded` for each `control-ended` event, and with a nil session when the connection drops.
+  func observeControlEnded(_ onEnded: @escaping @MainActor (ControlEnded) -> Void) -> () -> Void
+}
+
 /// One authenticated connection to stim-server, as `apps/mobile/src/lib/connection.ts` keeps it: it reconnects with
 /// a delay that doubles from 1 to 30 seconds, sends each subscription again after every `hello`, and stops on a
 /// refusal (`unauthorized`, `pairing-expired`, `protocol-unsupported`) until `start` runs again.
-@MainActor public final class ServerClient: ReplayServer {
+@MainActor public final class ServerClient: DeviceServer {
   public enum State: Equatable, Sendable {
     case idle
     case connecting
@@ -83,6 +89,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private var nextID = 1
   private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
   private var subscriptions: [ObjectIdentifier: Subscription] = [:]
+  private var controlObservers: [UUID: @MainActor (ControlEnded) -> Void] = [:]
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
   private var stopped = true
@@ -232,6 +239,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
       }
       return
     }
+    if message["event"]?.string == "control-ended" {
+      endControl(
+        ControlEnded(
+          session: message["session"]?.string, reason: message["reason"]?.string ?? "failed",
+          message: message["message"]?.string ?? "Control ended."))
+      return
+    }
     guard let name = message["event"]?.string, let subscription = message["subscription"]?.string else { return }
     let event = ServerEvent(name: name, subscription: subscription, fields: message)
     for sub in subscriptions.values where sub.serverID == subscription {
@@ -291,9 +305,20 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
+  public func observeControlEnded(_ onEnded: @escaping @MainActor (ControlEnded) -> Void) -> () -> Void {
+    let key = UUID()
+    controlObservers[key] = onEnded
+    return { [weak self] in self?.controlObservers[key] = nil }
+  }
+
+  private func endControl(_ ended: ControlEnded) {
+    for observer in controlObservers.values { observer(ended) }
+  }
+
   private func detach(_ reason: String) {
     let transport = self.transport
     self.transport = nil
+    if transport != nil { endControl(ControlEnded(session: nil, reason: "failed", message: reason)) }
     generation += 1
     for sub in subscriptions.values {
       sub.serverID = nil
