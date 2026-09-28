@@ -1128,34 +1128,36 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
       recordingTurn = cancelling.track(
-        recordingTurn.then(async () => {
-          if (closing) return;
-          const run = runStim(
-            options.stimCli,
-            options.env,
-            ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
-            homedir(),
-            actionLimits,
-          );
-          let stop!: () => void;
-          const stopped = new Promise<null>((resolve) => {
-            stop = () => resolve(null);
-          });
-          const cancel = () => {
-            stop();
-            return run.cancel();
-          };
-          running.add(cancel);
-          const outcome = await Promise.race([run.outcome, stopped]);
-          running.delete(cancel);
-          if (!outcome) return;
-          const printed = actionOutcome(outcome);
-          if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
-          audit({ ok: true });
-          const deleted = printed.output.recordingsDeleted;
-          const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
-          return send(socket, { id, result: { enabled, recordingsDeleted } });
-        }),
+        recordingTurn
+          .catch(() => {})
+          .then(async () => {
+            if (closing) return;
+            const run = runStim(
+              options.stimCli,
+              options.env,
+              ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
+              homedir(),
+              actionLimits,
+            );
+            let stop!: () => void;
+            const stopped = new Promise<null>((resolve) => {
+              stop = () => resolve(null);
+            });
+            const cancel = () => {
+              stop();
+              return run.cancel();
+            };
+            running.add(cancel);
+            const outcome = await Promise.race([run.outcome, stopped]);
+            running.delete(cancel);
+            if (!outcome) return;
+            const printed = actionOutcome(outcome);
+            if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
+            audit({ ok: true });
+            const deleted = printed.output.recordingsDeleted;
+            const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
+            return send(socket, { id, result: { enabled, recordingsDeleted } });
+          }),
       );
     }
 
