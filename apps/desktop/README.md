@@ -526,6 +526,43 @@ http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
 to the server is on a port with Funnel on, the tab says the server is public
 and pairing fails with the same explanation; it never suggests a Funnel port.
 
+## Notifications
+
+Stim Desktop notifies with the phone app's oversight rules
+(`packages/server/src/oversight.ts`, ported to `StimKit/Oversight.swift`), run
+on each `stim status --watch --json` payload and every 30 seconds: **Work
+started** (a workspace begins warming, or an agent starts driving a device),
+**Agent looks stuck** (a driven workspace with no agent activity for the stuck
+threshold), **Agent repeats the same failure** (the third build failure in a row
+with the same cause), **Work finished or PR ready** (an agent stopped after a
+green build, or git finds the branch merged), and **Machine in trouble** (free
+disk under Stim's floor, or critical memory pressure for a minute). Each
+workspace notifies once per episode, and a later notification replaces the
+earlier one. The first payload after launch records what is already true without
+notifying. Desktop does not look up pull requests, so it never notifies a pull
+request ready for review; a merged branch notifies once git finds it merged. The
+phone's "Someone takes over your device" is a push to a phone and never fires
+here. A phone controlling a simulator
+through stim-server counts as an agent driving it, because Desktop cannot read
+stim-server's leases.
+
+Each category has a level, with the phone's names: **Alert**, **Silent** or
+**Off**. Machine in trouble is Alert by default and the others Silent. An Alert
+appears as a card in the main window's top right corner while that window is in
+front, newest on top, with its call to action (**Open workspace**, **Show
+device**, **Show page**, **Show build**, **Show machine**) and a dismiss button; clicking the
+card opens its target. Work started and finished cards leave after 6 seconds,
+unless the pointer is over them; stuck, repeated failure and machine cards stay
+until dismissed. Otherwise an Alert is a macOS notification with sound, and
+clicking it brings Stim Desktop up on the target. macOS asks for permission the
+first time one is posted. Silent and Off never interrupt.
+
+**Settings > App > Notify when** sets each category's level, the stuck threshold
+(5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.
+During quiet hours an Alert is delivered as Silent. The rules always run every
+category without quiet hours, so switching a category on later does not notify
+what it missed.
+
 ## Settings
 
 **Stim > Settings** (Command-comma) edits Stim settings and the app's own
