@@ -59,6 +59,7 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    ['expo-navigation-bar', { enforceContrast: false }],
     ['expo-notifications', { mode: dev ? 'development' : 'production' }],
     '@sentry/react-native/expo',
     './plugins/sentry-upload-only-with-token',

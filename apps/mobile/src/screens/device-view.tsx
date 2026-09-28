@@ -24,6 +24,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import { NavigationBar } from 'expo-navigation-bar';
 
 import { Button } from '@/components/button';
 import { DeviceScreen } from '@/components/device-screen';
@@ -365,6 +366,7 @@ export function DeviceView({
 
   return (
     <GestureHandlerRootView style={styles.root}>
+      <NavigationBar style="light" />
       <GestureDetector gesture={zoom.pan}>
         <View
           ref={root}
