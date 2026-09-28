@@ -1148,6 +1148,27 @@ describe('buildIos with a mocked executor', () => {
     await promise;
   });
 
+  test.each([
+    ['a generic destination with an arch builds that one slice', 'arm64', ['ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES']],
+    ['a generic destination without an arch leaves ARCHS to the project', null, []],
+  ])('%s', async (_name, arch, expected) => {
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      destination: 'generic/platform=iOS Simulator',
+      arch,
+      logWriter: recordingWriter(),
+      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES'],
+    });
+    const args = spawnCalls[0]?.args ?? [];
+    expect(args[args.indexOf('-destination') + 1]).toBe('generic/platform=iOS Simulator');
+    expect(args.slice(args.indexOf('build') + 1)).toEqual(['COMPILATION_CACHE_ENABLE_CACHING=YES', ...expected]);
+    makeProduct(workspaceDerivedData(tmp));
+    child.emit('close', 0, null);
+    await promise;
+  });
+
   test('compilationCache: null is how a caller turns it off entirely', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });

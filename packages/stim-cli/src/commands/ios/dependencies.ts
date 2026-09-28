@@ -18,6 +18,8 @@ import {
   remoteIosDeps,
   resolveRemoteContext,
 } from '../../engine/device-remote.ts';
+import { readRemoteSimulatorArch } from '../../engine/agent-device.ts';
+import { hostSimulatorArch } from '@stim-cli/core';
 import {
   awaitIosDeviceLaunch,
   installIosDeviceApp,
@@ -69,6 +71,8 @@ export interface IosDeps {
   ensureRemoteBootOwned: typeof ensureRemoteBootOwned;
   detectProviders: typeof detectProviders;
   remoteIosDeps: typeof remoteIosDeps;
+  readRemoteSimulatorArch: typeof readRemoteSimulatorArch;
+  hostSimulatorArch: typeof hostSimulatorArch;
   resolveEasCliBin: typeof resolveEasCliBin;
   findProjectRoot: typeof findProjectRoot;
   resolveSettings: typeof resolveSettings;
@@ -164,6 +168,8 @@ export const DEFAULT_DEPS: IosDeps = {
   ensureBooted,
   resolveRemoteContext,
   remoteIosDeps,
+  readRemoteSimulatorArch,
+  hostSimulatorArch,
   ensureMetroReachable,
   ensureRemoteBootOwned,
   detectProviders,

@@ -684,6 +684,7 @@ export async function buildIos({
   configuration = 'Debug',
   sdk = 'iphonesimulator',
   destination = null,
+  arch = null,
   derivedDataPath = null,
   extraArgs = [],
   compilationCache = undefined,
@@ -703,6 +704,7 @@ export async function buildIos({
   configuration?: string;
   sdk?: string;
   destination?: string | null;
+  arch?: string | null;
   derivedDataPath?: string | null;
   extraArgs?: string[];
   compilationCache?: string[] | null;
@@ -764,10 +766,12 @@ export async function buildIos({
   }
   const buildScheme = selected.scheme as string;
 
-  const buildSettings =
+  const cacheSettings =
     compilationCache === undefined
       ? resolveCompilationCacheSettings({ root, derivedDataPath: dd, exec: executor, onNote, optimizations })
       : compilationCache || [];
+  // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
+  const buildSettings = arch ? [...cacheSettings, `ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : cacheSettings;
 
   const args = xcodebuildArgs({
     project: resolvedTarget,

@@ -194,7 +194,12 @@ leased until <time>" for each one.`,
   scheme          the explicit shared Xcode scheme selected by --scheme;
                   absent for automatic selection; not the app URL scheme
   cacheKey        the shared-build-cache key derived from it (the
-                  configuration is part of it: -release-sim vs -debug-sim)
+                  configuration is part of it: -release-sim vs
+                  -debug-sim-arm64). A single-architecture simulator build
+                  ends in its architecture (-arm64 or -x86-64): a local Debug
+                  build compiles this Mac's, a --remote build the remote
+                  host's. A local non-Debug simulator build compiles every
+                  architecture the project lists and has no suffix
   With --eas-profile, fingerprint is computed by EAS CLI using the selected
   profile/environment, and cacheKey identifies the EAS project and build ID
   separately from local native builds. cacheHit is "remote" for the EAS

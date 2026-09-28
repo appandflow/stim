@@ -21,6 +21,8 @@ import {
   resolveConfiguration,
   resolveDeviceType,
   resolveRuntime,
+  simulatorBuildArch,
+  iosProviderRunOptions,
 } from './support.ts';
 import type { FailArgs, IosCommandOptions } from './types.ts';
 
@@ -135,10 +137,17 @@ export async function planIos(
       remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
     });
   }
+  const arch = simulatorBuildArch({
+    physical: false,
+    remoteArch: null,
+    hostArch: d.hostSimulatorArch(),
+    configuration,
+  });
   const cacheKey = buildCacheKey(PLATFORM, fingerprint.hash, {
     scheme: opts.scheme,
     ...(configuration ? { configuration } : {}),
     isSimulator: true,
+    ...(arch ? { arch } : {}),
     ...(buildProfile ? { buildProfile } : {}),
   });
   const plan = await planCachedBuild(
@@ -152,7 +161,7 @@ export async function planIos(
       providerConfig: d.resolveCacheProviderConfig(settingsContext),
       expoRemote:
         cachePolicy.remote && !buildProfile && !opts.scheme
-          ? { runOptions: configuration ? { configuration } : null }
+          ? { runOptions: iosProviderRunOptions(configuration, arch) }
           : null,
     },
     {

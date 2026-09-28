@@ -132,6 +132,7 @@ export interface BuildRunOptions {
   variant?: string;
   abi?: string;
   allArch?: boolean;
+  arch?: string;
   configuration?: string;
   scheme?: string;
   buildConfiguration?: string;
@@ -165,9 +166,20 @@ function buildTarget(options: BuildRunOptions): string {
   return `on-${slug(name)}`;
 }
 
+/** The simulator slice a local build compiles for this machine: `arm64` or `x86_64`. */
+export function hostSimulatorArch(arch: string = process.arch): 'arm64' | 'x86_64' {
+  return arch === 'x64' ? 'x86_64' : 'arm64';
+}
+
 export function buildCacheKey(platform: string, fingerprintHash: string, options: unknown = {}): string {
   const opts = (options && typeof options === 'object' ? options : {}) as BuildRunOptions;
-  const abi = platform === 'android' && typeof opts.abi === 'string' ? slug(opts.abi) : '';
+  const target = buildTarget(opts);
+  const abi =
+    platform === 'android' && typeof opts.abi === 'string'
+      ? slug(opts.abi)
+      : platform === 'ios' && target === 'sim' && typeof opts.arch === 'string'
+        ? slug(opts.arch)
+        : '';
   const allArch = platform === 'android' && opts.allArch === true ? '-all-arch' : '';
   const compiler = typeof opts.compiler === 'string' ? slug(opts.compiler) : '';
   const profile = typeof opts.buildProfile === 'string' ? slug(opts.buildProfile) : '';
@@ -175,7 +187,7 @@ export function buildCacheKey(platform: string, fingerprintHash: string, options
     platform === 'ios' && typeof opts.scheme === 'string' && opts.scheme
       ? createHash('sha256').update(opts.scheme).digest('hex')
       : '';
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${buildTarget(opts)}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${target}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
 }
 
 export interface RegisterOptions {

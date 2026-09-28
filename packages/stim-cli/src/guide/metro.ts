@@ -60,6 +60,12 @@ REMOTE DEVICE BACKENDS
   requires AGENT_DEVICE_DAEMON_BASE_URL and
   AGENT_DEVICE_DAEMON_AUTH_TOKEN. Stim creates no remote session for it.
 
+  An iOS remote build compiles one simulator architecture, since xcodebuild
+  cannot target the remote simulator itself: the proxy daemon's host
+  architecture from its /health hostArch, and arm64 when the daemon does not
+  report one, cannot be reached within 3 seconds, or runs on EAS, whose hosts
+  are Apple silicon. The cache key ends in that architecture.
+
   The EAS backend needs eas-cli 21.6.0 or later and an account with EAS
   Simulator access. An EAS session is billable. Stim prepares the app before
   it creates or reconnects the session, so a failed build starts no session

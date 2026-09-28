@@ -11,6 +11,7 @@ import { listIosRuntimes } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
+import type { SimulatorArch } from '../../engine/agent-device.ts';
 
 export const PLATFORM = 'ios';
 
@@ -181,6 +182,30 @@ export function isReleaseConfiguration(configuration: string | null | undefined)
   return (
     typeof configuration === 'string' && configuration.trim() !== '' && configuration.trim().toLowerCase() !== 'debug'
   );
+}
+
+export function simulatorBuildArch({
+  physical,
+  remoteArch,
+  hostArch,
+  configuration,
+}: {
+  physical: boolean;
+  remoteArch: SimulatorArch | null;
+  hostArch: SimulatorArch;
+  configuration: string | null | undefined;
+}): SimulatorArch | null {
+  if (physical) return null;
+  if (remoteArch) return remoteArch;
+  return isReleaseConfiguration(configuration) ? null : hostArch;
+}
+
+export function iosProviderRunOptions(
+  configuration: string | null | undefined,
+  arch: SimulatorArch | null,
+): { configuration?: string; arch?: SimulatorArch } | null {
+  if (arch) return { configuration: configuration || 'Debug', arch };
+  return configuration ? { configuration } : null;
 }
 
 export function podAction(
