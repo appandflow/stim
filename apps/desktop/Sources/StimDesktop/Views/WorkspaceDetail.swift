@@ -63,7 +63,12 @@ struct WorkspaceDetail: View {
 
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
-      WorkspaceHeaderLine(env: env, openLogs: { showsLogs = true })
+      WorkspaceHeaderLine(
+        env: env,
+        openLogs: {
+          logQuery.errorsOnly = false
+          showsLogs = true
+        })
         .padding(.horizontal, Space.xxl)
         .padding(.vertical, Space.md)
       Rectangle().fill(Palette.border).frame(height: 1)

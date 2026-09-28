@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Each platform the workspace runs: the running build's phases, output and cache miss, or the last build and what
 /// `stim <platform> --plan` predicts for the next one, with Check and Run. Opening the section checks every platform
-/// with a last build or a device, unless a build is running.
+/// it shows, unless a build is running.
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
@@ -14,14 +14,19 @@ struct BuildSection: View {
 
   private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
 
+  private var platforms: [String] {
+    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms }
+    return env.runPlatforms + [running.platform]
+  }
+
   private var trigger: [String] {
-    [running == nil ? "idle" : "building"] + env.usedPlatforms.map(buildKey)
+    [running == nil ? "idle" : "building"] + platforms.map(buildKey)
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       SectionLabel(title: "Build")
-      ForEach(env.runPlatforms, id: \.self) { platform in
+      ForEach(platforms, id: \.self) { platform in
         card(platform)
       }
     }
@@ -32,7 +37,7 @@ struct BuildSection: View {
 
   private func checkUsed() {
     if running != nil { return checks.cancel(workspace: env.path) }
-    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: env.usedPlatforms.map { ($0, buildKey($0)) }))
+    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: platforms.map { ($0, buildKey($0)) }))
   }
 
   private func card(_ platform: String) -> some View {

@@ -133,6 +133,8 @@ this order:
 - **Agents**: the coding-agent sessions working in the workspace.
 - **Build cache · project**: the project's hit rate and time saved per
   platform.
+- **Warnings**: the workspace's `warnings` from `stim status --json`, when
+  there are some.
 
 Below the line, the devices take the rest of the page: every device of the
 workspace at once, in the order above, each with its live frame. The frames

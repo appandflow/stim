@@ -226,7 +226,6 @@ struct GitPopover: View {
 /// CPU, memory and disk with their icons.
 struct UsageFigures: View {
   var usage: WorkspaceUsage
-  var large = false
 
   var body: some View {
     if let cpu = usage.cpuPercent { figure("cpu", formatPercent(cpu), help: "CPU, where 100% is one core") }
@@ -240,7 +239,7 @@ struct UsageFigures: View {
     HStack(spacing: Space.xs + 1) {
       Image(systemName: icon).font(.system(size: 10)).foregroundStyle(Palette.secondary).frame(width: 14)
       Text(value)
-        .font(.stim(large && !minor ? .callout : .footnote, weight: large && !minor ? .semibold : nil))
+        .font(.stim(.footnote))
         .foregroundStyle(minor ? Palette.secondary : Palette.text)
         .monospacedDigit()
         .lineLimit(1)
@@ -251,27 +250,23 @@ struct UsageFigures: View {
 
 struct ProcessRowsTable: View {
   var rows: [ProcessRow]
-  var compact = false
 
   var body: some View {
-    Grid(alignment: .leading, horizontalSpacing: Space.md, verticalSpacing: compact ? Space.xxs : Space.sm) {
-      if !compact {
-        GridRow {
-          Text("Process")
-          Text("CPU").gridColumnAlignment(.trailing)
-          Text("Memory").gridColumnAlignment(.trailing)
-        }
-        .font(.stim(.caption, weight: .semibold))
-        .foregroundStyle(Palette.tertiary)
+    Grid(alignment: .leading, horizontalSpacing: Space.md, verticalSpacing: Space.sm) {
+      GridRow {
+        Text("Process")
+        Text("CPU").gridColumnAlignment(.trailing)
+        Text("Memory").gridColumnAlignment(.trailing)
       }
+      .font(.stim(.caption, weight: .semibold))
+      .foregroundStyle(Palette.tertiary)
       ForEach(rows) { row in
         GridRow {
           Text(row.label).lineLimit(1).truncationMode(.middle)
           Text(formatPercent(row.cpuPercent)).monospacedDigit().gridColumnAlignment(.trailing)
           Text(formatMemoryMb(row.memoryMb)).monospacedDigit().gridColumnAlignment(.trailing)
         }
-        .font(.stim(compact ? .caption : .callout))
-        .foregroundStyle(compact ? Palette.secondary : Palette.text)
+        .font(.stim(.callout))
       }
     }
   }
