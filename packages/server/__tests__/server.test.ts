@@ -656,6 +656,7 @@ describe('push.register', () => {
   const PUSH = {
     token: 'ExponentPushToken[abc123]',
     events: ['stuck', 'machine'],
+    levels: { stuck: 'silent', machine: 'alert' },
     ref: 'mac-1',
     stuckMinutes: 20,
     quietHours: { start: 22 * 60, end: 7 * 60, timeZone: 'America/Toronto' },
@@ -709,6 +710,7 @@ describe('push.register', () => {
     const legacy = { token: PUSH.token, events: ['build-failed', 'disk'], agentOnly: true, ref: 'mac-1' };
     expect(await client.request('push.register', legacy)).toEqual({ id: 2, result: {} });
     expect(readDevices()[0]!.push).toMatchObject({ events: ['machine'], stuckMinutes: 15, quietHours: null });
+    expect(readDevices()[0]!.push!.levels).toBeUndefined();
   });
 
   it('refuses a token that is not an Expo push token and unknown events', async () => {
@@ -724,6 +726,9 @@ describe('push.register', () => {
       { ...PUSH, stuckMinutes: 2.5 },
       { ...PUSH, quietHours: { start: 1440, end: 0, timeZone: 'UTC' } },
       { ...PUSH, quietHours: { start: 0, end: 60, timeZone: 'Mars/Olympus' } },
+      { ...PUSH, levels: { stuck: 'loud' } },
+      { ...PUSH, levels: { offline: 'alert' } },
+      { ...PUSH, levels: ['silent'] },
     ]) {
       expect(await client.request('push.register', params)).toMatchObject({ error: { code: 'bad-request' } });
     }

@@ -5,9 +5,11 @@ import { configDir, withDirLock } from '@stim-cli/core';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
 import {
   CAPABILITIES,
+  NOTIFICATION_LEVELS,
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
   type Capability,
+  type NotificationLevel,
   type PushEvent,
   type QuietHours,
 } from './protocol.ts';
@@ -32,6 +34,8 @@ export interface PairedDevice {
 export interface PushRegistration {
   token: string;
   events: PushEvent[];
+  /** Absent for a phone that registered before levels, which gets each event's default delivery. */
+  levels?: Partial<Record<PushEvent, NotificationLevel>>;
   ref: string;
   registeredAt: string;
   stuckMinutes: number;
@@ -41,6 +45,17 @@ export interface PushRegistration {
 /** The events a registration asks for, with the legacy `disk` read as `machine` and other legacy names dropped. */
 export function pushEvents(events: readonly unknown[]): PushEvent[] {
   return PUSH_EVENTS.filter((event) => events.includes(event) || (event === 'machine' && events.includes('disk')));
+}
+
+/** Levels as `push.register` takes them, or null when `value` is not valid. */
+export function parseLevels(value: unknown): Partial<Record<PushEvent, NotificationLevel>> | null {
+  if (!isJsonObject(value)) return null;
+  const entries = Object.entries(value);
+  const valid = entries.every(
+    ([event, level]) =>
+      (PUSH_EVENTS as readonly string[]).includes(event) && (NOTIFICATION_LEVELS as readonly unknown[]).includes(level),
+  );
+  return valid ? (Object.fromEntries(entries) as Partial<Record<PushEvent, NotificationLevel>>) : null;
 }
 
 function validTimeZone(timeZone: string): boolean {
@@ -125,9 +140,11 @@ function parsePush(value: unknown): PushRegistration | null {
   const { token, events, ref, registeredAt, stuckMinutes } = value;
   if (typeof token !== 'string' || !pushToken.test(token) || typeof ref !== 'string') return null;
   if (!Array.isArray(events) || typeof registeredAt !== 'string') return null;
+  const levels = value.levels === undefined ? null : parseLevels(value.levels);
   return {
     token,
     events: pushEvents(events),
+    ...(levels ? { levels } : {}),
     ref,
     registeredAt,
     stuckMinutes: validStuckMinutes(stuckMinutes) ? stuckMinutes : DEFAULT_STUCK_MINUTES,

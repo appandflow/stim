@@ -581,13 +581,17 @@ export type ClientAuth = { deviceToken: string } | { pairingToken: string; devic
 /** What stim-server can push, the categories of `@/lib/oversight`. */
 export type PushEvent = 'started' | 'stuck' | 'looping' | 'finished' | 'machine' | 'control';
 
+/** How a pushed event is delivered: `alert` with a banner and sound, `silent` to the notification list only. */
+export type NotificationLevel = 'alert' | 'silent';
+
 /**
  * `ref` comes back as `data.ref` in every push, naming the Mac that sent it. `quietHours` are minutes after midnight
- * in the phone's IANA `timeZone`.
+ * in the phone's IANA `timeZone`. Only a server whose hello lists the `notification-levels` feature takes `levels`.
  */
 export interface PushRegisterParams {
   token: string;
   events: PushEvent[];
+  levels?: Partial<Record<PushEvent, NotificationLevel>>;
   ref: string;
   stuckMinutes?: number;
   quietHours?: { start: number; end: number; timeZone: string };
