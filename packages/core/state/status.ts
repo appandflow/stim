@@ -80,6 +80,8 @@ export interface LastBuildReport {
   finishedAt: string | null;
   errorCode?: string;
   missReason?: BuildMissReason;
+  /** The build machine that compiled the app when the build was offloaded. */
+  offloadedTo?: string;
   /** The first compiler diagnostics of a failed build, when the build tool reported any. */
   diagnostics?: BuildDiagnostic[];
 }

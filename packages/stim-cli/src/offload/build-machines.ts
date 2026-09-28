@@ -136,6 +136,33 @@ function hello({ url, servername, host }: Endpoint, auth: Record<string, string>
 
 const realIo: BuildMachineIo = { status: tailscaleStatus, hello };
 
+/**
+ * The endpoint of a paired machine's pinned node, or why Stim does not connect to it. The name must still
+ * resolve to exactly the pinned node; the token is never sent anywhere else.
+ */
+export function pinnedEndpoint(
+  credential: BuildMachineCredential,
+  status: () => unknown = tailscaleStatus,
+): Endpoint | string {
+  const parsed = parseMachine(credential.machine);
+  if (!parsed) return `${credential.machine} is not a tailnet name`;
+  const current = status();
+  if (!isJsonObject(current)) return 'Tailscale is not running';
+  const peer = findPeer(current, parsed.name);
+  if (peer === 'missing') return `no peer on this tailnet is named ${parsed.name}`;
+  if (peer === 'ambiguous') return `several tailnet peers match ${parsed.name}`;
+  if (peer.nodeId !== credential.nodeId) {
+    return `${peer.dnsName} is now node ${peer.nodeId}, not the pinned ${credential.nodeId}; run stim doctor`;
+  }
+  return endpoint(peer, parsed.port);
+}
+
+/** The build machines named in `offload.machines` that this Mac asked for build access, in that order. */
+export function pairedMachines(entries: string[] = configuredMachines()): BuildMachineCredential[] {
+  const credentials = readBuildMachines();
+  return entries.flatMap((entry) => credentials.filter((each) => each.machine === entry));
+}
+
 function configuredMachines(): string[] {
   const machines = loadConfig()?.offload?.machines;
   return Array.isArray(machines) ? machines.filter((entry): entry is string => typeof entry === 'string') : [];

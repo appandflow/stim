@@ -51,7 +51,15 @@ export const METHODS = [
   'push.register',
   'push.unregister',
   'notifications.list',
+  'build.offer',
+  'build.sync',
+  'build.start',
+  'build.cancel',
+  'build.artifact',
 ] as const;
+
+/** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
+export const BUILD_METHODS = ['build.offer', 'build.sync', 'build.start', 'build.cancel', 'build.artifact'] as const;
 
 export type Method = (typeof METHODS)[number];
 
@@ -85,6 +93,8 @@ export const ERROR_CODES = [
   'device-busy',
   'unknown-session',
   'no-recording',
+  'build-refused',
+  'build-busy',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -475,6 +485,92 @@ export interface BuildPlanParams {
 
 /** `stim ios|android --plan --json`. It builds, boots and installs nothing, and writes no Stim state. */
 export type BuildPlanResult = BuildPlanPayload;
+/** A client's repository on a build machine: letters, digits, `.`, `_` and `-`, at most 80. */
+export const BUILD_REPO_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$';
+
+/** Asks a build machine what it can build, how busy it is, and how warm its copy of `repo` is. */
+export interface BuildOfferParams {
+  repo: string;
+  /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
+  lockfile?: string;
+}
+
+/** The toolchain a build must match exactly on both Macs. */
+export interface BuildToolchain {
+  stimBuild: string | null;
+  arch: string;
+  xcode: string | null;
+  simulatorSdk: string | null;
+  cocoapods: string | null;
+  /** Simulator runtime identifiers that have an iPhone simulator to build for. */
+  runtimes: string[];
+}
+
+export interface BuildOfferResult {
+  toolchain: BuildToolchain;
+  capacity: { running: number; max: number; diskFreeBytes: number | null; minDiskFreeBytes: number };
+  warm: { checkout: boolean; dependencies: boolean; build: boolean };
+}
+
+/** One file of the client's checkout. A `link` blob holds the symlink's target. */
+export interface BuildFile {
+  path: string;
+  kind: 'file' | 'exec' | 'link';
+  size: number;
+  sha256: string;
+}
+
+/**
+ * One page of the manifest of `repo`, as `git ls-files -co --exclude-standard` lists it. Pages accumulate until
+ * `done`; the next `build.sync` after that starts a new manifest.
+ */
+export interface BuildSyncParams {
+  repo: string;
+  files: BuildFile[];
+  done: boolean;
+}
+
+/** The digests of this page the machine lacks; the client sends each as binary frames before `build.start`. */
+export interface BuildSyncResult {
+  missing: string[];
+}
+
+/** Builds the synced manifest of `repo`. The machine refuses unless its fingerprint equals `fingerprint`. */
+export interface BuildStartParams {
+  repo: string;
+  project: string;
+  platform: 'ios';
+  configuration: string | null;
+  scheme: string | null;
+  runtime: string;
+  fingerprint: string;
+  packageName: string | null;
+  isExpo: boolean;
+  optimizations: Record<string, unknown> | null;
+  stimBuild: string;
+}
+
+export interface BuildJobParams {
+  job: string;
+}
+
+/** Sent after the artifact's binary frames: the archive's name, size and sha256. */
+export interface BuildArtifactResult {
+  name: string;
+  size: number;
+  sha256: string;
+}
+
+export type BuildJobOutcome =
+  | {
+      ok: true;
+      artifact: BuildArtifactResult;
+      fingerprint: string;
+      compilationCache: Record<string, unknown>;
+      timings: Record<string, number>;
+    }
+  | { ok: false; code: string; message: string; timings?: Record<string, number> };
+
 export type MemoryPressure = 'normal' | 'warning' | 'critical';
 
 /** A volume that holds Stim workspaces, Stim home, or the simulators. */
@@ -668,6 +764,11 @@ export interface Methods {
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
+  'build.offer': { params: BuildOfferParams; result: BuildOfferResult };
+  'build.sync': { params: BuildSyncParams; result: BuildSyncResult };
+  'build.start': { params: BuildStartParams; result: BuildJobParams };
+  'build.cancel': { params: BuildJobParams; result: Record<string, never> };
+  'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
 }
 
 export type ClientRequest = {
@@ -786,7 +887,21 @@ export interface NotificationEvent {
   notification: NotificationEntry;
 }
 
+/**
+ * A build job's progress: a `phase` line, a build-log `record`, or, last, its `outcome`. The job ends with the
+ * connection that started it.
+ */
+export interface BuildProgressEvent {
+  event: 'build.progress';
+  job: string;
+  phase?: string;
+  msg?: string;
+  record?: Record<string, unknown>;
+  outcome?: BuildJobOutcome;
+}
+
 export type ServerEvent =
+  | BuildProgressEvent
   | NotificationEvent
   | StatusEvent
   | LogsEvent
@@ -807,6 +922,17 @@ const protocolError: JsonSchema = {
   required: ['code', 'message'],
   additionalProperties: false,
   properties: { code: { enum: [...ERROR_CODES] }, message: { type: 'string' } },
+};
+
+const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
+
+const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
+
+const buildJob: JsonSchema = {
+  type: 'object',
+  required: ['job'],
+  additionalProperties: false,
+  properties: { job: { type: 'string' } },
 };
 
 function request(method: Method, params?: JsonSchema): JsonSchema {
@@ -1336,6 +1462,67 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { since: { type: 'integer', minimum: 0 } },
           }),
+          request('build.offer', {
+            type: 'object',
+            required: ['repo'],
+            additionalProperties: false,
+            properties: { repo: buildRepo, lockfile: sha256 },
+          }),
+          request('build.sync', {
+            type: 'object',
+            required: ['repo', 'files', 'done'],
+            additionalProperties: false,
+            properties: {
+              repo: buildRepo,
+              files: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['path', 'kind', 'size', 'sha256'],
+                  additionalProperties: false,
+                  properties: {
+                    path: { type: 'string', minLength: 1 },
+                    kind: { enum: ['file', 'exec', 'link'] },
+                    size: { type: 'integer', minimum: 0 },
+                    sha256,
+                  },
+                },
+              },
+              done: { type: 'boolean' },
+            },
+          }),
+          request('build.start', {
+            type: 'object',
+            required: [
+              'repo',
+              'project',
+              'platform',
+              'configuration',
+              'scheme',
+              'runtime',
+              'fingerprint',
+              'packageName',
+              'isExpo',
+              'optimizations',
+              'stimBuild',
+            ],
+            additionalProperties: false,
+            properties: {
+              repo: buildRepo,
+              project: { type: 'string', description: 'The app directory relative to the repository root.' },
+              platform: { const: 'ios' },
+              configuration: { type: ['string', 'null'] },
+              scheme: { type: ['string', 'null'] },
+              runtime: { type: 'string', minLength: 1 },
+              fingerprint: { type: 'string', minLength: 1 },
+              packageName: { type: ['string', 'null'] },
+              isExpo: { type: 'boolean' },
+              optimizations: { type: ['object', 'null'] },
+              stimBuild: { type: 'string', minLength: 1 },
+            },
+          }),
+          request('build.cancel', buildJob),
+          request('build.artifact', buildJob),
         ],
       },
       ServerResponse: {
@@ -1442,6 +1629,19 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'job'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'build.progress' },
+              job: { type: 'string' },
+              phase: { type: 'string' },
+              msg: { type: 'string' },
+              record: { type: 'object' },
+              outcome: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } },
+            },
+          },
           {
             type: 'object',
             required: ['event', 'log', 'notification'],

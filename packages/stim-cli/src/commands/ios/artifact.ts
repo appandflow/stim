@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
@@ -40,6 +41,16 @@ import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../e
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
+import {
+  chooseBuildMachine,
+  liveBuildSlots,
+  offloadIosBuild,
+  offloadMode,
+  offloadPlacement,
+  simulatorRuntime,
+  type OffloadChoice,
+} from '../../offload/client.ts';
+import { pairedMachines } from '../../offload/build-machines.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
@@ -138,6 +149,8 @@ export interface PreparedIosArtifact {
     identity: { fingerprint: string; key: string } | null;
     hit: CacheHitLevel;
     providerName: string | null;
+    /** The build machine that compiled the app, when the build was offloaded. */
+    offloadedTo: string | null;
     readEnabled: boolean;
     missReason: BuildMissReason | null;
     waitedForBuild: WaitedForBuild | null;
@@ -246,6 +259,8 @@ export async function acquireIosArtifact(
   let appPath: string | null = null;
   let bundleId: string | null = null;
   let cacheHit: CacheHitLevel = false;
+  let offloadedTo: string | null = null;
+  const openOffload: { choice: OffloadChoice | null } = { choice: null };
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
@@ -628,24 +643,145 @@ export async function acquireIosArtifact(
     }
   }
 
+  async function takeBuildSlot(): Promise<void> {
+    if (!maxBuilds) return;
+    try {
+      buildSlot = await d.acquireBuildSlot({ max: maxBuilds, root, logFile, out: note });
+    } catch (e) {
+      const refusal = claimFailure(e, 'stim ios');
+      if (refusal) {
+        fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
+      }
+      note(
+        chalk.yellow(phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`)),
+      );
+    }
+  }
+
+  /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
+  function placeBuild(): { reason: string; runtime: string; machines: ReturnType<typeof pairedMachines> } | null {
+    const mode = offloadMode();
+    const machines = mode === 'off' ? [] : pairedMachines();
+    if (mode === 'off' || machines.length === 0) return null;
+    const runtime = physical || remoteDestination || release ? null : simulatorRuntime(udid);
+    const unsupported = physical
+      ? 'device builds build here'
+      : remoteDestination
+        ? '--remote builds build here'
+        : release
+          ? `${configuration} builds build here`
+          : !cachePolicy.write
+            ? 'the build cache is off'
+            : !runtime
+              ? `the runtime of simulator ${udid} is unknown`
+              : null;
+    const placement = offloadPlacement({
+      mode,
+      machines: machines.length,
+      liveSlots: maxBuilds ? liveBuildSlots() : 0,
+      maxBuilds: maxBuilds ?? 0,
+      unsupported,
+    });
+    if (!placement.offload) {
+      phase('build', `placement: here (${placement.reason})`);
+      return null;
+    }
+    return { reason: placement.reason, runtime: runtime!, machines };
+  }
+
+  /** Asks the paired machines once the post-mutation key is known; null builds here. */
+  async function chooseMachine(placement: {
+    reason: string;
+    runtime: string;
+    machines: ReturnType<typeof pairedMachines>;
+  }): Promise<OffloadChoice | null> {
+    const choice = await chooseBuildMachine({
+      projectRoot: root,
+      runtime: placement.runtime,
+      note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
+      machines: placement.machines,
+    });
+    if (typeof choice === 'string') {
+      phase('build', `offload failed: no machine can build it (${choice}) -> building here`);
+      return null;
+    }
+    openOffload.choice = choice;
+    phase('build', `placement: ${choice.machine} (${placement.reason})`);
+    return choice;
+  }
+
+  /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
+  async function compileElsewhere({ choice, runtime }: { choice: OffloadChoice; runtime: string }): Promise<boolean> {
+    if (!storeKey || !storeHash) return false;
+    const stagingDir = join(workspaceDir(root), 'offload');
+    const outcome = await offloadIosBuild({
+      choice,
+      expectedFingerprint: storeHash,
+      runtime,
+      configuration,
+      scheme: buildScheme ?? null,
+      isExpo,
+      optimizations,
+      stagingDir,
+      onPhase: (name, msg) => note(chalk.dim(phaseLine('build', `${choice.machine} ${name}: ${msg.trim()}`))),
+      onRecord: (record) => logWriter().write({ ...record, offloadedTo: choice.machine }),
+    });
+    let stored: string | null = null;
+    let reason = outcome.ok ? null : outcome.reason;
+    if (outcome.ok) {
+      const settled = await refingerprintAfterMutation({
+        projectRoot: root,
+        platform: PLATFORM,
+        previousHash: storeHash,
+        fingerprint: d.fingerprintProject,
+      });
+      if (!settled || settled.moved) {
+        reason = 'the checkout here changed while it built';
+      } else {
+        try {
+          stored = d.storeBuild(PLATFORM, storeKey, outcome.appPath, {
+            sources: storeSources,
+            overwrite: !useBuildCache,
+          });
+        } catch (e) {
+          reason = `could not store the app: ${(e as Error)?.message || e}`;
+        }
+      }
+    }
+    try {
+      rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
+    const prepared = stored ? await installableCachedApp(stored) : null;
+    if (!outcome.ok || !prepared) {
+      phase('build', `offload failed: ${reason ?? 'the stored app is not installable'} -> building here`);
+      logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
+      return false;
+    }
+    const { timings } = outcome;
+    appPath = prepared;
+    offloadedTo = outcome.machine;
+    phase(
+      'build',
+      `built on ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
+        `sync ${formatDuration(timings.syncMs)}, build ${formatDuration(timings.workerMs)}, fetch ${formatDuration(timings.fetchMs)}`,
+    );
+    compilationCache = outcome.compilationCache;
+    phase('cache', `compilation cache on ${outcome.machine} ${compilationCacheActivityLine(compilationCache)}`);
+    logWriter().write({
+      src: 'build',
+      level: 'info',
+      event: 'offload_done',
+      msg: `built on ${outcome.machine}`,
+      timings,
+    });
+    return true;
+  }
+
   async function buildArtifact(): Promise<void> {
     buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
     if (!appPath) {
-      if (maxBuilds) {
-        try {
-          buildSlot = await d.acquireBuildSlot({ max: maxBuilds, root, logFile, out: note });
-        } catch (e) {
-          const refusal = claimFailure(e, 'stim ios');
-          if (refusal) {
-            fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
-          }
-          note(
-            chalk.yellow(
-              phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),
-            ),
-          );
-        }
-      }
+      const offload = placeBuild();
+      if (!offload) await takeBuildSlot();
 
       const mutatingSteps: string[] = [];
       const rekeyedBy: string[] = [];
@@ -770,8 +906,16 @@ export async function acquireIosArtifact(
         }
       }
 
-      if (!appPath) {
+      if (offload && !appPath) {
         explainMiss(rekeyedBy);
+        step('compile');
+        if (!storeKey) phase('build', 'offload failed: no cache key to store the app under -> building here');
+        const choice = storeKey ? await chooseMachine(offload) : null;
+        if (!choice || !(await compileElsewhere({ choice, runtime: offload.runtime }))) await takeBuildSlot();
+      }
+
+      if (!appPath) {
+        if (!offload) explainMiss(rekeyedBy);
         step('compile');
         phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
         const result = await d.buildIos({
@@ -865,6 +1009,7 @@ export async function acquireIosArtifact(
         identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
         hit: cacheHit,
         providerName: remote?.name ?? providerName,
+        offloadedTo,
         readEnabled: useBuildCache,
         missReason: cacheHit ? null : missReason,
         waitedForBuild,
@@ -894,6 +1039,7 @@ export async function acquireIosArtifact(
     if (error instanceof ArtifactRefusal) return { ok: false, failure: error.failure, compilationCache };
     throw error;
   } finally {
+    openOffload.choice?.connection.close();
     releaseLock();
     releaseSlot();
     if (!transferred) releaseArtifact();

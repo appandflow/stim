@@ -218,6 +218,9 @@ leased until <time>" for each one.`,
                   the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
+  offloadedTo     only on an iOS app a build machine compiled: its
+                  offload.machines entry (see \`guide settings\`). cacheHit is
+                  false for it
   compilationCache
                   Xcode compilation-cache activity for a compiled iOS app:
                     { status: "reported", hits, cacheableTasks, hitRatePercent }
@@ -1066,7 +1069,7 @@ RULES
 
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
-               errorCode?, missReason?, diagnostics? }
+               errorCode?, missReason?, offloadedTo?, diagnostics? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -1283,7 +1286,10 @@ RULES
   \`project\` is null outside a project; a platform with no run yet is null.
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
   hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
-  lastPodsMs once the project has compiled or installed pods. Milliseconds are
+  lastPodsMs once the project has compiled or installed pods, and
+  offloadedRuns, offloadedRunMs and lastOffloadHost once a build machine
+  compiled one. An offloaded run is a miss but not a cold run, so the cold
+  average, time saved and build estimates stay local. Milliseconds are
   integers.
 
 HOW A RUN IS COUNTED (\`stats\`)

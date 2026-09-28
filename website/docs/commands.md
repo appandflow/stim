@@ -190,7 +190,9 @@ stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-ty
 
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
 app, opens it, and checks launch logs. Native builds run locally by default;
-`--eas-profile` downloads an existing EAS development build.
+`--eas-profile` downloads an existing EAS development build. A simulator Debug
+build can compile on a paired build machine instead: see `offload.mode` in
+[machine settings](./settings.md#machine-settings).
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
