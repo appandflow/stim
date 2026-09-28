@@ -6,6 +6,7 @@ import SwiftUI
 
 struct PhonesView: View {
   @ObservedObject var server: ServerController
+  var cli: Task<StimCLI, Never>
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
@@ -25,6 +26,8 @@ struct PhonesView: View {
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
       }
+
+      RecordingSection(cli: cli)
 
       if case .running(let health, _) = server.state, !health.tailscale.isRunning {
         TailscaleSetup(tailscale: health.tailscale, port: server.port, canRestart: server.canRestart) {
@@ -456,4 +459,72 @@ struct QRCodeImage: View {
 private func copy(_ text: String) {
   NSPasteboard.general.clearContents()
   NSPasteboard.general.setString(text, forType: .string)
+}
+
+/// `recording.enabled` in the machine layer: whether stim-server records device screens on this Mac for replay.
+private struct RecordingSection: View {
+  var cli: Task<StimCLI, Never>
+  @State private var entry: SettingEntry?
+  @State private var writing = false
+  @State private var failure: String?
+  @State private var confirmingOff = false
+
+  private var enabled: Bool { entry?.layer(.machine)?.bool ?? true }
+
+  var body: some View {
+    Section {
+      Toggle(
+        "Record device screens for replay",
+        isOn: Binding(get: { enabled }, set: { on in on ? write(true) : (confirmingOff = true) })
+      )
+      .disabled(entry == nil || writing || entry?.env != nil)
+      if let override = entry?.env {
+        Text("\(override.name)=\(override.value) overrides this setting.").foregroundStyle(Palette.warning)
+      }
+      if let failure {
+        Text(failure).foregroundStyle(Palette.error)
+      }
+    } footer: {
+      Text(
+        "recording.enabled on this Mac. While stim-server runs it keeps the last 15 minutes of each simulator, emulator and Chrome page, which Stim Desktop and the phone app replay. A workspace or repository setting still wins. Turning it off deletes the recordings."
+      )
+      .foregroundStyle(Palette.tertiary)
+      .multilineTextAlignment(.leading)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .task { await load() }
+    .confirmationDialog("Stop recording device screens?", isPresented: $confirmingOff, titleVisibility: .visible) {
+      Button("Turn off and delete recordings", role: .destructive) { write(false) }
+    } message: {
+      Text("stim settings set recording.enabled false --scope machine deletes the recordings of every workspace it turns off.")
+    }
+  }
+
+  private func load() async {
+    let cli = await cli.value
+    let result = await Task.detached { Result { try cli.settings(cwd: NSHomeDirectory()) } }.value
+    switch result {
+    case .success(let payload):
+      entry = payload.entry("recording.enabled")
+      failure = entry == nil ? "This stim has no recording.enabled setting; update it to replay devices." : nil
+    case .failure(let error): failure = error.localizedDescription
+    }
+  }
+
+  private func write(_ on: Bool) {
+    writing = true
+    Task {
+      let cli = await cli.value
+      let result = await Task.detached {
+        Result { try cli.writeSetting("recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory()) }
+      }.value
+      switch result {
+      case .success(.written): failure = nil
+      case .success(.refused(let refusal)): failure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+      case .failure(let error): failure = error.localizedDescription
+      }
+      await load()
+      writing = false
+    }
+  }
 }

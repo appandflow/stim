@@ -574,6 +574,13 @@ import Testing
           {"dir":"/s/workspaces/e","bytes":300,"trimBytes":0,"willTrim":false,"reason":null,"detail":null},
           {"dir":"/s/workspaces/f","bytes":90,"trimBytes":50,"willTrim":false,"reason":"collector",
            "detail":"a device log collector is recorded for ios"}],
+        "recordings":[
+          {"dir":"/s/workspaces/g/recordings","projectRoot":"/pg","bytes":3000,"deleteBytes":0,"willDelete":false,
+           "withWorkspace":false,"reason":"retained","detail":"the last 15 minutes of footage per device stay"},
+          {"dir":"/s/workspaces/h/recordings","projectRoot":"/ph","bytes":2000,"deleteBytes":1500,"willDelete":true,
+           "withWorkspace":false,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/a/recordings","projectRoot":"/p","bytes":800,"deleteBytes":800,"willDelete":true,
+           "withWorkspace":true,"reason":null,"detail":null}],
         "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}],
         "futureSection":[{"id":"z"}]
       }}
@@ -582,7 +589,16 @@ import Testing
     #expect(report.actionable)
     #expect(
       report.sections.map(\.key) == [
-        "orphanedWorkspaces", "buildsInProgress", "workspaceLogs", "workspaceBuildOutputs", "caches", "futureSection",
+        "orphanedWorkspaces", "buildsInProgress", "workspaceLogs", "workspaceBuildOutputs", "recordings", "caches",
+        "futureSection",
+      ])
+    let recordings = report.sections.first { $0.key == "recordings" }!
+    #expect(recordings.title == "Device recordings")
+    #expect(recordings.entries.map(\.label) == ["/pg", "/ph", "/p"])
+    #expect(recordings.entries.map(\.bytes) == [3000, 1500, 800])
+    #expect(
+      recordings.entries.map(\.kept) == [
+        "the last 15 minutes of footage per device stay", nil, "deleted with its workspace directory, counted there",
       ])
     let logs = report.sections.first { $0.key == "workspaceLogs" }!.entries
     #expect(logs.map(\.bytes) == [700, 50])
@@ -591,8 +607,8 @@ import Testing
     #expect(outputs.map(\.kept) == ["in use: supervisor running", nil])
     #expect(report.sections.first { $0.key == "buildsInProgress" }!.entries[0].kept != nil)
     #expect(report.sections.first { $0.key == "caches" }!.entries[0].kept == "no eviction")
-    #expect(report.deletableCount == 4)
-    #expect(report.reclaimableBytes == 5296)
+    #expect(report.deletableCount == 5)
+    #expect(report.reclaimableBytes == 6796)
   }
 
   @Test func surfacesTheRefusalContract() {
@@ -644,6 +660,16 @@ import Testing
     #expect(outcome.done.count == 2)
     #expect(outcome.freedBytes == 3000)
     #expect(outcome.kept.isEmpty)
+  }
+
+  @Test func namesDeletedRecordings() throws {
+    let json = """
+      {"mode":"delete","idle":null,"failures":0,"sections":{},"results":[
+        {"kind":"recording","status":"done","label":"/p/app","id":null,"bytes":1000,"detail":null},
+        {"kind":"recording","status":"done","label":"/p/web","id":null,"bytes":2000,"detail":null}
+      ]}
+      """
+    #expect(try GcOutcome(json: Data(json.utf8)).headline.hasSuffix("Deleted the device recordings of 2 workspaces"))
   }
 
   @Test func fallsBackToTheReportOnACLIWithoutResults() throws {

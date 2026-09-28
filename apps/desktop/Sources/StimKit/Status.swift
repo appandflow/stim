@@ -57,15 +57,24 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var worktree: WorktreeInfo?
   /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
   public var agents: [AgentSession]?
+  /// Whether stim-server may record this workspace's device screens; absent from a `stim` without replay.
+  public var recording: Recording?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
     case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case supervisor, logs, slots, remoteDevices, physicalDevices, build
-    case lastBuilds, builds, worktree
+    case lastBuilds, builds, worktree, recording
     case agents
   }
+
+  public struct Recording: Decodable, Hashable, Sendable {
+    public var enabled: Bool
+  }
+
+  /// `recording.enabled` is false for this workspace, so it has no replay.
+  public var replayOff: Bool { recording?.enabled == false }
 
   public var id: String { path }
 

@@ -54,10 +54,12 @@ before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
-workspace; see its README. It reads Stim state only through the CLI's JSON
-output and runs Stim commands through the CLI, never by reading or writing
-`$STIM_HOME`. Build and test it with `swift build` and `swift test` from that
-directory. Its design tokens are generated from `apps/mobile/src/design/tokens.ts`;
+workspace; see its README. It reads Stim state through the CLI's JSON output,
+or through the local stim-server protocol where the CLI lacks the data, such as
+device replay, and runs Stim commands through the CLI, never by reading or
+writing `$STIM_HOME`. It connects to stim-server only over loopback, with the
+device token it gets by spending a read-only `stim-server pair` token. Build
+and test it with `swift build` and `swift test` from that directory. Its design tokens are generated from `apps/mobile/src/design/tokens.ts`;
 run `node apps/desktop/scripts/generate-tokens.mjs` after changing that file.
 
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm

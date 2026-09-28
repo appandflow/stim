@@ -16,6 +16,12 @@ struct DeviceTile: View {
   var onToggleTakeOver: (() -> Void)? = nil
   /// False where the workspace header already names the drivers, so a driven tile only says "Driven".
   var namesDriver = true
+  /// The device's replay through stim-server, where the tile offers one.
+  var replay: ReplayController? = nil
+  /// Whether `replay` shows recorded footage instead of the live screen.
+  var replaying = false
+  var replayOff = false
+  var onReplaySeek: () -> Void = {}
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -25,6 +31,7 @@ struct DeviceTile: View {
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
   @State private var confirmingStop = false
+  @State private var replaySize: CGSize?
   @EnvironmentObject private var actions: ActionCenter
 
   private let screenPadding: CGFloat = 12
@@ -39,12 +46,25 @@ struct DeviceTile: View {
           BuildProgressBar(build: build, compact: true).padding(.horizontal, Space.lg).padding(.bottom, Space.md)
         }
         Rectangle().fill(Palette.border).frame(height: 1)
-        if let workspace, showsStoppedBar {
+        if replaying, let replay {
+          ReplayScreen(controller: replay) { replaySize = $0 }
+            .frame(width: replayWidth)
+            .padding(screenPadding)
+            .frame(height: screenHeight)
+            .frame(maxWidth: .infinity)
+            .background(Media.screen)
+        } else if let workspace, showsStoppedBar {
           stoppedBar(runCommand(for: device, cwd: workspace))
         } else {
           screen
             .frame(height: screenHeight)
             .background(Media.screen)
+        }
+        if let replay, replaying || replayOff || replay.timeline != nil {
+          Rectangle().fill(Palette.border).frame(height: 1)
+          ReplayBar(controller: replay, running: device.isRunning, replayOff: replayOff, onSeek: onReplaySeek)
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.md)
         }
       }
     }
@@ -154,7 +174,11 @@ struct DeviceTile: View {
           .buttonStyle(.bordered)
           .controlSize(.small)
           .fixedSize()
-          .help("Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
+          .disabled(replaying)
+          .help(
+            replaying
+              ? "Go live to take over this device."
+              : "Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
       }
     }
   }
@@ -344,6 +368,11 @@ struct DeviceTile: View {
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
     guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
     return screenHeight(screenID) * size.width / size.height
+  }
+
+  private var replayWidth: CGFloat? {
+    guard let size = replaySize, size.height > 0 else { return nil }
+    return (screenHeight - screenPadding * 2) * size.width / size.height
   }
 
   private var width: CGFloat {

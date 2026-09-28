@@ -92,6 +92,7 @@ public struct GcPreview: Sendable {
     ("skipped", "Skipped"),
     ("workspaceLogs", "Workspace logs"),
     ("workspaceBuildOutputs", "Workspace build outputs"),
+    ("recordings", "Device recordings"),
     ("caches", "Shared caches"),
   ]
 
@@ -142,15 +143,19 @@ public struct GcPreview: Sendable {
 
   private static func entry(_ item: [String: Any], key: String) -> Entry {
     let reportOnly = Self.reportOnly.contains(key)
-    let label = ["name", "dir", "path", "project", "id", "message"].lazy.compactMap { item[$0] as? String }.first ?? "?"
-    let bytes = (item[key == "workspaceLogs" ? "trimBytes" : "bytes"] as? NSNumber)?.int64Value
-    let acted = ["willRemove", "willClear", "willEmpty", "willTrim"].compactMap { item[$0] as? Bool }.first
+    let labelKeys = key == "recordings" ? ["projectRoot", "dir"] : ["name", "dir", "path", "project", "id", "message"]
+    let label = labelKeys.lazy.compactMap { item[$0] as? String }.first ?? "?"
+    let acted = ["willRemove", "willClear", "willEmpty", "willTrim", "willDelete"].compactMap { item[$0] as? Bool }.first
+    let bytesKey = key == "workspaceLogs" ? "trimBytes" : key == "recordings" && acted == true ? "deleteBytes" : "bytes"
+    let bytes = (item[bytesKey] as? NSNumber)?.int64Value
     let kept: String?
     if key == "idleDevices" {
       let idle = (item["idleForMs"] as? NSNumber).map { "idle \(ActivityBadge.duration($0.doubleValue / 1000))" }
       kept = [idle ?? "idle", "stim gc --idle shuts it down"].joined(separator: "; ")
     } else if key == "unverifiedDevices" {
       kept = "This Stim home has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
+    } else if key == "recordings", item["withWorkspace"] as? Bool == true {
+      kept = "deleted with its workspace directory, counted there"
     } else if reportOnly {
       kept = item["detail"] as? String ?? "reported only"
     } else if acted == false {

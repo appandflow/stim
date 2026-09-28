@@ -386,7 +386,8 @@ page while an agent or automation tool drives them, or while the phone app
 watches them. It keeps the last 15 minutes of footage per device, so you can
 see what an agent did while you were away.
 
-In the phone app, the device viewer shows a replay bar under the screen:
+In the phone app and in Stim Desktop, the device viewer shows a replay bar
+under the screen:
 
 - **Scrub.** Drag to show the frame at that time.
 - **Markers.** Tap one to land just before an agent action or an app error.
@@ -396,9 +397,10 @@ Control is off while you look at the past. Time when nothing was recorded, such
 as after `stim stop`, shows as a gap, and a stopped device's last footage stays
 replayable.
 
-Recordings stay on your Mac and are served only to paired phones. Turn them off
-for the whole Mac in the phone's Settings, or on the Mac, where a repository or
-workspace can also be set on its own:
+Recordings stay on your Mac and are served only to paired phones and Stim
+Desktop. Turn them off for the whole Mac in the phone's Settings or in Stim
+Desktop's Phones settings, or on the Mac, where a repository or workspace can
+also be set on its own:
 
 ```bash
 stim settings set recording.enabled false --scope machine

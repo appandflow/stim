@@ -5,8 +5,9 @@ description: 'Download the macOS app that shows the devices Stim runs'
 
 Stim Desktop is a macOS app that shows every Stim workspace with its live
 simulators and emulators, build progress, logs and settings. It runs `stim`
-commands for you and reads Stim's state only through the CLI, so it needs
+commands for you and reads Stim's state through the CLI, so it needs
 `stim` installed as described in [Getting started](./getting-started.md).
+Device replay comes from the `stim-server` it runs for the phone app.
 
 A workspace appears from the moment `stim worktree warm` starts in it: the
 sidebar and the wall show it as **Warming…** with an activity indicator, then
@@ -149,6 +150,16 @@ While Stim Desktop is installed, Stim shows owned simulators and emulators in
 it instead of their own windows, unless `iosSimulatorApp` or
 `androidEmulatorApp` is set to another viewer. See
 [Devices and cleanup](./owned-devices.md).
+
+## Replay device screens
+
+With **Serve to phones** on in **Stim > Settings > Phones**, a workspace page
+shows a replay bar under its device, as in the phone app: drag to scrub, hover
+a marker to see the agent action or error, click it to land just before it,
+and play at 1x or 2x. **Live** returns to the live screen; Take over is off
+while you look at the past. **Record device screens for replay** in the same
+tab turns `recording.enabled` on or off for the Mac. See
+[Replay device screens](./owned-devices.md#replay-device-screens).
 
 ## Remove worktrees of finished pull requests
 

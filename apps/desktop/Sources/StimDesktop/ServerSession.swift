@@ -1,0 +1,123 @@
+import Combine
+import Foundation
+import CryptoKit
+import StimKit
+
+/// The device token Stim Desktop holds for the stim-server of one Stim home, in a file only the user can read under
+/// Application Support. The server issued it to a loopback connection, so it refuses the token from any other node.
+struct LocalServerCredential: Codable, Equatable {
+  var deviceID: String
+  var deviceToken: String
+
+  private static func file(home: String) -> URL {
+    let digest = SHA256.hash(data: Data(home.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Stim Desktop/stim-server/\(digest).json")
+  }
+
+  static func load(home: String) -> LocalServerCredential? {
+    (try? Data(contentsOf: file(home: home))).flatMap { try? JSONDecoder().decode(LocalServerCredential.self, from: $0) }
+  }
+
+  func save(home: String) {
+    let file = Self.file(home: home)
+    let manager = FileManager.default
+    guard let data = try? JSONEncoder().encode(self),
+      (try? manager.createDirectory(
+        at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700])) != nil
+    else { return }
+    let temporary = file.appendingPathExtension("tmp")
+    guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+      return
+    }
+    _ = try? manager.replaceItemAt(file, withItemAt: temporary)
+  }
+
+  static func delete(home: String) {
+    try? FileManager.default.removeItem(at: file(home: home))
+  }
+}
+
+/// Stim Desktop's own connection to the stim-server `ServerController` runs or found on this Mac, over loopback.
+/// It pairs read-only through `stim-server pair` the first time, and once more when the server no longer knows its
+/// token, then stops until the server restarts.
+@MainActor final class ServerSession: ObservableObject {
+  static let shared = ServerSession(controller: .shared)
+  static let deviceName = "Stim Desktop"
+
+  @Published private(set) var client: ServerClient?
+  @Published private(set) var state = ServerClient.State.idle
+
+  private let controller: ServerController
+  private var watch: AnyCancellable?
+  private var key: String?
+  private var repaired = false
+
+  init(controller: ServerController) {
+    self.controller = controller
+    watch = controller.$state.sink { [weak self] state in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(state) } }
+    }
+  }
+
+  /// The id of the paired device this app is, on the Stim home `home`, so the Phones list can leave it out.
+  static func ownDeviceID(home: String) -> String? {
+    LocalServerCredential.load(home: home)?.deviceID
+  }
+
+  var isOpen: Bool { client?.isOpen == true }
+
+  private func follow(_ state: ServerController.State) {
+    guard case .running(let health, _) = state else {
+      replace(key: nil, health: nil)
+      return
+    }
+    let key = "\(controller.port) \(health.stimHome) \(health.version)"
+    if key != self.key { replace(key: key, health: health) }
+  }
+
+  private func replace(key: String?, health: ServerHealth?) {
+    client?.stop()
+    client = nil
+    self.key = key
+    self.state = .idle
+    repaired = false
+    guard let health, let endpoint = URL(string: "ws://127.0.0.1:\(controller.port)") else { return }
+    let home = health.stimHome
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    var pairing = false
+    let client = ServerClient(
+      endpoint: endpoint, clientName: Self.deviceName, clientVersion: version,
+      auth: { [controller] in
+        if let credential = LocalServerCredential.load(home: home) {
+          pairing = false
+          return .device(token: credential.deviceToken)
+        }
+        let cli = await controller.cli()
+        let port = controller.port
+        let code = try await Task.detached { try cli.pair(port: port, control: false) }.value
+        pairing = true
+        return .pairing(token: code.qr.pairingToken, deviceName: Self.deviceName)
+      })
+    client.onState = { [weak self, weak client] state in
+      guard let self, let client, client === self.client else { return }
+      self.state = state
+      switch state {
+      case .open(let hello):
+        if let token = hello.deviceToken, let device = hello.device {
+          LocalServerCredential(deviceID: device.id, deviceToken: token).save(home: home)
+          self.controller.reloadDevices()
+        }
+        self.repaired = false
+      case .refused(let error) where error.code == "unauthorized" && !pairing && !self.repaired:
+        self.repaired = true
+        LocalServerCredential.delete(home: home)
+        client.start()
+      default: break
+      }
+    }
+    self.client = client
+    client.start()
+  }
+}

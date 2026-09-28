@@ -132,13 +132,15 @@ final class ServerController: ObservableObject {
 
   func reloadDevices() {
     let epoch = devicesEpoch
+    let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
       let result = await Task.detached { Result { try cli.devices() } }.value
       guard epoch == devicesEpoch else { return }
       switch result {
       case .success(let devices):
-        self.devices = devices.map { device in
+        let own = health.flatMap { ServerSession.ownDeviceID(home: $0.stimHome) }
+        self.devices = devices.filter { $0.id != own }.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
           device.capabilities = Self.capabilities(control: control)
