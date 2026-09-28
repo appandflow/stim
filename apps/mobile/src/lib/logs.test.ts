@@ -1,6 +1,8 @@
 import captured from '@/lib/fixtures/metro-errors.json';
 import {
   agentActions,
+  agentFilterOptions,
+  matchesAgentFilter,
   appendRecords,
   copyText,
   DEFAULT_FILTER,
@@ -190,24 +192,45 @@ describe('agentActions', () => {
 
   it('keeps only the device own actions, newest first, up to five', () => {
     const sim = '2FA9C340-A259-4420-A617-316DC159FF84';
-    const first = agentActions([], [action(1, sim), action(2, 'emulator-5554'), action(3, sim)], sim);
+    const first = agentActions([], [action(1, sim), action(2, 'emulator-5554'), action(3, sim)], sim, 5);
     expect(first.map((a) => a.record.ts)).toEqual([3, 1]);
     const next = agentActions(
       first,
       [4, 5, 6, 7].map((ts) => action(ts, sim)),
       sim,
+      5,
     );
     expect(next.map((a) => a.record.ts)).toEqual([7, 6, 5, 4, 3]);
   });
 
   it('keeps two identical actions in the same millisecond as two rows with distinct, stable keys', () => {
     const sim = 'sim';
-    const first = agentActions([], [action(1, sim), action(1, sim)], sim);
+    const first = agentActions([], [action(1, sim), action(1, sim)], sim, 5);
     expect(first.map((a) => a.record)).toEqual([action(1, sim), action(1, sim)]);
     expect(new Set(first.map((a) => a.key)).size).toBe(2);
-    const next = agentActions(first, [action(1, sim)], sim);
+    const next = agentActions(first, [action(1, sim)], sim, 5);
     expect(next.slice(1)).toEqual(first);
     expect(new Set(next.map((a) => a.key)).size).toBe(3);
+  });
+});
+
+describe('agentFilterOptions', () => {
+  it('offers failed actions when any failed, then the most used commands, each with its count', () => {
+    const actions = [
+      ['tap', 'info'],
+      ['tap', 'info'],
+      ['find', 'error'],
+      ['snapshot', 'info'],
+      ['tap', 'info'],
+    ].map(([command, level], key) => ({
+      key,
+      record: { ts: key, src: 'agent' as const, level: level as LogRecord['level'], msg: command!, command },
+    }));
+    const options = agentFilterOptions(actions);
+    expect(options.map((o) => `${o.label} ${o.count}`)).toEqual(['All 5', 'Failed 1', 'tap 3', 'find 1']);
+    expect(actions.filter((a) => matchesAgentFilter(a, options[1]!.filter)).map((a) => a.record.command)).toEqual([
+      'find',
+    ]);
   });
 });
 

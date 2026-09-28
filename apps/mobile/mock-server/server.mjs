@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { WebSocketServer } from 'ws';
 
-import { filterRecords, loadFixtures, shiftTimestamps } from './fixtures.mjs';
+import { filterRecords, loadFixtures, shiftTimestamps, usageHistory } from './fixtures.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -58,6 +58,8 @@ const ACTION_MS = 800;
 const busy = new Set();
 
 const startedAt = Date.now();
+const shiftMs = startedAt - Date.parse(fixtures.capturedAt);
+const logs = fixtures.logs.map((record) => ({ ...record, ts: record.ts + shiftMs }));
 const only = values.workspaces ? new RegExp(values.workspaces) : null;
 const readOverlay = () => {
   if (!values.overlay) return {};
@@ -75,7 +77,7 @@ const overlaid = (payload) => {
   };
 };
 const status = () => {
-  const payload = overlaid(shiftTimestamps(fixtures.status, startedAt - Date.parse(fixtures.capturedAt)));
+  const payload = overlaid(shiftTimestamps(fixtures.status, shiftMs));
   if (!only) return payload;
   const environments = payload.environments.filter((env) => only.test(env.path));
   const live = environments.filter((env) => env.live);
@@ -170,21 +172,30 @@ server.on('connection', (socket) => {
       return { result: { ...hello(deviceToken, auth.deviceName ?? 'Phone'), deviceToken } };
     },
     'status.subscribe'() {
-      const subscription = every(5000, (id) => send({ event: 'status', subscription: id, payload: status() }));
-      setImmediate(() => send({ event: 'status', subscription, payload: status() }));
+      const event = (id) => {
+        const payload = status();
+        return {
+          event: 'status',
+          subscription: id,
+          payload,
+          usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
+        };
+      };
+      const subscription = every(5000, (id) => send(event(id)));
+      setImmediate(() => send(event(subscription)));
       return { result: { subscription } };
     },
     'logs.query'(params) {
-      return { result: { records: filterRecords(fixtures.logs, params) } };
+      return { result: { records: filterRecords(logs, params) } };
     },
     'logs.subscribe'(params) {
       let cursor = 0;
       const subscription = every(2000, (id) => {
-        const record = { ...fixtures.logs[cursor++ % fixtures.logs.length], ts: Date.now() };
+        const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
         const records = filterRecords([record], { ...params, tail: undefined });
         if (records.length > 0) send({ event: 'logs', subscription: id, records });
       });
-      setImmediate(() => send({ event: 'logs', subscription, records: filterRecords(fixtures.logs, params) }));
+      setImmediate(() => send({ event: 'logs', subscription, records: filterRecords(logs, params) }));
       return { result: { subscription } };
     },
     'frames.subscribe'(params) {

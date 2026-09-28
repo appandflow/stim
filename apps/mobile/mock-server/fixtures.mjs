@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const LEVELS = ['debug', 'info', 'warn', 'error', 'fatal'];
 const ERROR_SOURCES = ['metro', 'client', 'build'];
@@ -12,7 +12,12 @@ export function loadFixtures() {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  const frame = JSON.parse(readFileSync(fixture('frame-ios.json'), 'utf8'));
+  const frames = {};
+  for (const platform of ['ios', 'android', 'web']) {
+    if (!existsSync(fixture(`frame-${platform}.json`))) continue;
+    const frame = JSON.parse(readFileSync(fixture(`frame-${platform}.json`), 'utf8'));
+    frames[platform] = { ...frame, data: readFileSync(fixture(`frame-${platform}.jpg`)).toString('base64') };
+  }
   const plans = JSON.parse(readFileSync(fixture('plans.json'), 'utf8'));
   return {
     capturedAt: status.capturedAt,
@@ -21,9 +26,7 @@ export function loadFixtures() {
     status: status.payload,
     logs,
     plans,
-    frames: {
-      ios: { ...frame, data: readFileSync(fixture('frame-ios.jpg')).toString('base64') },
-    },
+    frames,
   };
 }
 
@@ -35,6 +38,47 @@ export function shiftTimestamps(value, deltaMs) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shiftTimestamps(item, deltaMs)]));
   }
   return value;
+}
+
+const USAGE_INTERVAL_MS = 15_000;
+const USAGE_POINTS = 40;
+
+/**
+ * The CPU and memory series stim-server sends beside each status, drawn around the captured owners' readings and
+ * ending on them, with the first slots empty as on a server that started recording recently.
+ */
+export function usageHistory(owners, now) {
+  const endAt = Math.floor(now / USAGE_INTERVAL_MS) * USAGE_INTERVAL_MS;
+  const series = (value, seed, swing) =>
+    Array.from({ length: USAGE_POINTS }, (_, i) => {
+      if (i < 4) return null;
+      if (i === USAGE_POINTS - 1) return value;
+      return Math.max(0, Math.round(value * (1 + swing * Math.sin((i + seed * 7) / 4))));
+    });
+  const workspaces = [...new Set(owners.map((owner) => owner.workspace).filter(Boolean))];
+  return {
+    intervalMs: USAGE_INTERVAL_MS,
+    endAt,
+    environments: workspaces.map((workspace, seed) => {
+      const mine = owners.filter((owner) => owner.workspace === workspace);
+      const sum = (key) => mine.reduce((total, owner) => total + owner[key], 0);
+      return {
+        workspace,
+        cpuPercent: series(sum('cpuPercent'), seed, 0.6),
+        memoryMb: series(sum('memoryMb'), seed, 0.08),
+      };
+    }),
+    devices: owners
+      .filter((owner) => owner.kind === 'simulator' || owner.kind === 'emulator')
+      .map((owner, seed) => ({
+        kind: owner.kind,
+        id: owner.id,
+        workspace: owner.workspace,
+        ...(owner.slot ? { slot: owner.slot } : {}),
+        cpuPercent: series(owner.cpuPercent, seed, 0.6),
+        memoryMb: series(owner.memoryMb, seed, 0.08),
+      })),
+  };
 }
 
 const rank = (level) => Math.max(0, LEVELS.indexOf(level));

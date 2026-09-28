@@ -99,38 +99,79 @@ reload and stop a workspace:
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
-- **Workspace**: a status card with the branch and the app's folder inside
-  its checkout, Metro's port and health, the git state as chips, memory, and the error count, which
-  opens the errors; a Build card for each platform the workspace uses: the running
-  build's progress with its cache outcome ("Cache hit" or "Cold build",
-  "Likely ..." before the run reaches a phase that decides it) in place of the
-  platform's name; the last build and why it built that way ("Cache hit (local)",
-  "Cold build: app config changed", or failed), with its duration and age; and what the next build would find, why,
-  and how long it should take ("Next: cache hit (local)" or "Next: cold build, Podfile.lock changed, ~5:40"), from
-  the server's read-only `build.plan`. Tapping a card opens that platform's build details: the running build, the
-  last build with when it ran, a failed build's compiler errors, and why it missed the cache with the changed
-  fingerprint sources; then the next build with the median behind its estimate, why it would miss the cache, a
-  refusal's remedy, when it was checked, and **Check again**. **Recent builds** lists the platform's last 10 runs
-  from status `builds`, newest first, under a bar sparkline of the durations of runs that finished (two or more),
-  colored by result. Each row shows the result (a cache hit, a cold build, failed, cancelled, or interrupted), its
-  duration, and a detail line: the miss reason, a failed run's cache hit, or cache reads off; how long ago it ran;
-  and a slot other than the default. Tapping a row shows its configuration, fingerprint and phase times, its
-  compiler errors and why it missed. The screen asks for each platform with a last build or a device when it opens,
-  one plan at a time, reuses a result for 60 seconds unless that platform's last build changes, asks again after a failure or a
-  reconnect, ignores a reply that arrives after it closes, and asks nothing while a build runs. Below the cards come
-  warnings, remote sessions, and each
-  device: a running device with the latest frame the server sends for it,
-  fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone
-  Duo or an Android foldable emulator, a stopped one as a single row. Tapping
-  the frame opens the [device view](#device-view). Under a running simulator or
-  emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
-  (taps, typing, app opens, screenshots, failed commands), and under the Web device
-  the clicks, typing and scrolls an attached tool sent to the page, from
-  `logs.subscribe` with `sources: ["agent"]`. **All** opens the logs on the Agent
-  source and that slot; an action opens them with that action expanded, which for a
-  failed command shows its error code, diagnostic id and duration. The **...** menu opens the logs, copies the
-  full path, shows errors, or opens the machine's status. With control, it
-  also runs **Reload** and **Stop** (see [Actions](#actions)).
+- **Workspace**: under the title, a centered stage line: a dot and **Running**
+  ("up 42m", red with the error count or a closed app), **Building** (the
+  platform and when it started), **Build failed** (when the newest build of
+  either platform failed), **Warming** (installing dependencies or copying
+  ignored files), **Ready**, or **Stopped** (when Metro stopped). After a thin
+  divider comes the git chip: commits ahead and behind, the count of changed
+  files, **merged into** a branch, **no upstream**, or a check for a clean
+  branch, and the pull request number colored by its state (open, draft,
+  merged, closed) with a dot for its worst check, when `stim status` reports
+  the pull request. It wraps onto its own line when both do not fit, and opens
+  the **Git** sheet: upstream, ahead, behind, changed and untracked files,
+  merged into, and the pull request's title, state, checks and review with
+  **Open in GitHub**. Below, three small cards open more:
+  - **Resources**: the workspace's CPU (`ps` CPU summed over its processes,
+    so above 100% on several cores) and memory from the status `machine`
+    owners, and its disk (the worktree plus Stim's build folder) once a status
+    watcher measured it. It opens the **Resources** sheet: CPU, memory and disk
+    tiles, with sparklines of the last 10 minutes when the server sends usage
+    history, a process table of the workspace's simulators, emulators, Chrome,
+    Metro and build, and the disk split with the Mac's free space.
+  - **Build**: one row per platform with the Apple or Android glyph, the last
+    run's time and whether it hit the cache, **Failed** in red, or the next
+    build's prediction from `build.plan` before any run. It opens the **Build**
+    sheet on that platform.
+  - **Logs**: the error count since the marker, with a red dot above zero,
+    Metro's port with its health as the dot's color, and the bundle line
+    (**Bundling** with Metro's percent, **Bundled in 1.8s** and when, or **Not
+    bundled yet** once the server reports bundles). It opens the logs, on
+    errors when there are some.
+
+  A card with a problem turns red; there is no separate banner. While a build
+  runs, the Build card gives its place to a full-width card: the platform and
+  target device, the tool's step with its counts (such as "Compiling 97 of 214
+  targets") and the elapsed time against the estimate, a bar of the phases
+  sized by the last comparable run, the cache-miss reason, the other
+  platform's last build, and the latest compiler line. Then **Devices**, one
+  card per device: a dot, the model and runtime, and the device's CPU,
+  memory and disk; the latest frame the server sends, fitted to the card, with
+  **Folded** or **Unfolded** for an iPhone Duo or an Android foldable emulator.
+  Tapping the frame opens the [device view](#device-view). A device waiting on
+  a build shows the build's step, a device with a failed build and no app shows
+  **No app installed**, and a closed app dims the frame under **App closed**. A
+  warming workspace shows one card while it warms, and a stopped one says that
+  nothing is running. Under a running simulator, emulator or Web device that
+  Stim owns, the agent row names the driving tool with its latest action and
+  how long ago, or **No agent** and how long the device has been idle. It
+  opens the **Agent** sheet: the device's actions, newest first, from
+  `logs.subscribe` with `sources: ["agent"]`, filtered by all, failed, or the
+  most used commands; an action opens the logs with it expanded, and **Open in
+  logs** opens them on the Agent source and that slot. The **Build** sheet
+  switches between iOS and Android. For the running build it shows the elapsed
+  time against the estimate with the miss reason, a checklist of phases with
+  their times and estimates, and the live output tail from the build log.
+  Otherwise it shows the last build with when it ran, a failed build's compiler
+  errors, why it missed the cache with the changed fingerprint sources, and its
+  phase times. **Recent builds** lists the platform's last 10 runs from status
+  `builds`, newest first, under a bar sparkline of the durations of runs that
+  finished (two or more), colored by result. Each row shows the result (a cache
+  hit, a cold build, failed, cancelled, or interrupted), its duration, and a
+  detail line: the miss reason, a failed run's cache hit, or cache reads off;
+  how long ago it ran; and a slot other than the default. Tapping a row shows
+  its configuration, fingerprint and phase times, its compiler errors and why it
+  missed. **Next build** is what the next build would find, why, and how long
+  it should take, from the server's read-only `build.plan`, with the median
+  behind its estimate, a refusal's remedy, when it was checked, and **Check
+  again**. The screen asks for each platform with a last build or a device when
+  it opens, one plan at a time, reuses a result for 60 seconds unless that
+  platform's last build changes, asks again after a failure or a reconnect,
+  ignores a reply that arrives after it closes, and asks nothing while a build
+  runs. The **...** menu opens the logs, copies the full path, shows errors, or
+  opens the machine's status. With control, it also runs **Reload** and
+  **Stop** (see [Actions](#actions)).
+
 - **Logs**: opens from the workspace screen's Logs card, on errors from the
   home screen and notifications, and from the agent feed on the Agent source
   with the tapped action expanded. A header shows Metro's port and a dot for
@@ -472,6 +513,16 @@ To try the home screen with two Macs, run two mock servers on different ports.
 node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-apps
 node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
 ```
+
+The status also holds seven workspaces under `.worktrees/a4-*` for the
+workspace screen, one per stage (running, building, crashed, build failed,
+warming, stopped) and one running iOS, Android and Web, with the status
+`machine` owners, disk use, bundle state, build detail and pull requests they
+would report. Start the server with `--workspaces a4-` to see only those. Each
+status event carries a usage history drawn around those owners, and
+`logs.ndjson` holds agent actions on their devices. Log timestamps move forward
+with the status. Android and Web devices show `frame-android.jpg` and
+`frame-web.jpg`.
 
 `--overlay <file>` changes the status while the server runs, to try
 notifications. The server rereads the JSON file for each status push (every 5

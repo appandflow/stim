@@ -27,6 +27,7 @@ import type {
   Platform,
   RotateDirection,
   StatusPayload,
+  StatusUsage,
   TouchPhase,
 } from '@/protocol/types';
 import { statusStorage } from '@/storage';
@@ -122,7 +123,9 @@ function MacLink({ mac }: { mac: PairedMac }) {
   useEffect(() => {
     if (!connection) return;
     return connection.subscribe('status.subscribe', {}, (event) => {
-      if (event.event === 'status') machines.receiveStatus(mac.id, event.payload);
+      if (event.event !== 'status') return;
+      machines.receiveStatus(mac.id, event.payload);
+      if (event.usage) machines.setHistory(mac.id, event.usage);
     });
   }, [connection, mac.id]);
 
@@ -228,6 +231,11 @@ export function useStatus(): StatusPayload | null {
 
 export function useMachineUsage(macId: string | undefined): MachineUsage | null {
   return useMachines((state) => (macId ? (state.usage[macId] ?? null) : null));
+}
+
+/** The CPU and memory history the server sent with its latest status; null from a server that keeps none. */
+export function useStatusHistory(macId: string | undefined): StatusUsage | null {
+  return useMachines((state) => (macId ? (state.history[macId] ?? null) : null));
 }
 
 export function useMachineLink(macId: string): MachineLink {

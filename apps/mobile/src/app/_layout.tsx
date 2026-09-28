@@ -122,7 +122,10 @@ function RootLayoutContent() {
                         contentStyle: { backgroundColor: 'transparent' },
                       }}
                     />
-                    <Stack.Screen name="mac/[id]/build" options={sheet([0.6, 1])} />
+                    <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
+                    <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
+                    <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
+                    <Stack.Screen name="mac/[id]/git" options={sheet([0.65, 1])} />
                   </Stack>
                 </MenuDrawer>
               </RecentsProvider>

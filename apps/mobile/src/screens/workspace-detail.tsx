@@ -2,35 +2,61 @@ import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform as OS, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
-import { BuildCards } from '@/components/build-card';
-import { Card } from '@/components/card';
 import { ConnectionBanner } from '@/components/connection-banner';
-import { DeviceTile } from '@/components/device-tile';
+import { DeviceTile, WarmingPlaceholder } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
-import { GitIndicator } from '@/components/git-indicator';
+import { SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
-import { Pill } from '@/components/pill';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { Text } from '@/components/text';
+import {
+  BuildCard,
+  BuildInProgressCard,
+  CardRow,
+  LogsCard,
+  ResourcesCard,
+  StageLine,
+} from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
-import { useAction, useHasStatus, useMacConnection, useWorkspace } from '@/hooks/mac-connection';
+import {
+  useAction,
+  useBuildPlans,
+  useHasStatus,
+  useMacConnection,
+  useMachineStatus,
+  useWorkspace,
+} from '@/hooks/mac-connection';
+import { useNow } from '@/hooks/use-now';
 import { useRecents } from '@/hooks/recents';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
+import { planKey } from '@/lib/plan-checks';
+import {
+  buildLine,
+  bundleLine,
+  deviceTitle,
+  deviceUsage,
+  gitChip,
+  metroHealth,
+  usedPlatforms,
+  workspaceStage,
+  workspaceUsage,
+} from '@/lib/workspace-view';
 import {
   deviceWarnings,
   devicesOf,
   livePlatforms,
   orderDevices,
   platformName,
+  runningBuild,
   workspaceTitleAt,
 } from '@/lib/workspaces';
-import type { ActionName, DevicePlatform } from '@/protocol/types';
+import type { ActionName, DevicePlatform, Platform } from '@/protocol/types';
 
 const ELLIPSIS_ICON = require('@/assets/icons/ellipsis.png');
 
@@ -49,6 +75,15 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const [toast, setToast] = useState<Toast | null>(null);
   const [bannerHeight, setBannerHeight] = useState(0);
   const dismissToast = useCallback(() => setToast(null), []);
+  const now = useNow(30_000);
+  const status = useMachineStatus(macId);
+  const machine = status?.machine;
+  const platforms = env ? usedPlatforms(env) : [];
+  const plan = useBuildPlans(
+    path,
+    Object.fromEntries(platforms.map((platform) => [platform, planKey(env?.lastBuilds?.[platform])])),
+    !env || runningBuild(env) !== null,
+  );
   const { touch } = useRecents();
   useEffect(() => {
     if (macId) touch({ macId, path });
@@ -97,7 +132,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
     <>
       <Stack.Screen
         options={{
-          headerTransparent: Platform.OS === 'ios',
+          headerTransparent: OS.OS === 'ios',
           headerBlurEffect: 'systemChromeMaterial',
           headerTitle: () => (
             <HeaderTitle title={title} subtitle={[project, inCheckout, mac?.name].filter(Boolean).join(' \u00B7 ')} />
@@ -106,7 +141,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
       />
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
-          icon={Platform.OS === 'ios' ? 'ellipsis' : ELLIPSIS_ICON}
+          icon={OS.OS === 'ios' ? 'ellipsis' : ELLIPSIS_ICON}
           tintColor={theme.colors.text}
           accessibilityLabel="More"
         >
@@ -168,7 +203,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
   if (!hasStatus) {
     return (
       <>
-        <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingTop: bannerHeight }}>
+        <ScrollView
+          style={{ backgroundColor: theme.colors.background }}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{ paddingTop: bannerHeight }}
+        >
           {header}
           <ActivityIndicator style={styles.loading} color={theme.colors.primary} />
         </ScrollView>
@@ -180,7 +219,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   if (!env) {
     return (
       <>
-        <ScrollView contentInsetAdjustmentBehavior="automatic">
+        <ScrollView style={{ backgroundColor: theme.colors.background }} contentInsetAdjustmentBehavior="automatic">
           {header}
           <EmptyState title="Workspace not found" message={`stim status no longer lists ${tildeHome(path, home)}.`} />
         </ScrollView>
@@ -189,73 +228,75 @@ export function WorkspaceDetail({ path }: { path: string }) {
     );
   }
 
-  const devices = orderDevices(devicesOf(env));
-  const { byDevice, general } = deviceWarnings(env.warnings, devices);
-  const errors = env.logs?.errorsSinceMarker ?? 0;
-  const metroHealthy = Boolean(env.metro?.running) && env.supervisor?.healthy !== false;
+  const all = orderDevices(devicesOf(env));
+  const { byDevice, general } = deviceWarnings(env.warnings, all);
+  const build = runningBuild(env);
+  const stage = workspaceStage(env, all, now);
+  const devices = stage.label === 'Stopped' ? [] : all;
+  const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/git', platform?: Platform) =>
+    router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
+  const lines = (platforms.length ? platforms : (['ios', 'android'] as const)).map((platform) =>
+    buildLine(platform, env.lastBuilds?.[platform], plan(platform)),
+  );
+  const failed = lines.find((line) => line.tone === 'error')?.platform;
+  const health = metroHealth(env);
+  const reportsBundles = status?.environments.some((e) => e.metro?.bundle) ?? false;
+  const buildTarget = build ? devices.find((d) => d.platform === build.platform && d.slot === build.slot) : undefined;
   return (
     <>
       <ScrollView
+        style={{ backgroundColor: theme.colors.background }}
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={[styles.container, { paddingTop: theme.space.xl + bannerHeight }]}
+        contentContainerStyle={[styles.container, { paddingTop: theme.space.md + bannerHeight }]}
       >
         {header}
-        <Card>
-          <View style={styles.card}>
-            {env.worktree?.branch || inCheckout ? (
-              <Text variant="caption" tone="secondary" mono numberOfLines={1}>
-                {env.worktree?.branch ? (
-                  <Text variant="footnote" weight="semibold">
-                    {env.worktree.branch}
-                  </Text>
-                ) : null}
-                {env.worktree?.branch && inCheckout ? '  ' : ''}
-                {inCheckout ?? ''}
-              </Text>
-            ) : null}
-            <View style={styles.chips}>
-              {env.metro ? (
-                <Pill tone={metroHealthy ? 'success' : env.metro.running ? 'error' : 'neutral'}>
-                  {`Metro :${env.metro.port} \u00B7 ${env.metro.running ? (metroHealthy ? 'healthy' : 'unhealthy') : 'stopped'}`}
-                </Pill>
-              ) : null}
-              <GitIndicator git={env.worktree?.git} chips />
-              {env.memoryMb > 0 ? (
-                <Pill
-                  icon="memorychip"
-                  accessibilityLabel={`${env.memorySource === 'footprint' ? 'Uses' : 'Estimated to use about'} ${(env.memoryMb / 1024).toFixed(1)} GB of memory`}
-                >
-                  {`${(env.memoryMb / 1024).toFixed(1)} GB`}
-                </Pill>
-              ) : null}
-              {env.logs ? (
-                <Pill tone={errors > 0 ? 'error' : 'neutral'} onPress={() => openLogs(true)}>
-                  {errors === 1 ? '1 error' : `${errors} errors`}
-                </Pill>
-              ) : null}
-            </View>
-          </View>
-        </Card>
-        <BuildCards env={env} />
+        <StageLine stage={stage} git={gitChip(env.worktree)} onGitPress={() => open('/mac/[id]/git')} />
+        <CardRow>
+          <ResourcesCard usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
+          {build ? null : (
+            <BuildCard lines={lines} onPress={() => open('/mac/[id]/build', failed ?? lines[0]?.platform)} />
+          )}
+          <LogsCard
+            errors={env.logs ? env.logs.errorsSinceMarker : null}
+            metro={env.metro && health ? { port: env.metro.port, health } : null}
+            bundle={bundleLine(env, now, reportsBundles)}
+            onPress={() => openLogs((env.logs?.errorsSinceMarker ?? 0) > 0)}
+          />
+        </CardRow>
+        {build ? (
+          <BuildInProgressCard
+            env={env}
+            build={build}
+            target={buildTarget ? deviceTitle(buildTarget).name : null}
+            onPress={() => open('/mac/[id]/build', build.platform)}
+          />
+        ) : null}
         {general.map((warning) => (
           <Text key={warning} variant="footnote" tone="warning" style={styles.warning}>
             {tildeHome(warning, home)}
           </Text>
         ))}
+        {devices.length || env.remoteDevices?.length || stage.label === 'Warming' ? (
+          <SectionHeader title="Devices" />
+        ) : null}
         {(env.remoteDevices ?? []).map((session) => (
           <RemoteTile key={session.sessionId} session={session} />
         ))}
         {devices.map((device) => (
           <DeviceTile
             key={`${device.platform}-${device.slot}`}
-            workspace={env.path}
+            env={env}
             device={device}
             warnings={byDevice.get(device) ?? []}
+            usage={device.running ? deviceUsage(device, env.path, machine, device.diskBytes) : null}
           />
         ))}
-        {devices.length === 0 && !env.remoteDevices?.length ? (
-          <Text tone="tertiary" style={styles.none}>
-            No device in this workspace yet.
+        {devices.length === 0 && stage.label === 'Warming' ? <WarmingPlaceholder subtitle={stage.subtitle} /> : null}
+        {devices.length === 0 && !env.remoteDevices?.length && stage.label !== 'Warming' ? (
+          <Text variant="footnote" tone="secondary" style={styles.none}>
+            {stage.label === 'Stopped'
+              ? 'Nothing is running. Ask your agent to run the app.'
+              : 'No device in this workspace yet.'}
           </Text>
         ) : null}
       </ScrollView>
@@ -271,7 +312,7 @@ function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (
     <View
       pointerEvents="box-none"
       onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
-      style={[styles.pinned, { top: Platform.OS === 'ios' ? headerHeight : 0 }]}
+      style={[styles.pinned, { top: OS.OS === 'ios' ? headerHeight : 0 }]}
     >
       <ConnectionBanner state={state} />
     </View>
@@ -299,13 +340,17 @@ const styles = StyleSheet.create((theme) => ({
   loading: { marginTop: 48 },
   pinned: { position: 'absolute', left: 0, right: 0 },
   container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
-  card: { padding: theme.space.lg, gap: theme.space.md },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
   warning: {
     padding: theme.space.md,
     borderRadius: theme.radius.control,
     overflow: 'hidden',
     backgroundColor: withAlpha(theme.colors.warning, theme.opacity.subtle),
   },
-  none: { textAlign: 'center', paddingVertical: theme.space.xxxl },
+  none: {
+    padding: theme.space.lg,
+    borderRadius: theme.radius.card,
+    borderCurve: 'continuous',
+    overflow: 'hidden',
+    backgroundColor: theme.colors.grouped,
+  },
 }));

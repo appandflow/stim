@@ -2,15 +2,18 @@ import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { BuildProgressBar } from '@/components/build-progress';
 import { Icon } from '@/components/icon';
 import { ListSection, SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
+import { PlatformGlyph } from '@/components/platform-glyph';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { buildTiming } from '@/components/workspace-cards';
+import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { useBuildOutput } from '@/hooks/workspace-logs';
 import {
   clockDuration,
   durationBars,
@@ -23,51 +26,76 @@ import {
 } from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
-import { runningBuild } from '@/lib/workspaces';
+import {
+  currentPhaseLabel,
+  deviceTitle,
+  PHASE_ORDER,
+  phaseName,
+  phaseSteps,
+  type PhaseStep,
+} from '@/lib/workspace-view';
+import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
 import type {
   BuildDiagnostic,
   BuildHistoryEntry,
   BuildMissChange,
   BuildMissReason,
-  BuildPhase,
+  BuildReport,
   LastBuild,
   Platform,
 } from '@/protocol/types';
 
 const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', removed: '\u2212', changed: '~' };
 
-const PHASE_ORDER: readonly BuildPhase[] = [
-  'prepare',
-  'cache-lookup',
-  'wait',
-  'prebuild',
-  'pods',
-  'compile',
-  'install',
-  'launch',
-];
+const PLATFORMS: Platform[] = ['ios', 'android'];
 
-/** One platform's builds in a workspace: the running build, the last build, recent runs, and what the next would do. */
-export function BuildDetails({ path, platform }: { path: string; platform: Platform }) {
+/**
+ * One workspace's builds, with a switch between iOS and Android: the running build's phases and output, the last
+ * build, recent runs, and what the next would do.
+ */
+export function BuildDetails({ path, platform: initial }: { path: string; platform: Platform }) {
   const { theme } = useUnistyles();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
+  const [platform, setPlatform] = useState<Platform>(initial === 'android' ? 'android' : 'ios');
   const last = env?.lastBuilds?.[platform];
   const history = env?.builds?.[platform] ?? [];
-  const running = env ? runningBuild(env) : null;
-  const { plan, checkedAt, recheck } = useBuildPlan(path, platform, planKey(last), running !== null);
+  const building = env ? runningBuild(env) : null;
+  const running = building?.platform === platform ? building : null;
+  const { plan, checkedAt, recheck } = useBuildPlan(path, platform, planKey(last), building !== null);
   const now = useNow(30_000);
-  const name = platform === 'ios' ? 'iOS' : 'Android';
+  const name = platformName(platform);
   const checking = plan?.kind === 'checking';
   const canCheck = recheck !== null && !checking;
+  const target = running && env ? devicesOf(env).find((d) => d.platform === platform && d.slot === running.slot) : null;
+  const started = running ? Date.parse(running.startedAt) : NaN;
   return (
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
-      <Text variant="title">{`${name} builds`}</Text>
-      {running?.platform === platform ? <BuildProgressBar build={running} /> : null}
+      <View style={styles.titles}>
+        <Text variant="title">Build</Text>
+        {running ? (
+          <Text variant="footnote" tone="secondary">
+            {[
+              target ? deviceTitle(target).name : null,
+              Number.isFinite(started) ? `started ${shortDuration(Math.max(0, now - started))} ago` : null,
+            ]
+              .filter(Boolean)
+              .join(' \u00B7 ')}
+          </Text>
+        ) : null}
+      </View>
+      <PlatformSwitch value={platform} onChange={setPlatform} building={building?.platform ?? null} />
 
-      <Section title="Last build">
-        {last ? <LastBuildDetails last={last} now={now} root={path} /> : <Note>No build recorded.</Note>}
-      </Section>
+      {running ? <RunningBuild build={running} path={path} history={history} /> : null}
+
+      {running ? null : (
+        <Section title="Last build">
+          {last ? <LastBuildDetails last={last} now={now} root={path} /> : <Note>{`No ${name} build recorded.`}</Note>}
+          {last && history[0] && Object.keys(history[0].phases).length ? (
+            <PhaseList steps={finishedSteps(history[0])} />
+          ) : null}
+        </Section>
+      )}
 
       {history.length ? (
         <Section title="Recent builds">
@@ -92,7 +120,7 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
           </Touch>
         }
       >
-        {running ? (
+        {building ? (
           <Note>Checked after the running build.</Note>
         ) : checking ? (
           <View style={styles.row}>
@@ -123,13 +151,147 @@ export function BuildDetails({ path, platform }: { path: string; platform: Platf
         ) : (
           <Note>Not checked yet.</Note>
         )}
-        {checkedAt !== null && !checking && !running ? (
+        {checkedAt !== null && !checking && !building ? (
           <Text variant="footnote" tone="tertiary">
             {`Checked ${shortDuration(now - checkedAt)} ago`}
           </Text>
         ) : null}
       </Section>
     </ScrollView>
+  );
+}
+
+function PlatformSwitch({
+  value,
+  onChange,
+  building,
+}: {
+  value: Platform;
+  onChange: (platform: Platform) => void;
+  building: Platform | null;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={styles.switch} accessibilityRole="tablist">
+      {PLATFORMS.map((platform) => {
+        const selected = platform === value;
+        return (
+          <Touch
+            key={platform}
+            onPress={() => onChange(platform)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            accessibilityLabel={`${platformName(platform)}${building === platform ? ', building' : ''}`}
+            style={[styles.segment, selected && styles.segmentSelected]}
+          >
+            <PlatformGlyph
+              platform={platform}
+              size={13}
+              color={selected ? theme.colors.text : theme.colors.secondary}
+              background={selected ? theme.colors.background : theme.colors.raised}
+            />
+            <Text variant="footnote" weight="semibold" tone={selected ? 'default' : 'secondary'}>
+              {platformName(platform)}
+            </Text>
+            {building === platform ? <View style={styles.buildingDot} /> : null}
+          </Touch>
+        );
+      })}
+    </View>
+  );
+}
+
+function RunningBuild({ build, path, history }: { build: BuildReport; path: string; history: BuildHistoryEntry[] }) {
+  const now = useNow(1000);
+  const { elapsed, estimate } = buildTiming(build, now);
+  const output = useBuildOutput(path, build.slot, true, OUTPUT_LINES).map((record) => record.msg);
+  const reported = build.detail?.line;
+  const lines = reported && output.at(-1) !== reported ? [...output, reported].slice(-OUTPUT_LINES) : output;
+  const miss = build.missReason?.summary;
+  return (
+    <>
+      <View style={styles.elapsed}>
+        <Text style={styles.big}>{elapsed}</Text>
+        <Text variant="callout" tone="secondary" style={styles.grow}>
+          {[estimate ? `of ${estimate}` : null, miss ? `cache miss, ${miss}` : null].filter(Boolean).join(' \u00B7 ')}
+        </Text>
+      </View>
+      <PhaseList steps={phaseSteps(build, history, now)} counts={currentPhaseLabel(build).counts} />
+      {lines.length ? (
+        <Section title="Live output">
+          <View style={styles.output}>
+            {lines.map((line, i) => (
+              <Text
+                key={`${i}-${line}`}
+                variant="caption2"
+                mono
+                numberOfLines={1}
+                style={i === lines.length - 1 ? styles.outputLatest : styles.outputLine}
+              >
+                {line}
+              </Text>
+            ))}
+          </View>
+        </Section>
+      ) : null}
+    </>
+  );
+}
+
+const OUTPUT_LINES = 6;
+
+function finishedSteps(entry: BuildHistoryEntry): PhaseStep[] {
+  return PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined).map((phase) => ({
+    phase,
+    state: 'done',
+    elapsedMs: entry.phases[phase] ?? null,
+    expectedMs: null,
+    fraction: 1,
+  }));
+}
+
+function PhaseList({ steps, counts }: { steps: PhaseStep[]; counts?: string | null }) {
+  const { theme } = useUnistyles();
+  return (
+    <ListSection>
+      {steps.map((step) => (
+        <View key={step.phase} style={[styles.phase, step.state === 'current' && styles.phaseCurrent]}>
+          {step.state === 'done' ? (
+            <View style={styles.check}>
+              <Icon name="checkmark" size={11} color={theme.colors.background} />
+            </View>
+          ) : step.state === 'current' ? (
+            <View style={styles.ring}>
+              <View style={styles.ringDot} />
+            </View>
+          ) : (
+            <View style={styles.pending} />
+          )}
+          <Text
+            variant="callout"
+            weight={step.state === 'current' ? 'semibold' : undefined}
+            tone={step.state === 'pending' ? 'tertiary' : 'default'}
+          >
+            {phaseName(step.phase)}
+          </Text>
+          {step.state === 'current' && counts ? (
+            <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
+              {counts}
+            </Text>
+          ) : null}
+          <View style={styles.grow} />
+          <Text variant="footnote" tone={step.state === 'pending' ? 'tertiary' : 'secondary'} style={styles.tabular}>
+            {step.state === 'pending'
+              ? step.expectedMs === null
+                ? ''
+                : `~${clockDuration(step.expectedMs)}`
+              : step.elapsedMs === null
+                ? ''
+                : clockDuration(step.elapsedMs)}
+          </Text>
+        </View>
+      ))}
+    </ListSection>
   );
 }
 
@@ -335,7 +497,79 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xxl, paddingBottom: 48 },
+  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
+  titles: { gap: theme.space.xxs },
+  switch: {
+    flexDirection: 'row',
+    padding: 3,
+    borderRadius: theme.radius.control,
+    borderCurve: 'continuous',
+    backgroundColor: theme.colors.raised,
+  },
+  segment: {
+    flex: 1,
+    height: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.space.sm,
+    borderRadius: theme.radius.control - 2,
+    borderCurve: 'continuous',
+  },
+  segmentSelected: { backgroundColor: theme.colors.background },
+  buildingDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
+  elapsed: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.md },
+  big: {
+    ...theme.typography.title,
+    fontSize: 28,
+    lineHeight: 34,
+    fontVariant: ['tabular-nums'],
+    color: theme.colors.text,
+  },
+  phase: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.md + 2,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.sm + 2,
+  },
+  phaseCurrent: { backgroundColor: withAlpha(theme.colors.primary, 0.06) },
+  check: {
+    width: 18,
+    height: 18,
+    borderRadius: theme.radius.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.success,
+  },
+  ring: {
+    width: 18,
+    height: 18,
+    borderRadius: theme.radius.round,
+    borderWidth: 2,
+    borderColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ringDot: { width: 8, height: 8, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
+  pending: {
+    width: 18,
+    height: 18,
+    borderRadius: theme.radius.round,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+  },
+  shrink: { flexShrink: 1 },
+  tabular: { fontVariant: ['tabular-nums'] },
+  output: {
+    padding: theme.space.lg,
+    gap: 3,
+    borderRadius: theme.radius.card,
+    borderCurve: 'continuous',
+    backgroundColor: theme.media.screen,
+  },
+  outputLine: { color: theme.media.textTertiary },
+  outputLatest: { color: theme.media.text },
   section: { gap: theme.space.md },
   refresh: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },

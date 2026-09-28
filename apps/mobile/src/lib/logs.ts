@@ -421,8 +421,6 @@ export function shareText(view: EntryView, entry: LogEntry, workspace: string): 
   return parts.join('\n\n');
 }
 
-export const AGENT_FEED_SIZE = 5;
-
 export function agentFeedFilter(workspace: string, slot: string): LogFilter {
   return { workspace, sources: ['agent'], slot, tail: 200 };
 }
@@ -432,10 +430,48 @@ export interface AgentAction {
   record: LogRecord;
 }
 
-export function agentActions(existing: AgentAction[], incoming: LogRecord[], deviceId: string): AgentAction[] {
+/** The device's own agent actions, newest first, at most `max`. */
+export function agentActions(
+  existing: AgentAction[],
+  incoming: LogRecord[],
+  deviceId: string,
+  max: number,
+): AgentAction[] {
   const mine = incoming.filter((record) => record.src === 'agent' && record.deviceId === deviceId);
   if (mine.length === 0) return existing;
   const base = existing[0]?.key ?? 0;
   const added = mine.map((record, i) => ({ key: base + i + 1, record })).reverse();
-  return added.concat(existing).slice(0, AGENT_FEED_SIZE);
+  return added.concat(existing).slice(0, max);
+}
+
+export type AgentFilter = { kind: 'all' } | { kind: 'failed' } | { kind: 'command'; command: string };
+
+export interface AgentFilterOption {
+  filter: AgentFilter;
+  label: string;
+  count: number;
+}
+
+const commandOf = (record: LogRecord) => (typeof record.command === 'string' ? record.command : null);
+
+/** The Agent sheet's filters: all, failed when any failed, then the two most used commands. */
+export function agentFilterOptions(actions: AgentAction[]): AgentFilterOption[] {
+  const failed = actions.filter((a) => a.record.level === 'error').length;
+  const counts = new Map<string, number>();
+  for (const { record } of actions) {
+    const command = commandOf(record);
+    if (command) counts.set(command, (counts.get(command) ?? 0) + 1);
+  }
+  const commands = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 2);
+  return [
+    { filter: { kind: 'all' }, label: 'All', count: actions.length },
+    ...(failed ? [{ filter: { kind: 'failed' } as const, label: 'Failed', count: failed }] : []),
+    ...commands.map(([command, count]) => ({ filter: { kind: 'command', command } as const, label: command, count })),
+  ];
+}
+
+export function matchesAgentFilter(action: AgentAction, filter: AgentFilter): boolean {
+  if (filter.kind === 'all') return true;
+  if (filter.kind === 'failed') return action.record.level === 'error';
+  return commandOf(action.record) === filter.command;
 }
