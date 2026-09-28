@@ -507,11 +507,6 @@ describe('build access', () => {
     const port = await start();
     const local = await connect(port);
     expect(await requestBuild(local)).toMatchObject({ error: { code: 'forbidden' } });
-    const spending = await connect(port);
-    const { token } = createPairingToken(Date.now(), ['build']);
-    expect(
-      await spending.request('hello', { protocol: 1, client: CLIENT, auth: { pairingToken: token, deviceName: 'Me' } }),
-    ).toMatchObject({ error: { code: 'forbidden' } });
     expect(readBuildClients()).toEqual([]);
   });
 });

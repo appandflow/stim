@@ -126,11 +126,6 @@ function pairingFile(): string {
   return join(serverDir(), 'pairing.json');
 }
 
-/** Build pairing tokens, apart from `pairing.json` so a stim-server without `build` never spends one as a reader. */
-function buildPairingFile(): string {
-  return join(serverDir(), 'build-pairing.json');
-}
-
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
@@ -244,8 +239,8 @@ function writeBuildClients(clients: PairedDevice[]): void {
   writeJson(buildClientsFile(), { version: 1, devices: clients });
 }
 
-function readPairings(file: string): PairingRecord[] {
-  const tokens = readJsonObject(file)?.tokens;
+function readPairings(): PairingRecord[] {
+  const tokens = readJsonObject(pairingFile())?.tokens;
   if (!Array.isArray(tokens)) return [];
   return tokens.flatMap((entry) =>
     isJsonObject(entry) && typeof entry.tokenHash === 'string' && typeof entry.expiresAt === 'string'
@@ -288,10 +283,9 @@ export function createPairingToken(
 ): { token: string; expiresAt: string } {
   const token = newToken();
   const expiresAt = new Date(now + PAIRING_TTL_MS).toISOString();
-  const file = isBuild(capabilities) ? buildPairingFile() : pairingFile();
   transaction(() => {
-    const pending = readPairings(file).filter((record) => unexpired(record, now));
-    writeJson(file, {
+    const pending = readPairings().filter((record) => unexpired(record, now));
+    writeJson(pairingFile(), {
       version: 1,
       tokens: [...pending, { tokenHash: hashToken(token), expiresAt, capabilities }],
     });
@@ -311,20 +305,13 @@ export function spendPairingToken(
   now: number = Date.now(),
 ): AuthOutcome {
   return transaction(() => {
+    const pairings = readPairings();
     const tokenHash = hashToken(token);
-    let match: PairingRecord | undefined;
-    for (const file of [pairingFile(), buildPairingFile()]) {
-      const pairings = readPairings(file);
-      const found = pairings.find((record) => record.tokenHash === tokenHash);
-      const pending = pairings.filter((record) => record !== found && unexpired(record, now));
-      if (pending.length !== pairings.length) writeJson(file, { version: 1, tokens: pending });
-      match ??= found;
-    }
+    const match = pairings.find((record) => record.tokenHash === tokenHash);
+    const pending = pairings.filter((record) => record !== match && unexpired(record, now));
+    if (pending.length !== pairings.length) writeJson(pairingFile(), { version: 1, tokens: pending });
     if (!match) return { ok: false, reason: 'pairing-unknown' };
     if (!unexpired(match, now)) return { ok: false, reason: 'pairing-expired' };
-    const build = isBuild(match.capabilities);
-    if (build && identity.kind === 'local') return { ok: false, reason: 'build-needs-tailnet' };
-    if (build && !validBuildName(name)) return { ok: false, reason: 'bad-device-name' };
     const deviceToken = newToken();
     const at = new Date(now).toISOString();
     const device: PairedDevice = {
@@ -336,8 +323,7 @@ export function spendPairingToken(
       lastSeenAt: at,
       capabilities: match.capabilities,
     };
-    if (build) writeBuildClients([...readBuildClients(now), device]);
-    else writeJson(devicesFile(), { version: 1, devices: [...readDevices(), device] });
+    writeJson(devicesFile(), { version: 1, devices: [...readDevices(), device] });
     return { ok: true, device, deviceToken };
   });
 }

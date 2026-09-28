@@ -14,7 +14,7 @@ The design is in
 
 ```bash
 stim-server [--port <n>]          # serve paired clients, port 7787 by default
-stim-server pair [--port <n>] [--control|--build]
+stim-server pair [--port <n>] [--control]
                                   # print a single-use pairing payload
 stim-server devices [list]        # list paired devices, build clients and build requests
 stim-server devices grant <id> --control|--read|--build
@@ -137,32 +137,27 @@ Because the server trusts `X-Forwarded-For` on loopback (see
 address. Run `stim-server` as a user no one else can run processes as when
 other people use this Mac, and approve a request only when you expect it.
 
-A Mac gets `build` one of two ways:
-
-- **Request and approve.** The client sends `hello` with `auth` set to
-  `{ "request": "build", "deviceName" }`, a name of at most 64 UTF-16 code
-  units with no control or format characters. The server records a pending build
-  client bound to the peer's node, answers with a `deviceToken`, no
-  capabilities and `approval: { "state": "pending", "expiresAt" }`, and closes
-  the connection. `stim-server devices` lists it as `pending build`. On this
-  Mac, `stim-server devices grant <id> --build` approves it and
-  `stim-server devices revoke <id>` denies it. Until then, `hello` with its
-  token fails with `approval-pending`, which does not count as a failed
-  attempt, while the request itself does, so a peer cannot send more
-  requests than failed attempts. A request lapses after 15 minutes. Each
-  node has at most one pending request, the newest, and the server holds at
-  most 8; more fail with `limit-exceeded`.
-- **Code.** `stim-server pair --build` prints a payload like the QR payload,
-  plus the Mac's tailnet `node` ID. The Mac that spends it gets `build` at
-  once: running the command is the approval. It refuses unless Tailscale runs
-  and a tailnet-only `tailscale serve` route reaches the server.
+A Mac gets `build` only by asking and being approved on this Mac. The client
+sends `hello` with `auth` set to `{ "request": "build", "deviceName" }`, a
+name of at most 64 UTF-16 code units with no control or format characters.
+The server records a pending build client bound to the peer's node, answers
+with a `deviceToken`, no capabilities and
+`approval: { "state": "pending", "expiresAt" }`, and closes the connection.
+`stim-server devices` lists it as `pending build`. On this Mac,
+`stim-server devices grant <id> --build` approves it and
+`stim-server devices revoke <id>` denies it. Until then, `hello` with its token
+fails with `approval-pending`, which does not count as a failed attempt, while
+the request itself does, so a peer cannot send more requests than failed
+attempts. A request lapses after 15 minutes. Each node has at most one pending
+request, the newest, and the server holds at most 8; more fail with
+`limit-exceeded`. There is no pairing code for `build`: `stim-server pair`
+never grants it.
 
 `devices grant` never gives `build` to a paired device, or `read` or
 `control` to a build client. Build clients live in
-`$STIM_HOME/server/build-clients.json` and unspent build codes in
-`build-pairing.json`, apart from `devices.json` and `pairing.json`, so a
-`stim-server` release without `build` never reads them: it refuses their
-tokens and cannot spend a build code as a reader.
+`$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
+`stim-server` release without `build` never reads them and refuses their
+tokens.
 
 ## Protocol
 

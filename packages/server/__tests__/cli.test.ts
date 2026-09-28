@@ -22,7 +22,7 @@ const DNS = 'mac.tail1.ts.net';
 const FAKE_TAILSCALE = `#!/usr/bin/env node
 const args = process.argv.slice(2).join(' ');
 if (args === 'status --json') {
-  console.log(JSON.stringify({ BackendState: 'Running', TailscaleIPs: ['100.64.0.1'], Self: { ID: 'nMac', DNSName: '${DNS}.', HostName: 'mac' } }));
+  console.log(JSON.stringify({ BackendState: 'Running', TailscaleIPs: ['100.64.0.1'], Self: { DNSName: '${DNS}.', HostName: 'mac' } }));
 } else if (args === 'serve status --json') {
   console.log(process.env.FAKE_SERVE_STATUS);
 } else {
@@ -43,17 +43,17 @@ function serveConfig(routes: Record<number, string>, funneled: number[] = []): s
 // The fake tailscale is a script with a shebang, which Windows cannot execute.
 const withTailscale = describe.skipIf(process.platform === 'win32');
 
-function pairWith(serveStatus: string, ...flags: string[]) {
+function pairWith(serveStatus: string) {
   const bin = join(home, 'bin');
-  mkdirSync(bin, { recursive: true });
+  mkdirSync(bin);
   writeFileSync(join(bin, 'tailscale'), FAKE_TAILSCALE);
   chmodSync(join(bin, 'tailscale'), 0o755);
-  const result = spawnSync(process.execPath, [BIN, 'pair', '--port', '7787', ...flags], {
+  const result = spawnSync(process.execPath, [BIN, 'pair', '--port', '7787'], {
     env: { ...process.env, STIM_HOME: home, PATH: `${bin}:${process.env.PATH}`, FAKE_SERVE_STATUS: serveStatus },
     encoding: 'utf8',
   });
-  const payload = result.status === 0 ? (JSON.parse(result.stdout) as Record<string, string>) : null;
-  return { status: result.status, endpoint: payload?.endpoint ?? null, payload, stderr: result.stderr };
+  const endpoint = result.status === 0 ? (JSON.parse(result.stdout) as { endpoint: string }).endpoint : null;
+  return { status: result.status, endpoint, stderr: result.stderr };
 }
 
 beforeEach(() => {
@@ -126,12 +126,11 @@ describe('build', () => {
     });
   }
 
-  it('refuses pair --build without Tailscale, and creates no token', () => {
+  it('grants build only by approving a request, never through pair', () => {
     const result = plain('pair', '--build', '--port', '17787');
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('refusing to pair for builds');
+    expect(result.stderr).toContain('--build applies only to `devices grant`');
     expect(readdirSync(home)).not.toContain('server');
-    expect(plain('pair', '--build', '--control').status).toBe(1);
   });
 
   it('lists a pending build request and approves it only with --build', () => {
@@ -145,6 +144,11 @@ describe('build', () => {
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
     expect(devices).toEqual([expect.objectContaining({ id, capabilities: ['build'] })]);
     expect(devices[0]).not.toHaveProperty('pendingUntil');
+
+    const denied = requestBuildAccess('Other', { kind: 'tailnet', nodeId: 'nO', nodeName: 'other', user: 'u' });
+    if (!denied.ok) throw new Error(denied.reason);
+    expect(plain('devices', 'revoke', denied.device.id).status).toBe(0);
+    expect(plain('devices', 'grant', denied.device.id, '--build').status).toBe(1);
   });
 });
 
@@ -192,14 +196,5 @@ withTailscale('pair with Tailscale running', () => {
     expect(stderr).toContain('Funnel is on for port 443');
     expect(stderr).toContain('--https=7443');
     expect(readdirSync(home)).not.toContain('server');
-  });
-
-  it('pair --build names the node and refuses without a tailnet-only route', () => {
-    const routed = pairWith(serveConfig({ 7443: 'http://127.0.0.1:7787' }), '--build');
-    expect(routed.payload).toMatchObject({ endpoint: `wss://${DNS}:7443`, node: 'nMac' });
-    expect(routed.stderr).toContain('run its project code on this Mac to build');
-    const missing = pairWith('{}', '--build');
-    expect(missing.status).toBe(1);
-    expect(missing.stderr).toContain('--https=7443');
   });
 });
