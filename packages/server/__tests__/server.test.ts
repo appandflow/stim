@@ -1792,6 +1792,7 @@ describe('frames.subscribe', () => {
       expect(await late.next()).toEqual(stalled);
       expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
       expect(await late.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
+      expect(readViewedDevices()).toEqual([]);
       client.socket.close();
       late.socket.close();
       await until(() => helperRuns().length === 1);
@@ -1816,6 +1817,42 @@ describe('frames.subscribe', () => {
       });
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
       expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1']);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    "never replays a slot's simulator footage for a physical iPhone",
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '100000' },
+        undefined,
+        fakeHelper(),
+      );
+      const recordings = join(workspaceStateDir(workspace), 'recordings', 'ios-default');
+      mkdirSync(recordings, { recursive: true });
+      const at = Date.now() - 1000;
+      const unit = Buffer.alloc(17);
+      unit.writeUInt32BE(18, 0);
+      unit.writeUInt8(1, 4);
+      unit.writeDoubleBE(at, 5);
+      unit.writeUInt16BE(330, 13);
+      unit.writeUInt16BE(720, 15);
+      writeFileSync(join(recordings, `${at}-${at}.seg`), Buffer.concat([unit, Buffer.from([0, 0, 0, 1, 0])]));
+      const sim = await authed(port);
+      expect(await sim.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], at })).toMatchObject({
+        result: { subscription: 's1' },
+      });
+      sim.socket.close();
+      const client = await authed(port);
+      const target = { workspace, platform: 'ios', physical: true, video: ['h264'] };
+      expect(await client.request('frames.subscribe', { ...target, at })).toMatchObject({
+        error: { code: 'no-recording' },
+      });
+      await client.request('frames.subscribe', target);
+      expect(await client.request('frames.seek', { subscription: 's1', at, rate: 0 })).toMatchObject({
+        error: { code: 'no-recording' },
+      });
     },
     10_000,
   );

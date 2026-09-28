@@ -191,7 +191,7 @@ export function DeviceTile({
           )}
         </View>
       )}
-      {streams && device.id ? <AgentRow env={env} device={device} deviceId={device.id} /> : null}
+      {streams && device.id && !device.physical ? <AgentRow env={env} device={device} deviceId={device.id} /> : null}
     </Card>
   );
 }

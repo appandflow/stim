@@ -101,12 +101,10 @@ export function DeviceView({
     : undefined;
   const running = Boolean(device?.running && streamsFrames(device));
   const viewOnly = physical && platform === 'ios';
-  const range = useReplayRange({ workspace, platform, slot });
-  const replayOff = env?.recording?.enabled === false;
-  const timeline = useMemo(
-    () => (range && !replayOff && !physical ? buildTimeline(range.spans) : null),
-    [range, replayOff, physical],
-  );
+  const slotRange = useReplayRange({ workspace, platform, slot });
+  const range = physical ? null : slotRange;
+  const replayOff = !physical && env?.recording?.enabled === false;
+  const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
   const hasFootage = timeline !== null && preset.video.length > 0;
   const [startAt, setStartAt] = useState<number | null>(null);
   const replayStart = hasFootage ? startAt : null;

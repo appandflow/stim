@@ -289,7 +289,9 @@ Events are `{ "event", "subscription", ... }`.
   started from a shell, is denied without a prompt, and the subscription
   ends with a `frames-failed` that names the Camera pane of System
   Settings. A physical iPhone is view only: `control.begin` with
-  `physical: true` refuses with `action-failed`.
+  `physical: true` refuses with `action-failed`. It is never recorded, so
+  `at` and `frames.seek` on it fail with `no-recording`, and it counts
+  toward no idle check.
 
 - **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
   (`default` when absent), like `frames.subscribe`, and returns what can be
