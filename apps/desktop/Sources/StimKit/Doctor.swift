@@ -13,6 +13,8 @@ public struct DoctorReport: Decodable, Hashable, Sendable {
 
   public var project: String
   public var findings: [Finding]
+  /// Each `offload.machines` entry's state; nil from a `stim` older than the field.
+  public var buildMachines: [BuildMachineStatus]?
 }
 
 /// The first `stim ...` command a doctor fix names in backticks, such as `stim doctor --fix --platform android`.

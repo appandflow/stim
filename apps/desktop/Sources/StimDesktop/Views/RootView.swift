@@ -281,6 +281,8 @@ struct RootView: View {
       if inspector == .hidden { toggleInspector() }
     case .workspace(let path), .url(let path, _):
       selection = .environment(path)
+    case .buildRequest(let id):
+      BuildRequestPrompt.present(id: id)
     }
   }
 

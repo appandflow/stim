@@ -43,6 +43,10 @@ final class ToastCenter: ObservableObject {
     toasts.removeAll { $0.id == id }
   }
 
+  func dismiss(key: String) {
+    for toast in toasts where toast.key == key { dismiss(toast.id) }
+  }
+
   func hover(_ id: Toast.ID, _ hovering: Bool) {
     if hovering {
       timers.removeValue(forKey: id)?.invalidate()

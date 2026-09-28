@@ -237,11 +237,19 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
-      findings.push(...(await inspectBuildMachines({ fix: opts.fix === true })));
+      const buildMachines = await inspectBuildMachines({ fix: opts.fix === true });
+      findings.push(...buildMachines.findings);
 
       if (opts.json) {
         console.log(
-          JSON.stringify({ project: root, platform: opts.platform ?? null, stim, budget: budget.report, findings }),
+          JSON.stringify({
+            project: root,
+            platform: opts.platform ?? null,
+            stim,
+            budget: budget.report,
+            buildMachines: buildMachines.machines,
+            findings,
+          }),
         );
         recordDoctorRun(root, opts.platform, version);
         return;

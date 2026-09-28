@@ -5,6 +5,8 @@ import Foundation
 /// `Fixtures/oversight-vectors.json`, so the two fail until they agree.
 public enum OversightCategory: String, Codable, CaseIterable, Hashable, Sendable {
   case started, stuck, looping, finished, machine, control
+  /// Stim Desktop only: another Mac asks to build on this one.
+  case buildRequest = "build-request"
 }
 
 /// The part of a `stim status --json` payload the rules read.
@@ -177,8 +179,10 @@ public enum OversightTarget: Codable, Hashable, Sendable {
   case device(path: String, platform: String, slot: String)
   case build(path: String, platform: String)
   case url(path: String, url: String)
+  /// A pending `stim-server` build request, by the id `stim-server devices` lists it under.
+  case buildRequest(id: String)
 
-  private enum Keys: String, CodingKey { case kind, path, platform, slot, url }
+  private enum Keys: String, CodingKey { case kind, path, platform, slot, url, id }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: Keys.self)
@@ -194,6 +198,7 @@ public enum OversightTarget: Codable, Hashable, Sendable {
         path: try c.decode(String.self, forKey: .path), platform: try c.decode(String.self, forKey: .platform))
     case "url":
       self = .url(path: try c.decode(String.self, forKey: .path), url: try c.decode(String.self, forKey: .url))
+    case "build-request": self = .buildRequest(id: try c.decode(String.self, forKey: .id))
     case let kind:
       throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "Unknown target \(kind)")
     }
@@ -220,13 +225,16 @@ public enum OversightTarget: Codable, Hashable, Sendable {
       try c.encode("url", forKey: .kind)
       try c.encode(path, forKey: .path)
       try c.encode(url, forKey: .url)
+    case .buildRequest(let id):
+      try c.encode("build-request", forKey: .kind)
+      try c.encode(id, forKey: .id)
     }
   }
 
   /// The workspace the target is in; nil for the machine.
   public var path: String? {
     switch self {
-    case .machine: return nil
+    case .machine, .buildRequest: return nil
     case .workspace(let path), .device(let path, _, _), .build(let path, _), .url(let path, _): return path
     }
   }

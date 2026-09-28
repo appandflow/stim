@@ -96,6 +96,7 @@ struct StimDesktopApp: App {
     let cli = Task.detached { StimCLI(environment: await environment.value, override: override) }
     self.cli = cli
     ServerController.shared.configure(environment: environment)
+    BuildRequestNotifier.shared.start()
     _ = ServerSession.shared
     let store = StatusStore(cli: cli)
     _store = StateObject(wrappedValue: store)

@@ -43,10 +43,10 @@ struct PhonesView: View {
         ForEach([server.devicesError, server.changeError].compactMap { $0 }, id: \.self) { error in
           Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
         }
-        if server.devices.isEmpty {
+        if server.phones.isEmpty {
           Text("No paired phones.").foregroundStyle(Palette.secondary)
         }
-        ForEach(server.devices) { device in
+        ForEach(server.phones) { device in
           DeviceRow(
             device: device, changing: server.pendingGrants[device.id] != nil,
             allowControl: { server.grant(device, control: $0) }
@@ -59,6 +59,24 @@ struct PhonesView: View {
           Button("Pair a Phone\u{2026}") { pairing = true }
             .disabled(!server.isRunning)
         }
+      }
+
+      Section {
+        if server.buildClients.isEmpty {
+          Text("No Mac builds here.").foregroundStyle(Palette.secondary)
+        }
+        ForEach(server.buildClients) { device in
+          BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
+        }
+      } header: {
+        Text("Macs that build here")
+      } footer: {
+        Text(
+          "Another Mac asks from its Build machines tab. Stim Desktop notifies you, and only Allow lets it run its project's code here to build, as your user. A build client never reads workspaces or controls devices. Requests lapse after 15 minutes."
+        )
+        .foregroundStyle(Palette.tertiary)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
 
       Section("stim-server executable") {
@@ -88,13 +106,23 @@ struct PhonesView: View {
       pairing = server.isRunning
     }
     .confirmationDialog(
-      "Revoke \(revoking?.name ?? "")?", isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
+      revokeTitle, isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
       presenting: revoking
     ) { device in
-      Button("Revoke", role: .destructive) { server.revoke(device) }
-    } message: { _ in
-      Text("The phone disconnects and must pair again to reconnect.")
+      Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
+    } message: { device in
+      Text(
+        device.pendingUntil != nil
+          ? "That Mac cannot build here unless it asks again."
+          : device.isBuildClient
+            ? "That Mac can no longer build here and must ask again."
+            : "The phone disconnects and must pair again to reconnect.")
     }
+  }
+
+  private var revokeTitle: String {
+    guard let revoking else { return "" }
+    return revoking.pendingUntil == nil ? "Revoke \(revoking.name)?" : "Deny \(revoking.name)?"
   }
 
   @ViewBuilder private var serverState: some View {
@@ -268,6 +296,47 @@ private struct DeviceRow: View {
 
   private var lastSeen: String {
     guard let at = device.lastSeenAt else { return "Never seen" }
+    return "Seen \(at.formatted(.relative(presentation: .named)))"
+  }
+}
+
+private struct BuildClientRow: View {
+  var device: PairedDevice
+  var review: () -> Void
+  var revoke: () -> Void
+
+  var body: some View {
+    HStack(spacing: Space.lg) {
+      Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: device.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
+          if device.pendingUntil != nil {
+            Pill("Waiting for you", tone: .warning, size: .small)
+          } else {
+            Pill("Can build", tone: .success, size: .small)
+          }
+        }
+        Text(verbatim: "\(device.id) \u{00B7} \(device.node)").font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      Spacer()
+      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      if device.pendingUntil != nil {
+        Button("Review\u{2026}", action: review)
+        Button("Deny", role: .destructive, action: revoke)
+      } else {
+        Button("Revoke", role: .destructive, action: revoke)
+      }
+    }
+    .padding(.vertical, Space.xxs)
+  }
+
+  private var detail: String {
+    if let until = device.pendingUntil { return "Lapses \(until.formatted(.relative(presentation: .named)))" }
+    guard let at = device.lastSeenAt else { return "Never built" }
     return "Seen \(at.formatted(.relative(presentation: .named)))"
   }
 }

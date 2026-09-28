@@ -205,12 +205,30 @@ while you look at the past. **Record device screens for replay** in the same
 tab turns `recording.enabled` on or off for the Mac. See
 [Replay device screens](./owned-devices.md#replay-device-screens).
 
+## Build on another Mac
+
+Another Mac on your tailnet can build for this one once someone on it
+approves this Mac. On this Mac, **Stim > Settings > Build Machines** lists the
+Macs on your tailnet that run stim-server; **Use for Builds** adds one to the
+`offload.machines` setting and sends it a request. Each listed Mac shows
+whether it approved this Mac, is waiting, revoked it, or is now a different
+tailnet node, which Stim refuses to connect to. **Remove** takes it out of the
+setting.
+
+On the other Mac, with **Serve to phones** on and its `tailscale serve` route
+set up, Stim Desktop notifies "<Mac> wants to build on this Mac". **Review**
+shows the Mac's name and tailnet node; **Allow** lets it build there, and
+**Deny** refuses. The Macs that build there are listed under **Macs that build
+here** in **Stim > Settings > Phones**, each with **Revoke**. Builds do not
+offload yet; see [`offload.machines`](./settings.md#machine-settings).
+
 ## Notifications
 
 Stim Desktop notifies you with the same rules as the phone app: work started,
 an agent that looks stuck, an agent that repeats the same build failure, work
-finished, and a machine low on disk or memory. Each category is Alert, Silent or
-Off; every category is Silent by default. An alert appears as a card in the
+finished, a machine low on disk or memory, and another Mac asking to build on
+this one. Each category is Alert, Silent or Off; every category is Silent by
+default except a build request, which alerts. An alert appears as a card in the
 corner while the window is in front, with a button that opens the workspace,
 device or build, and as a macOS notification otherwise; macOS asks for
 permission the first time. Every notification, Silent and Off (as Muted) ones

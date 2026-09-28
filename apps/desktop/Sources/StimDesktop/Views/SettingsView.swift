@@ -25,6 +25,9 @@ struct SettingsView: View {
       PhonesView(server: ServerController.shared, cli: cli)
         .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
         .tag("phones")
+      BuildMachinesView(cli: cli, store: store) { model.load(directory: workspace) }
+        .tabItem { Label("Build Machines", systemImage: "hammer") }
+        .tag("build-machines")
       scopeTab(.machine, title: "Machine", icon: "desktopcomputer")
       scopeTab(.repo, title: "Repository", icon: "folder")
       scopeTab(.workspace, title: "Workspace", icon: "square.stack.3d.up")

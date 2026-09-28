@@ -10,6 +10,7 @@ extension OversightCategory {
     case .finished: return "Work finished or PR ready"
     case .machine: return "Machine in trouble"
     case .control: return "Someone takes over your device"
+    case .buildRequest: return "A Mac asks to build here"
     }
   }
 
@@ -22,19 +23,20 @@ extension OversightCategory {
     case .finished: return "checkmark.circle"
     case .machine: return "exclamationmark.triangle"
     case .control: return "hand.raised"
+    case .buildRequest: return "hammer"
     }
   }
 
   /// Whether a toast of the category stays until dismissed: it asks for the user, not just reports.
   public var needsAttention: Bool {
     switch self {
-    case .stuck, .looping, .machine, .control: return true
+    case .stuck, .looping, .machine, .control, .buildRequest: return true
     case .started, .finished: return false
     }
   }
 
   /// The categories that can fire on Stim Desktop; `control` is a stim-server push to a phone.
-  public static let desktop: [OversightCategory] = [.started, .stuck, .looping, .finished, .machine]
+  public static let desktop: [OversightCategory] = [.started, .stuck, .looping, .finished, .machine, .buildRequest]
 }
 
 extension OversightTarget {
@@ -46,12 +48,13 @@ extension OversightTarget {
     case .device(_, let platform, _): return platform == "web" ? "Show page" : "Show device"
     case .build: return "Show build"
     case .url: return "Open pull request"
+    case .buildRequest: return "Review"
     }
   }
 
   /// Every string `actionTitle` can render, for UI that reserves a column sized to the widest one.
   public static let actionTitles: [String] = [
-    "Show machine", "Open workspace", "Show device", "Show page", "Show build", "Open pull request",
+    "Show machine", "Open workspace", "Show device", "Show page", "Show build", "Open pull request", "Review",
   ]
 }
 
@@ -64,7 +67,9 @@ public enum NotificationLevel: String, CaseIterable, Sendable {
 }
 
 extension OversightCategory {
-  public var defaultLevel: NotificationLevel { .silent }
+  /// Every category starts Silent, except a build request: it waits on an answer from this Mac and lapses after
+  /// 15 minutes.
+  public var defaultLevel: NotificationLevel { self == .buildRequest ? .alert : .silent }
 }
 
 /// Stim Desktop's notification settings, in its own `UserDefaults`.

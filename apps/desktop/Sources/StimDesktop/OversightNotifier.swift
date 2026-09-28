@@ -115,6 +115,7 @@ final class OversightNotifier: ObservableObject {
     case .finished: return .success
     case .stuck, .looping: return .warning
     case .machine, .control: return .error
+    case .buildRequest: return .warning
     }
   }
 }
@@ -123,6 +124,10 @@ enum NoticeRouter {
   @MainActor static func open(_ target: OversightTarget) {
     if case .url(_, let url) = target, let link = URL(string: url) {
       NSWorkspace.shared.open(link)
+      return
+    }
+    if case .buildRequest(let id) = target {
+      DispatchQueue.main.async { MainActor.assumeIsolated { BuildRequestPrompt.present(id: id) } }
       return
     }
     NSApp.activate(ignoringOtherApps: true)

@@ -111,7 +111,10 @@ tailnet, not asked yet, waiting for approval (with the
 now a different tailnet node than the one this Mac paired with. `--fix` asks
 each named machine without a pairing for build access, asks again one that
 revoked or let the request lapse, and forgets the pairing of a machine no
-longer named. It never re-pairs with a different node.
+longer named. It never re-pairs with a different node. `--json` lists each named machine
+under `buildMachines` with its `state`: `approved`, `pending`, `not-asked`,
+`revoked`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
+`invalid`.
 
 ## `ports`
 
