@@ -9,6 +9,7 @@
     "website/.docusaurus/**",
     "website/static/img/branding/stim-jar-*.json",
     ".claude/**",
-    "apps/mobile/**"
+    "apps/mobile/**",
+    "apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json"
   ]
 }
