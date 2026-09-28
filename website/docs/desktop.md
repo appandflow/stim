@@ -55,6 +55,25 @@ brew install --cask appandflow/tap/stim
 - `stim` on the login shell's `PATH`, or its path set in **Stim > Settings >
   App**.
 
+## A workspace at a glance
+
+A workspace's page opens with the same summary as the phone app. A stage line
+says whether it is **Running**, **Building**, **Build failed**, **Warming**,
+**Ready** or **Stopped**, with how long and any problem ("3 errors", "iOS app
+closed"). Next to it, the git chip shows unpushed commits and uncommitted
+files when there are some, and the branch's pull request coloured by its state
+with a single CI mark; click it for the branch, the pull request and a link to
+GitHub.
+
+Three cards follow. **Resources** shows the workspace's CPU, memory and disk
+and opens a popover with every process and the last 10 minutes of CPU and
+memory. **Build** shows each platform's last build time and whether it hit the
+cache, or the next build's estimate in grey, and opens the recent builds.
+**Logs** shows the error count, Metro's port and health, and the latest
+bundle, and opens the logs. While a build runs, a build card takes the Build
+card's place with the phase, progress against past runs and the latest output
+line. A wide window shows the process list and the phase checklist inline.
+
 ## Run the app
 
 Each workspace's context menu and "..." menu offer **Run on iOS** and **Run on
