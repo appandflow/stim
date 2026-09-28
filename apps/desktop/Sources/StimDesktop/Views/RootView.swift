@@ -205,15 +205,15 @@ struct RootView: View {
       return
     }
     pendingLink = PendingWorkspaceLink(request: request)
-    showWorkspaceLink(in: store.payload)
+    showWorkspaceLink(in: store.payload, expires: false)
   }
 
   /// A link waits for the payloads that follow it, which a cold launch only has once `stim status` answers, and
   /// gives up 10 seconds after the first one that does not list its workspace.
-  private func showWorkspaceLink(in payload: StatusPayload?) {
+  private func showWorkspaceLink(in payload: StatusPayload?, expires: Bool = true) {
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
-      guard !pending.expiring else { return }
+      guard expires, !pending.expiring else { return }
       pendingLink?.expiring = true
       Task {
         try? await Task.sleep(for: .seconds(10))
