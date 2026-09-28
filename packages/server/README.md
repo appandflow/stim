@@ -555,8 +555,9 @@ current frame's pixels, text as injected text, and `\n`, `\t`, `\b`,
 `input.posture` fail with `bad-request`, because a phone turns only in hand.
 
 Some Android 15 and 16 devices send no frame until their screen changes
-(scrcpy #6500, #6546), so a tile can stay blank until then. A phone with its
-screen off also shows nothing until it is woken.
+(scrcpy #6500, #6546), so a tile can stay blank until then. With its screen
+off, a phone streams what its display shows, such as a Samsung always-on
+display, or black; the stream never wakes it.
 
 For testing without a phone, `STIM_SERVER_TEST_ADB_EMULATORS=1` in the
 server's environment lets a `physical: true` target resolve to an emulator the

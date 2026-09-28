@@ -55,8 +55,9 @@ adb with the [scrcpy](https://github.com/Genymobile/scrcpy) server, which
 `stim-server` pushes to `/data/local/tmp` and deletes when the stream stops. It
 installs nothing, changes no setting, and cannot rotate the phone. Control ends
 when the workspace releases the lease or it expires. Some Android 15 and 16
-phones send no picture until their screen changes, and a phone with its screen
-off shows nothing until you wake it. Physical iPhones are not streamed yet.
+phones send no picture until their screen changes. With the screen off, you see
+what the phone's display shows, such as an always-on display, and watching never
+wakes it. Physical iPhones are not streamed yet.
 
 Each workspace keeps its owned-device assignments for later runs.
 After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
