@@ -1,0 +1,72 @@
+diff --git a/ios/ImageLoader.swift b/ios/ImageLoader.swift
+index de6e2c368e45bedd01e563cf254c006190aca233..f8299281fc674157d83863d38abde2c6976a82f6 100644
+--- a/ios/ImageLoader.swift
++++ b/ios/ImageLoader.swift
+@@ -12,6 +12,14 @@ internal final class ImageLoader {
+   )
+ 
+   func load(_ source: ImageSource, options: ImageLoadOptions) async throws -> UIImage {
++    // `maxSize` isn't applied to asset catalog images: the catalog already serves the variant for the screen scale.
++    if let image = assetCatalogImage(for: source.uri) {
++      if let tintColor = options.tintColor {
++        return image.withTintColor(tintColor)
++      }
++      return image
++    }
++
+     // This loader uses only the disk cache. We may want to give more control on this, but the memory cache
+     // doesn't make much sense for shared refs as they're kept in memory as long as their JS objects.
+     var context = createSDWebImageContext(forSource: source, cachePolicy: .disk)
+diff --git a/ios/ImageView.swift b/ios/ImageView.swift
+index bf865ebaa990861eb534b3e1695d9594b0e55de6..99eaac839174ce2ad7608cd1f51fdd3800aedd3d 100644
+--- a/ios/ImageView.swift
++++ b/ios/ImageView.swift
+@@ -457,6 +457,9 @@ public final class ImageView: ExpoView {
+   }
+ 
+   private func localAssetImage(from source: ImageSource) -> UIImage? {
++    if let image = assetCatalogImage(for: source.uri) {
++      return image
++    }
+     guard let path = localAssetName(from: source.uri) else {
+       return nil
+     }
+diff --git aios/Utils/AssetCatalog.swift b/ios/Utils/AssetCatalog.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..7ebcbe1796309c2105aadb43e294bf2fecf70bdc
+--- /dev/null
++++ b/ios/Utils/AssetCatalog.swift
+@@ -0,0 +1,33 @@
++// Copyright 2026-present 650 Industries. All rights reserved.
++
++internal import React
++
++/**
++ Loads a bundled packager image from React Native's asset catalog.
++
++ When an app sets the `RCTUseAssetCatalog` Info.plist key, React Native compiles its bundled
++ png/jpg/jpeg images into `RNAssets.bundle/Assets.car` instead of copying them as loose files,
++ so the `file://` URL JS resolves for a `require()`d image points to a file that doesn't exist.
++ See https://github.com/react/react-native/pull/30129.
++
++ Returns `nil` for anything React Native doesn't put in the catalog, and always when the app
++ hasn't opted in, so those sources keep their regular loading path.
++ */
++func assetCatalogImage(for url: URL?) -> UIImage? {
++  guard usesAssetCatalog, let url, url.isFileURL, RCTAssetCatalogNameForURL(url) != nil else {
++    return nil
++  }
++  return RCTImageFromLocalAssetURL(url)
++}
++
++// React Native reads the key with `boolValue`, which also accepts string values such as "YES".
++private let usesAssetCatalog: Bool = {
++  let value = Bundle.main.object(forInfoDictionaryKey: "RCTUseAssetCatalog")
++  if let number = value as? NSNumber {
++    return number.boolValue
++  }
++  if let string = value as? NSString {
++    return string.boolValue
++  }
++  return false
++}()
