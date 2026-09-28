@@ -224,7 +224,11 @@ async function main(): Promise<void> {
     if (scope === null || scope === 'many') fail('devices grant takes exactly one of --control, --read or --build.');
     const capabilities = scope === 'build' ? (['build'] as const) : capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
-    if (outcome === 'unknown') fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    if (outcome === 'unknown') {
+      fail(
+        `no paired device ${arg}, and no pending build request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
+      );
+    }
     if (outcome === 'build-mismatch') {
       fail(
         scope === 'build'

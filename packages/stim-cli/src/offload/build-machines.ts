@@ -1,6 +1,7 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { WebSocket } from 'ws';
+import type { ConnectionOptions } from 'node:tls';
+import { WebSocket, type ClientOptions } from 'ws';
 import {
   buildMachinesFile,
   buildMachinesLock,
@@ -20,6 +21,8 @@ const HELLO_TIMEOUT_MS = 10_000;
 export interface TailnetPeer {
   nodeId: string;
   dnsName: string;
+  /** A tailnet address of the node; WireGuard delivers packets to it only from that node. */
+  address: string;
 }
 
 export type HelloReply =
@@ -37,10 +40,9 @@ export type HelloReply =
 export interface BuildMachineIo {
   /** `tailscale status --json`, or null when Tailscale is not running. */
   status: () => unknown;
-  hello: (url: string, auth: Record<string, string>) => Promise<HelloReply>;
+  hello: (endpoint: Endpoint, auth: Record<string, string>) => Promise<HelloReply>;
 }
 
-/** Splits an `offload.machines` entry, `name` or `name:port`. */
 export function parseMachine(entry: string): { name: string; port: number } | null {
   const match = /^([A-Za-z0-9][A-Za-z0-9.-]*?)(?::(\d{1,5}))?$/.exec(entry.trim());
   if (!match) return null;
@@ -57,14 +59,30 @@ export function findPeer(status: unknown, name: string): TailnetPeer | 'missing'
   const found = peers.flatMap((peer) => {
     if (!isJsonObject(peer) || typeof peer.ID !== 'string' || typeof peer.DNSName !== 'string') return [];
     const dnsName = peer.DNSName.replace(/\.$/, '').toLowerCase();
-    return dnsName === name || dnsName.startsWith(`${name}.`) ? [{ nodeId: peer.ID, dnsName }] : [];
+    const addresses = Array.isArray(peer.TailscaleIPs) ? peer.TailscaleIPs.filter((ip) => typeof ip === 'string') : [];
+    const address = addresses.find((ip) => !ip.includes(':')) ?? addresses[0];
+    if (!address || !(dnsName === name || dnsName.startsWith(`${name}.`))) return [];
+    return [{ nodeId: peer.ID, dnsName, address }];
   });
   if (found.length === 0) return 'missing';
   return found.length === 1 ? found[0]! : 'ambiguous';
 }
 
-function endpoint(peer: TailnetPeer, port: number): string {
-  return port === 443 ? `wss://${peer.dnsName}` : `wss://${peer.dnsName}:${port}`;
+export interface Endpoint {
+  url: string;
+  servername: string;
+  host: string;
+}
+
+/**
+ * Connects to the pinned node's own tailnet address rather than resolving its name, so the socket reaches the
+ * node whose ID was just checked. `tailscale serve` still needs the MagicDNS name for TLS (SNI and certificate)
+ * and for its Host routing.
+ */
+function endpoint(peer: TailnetPeer, port: number): Endpoint {
+  const address = peer.address.includes(':') ? `[${peer.address}]` : peer.address;
+  const suffix = port === 443 ? '' : `:${port}`;
+  return { url: `wss://${address}${suffix}`, servername: peer.dnsName, host: `${peer.dnsName}${suffix}` };
 }
 
 function tailscaleStatus(): unknown {
@@ -81,9 +99,14 @@ function tailscaleStatus(): unknown {
   return null;
 }
 
-function hello(url: string, auth: Record<string, string>): Promise<HelloReply> {
+function hello({ url, servername, host }: Endpoint, auth: Record<string, string>): Promise<HelloReply> {
   return new Promise((resolve) => {
-    const socket = new WebSocket(url, { handshakeTimeout: HELLO_TIMEOUT_MS });
+    const options: ClientOptions & ConnectionOptions = {
+      handshakeTimeout: HELLO_TIMEOUT_MS,
+      servername,
+      headers: { Host: host },
+    };
+    const socket = new WebSocket(url, options);
     const done = (reply: HelloReply) => {
       clearTimeout(timer);
       socket.removeAllListeners();

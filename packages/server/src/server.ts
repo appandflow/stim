@@ -221,6 +221,10 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
     code: 'forbidden',
     message: 'Build access is granted only to another Mac on the tailnet, not to a connection from this Mac.',
   },
+  'bad-device-name': {
+    code: 'bad-request',
+    message: 'A Mac asking to build here needs a one-line name of at most 64 characters.',
+  },
   'build-requests-full': {
     code: 'limit-exceeded',
     message: 'This Mac has too many pending build requests. Try again after they are approved or lapse.',
@@ -543,6 +547,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (typeof auth.pairingToken === 'string' && deviceName) {
         outcome = spendPairingToken(auth.pairingToken, deviceName, identity);
       } else if (auth.request === 'build' && deviceName) {
+        if (limiter.blocked(limitKey)) {
+          return refuse(
+            id,
+            'limit-exceeded',
+            'Too many attempts from this peer. Try again in a minute.',
+            CLOSE_UNAUTHORIZED,
+          );
+        }
         outcome = requestBuildAccess(deviceName, identity);
       } else if (typeof auth.deviceToken === 'string') {
         outcome = authenticateDevice(auth.deviceToken, identity);

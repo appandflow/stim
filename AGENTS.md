@@ -205,8 +205,9 @@ outside it moves to its own issue and pull request.
   tailnet run its project code on this Mac to build. A person grants it on the
   worker, per client, with `stim-server pair --build` or
   `stim-server devices grant <id> --build`, and never together with `read` or
-  `control`; loopback connections never get it. Build clients live in
-  `server/build-clients.json`, apart from `devices.json`. The client names its
+  `control`; an honest loopback connection never gets it. Build clients and
+  unspent build codes live in `server/build-clients.json` and
+  `server/build-pairing.json`, apart from `devices.json` and `pairing.json`. The client names its
   build machines in `offload.machines`, pins each one's tailnet node in
   `build-machines.json`, and sends its token only to that node.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path

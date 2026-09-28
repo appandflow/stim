@@ -497,7 +497,9 @@ describe('build access', () => {
 
   test.skipIf(!fakeTailscale)('counts each build request toward the failed-attempt limit', async () => {
     const port = await start({ maxAuthFailures: 2 });
-    for (let attempt = 0; attempt < 2; attempt++) await requestBuild(await connect(port, '100.64.0.3'));
+    const opened = await Promise.all([1, 2, 3].map(() => connect(port, '100.64.0.3')));
+    for (const socket of opened.slice(0, 2)) await requestBuild(socket);
+    expect(await requestBuild(opened[2]!)).toMatchObject({ error: { code: 'limit-exceeded' } });
     await expect(connect(port, '100.64.0.3')).rejects.toThrow('HTTP 429');
   });
 

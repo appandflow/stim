@@ -129,14 +129,19 @@ gets `forbidden` for all of them.
 `build` lets another Mac on the tailnet run its project's code on this Mac to
 build for it: config plugins, CocoaPods hooks, Xcode script phases and Gradle
 plugins run as the user `stim-server` runs as. It never comes with `read` or
-`control`, and a phone cannot be granted it. Grant it only to Macs you trust
-with that. A connection from this Mac, over loopback, cannot get it: it has no
-tailnet node to bind the token to.
+`control`, and `devices grant` never turns a paired device into a build
+client. Grant it only to Macs you trust with that. A connection from this Mac,
+over loopback, cannot get it: it has no tailnet node to bind the token to.
+Because the server trusts `X-Forwarded-For` on loopback (see
+[Pairing](#pairing)), a process on this Mac can still claim a tailnet peer's
+address. Run `stim-server` as a user no one else can run processes as when
+other people use this Mac, and approve a request only when you expect it.
 
 A Mac gets `build` one of two ways:
 
 - **Request and approve.** The client sends `hello` with `auth` set to
-  `{ "request": "build", "deviceName" }`. The server records a pending build
+  `{ "request": "build", "deviceName" }`, a name of at most 64 characters
+  with no control characters. The server records a pending build
   client bound to the peer's node, answers with a `deviceToken`, no
   capabilities and `approval: { "state": "pending", "expiresAt" }`, and closes
   the connection. `stim-server devices` lists it as `pending build`. On this
@@ -154,9 +159,10 @@ A Mac gets `build` one of two ways:
 
 `devices grant` never gives `build` to a paired device, or `read` or
 `control` to a build client. Build clients live in
-`$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
-`stim-server` release without `build` does not read them and refuses their
-tokens.
+`$STIM_HOME/server/build-clients.json` and unspent build codes in
+`build-pairing.json`, apart from `devices.json` and `pairing.json`, so a
+`stim-server` release without `build` never reads them: it refuses their
+tokens and cannot spend a build code as a reader.
 
 ## Protocol
 

@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readBuildMachines } from '@stim-cli/core/state';
-import { findPeer, inspectBuildMachines, parseMachine, type HelloReply } from '../offload/build-machines.ts';
+import {
+  findPeer,
+  inspectBuildMachines,
+  parseMachine,
+  type Endpoint,
+  type HelloReply,
+} from '../offload/build-machines.ts';
 
 let home: string;
 
@@ -21,19 +27,19 @@ function status(nodeId: string, dnsName = 'mini.tail1.ts.net.') {
     BackendState: 'Running',
     Self: { ID: 'nLaptop', HostName: 'laptop', DNSName: 'laptop.tail1.ts.net.' },
     Peer: {
-      key1: { ID: nodeId, DNSName: dnsName },
+      key1: { ID: nodeId, DNSName: dnsName, TailscaleIPs: ['fd7a::1', '100.64.0.7'] },
       key2: { ID: 'nFunnel', DNSName: '' },
-      key3: { ID: 'nOther', DNSName: 'minimal.tail1.ts.net.' },
+      key3: { ID: 'nOther', DNSName: 'minimal.tail1.ts.net.', TailscaleIPs: ['100.64.0.8'] },
     },
   };
 }
 
 function fakeIo(nodeId: string, replies: HelloReply[]) {
-  const calls: { url: string; auth: Record<string, string> }[] = [];
+  const calls: { endpoint: Endpoint; auth: Record<string, string> }[] = [];
   const io = {
     status: () => status(nodeId),
-    hello: (url: string, auth: Record<string, string>) => {
-      calls.push({ url, auth });
+    hello: (endpoint: Endpoint, auth: Record<string, string>) => {
+      calls.push({ endpoint, auth });
       return Promise.resolve(replies.shift()!);
     },
   };
@@ -51,8 +57,9 @@ const pending: HelloReply = {
 
 describe('findPeer', () => {
   it('matches a MagicDNS name or its first label, and only one peer', () => {
-    expect(findPeer(status('nMini'), 'mini')).toEqual({ nodeId: 'nMini', dnsName: 'mini.tail1.ts.net' });
-    expect(findPeer(status('nMini'), 'mini.tail1.ts.net')).toEqual({ nodeId: 'nMini', dnsName: 'mini.tail1.ts.net' });
+    const mini = { nodeId: 'nMini', dnsName: 'mini.tail1.ts.net', address: '100.64.0.7' };
+    expect(findPeer(status('nMini'), 'mini')).toEqual(mini);
+    expect(findPeer(status('nMini'), 'mini.tail1.ts.net')).toEqual(mini);
     expect(findPeer(status('nMini'), 'nope')).toBe('missing');
     expect(findPeer(status('nMini', 'minimal.tail1.ts.net.'), 'minimal')).toBe('ambiguous');
     expect(parseMachine('Mini:7444')).toEqual({ name: 'mini', port: 7444 });
@@ -64,7 +71,12 @@ describe('inspectBuildMachines', () => {
   it('requests access with --fix and pins the node it asked', async () => {
     const { io, calls } = fakeIo('nMini', [pending]);
     const findings = await inspectBuildMachines({ fix: true }, io, ['mini']);
-    expect(calls).toEqual([{ url: 'wss://mini.tail1.ts.net:7443', auth: { request: 'build', deviceName: 'laptop' } }]);
+    expect(calls).toEqual([
+      {
+        endpoint: { url: 'wss://100.64.0.7:7443', servername: 'mini.tail1.ts.net', host: 'mini.tail1.ts.net:7443' },
+        auth: { request: 'build', deviceName: 'laptop' },
+      },
+    ]);
     expect(findings[0]!.fix).toContain('stim-server devices grant ab12 --build');
     expect(readBuildMachines()).toEqual([
       expect.objectContaining({ machine: 'mini', nodeId: 'nMini', deviceToken: 'secret', state: 'pending' }),

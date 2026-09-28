@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -42,6 +42,22 @@ describe('build clients', () => {
     expect(spendPairingToken(token, 'Mini', node('nB'))).toMatchObject({ ok: true });
     expect(readDevices()).toEqual([]);
     expect(readBuildClients().map((client) => client.capabilities)).toEqual([[], ['build']]);
+  });
+
+  it('keeps build codes out of pairing.json, which older servers spend', () => {
+    createPairingToken(Date.now(), ['build']);
+    expect(existsSync(join(home, 'server', 'pairing.json'))).toBe(false);
+  });
+
+  it('refuses a build name that could forge the approval listing', () => {
+    for (const name of ['Laptop\n1234  Mini  build  from mini', 'Laptop\u202e', 'x'.repeat(65)]) {
+      expect(requestBuildAccess(name, node('nA'))).toEqual({ ok: false, reason: 'bad-device-name' });
+      expect(spendPairingToken(createPairingToken(Date.now(), ['build']).token, name, node('nA'))).toEqual({
+        ok: false,
+        reason: 'bad-device-name',
+      });
+    }
+    expect(readBuildClients()).toEqual([]);
   });
 
   it('keeps one pending request per node and caps the total', () => {
