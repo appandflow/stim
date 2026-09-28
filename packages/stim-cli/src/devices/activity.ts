@@ -338,7 +338,7 @@ export function createDeviceProcessTables(): DeviceProcessTables {
     },
     host() {
       if (host === undefined) {
-        // macOS ps on a heavily loaded host can stall for over 5 s while reading process arguments.
+        // macOS ps can stall for several seconds on a heavily loaded host.
         const output = exec.runFileQuiet('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 10_000 });
         host = output === null ? null : parseProcessTable(output);
       }

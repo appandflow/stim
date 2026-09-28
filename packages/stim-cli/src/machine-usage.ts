@@ -51,8 +51,8 @@ function rank(owner: MachineOwner): number {
  * workspace's verified supervisor and Metro, running build and Chrome. Only a process under none of those falls back
  * to stim-server or a machine-wide service in `SHARED`, so a `simctl` a workspace's log collector runs stays with the
  * workspace. An emulator counts in the workspace that records its AVD whenever its process runs, including while adb
- * does not list it. A process with no root ancestor is left out. `footprints` holds physical footprint bytes by pid, or is
- * null when they could not be read, and the owners' `memoryMb` then sums resident sizes. A process missing from
+ * does not list it. A process with no root ancestor is left out. `footprints` holds physical footprint bytes by pid,
+ * or is null when they could not be read, and the owners' `memoryMb` then sums resident sizes. A process missing from
  * `footprints`, another user's or one that exited between the two reads, counts its resident size.
  */
 export function attributeMachineUsage({
