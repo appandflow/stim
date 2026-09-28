@@ -219,6 +219,51 @@ describe('createActivityReader', () => {
     expect(read({}).state).toBe('unknown');
   });
 
+  const runnerRow = (start: string) =>
+    `   200     1 204800   1.0 ${start}     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /Users/me/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd/Build/Products/AgentDeviceRunner.env.session-${UDID}-owner-100-8ffad543-52731.xctestrun -destination platform=iOS Simulator,id=${UDID}\n`;
+
+  test('a runner agent-device kept warm after close, or handed off at daemon exit, does not drive the device', () => {
+    const at = NOW - 2 * 3_600_000;
+    writeLogs([{ ts: at, src: 'device', platform: 'ios', msg: 'app log' }]);
+    ps = runnerRow(RUNNER_START);
+    const idle = { state: 'idle', lastActivityAt: new Date(at).toISOString(), basis: ['device-log'] };
+
+    writeLease(runnerLease({ deviceClaimProtocol: 1 }));
+    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject(idle);
+    expect(read({ 100: 'unknown', 200: RUNNER_START })).toMatchObject(idle);
+
+    writeLease(runnerLease({ deviceClaimProtocol: 1, ownerToken: 'detached-owner-100-8ffad543' }));
+    expect(read({ 200: RUNNER_START })).toMatchObject(idle);
+
+    ps = runnerRow('Fri Sep 25 08:00:00 2026');
+    expect(read({ 200: RUNNER_START })).toMatchObject({ state: 'driven', basis: ['driver-process'] });
+  });
+
+  test("an open session's claim still drives a device whose runner declares the claim protocol", () => {
+    writeLease(runnerLease({ deviceClaimProtocol: 1 }));
+    ps = runnerRow(RUNNER_START);
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
+    );
+    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
+      state: 'driven',
+      driver: { tool: 'agent-device', pid: 100 },
+      basis: ['agent-device-claim'],
+    });
+  });
+
+  test('a runner from an agent-device build without device claims still drives the device', () => {
+    writeLease(runnerLease());
+    ps = runnerRow(RUNNER_START);
+    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
+      state: 'driven',
+      basis: ['agent-device-lease', 'driver-process'],
+    });
+  });
+
   test('a host test runner naming the device makes it driven', () => {
     ps = `  3503     1   1024   0.0 ${RUNNER_START}     maestro test flow.yaml --udid ${UDID}\n`;
     expect(read({})).toMatchObject({ state: 'driven', driver: { tool: 'maestro', pid: 3503 } });

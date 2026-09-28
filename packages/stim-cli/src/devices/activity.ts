@@ -76,6 +76,11 @@ export interface AgentDeviceRecord {
   readable: boolean;
   owner: PidStart | null;
   runner: PidStart | null;
+  /**
+   * The lease declares agent-device's device-claim protocol: its owner holds a device claim while it wants the
+   * device, so without a claim the runner is one agent-device kept warm after `close` or handed off at daemon exit.
+   */
+  claimProtocol: boolean;
   createdAtMs: number | null;
 }
 
@@ -117,6 +122,7 @@ export function parseAgentDeviceRecord(
     readable: Boolean(entry && deviceId),
     owner: entry ? field(entry, 'ownerPid', 'ownerStartTime') : null,
     runner: entry && kind === 'runner-lease' ? field(entry, 'runnerPid', 'runnerStartTime') : null,
+    claimProtocol: kind === 'runner-lease' && entry?.deviceClaimProtocol === 1,
     createdAtMs,
   };
 }
@@ -283,6 +289,12 @@ export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
   });
 }
 
+function isClaimProtocolRunner(record: AgentDeviceRecord, row: HostProcess): boolean {
+  if (!record.claimProtocol || record.runner?.pid !== row.pid || row.startedAt === null) return false;
+  const recorded = Date.parse(record.runner.startTime);
+  return Math.floor(recorded / 1000) === Math.floor(Date.parse(row.startedAt) / 1000);
+}
+
 export interface ActivityTarget extends LogRecordTarget {
   workspace: string | null;
 }
@@ -378,6 +390,7 @@ export function createActivityReader({
     }));
     for (const { record, liveness } of agentDevice) {
       if (record.deviceId !== null && record.deviceId !== target.id) continue;
+      if (record.claimProtocol) continue;
       const basis = record.kind === 'claim' ? 'agent-device-claim' : 'agent-device-lease';
       if (liveness === 'live') {
         evidence.drivers.push({
@@ -419,6 +432,7 @@ export function createActivityReader({
     const processes = tables.host();
     if (processes === null) evidence.unknown.push('driver-process');
     for (const row of processes ?? []) {
+      if (agentDevice.some(({ record }) => isClaimProtocolRunner(record, row))) continue;
       const tool = hostDriverTool(row.command, target.platform, target.id);
       if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
     }

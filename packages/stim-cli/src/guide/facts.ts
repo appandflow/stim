@@ -926,9 +926,14 @@ RULES
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
-                     with its recorded start time, so a reused pid is dead
+                     with its recorded start time, so a reused pid is dead.
+                     A runner lease that declares agent-device's device
+                     claims is never a driver: without a claim, the runner
+                     is one agent-device kept warm after close or handed
+                     off when its daemon exited
                    device-lock          an unexpired \`stim device lock\` lease
-                   driver-process       a host process naming the UDID or serial
+                   driver-process       a host process naming the UDID or
+                                        serial, other than such a runner
                    instrumentation      an on-device uiautomator, androidx.test or
                                         argent helper process (one adb shell ps
                                         per emulator)
