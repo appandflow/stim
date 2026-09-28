@@ -70,9 +70,11 @@ trust the Mac. macOS
 counts the iPhone's screen as a camera, so the first stream asks for Camera
 access for Stim, the app that runs `stim-server`.
 
-While a workspace holds an Android phone's lease, the phone app also shows the
-phone's screen live through `stim-server`, and a phone paired with control can
-tap, swipe, type and press Home, Back, Apps and Lock on it. The stream runs over
+While a workspace holds an Android phone's lease, the phone app and Stim Desktop
+also show the phone's screen live through `stim-server`. Take over in Stim
+Desktop, or a phone paired with control, can tap, swipe, type and press Home,
+Back, Apps and Lock on it. Stim Desktop also shows a cabled iPhone's screen,
+view only. The stream runs over
 adb with the [scrcpy](https://github.com/Genymobile/scrcpy) server, which
 `stim-server` pushes to `/data/local/tmp` and deletes when the stream stops. It
 installs nothing, changes no setting, and cannot rotate the phone. Control ends

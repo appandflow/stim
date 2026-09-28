@@ -151,6 +151,21 @@ it instead of their own windows, unless `iosSimulatorApp` or
 `androidEmulatorApp` is set to another viewer. See
 [Devices and cleanup](./owned-devices.md).
 
+## Watch and drive a leased phone
+
+With **Serve to phones** on in **Stim > Settings > Phones**, the tile of a
+phone the workspace leases with `stim android --device`, `stim ios --device`
+or `stim device lock` shows its screen live. On an Android phone, **Take over**
+sends your clicks, trackpad scrolls and typing to it, and adds Home, Back, Apps
+and Lock buttons. An iPhone over a USB cable is view only. The tile says so
+when the phone is disconnected, when the lease has ended, and when
+`stim-server` is too old to stream phones. See
+[Physical devices](./owned-devices.md).
+
+```text
+Lease my connected Android phone to this workspace with stim device lock for 30 minutes, then tell me to open the workspace in Stim Desktop.
+```
+
 ## Replay device screens
 
 With **Serve to phones** on in **Stim > Settings > Phones**, a workspace page

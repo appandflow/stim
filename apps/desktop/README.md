@@ -8,8 +8,8 @@ from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
 `stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
-Device replay, which only stim-server serves, comes from the stim-server the
-Phones tab runs or found, over loopback; see [Replay](#replay). Its
+Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server the
+Phones tab runs or found, over loopback; see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
@@ -422,14 +422,16 @@ endpoint, such as Playwright MCP, shows as the driver.
 While a stim-server runs on port 7787 (**Serve to phones**, see [Phones](#phones)),
 the focused device of a workspace page offers a replay bar under its screen,
 like the phone app's device viewer. Stim Desktop connects to that server at
-`ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json` for a
-read-only token, spends it as a device named "Stim Desktop", and keeps the
+`ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json --control` for a
+token, spends it as a device named "Stim Desktop", and keeps the
 device token in a file only you can read under `~/Library/Application
 Support/Stim Desktop/stim-server/`, one per Stim home. The server issued it to
 a loopback connection, so it refuses the token from any other node. When the
 server no longer knows the token, the app pairs once more, so revoking it with
 `stim-server devices revoke` lasts only until the next connection; turn off
-**Serve to phones** to stop it. The Phones list leaves this device out.
+**Serve to phones** to stop it. A read-only pairing from an earlier version gets
+control through `stim-server devices grant <id> --control` once, then the app
+reconnects. The Phones list leaves this device out.
 
 The app polls `replay.range` every 10 seconds while the tile shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
@@ -469,9 +471,34 @@ A physical iPhone, iPad or Android phone the workspace leases with
 own tile, from the environment's `physicalDevices` in `stim status --json`, next
 to any simulator or emulator in the same slot. The tile names the device and
 its model, carries a **Physical** pill and the time the lease ends, and counts
-as running while the Mac reaches the device. Stim does not stream a physical
-device, so the tile shows no screen, no Take over and no Stop. A lease alone
-puts the workspace under Live.
+as running while the Mac reaches the device. It has no Stop and no rotate
+buttons. A lease alone puts the workspace under Live.
+
+The tile streams the device's screen from the local stim-server (see
+[Replay](#replay) for the connection) with `frames.subscribe`, `physical:
+true` and `video: ["h264"]`, as the phone app does, and decodes the H.264
+itself. An iPhone streams only over a USB cable and is view only. An Android
+phone streams over adb, and **Take over** sends clicks and drags as touches,
+trackpad scrolls as one-finger drags, and typed ASCII, Return, Tab and Delete
+as text, through a `control.begin` session with `physical: true`. While taken
+over, the tile shows Home, Back, Apps and Lock buttons. The server accepts
+control only from the workspace that holds the lease, and never takes or
+renews a lease itself.
+
+Instead of a screen, the tile says:
+
+- **Turn on Serve to phones** while no stim-server runs, or why the server is
+  unreachable.
+- **Update stim-server** with the install command when the server's hello
+  lacks `physical-ios` or `physical-android` for the device.
+- **Disconnected** when `stim status` reads the device as disconnected.
+- **The workspace's lease on this device ended**, with the `--device` command
+  that leases it again, once the lease's end time passes, before `stim status`
+  drops the tile.
+
+A delayed stream shows the server's reason, such as a locked iPhone. When the
+server ends control (no input for 5 minutes, the device gone, the lease
+ended), Take over turns off and the tile says why.
 
 ## Phones
 

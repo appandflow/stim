@@ -33,6 +33,7 @@ struct DeviceTile: View {
   @State private var confirmingStop = false
   @State private var replaySize: CGSize?
   @EnvironmentObject private var actions: ActionCenter
+  @ObservedObject private var server = ServerSession.shared
 
   private let screenPadding: CGFloat = 12
 
@@ -105,7 +106,7 @@ struct DeviceTile: View {
         } else if device.isRunning, !isPhysical, let workspace {
           stopButton(workspace: workspace)
         }
-        if interactive, device.platform != "web" {
+        if interactive, device.platform != "web", !isPhysical {
           rotateButton(clockwise: false)
           rotateButton(clockwise: true)
         }
@@ -146,7 +147,10 @@ struct DeviceTile: View {
         }
         if isPhysical {
           Pill { Text("Physical") }
-            .help("A device Stim uses through this workspace's lease and never owns.")
+            .help(
+              device.platform == "ios"
+                ? "A device Stim uses through this workspace's lease and never owns. Its screen is view only."
+                : "A device Stim uses through this workspace's lease and never owns.")
           if let expires = device.leaseExpiresAt {
             Text("Leased until \(expires.formatted(date: .omitted, time: .shortened))")
               .font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
@@ -161,7 +165,7 @@ struct DeviceTile: View {
   }
 
   @ViewBuilder private var takeOverButton: some View {
-    if let onToggleTakeOver {
+    if let onToggleTakeOver, !isPhysical || PhysicalScreen(device: device, link: server.link, now: Date()).canControl {
       if takenOver {
         Button("Release", systemImage: "hand.raised.fill", action: onToggleTakeOver)
           .buttonStyle(.borderedProminent)
@@ -187,6 +191,7 @@ struct DeviceTile: View {
 
   private var showsStoppedBar: Bool {
     if case .remote = device { return false }
+    if isPhysical, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
   }
 
@@ -452,7 +457,17 @@ struct DeviceTile: View {
         placeholder("No preview URL was recorded for session \(remote.sessionId).")
       }
     default:
-      placeholder(isPhysical && device.isRunning ? "Stim does not stream physical devices." : device.state)
+      if isPhysical, let workspace {
+        PhysicalDeviceScreen(
+          device: device, workspace: workspace, interactive: interactive,
+          onPixelSizeChange: { pixelSizes[1] = $0 },
+          onControlLost: { if takenOver { onToggleTakeOver?() } }
+        )
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+      } else {
+        placeholder(device.state)
+      }
     }
   }
 
@@ -465,7 +480,7 @@ extension DeviceRef {
   var isInteractive: Bool {
     switch self {
     case .ios(_, let sim): return isRunning && !sim.physical
-    case .android(_, let avd): return isRunning && avd.owned && !avd.physical && avd.serial != nil
+    case .android(_, let avd): return isRunning && (avd.owned || avd.physical) && avd.serial != nil
     case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
     case .remote: return false
     }
