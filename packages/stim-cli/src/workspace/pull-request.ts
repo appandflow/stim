@@ -3,6 +3,9 @@ import { getExecutor } from '../exec.ts';
 const GH_TIMEOUT_MS = 20_000;
 const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
 const GH_FIELDS = 'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository,isDraft';
+const GH_DETAIL_FIELDS =
+  'title reviewDecision commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 0) {' +
+  ' checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }';
 const SIGNED_OUT_EXIT = 4;
 
 export interface GhPullRequest {
@@ -14,6 +17,24 @@ export interface GhPullRequest {
   closedAt: string | null;
   isCrossRepository?: boolean;
   isDraft?: boolean;
+  title?: string;
+  reviewDecision?: string | null;
+  commits?: { nodes?: { commit?: { statusCheckRollup?: GhCheckRollup | null } }[] };
+}
+
+interface GhStateCount {
+  state: string;
+  count: number;
+}
+
+export interface GhCheckRollup {
+  contexts?: { checkRunCountsByState?: GhStateCount[]; statusContextCountsByState?: GhStateCount[] };
+}
+
+export interface CheckCounts {
+  passing: number;
+  failing: number;
+  pending: number;
 }
 
 /**
@@ -29,6 +50,47 @@ export interface PullRequestFact {
   head: string;
   containsHead: boolean;
   endedAt: number | null;
+  /** Present when the lookup asked for detail. */
+  title?: string;
+  reviewDecision?: 'approved' | 'changes-requested' | 'review-required' | null;
+  checks?: CheckCounts | null;
+}
+
+const PASSING = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED', 'COMPLETED']);
+const FAILING = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE']);
+const PENDING = new Set(['QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED', 'EXPECTED']);
+
+/** Sums a head commit's check runs and commit statuses by outcome; null when the commit has no checks. */
+export function checkCounts(rollup: GhCheckRollup | null | undefined): CheckCounts | null {
+  if (!rollup) return null;
+  const counts: CheckCounts = { passing: 0, failing: 0, pending: 0 };
+  const contexts = rollup.contexts;
+  for (const { state, count } of [
+    ...(contexts?.checkRunCountsByState ?? []),
+    ...(contexts?.statusContextCountsByState ?? []),
+  ]) {
+    if (!Number.isInteger(count) || count <= 0) continue;
+    if (PASSING.has(state)) counts.passing += count;
+    else if (FAILING.has(state)) counts.failing += count;
+    else if (PENDING.has(state)) counts.pending += count;
+  }
+  return counts;
+}
+
+function reviewDecisionOf(value: string | null | undefined): PullRequestFact['reviewDecision'] {
+  if (value === 'APPROVED') return 'approved';
+  if (value === 'CHANGES_REQUESTED') return 'changes-requested';
+  if (value === 'REVIEW_REQUIRED') return 'review-required';
+  return null;
+}
+
+function detailOf(pull: GhPullRequest): Pick<PullRequestFact, 'title' | 'reviewDecision' | 'checks'> {
+  if (typeof pull.title !== 'string') return {};
+  return {
+    title: pull.title,
+    reviewDecision: reviewDecisionOf(pull.reviewDecision),
+    checks: checkCounts(pull.commits?.nodes?.[0]?.commit?.statusCheckRollup),
+  };
 }
 
 export type PullRequestLookup = { pullRequest: PullRequestFact | null } | { unavailable: string };
@@ -80,6 +142,7 @@ export function selectPullRequest(
     head: pull.headRefOid,
     containsHead: tier < 2,
     endedAt: state === 'merged' ? epoch(pull.mergedAt) : state === 'closed' ? epoch(pull.closedAt) : null,
+    ...detailOf(pull),
   };
 }
 
@@ -145,13 +208,14 @@ export interface PullRequestQuery {
   head: string;
 }
 
-function branchesQuery(count: number): string {
+function branchesQuery(count: number, detail: boolean): string {
   const variables = Array.from({ length: count }, (_, i) => `, $b${i}: String!`).join('');
+  const nodes = `${GH_FIELDS.replaceAll(',', ' ')}${detail ? ` ${GH_DETAIL_FIELDS}` : ''}`;
   const fields = Array.from(
     { length: count },
     (_, i) =>
       ` b${i}: pullRequests(headRefName: $b${i}, states: [OPEN, CLOSED, MERGED], first: 20,` +
-      ` orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${GH_FIELDS.replaceAll(',', ' ')} } }`,
+      ` orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${nodes} } }`,
   ).join('');
   return `query($owner: String!, $repo: String!${variables}) { repository(owner: $owner, name: $repo) {${fields} } }`;
 }
@@ -161,8 +225,9 @@ function branchesQuery(count: number): string {
  * which asks for the same 20 newest pull requests of each head branch that `gh pr list --head` returns. `gh` fills
  * `{owner}` and `{repo}` from the remotes of `repo`; branch names travel as variables. Once `gh` is missing, signed
  * out or times out, every later call through the same function answers `unavailable` without running it again.
+ * With `detail`, it also asks for each pull request's title, review decision and head commit check counts.
  */
-export function pullRequestLookups(): (
+export function pullRequestLookups({ detail = false }: { detail?: boolean } = {}): (
   repo: string,
   queries: readonly PullRequestQuery[],
 ) => Promise<PullRequestLookup[]> {
@@ -175,7 +240,7 @@ export function pullRequestLookups(): (
     if (!queries.length) return [];
     const args = ['api', 'graphql', '-F', 'owner={owner}', '-F', 'repo={repo}'];
     queries.forEach(({ branch }, i) => args.push('-f', `b${i}=${branch}`));
-    args.push('-f', `query=${branchesQuery(queries.length)}`);
+    args.push('-f', `query=${branchesQuery(queries.length, detail)}`);
     let out: string;
     try {
       out = await exec.runFileAsync('gh', args, { cwd: repo, timeoutMs: GH_TIMEOUT_MS, env: GH_ENV });

@@ -5,6 +5,7 @@ import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine
 import {
   NO_BUILD_PROGRESS,
   startBuildProgress,
+  tapBuildLog,
   type BuildProgress,
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
@@ -695,7 +696,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
   const logsDir = workspaceLogsDir(root);
   const buildLog = join(logsDir, `build-${deviceSlotFileKey('android', slot)}.ndjson`);
-  const writer = createWriter(buildLog, { truncate: true, fields: { slot } });
+  const writer = tapBuildLog(createWriter(buildLog, { truncate: true, fields: { slot } }), progress);
 
   const record: AndroidRecord = {
     fingerprint: null,
@@ -1069,7 +1070,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         androidPackage,
         record,
         maxBuilds: limits.maxBuilds,
-        progress: { phase, out, estimates, stats, step: progress.step },
+        progress: { phase, out, estimates, stats, step: progress.step, miss: progress.miss },
       },
       {
         deviceAbi,

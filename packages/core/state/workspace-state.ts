@@ -162,7 +162,8 @@ function missChange(value: unknown): BuildMissChange | null {
   };
 }
 
-function missReason(value: unknown): BuildMissReason | null {
+/** A recorded miss reason in the shape status reports, without `baseline.cacheKey`; null when malformed. */
+export function parseMissReason(value: unknown): BuildMissReason | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (typeof record.kind !== 'string' || !MISS_KINDS.has(record.kind) || typeof record.summary !== 'string')
@@ -227,7 +228,8 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
   const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
-  const reason = record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : missReason(record.missReason);
+  const reason =
+    record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : parseMissReason(record.missReason);
   const diagnostics = record.status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
   return {
     platform,

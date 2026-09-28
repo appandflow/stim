@@ -10,7 +10,7 @@ import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
 import { existsSync, fstatSync } from 'fs';
 import { homedir, totalmem } from 'os';
-import { basename, dirname } from 'path';
+import { basename, dirname, join } from 'path';
 import type { Command } from 'commander';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../workspace/config.ts';
@@ -46,6 +46,7 @@ import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
+  readBuildDetail,
   readIdleStop,
   readBuildHistory,
   readLastBuilds,
@@ -58,6 +59,7 @@ import {
 import {
   createActivityReader,
   readWebActivity,
+  tailLines,
   createDeviceProcessTables,
   type ActivityTarget,
   type DeviceActivity,
@@ -87,6 +89,8 @@ import {
 } from '../status.ts';
 import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
+import { metroBundleState } from '../metro-bundle.ts';
+import { applyStatusMeasures, createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts';
 import { readFootprints } from '../footprint.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
@@ -127,6 +131,7 @@ interface StatusSnapshot {
   leases: ReturnType<typeof deviceLeaseStates>;
   leaseNow: number;
   orphanWorktrees: WorktreeFacts[];
+  worktrees: WorktreeFacts[];
   simsAvailable: boolean;
   simctlError: string | null;
   cwdRoot: string | null;
@@ -267,6 +272,8 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     );
   }
 
+  applyStatusMeasures(states, worktrees);
+  readLogDerivedFacts(states);
   const tables = createDeviceProcessTables();
   readDeviceProcesses(states, tables, { projects, launchesByState });
   readMetroReverses(states, launchesByState);
@@ -281,6 +288,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     leases,
     leaseNow,
     orphanWorktrees,
+    worktrees,
     simsAvailable,
     simctlError,
     cwdRoot,
@@ -289,6 +297,26 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     roots,
     simNames,
   };
+}
+
+/** Sets the facts status derives from workspace logs and the running build's detail file. */
+function readLogDerivedFacts(states: EnvironmentState[]): void {
+  const now = Date.now();
+  for (const state of states) {
+    if (state.metro) {
+      const bundle = metroBundleState(tailLines(join(workspaceLogsDir(state.path), 'metro.ndjson')) ?? [], {
+        running: state.metro.running,
+        now,
+      });
+      if (bundle) state.metro.bundle = bundle;
+      else delete state.metro.bundle;
+    }
+    if (state.build?.state === 'running') {
+      const record = parseActiveBuild(readWorkspaceState(state.path)?.[ACTIVE_BUILD_KEY]);
+      const detail = record ? readBuildDetail(state.path, record.claim.claimId) : null;
+      if (detail) state.build.detail = detail;
+    }
+  }
 }
 
 function phaseMarker({ phase, live, warmStep }: EnvironmentState): string {
@@ -345,6 +373,8 @@ async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Pr
   };
   withStateReadCache(() => {
     for (const state of snapshot.states) state.logs = logFacts(state.path);
+    applyStatusMeasures(snapshot.states, snapshot.worktrees);
+    readLogDerivedFacts(snapshot.states);
     readDeviceProcesses(snapshot.states, snapshot.tables, null);
   });
   if (machine && snapshot.machine) {
@@ -535,6 +565,7 @@ async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
   let snapshot: StatusSnapshot | null = null;
   let sources: StatusSources | null = null;
+  const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
@@ -543,6 +574,7 @@ async function watchStatus(json: boolean): Promise<void> {
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
         else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
+        measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));

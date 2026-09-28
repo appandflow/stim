@@ -1,0 +1,19 @@
+# Captured from `gradlew assembleProductionDebug` of an Expo app (TERM=dumb), home paths shortened:
+# the first project configuration, then tasks of each kind the progress parser reads, in order.
+> Task :expo-module-gradle-plugin:jar
+> Configure project :app
+  [expo-max-sdk-override-plugin] This plugin will find all permissions declared with `android:maxSdkVersion`. If there exists a declaration with the `android:maxSdkVersion` annotation and another one without, the plugin will remove the annotation from the final merged manifest. In order to see a log with the changes run a clean build of the app.
+> Task :10play_tentap-editor:generateCodegenArtifactsFromSchema
+> Task :app:generateCodegenArtifactsFromSchema SKIPPED
+> Task :app:packageProductionDebugResources
+> Task :app:mergeProductionDebugResources
+> Task :app:compileProductionDebugShaders NO-SOURCE
+> Task :app:mergeExtDexProductionDebug
+> Task :react-native-worklets:buildCMakeDebug[arm64-v8a][worklets]
+w: file:///Users/dev/Developer/tlon-apps/.worktrees/wide-insets/node_modules/expo-modules-core/android/src/main/java/expo/modules/apploader/AppLoaderProvider.kt:34:52 Unchecked cast of 'Class<*>!' to 'Class<out HeadlessAppLoader>'.
+> Task :app:compileProductionDebugKotlin
+> Task :app:dexBuilderProductionDebug FROM-CACHE
+> Task :app:packageProductionDebug
+> Task :app:assembleProductionDebug
+BUILD SUCCESSFUL in 9m 44s
+1034 actionable tasks: 526 executed, 508 from cache

@@ -1051,7 +1051,13 @@ describe('explicit remote backend behavior', () => {
     let clock = Date.parse('2026-09-25T14:51:27.000Z');
     const h = harness({
       remoteDevice: 'eas',
-      progress: { step: (phase: string) => log.push(phase), durations: () => ({}), clear: () => {} },
+      progress: {
+        step: (phase: string) => log.push(phase),
+        miss: () => {},
+        output: () => {},
+        durations: () => ({}),
+        clear: () => {},
+      },
       now: () => clock,
       resolveRemoteDeviceContext: async () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
@@ -5713,7 +5719,13 @@ describe('run statistics', () => {
 
   test('the run enters each phase at its real step, and a cache hit skips compile', async () => {
     const steps: string[] = [];
-    const progress = { step: (phase: string) => steps.push(phase), durations: () => ({}), clear: () => {} };
+    const progress = {
+      step: (phase: string) => steps.push(phase),
+      miss: () => {},
+      output: () => {},
+      durations: () => ({}),
+      clear: () => {},
+    };
     expect((await harness({ progress }).run()).ok).toBe(true);
     expect(steps).toEqual(['cache-lookup', 'compile', 'install', 'launch']);
 

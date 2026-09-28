@@ -478,11 +478,38 @@ export type ServerResponse =
   | { id: RequestId; result: Methods[Method]['result'] }
   | { id: RequestId | null; error: ProtocolError };
 
-/** A full status payload, as `stim status --watch --json` prints it. */
+/** One CPU and memory series of {@link UsageHistory}: `cpuPercent` is ps %CPU, where 100 is one core. */
+export interface UsageSeries {
+  cpuPercent: (number | null)[];
+  memoryMb: (number | null)[];
+}
+
+/** A simulator's or emulator's series; `id` is its UDID or AVD name, as its machine owner names it. */
+export interface DeviceUsageSeries extends UsageSeries {
+  kind: 'simulator' | 'emulator';
+  id: string;
+  workspace: string | null;
+  slot?: string;
+}
+
+/**
+ * The last 10 minutes of CPU and memory the server read from status payloads while a client was connected, in slots
+ * of `intervalMs`, oldest first: point `i` of `n` is at `endAt - (n - 1 - i) * intervalMs`, null where no payload
+ * fell in its slot. An environment's series sums every machine owner of that `workspace`, an environment `path`.
+ */
+export interface UsageHistory {
+  intervalMs: number;
+  endAt: number;
+  environments: (UsageSeries & { workspace: string })[];
+  devices: DeviceUsageSeries[];
+}
+
+/** A full status payload, as `stim status --watch --json` prints it, and the server's usage history, when it has one. */
 export interface StatusEvent {
   event: 'status';
   subscription: string;
   payload: StatusPayload;
+  usage?: UsageHistory;
 }
 
 /**
@@ -793,6 +820,44 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { workspace: { type: 'string', description: 'An environment path from a status payload.' } },
       },
+      UsageHistory: {
+        type: 'object',
+        required: ['intervalMs', 'endAt', 'environments', 'devices'],
+        additionalProperties: false,
+        properties: {
+          intervalMs: { type: 'integer' },
+          endAt: { type: 'integer' },
+          environments: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['workspace', 'cpuPercent', 'memoryMb'],
+              additionalProperties: false,
+              properties: {
+                workspace: { type: 'string' },
+                cpuPercent: { type: 'array', items: { type: ['number', 'null'] } },
+                memoryMb: { type: 'array', items: { type: ['number', 'null'] } },
+              },
+            },
+          },
+          devices: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['kind', 'id', 'workspace', 'cpuPercent', 'memoryMb'],
+              additionalProperties: false,
+              properties: {
+                kind: { enum: ['simulator', 'emulator'] },
+                id: { type: 'string' },
+                workspace: { type: ['string', 'null'] },
+                slot: { type: 'string' },
+                cpuPercent: { type: 'array', items: { type: ['number', 'null'] } },
+                memoryMb: { type: 'array', items: { type: ['number', 'null'] } },
+              },
+            },
+          },
+        },
+      },
       MachineHistory: {
         type: 'object',
         required: ['intervalMs', 'samples'],
@@ -1007,6 +1072,7 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'status' },
               subscription: { type: 'string' },
               payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
+              usage: { $ref: '#/$defs/UsageHistory' },
             },
           },
           {

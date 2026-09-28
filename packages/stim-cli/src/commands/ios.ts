@@ -2,7 +2,7 @@ import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts'
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
-import { NO_BUILD_PROGRESS, startBuildProgress, type BuildProgress } from '../engine/build-progress.ts';
+import { NO_BUILD_PROGRESS, startBuildProgress, tapBuildLog, type BuildProgress } from '../engine/build-progress.ts';
 import { join } from 'node:path';
 import {
   resolveOptimizations,
@@ -322,7 +322,7 @@ async function runIos(
   const logsDir = workspaceLogsDir(root);
   const logFile = iosSlotLogFile(root, slot);
   let writer = null as NdjsonWriter | null;
-  const logWriter = () => (writer ||= d.createWriter(logFile, { truncate: true }));
+  const logWriter = () => (writer ||= tapBuildLog(d.createWriter(logFile, { truncate: true }), progress));
 
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
@@ -821,7 +821,7 @@ async function runIos(
           easBuild,
           easProfile: opts.easProfile,
           maxBuilds: limits.maxBuilds,
-          progress: { phase, note, logWriter, estimates, stats, step: progress.step },
+          progress: { phase, note, logWriter, estimates, stats, step: progress.step, miss: progress.miss },
         },
         d,
       ),

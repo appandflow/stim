@@ -205,6 +205,17 @@ staging change, push or fetch touches its git files, and at least once a
 minute, so a file edit, creation or deletion that is not staged can take up
 to a minute to show.
 
+Each worktree also reports the GitHub pull request of its branch, once
+`stim status --watch` has looked it up. In `--json` that is `pullRequest` next
+to `git`: `{ number, url, title, state, checks, reviewDecision, checkedAt }`,
+where `state` is `open`, `draft`, `merged` or `closed`, and `checks` counts the
+head commit's `passing`, `failing` and `pending` checks. It is `null` when the
+branch has no pull request, and absent when `gh` is missing or signed out, the
+repository has no GitHub remote, or no watcher has looked it up yet. The watcher
+uses the same `gh` lookup as `stim gc`, off its refresh path, once per
+repository for worktrees whose answer is over 5 minutes old or whose HEAD
+moved; one-shot `stim status` only reads the cached answers.
+
 Status reads the worktree list from git's records in the repository. It runs
 `git status` only in worktrees outside macOS-protected folders, or in ones with
 a registered environment, so a worktree under `~/Documents` or `~/Desktop` is

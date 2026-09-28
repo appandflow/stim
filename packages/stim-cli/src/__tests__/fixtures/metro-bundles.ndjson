@@ -1,0 +1,12 @@
+{"src":"metro","level":"info","event":"supervisor_started","msg":"supervisor pid 36817 starting the expo-child dev server on port 8093 for /Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile","ts":1790279283842}
+{"src":"metro","level":"info","event":"server_started","msg":"expo-child dev server listening on port 8093","ts":1790279283873}
+{"src":"metro","level":"info","msg":"iOS Bundled 14176ms apps/tlon-mobile/index.tsx (9990 modules)","raw":true,"event":"expo_stdout","marker":true,"ts":1790279306900}
+{"ts":1790279349582,"src":"metro","level":"debug","event":"bundle_response_started","platform":"ios","requestId":"ce4ecd25-73b9-4741-b9c7-c8ec71d1e797","msg":"ios bundle response started"}
+{"src":"metro","level":"info","msg":"iOS Bundled 448ms apps/tlon-mobile/index.tsx (1 module)","raw":true,"event":"expo_stdout","marker":true,"ts":1790279350035}
+{"ts":1790279350051,"src":"metro","level":"debug","event":"bundle_response_finished","platform":"ios","requestId":"ce4ecd25-73b9-4741-b9c7-c8ec71d1e797","statusCode":200,"msg":"ios bundle response finished"}
+{"ts":1790280379588,"src":"metro","level":"debug","event":"bundle_response_started","platform":"ios","requestId":"4f9faf19-9afd-4b84-9ff1-b5bbe145fca0","msg":"ios bundle response started"}
+{"src":"metro","level":"info","msg":"iOS Bundled 465ms apps/tlon-mobile/index.tsx (1 module)","raw":true,"event":"expo_stdout","marker":true,"ts":1790280380058}
+{"ts":1790280380076,"src":"metro","level":"debug","event":"bundle_response_finished","platform":"ios","requestId":"4f9faf19-9afd-4b84-9ff1-b5bbe145fca0","statusCode":200,"msg":"ios bundle response finished"}
+{"ts":1790280380102,"src":"metro","level":"debug","event":"bundle_response_started","platform":"ios","requestId":"54589e58-0bf3-414d-b12a-86a34a62df88","msg":"ios bundle response started"}
+{"src":"metro","level":"info","msg":"iOS Bundled 468ms apps/tlon-mobile/index.tsx (1 module)","raw":true,"event":"expo_stdout","marker":true,"ts":1790280380571}
+{"ts":1790280380572,"src":"metro","level":"debug","event":"bundle_response_finished","platform":"ios","requestId":"54589e58-0bf3-414d-b12a-86a34a62df88","statusCode":200,"msg":"ios bundle response finished"}

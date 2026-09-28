@@ -14,7 +14,7 @@ import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import type { HelloResult, MachineUsage, ServerMessage } from '../src/protocol.ts';
+import type { HelloResult, MachineUsage, ServerMessage, StatusEvent } from '../src/protocol.ts';
 import { readAudit } from '../src/actions.ts';
 import {
   capabilitiesFor,
@@ -578,6 +578,41 @@ describe('status.subscribe', () => {
     await server!.close();
     server = null;
     await until(() => !alive(pid!));
+  });
+
+  it('sends the CPU and memory history beside the payload once a payload reports machine owners', async () => {
+    const machine = {
+      memorySource: 'footprint',
+      owners: [
+        {
+          kind: 'simulator',
+          name: 'sim',
+          workspace: '/work/app',
+          id: 'UDID-1',
+          owned: true,
+          cpuPercent: 12.5,
+          residentMb: 3000,
+          memoryMb: 1500,
+          processes: 40,
+        },
+      ],
+    };
+    const port = await start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify([{ ...PAYLOADS[1], machine }]) } });
+    const { token } = await pair(port);
+    const client = await connect(port);
+    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    await client.request('status.subscribe');
+    const event = (await client.next()) as StatusEvent;
+    expect(event.payload).toEqual({ ...PAYLOADS[1], machine });
+    expect(event.usage).toMatchObject({
+      intervalMs: 10_000,
+      devices: [{ kind: 'simulator', id: 'UDID-1', workspace: '/work/app' }],
+    });
+    const [app] = event.usage!.environments;
+    expect(app).toMatchObject({ workspace: '/work/app' });
+    expect(app!.cpuPercent).toHaveLength(60);
+    expect(app!.cpuPercent.filter((value) => value !== null)).toEqual([12.5]);
+    expect(app!.memoryMb.filter((value) => value !== null)).toEqual([1500]);
   });
 
   it('ends the subscription with an error event when the status child exits', async () => {
