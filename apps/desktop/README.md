@@ -513,11 +513,12 @@ at the next launch. Notifications and launch at login need the bundled app.
 `stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>]`,
 which `stim worktree warm`, `start`, `ios`, `android` and `web` print, shows a
 card for that workspace with **Open**; the app navigates only when Open is
-clicked. A malformed link, or a path `stim status` still does not list 10
-seconds after its first answer since the link arrived, shows **Workspace not
-found**. Another link to the same workspace replaces its card. With only the menu bar extra
-running and the main window closed, the card appears when the window next
-opens, because the link cannot open a window from the app delegate.
+clicked. A malformed link, or a path `stim status` does not list within 10
+seconds, shows **Workspace not found**; if the workspace appears within the
+next minute, its card replaces that one. Another link to the same workspace
+replaces its card. With only the menu bar extra running and the main window
+closed, the card appears when the window next opens, because the link cannot
+open a window from the app delegate.
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
 - `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup

@@ -205,21 +205,25 @@ struct RootView: View {
       return
     }
     pendingLink = PendingWorkspaceLink(request: request)
-    showWorkspaceLink(in: store.payload, expires: false)
+    showWorkspaceLink(in: store.payload)
   }
 
-  /// A link waits for the payloads that follow it, which a cold launch only has once `stim status` answers, and
-  /// gives up 10 seconds after the first one that does not list its workspace.
-  private func showWorkspaceLink(in payload: StatusPayload?, expires: Bool = true) {
+  /// A link waits for a status payload that lists its workspace. Once one exists, "Workspace not found" shows after
+  /// 10 seconds without a match, and a match within the next minute still replaces it with the workspace's card,
+  /// since `stim status --watch` can lag the command that printed the link.
+  private func showWorkspaceLink(in payload: StatusPayload?) {
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
-      guard expires, !pending.expiring else { return }
+      guard !pending.expiring else { return }
       pendingLink?.expiring = true
       Task {
         try? await Task.sleep(for: .seconds(10))
         guard pendingLink?.id == pending.id else { return }
-        pendingLink = nil
-        showWorkspaceNotFound("Stim does not list \(abbreviatingHome(pending.request.path)) as a workspace.")
+        showWorkspaceNotFound(
+          "Stim does not list \(abbreviatingHome(pending.request.path)) as a workspace.",
+          key: "workspace-link:\(pending.request.path)")
+        try? await Task.sleep(for: .seconds(60))
+        if pendingLink?.id == pending.id { pendingLink = nil }
       }
       return
     }
@@ -238,8 +242,8 @@ struct RootView: View {
         sticky: true, key: "workspace-link:\(path)"))
   }
 
-  private func showWorkspaceNotFound(_ body: String) {
-    toasts.show(Toast(icon: "questionmark.folder", tone: .warning, title: "Workspace not found", body: body))
+  private func showWorkspaceNotFound(_ body: String, key: String? = nil) {
+    toasts.show(Toast(icon: "questionmark.folder", tone: .warning, title: "Workspace not found", body: body, key: key))
   }
 
   private func openErrors(_ path: String) {
