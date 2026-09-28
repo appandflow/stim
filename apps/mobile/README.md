@@ -132,7 +132,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   out each part. It wraps onto its own line when both do not fit, and opens
   the **Git** sheet: upstream, ahead, behind, changed and untracked files,
   merged into, and the pull request's title, state, checks and review with
-  **Open in GitHub**. Below, three small cards open more:
+  **Open in GitHub**. Under it, one line for each Claude Code or Codex session
+  working in the workspace; a Claude Code session with Remote Control
+  connected shows as a link that opens it in the Claude app, or claude.ai/code
+  without the app. Below, three small cards open more:
   - **Resources**: the workspace's CPU (`ps` CPU summed over its processes,
     so above 100% on several cores) and memory from the status `machine`
     owners, and its disk (the worktree plus Stim's build folder) once a status

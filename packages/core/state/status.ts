@@ -260,6 +260,7 @@ export type AgentTool = (typeof AGENT_TOOLS)[number];
  * inside it, or its git worktree root, or one that ran a Stim command in it. `title` is the short name the tool keeps
  * for the session, never its conversation. `lastActiveAt` is the tool's own last update, or the Stim command's time
  * when that is newer. `openUrl` opens the session in the tool's desktop app when that app is installed on this Mac.
+ * `webUrl` opens a Claude Code session with Remote Control connected on claude.ai/code or in the Claude mobile app.
  */
 export interface AgentSession {
   tool: AgentTool;
@@ -270,6 +271,7 @@ export interface AgentSession {
   lastActiveAt?: string;
   pid?: number;
   openUrl?: string;
+  webUrl?: string;
 }
 
 export interface AndroidRuntimeFacts {

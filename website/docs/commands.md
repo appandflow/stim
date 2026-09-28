@@ -790,7 +790,7 @@ most every 5 minutes per folder while the environment is live and every hour
 otherwise, and one-shot `stim status` reads its cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:
-`[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl? }]`,
+`[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl?, webUrl? }]`,
 with `tool` either `claude-code` or `codex`. A session works in an environment
 when its working directory is the environment's path, a folder inside it, or
 its git worktree root. The watcher finds running Claude Code sessions in
@@ -802,7 +802,10 @@ record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
 session in the Claude desktop app or the Codex app when that app is installed,
-and is absent for a Claude Code session started in a terminal.
+and is absent for a Claude Code session started in a terminal. `webUrl` is the
+session's `https://claude.ai/code/` link while Claude Code Remote Control is
+connected, which opens it in a browser or the Claude mobile app; Stim's phone
+app opens it from the workspace page.
 
 In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and

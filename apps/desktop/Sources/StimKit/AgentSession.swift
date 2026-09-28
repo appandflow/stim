@@ -11,6 +11,7 @@ public struct AgentSession: Decodable, Hashable, Sendable, Identifiable {
   public var lastActiveAt: String?
   public var pid: Int?
   public var openUrl: String?
+  public var webUrl: String?
 
   public var id: String { "\(tool):\(sessionId)" }
 

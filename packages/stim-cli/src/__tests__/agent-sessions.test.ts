@@ -33,7 +33,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('a Claude Code session file gives its id, cwd, name and times, and a desktop link only for a desktop session', () => {
+test('a Claude Code session file gives its id, cwd, name and times, a desktop link only for a desktop session, and a web link only with Remote Control', () => {
   expect(parseClaudeSession(CLAUDE, APPS)).toEqual({
     tool: 'claude-code',
     sessionId: '0dc300cd-42a3-4758-8d35-79edf2904001',
@@ -43,9 +43,14 @@ test('a Claude Code session file gives its id, cwd, name and times, and a deskto
     lastActiveAt: '2026-09-28T12:41:03.886Z',
     pid: 20606,
     openUrl: 'claude://code/continue?session=local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7',
+    webUrl: 'https://claude.ai/code/session_016mNVcEGnttEVda1aDtiDUK',
   });
   expect(parseClaudeSession(CLAUDE, NO_APPS)).not.toHaveProperty('openUrl');
+  expect(parseClaudeSession(CLAUDE, NO_APPS)?.webUrl).toBe('https://claude.ai/code/session_016mNVcEGnttEVda1aDtiDUK');
   expect(parseClaudeSession({ ...CLAUDE, hostSessionId: undefined }, APPS)).not.toHaveProperty('openUrl');
+  for (const bridgeSessionId of [undefined, 'local_bb7da4e5', 'session_a/../b', 42]) {
+    expect(parseClaudeSession({ ...CLAUDE, bridgeSessionId }, APPS)).not.toHaveProperty('webUrl');
+  }
   expect(parseClaudeSession({ ...CLAUDE, name: 'a\nb\tc'.padEnd(300, 'x') }, APPS)?.title).toBe(
     `a b c${'x'.repeat(112)}...`,
   );
@@ -185,10 +190,11 @@ test('a Stim command records the agent session of its shell, and status reads it
   recordWorkspaceUse(project, new Date(), { CLAUDE_CODE_SESSION_ID: 'from-shell' });
   expect(readWorkspaceState(project)?.agentSession).toMatchObject({ tool: 'claude-code', sessionId: 'from-shell' });
   const cached = {
-    tool: 'codex',
+    tool: 'claude-code',
     sessionId: 'thread-1',
     cwd: join(project, 'src'),
     lastActiveAt: '2026-09-28T00:00:00Z',
+    webUrl: 'https://claude.ai/code/session_01abc',
   };
   mkdirSync(join(home, 'stim'), { recursive: true });
   const cache = (discoveredAt: string) =>
@@ -198,6 +204,7 @@ test('a Stim command records the agent session of its shell, and status reads it
   const fresh = environment();
   applyStatusMeasures([fresh], []);
   expect(fresh.agents?.map((agent) => agent.sessionId)).toEqual(['from-shell', 'thread-1']);
+  expect(fresh.agents?.[1]?.webUrl).toBe(cached.webUrl);
 
   cache(new Date(Date.now() - 3 * 60_000).toISOString());
   recordWorkspaceUse(project, new Date(), {});

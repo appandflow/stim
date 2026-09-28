@@ -1148,7 +1148,7 @@ RULES
   recently active first:
 
   agents        [{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?,
-                pid?, openUrl? }]
+                pid?, openUrl?, webUrl? }]
     tool        claude-code | codex
     title       the short name the tool keeps for the session; never a
                 prompt or any conversation content
@@ -1159,6 +1159,9 @@ RULES
                 (claude://code/continue) or the Codex app
                 (codex://threads/<id>) when that app is installed on the
                 Mac; absent for a Claude Code session started in a terminal
+    webUrl      https://claude.ai/code/<id> for a Claude Code session with
+                Remote Control connected; it opens the session in a browser
+                or the Claude mobile app
 
   A session works in an environment when its cwd is the environment's
   path or inside it (the deepest environment wins), or is the environment's

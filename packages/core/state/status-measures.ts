@@ -127,11 +127,13 @@ export function agentSessionOf(value: unknown): AgentSession | null {
   const startedAt = optionalString(raw.startedAt);
   const lastActiveAt = optionalString(raw.lastActiveAt);
   const openUrl = optionalString(raw.openUrl);
+  const webUrl = optionalString(raw.webUrl);
   if (title) session.title = title;
   if (startedAt) session.startedAt = startedAt;
   if (lastActiveAt) session.lastActiveAt = lastActiveAt;
   if (Number.isInteger(raw.pid) && (raw.pid as number) > 0) session.pid = raw.pid as number;
   if (openUrl) session.openUrl = openUrl;
+  if (webUrl) session.webUrl = webUrl;
   return session;
 }
 
