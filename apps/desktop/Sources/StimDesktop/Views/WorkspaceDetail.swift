@@ -207,13 +207,17 @@ struct WorkspaceDetail: View {
       showsCovers: true,
       focused: focused
     )
-    .contentShape(Rectangle())
-    .onTapGesture {
-      focusedID = device.id
-      viewing = ViewedDevice(id: device.id)
+    .overlay {
+      Button {
+        focusedID = device.id
+        viewing = ViewedDevice(id: device.id)
+      } label: {
+        Color.clear.contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Open \(device.label) to take it over or replay what it recorded")
+      .accessibilityLabel("Open \(device.label)")
     }
-    .help("Open \(device.label) to take it over or replay what it recorded")
-    .accessibilityAddTraits(.isButton)
   }
 }
 
