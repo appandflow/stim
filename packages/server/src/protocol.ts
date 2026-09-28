@@ -9,6 +9,15 @@ export const CAPABILITIES = ['read', 'control'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
+/**
+ * What this server serves beyond protocol version 1's base, so a client can tell before it asks:
+ * `physical-android` is `physical: true` on `frames.subscribe` and `control.begin` for an Android phone. An older
+ * server ignores `physical` on `frames.subscribe` and would stream the slot's Stim-owned device instead.
+ */
+export const FEATURES = ['physical-android'] as const;
+
+export type Feature = (typeof FEATURES)[number];
+
 export const METHODS = [
   'hello',
   'status.subscribe',
@@ -95,6 +104,7 @@ export interface HelloResult {
    */
   server: { name: string; version: string; stim: string; home: string };
   capabilities: Capability[];
+  features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];
   /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
@@ -634,7 +644,7 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloResult: {
         type: 'object',
-        required: ['protocol', 'server', 'capabilities', 'actions', 'device'],
+        required: ['protocol', 'server', 'capabilities', 'features', 'actions', 'device'],
         additionalProperties: false,
         properties: {
           protocol: { type: 'integer' },
@@ -650,6 +660,7 @@ export function protocolJsonSchema(): JsonSchema {
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
+          features: { type: 'array', items: { enum: [...FEATURES] } },
           actions: { type: 'array', items: { enum: [...ACTIONS] } },
           device: {
             type: 'object',

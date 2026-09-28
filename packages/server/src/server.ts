@@ -22,6 +22,7 @@ import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   ACTIONS,
+  FEATURES,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
@@ -437,6 +438,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
         capabilities: device.capabilities,
+        features: [...FEATURES],
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(outcome.deviceToken ? { deviceToken: outcome.deviceToken } : {}),

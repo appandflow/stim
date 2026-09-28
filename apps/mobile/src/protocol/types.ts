@@ -416,6 +416,8 @@ export interface Methods {
       /** `home` is absent from servers older than the `machine.get` method. */
       server: { name: string; version: string; stim: string; home?: string };
       capabilities: string[];
+      /** What the server serves beyond the base protocol; absent from servers that predate it. */
+      features?: string[];
       /** The actions this device may run; absent from servers that predate actions. */
       actions?: ActionName[];
       /** The paired device this connection authenticated as; absent from servers that predate it. */

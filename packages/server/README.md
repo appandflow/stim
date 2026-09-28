@@ -126,7 +126,9 @@ Events are `{ "event", "subscription", ... }`.
 - `hello` must come first. Params: `protocol` (1), `client` (`name`,
   `version`), and `auth`, either `{ "pairingToken", "deviceName" }` or
   `{ "deviceToken" }`. The result carries the server name and versions, the
-  device's `capabilities` (see [Scopes](#scopes)), the `actions` it may run
+  device's `capabilities` (see [Scopes](#scopes)), the server's `features`
+  (`physical-android` when it serves `physical: true`, see
+  [Physical Android devices](#physical-android-devices)), the `actions` it may run
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as

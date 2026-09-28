@@ -341,6 +341,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
+        features: ['physical-android'],
         actions: [],
       },
     });
