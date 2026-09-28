@@ -68,6 +68,7 @@ struct Sidebar: View {
         let count = store.attentionCount + autopilot.finishedPullRequests.count
         if count > 0 {
           Pill("\(count)", tone: .warning, size: .small)
+            .help("\(count) item\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") attention")
         }
       }
       PinnedRow(item: .machine, selection: $selection) {
@@ -76,6 +77,7 @@ struct Sidebar: View {
         if autopilot.pressure != nil {
           Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.warning)
             .help("Free disk is under the Stim budget")
+            .accessibilityLabel("Free disk is under the Stim budget")
         }
       }
     }
@@ -175,10 +177,13 @@ struct ProjectRow: View {
       Spacer()
       if summary.live > 0 {
         Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
+          .help("\(countLabel(summary.live, "live workspace")) of \(summary.total)")
       } else if summary.settingUp > 0 {
         Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
+          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none live yet")
       } else {
         Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
+          .help("\(countLabel(summary.total, "workspace")), none live")
       }
     }
     .contextMenu {
@@ -234,6 +239,8 @@ struct WorkspaceRow: View {
       StatusDot(
         color: env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary,
         filled: env.live || env.isSettingUp)
+        .contentShape(Circle())
+        .help(env.live ? "Live" : env.isWarming ? "Warming" : env.isSettingUp ? "Warmed, not started" : "Idle")
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: Space.sm) {
           Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
@@ -251,6 +258,8 @@ struct WorkspaceRow: View {
           }
           if !env.warnings.isEmpty {
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.warning)
+              .help(env.warnings.map { abbreviatingHome($0) }.joined(separator: "\n"))
+              .accessibilityLabel(countLabel(env.warnings.count, "warning"))
           }
         }
         HStack(spacing: Space.sm) {
@@ -258,6 +267,7 @@ struct WorkspaceRow: View {
           Spacer(minLength: 0)
           if let metro = env.metro {
             Text(":\(String(metro.port))").font(.stim(.caption2, mono: true)).foregroundStyle(Palette.tertiary).fixedSize()
+              .help("Metro port \(String(metro.port))\(metro.running ? "" : ", stopped")")
           }
         }
       }
@@ -431,23 +441,31 @@ struct SidebarFooter: View {
         statusLabel(dot: Palette.warning, text: compatibility == .missing ? "Install stim" : "stim update available")
       }
       .buttonStyle(.plain)
+      .help(
+        compatibility == .missing
+          ? "Stim Desktop cannot find stim \u{2014} click to install it with npm"
+          : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with npm")
     case .diskCritical(let freeBytes):
       Button { selection = .machine } label: {
         statusLabel(dot: Palette.error, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
+      .help("Free disk is below Stim's hard floor, so start, ios and android refuse \u{2014} click to open Machine")
     case .desktopUpdateAvailable:
       Button(action: updater.checkForUpdates) {
         statusLabel(dot: Palette.primary, text: "Update available")
       }
       .buttonStyle(.plain)
+      .help("A new version of Stim Desktop is available \u{2014} click to install it")
     case .diskWarning(let freeBytes):
       Button { selection = .machine } label: {
         statusLabel(dot: Palette.warning, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
+      .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
+        .help(version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim")
     }
   }
 
@@ -467,7 +485,8 @@ struct SidebarFooter: View {
   }
 
   private var agentsTooltip: String {
-    (["\(drivenDevices.count) device\(drivenDevices.count == 1 ? "" : "s") driven by an agent:"]
+    let count = drivenDevices.count
+    return (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show all devices"]
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 
@@ -480,13 +499,20 @@ struct SidebarFooter: View {
   }
 
   private var phonesTooltip: String {
-    guard case .running(let health, _) = server.state, let route = health.route, let dnsName = health.tailscale.dnsName
-    else { return "Phones on" }
-    return "Phones connect to \(route.endpoint(dnsName: dnsName))"
+    switch server.state {
+    case .off: return "Phone server is off \u{2014} click to open Phones settings"
+    case .starting: return "Phone server is starting \u{2014} click to open Phones settings"
+    case .failed(let message): return "Phone server failed: \(message) \u{2014} click to open Phones settings"
+    case .running(let health, _):
+      guard let route = health.route, let dnsName = health.tailscale.dnsName else {
+        return "Phone server is running, but phones cannot reach it over Tailscale yet \u{2014} click to pair a phone"
+      }
+      return "Phone server is running at \(route.endpoint(dnsName: dnsName)) \u{2014} click to pair a phone"
+    }
   }
 
   private var settingsButton: some View {
-    IconButton(systemImage: "gearshape", help: "Settings") { openSettings() }
+    IconButton(systemImage: "gearshape", help: "Settings (\u{2318},)", label: "Settings") { openSettings() }
   }
 }
 

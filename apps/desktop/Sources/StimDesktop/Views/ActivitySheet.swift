@@ -391,6 +391,7 @@ struct GcPreviewView: View {
       Image(systemName: entry.kept == nil ? "trash" : "lock")
         .foregroundStyle(entry.kept == nil ? Palette.warning : Palette.tertiary)
         .frame(width: 14)
+        .help(entry.kept == nil ? "stim gc --delete deletes this" : "Kept by stim gc --delete")
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(abbreviatingHome(entry.label))
           .font(.stim(.caption, mono: true))

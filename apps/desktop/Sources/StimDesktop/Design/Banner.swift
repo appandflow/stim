@@ -43,6 +43,7 @@ struct Banner<Content: View, Trailing: View>: View {
         }
         .buttonStyle(.plain)
         .help("Dismiss")
+        .accessibilityLabel("Dismiss")
       }
     }
     .padding(style == .inline ? Space.xl : Space.lg + Space.xxs)

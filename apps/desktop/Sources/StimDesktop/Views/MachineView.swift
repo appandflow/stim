@@ -420,6 +420,7 @@ struct MachineView: View {
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .frame(width: 28)
+      .accessibilityLabel("Worktree actions")
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
@@ -615,7 +616,7 @@ struct MachineView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       if runtime.unused {
-        Pill(tone: .warning) { Text("Unused") }
+        Pill(tone: .warning) { Text("Unused") }.help("No simulator or emulator uses it")
       } else {
         Text(runtime.deviceCount == 1 ? "1 device" : "\(runtime.deviceCount) devices").foregroundStyle(Palette.secondary)
       }

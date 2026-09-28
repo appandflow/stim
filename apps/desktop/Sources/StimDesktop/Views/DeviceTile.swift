@@ -62,6 +62,8 @@ struct DeviceTile: View {
     VStack(alignment: .leading, spacing: Space.sm) {
       HStack(spacing: Space.md) {
         StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
+          .contentShape(Circle())
+          .help("State: \(device.state)")
         ViewThatFits(in: .horizontal) {
           HStack(spacing: Space.xs) {
             Text(device.label).font(.stim(.callout, weight: .semibold))
@@ -132,7 +134,7 @@ struct DeviceTile: View {
         }
         Text(source).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let posture = posture ?? emulatorPosture?.label {
-          Pill { Text(posture) }
+          Pill { Text(posture) }.help("Current posture")
         }
       }
     }
@@ -277,6 +279,7 @@ struct DeviceTile: View {
     }
     .buttonStyle(.stim())
     .help(rotateFailed ? "The last rotation did not reach the device." : clockwise ? "Rotate right" : "Rotate left")
+    .accessibilityLabel(clockwise ? "Rotate right" : "Rotate left")
   }
 
   private func foldButton(udid: String) -> some View {
