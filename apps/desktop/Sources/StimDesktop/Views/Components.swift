@@ -1,3 +1,4 @@
+import AppKit
 import Lottie
 import StimKit
 import SwiftUI
@@ -157,6 +158,7 @@ struct EmptyState: View {
   var title: String
   var message: String
   var showsHero = false
+  var showsPrompts = false
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -171,9 +173,45 @@ struct EmptyState: View {
       }
       Text(title).font(.stim(.headline))
       Text(message).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+      if showsPrompts {
+        AgentPromptList().padding(.top, Space.xs)
+      }
     }
     .padding(Space.huge)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+struct AgentPromptList: View {
+  @State private var prompts = Array(AgentPrompts.all.shuffled().prefix(3))
+  @State private var copied: String?
+
+  var body: some View {
+    VStack(spacing: Space.md) {
+      Text("Copy a prompt for your coding agent.").foregroundStyle(Palette.secondary)
+      ForEach(prompts, id: \.self) { prompt in
+        Card {
+          HStack(spacing: Space.lg) {
+            Text(prompt)
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(prompt, forType: .string)
+              copied = prompt
+            } label: {
+              Label(copied == prompt ? "Copied" : "Copy", systemImage: copied == prompt ? "checkmark" : "doc.on.doc")
+            }
+            .buttonStyle(.stim(.secondary))
+            .help("Copy this prompt to the clipboard")
+            .accessibilityLabel(copied == prompt ? "Copied prompt: \(prompt)" : "Copy prompt: \(prompt)")
+          }
+          .padding(.horizontal, Space.xl)
+          .padding(.vertical, Space.lg)
+        }
+      }
+    }
+    .frame(maxWidth: 460)
   }
 }
 
