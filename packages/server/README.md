@@ -39,9 +39,11 @@ started with. While Tailscale runs, it also carries `route`, read from
 `port` that proxies to the server, `funneled` with the Funnel `ports` that do,
 `missing`, or `unknown` with a `reason`; the last three carry the `port` the
 setup command would use. Stim Desktop uses it to find a running server and
-show its route. A request through
-`tailscale serve`, on a Tailscale address, or with a `Host` other than
-`127.0.0.1` or `localhost` gets HTTP 426, like any other plain HTTP request.
+show its route. A request through `tailscale serve` or on a Tailscale address
+gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
+Desktop's Build machines list uses to find stim-server on the other Macs of the
+tailnet. A request from this Mac with a `Host` other than `127.0.0.1` or
+`localhost` gets HTTP 426, like any other plain HTTP request.
 
 `stim-server` runs the `stim` version this package was released with, not the
 one on your PATH. It reads the login shell's environment once at start, so
