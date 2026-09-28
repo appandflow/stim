@@ -25,17 +25,16 @@ struct ReplayScreen: NSViewRepresentable {
   }
 }
 
-/// Decodes on its own queue: a seek resends every frame from the keyframe before it, and decoding those on the
-/// main thread would stall scrubbing.
 final class ReplayScreenView: NSView {
+  private final class Decoding {
+    var configured = false
+    var decoder: H264Decoder?
+  }
+
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   private var size: CGSize?
   private let queue = DispatchQueue(label: "dev.stim.desktop.replay-decode")
-  private var configured = false
-  private lazy var decoder = H264Decoder { [weak self] image in
-    guard let surface = CVPixelBufferGetIOSurface(image)?.takeUnretainedValue() else { return }
-    DispatchQueue.main.async { self?.layer?.contents = surface }
-  }
+  private let decoding = Decoding()
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -43,14 +42,19 @@ final class ReplayScreenView: NSView {
     layer = CALayer()
     layer?.contentsGravity = .resizeAspect
     layer?.minificationFilter = .trilinear
+    decoding.decoder = H264Decoder { [weak self] image in
+      guard let surface = CVPixelBufferGetIOSurface(image)?.takeUnretainedValue() else { return }
+      DispatchQueue.main.async { self?.layer?.contents = surface }
+    }
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
   @MainActor func show(_ packet: VideoPacket) {
-    queue.async { [self] in
-      if packet.keyframe { configured = decoder.configure(packet.accessUnit) }
-      if configured { decoder.decode(packet.accessUnit) }
+    queue.async { [decoding] in
+      guard let decoder = decoding.decoder else { return }
+      if packet.keyframe { decoding.configured = decoder.configure(packet.accessUnit) }
+      if decoding.configured { decoder.decode(packet.accessUnit) }
     }
     let size = CGSize(width: packet.width, height: packet.height)
     if size != self.size {
@@ -60,7 +64,7 @@ final class ReplayScreenView: NSView {
   }
 
   func invalidate() {
-    queue.async { [self] in decoder.invalidate() }
+    queue.async { [decoding] in decoding.decoder?.invalidate() }
   }
 }
 
@@ -206,9 +210,8 @@ struct ReplayBar: View {
 }
 
 /// The scrubber: recorded spans, gaps, markers and the playhead. Hovering shows the time or the marker under the
-/// pointer in a tooltip that stays out of the layout; dragging shows the frame under the pointer, and a click near a
-/// marker lands just before it. Its hover and drag state stay in this view, so moving the pointer redraws only the
-/// track.
+/// pointer in a tooltip, at most 30 times a second and without touching the layout; dragging shows the frame under
+/// the pointer, and a click near a marker lands just before it.
 struct ReplayTrack: View {
   var timeline: ReplayTimeline
   var markers: [ReplayMarker]
@@ -221,7 +224,7 @@ struct ReplayTrack: View {
   private static let dragThreshold: CGFloat = 3
   private static let tooltipWidth: CGFloat = 280
   @State private var dragging: CGFloat?
-  @State private var hover: CGFloat?
+  @State private var hover = ReplayHover()
   @State private var width: CGFloat = 0
 
   var body: some View {
@@ -251,15 +254,15 @@ struct ReplayTrack: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .contentShape(Rectangle())
     .overlay(alignment: .topLeading) {
-      let x = dragging ?? hover
-      tooltip(x: x ?? 0, marker: dragging == nil ? x.flatMap(nearestMarker) : nil)
-        .opacity(x == nil ? 0 : 1)
+      ReplayTooltipLayer(
+        hover: hover, dragging: dragging, maxWidth: min(Self.tooltipWidth, width),
+        text: { x, marker in tooltipText(x: x, marker: marker) })
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     .onContinuousHover { phase in
       switch phase {
-      case .active(let point): hover = point.x.rounded()
-      case .ended: hover = nil
+      case .active(let point): hover.move(to: point.x.rounded(), marker: nearestMarker(x: point.x.rounded()))
+      case .ended: hover.move(to: nil, marker: nil)
       }
     }
     .gesture(
@@ -275,7 +278,7 @@ struct ReplayTrack: View {
           let x = min(max(0, drag.location.x), width)
           let dragged = dragging != nil
           dragging = nil
-          if dragged { hover = nil }
+          if dragged { hover.move(to: nil, marker: nil) }
           if !dragged, let marker = nearestMarker(x: x) {
             seek(timeline.seekTime(for: marker), 0)
           } else {
@@ -301,36 +304,174 @@ struct ReplayTrack: View {
     }
   }
 
-  /// Drawn in an overlay, so neither its size nor its text moves the track or the tile around it. It stays in the
-  /// overlay while hidden: SwiftUI drops the alignment guides of a view inside an `if` there.
-  private func tooltip(x: CGFloat, marker: ReplayMarker?) -> some View {
+  private func tooltipText(x: CGFloat, marker: ReplayMarker?) -> String {
     let at = marker?.at ?? timeline.time(at: fraction(x))
     let time = Date(timeIntervalSince1970: at / 1000).formatted(date: .omitted, time: .standard)
+    if let marker {
+      return "\(marker.title)\(marker.command.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(time)\n\(marker.label)"
+    }
     let gap = timeline.pieces.first { $0.isGap && fraction(x) >= $0.from && fraction(x) <= $0.to }
-    let text =
-      marker.map { marker in
-        "\(marker.title)\(marker.command.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(time)\n\(marker.label)"
-      } ?? gap.map { "Not recorded for \(ReplayTimeline.shortDuration(ms: $0.end - $0.start))" } ?? time
-    return Group {
-      if marker != nil {
-        Text(text).lineLimit(3)
-          .frame(width: max(0, min(Self.tooltipWidth, width) - 2 * Space.md), alignment: .leading)
-          .fixedSize(horizontal: false, vertical: true)
-      } else {
-        Text(text).fixedSize()
-      }
+    return gap.map { "Not recorded for \(ReplayTimeline.shortDuration(ms: $0.end - $0.start))" } ?? time
+  }
+
+}
+
+/// Where the pointer hovers over a `ReplayTrack`, passed to `onChange` at most `interval` apart and last where the
+/// pointer stopped. It is not observable state, so hovering updates only the tooltip layer.
+@MainActor final class ReplayHover {
+  static let interval: TimeInterval = 1.0 / 30
+
+  private(set) var x: CGFloat?
+  private(set) var marker: ReplayMarker?
+  var onChange: () -> Void = {}
+  private var shownAt: TimeInterval = 0
+  private var pending: (x: CGFloat?, marker: ReplayMarker?)?
+
+  func move(to x: CGFloat?, marker: ReplayMarker?) {
+    let now = ProcessInfo.processInfo.systemUptime
+    guard x != nil, now - shownAt < Self.interval else {
+      pending = nil
+      show(x, marker, at: now)
+      return
     }
-    .font(.stim(.caption))
-    .foregroundStyle(Palette.text)
-    .padding(.horizontal, Space.md)
-    .padding(.vertical, Space.xs)
-    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
-    .shadow(color: Palette.shadow.opacity(0.15), radius: 6)
-    .alignmentGuide(.leading) { dimensions in
-      -min(max(0, x - dimensions.width / 2), max(0, width - dimensions.width))
+    let scheduled = pending != nil
+    pending = (x, marker)
+    guard !scheduled else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.interval - (now - shownAt)) { [weak self] in
+      guard let self, let pending = self.pending else { return }
+      self.pending = nil
+      self.show(pending.x, pending.marker, at: ProcessInfo.processInfo.systemUptime)
     }
-    .alignmentGuide(.top) { dimensions in dimensions.height + Space.sm }
-    .allowsHitTesting(false)
+  }
+
+  private func show(_ x: CGFloat?, _ marker: ReplayMarker?, at now: TimeInterval) {
+    shownAt = now
+    guard x != self.x || marker != self.marker else { return }
+    self.x = x
+    self.marker = marker
+    onChange()
+  }
+}
+
+/// The track's tooltip, at the pointer while dragging and at the hover otherwise. It is plain AppKit placed by
+/// frame, so following the pointer never updates or lays out the SwiftUI page around the track.
+private struct ReplayTooltipLayer: NSViewRepresentable {
+  var hover: ReplayHover
+  var dragging: CGFloat?
+  var maxWidth: CGFloat
+  var text: (_ x: CGFloat, _ marker: ReplayMarker?) -> String
+
+  func makeNSView(context: Context) -> ReplayTooltipView { ReplayTooltipView(hover: hover) }
+
+  func updateNSView(_ view: ReplayTooltipView, context: Context) {
+    view.dragging = dragging
+    view.maxWidth = maxWidth
+    view.text = text
+    view.refresh()
+  }
+}
+
+/// Draws with layers only: a subview or text field whose size changes would ask the window for a layout pass,
+/// and that pass re-lays out the SwiftUI page.
+final class ReplayTooltipView: NSView {
+  private static let maxLines = 3
+
+  var dragging: CGFloat?
+  var maxWidth: CGFloat = 0
+  var text: ((_ x: CGFloat, _ marker: ReplayMarker?) -> String)?
+  private let hover: ReplayHover
+  private let bubble = CALayer()
+  private let label = CATextLayer()
+  private let font = TextVariant.caption.nsFont()
+
+  init(hover: ReplayHover) {
+    self.hover = hover
+    super.init(frame: .zero)
+    wantsLayer = true
+    layer?.masksToBounds = false
+    bubble.cornerRadius = Radius.chip
+    bubble.borderWidth = 1
+    bubble.shadowRadius = 6
+    bubble.shadowOpacity = 0.15
+    bubble.shadowOffset = .zero
+    bubble.isHidden = true
+    label.isWrapped = true
+    label.truncationMode = .end
+    let still: [String: CAAction] = [
+      "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "hidden": NSNull(),
+    ]
+    bubble.actions = still
+    label.actions = still
+    bubble.addSublayer(label)
+    layer?.addSublayer(bubble)
+    hover.onChange = { [weak self] in self?.refresh() }
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  override var isFlipped: Bool { true }
+
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    refresh()
+  }
+
+  override func viewDidChangeBackingProperties() {
+    super.viewDidChangeBackingProperties()
+    label.contentsScale = window?.backingScaleFactor ?? 2
+  }
+
+  func refresh() {
+    guard let x = dragging ?? hover.x, let text else {
+      bubble.isHidden = true
+      return
+    }
+    var color = NSColor.clear
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      bubble.backgroundColor = NSColor(Palette.surface).cgColor
+      bubble.borderColor = NSColor(Palette.border).cgColor
+      bubble.shadowColor = NSColor(Palette.shadow).cgColor
+      color = NSColor(cgColor: NSColor(Palette.text).cgColor) ?? .labelColor
+    }
+    let inner = max(0, maxWidth - 2 * Space.md)
+    let string = truncated(text(x, dragging == nil ? hover.marker : nil), width: inner, color: color)
+    let fitted = measure(string, width: inner)
+    let size = CGSize(width: ceil(min(fitted.width, inner)), height: ceil(fitted.height))
+    let width = size.width + 2 * Space.md
+    let height = size.height + 2 * Space.xs
+    let left = min(max(0, x - width / 2), max(0, bounds.width - width))
+    label.string = string
+    label.contentsScale = window?.backingScaleFactor ?? 2
+    bubble.frame = CGRect(x: left, y: -height - Space.sm, width: width, height: height)
+    label.frame = CGRect(x: Space.md, y: Space.xs, width: size.width, height: size.height)
+    bubble.isHidden = false
+  }
+
+  private func measure(_ string: NSAttributedString, width: CGFloat) -> CGRect {
+    string.boundingRect(
+      with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin])
+  }
+
+  /// `CATextLayer` drops a wrapped line that does not fit instead of truncating it, so the text is cut to
+  /// `maxLines` here.
+  private func truncated(_ text: String, width: CGFloat, color: NSColor) -> NSAttributedString {
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+    let limit = measure(
+      NSAttributedString(
+        string: Array(repeating: "A", count: Self.maxLines).joined(separator: "\n"), attributes: attributes),
+      width: width
+    ).height
+    let whole = NSAttributedString(string: text, attributes: attributes)
+    guard measure(whole, width: width).height > limit + 0.5 else { return whole }
+    var low = 0
+    var high = text.count
+    while low < high {
+      let mid = (low + high + 1) / 2
+      let candidate = NSAttributedString(string: text.prefix(mid) + "\u{2026}", attributes: attributes)
+      if measure(candidate, width: width).height <= limit + 0.5 { low = mid } else { high = mid - 1 }
+    }
+    return NSAttributedString(string: text.prefix(low) + "\u{2026}", attributes: attributes)
   }
 }
