@@ -295,8 +295,8 @@ public final class EmulatorDisplayNSView: NSView {
   }
 
   func press(_ button: EmulatorButton) {
-    guard let input = inputClient() else { return }
-    if hasKeyboard != false, let key = button.domKey {
+    guard interactive else { return }
+    if hasKeyboard != false, let key = button.domKey, let input = inputClient() {
       input.call("sendKey", InputMessages.namedKey(key))
     } else if let serial {
       let adb = self.adb ?? AdbInput(serial: serial)

@@ -158,7 +158,10 @@ the agent row (the driving tool and its last action, "agent-device · Tapped
 "Allow camera" · 12s ago", or "No agent" with how long it has been idle;
 clicking it lists the latest agent actions) and the replay bar (see
 [Replay](#replay)). Escape releases a device that is taken over, and
-otherwise closes the viewer; closing it releases the device too.
+otherwise closes the viewer; closing it releases the device too. While the
+viewer is open, the device's tile stops streaming and says "Open in the
+viewer". Tiles on the All devices wall are previews too; clicking one opens its
+workspace.
 
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens

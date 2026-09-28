@@ -205,7 +205,8 @@ struct WorkspaceDetail: View {
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
       presence: env.appPresence(device),
       showsCovers: true,
-      focused: focused
+      focused: focused,
+      showsScreen: viewing?.id != device.id
     )
     .overlay {
       Button {

@@ -73,8 +73,9 @@ or how long it has been idle. While its build runs, a device shows the phase
 and progress over its screen.
 
 Click a device to open its viewer: the screen as large as the sheet allows,
-**Take over** (the hand button) and **Stop**, the device's Home, Back, Apps
-and Lock buttons while you have it, the agent's last actions and the replay
+**Take over** (the hand button) and **Stop**, the device's buttons while you
+have it (Home and Lock on a simulator; Home, Back, Apps and Lock on an
+emulator), the agent's last actions and the replay
 bar. Escape gives the device back, and a second Escape closes the viewer.
 
 The inspector, toggled from the toolbar, holds the details: **Build** (the

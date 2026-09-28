@@ -30,6 +30,10 @@ struct DeviceTile: View {
   /// The device viewer: take over, hardware buttons, rotation, replay, the agent row and Stop. A tile without it is
   /// a preview with no controls.
   var viewer = false
+  /// The widest the viewer can draw the tile; the screen shrinks below `screenHeight` to fit it.
+  var maxWidth: CGFloat? = nil
+  /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
+  var showsScreen = true
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -59,18 +63,22 @@ struct DeviceTile: View {
           ReplayScreen(controller: replay) { replaySize = $0 }
             .frame(width: replayWidth)
             .padding(screenPadding)
-            .frame(height: screenHeight)
+            .frame(height: fittedHeight)
             .frame(maxWidth: .infinity)
             .background(Media.screen)
         } else if let workspace, showsStoppedBar {
           stoppedBar(runCommand(for: device, cwd: workspace))
+        } else if !showsScreen {
+          placeholder("Open in the viewer")
+            .frame(height: fittedHeight)
+            .background(Media.screen)
         } else {
           screen
-            .frame(height: screenHeight)
+            .frame(height: fittedHeight)
             .background(Media.screen)
             .overlay { screenCover }
         }
-        if viewer, interactive, !isPhysical {
+        if viewer, interactive, !isPhysical, device.platform != "web" {
           hardwareButtons
             .padding(.horizontal, Space.lg)
             .padding(.vertical, Space.md)
@@ -455,7 +463,7 @@ struct DeviceTile: View {
   }
 
   private func screenHeight(_ screenID: UInt32) -> CGFloat {
-    let full = screenHeight - screenPadding * 2
+    let full = fittedHeight - screenPadding * 2
     return screenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
   }
 
@@ -466,7 +474,7 @@ struct DeviceTile: View {
 
   private var replayWidth: CGFloat? {
     guard let size = replaySize, size.height > 0 else { return nil }
-    return (screenHeight - screenPadding * 2) * size.width / size.height
+    return (fittedHeight - screenPadding * 2) * size.width / size.height
   }
 
   private var width: CGFloat {
@@ -474,12 +482,34 @@ struct DeviceTile: View {
     if widths.count == screenIDs.count {
       return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
     }
-    if case .remote = device { return max(360, screenHeight * 0.6) }
+    if case .remote = device { return max(360, fittedHeight * 0.6) }
     switch device.formFactor {
-    case .phone: return max(Self.minimumWidth, screenHeight * 0.52)
-    case .tablet: return screenHeight * 0.78
-    case .dual: return screenHeight * 1.4
-    case .desktop: return screenHeight * 1.6
+    case .phone: return max(Self.minimumWidth, fittedHeight * 0.52)
+    case .tablet: return fittedHeight * 0.78
+    case .dual: return fittedHeight * 1.4
+    case .desktop: return fittedHeight * 1.6
+    }
+  }
+
+  private var fittedHeight: CGFloat {
+    guard let maxWidth else { return screenHeight }
+    if replaying, let size = replaySize, size.width > 0, size.height > 0 {
+      return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
+    }
+    let ratios = screenIDs.compactMap { screenID -> CGFloat? in
+      guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
+      return size.width / size.height * (screenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
+    }
+    if ratios.count == screenIDs.count, !ratios.isEmpty {
+      let room = maxWidth - screenPadding * CGFloat(screenIDs.count + 1)
+      return min(screenHeight, room / ratios.reduce(0, +) + screenPadding * 2)
+    }
+    if case .remote = device { return min(screenHeight, maxWidth / 0.6) }
+    switch device.formFactor {
+    case .phone: return min(screenHeight, maxWidth / 0.52)
+    case .tablet: return min(screenHeight, maxWidth / 0.78)
+    case .dual: return min(screenHeight, maxWidth / 1.4)
+    case .desktop: return min(screenHeight, maxWidth / 1.6)
     }
   }
 
