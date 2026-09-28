@@ -64,8 +64,8 @@ run `node apps/desktop/scripts/generate-tokens.mjs` after changing that file.
 
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
 workspace named `stim-mobile`; see its README. The root checks above do not
-cover it. Run `pnpm run format:check`, `pnpm run lint`, `pnpm run typecheck` and
-`pnpm test` from that directory. Develop it with Stim and its mock server,
+cover it. Run `pnpm run format:check`, `pnpm run lint`, `pnpm run typecheck`,
+`pnpm run knip` and `pnpm test` from that directory. Develop it with Stim and its mock server,
 which replays captured Stim payloads.
 
 Native tool compatibility runs separately with `pnpm run test:compat`. Follow

@@ -11,6 +11,7 @@
     "dev:pair": "node scripts/dev-pair.mjs",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error",
     "typecheck": "tsc --noEmit",
+    "knip": "pnpm -w run knip",
     "test": "jest",
     "format": "oxfmt .",
     "format:check": "oxfmt --check ."
