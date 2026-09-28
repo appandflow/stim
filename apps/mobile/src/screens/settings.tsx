@@ -20,7 +20,7 @@ import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { useNotificationPrefs } from '@/hooks/notifications';
-import { NOTIFY_CATEGORIES } from '@/lib/notifications';
+import { NOTIFY_CATEGORIES, type NotifyLevel } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
 import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
@@ -30,6 +30,7 @@ import {
   HOME_FOOTER,
   NOTIFICATIONS_FOOTER,
   NOTIFY_CATEGORY_LABELS,
+  NOTIFY_LEVEL_OPTIONS,
   HOME_VIEW_OPTIONS,
   labelOf,
   parseQuietHoursValue,
@@ -62,10 +63,8 @@ export function Settings() {
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
   const { prefs, enable, update: updateNotifications } = useNotificationPrefs();
-  const toggleCategory = (category: OversightCategory, on: boolean) =>
-    updateNotifications({
-      categories: on ? [...prefs.categories, category] : prefs.categories.filter((c) => c !== category),
-    });
+  const setLevel = (category: OversightCategory, level: NotifyLevel) =>
+    updateNotifications({ levels: { ...prefs.levels, [category]: level } });
   const switchColors = { checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary };
   const showIdle = filters.activity !== 'live';
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
@@ -126,22 +125,17 @@ export function Settings() {
           />
           {prefs.enabled
             ? NOTIFY_CATEGORIES.map((category) => (
-                <Row
+                <Choice
                   key={category}
                   colors={colors}
                   title={NOTIFY_CATEGORY_LABELS[category]}
-                  onPress={() => toggleCategory(category, !prefs.categories.includes(category))}
-                  trailing={
-                    <Switch
-                      value={prefs.categories.includes(category)}
-                      onCheckedChange={(on) => toggleCategory(category, on)}
-                      colors={switchColors}
-                    />
-                  }
+                  options={NOTIFY_LEVEL_OPTIONS}
+                  value={prefs.levels[category]}
+                  onChange={(level) => setLevel(category, level)}
                 />
               ))
             : null}
-          {prefs.enabled && prefs.categories.includes('stuck') ? (
+          {prefs.enabled && prefs.levels.stuck !== 'off' ? (
             <Choice
               colors={colors}
               title="Stuck after"
@@ -347,7 +341,7 @@ function Choice<T extends string>({
 }: {
   colors: Theme['colors'];
   title: string;
-  icon: ImageSourcePropType;
+  icon?: ImageSourcePropType;
   options: Option<T>[];
   value: T;
   onChange: (value: T) => void;

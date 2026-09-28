@@ -24,7 +24,7 @@ import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { useNotificationPrefs } from '@/hooks/notifications';
-import { NOTIFY_CATEGORIES } from '@/lib/notifications';
+import { NOTIFY_CATEGORIES, type NotifyLevel } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
 import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
@@ -34,6 +34,7 @@ import {
   HOME_FOOTER,
   NOTIFICATIONS_FOOTER,
   NOTIFY_CATEGORY_LABELS,
+  NOTIFY_LEVEL_OPTIONS,
   HOME_VIEW_OPTIONS,
   parseQuietHoursValue,
   QUIET_HOURS_OPTIONS,
@@ -176,8 +177,8 @@ function NotificationsSection({
   modifiers: RowModifiers;
 }) {
   const { prefs, enable, update } = value;
-  const toggle = (category: OversightCategory, on: boolean) =>
-    update({ categories: on ? [...prefs.categories, category] : prefs.categories.filter((c) => c !== category) });
+  const setLevel = (category: OversightCategory, level: NotifyLevel) =>
+    update({ levels: { ...prefs.levels, [category]: level } });
   return (
     <Section title="Notifications" footer={<Text>{NOTIFICATIONS_FOOTER}</Text>}>
       <Toggle
@@ -189,17 +190,19 @@ function NotificationsSection({
       </Toggle>
       {prefs.enabled
         ? NOTIFY_CATEGORIES.map((category) => (
-            <Toggle
+            <Choice
               key={category}
-              isOn={prefs.categories.includes(category)}
-              onIsOnChange={(on) => toggle(category, on)}
+              colors={colors}
+              title={NOTIFY_CATEGORY_LABELS[category]}
+              symbol={CATEGORY_SYMBOLS[category]}
+              options={NOTIFY_LEVEL_OPTIONS}
+              value={prefs.levels[category]}
+              onChange={(level) => setLevel(category, level)}
               modifiers={modifiers}
-            >
-              <RowLabel colors={colors} title={NOTIFY_CATEGORY_LABELS[category]} symbol={CATEGORY_SYMBOLS[category]} />
-            </Toggle>
+            />
           ))
         : null}
-      {prefs.enabled && prefs.categories.includes('stuck') ? (
+      {prefs.enabled && prefs.levels.stuck !== 'off' ? (
         <Choice
           colors={colors}
           title="Stuck after"

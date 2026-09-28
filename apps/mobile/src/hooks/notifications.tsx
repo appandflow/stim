@@ -12,6 +12,7 @@ import { NOTIFY_STATE_KEY } from '@/lib/derived-data';
 import {
   DEFAULT_PREFS,
   localNotifications,
+  notifiedCategories,
   notificationRoute,
   parsePrefs,
   type NotificationPrefs,
@@ -45,11 +46,11 @@ Notifications.setNotificationHandler({
 async function createChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(CHANNEL, {
-    name: 'Needs attention',
+    name: 'Alerts',
     importance: AndroidImportance.HIGH,
   });
   await Notifications.setNotificationChannelAsync(QUIET_CHANNEL, {
-    name: 'Work started',
+    name: 'Silent',
     importance: AndroidImportance.LOW,
   });
 }
@@ -237,7 +238,7 @@ export function unregisterPush(connection: StimConnection | null, macId: string)
 function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
   const { connections } = useMacs();
   const [token, setToken] = useState<string | null>(() => storage.getString(TOKEN_KEY) ?? null);
-  const events = prefs.enabled ? prefs.categories : [];
+  const events = prefs.enabled ? notifiedCategories(prefs) : [];
   const pushWanted = PUSH_ENABLED && events.length > 0;
   const { stuckMinutes, quietHours } = prefs;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -246,6 +247,7 @@ function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
       ? JSON.stringify({
           token,
           events,
+          levels: Object.fromEntries(events.map((event) => [event, prefs.levels[event]])),
           stuckMinutes,
           ...(quietHours ? { quietHours: { ...quietHours, timeZone } } : {}),
         })

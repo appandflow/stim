@@ -1,5 +1,5 @@
 import type { HomeView } from '@/hooks/home-filters';
-import type { QuietHours } from '@/lib/notifications';
+import type { NotifyLevel, QuietHours } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
 import type { Appearance, VideoQuality } from '@/hooks/settings';
 
@@ -49,6 +49,12 @@ export const NOTIFY_CATEGORY_LABELS: Record<OversightCategory, string> = {
   control: 'Someone takes over your device',
 };
 
+export const NOTIFY_LEVEL_OPTIONS: Option<NotifyLevel>[] = [
+  { value: 'alert', label: 'Alert' },
+  { value: 'silent', label: 'Silent' },
+  { value: 'off', label: 'Off' },
+];
+
 export const STUCK_MINUTES_OPTIONS: Option<string>[] = [5, 10, 15, 30, 60].map((minutes) => ({
   value: String(minutes),
   label: `${minutes} min`,
@@ -72,4 +78,4 @@ export function parseQuietHoursValue(value: string): QuietHours | null {
 }
 
 export const NOTIFICATIONS_FOOTER =
-  "Stim notifies when your attention changes the outcome, or when work you wait on starts or finishes. A single failed build, new log errors, a stopped app or a slow build stay in home's attention list. Each workspace notifies once per episode, and a later notification replaces the earlier one. Work started arrives silently. Quiet hours hold notifications, and a problem that still holds when they end notifies then. On iPhone, a Mac whose stim-server sends push notifications notifies while Stim is in the background or closed, as long as stim-server runs; they pass through Expo's push service and Apple. Only a Mac that pushes can tell when a pull request is ready or merged, or when someone takes over a device you control. Everything else, including a machine going offline and every notification on Android, arrives only while Stim is open or when you next open it: the connection to the Mac closes seconds after you leave the app.";
+  "Stim notifies when your attention changes the outcome, or when work you wait on starts or finishes. A single failed build, new log errors, a stopped app or a slow build stay in home's attention list. Each workspace notifies once per episode, and a later notification replaces the earlier one. Alert shows a banner and plays a sound. Silent does neither: the notification waits in your notification list. Off never notifies. Quiet hours hold notifications, and a problem that still holds when they end notifies then. On iPhone, a Mac whose stim-server sends push notifications notifies while Stim is in the background or closed, as long as stim-server runs; they pass through Expo's push service and Apple. Only a Mac that pushes can tell when a pull request is ready or merged, or when someone takes over a device you control. Everything else, including a machine going offline and every notification on Android, arrives only while Stim is open or when you next open it: the connection to the Mac closes seconds after you leave the app.";

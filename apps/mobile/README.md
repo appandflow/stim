@@ -437,12 +437,22 @@ reconnects on its own, so a revoked grant shows as read-only everywhere.
 
 **Settings > Notifications** turns on notifications for what a person
 overseeing agents needs: your attention changes the outcome, or work you wait
-on started or finished. Each category has its own switch:
+on started or finished. Each category has its own level:
+
+- **Alert**: a banner and sound (iOS `interruptionLevel` `active`, Android's
+  high-importance "Alerts" channel, `attention`).
+- **Silent**: no banner or sound; the notification waits in Notification
+  Center or the notification shade (iOS `passive`, Android's low-importance
+  "Silent" channel, `updates`).
+- **Off**: never notifies.
+
+Machine in trouble and Someone takes over your device default to Alert, every
+other category to Silent. Settings saved before levels keep what was off off,
+and give each category that was on its default level.
 
 - **Work started**: a workspace began warming, or an agent first drove one of
-  its devices. It arrives silently (iOS `passive`, Android's low-importance
-  "Work started" channel), grouped per Mac, and opens the workspace or the
-  device viewer.
+  its devices. It is grouped per Mac, and opens the workspace or the device
+  viewer.
 - **Agent looks stuck**: an agent drove the workspace, a device is still up,
   and nothing happened for the **Stuck after** time (15 minutes by default):
   no agent action, build, reload or new log error. App log records do not
@@ -480,12 +490,13 @@ When notifications can arrive:
 - **iPhone, from a Mac whose `stim-server` pushes** (#1577): every category
   but a machine going offline arrives while the app is open, in the background
   or closed, as long as `stim-server` runs on the Mac and the phone has a
-  network connection. The app registers its Expo push token, its categories,
-  its stuck time and its quiet hours in the phone's time zone with each Mac
+  network connection. The app registers its Expo push token, the categories
+  that are not Off with their levels, its stuck time and its quiet hours in the phone's time zone with each Mac
   over the existing connection; the Mac sends through Expo's push service and
   Apple, with the workspace title, a one-line cause, the screen to open and the
   workspace's path. The app then does not notify those categories
-  itself, so nothing arrives twice. Push needs the production app and an
+  itself, so nothing arrives twice. A `stim-server` older than levels ignores
+  them and alerts for every category but Work started. Push needs the production app and an
   APNs key in the EAS credentials for `com.appandflow.stim` (`eas credentials
 --platform ios`, **Push Notifications**); without one Expo refuses every
   push with `InvalidCredentials`, which `stim-server` prints on stderr. Stim
