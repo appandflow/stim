@@ -12,7 +12,6 @@ import {
   hermescPath,
   pickEntryFile,
   readHermesEnabled,
-  refreshUpdatesManifest,
   swapJsBundle,
 } from '../engine/js-swap.ts';
 import { getExecutor } from '../exec.ts';
@@ -392,15 +391,6 @@ describe('the expo-updates embedded manifest in a swapped copy', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'app.manifest'), text);
   };
-
-  test('refreshUpdatesManifest replaces only the id and commitTime and rejects a non-object', () => {
-    expect(JSON.parse(refreshUpdatesManifest(EMBEDDED, { id: 'new-id', commitTime: 2000 }))).toEqual({
-      id: 'new-id',
-      commitTime: 2000,
-      assets: [{ name: 'logo', type: 'png' }],
-    });
-    expect(() => refreshUpdatesManifest('[]', { id: 'x', commitTime: 1 })).toThrow(/not a JSON object/);
-  });
 
   test('gets a fresh id and a commitTime from this swap, so an update downloaded after the cached build cannot outrank it', async () => {
     const { run, appCopy, calls } = harness({

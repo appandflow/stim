@@ -385,8 +385,8 @@ export async function swapApkBundle({
   try {
     // --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
     // runtime can mmap it straight out of the APK, and a deflated entry fails to
-    // load. jar --update keeps every other entry's method and replaces
-    // assets/index.android.bundle in place.
+    // load. jar --update keeps every other entry's method and replaces the
+    // staged assets/ entries in place.
     e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
   } catch (err) {
     return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);

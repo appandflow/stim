@@ -193,7 +193,7 @@ export const UPDATES_MANIFEST_NAME = 'app.manifest';
  * `commitTime` the cached build wrote, so an update downloaded after that build would launch instead
  * of the injected bundle. A full build writes a fresh id and `commitTime`; this does the same.
  */
-export function refreshUpdatesManifest(text: string, { id, commitTime }: { id: string; commitTime: number }): string {
+function refreshUpdatesManifest(text: string, { id, commitTime }: { id: string; commitTime: number }): string {
   const manifest: unknown = JSON.parse(text);
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
     throw new Error(`${UPDATES_MANIFEST_NAME} is not a JSON object`);
