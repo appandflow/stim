@@ -3,7 +3,7 @@ import { createBuildDetailParser, parseBuildToolLine } from '../engine/build-det
 
 function fixtureLines(name: string): string[] {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf-8')
-    .split('\n')
+    .split(/\r?\n/)
     .filter((line) => line && !line.startsWith('# '));
 }
 
