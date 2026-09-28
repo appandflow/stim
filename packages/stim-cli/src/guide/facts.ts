@@ -100,7 +100,34 @@ is still running.
                   Stim created the session, or null
 
 Plain status prints one "remote <platform>: EAS session <id> billable" line
-per session, with the preview URL.`,
+per session, with the preview URL.
+
+status's physicalDevices lists each physical phone or tablet the environment
+holds an unexpired lease on, from \`ios --device\`, \`android --device\` or
+\`device lock\`, in every slot. A run lease ends with its run, so a phone
+stays listed after the run only while \`device lock\` holds it. A
+simulator or emulator lease is not listed. The field is absent when the
+workspace leases no physical device.
+
+  physicalDevices  [{ platform, slot, id, name, model, owned, physical,
+                   connection, lease }]
+  id               the UDID or adb serial
+  name             the device's own name, else the name the lease recorded
+  model            devicectl's marketing name ("iPhone 12 Pro"), null when
+                   unread, or the Android model the lease recorded
+  owned            always false: Stim uses a physical device, never owns it
+  physical         always true
+  connection       "connected"     devicectl can reach the phone, or adb lists
+                                   the serial as device
+                   "disconnected"  the tool answered without it
+                   "unknown"       the tool could not be read in time
+                   status reuses one devicectl or adb listing for 30 s
+                   under \`status --watch\`
+  lease            { holder, kind, grantedAt, expiresAt }: holder is the
+                   workspace path, kind "declared" (device lock) or "run"
+
+Plain status prints "ios: Old iPhone (physical, iPhone 12 Pro) connected --
+leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary: 'every field of the start, ios, android, web and reload payloads, the error contract, the device rules',

@@ -47,6 +47,23 @@ for the run, then releases the lease. Use `stim device lock` to hold it across
 runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
+While a workspace holds the lease, `stim status` lists the device under that
+workspace with its name, model, whether the Mac reaches it, and when the lease
+ends, and Stim Desktop and the Stim phone app show it as a tile with a
+Physical badge. Neither streams its screen. To keep a phone on screen while
+you work, lock it:
+
+```bash
+stim device lock ios --for 30m
+stim status
+```
+
+Or ask an agent:
+
+```text
+Lease my connected iPhone to this workspace with stim device lock for 30 minutes, then run stim status and tell me whether it shows as connected.
+```
+
 Each workspace keeps its owned-device assignments for later runs.
 After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
 Simulator on older Xcode. Stim passes the workspace's simulator ID to Device Hub

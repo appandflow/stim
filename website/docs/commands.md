@@ -730,6 +730,19 @@ URL. In `--json`, each environment's `remoteDevices` array holds
 `status` reads Stim's local records and does not query EAS; `stim stop` in that
 workspace ends the session.
 
+A physical phone or tablet the workspace leases with `ios --device`,
+`android --device`, or `device lock` prints under its workspace as
+`ios: Old iPhone (physical, iPhone 12 Pro) connected -- leased until 17:04:53 (9m59s left)`.
+In `--json`, each environment's `physicalDevices` array holds `platform`,
+`slot`, `id` (the UDID or serial), `name`, `model`, `owned` (always `false`),
+`physical` (always `true`), `connection` (`connected`, `disconnected`, or
+`unknown`), and `lease` with `holder`, `kind`, `grantedAt`, and `expiresAt`.
+Status reads the connection from `xcrun devicectl list devices` or
+`adb devices`, only when the workspace holds such a lease. A run lease ends
+with its run, so to keep a phone listed after the run, hold it with
+`stim device lock`. Stim Desktop and the Stim phone app show each one as a
+tile with a Physical badge.
+
 A dev server that its supervisor stopped after
 [`metro.idleStopMinutes`](./dev-server-and-logs.md#idle-stop) with no use
 prints as `metro: port <port> stopped (idle)`. In `--json` that environment's

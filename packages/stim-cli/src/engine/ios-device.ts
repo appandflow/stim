@@ -18,6 +18,7 @@ export interface IosDeviceEntry {
   platform?: string | null;
   reality?: string | null;
   tunnelState?: string | null;
+  model?: string | null;
 }
 
 function text(value: unknown): string | null {
@@ -57,20 +58,29 @@ export function parseDevicectlDevices(payload: unknown): IosDeviceEntry[] {
       platform: text(hardware.platform),
       reality: text(hardware.reality),
       tunnelState: text(connection.tunnelState),
+      model: text(hardware.marketingName),
     });
   }
   return out;
 }
 
 export function listIosDevices({ exec = null }: { exec?: Executor | null } = {}): IosDeviceEntry[] {
+  return readIosDevices({ exec }) ?? [];
+}
+
+/** devicectl's device list, or null when devicectl failed or did not answer within `timeoutMs`. */
+export function readIosDevices({
+  exec = null,
+  timeoutMs = DEVICECTL_TIMEOUT_MS,
+}: { exec?: Executor | null; timeoutMs?: number } = {}): IosDeviceEntry[] | null {
   const executor = exec || getExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
   const out = join(dir, 'devices.json');
   try {
-    executor.runFile('xcrun', ['devicectl', 'list', 'devices', '-j', out], { timeoutMs: DEVICECTL_TIMEOUT_MS });
+    executor.runFile('xcrun', ['devicectl', 'list', 'devices', '-j', out], { timeoutMs });
     return parseDevicectlDevices(readFileSync(out, 'utf-8'));
   } catch {
-    return [];
+    return null;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -107,7 +117,7 @@ function isIosHardware(device: IosDeviceEntry): boolean {
   );
 }
 
-function isReachable(device: IosDeviceEntry): boolean {
+export function isReachable(device: IosDeviceEntry): boolean {
   return device.tunnelState?.toLowerCase() !== 'unavailable';
 }
 

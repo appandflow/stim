@@ -48,6 +48,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var logs: Logs?
   public var slots: [Slot]?
   public var remoteDevices: [RemoteDevice]?
+  /// The physical phones and tablets the workspace leases; absent from an older `stim` and when it leases none.
+  public var physicalDevices: [PhysicalDevice]?
   public var build: Build?
   public var lastBuilds: LastBuilds?
   /// Each platform's last runs, newest first; absent from an older `stim`.
@@ -58,7 +60,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
 
   enum CodingKeys: String, CodingKey {
     case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
-    case supervisor, logs, slots, remoteDevices, build
+    case supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree
   }
 
@@ -76,9 +78,12 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var isSettingUp: Bool { isWarming || phase == "ready" }
 
   /// Whether the Live views show the workspace: something runs, a build runs, or it is being set up.
-  public var isActive: Bool { live || build?.isRunning == true || isSettingUp }
+  public var isActive: Bool {
+    live || build?.isRunning == true || isSettingUp || physicalDevices?.isEmpty == false
+  }
 
-  /// The workspace's default devices, its Stim-owned Chrome, then each named slot's devices.
+  /// The workspace's default devices, its Stim-owned Chrome, each named slot's devices, then its leased physical
+  /// devices.
   public var devices: [DeviceRef] {
     var out: [DeviceRef] = []
     if let ios { out.append(.ios(slot: DeviceRef.defaultSlot, ios)) }
@@ -88,6 +93,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
       if let ios = slot.ios { out.append(.ios(slot: slot.slot, ios)) }
       if let android = slot.android { out.append(.android(slot: slot.slot, android)) }
     }
+    for device in physicalDevices ?? [] { out.append(device.ref) }
     for remote in remoteDevices ?? [] { out.append(.remote(remote)) }
     return out
   }
@@ -109,6 +115,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// whether a run targets a remote session, so remote devices get none.
   public func runningBuild(for device: DeviceRef) -> Build? {
     if case .remote = device { return nil }
+    if device.isPhysical { return nil }
     guard let build, build.isRunning, build.platform == device.platform, build.slot == device.slot else { return nil }
     return build
   }
@@ -204,6 +211,10 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var state: String
   public var activity: DeviceActivity?
   public var app: AppProcess?
+  /// Set only on a device built from `physicalDevices`, never decoded from the `ios` record.
+  public var physical = false
+  public var model: String?
+  public var leaseExpiresAt: String?
 
   enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app }
 
@@ -242,6 +253,43 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var deviceProfile: String?
   public var activity: DeviceActivity?
   public var app: AppProcess?
+  public var model: String?
+  public var leaseExpiresAt: String?
+}
+
+/// A physical phone or tablet the workspace leases with `ios --device`, `android --device` or `device lock`.
+/// `connection` is `connected`, `disconnected` or `unknown`.
+public struct PhysicalDevice: Decodable, Hashable, Sendable {
+  public struct Lease: Decodable, Hashable, Sendable {
+    public var holder: String
+    public var kind: String
+    public var grantedAt: String?
+    public var expiresAt: String
+  }
+
+  public var platform: String
+  public var slot: String
+  public var id: String
+  public var name: String?
+  public var model: String?
+  public var connection: String
+  public var lease: Lease
+
+  var ref: DeviceRef {
+    let name = name ?? id
+    if platform == "ios" {
+      var device = IosDevice(name: name, udid: id, owned: false, state: connection)
+      device.physical = true
+      device.model = model
+      device.leaseExpiresAt = lease.expiresAt
+      return .ios(slot: slot, device)
+    }
+    return .android(
+      slot: slot,
+      AndroidDevice(
+        name: name, owned: false, physical: true, serial: id, state: connection, model: model,
+        leaseExpiresAt: lease.expiresAt))
+  }
 }
 
 /// The workspace's Stim-owned Chrome from `stim web`. `pid`, `cdpEndpoint` and `targetId` are set only while it

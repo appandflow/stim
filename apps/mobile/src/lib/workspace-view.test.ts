@@ -137,6 +137,12 @@ describe('appPresence', () => {
     return appPresence(e, devicesOf(e)[0]!);
   };
 
+  it('never reports the app of a leased phone, which Stim does not track', () => {
+    const e = env({ ios: booted, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } });
+    expect(appPresence(e, devicesOf(e)[0]!)).toBe('none');
+    expect(appPresence(e, { ...devicesOf(e)[0]!, physical: true, owned: false })).toBeNull();
+  });
+
   it('says no app only when the latest build failed and none ever succeeded', () => {
     expect(presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } })).toBe('none');
     expect(
@@ -214,6 +220,11 @@ describe('usage from machine owners', () => {
     expect(deviceUsage(android, '/w', machine, 5.1e9)).toEqual({ cpuPercent: 14, memoryMb: 2970, diskBytes: 5.1e9 });
   });
 
+  it("gives a leased phone none of its slot's simulator usage", () => {
+    const phone = { ...devicesOf(e).find((d) => d.platform === 'ios')!, physical: true, owned: false };
+    expect(deviceUsage(phone, '/w', machine, null)).toBeNull();
+  });
+
   it('lists devices before Metro in the process table', () => {
     expect(processRows(e, devicesOf(e), machine).map((row) => row.label)).toEqual([
       'iPhone 18 simulator',
@@ -236,6 +247,18 @@ describe('deviceTitle', () => {
       env({ slots: [{ slot: 'tablet', ios: { ...booted, name: 'stim-w (iPad Pro 13-inch (M5) 26.2)' } }] }),
     );
     expect(deviceTitle(other!)).toEqual({ name: 'iPad Pro 13-inch (M5)', detail: 'iOS 26.2 \u00B7 tablet' });
+  });
+
+  it('titles a leased iPhone by its own name and model, not as a simulator', () => {
+    const phone = { platform: 'ios', slot: 'default', physical: true, running: true, owned: false } as const;
+    expect(deviceTitle({ ...phone, id: 'U', name: 'Old iPhone', model: 'iPhone 12 Pro', state: 'connected' })).toEqual({
+      name: 'Old iPhone',
+      detail: 'iPhone 12 Pro',
+    });
+    expect(deviceTitle({ ...phone, id: 'U', name: 'iOS device', model: 'iOS device', state: 'connected' })).toEqual({
+      name: 'iOS device',
+      detail: '',
+    });
   });
 });
 

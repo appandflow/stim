@@ -49,6 +49,7 @@ import {
 } from '@/lib/workspace-view';
 import {
   deviceWarnings,
+  deviceKey,
   devicesOf,
   livePlatforms,
   orderDevices,
@@ -241,7 +242,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const failed = lines.find((line) => line.tone === 'error')?.platform;
   const health = metroHealth(env);
   const reportsBundles = status?.environments.some((e) => e.metro?.bundle) ?? false;
-  const buildTarget = build ? devices.find((d) => d.platform === build.platform && d.slot === build.slot) : undefined;
+  const buildTarget = build
+    ? devices.find((d) => d.platform === build.platform && d.slot === build.slot && !d.physical)
+    : undefined;
   return (
     <>
       <ScrollView
@@ -284,7 +287,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
         ))}
         {devices.map((device) => (
           <DeviceTile
-            key={`${device.platform}-${device.slot}`}
+            key={deviceKey(device)}
             env={env}
             device={device}
             warnings={byDevice.get(device) ?? []}

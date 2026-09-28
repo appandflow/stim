@@ -85,6 +85,32 @@ import Testing
     #expect(workspace.devices[0].activity == nil)
   }
 
+  @Test func listsLeasedPhysicalDevicesAfterTheSlotsWithoutARunCommand() throws {
+    let lease = #"{"holder":"/w","kind":"declared","grantedAt":null,"expiresAt":"2026-09-27T21:04:53.577Z"}"#
+    let json = #"""
+      {"path":"/w","live":false,"warnings":[],
+       "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"SIM","owned":true,"state":"Booted"},
+       "physicalDevices":[
+        {"platform":"ios","slot":"default","id":"PHONE","name":"Old iPhone","model":"iPhone 12 Pro","owned":false,
+         "physical":true,"connection":"connected","lease":\#(lease)},
+        {"platform":"android","slot":"pixel","id":"R5","name":null,"model":null,"owned":false,"physical":true,
+         "connection":"disconnected","lease":\#(lease)}]}
+      """#
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(env.isActive)
+    #expect(env.devices.map(\.id) == ["ios:SIM", "ios:PHONE", "android:pixel:physical:R5"])
+    #expect(env.devices.map(\.isPhysical) == [false, true, true])
+    #expect(env.devices.map(\.isRunning) == [true, true, false])
+    #expect(env.devices.map(\.label) == ["iPhone 18 Pro", "Old iPhone", "pixel"])
+    #expect(env.devices.map(\.detail) == ["iOS 27.0", "iPhone 12 Pro", "R5"])
+    #expect(env.devices[1].leaseExpiresAt != nil)
+    #expect(env.devices.compactMap { runCommand(for: $0, cwd: "/w") }.count == 1)
+
+    let older = try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/w","live":false,"warnings":[]}"#.utf8))
+    #expect(older.physicalDevices == nil)
+    #expect(older.devices.isEmpty)
+  }
+
   @Test func decodesAMissingSimulatorWithoutAName() throws {
     let json = #"{"name":null,"udid":"1F11A62B","owned":true,"state":"missing"}"#
     let device = try JSONDecoder().decode(IosDevice.self, from: Data(json.utf8))

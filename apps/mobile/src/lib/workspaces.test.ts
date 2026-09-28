@@ -2,9 +2,11 @@ import fixture from '../../mock-server/fixtures/status.json';
 
 import {
   attentionGroups,
+  deviceKey,
   deviceSource,
   deviceWarnings,
   devicesOf,
+  isActive,
   livePlatforms,
   orderDevices,
   pathInCheckout,
@@ -186,6 +188,35 @@ describe('livePlatforms', () => {
       slots: [{ slot: 'pixel', android: { name: 'stim-w-pixel', owned: true, physical: false, state: 'detected' } }],
     });
     expect(livePlatforms(both)).toEqual(['ios', 'android']);
+  });
+});
+
+describe('physical devices', () => {
+  const leased = payload.environments.find((e) => e.path.includes('chat-perf-demo'));
+  if (!leased) throw new Error('fixture lost its workspace with physical devices');
+
+  it('lists each leased phone after the owned devices, named, never owned, running only while connected', () => {
+    const phones = devicesOf(leased).filter((d) => d.physical);
+    expect(phones).toEqual([
+      expect.objectContaining({
+        platform: 'ios',
+        slot: 'default',
+        name: 'Old iPhone',
+        model: 'iPhone 12 Pro',
+        state: 'connected',
+        running: true,
+        owned: false,
+      }),
+      expect.objectContaining({ platform: 'android', slot: 'pixel', name: 'Pixel 9', running: false, owned: false }),
+    ]);
+    expect(deviceSource(phones[0]!)).toBe('iOS device');
+    expect(livePlatforms(env('/w', { physicalDevices: leased.physicalDevices }))).toEqual([]);
+  });
+
+  it('keys a leased phone apart from the simulator in its slot, and a lease alone makes the workspace active', () => {
+    const keys = devicesOf(leased).map(deviceKey);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(isActive(env('/w', { physicalDevices: leased.physicalDevices }))).toBe(true);
   });
 });
 

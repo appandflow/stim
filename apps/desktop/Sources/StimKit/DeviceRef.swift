@@ -1,3 +1,5 @@
+import Foundation
+
 public enum DeviceRef: Hashable, Identifiable, Sendable {
   case ios(slot: String, IosDevice)
   case android(slot: String, AndroidDevice)
@@ -11,6 +13,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var id: String {
     switch self {
     case .ios(_, let d): return "ios:\(d.udid)"
+    case .android(let slot, let d) where d.physical: return "android:\(slot):physical:\(d.serial ?? d.name)"
     case .android(let slot, let d): return "android:\(slot):\(d.name)"
     case .remote(let d): return "remote:\(d.sessionId)"
     case .web(let d): return "web:\(d.profile)"
@@ -59,6 +62,27 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  /// A phone or tablet Stim uses and never owns: one from `physicalDevices`, or an Android record `stim status` marks
+  /// physical.
+  public var isPhysical: Bool {
+    switch self {
+    case .ios(_, let d): return d.physical
+    case .android(_, let d): return d.physical
+    case .remote, .web: return false
+    }
+  }
+
+  /// When the workspace's lease on a physical device ends.
+  public var leaseExpiresAt: Date? {
+    let text: String?
+    switch self {
+    case .ios(_, let d): text = d.leaseExpiresAt
+    case .android(_, let d): text = d.leaseExpiresAt
+    case .remote, .web: text = nil
+    }
+    return text.flatMap { try? Date($0, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true)) }
+  }
+
   /// The device is up and `stim status` saw no process of the workspace's app on it.
   public var appStopped: Bool { isRunning && app?.state == "stopped" }
 
@@ -83,8 +107,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// A recorded remote session counts as running: `stim status` does not ask the backend.
   public var isRunning: Bool {
     switch self {
-    case .ios(_, let d): return d.state == "Booted"
-    case .android(_, let d): return d.state == "detected"
+    case .ios(_, let d): return d.physical ? d.state == "connected" : d.state == "Booted"
+    case .android(_, let d): return d.state == "detected" || (d.physical && d.state == "connected")
     case .remote: return true
     case .web(let d): return d.running
     }
@@ -162,13 +186,28 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// What `label` leaves out: the model for a named slot, the runtime for a default-slot simulator, the AVD name for
   /// a default-slot owned emulator.
   public var detail: String? {
-    if slot != DeviceRef.defaultSlot { return model }
+    if slot != DeviceRef.defaultSlot { return physicalModel ?? model }
     switch self {
+    case .ios(_, let d) where d.physical: return d.model == d.name ? nil : d.model
+    case .android(_, let d) where d.physical: return d.model == d.name ? nil : d.model
     case .ios: return iosModel.runtime.map { "iOS \($0)" }
     case .android(_, let d): return d.owned ? d.name : nil
     case .web(let d): return DeviceRef.shortURL(d.currentURL)
     case .remote: return nil
     }
+  }
+
+  private var physicalModel: String? {
+    switch self {
+    case .ios(_, let d) where d.physical: return DeviceRef.nameAndModel(d.name, d.model)
+    case .android(_, let d) where d.physical: return DeviceRef.nameAndModel(d.name, d.model)
+    default: return nil
+    }
+  }
+
+  private static func nameAndModel(_ name: String, _ model: String?) -> String {
+    guard let model, model != name else { return name }
+    return "\(name) \u{00B7} \(model)"
   }
 
   /// A page URL without its scheme and trailing slash, as a browser's address bar shows it.

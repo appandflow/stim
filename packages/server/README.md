@@ -133,7 +133,8 @@ Events are `{ "event", "subscription", ... }`.
   of the user the server runs as, so clients can show paths under it as
   `~/...`.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
-  full payload as `stim status --watch --json` prints it. All subscribers share
+  full payload as `stim status --watch --json` prints it, including each
+  environment's `physicalDevices`, the phones it leases. All subscribers share
   one `stim status --watch --json` child, which stops with the last
   subscriber. While any status subscription is open, the server keeps a CPU
   and memory history from each payload's `machine.owners`, and every `status`
@@ -168,7 +169,7 @@ Events are `{ "event", "subscription", ... }`.
   or a running emulator that `stim status` lists as owned by that workspace,
   or with `web` the page of the workspace's running Stim-owned Chrome from
   `stim web` (default slot only);
-  any other device ends the subscription with a `frames-failed` `error`
+  any other device, a physical device from `physicalDevices` included, ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.

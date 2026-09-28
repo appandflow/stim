@@ -11,11 +11,12 @@ import { Pill, StatusDot } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
-import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { usageLabel } from '@/components/workspace-cards';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { formatBytes } from '@/lib/home';
+import { shortDuration } from '@/lib/format';
 import { tildeHome } from '@/lib/paths';
 import {
   agentRow,
@@ -47,6 +48,7 @@ export function DeviceTile({
   const { home, mac } = useMacConnection();
   const workspace = env.path;
   const [screenWidth, setScreenWidth] = useState(0);
+  const now = useNow(30_000);
   const streams = device.running && device.owned && !device.physical;
   const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
   const thumbnail = useRef<ViewInstance>(null);
@@ -71,6 +73,14 @@ export function DeviceTile({
       {tildeHome(warning, home)}
     </Text>
   ));
+  const leasePills = device.physical
+    ? [
+        <Pill key="physical">Physical</Pill>,
+        device.leaseExpiresAt ? (
+          <Pill key="lease">{`Leased \u00B7 ${shortDuration(Math.max(0, Date.parse(device.leaseExpiresAt) - now))} left`}</Pill>
+        ) : null,
+      ]
+    : [];
   const header = (
     <View style={styles.header}>
       <StatusDot color={dot} filled={device.running} />
@@ -91,11 +101,13 @@ export function DeviceTile({
         <Text variant="footnote" tone="tertiary" style={styles.stateLine}>
           {device.platform === 'web' ? 'Closed' : `Not running \u00B7 ${device.state}`}
         </Text>
+        {leasePills.length ? <View style={styles.badges}>{leasePills}</View> : null}
         {notes.length ? <View style={styles.notes}>{notes}</View> : null}
       </Card>
     );
   }
   const pills = [
+    ...leasePills,
     device.page?.error ? (
       <Pill key="page" tone="warning">
         Page failed to load
@@ -116,7 +128,12 @@ export function DeviceTile({
   ) : noApp ? (
     <Placeholder title="No app installed" subtitle="Fix the build and run it again" />
   ) : !streams ? (
-    <Placeholder title="No live screen" subtitle="Frames are only served for devices Stim owns." />
+    <Placeholder
+      title="No live screen"
+      subtitle={
+        device.physical ? 'Stim does not stream physical devices.' : 'Frames are only served for devices Stim owns.'
+      }
+    />
   ) : null;
   return (
     <Card>
