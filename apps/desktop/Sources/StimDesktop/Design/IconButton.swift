@@ -35,12 +35,13 @@ private struct IconButtonBody: View {
 }
 
 /// An SF Symbol button with an optional short count after the icon, such as the number of agent-driven devices.
-/// `help` is the tooltip; its first line is also the accessibility label.
+/// `help` is the tooltip; `label` is the accessibility label, by default `help`'s first line up to " \u{2014} ".
 struct IconButton: View {
   var systemImage: String
   var tint = Palette.secondary
   var badge: String?
   var help: String
+  var label: String?
   var action: () -> Void
 
   var body: some View {
@@ -53,6 +54,7 @@ struct IconButton: View {
     }
     .buttonStyle(.icon(tint: tint))
     .help(help)
-    .accessibilityLabel(String(help.prefix { $0 != "\n" }))
+    .accessibilityLabel(
+      label ?? String(help.prefix { $0 != "\n" }).components(separatedBy: " \u{2014} ")[0])
   }
 }

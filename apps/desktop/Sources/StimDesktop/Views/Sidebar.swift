@@ -444,7 +444,7 @@ struct SidebarFooter: View {
       .help(
         compatibility == .missing
           ? "Stim Desktop cannot find stim \u{2014} click to install it with npm"
-          : "This stim is older than Stim Desktop needs \u{2014} click to update it with npm")
+          : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with npm")
     case .diskCritical(let freeBytes):
       Button { selection = .machine } label: {
         statusLabel(dot: Palette.error, text: "Low disk: \(formatDisk(freeBytes)) free")
@@ -505,14 +505,14 @@ struct SidebarFooter: View {
     case .failed(let message): return "Phone server failed: \(message) \u{2014} click to open Phones settings"
     case .running(let health, _):
       guard let route = health.route, let dnsName = health.tailscale.dnsName else {
-        return "Phone server is running, but phones cannot reach it over Tailscale yet \u{2014} click to open Phones settings"
+        return "Phone server is running, but phones cannot reach it over Tailscale yet \u{2014} click to pair a phone"
       }
       return "Phone server is running at \(route.endpoint(dnsName: dnsName)) \u{2014} click to pair a phone"
     }
   }
 
   private var settingsButton: some View {
-    IconButton(systemImage: "gearshape", help: "Settings (\u{2318},)") { openSettings() }
+    IconButton(systemImage: "gearshape", help: "Settings (\u{2318},)", label: "Settings") { openSettings() }
   }
 }
 

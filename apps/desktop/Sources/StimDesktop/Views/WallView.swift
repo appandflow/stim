@@ -115,7 +115,7 @@ struct WorkspaceHeader: View {
       }
       if let supervisor = env.supervisor, supervisor.healthy != true {
         Pill(tone: .warning) { Text("supervisor unhealthy") }
-          .help("stim status reports this workspace's \(supervisor.mode ?? "dev server") supervisor as unhealthy")
+          .help("stim status reports this workspace's dev server supervisor as unhealthy")
       }
       if let usage {
         if let cpu = usage.latest.cpuPercent {
