@@ -224,14 +224,50 @@ describe('orderDevices and deviceWarnings', () => {
     }),
   );
 
-  it('puts driven devices first, then running, then stopped, by slot inside each group', () => {
-    expect(orderDevices(devices).map((d) => `${d.slot}/${d.platform}`)).toEqual([
+  const order = (list: typeof devices) => orderDevices(list).map((d) => `${d.slot}/${d.platform}`);
+
+  it('puts running devices first, then orders by platform and slot', () => {
+    expect(order(devices)).toEqual(['duo/ios', 'tablet/ios', 'default/ios', 'default/android', 'tablet/android']);
+  });
+
+  it('keeps the order when only activity and drivers change', () => {
+    const flipped = devices.map((d) =>
+      d.slot === 'duo'
+        ? { ...d, activity: { state: 'idle' as const, basis: [] } }
+        : d.slot === 'tablet' && d.platform === 'ios'
+          ? {
+              ...d,
+              activity: {
+                state: 'driven' as const,
+                driver: { tool: 'argent', pid: 7, since: '2026-09-27T10:00:00Z' },
+                lastActivityAt: '2026-09-27T10:01:00Z',
+                basis: [],
+              },
+            }
+          : d,
+    );
+    expect(order(flipped)).toEqual(order(devices));
+  });
+
+  it('keeps the others in place when a device is added or removed', () => {
+    const web = devicesOf(env('/w', { web: { running: true, url: 'http://localhost:8081' } as WebBrowserState }));
+    const phone = devicesOf(
+      env('/w', {
+        slots: [
+          { slot: 'aaa', ios: null, android: { name: 'Pixel', owned: false, physical: true, state: 'detected' } },
+        ],
+      }),
+    );
+    expect(order([...devices, ...web, ...phone])).toEqual([
       'duo/ios',
       'tablet/ios',
-      'default/android',
+      'default/web',
+      'aaa/android',
       'default/ios',
+      'default/android',
       'tablet/android',
     ]);
+    expect(order(devices.filter((d) => d.slot !== 'duo'))).toEqual(order(devices).filter((k) => !k.startsWith('duo/')));
   });
 
   it('gives a warning to the device with the longest name it mentions', () => {

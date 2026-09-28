@@ -12,7 +12,8 @@ reload and stop a workspace:
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  building, warming and ready ones first, then live ones. A workspace
+  in Live and Idle sections, each by project and name, so a workspace keeps its
+  place while builds run and agents attach. A workspace
   `stim worktree warm` is preparing shows **Warming…** with its step and an
   activity indicator, and one it has prepared shows **Ready** until its first
   run; both count as live for the filters. Each is titled by its worktree's
@@ -49,7 +50,10 @@ reload and stop a workspace:
   open the workspace's errors, and every other item opens the workspace.
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
   the list to a grid of every running simulator and emulator on every paired
-  machine, with its latest frame, model, workspace name and machine.
+  machine, with its latest frame, model, workspace name and machine, by project
+  and workspace name and, inside a workspace, iOS, Android, Web and then physical
+  devices, by slot. A tile never moves because a tool starts or stops driving
+  it; its driven badge shows that instead.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile's screen opens the [device view](#device-view); tapping the
