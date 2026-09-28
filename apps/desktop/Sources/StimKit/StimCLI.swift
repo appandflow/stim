@@ -72,6 +72,11 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(GcReport.self, from: run(["gc", "--json"]))
   }
 
+  /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
+  public func doctor(cwd: String) throws -> DoctorReport {
+    try JSONDecoder().decode(DoctorReport.self, from: run(["doctor", "--json"], cwd: cwd))
+  }
+
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
   public func settings(cwd: String) throws -> SettingsPayload {
     try JSONDecoder().decode(SettingsPayload.self, from: run(["settings", "--json"], cwd: cwd))

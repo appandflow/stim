@@ -8,6 +8,7 @@ struct AttentionView: View {
   var openLogs: (String) -> Void
   @EnvironmentObject private var actions: ActionCenter
   @State private var expanded = false
+  @State private var fixing: StimCommand?
 
   private static let collapsedGroups = 3
 
@@ -28,7 +29,7 @@ struct AttentionView: View {
           VStack(spacing: Space.md) {
             Image(systemName: "checkmark.circle").font(.system(size: 28)).foregroundStyle(Palette.success)
             Text("Nothing needs you right now").font(.stim(.headline))
-            Text("Agents handle log errors and failed runs themselves. Signing failures, expired leases and stuck agents show up here.")
+            Text("Agents handle log errors and failed runs themselves. Setup problems, signing failures, expired leases and stuck agents show up here.")
               .foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
           }
           .frame(maxWidth: .infinity)
@@ -76,6 +77,14 @@ struct AttentionView: View {
       }
       .padding(Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .confirmationDialog(
+      "Run stim doctor --fix?", isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } }),
+      titleVisibility: .visible, presenting: fixing
+    ) { command in
+      Button("Run the fix") { actions.run("Fix \(store.names(ofPath: command.cwd).title)", command) }
+    } message: { command in
+      Text("\(command.displayLine())\n\nStop native builds in this checkout first. Doctor repairs only what its report names.")
     }
   }
 
@@ -138,7 +147,10 @@ struct AttentionView: View {
           NSPasteboard.general.setString(command.shellLine, forType: .string)
         }
         .help(command.displayLine())
-        if item.runnable {
+        if item.runnable && command.arguments.contains("--fix") {
+          Button("Fix\u{2026}") { fixing = command }
+            .help(command.displayLine())
+        } else if item.runnable {
           runButton("Run", command, runTitle: "Fix \(store.names(ofPath: command.cwd).title)")
         }
       }

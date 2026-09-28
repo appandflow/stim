@@ -104,6 +104,9 @@ struct StimDesktopApp: App {
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
       if !store.watching || worktree { store.refresh() }
       if run.steps.contains(where: GcReport.changed(by:)) { gc.changed() }
+      for step in run.steps where step.arguments.first == "doctor" && step.arguments.contains("--fix") {
+        store.doctorChanged(in: step.cwd)
+      }
     }
     let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, cli: cli)
     _autopilot = StateObject(wrappedValue: autopilot)
