@@ -48,7 +48,7 @@ test('a Claude Code session file gives its id, cwd, name and times, a desktop li
   expect(parseClaudeSession(CLAUDE, NO_APPS)).not.toHaveProperty('openUrl');
   expect(parseClaudeSession(CLAUDE, NO_APPS)?.webUrl).toBe('https://claude.ai/code/session_016mNVcEGnttEVda1aDtiDUK');
   expect(parseClaudeSession({ ...CLAUDE, hostSessionId: undefined }, APPS)).not.toHaveProperty('openUrl');
-  for (const bridgeSessionId of [undefined, 'local_bb7da4e5', 'session_a/../b', 42]) {
+  for (const bridgeSessionId of [undefined, null, 'local_bb7da4e5', 'session_a/../b', 42]) {
     expect(parseClaudeSession({ ...CLAUDE, bridgeSessionId }, APPS)).not.toHaveProperty('webUrl');
   }
   expect(parseClaudeSession({ ...CLAUDE, name: 'a\nb\tc'.padEnd(300, 'x') }, APPS)?.title).toBe(

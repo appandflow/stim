@@ -31,7 +31,7 @@ export function AgentSessions({ agents, now }: { agents: AgentSession[] | undefi
             onPress={() => void Linking.openURL(url)}
             accessibilityRole="link"
             accessibilityLabel={label}
-            accessibilityHint="Opens the session in the Claude app"
+            accessibilityHint="Opens the session in the Claude app or on claude.ai"
             hitSlop={6}
             style={styles.link}
           >
