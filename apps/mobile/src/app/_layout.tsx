@@ -99,34 +99,16 @@ function RootLayoutContent() {
                         headerLargeTitle: true,
                         contentStyle: { backgroundColor: colors.grouped },
                         ...(Platform.OS === 'android'
-                          ? {
-                              headerStyle: { backgroundColor: colors.grouped },
-                              headerShadowVisible: false,
-                            }
+                          ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
                           : null),
                       }}
                     />
-                    <Stack.Screen
-                      name="pair"
-                      options={{
-                        title: 'Pair a machine',
-                        presentation: 'modal',
-                      }}
-                    />
-                    <Stack.Screen
-                      name="rename"
-                      options={{
-                        title: 'Rename machine',
-                        presentation: 'modal',
-                      }}
-                    />
+                    <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
+                    <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
                     <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
                     <Stack.Screen
                       name="mac/[id]/workspace"
-                      options={{
-                        title: 'Workspace',
-                        headerShadowVisible: false,
-                      }}
+                      options={{ title: 'Workspace', headerShadowVisible: false }}
                     />
                     <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
                     <Stack.Screen

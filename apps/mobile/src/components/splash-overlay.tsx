@@ -1,8 +1,9 @@
 import { Image } from 'expo-image';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AccessibilityInfo, Appearance, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Appearance, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { EaseView } from 'react-native-ease';
+import { useReducedMotion } from 'react-native-reanimated';
 
 import { colors } from '@/design/tokens';
 
@@ -50,15 +51,10 @@ let played = false;
 export function SplashOverlay({ children }: { children: ReactNode }) {
   const [visible, setVisible] = useState(!played);
   const [scheme] = useState<'light' | 'dark'>(() => (Appearance.getColorScheme() === 'dark' ? 'dark' : 'light'));
-  const [reduceMotion, setReduceMotion] = useState<boolean>();
+  const reduceMotion = useReducedMotion();
   const [displayed, setDisplayed] = useState(false);
   const [replayed] = useState(played);
   const { width, height } = useWindowDimensions();
-
-  useEffect(() => {
-    if (played) return;
-    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion, () => setReduceMotion(false));
-  }, []);
 
   useEffect(() => {
     if (!visible) return;
@@ -66,7 +62,6 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
       const timeout = setTimeout(() => setDisplayed(true), DISPLAY_TIMEOUT_MS);
       return () => clearTimeout(timeout);
     }
-    if (reduceMotion === undefined) return;
     played = true;
     SplashScreen.hide();
     const timeout = setTimeout(
@@ -76,7 +71,7 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
     return () => clearTimeout(timeout);
   }, [visible, displayed, reduceMotion]);
 
-  const started = replayed || (displayed && reduceMotion !== undefined);
+  const started = replayed || displayed;
   const grid = useMemo(() => pixelGrid(width, height), [width, height]);
   const ripple = started && !reduceMotion;
   const floodScale = (Math.max(width, height) + 4 * grid.size) / FLOOD_SIZE;
@@ -103,16 +98,21 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
           pointerEvents="none"
           testID="splash-overlay"
         >
-          <View style={[styles.grid, { width: grid.width, height: grid.height }]}>
-            {grid.cells.map((cell) => (
-              <EaseView
-                key={cell.key}
-                style={[styles.pixel, { left: cell.left, top: cell.top, width: grid.size + 1, height: grid.size + 1 }]}
-                animate={ripple ? { scale: 0, rotate: 45 } : { scale: 1, rotate: 0 }}
-                transition={{ type: 'timing', duration: PIXEL_MS, delay: cell.delay, easing: 'easeOut' }}
-              />
-            ))}
-          </View>
+          {!reduceMotion && (
+            <View style={[styles.grid, { width: grid.width, height: grid.height }]}>
+              {grid.cells.map((cell) => (
+                <EaseView
+                  key={cell.key}
+                  style={[
+                    styles.pixel,
+                    { left: cell.left, top: cell.top, width: grid.size + 1, height: grid.size + 1 },
+                  ]}
+                  animate={ripple ? { scale: 0, rotate: 45 } : { scale: 1, rotate: 0 }}
+                  transition={{ type: 'timing', duration: PIXEL_MS, delay: cell.delay, easing: 'easeOut' }}
+                />
+              ))}
+            </View>
+          )}
           <EaseView
             style={[StyleSheet.absoluteFill, { backgroundColor: colors[scheme].background }]}
             animate={{ opacity: ripple ? 0 : 1 }}
@@ -156,7 +156,6 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
   );
 }
 
-/** Square cells, `COLUMNS` across, centred on the logo, each delayed by its distance from the logo. */
 function pixelGrid(width: number, height: number) {
   const size = width / COLUMNS;
   const rows = (Math.ceil(height / 2 / size) + 1) * 2;
