@@ -2,7 +2,7 @@ import fixture from '../../mock-server/fixtures/status.json';
 
 import { homeAttention, type AttentionMachine } from '@/lib/attention';
 import type { ConnectionState } from '@/lib/connection';
-import type { BuildReport, EnvironmentState, MachineUsage, StatusPayload, WebBrowserState } from '@/protocol/types';
+import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-26T12:00:00Z');
 const OPEN: ConnectionState = {
@@ -44,199 +44,49 @@ const mac = (environments: EnvironmentState[], extra: Partial<AttentionMachine> 
   ...extra,
 });
 
-const running = (startedMsAgo: number, expectedMs: number | null): BuildReport => ({
-  platform: 'ios',
-  slot: 'default',
-  state: 'running',
-  phase: 'compile',
-  startedAt: new Date(NOW - startedMsAgo).toISOString(),
-  phaseStartedAt: new Date(NOW - startedMsAgo).toISOString(),
-  outcome: 'cold',
-  expectedMs,
-  expectedPhaseMs: null,
-  basis: 4,
-});
-
 const summary = (machines: AttentionMachine[]) =>
-  homeAttention(machines, NOW).map((i) => `${i.severity} ${i.title}: ${i.detail} -> ${i.target.kind}`);
+  homeAttention(machines, NOW, 15).map((i) => `${i.severity} ${i.title}: ${i.detail} -> ${i.target.kind}`);
 
-const booted = (state: 'running' | 'stopped' | 'unknown') => ({
-  name: 'stim-x (iPhone 18 Pro 27.0)',
-  udid: 'U',
-  owned: true,
-  state: 'Booted',
-  app: { id: 'com.app', state },
+const failedBuild = (errorCode: string) => ({
+  platform: 'ios' as const,
+  status: 'failed' as const,
+  cacheHit: false as const,
+  cacheSkipped: false,
+  durationMs: 1000,
+  fingerprint: null,
+  startedAt: new Date(NOW - 60_000).toISOString(),
+  finishedAt: new Date(NOW - 60_000).toISOString(),
+  errorCode,
 });
 
 describe('homeAttention', () => {
-  it('is empty when nothing is wrong', () => {
-    expect(summary([mac([env('fine', { live: true, ios: booted('running') })])])).toEqual([]);
-  });
-
-  const failedBuild = (msAgo: number) => ({
-    ios: {
-      platform: 'ios' as const,
-      status: 'failed' as const,
-      cacheHit: false as const,
-      cacheSkipped: false,
-      durationMs: 1000,
-      fingerprint: null,
-      startedAt: new Date(NOW - msAgo).toISOString(),
-      finishedAt: new Date(NOW - msAgo).toISOString(),
-      errorCode: 'STIM_BUILD_FAILED',
-    },
-  });
-
-  it('lists failed builds and log errors, linking errors to the logs', () => {
+  it('leaves out what agents handle: log errors and a single failed build', () => {
     expect(
       summary([
         mac([
-          env('broken', { lastBuilds: failedBuild(3_600_000) }),
+          env('broken', { lastBuilds: { ios: failedBuild('STIM_BUILD_FAILED') } }),
           env('bundle', { live: true, logs: { dir: '/l', errorsSinceMarker: 2 } }),
         ]),
       ]),
-    ).toEqual([
-      'error bundle: 2 errors in the logs -> logs',
-      'error broken: iOS build failed (STIM_BUILD_FAILED) \u00B7 1h ago -> workspace',
-    ]);
+    ).toEqual([]);
   });
 
-  it('does not raise a workspace a warm is setting up', () => {
-    const warning = {
+  it("titles a workspace item by its workspace and a machine item by the Mac, with the Mac's home as ~", () => {
+    const issue = {
       code: 'port-not-ours' as const,
       severity: 'warning' as const,
-      message: 'm',
-      remedy: 'stim start',
-      workspace: 'new',
+      message: 'port 8082 is in use by pid 1 in /u/other',
+      remedy: 'stim stop',
+      workspace: '/u/app/.worktrees/held',
     };
-    expect(
-      summary([
-        mac([
-          env('new', { phase: 'warming', warmStep: 'copy', issues: [{ ...warning }] }),
-          env('ready', { phase: 'ready', issues: [{ ...warning, workspace: 'ready' }] }),
-        ]),
-      ]),
-    ).toEqual([]);
-  });
-
-  it('leaves out log errors and day-old failed builds of idle workspaces', () => {
-    expect(
-      summary([
-        mac([env('abandoned', { lastBuilds: failedBuild(2 * 86_400_000), logs: { dir: '/l', errorsSinceMarker: 3 } })]),
-      ]),
-    ).toEqual([]);
-    expect(
-      summary([
-        mac([
-          env('building', {
-            build: running(10_000, null),
-            lastBuilds: { android: { ...failedBuild(2 * 86_400_000).ios, platform: 'android' } },
-          }),
-        ]),
-      ]),
-    ).toEqual(['error building: Android build failed (STIM_BUILD_FAILED) \u00B7 2d ago -> workspace']);
-  });
-
-  it('drops a failed build while the same platform builds again', () => {
-    const failed = {
-      platform: 'ios' as const,
-      status: 'failed' as const,
-      cacheHit: false as const,
-      cacheSkipped: false,
-      durationMs: null,
-      fingerprint: null,
-      startedAt: new Date(NOW).toISOString(),
-      finishedAt: null,
-    };
-    expect(summary([mac([env('retry', { build: running(60_000, null), lastBuilds: { ios: failed } })])])).toEqual([]);
-  });
-
-  it('keeps error issues from idle workspaces, their warnings only from active ones, and no info notes', () => {
-    const issue = (severity: 'error' | 'warning' | 'info', message: string, workspace: string) => ({
-      code: 'port-not-ours',
-      severity,
-      message,
-      remedy: 'stim start',
-      workspace,
-    });
-    expect(
-      summary([
-        mac([
-          env('idle', {
-            issues: [
-              issue('error', 'port 8082: pid 1 runs from /u/other', '/u/app/.worktrees/idle'),
-              issue('warning', 'recorded sim X no longer exists', '/u/app/.worktrees/idle'),
-            ],
-          }),
-          env('live', {
-            live: true,
-            issues: [
-              issue('warning', 'simulator is booted with no Metro', '/x'),
-              issue('info', 'port 8083 is in use by another app; stim start will choose a free port', '/x'),
-            ],
-          }),
-        ]),
-      ]),
-    ).toEqual([
-      'error idle: port 8082: pid 1 runs from ~/other -> workspace',
-      'warning live: simulator is booted with no Metro -> workspace',
-    ]);
-  });
-
-  it('flags a build at more than twice its median, not one merely over it', () => {
-    expect(summary([mac([env('slow', { build: running(7 * 60_000, 3 * 60_000) })])])).toEqual([
-      'warning slow: iOS build at 7:00, usually ~3:00 -> workspace',
-    ]);
-    expect(summary([mac([env('late', { build: running(5 * 60_000, 3 * 60_000) })])])).toEqual([]);
-    expect(summary([mac([env('unknown', { build: running(60 * 60_000, null) })])])).toEqual([]);
-  });
-
-  it('flags a live device whose app stopped, except while a build installs it', () => {
-    expect(summary([mac([env('crashed', { live: true, ios: booted('stopped') })])])).toEqual([
-      'warning crashed: App not running on iPhone 18 Pro 27.0 -> workspace',
-    ]);
-    expect(
-      summary([mac([env('installing', { live: true, ios: booted('stopped'), build: running(10_000, null) })])]),
-    ).toEqual([]);
-    expect(summary([mac([env('unsure', { live: true, ios: booted('unknown') })])])).toEqual([]);
-  });
-
-  it('flags a live workspace whose web page failed to load', () => {
-    const web: WebBrowserState = {
-      browser: 'chrome',
-      version: null,
-      running: true,
-      pid: 1,
-      supervisorPid: 2,
-      url: 'http://localhost:5173/',
-      headless: true,
-      viewport: 'desktop',
-      profile: '/p',
-      cdpEndpoint: 'http://127.0.0.1:8900',
-      targetId: 'T',
-      page: {
-        url: 'http://localhost:5173/apps/groups/',
-        state: 'failed',
-        error: 'GET failed: net::ERR_CONNECTION_REFUSED',
-      },
-    };
-    expect(summary([mac([env('vite', { live: true, web })])])).toEqual([
-      'warning vite: Web page failed to load -> workspace',
-    ]);
-    expect(
-      summary([mac([env('fine', { live: true, web: { ...web, page: { url: web.url, state: 'loaded' as const } } })])]),
-    ).toEqual([]);
-  });
-
-  it('flags disk below the critical floor on the machine', () => {
-    expect(summary([mac([], { usage: usage(3.2) })])).toEqual([
+    expect(summary([mac([env('held', { live: true, issues: [issue] })], { usage: usage(3.2) })])).toEqual([
       "error MacBook Pro: 3.2 GB free, below Stim's floor -> machine",
+      'warning held: port 8082 is in use by pid 1 in ~/other -> workspace',
     ]);
-    expect(summary([mac([], { usage: usage(12) })])).toEqual([]);
   });
 
   it('shows only the offline item for a disconnected machine, since its status is stale', () => {
-    const stale = mac([env('bundle', { live: true, logs: { dir: '/l', errorsSinceMarker: 2 } })], {
+    const stale = mac([env('sign', { lastBuilds: { ios: failedBuild('STIM_CODESIGN_FAILED') } })], {
       state: { kind: 'waiting', retryInMs: 30_000, reason: 'Closed.' },
       disconnectedAt: NOW - 5 * 60_000,
       usage: usage(1),
@@ -255,15 +105,28 @@ describe('homeAttention', () => {
     ]);
   });
 
-  it('ranks errors first, then machine problems, then active workspaces before idle ones', () => {
-    const errors = { dir: '/l', errorsSinceMarker: 1 };
+  it('ranks errors first, then machine problems, then live workspaces before idle ones, across Macs', () => {
+    const lease = (expiresAt: string) => [
+      {
+        platform: 'android' as const,
+        slot: 'default',
+        id: 'X',
+        name: 'Pixel',
+        model: null,
+        owned: false as const,
+        physical: true as const,
+        connection: 'connected' as const,
+        lease: { holder: 'h', kind: 'declared' as const, grantedAt: null, expiresAt },
+      },
+    ];
+    const expired = new Date(NOW - 60_000).toISOString();
     const titles = homeAttention(
       [
         mac(
           [
-            env('idle-error', { lastBuilds: failedBuild(60_000) }),
-            env('live-warning', { live: true, ios: booted('stopped') }),
-            env('live-error', { live: true, logs: errors }),
+            env('idle-error', { lastBuilds: { ios: failedBuild('STIM_NO_PROFILE') } }),
+            env('live-warning', { live: true, physicalDevices: lease(expired) }),
+            env('live-error', { live: true, lastBuilds: { ios: failedBuild('STIM_LOW_DISK') } }),
           ],
           { usage: usage(2) },
         ),
@@ -276,6 +139,7 @@ describe('homeAttention', () => {
         },
       ],
       NOW,
+      15,
     ).map((i) => i.title);
     expect(titles).toEqual(['MacBook Pro', 'live-error', 'idle-error', 'Mac mini', 'live-warning']);
   });

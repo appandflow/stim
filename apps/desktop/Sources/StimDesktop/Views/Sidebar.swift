@@ -65,7 +65,7 @@ struct Sidebar: View {
       PinnedRow(item: .attention, selection: $selection) {
         SidebarLabel(title: "Needs attention", icon: "exclamationmark.triangle", selected: selection == .attention)
         Spacer()
-        let count = store.attentionCount + autopilot.finishedPullRequests.count
+        let count = store.attention(lowestVolume: autopilot.lowestVolume).count + autopilot.finishedPullRequests.count
         if count > 0 {
           Pill("\(count)", tone: .warning, size: .small)
             .help("\(count) item\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") attention")

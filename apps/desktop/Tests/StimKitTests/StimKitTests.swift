@@ -372,88 +372,14 @@ import Testing
 }
 
 @Suite struct RemedyTests {
-  @Test func mapsStatusWarningsToCommands() {
-    #expect(
-      remedyCommand(forWarning: "stale supervisor record for /w", workspace: "/w")
-        == StimCommand(["stop"], cwd: "/w"))
-    #expect(
-      remedyCommand(
-        forWarning: "owned AVD stim-x is not detected by adb; rerun your `stim android` command", workspace: "/w")
-        == StimCommand(["android"], cwd: "/w"))
-    #expect(remedyCommand(forWarning: "something else", workspace: "/w") == nil)
-  }
-
   private func workspace(_ json: String) throws -> Workspace {
     try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
-  }
-
-  @Test func groupsIssuesByWorkspaceLiveFirstThenErrors() throws {
-    func env(_ path: String, live: Bool = false, severity: String = "warning", remedy: String = "stim android", slot: String? = nil)
-      throws -> Workspace
-    {
-      let slotField = slot.map { #","slot":"\#($0)""# } ?? ""
-      return try workspace(
-        #"{"path":"\#(path)","live":\#(live),"warnings":["m"],"issues":[{"code":"c","severity":"\#(severity)","message":"m","remedy":"\#(remedy)","workspace":"\#(path)"\#(slotField)}]}"#
-      )
-    }
-    let groups = attentionGroups([
-      try workspace(#"{"path":"/clean","live":false,"warnings":[],"issues":[]}"#),
-      try env("/idle"),
-      try env("/err", severity: "error", remedy: "stim guide errors teardown"),
-      try env("/live", live: true, remedy: "stim android --slot fold", slot: "fold"),
-      try env("/note", live: true, severity: "info", remedy: "stim start"),
-    ])
-    #expect(groups.map(\.workspace.path) == ["/live", "/err", "/idle"])
-    #expect(
-      groups[0].items == [
-        AttentionItem(
-          text: "fold: m", isError: false, command: StimCommand(["android", "--slot", "fold"], cwd: "/live"),
-          runnable: true)
-      ])
-    #expect(groups[1].items.map(\.isError) == [true])
-    #expect(groups[1].items.map(\.runnable) == [false])
-  }
-
-  @Test func listsAFailedRunElseLogErrorsAndSkipsACancelledRun() throws {
-    let groups = attentionGroups([
-      try workspace(
-        #"{"path":"/ok","live":true,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":0},"lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-26T00:00:00Z"}}}"#
-      ),
-      try workspace(
-        #"{"path":"/broken","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":1},"lastBuilds":{"android":{"platform":"android","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_BUILD_FAILED","diagnostics":[{"file":"/broken/android/app/Main.kt","line":23,"column":9,"message":"Unresolved reference 'Foo'."},{"file":null,"line":null,"column":null,"message":"Task failed"}]}}}"#
-      ),
-      try workspace(
-        #"{"path":"/metro","live":false,"warnings":[],"issues":[],"logs":{"dir":"/l","errorsSinceMarker":2},"lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"startedAt":"2026-09-26T00:00:00Z","errorCode":"STIM_CANCELLED"}}}"#
-      ),
-    ])
-    #expect(groups.map(\.workspace.path) == ["/broken", "/metro"])
-    #expect(
-      groups[1].items == [
-        AttentionItem(text: "2 errors in the logs", isError: true, command: nil, runnable: false, opensLogs: true)
-      ])
-    #expect(
-      groups[0].items == [
-        AttentionItem(
-          text: "Android run failed (STIM_BUILD_FAILED)", isError: true,
-          command: StimCommand(["android"], cwd: "/broken"), runnable: true, opensLogs: true,
-          detail: "android/app/Main.kt:23:9: Unresolved reference 'Foo'.")
-      ])
   }
 
   @Test func pluralizesCounts() {
     #expect(countLabel(1, "hit") == "1 hit")
     #expect(countLabel(2, "miss", plural: "misses") == "2 misses")
     #expect(countLabel(0, "record") == "0 records")
-  }
-
-  @Test func fallsBackToWarningTextWithoutIssues() throws {
-    let groups = attentionGroups([
-      try workspace(
-        #"{"path":"/w","live":false,"warnings":["owned AVD stim-x is not detected by adb; rerun your `stim android` command","other"]}"#
-      )
-    ])
-    #expect(groups.map(\.items.count) == [2])
-    #expect(groups[0].items.map(\.command) == [StimCommand(["android"], cwd: "/w"), nil])
   }
 
   @Test func quotesPathsForTheShell() {
@@ -506,9 +432,6 @@ import Testing
     #expect(runCommand(for: web, cwd: "/w") == StimCommand(["web"], cwd: "/w"))
     #expect(env.usedPlatforms == ["ios"])
     #expect(platformName("web") == "Web")
-    let items = try #require(attentionGroups([env]).first).items
-    #expect(items.map(\.text) == ["Web page failed to load"])
-    #expect(items.first?.command == StimCommand(["web"], cwd: "/w"))
   }
 
   @Test func titlesTheWebDeviceWithTheInAppRouteAfterTheLoadedDocument() throws {

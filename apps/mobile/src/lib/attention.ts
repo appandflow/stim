@@ -1,9 +1,9 @@
 import type { ConnectionState } from '@/lib/connection';
-import { clockDuration, shortDuration } from '@/lib/format';
-import { diskTone, formatBytes } from '@/lib/home';
+import { shortDuration } from '@/lib/format';
+import { needsAttention } from '@/lib/needs-attention';
 import { tildeHome } from '@/lib/paths';
-import { attentionGroups, devicesOf, isActive, repositoryRoots, runningBuild, workspaceTitle } from '@/lib/workspaces';
-import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
+import { repositoryRoots, workspaceTitle } from '@/lib/workspaces';
+import type { MachineUsage, StatusPayload } from '@/protocol/types';
 
 export interface AttentionMachine {
   id: string;
@@ -20,10 +20,7 @@ export interface AttentionMachine {
   seenAt: number | null;
 }
 
-export type AttentionTarget =
-  | { kind: 'machine'; macId: string }
-  | { kind: 'workspace'; macId: string; path: string }
-  | { kind: 'logs'; macId: string; path: string };
+export type AttentionTarget = { kind: 'machine'; macId: string } | { kind: 'workspace'; macId: string; path: string };
 
 export interface HomeAttentionItem {
   key: string;
@@ -34,10 +31,8 @@ export interface HomeAttentionItem {
   target: AttentionTarget;
 }
 
-const OVERRUN_FACTOR = 2;
-const RECENT_FAILURE_MS = 24 * 60 * 60 * 1000;
-
-const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : 'Android');
+/** Stim Desktop's default for how long an EAS session may run with no agent before it needs a person. */
+const EAS_SESSION_MINUTES = 30;
 
 function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | null {
   const base = {
@@ -58,106 +53,42 @@ function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | nu
   return { ...base, severity: 'warning', detail: `Offline${seen}` };
 }
 
-function diskItem(mac: AttentionMachine): HomeAttentionItem | null {
-  const lowest = mac.usage?.volumes.reduce<number | null>(
-    (min, v) => (min === null ? v.freeBytes : Math.min(min, v.freeBytes)),
-    null,
-  );
-  if (lowest === null || lowest === undefined || diskTone(lowest) !== 'critical') return null;
-  return {
-    key: `${mac.id}\ndisk`,
-    severity: 'error',
-    title: mac.name,
-    detail: `${formatBytes(lowest)} free, below Stim's floor`,
-    macName: mac.name,
-    target: { kind: 'machine', macId: mac.id },
-  };
-}
-
-function workspaceItems(
-  mac: AttentionMachine,
-  env: EnvironmentState,
-  active: boolean,
-  title: string,
-  issues: { message: string; severity: 'error' | 'warning' }[],
-  now: number,
-): HomeAttentionItem[] {
-  const items: HomeAttentionItem[] = [];
-  const at = { macId: mac.id, path: env.path };
-  const add = (id: string, severity: HomeAttentionItem['severity'], detail: string, logs = false) =>
-    items.push({
-      key: `${mac.id}\n${env.path}\n${id}`,
-      severity,
-      title,
-      detail,
-      macName: mac.name,
-      target: logs ? { kind: 'logs', ...at } : { kind: 'workspace', ...at },
-    });
-
-  for (const platform of ['ios', 'android'] as const) {
-    const last = env.lastBuilds?.[platform];
-    if (!last || last.status !== 'failed' || runningBuild(env)?.platform === platform) continue;
-    const endedAt = last.finishedAt ?? last.startedAt;
-    const ended = Date.parse(endedAt);
-    if (!active && !(now - ended < RECENT_FAILURE_MS)) continue;
-    const age = Number.isNaN(ended) ? '' : ` \u00B7 ${shortDuration(now - ended)} ago`;
-    const code = last.errorCode ? ` (${last.errorCode})` : '';
-    add(`build-${platform}`, 'error', `${platformName(platform)} build failed${code}${age}`);
-  }
-
-  const errors = env.logs?.errorsSinceMarker ?? 0;
-  if (active && errors > 0) {
-    add('logs', 'error', `${errors === 1 ? '1 error' : `${errors} errors`} in the logs`, true);
-  }
-
-  issues.forEach((issue, i) => {
-    add(`issue-${i}`, issue.severity, tildeHome(issue.message, mac.home));
-  });
-
-  const build = runningBuild(env);
-  const started = build ? Date.parse(build.startedAt) : NaN;
-  if (build?.expectedMs && Number.isFinite(started) && now - started > OVERRUN_FACTOR * build.expectedMs) {
-    const detail = `${platformName(build.platform)} build at ${clockDuration(now - started)}, usually ~${clockDuration(build.expectedMs)}`;
-    add('overrun', 'warning', detail);
-  }
-
-  if (env.live) {
-    for (const device of devicesOf(env)) {
-      if (!device.running || device.app?.state !== 'stopped' || runningBuild(env, device)) continue;
-      add(`app-${device.platform}-${device.slot}`, 'warning', `App not running on ${device.model}`);
-    }
-    if (env.web?.running && env.web.page?.state === 'failed') {
-      add('page-web', 'warning', 'Web page failed to load');
-    }
-  }
-  return items;
-}
-
 const SEVERITY_RANK = { error: 0, warning: 1 };
 
 /**
- * What home's attention strip lists, most important first: errors before warnings, then machine problems, then
- * active workspaces, then idle ones, each in status order. A machine that is not connected yields only its offline
- * item, since its status is stale. An idle workspace contributes its error issues and a build that failed in the last
- * day; its warnings and log errors are left to the machine sheet and the workspace screen.
+ * What home's attention strip lists: what only a person can act on (`needsAttention`), most important first: errors
+ * before warnings, then machine problems, then live workspaces, then idle ones, each in status order. A machine that
+ * is not connected yields only its offline item, since its status is stale.
  */
-export function homeAttention(machines: AttentionMachine[], now: number): HomeAttentionItem[] {
+export function homeAttention(machines: AttentionMachine[], now: number, stuckMinutes: number): HomeAttentionItem[] {
   const ranked: { item: HomeAttentionItem; scope: number }[] = [];
   for (const mac of machines) {
     const offline = machineItem(mac, now);
     if (offline) ranked.push({ item: offline, scope: 0 });
     if (mac.missing || mac.state.kind !== 'open') continue;
-    const disk = diskItem(mac);
-    if (disk) ranked.push({ item: disk, scope: 0 });
-    if (!mac.status) continue;
-    const roots = repositoryRoots(mac.status);
-    const issuesByPath = new Map(attentionGroups(mac.status.environments).map((g) => [g.path, g.items]));
-    for (const env of mac.status.environments) {
-      const active = isActive(env);
-      const issues = (issuesByPath.get(env.path) ?? []).filter((i) => active || i.severity === 'error');
-      for (const item of workspaceItems(mac, env, active, workspaceTitle(env, roots), issues, now)) {
-        ranked.push({ item, scope: active ? 1 : 2 });
-      }
+    const environments = mac.status?.environments ?? [];
+    const roots = mac.status ? repositoryRoots(mac.status) : [];
+    const byPath = new Map(environments.map((env) => [env.path, env]));
+    const items = needsAttention({
+      environments,
+      volumes: mac.usage?.volumes ?? null,
+      now,
+      stuckMinutes,
+      easSessionMinutes: EAS_SESSION_MINUTES,
+    });
+    for (const item of items) {
+      const env = item.workspace === null ? undefined : byPath.get(item.workspace);
+      ranked.push({
+        scope: env ? (env.live ? 1 : 2) : 0,
+        item: {
+          key: `${mac.id}\n${item.id}`,
+          severity: item.severity,
+          title: env && mac.status ? workspaceTitle(env, roots) : mac.name,
+          detail: tildeHome(item.body, mac.home),
+          macName: mac.name,
+          target: env ? { kind: 'workspace', macId: mac.id, path: env.path } : { kind: 'machine', macId: mac.id },
+        },
+      });
     }
   }
   return ranked
