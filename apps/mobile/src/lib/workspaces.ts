@@ -141,6 +141,8 @@ export interface DeviceRef {
   app?: DeviceAppProcess;
   /** The Stim-owned Chrome's current page and, when its latest load failed, why. */
   page?: { url: string; error: string | null };
+  /** Bytes the device's data holds, when status measures it. */
+  diskBytes?: number | null;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
@@ -157,6 +159,7 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
     physical: false,
     activity: sim.activity,
     app: sim.app,
+    diskBytes: sim.disk?.bytes ?? null,
   };
 }
 
@@ -173,6 +176,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     physical: avd.physical,
     activity: avd.activity,
     app: avd.app,
+    diskBytes: avd.disk?.bytes ?? null,
   };
 }
 

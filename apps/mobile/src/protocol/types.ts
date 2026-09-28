@@ -29,6 +29,13 @@ export interface SimState {
   state: string;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** The simulator's data folder, once a status watcher has measured it. */
+  disk?: DeviceDisk;
+}
+
+export interface DeviceDisk {
+  bytes: number;
+  measuredAt: string;
 }
 
 export interface AndroidState {
@@ -37,8 +44,11 @@ export interface AndroidState {
   physical: boolean;
   serial?: string | null;
   state?: 'detected' | 'not-detected' | 'missing' | 'unknown';
+  deviceProfile?: string | null;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** The emulator's AVD folder, once a status watcher has measured it. */
+  disk?: DeviceDisk;
 }
 
 export interface DeviceAppProcess {
@@ -66,6 +76,24 @@ export interface BuildReport {
   expectedMs: number | null;
   expectedPhaseMs: number | null;
   basis: number;
+  /** Present once the build tool printed a recognized line. */
+  detail?: BuildDetail;
+  /** Present once the run knows why the cache missed. */
+  missReason?: BuildMissReason;
+}
+
+/**
+ * The build tool's step inside `phase`. `done` and `total` count `unit`s: xcodebuild targets that started work of
+ * those in its dependency graph, or Gradle tasks reported so far with a null `total`. `line` is the latest
+ * compile, link or task line.
+ */
+export interface BuildDetail {
+  step: 'configure' | 'compile' | 'link' | 'resources' | 'script' | 'dex' | 'package' | 'sign' | null;
+  unit: 'targets' | 'tasks' | null;
+  done: number | null;
+  total: number | null;
+  line: string | null;
+  updatedAt: string;
 }
 
 export type BuildCacheHit = 'local' | 'remote' | false;
@@ -144,6 +172,19 @@ export interface WorktreeFacts {
   branch?: string;
   repository?: string;
   git?: WorktreeGit | null;
+  /** Null when GitHub has no pull request for the branch and HEAD; absent when unknown. */
+  pullRequest?: PullRequestFacts | null;
+}
+
+/** The branch's pull request as Stim last asked GitHub; `checks` counts the head commit's checks. */
+export interface PullRequestFacts {
+  number: number;
+  url: string;
+  title: string;
+  state: 'open' | 'draft' | 'merged' | 'closed';
+  checks: { passing: number; failing: number; pending: number } | null;
+  reviewDecision: 'approved' | 'changes-requested' | 'review-required' | null;
+  checkedAt: string;
 }
 
 /**
@@ -198,7 +239,14 @@ export interface EnvironmentState {
   issues?: StatusIssue[];
   ios?: SimState | null;
   android?: AndroidState | null;
-  metro?: { port: number; running: boolean; pid: number | null } | null;
+  metro?: {
+    port: number;
+    running: boolean;
+    pid: number | null;
+    lastStop?: { reason: string; at?: string };
+    /** Absent when the Metro log has no bundle request, and from a `stim` that does not report bundles. */
+    bundle?: MetroBundle;
+  } | null;
   web?: WebBrowserState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
@@ -208,6 +256,50 @@ export interface EnvironmentState {
   lastBuilds?: { ios?: LastBuild; android?: LastBuild };
   /** Each platform's recent runs, newest first, at most 10 each. Absent from a `stim` without build history. */
   builds?: { ios?: BuildHistoryEntry[]; android?: BuildHistoryEntry[] };
+  /** Disk use as a status watcher last measured it; absent until one has. */
+  disk?: WorkspaceDisk;
+}
+
+/**
+ * `percent` (0 to 100) is present only when Metro reported progress for the in-flight bundle. `last` is the newest
+ * finished bundle request.
+ */
+export interface MetroBundle {
+  bundling: boolean;
+  platform?: Platform;
+  startedAt?: string;
+  percent?: number;
+  last?: { platform: Platform; status: 'ok' | 'failed'; durationMs: number; finishedAt: string };
+}
+
+/**
+ * `worktreeBytes` is the git worktree folder, node_modules included; `nodeModulesBytes` is part of it. `buildBytes`
+ * is Stim's own folder for the workspace: derived data, Gradle outputs and logs.
+ */
+export interface WorkspaceDisk {
+  worktreeBytes: number | null;
+  nodeModulesBytes: number | null;
+  buildBytes: number | null;
+  measuredAt: string;
+}
+
+/**
+ * CPU and memory series stim-server records from each status's machine owners, oldest first, point `i` at
+ * `endAt - (n - 1 - i) * intervalMs`, null where no reading fell in a slot. A device `id` is the machine owner id:
+ * the simulator's UDID or the AVD name.
+ */
+export interface StatusUsage {
+  intervalMs: number;
+  endAt: number;
+  environments: { workspace: string; cpuPercent: (number | null)[]; memoryMb: (number | null)[] }[];
+  devices: {
+    kind: 'simulator' | 'emulator';
+    id: string;
+    workspace: string | null;
+    slot?: string;
+    cpuPercent: (number | null)[];
+    memoryMb: (number | null)[];
+  }[];
 }
 
 export type BuildResult = 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
@@ -268,6 +360,33 @@ export interface StatusPayload {
   deviceLeases: DeviceLeaseState[];
   unprovisionedWorktrees?: WorktreeFacts[];
   simctlAvailable: boolean;
+  /** Null when nothing runs that status attributes; absent from a `stim` that predates it. */
+  machine?: MachineUsageState | null;
+}
+
+export type MachineOwnerKind = 'simulator' | 'emulator' | 'metro' | 'build' | 'browser' | 'server' | 'shared';
+
+/**
+ * One thing using the Mac's CPU and memory, each process counted in exactly one owner. `slot` is absent for the
+ * default slot. `id` is the simulator's UDID, the emulator's AVD name, Metro's port, the build's platform, or null.
+ * `cpuPercent` is `ps` %CPU summed over its processes, where 100 is one core.
+ */
+export interface MachineOwner {
+  kind: MachineOwnerKind;
+  name: string;
+  workspace: string | null;
+  slot?: string;
+  id: string | null;
+  owned: boolean;
+  cpuPercent: number;
+  residentMb: number;
+  memoryMb: number;
+  processes: number;
+}
+
+export interface MachineUsageState {
+  memorySource: 'footprint' | 'rss';
+  owners: MachineOwner[];
 }
 
 export type LogSource = 'metro' | 'client' | 'device' | 'build' | 'agent';
@@ -469,6 +588,8 @@ export interface StatusEvent {
   event: 'status';
   subscription: string;
   payload: StatusPayload;
+  /** Absent from a server that does not record usage history. */
+  usage?: StatusUsage;
 }
 
 export interface LogsEvent {

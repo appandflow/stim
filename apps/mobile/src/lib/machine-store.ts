@@ -5,7 +5,7 @@ import { mergeWorkspaces, type HomeItem } from '@/lib/home';
 import type { PairedMac } from '@/lib/macs';
 import type { StatusCache } from '@/lib/status-cache';
 import { shareItems, shareStatus } from '@/lib/status-share';
-import type { MachineUsage, StatusPayload } from '@/protocol/types';
+import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
 
 export interface MachineLink {
   connection: StimConnection | null;
@@ -30,6 +30,8 @@ export interface MachinesState {
   links: Record<string, MachineLink>;
   snapshots: Record<string, MachineSnapshot>;
   usage: Record<string, MachineUsage>;
+  /** The CPU and memory history each server sends beside its status. */
+  history: Record<string, StatusUsage>;
   /** Every workspace of every machine, in home's order; an unchanged workspace keeps its item. */
   workspaces: HomeItem[];
 }
@@ -77,6 +79,7 @@ export function createMachineStore({
     links: {},
     snapshots,
     usage: {},
+    history: {},
     workspaces: workspacesOf({ macs: null, snapshots, workspaces: [] }),
   }));
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -113,13 +116,14 @@ export function createMachineStore({
     setMacs(macs: PairedMac[], prune: boolean) {
       store.setState((state) => {
         const ids = new Set(macs.map((mac) => mac.id));
-        let { snapshots: kept, usage } = state;
+        let { snapshots: kept, usage, history } = state;
         if (prune) {
           for (const id of Object.keys(kept)) {
             if (!ids.has(id)) {
               forget(id);
               kept = without(kept, id);
               usage = without(usage, id);
+              history = without(history, id);
             }
           }
           cache?.keepOnly([...ids]);
@@ -128,7 +132,7 @@ export function createMachineStore({
           const snapshot = kept[mac.id];
           if (snapshot && snapshot.name !== mac.name) kept = { ...kept, [mac.id]: { ...snapshot, name: mac.name } };
         }
-        return { macs, snapshots: kept, usage, workspaces: workspacesOf({ ...state, macs, snapshots: kept }) };
+        return { macs, snapshots: kept, usage, history, workspaces: workspacesOf({ ...state, macs, snapshots: kept }) };
       });
     },
     patchLink(id: string, patch: Partial<MachineLink>) {
@@ -138,7 +142,11 @@ export function createMachineStore({
     },
     removeLink(id: string) {
       if (store.getState().links[id]?.state.kind === 'open') write(id);
-      store.setState((state) => ({ links: without(state.links, id), usage: without(state.usage, id) }));
+      store.setState((state) => ({
+        links: without(state.links, id),
+        usage: without(state.usage, id),
+        history: without(state.history, id),
+      }));
     },
     receiveStatus(id: string, payload: StatusPayload) {
       const state = store.getState();
@@ -155,6 +163,11 @@ export function createMachineStore({
     },
     setUsage(id: string, usage: MachineUsage) {
       store.setState((state) => ({ usage: { ...state.usage, [id]: usage } }));
+    },
+    setHistory(id: string, history: StatusUsage | undefined) {
+      store.setState((state) => ({
+        history: history ? { ...state.history, [id]: history } : without(state.history, id),
+      }));
     },
     /** Writes every live status now, as the app leaves the foreground. */
     flushAll() {
