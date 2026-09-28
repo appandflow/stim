@@ -124,7 +124,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     case .revoked: return "It revoked this Mac, denied the request, or the request lapsed."
     case .nodeChanged:
       return
-        "The name now belongs to a different tailnet node than the one this Mac asked, so Stim does not connect to it. Remove it, then add it again if that Mac was replaced."
+        "The name now belongs to a different tailnet node than the one this Mac asked, so Stim does not connect to it. If that Mac was replaced, remove it here, which forgets the old node, then use it for builds again."
     case .notOnTailnet: return "No Mac on this tailnet has that name."
     case .tailscaleOff: return "Start Tailscale to reach it."
     case .unreachable: return "stim-server did not answer on its tailscale serve route."

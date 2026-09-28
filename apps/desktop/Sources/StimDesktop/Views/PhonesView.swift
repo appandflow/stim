@@ -112,9 +112,11 @@ struct PhonesView: View {
       Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
     } message: { device in
       Text(
-        device.isBuildClient
-          ? "That Mac can no longer build here and must ask again."
-          : "The phone disconnects and must pair again to reconnect.")
+        device.pendingUntil != nil
+          ? "That Mac cannot build here unless it asks again."
+          : device.isBuildClient
+            ? "That Mac can no longer build here and must ask again."
+            : "The phone disconnects and must pair again to reconnect.")
     }
   }
 

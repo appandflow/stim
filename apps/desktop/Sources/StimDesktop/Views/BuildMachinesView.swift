@@ -164,7 +164,7 @@ struct BuildMachinesView: View {
   }
 
   private func refreshStatuses(ask: Bool) async {
-    guard let checkout, !(entries ?? []).isEmpty else {
+    guard let checkout, ask || !(entries ?? []).isEmpty else {
       statuses = []
       return
     }
@@ -191,8 +191,11 @@ struct BuildMachinesView: View {
     }
   }
 
+  /// Removing a machine pinned to a node that changed runs `doctor --fix`, which forgets the old pin, so the Mac
+  /// can be used for builds again.
   private func remove(_ entry: String) {
-    write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: false)
+    let repins = statuses?.first { $0.machine == entry }?.state == .nodeChanged
+    write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins)
   }
 
   private func write(_ entry: String, value: String?, ask: Bool) {
