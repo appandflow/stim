@@ -503,6 +503,27 @@ describe('PushNotifier', () => {
     expect(t.subscriptions).toEqual({ opened: 1, closed: 1 });
   });
 
+  it('logs a stuck agent at the threshold of the phones that want stuck, not of the others', async () => {
+    const t = (current = setup({
+      devices: [
+        device(registration({ events: ['machine'], stuckMinutes: 5 })),
+        { ...device(registration({ token: 'ExponentPushToken[phone-b]', stuckMinutes: 30 })), id: 'd2' },
+      ],
+    }));
+    t.emit(status());
+    t.at(1000);
+    t.emit(status(env(driven(T0 + 1000))));
+    t.at(6 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    expect(t.logged.map((n) => n.category)).toEqual(['started']);
+    t.at(31 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    expect(t.logged.map((n) => [n.category, n.suppressed])).toEqual([
+      ['started', undefined],
+      ['stuck', undefined],
+    ]);
+  });
+
   it('logs what no phone is pushed, marking what a muted category or quiet hours held back', async () => {
     const t = (current = setup({ devices: [device()] }));
     t.emit(status(env()));

@@ -574,8 +574,7 @@ were in quiet hours. A problem that still holds when quiet hours end is pushed
 then, so a `quiet-hours` entry may still have reached the phone. Without
 `suppressed`, a registered device was due to get it, or none is registered; a
 device's hourly budget or a summary push can still stand in for the push
-itself. A push for a
-logged notification carries the entry's `seq` as `data.notification`, so the
+itself. A push for a logged notification carries the entry's `seq` as `data.notification`, so the
 phone can mark it read.
 
 The log keeps the last 200 entries, none older than 7 days, in

@@ -56,8 +56,9 @@ function parseLog(value: Record<string, unknown> | null): LogFile | null {
 }
 
 /**
- * The oversight notifications this server generated, newest last, kept in `file` within {@link LIMITS}. Sequence numbers only grow, and `log` names the
- * file's lifetime, so a client can tell a cursor from a log that was deleted since.
+ * The oversight notifications this server generated, newest last, kept in `file` within {@link LIMITS}. Sequence
+ * numbers only grow, and `log` names the file's lifetime, so a client can tell a cursor from a log that was deleted
+ * since.
  */
 export class NotificationLog {
   private readonly file: string;
