@@ -66,6 +66,7 @@ function probe(): WorkerProbe {
     runtimes,
     cocoapods: quiet('pod', ['--version'])?.trim().split('\n').pop() ?? null,
     node: process.version,
+    arch: process.arch,
     cpus: cpus().length,
     load1: loadavg()[0]!,
     availableMemBytes: availableMemBytes(),

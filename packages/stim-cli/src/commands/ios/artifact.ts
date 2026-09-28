@@ -676,7 +676,17 @@ export async function acquireIosArtifact(
       logWriter: logWriter(),
     });
     let stored: string | null = null;
-    if (outcome.ok) {
+    const settled = outcome.ok
+      ? await refingerprintAfterMutation({
+          projectRoot: root,
+          platform: PLATFORM,
+          previousHash: storeHash,
+          fingerprint: d.fingerprintProject,
+        })
+      : null;
+    if (outcome.ok && (!settled || settled.moved)) {
+      note(chalk.yellow(phaseLine('build', 'offload: local inputs changed while the worker built; not storing it')));
+    } else if (outcome.ok) {
       try {
         stored = d.storeBuild(PLATFORM, storeKey, outcome.appPath, {
           sources: storeSources,
@@ -686,7 +696,9 @@ export async function acquireIosArtifact(
         note(chalk.yellow(phaseLine('build', `could not store the offloaded app: ${(e as Error)?.message || e}`)));
       }
     }
-    rmSync(stagingDir, { recursive: true, force: true });
+    try {
+      rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
     const prepared = stored ? await installableCachedApp(stored) : null;
     if (outcome.ok && prepared) {
       const w = outcome.timings.worker;

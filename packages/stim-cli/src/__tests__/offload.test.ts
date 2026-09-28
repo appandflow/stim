@@ -9,6 +9,7 @@ const idleWorker: WorkerProbe = {
   ...toolchain,
   runtimes: ['iOS 27.0'],
   node: 'v26.7.0',
+  arch: process.arch,
   cpus: 10,
   load1: 2,
   availableMemBytes: 6 * 1024 ** 3,

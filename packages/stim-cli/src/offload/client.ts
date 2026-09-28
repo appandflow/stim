@@ -111,6 +111,7 @@ export function decideOffload({
   if (!worker.stimBuildId || worker.stimBuildId !== localBuildId) {
     refusals.push(`worker Stim build ${worker.stimBuildId} != local ${localBuildId}`);
   }
+  if (worker.arch !== process.arch) refusals.push(`worker CPU ${worker.arch} != local ${process.arch}`);
   if (worker.xcode !== toolchain.xcode) refusals.push(`Xcode ${worker.xcode} != local ${toolchain.xcode}`);
   if (worker.simulatorSdk !== toolchain.simulatorSdk) {
     refusals.push(`simulator SDK ${worker.simulatorSdk} != local ${toolchain.simulatorSdk}`);
@@ -156,19 +157,27 @@ export async function planOffload({
     activeBuilds: listBuildSlots().filter((slot) => slot.alive).length,
     maxBuilds: maxBuilds ?? null,
   };
+  const force = env.STIM_OFFLOAD_FORCE === '1';
+  const loadRatio = Number(env.STIM_OFFLOAD_LOAD_RATIO) || 1.5;
   const started = Date.now();
   let worker: WorkerProbe | null = null;
   let workerError: string | null = null;
-  try {
-    worker = parseWorkerOutput<WorkerProbe>(await ssh(host, `${WORKER_NODE} probe`, { timeoutMs: 30_000 }));
-    if (!worker) workerError = 'probe printed no result';
-  } catch (e) {
-    workerError = String((e as Error)?.message || e).split('\n')[0]!;
+  const pressured =
+    force ||
+    local.load1 / local.cpus >= loadRatio ||
+    (local.maxBuilds !== null && local.activeBuilds >= local.maxBuilds);
+  if (pressured) {
+    try {
+      worker = parseWorkerOutput<WorkerProbe>(await ssh(host, `${WORKER_NODE} probe`, { timeoutMs: 30_000 }));
+      if (!worker) workerError = 'probe printed no result';
+    } catch (e) {
+      workerError = String((e as Error)?.message || e).split('\n')[0]!;
+    }
   }
   const probeMs = Date.now() - started;
   const verdict = decideOffload({
-    force: env.STIM_OFFLOAD_FORCE === '1',
-    loadRatio: Number(env.STIM_OFFLOAD_LOAD_RATIO) || 1.5,
+    force,
+    loadRatio,
     local,
     toolchain: localToolchain(),
     localBuildId: distBuildId(localDistDir()),
@@ -198,7 +207,7 @@ function repoIdentity(projectRoot: string): { repoRoot: string; projectRel: stri
   return {
     repoRoot,
     projectRel: relative(repoRoot, realpathSync(projectRoot)),
-    repoId: `${basename(dirname(common)) || 'repo'}-${id}`,
+    repoId: `${(basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_')}-${id}`,
   };
 }
 
@@ -269,8 +278,13 @@ export async function offloadIosBuild({
   let t = Date.now();
   try {
     await ssh(host, `mkdir -p ~/${WORKER_ROOT}/repos ~/${remoteRepo} && mkdir ${lockDir}`, { timeoutMs: 20_000 });
-  } catch {
-    return fail(`the worker checkout ${remoteRepo} is locked by another offload (remove ${lockDir} if none runs)`);
+  } catch (e) {
+    const message = String((e as Error)?.message || e);
+    return fail(
+      message.includes('File exists')
+        ? `the worker checkout ${remoteRepo} is locked by another offload (remove ${lockDir} if none runs)`
+        : `could not lock the worker checkout: ${message.split('\n')[0]}`,
+    );
   }
   lap('lockMs', t);
 
@@ -304,7 +318,7 @@ export async function offloadIosBuild({
     try {
       packageName = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')).name ?? null;
     } catch {}
-    const remoteHome = (await ssh(host, 'echo $HOME', { timeoutMs: 20_000 })).trim();
+    const remoteHome = (await ssh(host, 'echo $HOME', { timeoutMs: 20_000 })).trim().split('\n').pop()!;
     const request: WorkerBuildRequest = {
       repoDir: `${remoteHome}/${remoteRepo}`,
       projectRel,

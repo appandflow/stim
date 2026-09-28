@@ -12,6 +12,7 @@ export interface WorkerProbe {
   runtimes: string[];
   cocoapods: string | null;
   node: string;
+  arch: string;
   cpus: number;
   load1: number;
   availableMemBytes: number | null;
