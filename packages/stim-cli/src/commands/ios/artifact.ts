@@ -712,11 +712,7 @@ export async function acquireIosArtifact(
 
   /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
   async function compileElsewhere({ choice, runtime }: { choice: OffloadChoice; runtime: string }): Promise<boolean> {
-    if (!storeKey || !storeHash) {
-      choice.connection.close();
-      phase('build', `offload skipped: no cache key to store the app under -> building here`);
-      return false;
-    }
+    if (!storeKey || !storeHash) return false;
     const stagingDir = join(workspaceDir(root), 'offload');
     const outcome = await offloadIosBuild({
       choice,

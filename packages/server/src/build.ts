@@ -103,6 +103,14 @@ function freeBytes(path: string): number | null {
   }
 }
 
+function listDir(path: string): string[] {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
+}
+
 function nonEmptyDir(path: string): boolean {
   try {
     return readdirSync(path).length > 0;
@@ -149,6 +157,17 @@ export class BuildHost {
   constructor(options: BuildHostOptions) {
     this.options = options;
     this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
+    this.sweepArtifacts();
+  }
+
+  /** Deletes archives no connection can fetch anymore: they belong to jobs of an earlier server. */
+  private sweepArtifacts(): void {
+    const root = this.root();
+    for (const client of listDir(root)) {
+      for (const repo of listDir(join(root, client, 'repos'))) {
+        rmSync(join(root, client, 'repos', repo, 'out'), { recursive: true, force: true });
+      }
+    }
   }
 
   root(): string {
@@ -274,18 +293,24 @@ export class BuildHost {
       releaseClaim(claim);
       return refusal('build-refused', (error as Error).message);
     }
-    const child = spawn(process.execPath, [this.options.worker, 'build'], {
-      cwd: area,
-      detached: true,
-      stdio: ['pipe', 'pipe', 'ignore'],
-      env: {
-        ...this.options.env,
-        STIM_HOME: join(area, 'home'),
-        CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
-        CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
-        npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
-      },
-    });
+    let child: ChildProcess;
+    try {
+      child = spawn(process.execPath, [this.options.worker, 'build'], {
+        cwd: area,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        env: {
+          ...this.options.env,
+          STIM_HOME: join(area, 'home'),
+          CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
+          CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
+          npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
+        },
+      });
+    } catch (error) {
+      releaseClaim(claim);
+      return refusal('build-refused', (error as Error).message);
+    }
     const signalGroup = (signal: NodeJS.Signals) => {
       if (child.pid === undefined) return;
       try {

@@ -211,7 +211,8 @@ closes its connections, which cancels its builds.
   later.
 - `build.artifact` takes the `job` of a successful build and sends the archive
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
-  answers `{ "name", "size", "sha256" }`, and deletes it here.
+  answers `{ "name", "size", "sha256" }`, and deletes it here. An archive
+  nobody fetched is deleted when its connection closes or the server starts.
 
 The worker root is `offload.workerRoot` in this Mac's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its

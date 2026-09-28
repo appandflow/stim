@@ -301,8 +301,9 @@ installs the app. The build output shows `placement: <machine>` or
 `placement: here (<reason>)`, and any failure prints
 `offload failed: <reason> -> building here` and compiles here instead. An
 offloaded app lands only in this Mac's build cache, not in a remote cache
-provider, and a project whose `xcodebuild` changes its own fingerprinted
-inputs always builds here. The
+provider. A project whose `xcodebuild` changes its own fingerprinted inputs
+builds on the machine, fails the fingerprint check there and builds here, so
+set `offload.mode` to `off` for it. The
 `--json` payload and `lastBuilds` carry `offloadedTo`, and `stim stats`
 counts offloaded runs apart from cold runs.
 
