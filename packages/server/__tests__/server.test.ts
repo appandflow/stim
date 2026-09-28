@@ -3002,6 +3002,24 @@ describe('frames.subscribe', () => {
       ]);
     });
 
+    test.skipIf(!fakeTailscale)('closes while a recording.set runs and starts none queued behind it', async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '30000' },
+        undefined,
+        fakeHelper(),
+        { record: true },
+      );
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
+      await until(() => stimCalls().some((call) => call.args?.startsWith('settings set')));
+      second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await server!.close();
+      server = null;
+      expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toHaveLength(1);
+    });
+
     test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {
       await startWithTools(
         {

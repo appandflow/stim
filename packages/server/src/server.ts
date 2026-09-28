@@ -1137,10 +1137,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             homedir(),
             actionLimits,
           );
-          const cancel = () => run.cancel();
+          let stop!: () => void;
+          const stopped = new Promise<null>((resolve) => {
+            stop = () => resolve(null);
+          });
+          const cancel = () => {
+            stop();
+            return run.cancel();
+          };
           running.add(cancel);
-          const outcome = await run.outcome;
+          const outcome = await Promise.race([run.outcome, stopped]);
           running.delete(cancel);
+          if (!outcome) return;
           const printed = actionOutcome(outcome);
           if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
           audit({ ok: true });
