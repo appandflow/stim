@@ -593,6 +593,8 @@ An entry is `{ "seq", "at", "id", "category", "title", "body", "quiet",
 workspace or machine and category, the key a push's collapse id is made from,
 so a later episode of the same problem shares it. `target` is the screen the
 push opens, as `{ "kind", ... }` with the fields of the push's `data`.
+`quiet` is the event's default delivery (only `started` is quiet); a device's
+[levels](#delivery-levels) decide how its push was actually delivered.
 `suppressed` says why no registered device got the notification when it was
 logged: `muted` when none wants its category, `quiet-hours` when those that do
 were in quiet hours. A problem that still holds when quiet hours end is pushed

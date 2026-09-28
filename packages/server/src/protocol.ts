@@ -590,6 +590,7 @@ export interface NotificationEntry {
   category: PushEvent;
   title: string;
   body: string;
+  /** The event's default delivery; a device's `levels` decide how its push was delivered. */
   quiet: boolean;
   target: NotificationTarget;
   suppressed?: NotificationSuppression;
