@@ -25,7 +25,7 @@ const GAP_LABEL_WIDTH = 96;
 
 /**
  * Live pill, play and pause, speed, and a scrubber over the device's recorded footage with its agent actions
- * and errors as markers. Dragging shows the frame under the finger; tapping near a marker lands just before it,
+ * and errors as markers. Without a timeline, while replay shows footage that is gone, only the Live pill. Dragging shows the frame under the finger; tapping near a marker lands just before it,
  * and tapping elsewhere shows the frame there. The track takes every touch itself, so a tap is one seek.
  */
 export function ReplayBar({
@@ -37,7 +37,7 @@ export function ReplayBar({
   onLive,
   onScrubbing,
 }: {
-  timeline: Timeline;
+  timeline: Timeline | null;
   markers: ReplayMarker[];
   replay: Replay | null;
   /** False while the device is not running, so only its recording can be shown. */
@@ -61,10 +61,34 @@ export function ReplayBar({
   }, []);
   const at = replay?.at ?? null;
   if (at !== null && at !== lastAt) setLastAt(at);
+  const isLive = replay === null && canGoLive;
+  const livePill = (
+    <Touch
+      onPress={onLive}
+      disabled={!replay || !canGoLive}
+      defaultOpacity={canGoLive ? 1 : theme.opacity.disabled}
+      accessibilityRole="button"
+      accessibilityLabel={isLive ? 'Live' : canGoLive ? 'Go live' : 'Live, device stopped'}
+      accessibilityState={{ selected: isLive, disabled: !replay || !canGoLive }}
+      style={styles.live(isLive)}
+      hitSlop={6}
+    >
+      <View style={styles.liveDot(isLive)} />
+      <Text variant="caption" weight="semibold" style={styles.liveText(isLive)}>
+        Live
+      </Text>
+    </Touch>
+  );
+  if (!timeline) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.controls}>{livePill}</View>
+      </View>
+    );
+  }
   const shownAt = at ?? lastAt;
   const position = dragging ?? (replay ? (shownAt === null ? 1 : positionOf(timeline, shownAt)) : 1);
   const playing = replay !== null && replay.rate > 0 && !replay.ended;
-  const isLive = replay === null && canGoLive;
 
   const fractionAt = (x: number) => Math.min(1, Math.max(0, x / (width || 1)));
   const drag = (x: number, final: boolean) => {
@@ -129,21 +153,7 @@ export function ReplayBar({
   return (
     <View style={styles.root}>
       <View style={styles.controls}>
-        <Touch
-          onPress={onLive}
-          disabled={!replay || !canGoLive}
-          defaultOpacity={canGoLive ? 1 : theme.opacity.disabled}
-          accessibilityRole="button"
-          accessibilityLabel={isLive ? 'Live' : canGoLive ? 'Go live' : 'Live, device stopped'}
-          accessibilityState={{ selected: isLive, disabled: !replay || !canGoLive }}
-          style={styles.live(isLive)}
-          hitSlop={6}
-        >
-          <View style={styles.liveDot(isLive)} />
-          <Text variant="caption" weight="semibold" style={styles.liveText(isLive)}>
-            Live
-          </Text>
-        </Touch>
+        {livePill}
         <Touch
           onPress={togglePlay}
           accessibilityRole="button"

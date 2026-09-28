@@ -23,6 +23,8 @@ export interface DeviceStream {
   seek: (at: number, rate: ReplayRate) => void;
   /** Returns to the live screen. */
   live: () => void;
+  /** Whether the server sends this subscription H.264 and so can `seek`; null until it answers. */
+  replayable: boolean | null;
 }
 
 export interface Replay {
@@ -40,9 +42,17 @@ interface StreamState {
   error: string | null;
   delayed: boolean;
   replay: Replay | null;
+  replayable: boolean | null;
 }
 
-const EMPTY: Omit<StreamState, 'key'> = { frame: null, video: null, error: null, delayed: false, replay: null };
+const EMPTY: Omit<StreamState, 'key'> = {
+  frame: null,
+  video: null,
+  error: null,
+  delayed: false,
+  replay: null,
+  replayable: null,
+};
 const POSITION_MS = 200;
 
 /**
@@ -129,7 +139,10 @@ export function useDeviceStream(
         subscription.current = result.subscription;
         size = '';
         replaying.current = startAt !== null ? { at: null, rate: 0, ended: false, timer: null } : null;
-        update({ replay: startAt !== null ? { at: null, rate: 0, ended: false } : null });
+        update({
+          replay: startAt !== null ? { at: null, rate: 0, ended: false } : null,
+          replayable: result.video === 'h264',
+        });
         const pending = pendingSeek.current;
         pendingSeek.current = null;
         if (pending) sendSeek(connection, result.subscription, pending.at, pending.rate);
