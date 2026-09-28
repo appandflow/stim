@@ -869,13 +869,15 @@ RULES
                    the claim does not record them
   lastActivityAt   the newest of this device's app log records, this
                    platform's Metro bundle requests, the workspace's last
-                   Stim run and, while agent-device drives it, the agent's
-                   last recorded action, rounded down to the minute; absent
-                   when none is recorded
+                   Stim run, while agent-device drives it the agent's last
+                   recorded action, and now while a stim-server client views
+                   it, rounded down to the minute; absent when none is
+                   recorded
   recent           the newest time of each kind of evidence behind
                    lastActivityAt: agent-action, device-log, metro-bundle,
-                   workspace-use, supervisor-start or page-log, each
-                   rounded down to the minute
+                   workspace-use, supervisor-start, page-log or viewer, each
+                   rounded down to the minute. viewer is now while a
+                   stim-server client streams the device's frames
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
@@ -885,11 +887,18 @@ RULES
                    instrumentation      an on-device uiautomator, androidx.test or
                                         argent helper process (one adb shell ps
                                         per emulator)
-                   device-log, metro-bundle, workspace-use, agent-action
-                                        recency
+                   device-log, metro-bundle, workspace-use, agent-action,
+                   viewer               recency
 
   Plain \`stim status\` appends it to each device line: "driven by
   agent-device for 12m", "active", "idle 3h", or "activity unknown (...)".
+
+  An owned device that is not booted after its supervisor shut it down for
+  devices.idleShutdownMinutes carries idleShutdown, and plain \`status\`
+  appends "shut down after 30m idle at <at>" to its line; the next \`ios\` or
+  \`android\` run for that slot clears it (\`guide lifecycle budget\`):
+
+  idleShutdown  { at, idleMinutes }
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 

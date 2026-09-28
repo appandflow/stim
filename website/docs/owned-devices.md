@@ -262,6 +262,43 @@ Stop an unneeded device with `stim stop` only in a workspace you own, then rerun
 `stim android` with the same build options. Read
 `stim guide errors STIM_NO_DEVICE` for recovery details.
 
+## Idle shutdown
+
+A stalled agent can leave its simulator or emulator booted for hours. Set
+`devices.idleShutdownMinutes` to have the workspace's dev server supervisor
+shut its owned devices down after that many idle minutes. It is off by default
+(`0`) and can be set for the machine or for one project:
+
+```bash
+stim settings set devices.idleShutdownMinutes 30 --scope machine
+```
+
+A device counts as idle when it is booted, no tool drives it, no `stim device
+lock` or agent-device session holds it, no build runs in the workspace, and it
+has shown no activity (app logs, bundle requests, Stim commands, agent actions)
+for that long. A phone app viewing the device through `stim-server` keeps it
+up. Stim Desktop's own simulator view does not.
+
+The device is shut down, never deleted, through the same path as `stim stop`.
+Physical devices are never touched. `stim status` shows
+`shut down after 30m idle` on the device, and the next `stim ios` or
+`stim android` boots it again.
+
+The supervisor checks once a minute and reads the setting when it starts, so
+restart the dev server with `stim stop` and `stim start` after changing it.
+Nothing checks after `stim stop` or for release runs, which have no
+supervisor. When `metro.idleStopMinutes` is shorter, the dev server's idle stop
+shuts down the devices idle that long first.
+
+Agent prompt:
+
+```text
+Turn on Stim's idle device shutdown for this project at 30 minutes with
+`stim settings set devices.idleShutdownMinutes 30 --scope workspace`, restart
+the dev server with `stim stop` and `stim start`, and confirm with
+`stim settings get devices.idleShutdownMinutes`.
+```
+
 ## Remote devices
 
 Stim supports two optional remote backends:

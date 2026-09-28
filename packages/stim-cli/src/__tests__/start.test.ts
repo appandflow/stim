@@ -865,6 +865,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       String(port),
       '--idle-stop-minutes',
       '60',
+      '--device-idle-minutes',
+      '0',
     ]);
     expect(spawned.opts.cwd).toBe(root);
     expect(spawned.opts.detached).toBe(true);
@@ -927,7 +929,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(spawned.args.at(-1)).toContain('[System.Diagnostics.Process]::Start($start)');
     expect(spawned.opts.env).toMatchObject({
       STIM_WINDOWS_LAUNCH_FILE: process.execPath,
-      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--idle-stop-minutes" "60" "--log-file" "${supervisorLogFile(root)}"`,
+      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--idle-stop-minutes" "60" "--device-idle-minutes" "0" "--log-file" "${supervisorLogFile(root)}"`,
       STIM_WINDOWS_LAUNCH_CWD: root,
     });
     const facts = JSON.parse(result.logs[0] ?? '');
@@ -1072,6 +1074,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       '--tunnel',
       '--idle-stop-minutes',
       '60',
+      '--device-idle-minutes',
+      '0',
     ]);
   });
 
@@ -1111,6 +1115,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       String(port),
       '--idle-stop-minutes',
       '60',
+      '--device-idle-minutes',
+      '0',
     ]);
   });
 
@@ -1191,6 +1197,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       '--tunnel',
       '--idle-stop-minutes',
       '60',
+      '--device-idle-minutes',
+      '0',
     ]);
   });
 
@@ -1217,7 +1225,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       return base(cmd);
     };
     setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok', idleStopMinutes: 0 } } });
+    upsertProject(root, {
+      metroPort: port,
+      settings: { metro: { tunnel: 'ngrok', idleStopMinutes: 0 }, devices: { idleShutdownMinutes: 30 } },
+    });
 
     try {
       await runAction({ json: true, wait: '10' }, (cmd) =>
@@ -1242,6 +1253,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       String(port),
       '--idle-stop-minutes',
       '0',
+      '--device-idle-minutes',
+      '30',
     ]);
   });
 

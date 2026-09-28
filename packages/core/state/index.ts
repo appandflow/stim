@@ -10,3 +10,4 @@ export * from './settings-schema.ts';
 export * from './status.ts';
 export * from './status-measures.ts';
 export * from './workspace-state.ts';
+export * from './viewers.ts';

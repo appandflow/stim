@@ -43,6 +43,30 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
   return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
 }
 
+export const DEVICE_IDLE_SHUTDOWN_KEY = 'deviceIdleShutdowns';
+
+/** An owned simulator or emulator the supervisor shut down after `devices.idleShutdownMinutes` with no use. */
+export interface DeviceIdleShutdownRecord {
+  at: string;
+  idleMinutes: number;
+}
+
+/** The recorded idle shutdowns by device slot key (`ios`, `android`, `ios:<slot>`). */
+export function readDeviceIdleShutdowns(
+  state: WorkspaceState | null | undefined,
+): Record<string, DeviceIdleShutdownRecord> {
+  const records = state?.[DEVICE_IDLE_SHUTDOWN_KEY];
+  if (!records || typeof records !== 'object' || Array.isArray(records)) return {};
+  const found: Record<string, DeviceIdleShutdownRecord> = {};
+  for (const [key, value] of Object.entries(records as Record<string, unknown>)) {
+    const record = value as Partial<DeviceIdleShutdownRecord> | null;
+    if (typeof record?.at === 'string' && typeof record.idleMinutes === 'number') {
+      found[key] = { at: record.at, idleMinutes: record.idleMinutes };
+    }
+  }
+  return found;
+}
+
 export const DEV_SERVER_STOP_REQUEST_KEY = 'devServerStopRequest';
 
 /** A Stim component's intent to stop the supervisor with `processToken`, written before it signals. */

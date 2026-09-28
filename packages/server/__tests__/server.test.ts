@@ -14,6 +14,7 @@ import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
+import { readViewedDevices } from '@stim-cli/core/state';
 import type { HelloResult, MachineUsage, ServerMessage, StatusEvent } from '../src/protocol.ts';
 import { readAudit } from '../src/actions.ts';
 import {
@@ -1425,6 +1426,7 @@ describe('frames.subscribe', () => {
       const second = await authed(port);
       await second.request('frames.subscribe', { workspace, platform: 'ios' });
       expect(await second.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
+      expect(readViewedDevices()).toEqual([{ platform: 'ios', id: 'SIM-1' }]);
       expect(await first.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
       expect(await second.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
       expect(toolRuns()[0]).toEqual({
@@ -1443,6 +1445,7 @@ describe('frames.subscribe', () => {
       first.socket.close();
       second.socket.close();
       await new Promise((resolve) => setTimeout(resolve, 1200));
+      expect(readViewedDevices()).toEqual([]);
       const settled = toolRuns().length;
       await new Promise((resolve) => setTimeout(resolve, 1200));
       expect(toolRuns()).toHaveLength(settled);

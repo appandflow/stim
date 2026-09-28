@@ -1,5 +1,5 @@
 import type { WebViewport } from './settings-registry.ts';
-import type { IdleStopRecord, MetroLastStop } from './workspace-state.ts';
+import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 export type RunOutcomeKind = 'hit' | 'cold';
@@ -180,6 +180,7 @@ export const ACTIVITY_RECENCY_BASES = [
   'workspace-use',
   'supervisor-start',
   'page-log',
+  'viewer',
 ] as const;
 
 export type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
@@ -405,6 +406,8 @@ export interface EnvironmentState {
     app?: DeviceAppProcess;
     /** The simulator's data folder, for an owned simulator once measured. */
     disk?: DiskMeasure;
+    /** Present while the device is not booted after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+    idleShutdown?: DeviceIdleShutdownRecord;
   } | null;
   android?: {
     name: string | undefined;
@@ -417,6 +420,8 @@ export interface EnvironmentState {
     app?: DeviceAppProcess;
     /** The AVD's folder, for an owned emulator once measured. */
     disk?: DiskMeasure;
+    /** Present while the emulator is not running after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+    idleShutdown?: DeviceIdleShutdownRecord;
   } | null;
   metro?: {
     port: number;

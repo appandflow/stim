@@ -44,8 +44,9 @@ Resolution order, first match wins:
   1. workspace       ~/.stim/config.json, under this project's entry
   2. repo            ~/.stim/config.json, under this repo's git common dir
   3. committed       .stim.json beside the app's package.json
-  4. machine         ~/.stim/config.json, top-level optimizations and
-                     android.deviceProfile only
+  4. machine         ~/.stim/config.json, top-level optimizations,
+                     android.deviceProfile and devices.idleShutdownMinutes
+                     only
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -277,6 +278,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         driven. Read
                         when \`start\` spawns the supervisor; see
                         \`guide metro\`.
+  devices.idleShutdownMinutes
+                        minutes an owned simulator or emulator stays idle
+                        (\`gc --idle\` conditions; an open stim-server viewer
+                        counts as activity) before its workspace's supervisor
+                        shuts it down, never deletes it. Default 0, never.
+                        Machine or project layers. Read when the supervisor
+                        starts; see \`guide lifecycle budget\`.
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports
