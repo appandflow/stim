@@ -294,6 +294,15 @@ export function createAgentActionReader({
       for (const [requestId, at] of parsed.started) cursor.started.set(requestId, at);
       cursor.session ??= parsed.session;
       const session = cursor.session;
+      const matched = new Map(
+        parsed.events.flatMap((event) =>
+          event.requestId && cursor.started.has(event.requestId)
+            ? [[event.requestId, cursor.started.get(event.requestId)!] as const]
+            : [],
+        ),
+      );
+      for (const requestId of [...parsed.finished, ...matched.keys()]) cursor.started.delete(requestId);
+      for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
       if (!parsed.events.length && !parsed.unknownVersion) continue;
 
       const runnerPath = join(dir, 'runner.log');
@@ -326,12 +335,9 @@ export function createAgentActionReader({
         if (event.ts < sinceTs) continue;
         const deviceId = deviceAt(event.ts);
         const target = deviceId ? byId.get(deviceId) : undefined;
-        const startedAt = event.requestId ? cursor.started.get(event.requestId) : undefined;
+        const startedAt = event.requestId ? matched.get(event.requestId) : undefined;
         if (target && deviceId) out.push(agentRecord(event, deviceId, target, startedAt));
       }
-      for (const requestId of parsed.finished) cursor.started.delete(requestId);
-      for (const event of parsed.events) if (event.requestId) cursor.started.delete(event.requestId);
-      for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
     }
     return out.toSorted((a, b) => (a.ts as number) - (b.ts as number));
   };
