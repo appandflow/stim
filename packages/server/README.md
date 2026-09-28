@@ -129,7 +129,8 @@ Events are `{ "event", "subscription", ... }`.
   `{ "deviceToken" }`. The result carries the server name and versions, the
   device's `capabilities` (see [Scopes](#scopes)), the server's `features`
   (`physical-ios` and `physical-android` when it serves `physical: true` for
-  that platform, see [Physical Android devices](#physical-android-devices)),
+  that platform: see `frames.subscribe` below for an iPhone and
+  [Physical Android devices](#physical-android-devices)),
   the `actions` it may run
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
@@ -172,9 +173,9 @@ Events are `{ "event", "subscription", ... }`.
   or a running emulator that `stim status` lists as owned by that workspace,
   or with `web` the page of the workspace's running Stim-owned Chrome from
   `stim web` (default slot only), or with `physical: true` the physical
-  iPhone the workspace leases in that slot (see below), or with `physical: true`
-  the Android phone it leases there (see
-  [Physical Android devices](#physical-android-devices));
+  iPhone (see below) or Android phone (see
+  [Physical Android devices](#physical-android-devices)) the workspace leases
+  in that slot;
   any other device ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest

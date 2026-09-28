@@ -2621,6 +2621,46 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)(
+    'the adb test switch resolves a leased emulator as a phone, and never an iPhone lease on the own simulator',
+    async () => {
+      const lease = {
+        grantedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        mine: false,
+        expired: false,
+        parsed: true,
+        deviceName: null,
+        holder: workspace,
+      };
+      const payload = statusPayload({ ios: OWNED_SIM, android: OWNED_EMULATOR }) as Record<string, unknown>;
+      const port = await startControl({
+        STIM_SERVER_TEST_ADB_EMULATORS: '1',
+        FAKE_STIM_PAYLOADS: JSON.stringify([
+          {
+            ...payload,
+            deviceLeases: [
+              { ...lease, path: '/locks/emu', platform: 'android', id: 'emulator-5554' },
+              { ...lease, path: '/locks/sim', platform: 'ios', id: 'SIM-1' },
+            ],
+          },
+        ]),
+      });
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('leases no physical iPhone') },
+      });
+      await client.request('frames.subscribe', { workspace, platform: 'android', physical: true });
+      await until(() => existsSync(`${toolCalls}.started`));
+      await server!.close();
+      server = null;
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.args.slice(0, 2)).toEqual(['android-device', 'emulator-5554']);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
     'controls a phone only under the lease its workspace holds, and never takes or releases that lease',
     async () => {
       const port = await startControl({

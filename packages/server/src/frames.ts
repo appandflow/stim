@@ -101,7 +101,7 @@ export interface LeaseLookup {
   now?: number;
   /**
    * The server's test switch: an emulator the workspace leases, its own included, resolves as a physical Android
-   * device, driven over adb the way a phone is.
+   * device, driven over adb the way a phone is. It never widens an iPhone lookup.
    */
   adbEmulators?: boolean;
 }
@@ -125,9 +125,10 @@ export function workspaceLease(
       candidate.platform === target.platform &&
       (candidate.slot ?? 'default') === slot &&
       !candidate.expired &&
-      (candidate.expiresAt === null || Date.parse(candidate.expiresAt) > now) &&
+      (candidate.expiresAt === null ? target.platform === 'ios' : Date.parse(candidate.expiresAt) > now) &&
       candidate.id !== null &&
-      (adbEmulators || (candidate.id !== owned && !EMULATOR_SERIAL.test(candidate.id))),
+      ((adbEmulators && target.platform === 'android') ||
+        (candidate.id !== owned && !EMULATOR_SERIAL.test(candidate.id))),
   );
   return lease ? (lease as DeviceLeaseState & { id: string }) : null;
 }
