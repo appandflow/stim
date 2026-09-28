@@ -11,6 +11,7 @@ import {
   orderDevices,
   pathInCheckout,
   streamsFrames,
+  unservedReason,
   projectOf,
   repositoryRoots,
   runningBuild,
@@ -214,13 +215,23 @@ describe('physical devices', () => {
     expect(livePlatforms(env('/w', { physicalDevices: leased.physicalDevices }))).toEqual([]);
   });
 
-  it('streams a connected leased iPhone, view only through stim-server, but not a leased Android phone', () => {
+  it("streams a connected leased phone only when the Mac's stim-server lists its platform's feature", () => {
     const phones = devicesOf(leased).filter((d) => d.physical);
-    const iphone = phones.find((d) => d.platform === 'ios');
-    const android = phones.find((d) => d.platform === 'android');
-    expect(streamsFrames(iphone!)).toBe(true);
-    expect(streamsFrames({ ...iphone!, running: false })).toBe(false);
-    expect(streamsFrames(android!)).toBe(false);
+    const iphone = phones.find((d) => d.platform === 'ios')!;
+    const android = { ...phones.find((d) => d.platform === 'android')!, running: true };
+    const both = ['physical-ios', 'physical-android'];
+    expect(streamsFrames(iphone, both)).toBe(true);
+    expect(streamsFrames({ ...iphone, running: false }, both)).toBe(false);
+    expect(streamsFrames(android, both)).toBe(true);
+    expect(streamsFrames(android, ['physical-ios'])).toBe(false);
+    expect(streamsFrames(iphone, ['physical-android'])).toBe(false);
+    expect(streamsFrames(iphone, [])).toBe(false);
+    expect(streamsFrames(android, null)).toBe(true);
+    expect(streamsFrames({ ...android, running: false }, null)).toBe(false);
+    expect(unservedReason(android)).toMatch(/Update stim-server/);
+    expect(unservedReason({ ...android, running: false, state: 'disconnected' })).toBe('disconnected');
+    const owned = devicesOf(leased).find((d) => !d.physical && d.owned)!;
+    expect(streamsFrames(owned, [])).toBe(true);
   });
 
   it('keys a leased phone apart from the simulator in its slot, and a lease alone makes the workspace active', () => {

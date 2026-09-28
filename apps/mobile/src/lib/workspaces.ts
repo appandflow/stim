@@ -157,9 +157,24 @@ export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physica
   return `${device.platform}\n${device.slot}${device.physical ? '\nphysical' : ''}`;
 }
 
-/** Whether stim-server serves the device's screen: an owned one, or a connected physical iPhone, view only. */
-export function streamsFrames(device: Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running'>): boolean {
-  return device.physical ? device.platform === 'ios' && device.running : device.owned;
+type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running' | 'state'>;
+
+/**
+ * Whether stim-server serves the device's screen: an owned one, or a connected physical device whose platform the
+ * Mac's stim-server lists in its hello `features` (`physical-ios`, view only, or `physical-android`). An older server
+ * ignores `physical` and would stream the slot's owned device instead. `features` is null while the Mac is not
+ * connected, when nothing streams and the tile waits for it like any other.
+ */
+export function streamsFrames(device: ServedDevice, features: readonly string[] | null): boolean {
+  if (!device.physical) return device.owned;
+  return device.running && (features === null || features.includes(`physical-${device.platform}`));
+}
+
+/** Why a device {@link streamsFrames} does not serve shows no screen. */
+export function unservedReason(device: ServedDevice): string {
+  if (!device.physical) return 'Frames are only served for devices Stim owns.';
+  if (!device.running) return device.state;
+  return "Update stim-server on the Mac to see this device's screen.";
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {

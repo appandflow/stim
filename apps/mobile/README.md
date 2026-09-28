@@ -312,8 +312,20 @@ and the viewer show it like a simulator's, the viewer has no Control, and the
 app sends it no input. The Mac captures it only over a USB cable, so a phone
 paired over Wi-Fi shows the server's message instead of a screen. While the
 iPhone is locked or QuickTime Player records it, the last frame stays with a
-**Screen paused** pill, and the viewer names the reason. A physical Android
-phone shows no screen.
+**Screen paused** pill, and the viewer names the reason.
+
+A connected physical Android phone streams like an emulator and opens the same
+viewer. With **Control** on, taps, typing, **Home**, **Back**, **Apps** and
+**Lock** reach the phone while the workspace holds its lease, and the session
+ends when the lease does. The viewer has no rotate buttons for a phone, which
+turns only in hand. A physical device is not recorded, so its viewer has no
+replay timeline or Recording badge.
+
+A phone tile streams only when the connected Mac's `stim-server` lists that
+platform's feature, `physical-ios` or `physical-android`, in its hello
+`features`. An older server would ignore `physical` and stream the slot's
+simulator or emulator instead, so while connected to one the tile asks for a
+`stim-server` update.
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on

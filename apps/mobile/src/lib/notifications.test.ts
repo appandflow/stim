@@ -19,6 +19,7 @@ const OPEN: ConnectionState = {
   server: { name: 'm', version: '1', stim: '1' },
   actions: null,
   capabilities: [],
+  features: [],
   deviceId: null,
 };
 const payload = fixture.payload as StatusPayload;

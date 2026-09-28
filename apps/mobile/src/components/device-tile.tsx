@@ -27,7 +27,7 @@ import {
   formatMemoryMb,
   type Usage,
 } from '@/lib/workspace-view';
-import { platformName, runningBuild, streamsFrames, type DeviceRef } from '@/lib/workspaces';
+import { platformName, runningBuild, streamsFrames, unservedReason, type DeviceRef } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
 const SCREEN_HEIGHT = 480;
@@ -45,11 +45,11 @@ export function DeviceTile({
   usage: Usage | null;
 }) {
   const { theme } = useUnistyles();
-  const { home, mac } = useMacConnection();
+  const { home, mac, state: link } = useMacConnection();
   const workspace = env.path;
   const [screenWidth, setScreenWidth] = useState(0);
   const now = useNow(30_000);
-  const streams = device.running && streamsFrames(device);
+  const streams = device.running && streamsFrames(device, link.kind === 'open' ? link.features : null);
   const { frame, error, delayed, delayedReason } = useFrame(workspace, device.platform, device.slot, streams, {
     physical: device.physical,
   });
@@ -136,14 +136,7 @@ export function DeviceTile({
   ) : noApp ? (
     <Placeholder title="No app installed" subtitle="Fix the build and run it again" />
   ) : !streams ? (
-    <Placeholder
-      title="No live screen"
-      subtitle={
-        device.physical
-          ? 'Stim does not stream physical Android devices.'
-          : 'Frames are only served for devices Stim owns.'
-      }
-    />
+    <Placeholder title="No live screen" subtitle={unservedReason(device)} />
   ) : null;
   return (
     <Card>

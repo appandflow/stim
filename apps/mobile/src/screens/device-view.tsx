@@ -45,7 +45,7 @@ import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { buildTimeline } from '@/lib/replay';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, shortUrl, streamsFrames, workspaceTitleAt } from '@/lib/workspaces';
+import { devicesOf, shortUrl, streamsFrames, unservedReason, workspaceTitleAt } from '@/lib/workspaces';
 import type { DevicePlatform, DevicePosture, InputButton, ReplayRate, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
@@ -99,7 +99,8 @@ export function DeviceView({
         (entry) => entry.platform === platform && entry.slot === slot && Boolean(entry.physical) === physical,
       )
     : undefined;
-  const running = Boolean(device?.running && streamsFrames(device));
+  const { mac, state: link, connection } = useMacConnection();
+  const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : null));
   const viewOnly = physical && platform === 'ios';
   const slotRange = useReplayRange({ workspace, platform, slot });
   const range = physical ? null : slotRange;
@@ -127,8 +128,7 @@ export function DeviceView({
     setStartAt(lastReplay.at ?? timeline?.start ?? null);
   }
   const source = stream.video ?? stream.frame;
-  const control = useDeviceControl(workspace, platform, slot);
-  const { mac, state: link, connection } = useMacConnection();
+  const control = useDeviceControl(workspace, platform, slot, physical);
   const readOnly = !viewOnly && control.allowed === false;
   const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
@@ -326,7 +326,7 @@ export function DeviceView({
           <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
         ) : null}
         {platform !== 'web' ? <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} /> : null}
-        {platform === 'android' || (platform === 'ios' && !postures.length && !shown) ? (
+        {(platform === 'android' && !physical) || (platform === 'ios' && !postures.length && !shown) ? (
           <>
             <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
             <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
@@ -411,7 +411,7 @@ export function DeviceView({
                   >
                     {streams ? null : (
                       <Text style={styles.placeholder}>
-                        {device?.state ?? 'This device is not running.'}
+                        {device?.running ? unservedReason(device) : (device?.state ?? 'This device is not running.')}
                         {canReplay ? ' Scrub below to replay what it recorded.' : ''}
                       </Text>
                     )}

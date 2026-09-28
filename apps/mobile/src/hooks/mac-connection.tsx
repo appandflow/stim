@@ -532,7 +532,12 @@ type HeldState =
  * ends a disconnected client's sessions), and when the server ends it; input sent while no session is on is
  * dropped.
  */
-export function useDeviceControl(workspace: string, platform: DevicePlatform, slot: string): DeviceControl {
+export function useDeviceControl(
+  workspace: string,
+  platform: DevicePlatform,
+  slot: string,
+  physical = false,
+): DeviceControl {
   const { connection, state: link } = useMacConnection();
   const allowed = link.kind === 'open' ? link.capabilities.includes('control') : null;
   const [held, setHeld] = useState<HeldState>({ kind: 'off' });
@@ -567,7 +572,8 @@ export function useDeviceControl(workspace: string, platform: DevicePlatform, sl
     (takeOver = false) => {
       if (!connection) return;
       setHeld({ kind: 'starting' });
-      connection.request('control.begin', { workspace, platform, slot, ...(takeOver ? { takeOver } : {}) }).then(
+      const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
+      connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
         (result) =>
           setHeld({
             kind: 'on',
@@ -585,7 +591,7 @@ export function useDeviceControl(workspace: string, platform: DevicePlatform, sl
         },
       );
     },
-    [connection, link, workspace, platform, slot],
+    [connection, link, workspace, platform, slot, physical],
   );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
   const send = useCallback(

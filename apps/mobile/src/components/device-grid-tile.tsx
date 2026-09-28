@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
-import { shortUrl, streamsFrames } from '@/lib/workspaces';
+import { shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -35,9 +35,9 @@ const sameTile = (a: TileProps, b: TileProps) =>
 
 export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible, onAspect, onOpen }: TileProps) {
   const { theme } = useUnistyles();
-  const { connection } = useMachineLink(tile.item.macId);
+  const { connection, state: link } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
-  const streams = streamsFrames(device);
+  const streams = streamsFrames(device, link.kind === 'open' ? link.features : null);
   const { frame, error } = useFrameSnapshot(
     connection,
     item.env.path,
@@ -90,13 +90,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           </Touch>
         ) : (
           <Text variant="caption" tone="tertiary" style={styles.placeholder}>
-            {streams
-              ? (error ?? 'Waiting for a frame')
-              : device.physical && device.platform !== 'ios'
-                ? 'Stim does not stream physical Android devices.'
-                : device.physical
-                  ? device.state
-                  : 'Frames are only served for devices Stim owns.'}
+            {streams ? (error ?? 'Waiting for a frame') : unservedReason(device)}
           </Text>
         )}
       </View>
