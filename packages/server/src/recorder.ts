@@ -106,6 +106,8 @@ class DeviceRecording {
   brokenAt: number | null = null;
   /** Whether a unit reached the disk. */
   wrote = false;
+  /** The helper was not built yet, which is no failure of the device. */
+  helperless = false;
   private readonly dir: string;
   private readonly workspaceDir: string;
   private readonly detach: () => void;
@@ -128,7 +130,10 @@ class DeviceRecording {
       record: (unit) => this.write(unit),
       failed: () => this.fail(),
     });
-    if (!detach) this.brokenAt = Date.now();
+    if (!detach) {
+      this.brokenAt = Date.now();
+      this.helperless = true;
+    }
     this.detach = detach ?? (() => {});
   }
 
@@ -341,12 +346,12 @@ export class Recorder {
     const now = this.now();
     for (const [key, session] of this.sessions) {
       const device = wanted.get(key);
-      if (session.wrote) this.failures.delete(key);
+      if (session.wrote || !device) this.failures.delete(key);
       const failures = this.failures.get(key) ?? 0;
       const broken = session.brokenAt !== null;
       const retry = broken && now - session.brokenAt! >= Math.min(RETRY_MS * 2 ** failures, MAX_RETRY_MS);
       if (device && deviceKey(device) === deviceKey(session.device) && !retry) continue;
-      if (broken) this.failures.set(key, failures + 1);
+      if (device && broken && !session.helperless) this.failures.set(key, failures + 1);
       session.stop();
       this.sessions.delete(key);
     }
