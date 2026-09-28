@@ -1,7 +1,8 @@
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
-import { View } from 'react-native';
+import { useState } from 'react';
+import { Modal, Platform, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -17,6 +18,7 @@ import { useRecents } from '@/hooks/recents';
 import { drawerStatus, UPDATE_READY_TEXT, type DrawerMachine } from '@/lib/drawer-status';
 import { machineStats } from '@/lib/home';
 import { isShownLive, workspaceTitleAt } from '@/lib/workspaces';
+import { About } from '@/screens/about';
 
 const WORDMARK = require('@/assets/images/wordmark.png');
 
@@ -29,6 +31,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const { view, setView } = useHomeFilters();
   const { recents } = useRecents();
   const update = useAppUpdate();
+  const [aboutOpen, setAboutOpen] = useState(false);
   const go = (href: Href) => {
     onClose();
     router.push(href);
@@ -120,7 +123,13 @@ export function Menu({ onClose }: { onClose: () => void }) {
       </ScrollView>
       <View style={styles.footer}>
         <Touch
-          onPress={() => go(status.macId ? { pathname: '/mac/[id]', params: { id: status.macId } } : '/about')}
+          onPress={() =>
+            status.macId
+              ? go({ pathname: '/mac/[id]', params: { id: status.macId } })
+              : Platform.OS === 'android'
+                ? setAboutOpen(true)
+                : router.push('/about')
+          }
           accessibilityLabel={
             connections.length === 1 ? `1 machine, ${status.text}` : `${connections.length} machines, ${status.text}`
           }
@@ -140,6 +149,27 @@ export function Menu({ onClose }: { onClose: () => void }) {
         </Touch>
         <IconButton icon="gearshape" accessibilityLabel="Settings" onPress={() => go('/settings')} />
       </View>
+      {/* react-native-screens draws an Android formSheet inside the stack, which sits in the drawer's scene card. */}
+      {Platform.OS === 'android' ? (
+        <Modal
+          visible={aboutOpen}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={() => setAboutOpen(false)}
+        >
+          <Pressable
+            style={styles.scrim}
+            onPress={() => setAboutOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close About"
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
+            <About />
+          </View>
+        </Modal>
+      ) : null}
     </View>
   );
 }
@@ -227,5 +257,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   badgeText: { color: theme.colors.sidebar },
   footerStatusRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  scrim: { flex: 1, backgroundColor: theme.colors.scrim },
+  sheet: {
+    height: '50%',
+    borderTopLeftRadius: theme.radius.sheet,
+    borderTopRightRadius: theme.radius.sheet,
+    overflow: 'hidden',
+    backgroundColor: theme.colors.background,
+  },
   updateDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
 }));
