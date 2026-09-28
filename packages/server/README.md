@@ -261,24 +261,35 @@ Events are `{ "event", "subscription", ... }`.
   iPhone watchable between runs. A lease on the workspace's own simulator
   is skipped. The iPhone must be cabled over USB and trust the Mac; over
   Wi-Fi it has no screen to capture. The helper, run as
-  `stim-frames iphone <udid>`, sets CoreMediaIO's
-  `kCMIOHardwarePropertyAllowScreenCaptureDevices`,
-  which makes macOS list cabled iPhones as capture devices, the ones
-  QuickTime Player's New Movie Recording shows, and opens only the one
-  whose unique ID is the UDID without dashes. It captures only while a
-  subscriber asks for frames, so the iPhone is free for QuickTime once
-  the helper stops. Frames and video go through the same JPEG and H.264
-  paths as a simulator. A physical iPhone has no screenshot fallback: a
-  subscription without the helper, or whose helper fails, ends with
-  `frames-failed`, such as when the iPhone is not cabled or is unplugged.
-  While the iPhone is locked or another app captures it, the subscription
-  gets `frame-delayed` with `delayed: true` and a `reason`, keeps its last
-  frame, and gets `delayed: false` once frames can arrive again. The first
-  capture asks for Camera access, which macOS attributes to the app that
-  started stim-server; a denial ends the subscription with a
-  `frames-failed` naming System Settings > Privacy & Security > Camera.
-  A physical iPhone is view only: `control.begin` with `physical: true`
-  refuses with `action-failed`.
+  `stim-frames iphone <udid> <name>` with the lease's device name, sets
+  CoreMediaIO's `kCMIOHardwarePropertyAllowScreenCaptureDevices`, which
+  makes macOS list cabled iPhones as capture devices, the ones QuickTime
+  Player's New Movie Recording shows. Such a device's unique ID is a
+  random UUID that names neither the UDID nor the USB device, so the
+  helper first checks that an iOS device on USB has the UDID, without
+  dashes, as its serial number. With one iPhone cabled it opens the one
+  iOS capture device; with several it opens the one whose name is the
+  lease's device name, and refuses when none or several match. It
+  captures only while a subscriber asks for frames. macOS lets several
+  processes capture the iPhone at once. Frames and video go through the
+  same JPEG and H.264 paths as a simulator. A physical iPhone has no
+  screenshot fallback: a subscription without the helper, or whose helper
+  fails, ends with `frames-failed`, such as when the iPhone is not cabled
+  or is unplugged. While the iPhone is locked, another app captures it,
+  or macOS is asking for Camera access, the subscription gets
+  `frame-delayed` with `delayed: true` and a `reason`, keeps its last
+  frame, and gets `delayed: false` once frames can arrive again.
+
+  macOS treats the iPhone's screen as a camera and attributes the helper's
+  request to the app that started stim-server. Stim asks for it with its
+  own Camera usage description and entitlement, so the first capture
+  shows the Camera prompt for Stim. An app without them, such as `node`
+  started from a shell, is denied without a prompt, and the subscription
+  ends with a `frames-failed` naming System Settings > Privacy & Security
+
+  > Camera.
+  > A physical iPhone is view only: `control.begin` with `physical: true`
+  > refuses with `action-failed`.
 
 
 - **Replay.** `replay.range` takes `workspace`, `platform` and `slot`

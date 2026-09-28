@@ -7,7 +7,7 @@ import IOKit
 /// The screen of a USB-cabled iPhone, view only. macOS lists a cabled iPhone as an external muxed capture device,
 /// the one QuickTime's New Movie Recording shows, only after a process sets
 /// `kCMIOHardwarePropertyAllowScreenCaptureDevices`, and the device appears some seconds later. Capture runs only
-/// while a subscriber asks for frames, so the phone is free for QuickTime otherwise.
+/// while a subscriber asks for frames.
 ///
 /// The capture device's unique ID is a random UUID (macOS 27), and none of its CoreMediaIO properties names the
 /// UDID. The USB device does: its serial number is the UDID without dashes. So the UDID must be cabled, and the
@@ -16,6 +16,7 @@ import IOKit
 final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
   static let searchSeconds = 15.0
   static let retrySeconds = 2.0
+  static let starvedSeconds = 2.0
 
   let udid: String
   let name: String?
@@ -29,6 +30,8 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   private var session: AVCaptureSession?
   private var authorized = false
   private var latest: CVPixelBuffer?
+  private var frameAt = Date.distantPast
+  private var watchdog: DispatchSourceTimer?
   private var retrying = false
   private var failure: String?
   private var reportedStall: String??
@@ -184,6 +187,8 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     if wanted, session == nil, authorized, let device { open(device) }
     if !wanted, let session {
       self.session = nil
+      watchdog?.cancel()
+      watchdog = nil
       latest = nil
       captureQueue.async { session.stopRunning() }
     }
@@ -217,13 +222,21 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
           guard let self, self.session === session else { return }
           self.failure = "Capture of the iPhone \(self.udid) stopped (\(error?.localizedDescription ?? "unknown error"))."
           self.session = nil
+          self.watchdog?.cancel()
+          self.watchdog = nil
           self.captureQueue.async { session.stopRunning() }
           self.retry()
         }
       })
     self.session = session
     failure = nil
+    frameAt = Date()
     reportStall()
+    let watchdog = DispatchSource.makeTimerSource(queue: queue)
+    watchdog.schedule(deadline: .now() + 1, repeating: 1)
+    watchdog.setEventHandler { [weak self] in self?.reportStall() }
+    watchdog.resume()
+    self.watchdog = watchdog
     captureQueue.async { session.startRunning() }
   }
 
@@ -237,14 +250,16 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     }
   }
 
-  /// A locked iPhone, a device another app such as QuickTime captures, and a failed open are stalls: the last
-  /// frame stays on screen with the reason, and frames resume when the reason clears.
+  /// A failed open, or frames that stopped while the iPhone is locked or another app captures it, are stalls: the
+  /// last frame stays on screen with the reason, and frames resume when the reason clears. Another app capturing
+  /// the iPhone alone is no stall, because macOS lets several processes capture it at once.
   private func reportStall() {
+    let starved = session != nil && Date().timeIntervalSince(frameAt) > Self.starvedSeconds
     let stall: String?
-    if let device, device.isInUseByAnotherApplication {
-      stall = "Another app, such as QuickTime Player, is capturing this iPhone."
-    } else if let device, device.isSuspended {
+    if starved, let device, device.isSuspended {
       stall = "The iPhone is locked. Unlock it to see its screen."
+    } else if starved, let device, device.isInUseByAnotherApplication {
+      stall = "Another app, such as QuickTime Player, is capturing this iPhone."
     } else {
       stall = failure
     }
@@ -255,7 +270,11 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
   func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
     guard let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
-    queue.async { self.latest = pixels }
+    queue.async {
+      self.latest = pixels
+      self.frameAt = Date()
+      if self.reportedStall != .some(self.failure) { self.reportStall() }
+    }
     pacer.changed()
   }
 

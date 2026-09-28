@@ -66,9 +66,9 @@ Lease my connected iPhone to this workspace with stim device lock for 30 minutes
 A leased iPhone cabled over USB also streams its screen to the phone app
 through `stim-server`, view only: Stim sends a physical iPhone no taps, text
 or buttons. Over Wi-Fi it shows no screen. The iPhone must be unlocked and
-trust the Mac, and QuickTime Player cannot record it at the same time. The
-first stream makes macOS ask for Camera access for the app that started
-`stim-server`.
+trust the Mac. macOS
+counts the iPhone's screen as a camera, so the first stream asks for Camera
+access for Stim, the app that runs `stim-server`.
 
 Each workspace keeps its owned-device assignments for later runs.
 After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or

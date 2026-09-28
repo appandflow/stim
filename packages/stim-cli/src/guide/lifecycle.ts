@@ -1606,8 +1606,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   streams a USB-cabled iPhone's screen to the phone app, view only; Stim
   sends a physical iPhone no input. The lease ends with the run, so
   \`device lock ios <udid>\` keeps it watchable between runs. A Wi-Fi phone
-  has no stream, a locked phone shows its last frame until unlocked, and
-  QuickTime Player cannot record it while it streams.
+  has no stream, and a locked phone shows its last frame until unlocked.
 
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide
