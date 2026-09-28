@@ -50,6 +50,8 @@ test('an iOS session is split between simulators at the close before the runner 
     command: 'press',
     deviceId: SECOND_SIM,
     details: { x: 201, y: 542 },
+    ts: Date.parse('2026-09-25T12:16:03.448Z'),
+    startedAt: Date.parse('2026-09-25T12:15:57.453Z'),
   });
   expect(second[2]).toMatchObject({ event: 'agent_failed', command: 'press' });
 
@@ -102,7 +104,39 @@ test('later calls return only complete lines appended since the previous call', 
   expect(reader()).toEqual([]);
   appendFileSync(events, `${line.slice(40)}\n`);
   expect(reader().map((record) => record.msg)).toEqual(['Filled @e3']);
+  const started = { ...JSON.parse(line), ts: '2026-09-25T12:17:01.000Z', kind: 'request.started', requestId: 'def' };
+  appendFileSync(events, `${JSON.stringify(started)}\n`);
   expect(reader()).toEqual([]);
+  appendFileSync(
+    events,
+    `${JSON.stringify({ ...JSON.parse(line), ts: '2026-09-25T12:17:04.000Z', requestId: 'def' })}\n`,
+  );
+  expect(reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
+  expect(reader()).toEqual([]);
+});
+
+test('an action keeps its start time however many requests the session made before it', () => {
+  const events = join(root, IOS_SESSION, 'events.ndjson');
+  const entry = (at: number, kind: string, requestId: string, extra: object = {}) =>
+    JSON.stringify({
+      version: 1,
+      ts: new Date(Date.parse('2026-09-25T12:17:00.000Z') + at).toISOString(),
+      session: 'cwd:b764dacffe51e890:default',
+      kind,
+      requestId,
+      command: 'press',
+      summary: 'Tapped',
+      ...extra,
+    });
+  const lines = Array.from({ length: 100 }, (_, i) => [
+    entry(i * 1000, 'request.started', `r${i}`),
+    entry(i * 1000 + 800, 'action.recorded', `r${i}`),
+    entry(i * 1000 + 800, 'request.finished', `r${i}`, { status: 'ok' }),
+  ]).flat();
+  appendFileSync(events, `${lines.join('\n')}\n`);
+  const tapped = read([{ platform: 'ios', id: SECOND_SIM, slot: 'default' }]).filter((r) => r.msg === 'Tapped');
+  expect(tapped).toHaveLength(100);
+  expect(tapped.every((record) => (record.ts as number) - (record.startedAt as number) === 800)).toBe(true);
 });
 
 test('an unrecognized event format yields one warning instead of misread actions', () => {

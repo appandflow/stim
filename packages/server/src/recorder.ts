@@ -292,6 +292,12 @@ export class Recorder {
     };
   }
 
+  /** `recording.enabled` for `workspace` as the last status showed it; true before the first status. */
+  enabled(workspace: string): boolean {
+    const environment = this.payload?.environments?.find((candidate) => candidate.path === workspace);
+    return environment?.recording?.enabled !== false;
+  }
+
   /** Whether `target` is being recorded now. */
   recording(target: Pick<FrameTarget, 'workspace' | 'platform' | 'slot'>): boolean {
     const session = this.sessions.get(targetKey(target));

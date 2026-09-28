@@ -56,7 +56,9 @@ if (command === 'status') {
     }
   }, 20);
 } else if (command === 'logs') {
-  for (const record of JSON.parse(env.FAKE_STIM_RECORDS)) print(record);
+  const from = args.indexOf('--source');
+  const sources = from === -1 || !env.FAKE_STIM_BY_SOURCE ? null : args.slice(from + 1).filter((arg) => !arg.startsWith('-'));
+  for (const record of JSON.parse(env.FAKE_STIM_RECORDS)) if (!sources || sources.includes(record.src)) print(record);
   if (!args.includes('--follow')) exit(0);
   if (env.FAKE_STIM_EXIT) {
     process.stderr.write('logs failed on purpose');
@@ -2723,6 +2725,233 @@ describe('frames.subscribe', () => {
       },
       10_000,
     );
+
+    describe('replay', () => {
+      const BASE = Date.now() - 60_000;
+      const STOPPED_SIM = { ...OWNED_SIM, state: 'Shutdown' };
+
+      /** Writes a segment of units every 100 ms from `start`, a keyframe every 5 units. */
+      function footage(first: number, count: number): void {
+        mkdirSync(deviceDir(), { recursive: true });
+        const units = Array.from({ length: count }, (_, i) => {
+          const header = Buffer.alloc(17);
+          header.writeUInt32BE(13 + 5, 0);
+          header.writeUInt8(i % 5 === 0 ? 1 : 0, 4);
+          header.writeDoubleBE(first + i * 100, 5);
+          header.writeUInt16BE(330, 13);
+          header.writeUInt16BE(720, 15);
+          return Buffer.concat([header, Buffer.from([0, 0, 0, 1, i])]);
+        });
+        writeFileSync(join(deviceDir(), `${first}-${first + (count - 1) * 100}.seg`), Buffer.concat(units));
+      }
+
+      const packetAt = (message: ServerMessage) => (message as unknown as { binary: Buffer }).binary.readDoubleBE(8);
+
+      async function untilMessage(client: Client, done: (message: ServerMessage) => boolean): Promise<ServerMessage[]> {
+        const seen: ServerMessage[] = [];
+        for (;;) {
+          const message = await client.next();
+          seen.push(message);
+          if (done(message)) return seen;
+        }
+      }
+
+      test.skipIf(!fakeTailscale)(
+        "replays a stopped device's footage from a time, plays it to the end, and cannot go live",
+        async () => {
+          registerWorkspaceDir();
+          footage(BASE, 20);
+          footage(BASE + 30_000, 5);
+          const port = await startWithTools(
+            { FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }) },
+            undefined,
+            fakeHelper(),
+            { record: true },
+          );
+          const client = await authed(port);
+          expect(
+            await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], at: BASE + 730 }),
+          ).toMatchObject({ result: { subscription: 's1', video: 'h264' } });
+          const shown = await untilMessage(
+            client,
+            (message) => 'binary' in message && packetAt(message) === BASE + 700,
+          );
+          expect(shown.map(packetAt)).toEqual([BASE + 500, BASE + 600, BASE + 700]);
+
+          client.socket.send(
+            JSON.stringify({ id: 50, method: 'frames.seek', params: { subscription: 's1', at: BASE + 1500, rate: 2 } }),
+          );
+          const played = await untilMessage(
+            client,
+            (message) => 'event' in message && message.event === 'replay-ended',
+          );
+          expect(played).toContainEqual({ id: 50, result: { at: BASE + 1500 } });
+          expect(played.filter((message) => 'binary' in message).map(packetAt)).toEqual([
+            ...[1500, 1600, 1700, 1800, 1900].map((offset) => BASE + offset),
+            ...[0, 100, 200, 300, 400].map((offset) => BASE + 30_000 + offset),
+          ]);
+          expect(played.at(-1)).toEqual({ event: 'replay-ended', subscription: 's1', at: BASE + 30_400 });
+
+          expect(await client.request('frames.live', { subscription: 's1' })).toMatchObject({
+            error: { code: 'frames-failed', message: expect.stringContaining('not booted') },
+          });
+          client.socket.send(
+            JSON.stringify({
+              id: 70,
+              method: 'frames.seek',
+              params: { subscription: 's1', at: BASE + 60_000, rate: 0 },
+            }),
+          );
+          const past = await untilMessage(client, (message) => 'id' in message && message.id === 70);
+          expect(past.at(-1)).toEqual({ id: 70, result: { at: BASE + 30_400 } });
+          expect(
+            await client.request('frames.subscribe', {
+              workspace,
+              platform: 'ios',
+              slot: '../../other',
+              video: ['h264'],
+              at: BASE,
+            }),
+          ).toMatchObject({ error: { code: 'bad-request' } });
+          expect(helperRuns()).toEqual([]);
+        },
+        10_000,
+      );
+
+      test.skipIf(!fakeTailscale)('seeks a live subscription into the footage and returns to live', async () => {
+        registerWorkspaceDir();
+        footage(BASE, 10);
+        const port = await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
+            FAKE_HELPER_INTERVAL_MS: '10',
+          },
+          undefined,
+          fakeHelper(),
+          { record: true },
+        );
+        const client = await authed(port);
+        await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
+        await untilMessage(client, (message) => 'binary' in message);
+        client.socket.send(
+          JSON.stringify({ id: 60, method: 'frames.seek', params: { subscription: 's1', at: BASE + 200, rate: 0 } }),
+        );
+        const seeked = await untilMessage(client, (message) => 'id' in message && message.id === 60);
+        expect(seeked.at(-1)).toEqual({ id: 60, result: { at: BASE + 200 } });
+        expect(
+          seeked
+            .filter((message) => 'binary' in message)
+            .map(packetAt)
+            .slice(-3),
+        ).toEqual([BASE, BASE + 100, BASE + 200]);
+        client.socket.send(JSON.stringify({ id: 61, method: 'frames.live', params: { subscription: 's1' } }));
+        expect((await untilMessage(client, (message) => 'id' in message && message.id === 61)).at(-1)).toEqual({
+          id: 61,
+          result: {},
+        });
+        const live = await untilMessage(client, (message) => 'binary' in message);
+        expect(packetAt(live.at(-1)!)).toBeLessThan(1_800_000_000_000);
+        expect(packetAt(live.at(-1)!)).toBeGreaterThan(1_758_000_000_000);
+      });
+
+      test.skipIf(!fakeTailscale)('a seek on a device with no recording stays live', async () => {
+        registerWorkspaceDir();
+        const port = await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
+            FAKE_HELPER_INTERVAL_MS: '10',
+          },
+          undefined,
+          fakeHelper(),
+          { record: false },
+        );
+        const client = await authed(port);
+        await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
+        await untilMessage(client, (message) => 'binary' in message);
+        client.socket.send(
+          JSON.stringify({ id: 80, method: 'frames.seek', params: { subscription: 's1', at: BASE, rate: 0 } }),
+        );
+        const refused = await untilMessage(client, (message) => 'id' in message && message.id === 80);
+        expect(refused.at(-1)).toMatchObject({ id: 80, error: { code: 'no-recording' } });
+        const next = await untilMessage(client, (message) => 'binary' in message);
+        expect(packetAt(next.at(-1)!)).toBeLessThan(1_760_000_000_000);
+      });
+
+      test.skipIf(!fakeTailscale)('lists the recorded spans and the markers of the device', async () => {
+        registerWorkspaceDir();
+        footage(BASE, 10);
+        footage(BASE + 30_000, 10);
+        const logged = [
+          { ts: BASE + 300, src: 'agent', event: 'agent_action', platform: 'ios', command: 'press', msg: 'press @e3' },
+          { ts: BASE + 400, src: 'agent', event: 'agent_action', platform: 'android', command: 'press', msg: 'other' },
+          { ts: BASE + 30_500, src: 'build', level: 'error', msg: 'Compile failed' },
+        ];
+        const port = await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }),
+            FAKE_STIM_RECORDS: JSON.stringify(logged),
+            FAKE_STIM_BY_SOURCE: '1',
+          },
+          undefined,
+          fakeHelper(),
+          { record: true },
+        );
+        const client = await authed(port);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(await client.request('replay.range', { workspace, platform: 'ios' })).toEqual({
+          id: 2,
+          result: {
+            enabled: true,
+            recording: false,
+            spans: [
+              { start: BASE, end: BASE + 900 },
+              { start: BASE + 30_000, end: BASE + 30_900 },
+            ],
+            markers: [
+              { at: BASE + 300, kind: 'action', command: 'press', label: 'press @e3' },
+              { at: BASE + 30_500, kind: 'error', label: 'Compile failed' },
+            ],
+          },
+        });
+        const logs = readFileSync(calls, 'utf8')
+          .split('\n')
+          .filter((line) => line.includes('"logs'));
+        expect(logs.map((line) => JSON.parse(line).args)).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(/^logs --json --source agent --since=\d+m --tail=5000$/),
+            expect.stringMatching(/^logs --json --source metro client build device --level=error --since=\d+m/),
+          ]),
+        );
+        expect(await client.request('replay.range', { workspace, platform: 'android' })).toMatchObject({
+          result: { spans: [], markers: [] },
+        });
+      });
+    });
+
+    test.skipIf(!fakeTailscale)('turns recording off at machine scope for a device with control only', async () => {
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), { record: true });
+      const reader = await authed(port);
+      expect(await reader.request('recording.set', { enabled: false })).toMatchObject({ error: { code: 'forbidden' } });
+      const controller = await authed(port, true);
+      expect(await controller.request('recording.set', { enabled: 'no' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await controller.request('recording.set', { enabled: false })).toMatchObject({
+        result: { enabled: false, recordingsDeleted: [] },
+      });
+      const settings = readFileSync(calls, 'utf8')
+        .split('\n')
+        .filter((line) => line.includes('"settings'))
+        .map((line) => JSON.parse(line));
+      expect(settings).toEqual([
+        { args: 'settings set recording.enabled false --scope machine --json', cwd: homedir() },
+      ]);
+      expect(readAudit().map((entry) => [entry.action, entry.ok])).toEqual([
+        ['recording.set', false],
+        ['recording.set', false],
+        ['recording.set', true],
+      ]);
+    });
 
     test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {
       await startWithTools(

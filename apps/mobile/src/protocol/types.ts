@@ -231,6 +231,8 @@ export interface EnvironmentState {
   phaseSince?: string | null;
   /** The step a `warming` workspace's warm is in. */
   warmStep?: 'refresh' | 'copy';
+  /** Whether stim-server may record this workspace's screens for replay; absent from an older `stim`. */
+  recording?: { enabled: boolean };
   memoryMb: number;
   /** How `memoryMb` was obtained; absent from a `stim` whose `memoryMb` is always the estimate. */
   memorySource?: 'footprint' | 'rss' | 'estimate';
@@ -434,6 +436,38 @@ export interface FrameTarget {
   maxEdge?: number;
   /** The codecs the app decodes; a result with `video` sends binary H.264 messages instead of `frame` events. */
   video?: 'h264'[];
+  /** Starts replaying the footage recorded at this time, epoch ms on the Mac; needs `video`. */
+  at?: number;
+  rate?: ReplayRate;
+}
+
+/** 0 pauses on the frame, 1 plays in real time, 2 twice as fast. */
+export type ReplayRate = 0 | 1 | 2;
+
+export interface ReplaySpan {
+  start: number;
+  end: number;
+}
+
+export interface ReplayMarker {
+  at: number;
+  kind: 'action' | 'error' | 'crash';
+  command?: string;
+  label: string;
+}
+
+export interface ReplayRange {
+  enabled: boolean;
+  recording: boolean;
+  spans: ReplaySpan[];
+  markers: ReplayMarker[];
+}
+
+/** A replaying subscription reached the newest recorded frame and stays paused there. */
+export interface ReplayEndedEvent {
+  event: 'replay-ended';
+  subscription: string;
+  at: number;
 }
 
 /** Needs `control`. The server refuses with `device-busy` while something else drives the device. */
@@ -546,6 +580,10 @@ export interface Methods {
   'settings.get': { params: { workspace?: string }; result: Record<string, unknown> };
   'frames.subscribe': { params: FrameTarget; result: { subscription: string; video?: 'h264' } };
   'frames.keyframe': { params: { subscription: string }; result: Record<string, never> };
+  'frames.seek': { params: { subscription: string; at: number; rate: ReplayRate }; result: { at: number } };
+  'frames.live': { params: { subscription: string }; result: Record<string, never> };
+  'replay.range': { params: { workspace: string; platform: DevicePlatform; slot?: string }; result: ReplayRange };
+  'recording.set': { params: { enabled: boolean }; result: { enabled: boolean; recordingsDeleted: string[] } };
   'build.plan': { params: BuildPlanParams; result: BuildPlan };
   'machine.get': { params: Record<string, never>; result: MachineUsage };
   'machine.history': { params: { sinceMs?: number }; result: MachineHistory };
@@ -641,6 +679,13 @@ export interface ControlEndedEvent {
   message: string;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent | ControlEndedEvent;
+export type ServerEvent =
+  | StatusEvent
+  | LogsEvent
+  | FrameEvent
+  | FrameDelayedEvent
+  | ReplayEndedEvent
+  | ErrorEvent
+  | ControlEndedEvent;
 
 export type ServerMessage = Response | ServerEvent;
