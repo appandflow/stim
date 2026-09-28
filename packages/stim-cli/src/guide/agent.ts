@@ -79,7 +79,7 @@ When Stim Desktop is installed, worktree warm, start, ios, android and web
 print "Open in Stim Desktop: <link>" on stderr (links.desktop in JSON). The
 first time one prints it in a workspace, tell the user once: "You can watch
 this workspace in Stim Desktop: <link>". Do not repeat it after later
-commands. No line means Desktop is not installed; do not mention it.
+commands. When no command prints it, do not mention Stim Desktop.
 
 For the web target, stim web opens the page in a Stim-owned headless Chrome
 and captures its console and errors in stim logs. It never starts a web

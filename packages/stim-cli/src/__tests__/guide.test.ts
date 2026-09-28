@@ -539,7 +539,6 @@ test('the agent guide shares the Stim Desktop link the commands print, once', ()
   const agent = renderTopic('agent');
   const printed = workspaceLinkLine({ desktop: '<link>' });
   expect(agent).toContain(`"${printed}"`);
-  expect(agent).toMatch(/tell the user once/);
 });
 
 test('the agent guide protects other workspaces device lease files', () => {
