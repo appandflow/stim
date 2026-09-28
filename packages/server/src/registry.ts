@@ -17,6 +17,10 @@ import { DEFAULT_STUCK_MINUTES } from './oversight.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
+export const BUILD_REQUEST_TTL_MS: number = 15 * 60_000;
+
+export const MAX_BUILD_REQUESTS = 8;
+
 export type PeerIdentity = { kind: 'local' } | { kind: 'tailnet'; nodeId: string; nodeName: string; user: string };
 
 export interface PairedDevice {
@@ -29,6 +33,8 @@ export interface PairedDevice {
   capabilities: Capability[];
   /** Where and what to push, from the device's last `push.register`. */
   push?: PushRegistration;
+  /** Set on a build client until `grantDevice` approves it; the request lapses at this time. */
+  pendingUntil?: string;
 }
 
 export interface PushRegistration {
@@ -89,7 +95,20 @@ interface PairingRecord {
 
 export type AuthOutcome =
   | { ok: true; device: PairedDevice; deviceToken?: string }
-  | { ok: false; reason: 'pairing-unknown' | 'pairing-expired' | 'device-unknown' | 'node-mismatch' };
+  | {
+      ok: false;
+      reason:
+        | 'pairing-unknown'
+        | 'pairing-expired'
+        | 'device-unknown'
+        | 'node-mismatch'
+        | 'approval-pending'
+        | 'build-needs-tailnet'
+        | 'build-requests-full'
+        | 'bad-device-name';
+    };
+
+export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch';
 
 export function serverDir(): string {
   return join(configDir(), 'server');
@@ -97,6 +116,10 @@ export function serverDir(): string {
 
 function devicesFile(): string {
   return join(serverDir(), 'devices.json');
+}
+
+function buildClientsFile(): string {
+  return join(serverDir(), 'build-clients.json');
 }
 
 function pairingFile(): string {
@@ -129,8 +152,26 @@ function parseCapabilities(value: unknown): Capability[] {
   return Array.isArray(value) ? CAPABILITIES.filter((capability) => value.includes(capability)) : [];
 }
 
-export function capabilitiesFor(control: boolean): Capability[] {
+export function capabilitiesFor(control: boolean): Exclude<Capability, 'build'>[] {
   return control ? ['read', 'control'] : ['read'];
+}
+
+const MAX_BUILD_NAME = 64;
+
+/** A name a person reads before approving: short, one line, and free of control and format characters. */
+function validBuildName(name: string): boolean {
+  return name.length <= MAX_BUILD_NAME && !/[\p{Cc}\p{Cf}]/u.test(name);
+}
+
+function newDeviceId(): string {
+  const taken = new Set([...readDevices(), ...readRecords(buildClientsFile())].map((device) => device.id));
+  let id = randomBytes(4).toString('hex');
+  while (taken.has(id)) id = randomBytes(4).toString('hex');
+  return id;
+}
+
+function isBuild(capabilities: readonly Capability[]): boolean {
+  return capabilities.includes('build');
 }
 
 const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
@@ -159,6 +200,7 @@ function parseDevice(value: unknown): PairedDevice | null {
   if (typeof id !== 'string' || typeof name !== 'string' || typeof tokenHash !== 'string' || !identity) return null;
   if (typeof pairedAt !== 'string') return null;
   const push = parsePush(value.push);
+  const pendingUntil = typeof value.pendingUntil === 'string' ? value.pendingUntil : null;
   return {
     id,
     name,
@@ -168,12 +210,33 @@ function parseDevice(value: unknown): PairedDevice | null {
     lastSeenAt: typeof lastSeenAt === 'string' ? lastSeenAt : null,
     capabilities: parseCapabilities(value.capabilities),
     ...(push ? { push } : {}),
+    ...(pendingUntil ? { pendingUntil } : {}),
   };
 }
 
-export function readDevices(): PairedDevice[] {
-  const devices = readJsonObject(devicesFile())?.devices;
+function readRecords(file: string): PairedDevice[] {
+  const devices = readJsonObject(file)?.devices;
   return Array.isArray(devices) ? devices.flatMap((entry) => parseDevice(entry) ?? []) : [];
+}
+
+export function readDevices(): PairedDevice[] {
+  return readRecords(devicesFile());
+}
+
+function lapsed(client: PairedDevice, now: number): boolean {
+  return client.pendingUntil !== undefined && Date.parse(client.pendingUntil) <= now;
+}
+
+/**
+ * The Macs that may build here, and the pending requests that have not lapsed. They live apart from
+ * `devices.json` so that a stim-server without `build` never reads them as devices.
+ */
+export function readBuildClients(now: number = Date.now()): PairedDevice[] {
+  return readRecords(buildClientsFile()).filter((client) => !lapsed(client, now));
+}
+
+function writeBuildClients(clients: PairedDevice[]): void {
+  writeJson(buildClientsFile(), { version: 1, devices: clients });
 }
 
 function readPairings(): PairingRecord[] {
@@ -216,7 +279,7 @@ function unexpired(record: PairingRecord, now: number): boolean {
 /** The device that spends the token gets `capabilities`. */
 export function createPairingToken(
   now: number = Date.now(),
-  capabilities: Capability[] = capabilitiesFor(false),
+  capabilities: Exclude<Capability, 'build'>[] = capabilitiesFor(false),
 ): { token: string; expiresAt: string } {
   const token = newToken();
   const expiresAt = new Date(now + PAIRING_TTL_MS).toISOString();
@@ -252,7 +315,7 @@ export function spendPairingToken(
     const deviceToken = newToken();
     const at = new Date(now).toISOString();
     const device: PairedDevice = {
-      id: randomBytes(4).toString('hex'),
+      id: newDeviceId(),
       name,
       tokenHash: hashToken(deviceToken),
       identity,
@@ -265,27 +328,76 @@ export function spendPairingToken(
   });
 }
 
-export function authenticateDevice(token: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
+/**
+ * Records a pending request from a tailnet peer to build here, replacing that node's earlier request.
+ * The returned token authenticates only after `grantDevice` approves it with `build`.
+ */
+export function requestBuildAccess(name: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
+  if (identity.kind === 'local') return { ok: false, reason: 'build-needs-tailnet' };
+  if (!validBuildName(name)) return { ok: false, reason: 'bad-device-name' };
   return transaction(() => {
-    const devices = readDevices();
-    const tokenHash = hashToken(token);
-    const device = devices.find((entry) => entry.tokenHash === tokenHash);
-    if (!device) return { ok: false, reason: 'device-unknown' };
-    if (!sameNode(device.identity, identity)) return { ok: false, reason: 'node-mismatch' };
-    device.lastSeenAt = new Date(now).toISOString();
-    writeJson(devicesFile(), { version: 1, devices });
-    return { ok: true, device };
+    const clients = readBuildClients(now).filter(
+      (client) => !(client.pendingUntil !== undefined && sameNode(client.identity, identity)),
+    );
+    if (clients.filter((client) => client.pendingUntil !== undefined).length >= MAX_BUILD_REQUESTS) {
+      return { ok: false, reason: 'build-requests-full' };
+    }
+    const deviceToken = newToken();
+    const device: PairedDevice = {
+      id: newDeviceId(),
+      name,
+      tokenHash: hashToken(deviceToken),
+      identity,
+      pairedAt: new Date(now).toISOString(),
+      lastSeenAt: null,
+      capabilities: [],
+      pendingUntil: new Date(now + BUILD_REQUEST_TTL_MS).toISOString(),
+    };
+    writeBuildClients([...clients, device]);
+    return { ok: true, device, deviceToken };
   });
 }
 
-export function grantDevice(id: string, capabilities: Capability[]): boolean {
+export function authenticateDevice(token: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
+  return transaction(() => {
+    const tokenHash = hashToken(token);
+    const devices = readDevices();
+    const clients = readBuildClients(now);
+    const device = devices.find((entry) => entry.tokenHash === tokenHash);
+    const client = device ? undefined : clients.find((entry) => entry.tokenHash === tokenHash);
+    const found = device ?? client;
+    if (!found) return { ok: false, reason: 'device-unknown' };
+    if (!sameNode(found.identity, identity)) return { ok: false, reason: 'node-mismatch' };
+    if (found.pendingUntil !== undefined) return { ok: false, reason: 'approval-pending' };
+    found.lastSeenAt = new Date(now).toISOString();
+    if (device) writeJson(devicesFile(), { version: 1, devices });
+    else writeBuildClients(clients);
+    return { ok: true, device: found };
+  });
+}
+
+/**
+ * Sets a paired device's capabilities. `build` goes only to a build client, which it also approves, and a
+ * build client takes nothing else, so a grant never turns a phone into a build client or the reverse.
+ */
+export function grantDevice(id: string, capabilities: Capability[], now: number = Date.now()): GrantOutcome {
   return transaction(() => {
     const devices = readDevices();
     const device = devices.find((entry) => entry.id === id);
-    if (!device) return false;
-    device.capabilities = capabilities;
-    writeJson(devicesFile(), { version: 1, devices });
-    return true;
+    if (device) {
+      if (isBuild(capabilities)) return 'build-mismatch';
+      device.capabilities = capabilities;
+      writeJson(devicesFile(), { version: 1, devices });
+      return 'granted';
+    }
+    const clients = readBuildClients(now);
+    const client = clients.find((entry) => entry.id === id);
+    if (!client) return 'unknown';
+    if (capabilities.length !== 1 || !isBuild(capabilities)) return 'build-mismatch';
+    client.capabilities = ['build'];
+    delete client.pendingUntil;
+    writeBuildClients(clients);
+    return 'granted';
   });
 }
 
@@ -324,8 +436,14 @@ export function revokeDevice(id: string): boolean {
   return transaction(() => {
     const devices = readDevices();
     const remaining = devices.filter((device) => device.id !== id);
-    if (remaining.length === devices.length) return false;
-    writeJson(devicesFile(), { version: 1, devices: remaining });
+    if (remaining.length !== devices.length) {
+      writeJson(devicesFile(), { version: 1, devices: remaining });
+      return true;
+    }
+    const clients = readRecords(buildClientsFile());
+    const kept = clients.filter((client) => client.id !== id);
+    if (kept.length === clients.length) return false;
+    writeBuildClients(kept);
     return true;
   });
 }

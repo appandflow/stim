@@ -201,6 +201,15 @@ outside it moves to its own issue and pull request.
   override, and sensitivity. Validation, doctor, `stim settings`, the shipped
   JSON Schema, and the guide contract tests derive from it; add a setting there
   first.
+- **Build access.** stim-server's `build` capability lets another Mac on the
+  tailnet run its project code on this Mac to build. The client asks with a
+  build request and a person approves it on the worker with
+  `stim-server devices grant <id> --build`; there is no pairing code for it.
+  It never comes with `read` or `control`, and an honest loopback connection
+  never gets it. Build clients live in `server/build-clients.json`, apart from
+  `devices.json`. The client names its build machines in `offload.machines`,
+  pins each one's tailnet node in `build-machines.json`, and sends its token
+  only to that node.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, and logs. The CLI owns every write to that state and imports

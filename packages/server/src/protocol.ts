@@ -4,8 +4,11 @@ export const PROTOCOL_VERSION = 1;
 
 export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 
-/** `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. */
-export const CAPABILITIES = ['read', 'control'] as const;
+/**
+ * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
+ * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
+ */
+export const CAPABILITIES = ['read', 'control', 'build'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -56,12 +59,13 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
- * updates; clients retry the others.
+ * updates; `approval-pending` refuses a build client until the Mac approves it; clients retry the others.
  */
 export const ERROR_CODES = [
   'unauthorized',
   'pairing-expired',
   'protocol-unsupported',
+  'approval-pending',
   'identity-unavailable',
   'bad-request',
   'unknown-method',
@@ -98,10 +102,19 @@ export interface DeviceAuth {
   deviceToken: string;
 }
 
+/**
+ * Asks, from another Mac on the tailnet, to build here. The result carries a device token with no
+ * capabilities and `approval`; the token authenticates once the Mac approves the request.
+ */
+export interface BuildRequestAuth {
+  request: 'build';
+  deviceName: string;
+}
+
 export interface HelloParams {
   protocol: number;
   client: { name: string; version: string };
-  auth: PairingAuth | DeviceAuth;
+  auth: PairingAuth | DeviceAuth | BuildRequestAuth;
 }
 
 export interface HelloResult {
@@ -117,8 +130,10 @@ export interface HelloResult {
   actions: ActionName[];
   /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
   device: { id: string; name: string };
-  /** Present only when the hello spent a pairing token. The server keeps only its hash. */
+  /** Present only when the hello spent a pairing token or requested build access. The server keeps only its hash. */
   deviceToken?: string;
+  /** Present only on a build request, which the server then closes; the request lapses at `expiresAt`. */
+  approval?: { state: 'pending'; expiresAt: string };
 }
 
 export interface SubscribeResult {
@@ -856,6 +871,12 @@ export function protocolJsonSchema(): JsonSchema {
                 additionalProperties: false,
                 properties: { deviceToken: { type: 'string' } },
               },
+              {
+                type: 'object',
+                required: ['request', 'deviceName'],
+                additionalProperties: false,
+                properties: { request: { const: 'build' }, deviceName: { type: 'string', minLength: 1 } },
+              },
             ],
           },
         },
@@ -887,6 +908,12 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { id: { type: 'string' }, name: { type: 'string' } },
           },
           deviceToken: { type: 'string' },
+          approval: {
+            type: 'object',
+            required: ['state', 'expiresAt'],
+            additionalProperties: false,
+            properties: { state: { const: 'pending' }, expiresAt: { type: 'string' } },
+          },
         },
       },
       LogRecord: {

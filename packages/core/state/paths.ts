@@ -95,6 +95,15 @@ export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }
 
+/** The build machines this Mac paired with, each with its pinned tailnet node and device token. */
+export function buildMachinesFile(): string {
+  return join(configDir(), 'build-machines.json');
+}
+
+export function buildMachinesLock(): string {
+  return join(configDir(), 'build-machines.lock');
+}
+
 export function createdDevicesLock(): string {
   return join(configDir(), 'created-devices.lock');
 }

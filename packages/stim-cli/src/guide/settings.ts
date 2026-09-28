@@ -491,6 +491,22 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
+BUILD MACHINES ARE MACHINE-LEVEL
+\`offload.machines\` lists the Macs on the tailnet that may build for this one,
+by MagicDNS name, each optionally with the port of its \`tailscale serve\`
+route (default 7443):
+
+  {
+    "offload": { "machines": ["janics-mac-mini"] }
+  }
+
+\`doctor --fix\`, run in any app directory, asks each named Mac for build access and pins its tailnet
+node in $STIM_HOME/build-machines.json. A person approves the request on that
+Mac with \`stim-server devices grant <id> --build\`; doctor prints the id.
+Stim connects to a named Mac only while its name still belongs to the pinned
+node and never sends the token to another node. Builds do not offload yet;
+\`doctor\` reports each machine's pairing state.
+
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
 a merged or idle linked worktree. The clock starts at the worktree's latest

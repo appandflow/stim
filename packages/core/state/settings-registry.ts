@@ -384,6 +384,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'offload.machines',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    description:
+      'Tailscale names of the Macs that may build for this one, each optionally with :<port> of its tailscale serve route (default 7443)',
+  },
+  {
     key: 'caches.buildCache',
     type: ABSOLUTE_PATH,
     scopes: MACHINE,

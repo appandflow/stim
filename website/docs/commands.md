@@ -104,6 +104,15 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+When the [`offload.machines`](./settings.md#machine-settings) setting names
+build machines, doctor reports each one this Mac is not approved on: not on the
+tailnet, not asked yet, waiting for approval (with the
+`stim-server devices grant <id> --build` command to run there), revoked, or
+now a different tailnet node than the one this Mac paired with. `--fix` asks
+each named machine without a pairing for build access, asks again one that
+revoked or let the request lapse, and forgets the pairing of a machine no
+longer named. It never re-pairs with a different node.
+
 ## `ports`
 
 ```text
