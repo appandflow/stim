@@ -142,7 +142,10 @@ test('--older-than deletes only the footage recorded before it', async () => {
 });
 
 test('keeps the recordings of a workspace whose project root cannot be proven gone', async () => {
-  const unmounted = join('/Volumes', `stim-test-unmounted-${process.pid}`, 'app');
+  const unmounted =
+    process.platform === 'win32'
+      ? `Q:\\stim-test-unmounted-${process.pid}\\app`
+      : join('/Volumes', `stim-test-unmounted-${process.pid}`, 'app');
   const dir = record(unmounted, [[now - 60_000, now]]);
 
   const report = await gcJson({});
