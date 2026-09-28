@@ -159,7 +159,12 @@ export function Menu({ onClose }: { onClose: () => void }) {
           navigationBarTranslucent
           onRequestClose={() => setAboutOpen(false)}
         >
-          <Pressable style={styles.scrim} onPress={() => setAboutOpen(false)} accessibilityLabel="Close About" />
+          <Pressable
+            style={styles.scrim}
+            onPress={() => setAboutOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close About"
+          />
           <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
             <About />
           </View>

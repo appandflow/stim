@@ -90,7 +90,7 @@ reload and stop a workspace:
   phone. The button at the bottom shows the number of
   paired machines and opens **About**, with the app and server versions, as a
   sheet over the menu, which stays open when the sheet closes. A tap
-  on home, a swipe left, or Android's back button closes it. Pairing scans the QR code Stim Desktop
+  on home, a swipe left, or Android's back button closes the menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
