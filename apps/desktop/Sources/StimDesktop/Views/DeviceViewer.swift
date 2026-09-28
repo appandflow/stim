@@ -3,7 +3,8 @@ import StimKit
 import SwiftUI
 
 /// One device of a workspace, large: its live screen, Take over and Release with the device's buttons, replay, the
-/// agent row and Stop. Escape releases a device that is taken over, and otherwise closes the viewer.
+/// agent row and Stop. Escape releases a device that is taken over, and otherwise closes the viewer. A command it
+/// starts shows its activity sheet over the viewer, since the window under the viewer cannot present another sheet.
 struct DeviceViewer: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
@@ -13,6 +14,7 @@ struct DeviceViewer: View {
   @State private var takenOver = false
   @State private var escapeMonitor: Any?
   @State private var window: NSWindow?
+  @EnvironmentObject private var actions: ActionCenter
 
   var body: some View {
     VStack(spacing: 0) {
@@ -47,6 +49,9 @@ struct DeviceViewer: View {
     .background(WindowReader(window: $window))
     .onAppear(perform: watchEscape)
     .onDisappear(perform: unwatchEscape)
+    .sheet(item: $actions.presented) { run in
+      ActivitySheet(run: run).environmentObject(actions)
+    }
     .onChange(of: device?.isInteractive) { _, interactive in
       if interactive != true { takenOver = false }
     }
