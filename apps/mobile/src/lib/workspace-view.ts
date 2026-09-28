@@ -51,7 +51,7 @@ export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 
   return device.app?.state === 'stopped' ? 'closed' : null;
 }
 
-export function closedApps(env: EnvironmentState, devices: DeviceRef[]): DeviceRef[] {
+function closedApps(env: EnvironmentState, devices: DeviceRef[]): DeviceRef[] {
   return devices.filter((d) => appPresence(env, d) === 'closed');
 }
 
@@ -131,7 +131,7 @@ export function workspaceUsage(env: EnvironmentState, machine: MachineUsageState
   };
 }
 
-export function workspaceDiskBytes(env: EnvironmentState): number | null {
+function workspaceDiskBytes(env: EnvironmentState): number | null {
   const disk = env.disk;
   if (!disk || (disk.worktreeBytes === null && disk.buildBytes === null)) return null;
   return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0);
@@ -158,7 +158,7 @@ const DEVICE_KIND: Record<DeviceRef['platform'], MachineOwner['kind']> = {
  * The owner that holds a device's processes. The emulator owner's id is its AVD name, not the serial a device
  * carries, so devices match on workspace, slot and kind. A physical device runs no process on the Mac.
  */
-export function deviceOwner(
+function deviceOwner(
   device: Pick<DeviceRef, 'platform' | 'slot'> & { physical?: boolean },
   path: string,
   machine: MachineUsageState | null | undefined,
@@ -332,7 +332,7 @@ export interface PhaseStep {
   fraction: number | null;
 }
 
-export function referenceRun(build: BuildReport, history: readonly BuildHistoryEntry[]): BuildHistoryEntry | null {
+function referenceRun(build: BuildReport, history: readonly BuildHistoryEntry[]): BuildHistoryEntry | null {
   const hit = build.outcome === 'hit';
   return (
     history.find(

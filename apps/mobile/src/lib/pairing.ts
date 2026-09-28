@@ -5,7 +5,7 @@ export type PairingResult = { ok: true; payload: PairingPayload } | { ok: false;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** `wss://` anywhere; plain `ws://` only to this device, for the mock server and the simulator. */
-export function checkEndpoint(endpoint: string): string | null {
+function checkEndpoint(endpoint: string): string | null {
   const match = /^(wss?):\/\/(\[[0-9a-f:]+\]|[a-z0-9.-]+)(:\d{1,5})?(\/[^\s?#]*)?$/i.exec(endpoint);
   if (!match) return 'The endpoint is not a ws:// or wss:// URL.';
   const [, scheme, host] = match;

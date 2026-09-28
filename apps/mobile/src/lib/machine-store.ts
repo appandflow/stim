@@ -44,7 +44,7 @@ export const IDLE_LINK: MachineLink = {
   disconnectedAt: null,
 };
 
-export const CACHE_WRITE_DELAY_MS = 5000;
+const CACHE_WRITE_DELAY_MS = 5000;
 
 function workspacesOf(state: Pick<MachinesState, 'macs' | 'snapshots' | 'workspaces'>): HomeItem[] {
   const machines = state.macs
@@ -175,5 +175,3 @@ export function createMachineStore({
     },
   };
 }
-
-export type MachineStore = ReturnType<typeof createMachineStore>;
