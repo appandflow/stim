@@ -196,6 +196,13 @@ when nothing is on disk, an ellipsis while it is measured, **Unknown** when it
 could not be sized, or a dash before the first measurement, with the reason in
 its help tag.
 
+Each list on the page, the processes under **Now** included, has a header
+with a disclosure chevron and its count. A collapsed section shows only the
+header. An expanded one shows its first 10 rows in its usual order, then
+**Show all** or **Show fewer**. **Safe to free now** always lists every row,
+because **Free** acts on checked rows. The app remembers each section's
+choices in its own preferences.
+
 - **Headline**: free space on the fullest volume against the Stim disk budget
   (`budget.minFreeDiskGb`), and one bar split into Stim devices (owned by a
   workspace, parked or orphaned), Stim caches and outputs (shared caches,
@@ -242,7 +249,7 @@ remove` in it, with what that frees: its `node_modules`, build outputs and
   `stim-*` device this home did not create, or **Yours**. Simulator sizes come
   from simctl; AVD sizes from `du -d 1` of the AVD folder (`~/.android/avd`,
   `ANDROID_AVD_HOME` or `ANDROID_USER_HOME/avd`). The app offers no action on a
-  device; the largest 12 show until **Show all**. The CLI's inventory notices,
+  device. The CLI's inventory notices,
   such as a listing that timed out, show above the list.
 - **Runtimes and system images**: iOS simulator runtimes with the size simctl
   reports, and Android system images sized with `du` of the SDK's

@@ -19,19 +19,21 @@ struct NowBand: View {
       }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
         let actionWidth = machine.owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
-        VStack(alignment: .leading, spacing: Space.xs) {
-          header(actionWidth: actionWidth)
-          ListSection(data: machine.ranked, id: \.key) { EmptyView() } row: { owner in
-            row(owner, actionWidth: actionWidth)
+        CollapsibleSection("machine.processes", title: "Processes", items: machine.ranked) { shown in
+          Text(
+            machine.memorySource == .footprint
+              ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
+              : "Each process counts in one row. Resident memory counts memory shared between processes once per process, so simulators read high."
+          )
+          .font(.stim(.footnote))
+          .foregroundStyle(Palette.tertiary)
+          VStack(alignment: .leading, spacing: Space.xs) {
+            header(actionWidth: actionWidth)
+            ListSection(data: shown, id: \.key) { EmptyView() } row: { owner in
+              row(owner, actionWidth: actionWidth)
+            }
           }
         }
-        Text(
-          machine.memorySource == .footprint
-            ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
-            : "Each process counts in one row. Resident memory counts memory shared between processes once per process, so simulators read high."
-        )
-        .font(.stim(.footnote))
-        .foregroundStyle(Palette.tertiary)
       } else if status.payload == nil {
         Text("Waiting for stim status...")
           .font(.stim(.callout))
