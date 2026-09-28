@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
@@ -40,6 +41,13 @@ import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../e
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
+import {
+  offloadHost,
+  offloadIosBuild,
+  planOffload,
+  simulatorRuntime,
+  type OffloadDecision,
+} from '../../offload/client.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
@@ -616,24 +624,93 @@ export async function acquireIosArtifact(
     }
   }
 
+  async function takeBuildSlot(): Promise<void> {
+    if (!maxBuilds) return;
+    try {
+      buildSlot = await d.acquireBuildSlot({ max: maxBuilds, root, logFile, out: note });
+    } catch (e) {
+      const refusal = claimFailure(e, 'stim ios');
+      if (refusal) {
+        fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
+      }
+      note(
+        chalk.yellow(phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`)),
+      );
+    }
+  }
+
+  async function planBuildOffload(): Promise<OffloadDecision | null> {
+    const host = offloadHost();
+    if (!host || physical || release || remoteDestination) return null;
+    const decision = await planOffload({ host, maxBuilds });
+    phase(
+      'build',
+      `offload ${decision.offload ? `-> ${host}` : 'declined, building here'}: ${decision.reasons.join('; ')} (probe ${formatDuration(decision.probeMs)})`,
+    );
+    logWriter().write({
+      src: 'build',
+      level: 'info',
+      event: 'offload_decision',
+      msg: decision.offload ? `offload to ${host}` : 'build locally',
+      decision,
+    });
+    return decision;
+  }
+
+  /** Builds on the worker and stores the app under the post-mutation key; false falls back to a local build. */
+  async function compileOnWorker(decision: OffloadDecision): Promise<boolean> {
+    if (!storeKey || !storeHash || !cachePolicy.write) return false;
+
+    const stagingDir = join(workspaceDir(root), 'offload');
+    const outcome = await offloadIosBuild({
+      decision,
+      projectRoot: root,
+      expectedFingerprint: storeHash,
+      configuration,
+      scheme: buildScheme ?? null,
+      isExpo,
+      optimizations,
+      runtime: simulatorRuntime(udid),
+      stagingDir,
+      note: (line) => note(chalk.dim(phaseLine('build', line))),
+      logWriter: logWriter(),
+    });
+    let stored: string | null = null;
+    if (outcome.ok) {
+      try {
+        stored = d.storeBuild(PLATFORM, storeKey, outcome.appPath, {
+          sources: storeSources,
+          overwrite: !useBuildCache,
+        });
+      } catch (e) {
+        note(chalk.yellow(phaseLine('build', `could not store the offloaded app: ${(e as Error)?.message || e}`)));
+      }
+    }
+    rmSync(stagingDir, { recursive: true, force: true });
+    const prepared = stored ? await installableCachedApp(stored) : null;
+    if (outcome.ok && prepared) {
+      const w = outcome.timings.worker;
+      appPath = prepared;
+      cacheHit = 'local';
+      phase(
+        'build',
+        `offload ok ${formatDuration(outcome.timings.totalMs)}: probe ${formatDuration(outcome.timings.probeMs)}, sync ${formatDuration(outcome.timings.syncMs)}, ` +
+          `worker ${formatDuration(outcome.timings.remoteMs)} (deps ${formatDuration(w.depsMs)}, prebuild ${formatDuration(w.prebuildMs)}, ` +
+          `pods ${formatDuration(w.podsMs)}, fingerprint ${formatDuration(w.fingerprintMs)}, xcodebuild ${formatDuration(w.buildMs)}), ` +
+          `fetch ${formatDuration(outcome.timings.fetchMs)}; compilation cache ${outcome.result.compilationCache}`,
+      );
+      phase('cache', `hit ${shortHash(storeHash)} (stored from ${decision.host})`);
+      return true;
+    }
+    phase('build', `offload ${outcome.ok ? 'store failed' : `failed: ${outcome.reason}`} -> building here`);
+    return false;
+  }
+
   async function buildArtifact(): Promise<void> {
     buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
     if (!appPath) {
-      if (maxBuilds) {
-        try {
-          buildSlot = await d.acquireBuildSlot({ max: maxBuilds, root, logFile, out: note });
-        } catch (e) {
-          const refusal = claimFailure(e, 'stim ios');
-          if (refusal) {
-            fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
-          }
-          note(
-            chalk.yellow(
-              phaseLine('build', `could not take a build slot: ${(e as Error)?.message || e}; building anyway`),
-            ),
-          );
-        }
-      }
+      const offloadDecision = await planBuildOffload();
+      if (!offloadDecision?.offload) await takeBuildSlot();
 
       const mutatingSteps: string[] = [];
       const rekeyedBy: string[] = [];
@@ -758,8 +835,14 @@ export async function acquireIosArtifact(
         }
       }
 
-      if (!appPath) {
+      if (!appPath && offloadDecision?.offload) {
         explainMiss(rekeyedBy);
+        step('compile');
+        if (!(await compileOnWorker(offloadDecision))) await takeBuildSlot();
+      }
+
+      if (!appPath) {
+        if (!offloadDecision?.offload) explainMiss(rekeyedBy);
         step('compile');
         phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
         const result = await d.buildIos({

@@ -142,6 +142,7 @@ export const pathRules = [
 
   { path: 'packages/stim-cli/src/collector', rows: everyRow },
   { path: 'packages/stim-cli/src/web', rows: everyRow },
+  { path: 'packages/stim-cli/src/offload', rows: everyRow },
   { path: 'packages/stim-cli/src/collector/android.ts', rows: ['logs'], platforms: android },
   { path: 'packages/stim-cli/src/collector/ios.ts', rows: ['logs'], platforms: ios },
   { path: 'packages/stim-cli/src/collector/ios-device.ts', rows: ['logs'], platforms: ios },
