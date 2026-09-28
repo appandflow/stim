@@ -211,9 +211,6 @@ import Testing
       """
     let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
     #expect(env.orderedDevices.map { "\($0.slot)/\($0.platform)" } == ["duo/ios", "default/android", "default/ios"])
-    var undriven = env
-    undriven.slots = env.slots.map { $0.map { var slot = $0; slot.ios?.activity = nil; return slot } }
-    #expect(undriven.orderedDevices.map(\.id) == env.orderedDevices.map(\.id))
   }
 
   @Test func projectFromGitCommonDir() {

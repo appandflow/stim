@@ -75,7 +75,8 @@ extension Workspace {
     case .ios, .android: break
     case .web, .remote: return nil
     }
-    let everBuilt = builds.map { $0.builds(for: device.platform).contains { $0.result == "succeeded" } } ?? true
+    let history = device.platform == "ios" ? builds?.ios : builds?.android
+    let everBuilt = history.map { $0.contains { $0.result == "succeeded" } } ?? true
     if lastBuilds?.build(for: device.platform)?.status == "failed", !everBuilt { return AppPresence.none }
     return device.app?.state == "stopped" ? .closed : nil
   }
@@ -539,30 +540,44 @@ public func barSteps(_ steps: [PhaseStep]) -> [PhaseStep] {
   return groups
 }
 
-/// A rolling window of CPU and memory per workspace, sampled from status `machine` owners.
+/// The last ten minutes of CPU and memory per workspace, from status `machine` owners sampled at `append` time.
 public struct OwnerHistory: Sendable {
-  /// Ten minutes at the three-second sampling interval.
-  public static let limit = 200
+  public static let window: TimeInterval = 10 * 60
 
-  public private(set) var cpu: [String: [Double]] = [:]
-  public private(set) var memoryMb: [String: [Double]] = [:]
+  public struct Sample: Equatable, Sendable {
+    public var at: Date
+    public var cpuPercent: Double
+    public var memoryMb: Double
+  }
+
+  public private(set) var samples: [String: [Sample]] = [:]
 
   public init() {}
 
-  /// Appends each workspace's owner sums; a workspace with no owner now drops its history.
-  public mutating func append(_ machine: MachineUsage?) {
-    var cpuSums: [String: Double] = [:]
-    var memorySums: [String: Double] = [:]
+  /// Appends each workspace's owner sums and drops samples older than `window`; a workspace with no owner now
+  /// drops its history.
+  public mutating func append(_ machine: MachineUsage?, at now: Date) {
+    var sums: [String: Sample] = [:]
     for owner in machine?.owners ?? [] {
       guard let workspace = owner.workspace else { continue }
-      cpuSums[workspace, default: 0] += owner.cpuPercent
-      memorySums[workspace, default: 0] += Double(owner.memory)
+      var sum = sums[workspace] ?? Sample(at: now, cpuPercent: 0, memoryMb: 0)
+      sum.cpuPercent += owner.cpuPercent
+      sum.memoryMb += Double(owner.memory)
+      sums[workspace] = sum
     }
-    cpu = cpuSums.reduce(into: [:]) { out, entry in
-      out[entry.key] = Array(((cpu[entry.key] ?? []) + [entry.value]).suffix(Self.limit))
+    samples = sums.reduce(into: [:]) { out, entry in
+      out[entry.key] = (samples[entry.key] ?? []).filter { now.timeIntervalSince($0.at) < Self.window } + [entry.value]
     }
-    memoryMb = memorySums.reduce(into: [:]) { out, entry in
-      out[entry.key] = Array(((memoryMb[entry.key] ?? []) + [entry.value]).suffix(Self.limit))
+  }
+
+  public func cpu(_ workspace: String) -> [Double] { samples[workspace]?.map(\.cpuPercent) ?? [] }
+  public func memoryMb(_ workspace: String) -> [Double] { samples[workspace]?.map(\.memoryMb) ?? [] }
+
+  /// How far back the workspace's samples reach.
+  public func span(_ workspace: String) -> TimeInterval? {
+    guard let first = samples[workspace]?.first, let last = samples[workspace]?.last, last.at > first.at else {
+      return nil
     }
+    return last.at.timeIntervalSince(first.at)
   }
 }

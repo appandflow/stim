@@ -137,7 +137,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
       if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
       let (ra, rb) = (rank(a.element), rank(b.element))
       if ra != rb { return ra < rb }
-      if a.element.slot != b.element.slot { return a.element.slot < b.element.slot }
+      let slots = a.element.slot.localizedCompare(b.element.slot)
+      if slots != .orderedSame { return slots == .orderedAscending }
       return a.offset < b.offset
     }.map(\.element)
   }

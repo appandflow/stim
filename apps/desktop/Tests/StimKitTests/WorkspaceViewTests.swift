@@ -81,6 +81,13 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(once.appPresence(once.devices[0]) == .closed)
   }
 
+  @Test func assumesAPlatformWithNoHistoryBuiltBefore() throws {
+    let env = try workspace(
+      #""ios":\#(booted),"app":{"id":"a","state":"stopped"}},"lastBuilds":{"ios":\#(lastBuild(status: "failed"))},"builds":{"android":[]}"#
+    )
+    #expect(env.appPresence(env.devices[0]) == .closed)
+  }
+
   @Test func doesNotGuessFromAMissingAppWhichStatusOmitsWithoutABundleID() throws {
     let env = try workspace(#""ios":\#(booted)},"lastBuilds":{"ios":\#(lastBuild(status: "failed"))}"#)
     #expect(env.appPresence(env.devices[0]) == nil)
@@ -130,23 +137,29 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 
   @Test func keepsTenMinutesOfEachWorkspaceAndDropsOneThatStopped() {
     var history = OwnerHistory()
-    for _ in 0..<(OwnerHistory.limit + 5) { history.append(machine) }
-    #expect(history.cpu["/w"]?.count == OwnerHistory.limit)
-    #expect(history.memoryMb["/w"]?.last == 6554)
-    history.append(MachineUsage(owners: [machine.owners[3]]))
-    #expect(history.cpu["/w"] == nil)
-    #expect(history.cpu["/other"]?.count == OwnerHistory.limit)
+    for minute in 0...12 { history.append(machine, at: now.addingTimeInterval(Double(minute) * 60)) }
+    #expect(history.cpu("/w").count == 10)
+    #expect(history.memoryMb("/w").last == 6554)
+    #expect(history.span("/w").map { $0.rounded() } == 540)
+    history.append(MachineUsage(owners: [machine.owners[3]]), at: now.addingTimeInterval(13 * 60))
+    #expect(history.cpu("/w").isEmpty)
+    #expect(history.cpu("/other").count == 10)
   }
 }
 
 @Suite struct DeviceOrderTests {
-  @Test func keepsDevicesInPlaceWhenAnAgentStartsDrivingOne() throws {
-    let fields =
-      #""ios":\#(booted)},"web":{"running":true,"url":"http://localhost:8081","headless":false,"viewport":"desktop","profile":"p"},"slots":[{"slot":"tablet","android":{"name":"stim-w-tab","owned":true,"physical":false,"state":"detected"#
-    let idle = try workspace(fields + #""}},{"slot":"old","ios":{"name":"stim-w-old (iPhone 15 26.0)","udid":"OLD","owned":true,"state":"Shutdown"}}]"#)
-    let driven = try workspace(
-      fields + #"","activity":{"state":"driven","basis":[]}}},{"slot":"old","ios":{"name":"stim-w-old (iPhone 15 26.0)","udid":"OLD","owned":true,"state":"Shutdown"}}]"#)
-    let order = ["ios:SIM-1", "android:tablet:stim-w-tab", "web:p", "ios:OLD"]
+  @Test func ordersByPlatformThenPhysicalThenRemoteAndKeepsPlacesWhenAnAgentDrives() throws {
+    let tablet = #"{"slot":"tablet","android":{"name":"stim-w-tab","owned":true,"physical":false,"state":"detected"}}"#
+    let old = #"{"slot":"old","ios":{"name":"stim-w-old (iPhone 15 26.0)","udid":"OLD","owned":true,"state":"Shutdown"}}"#
+    let rest =
+      #""web":{"running":true,"url":"http://localhost:8081","headless":false,"viewport":"desktop","profile":"p"},"physicalDevices":[{"platform":"android","slot":"default","id":"R5","connection":"connected","lease":{"holder":"h","kind":"run","expiresAt":"\#(iso(-600))"}}],"remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"S","state":"claimed"}]"#
+    let idle = try workspace(#""ios":\#(booted)},"slots":[\#(tablet),\#(old)],\#(rest)"#)
+    let drivenTablet = tablet.replacingOccurrences(
+      of: #""detected"}"#, with: #""detected","activity":{"state":"driven","basis":[]}}"#)
+    let driven = try workspace(#""ios":\#(booted)},"slots":[\#(drivenTablet),\#(old)],\#(rest)"#)
+    let order = [
+      "ios:SIM-1", "android:tablet:stim-w-tab", "web:p", "android:default:physical:R5", "remote:S", "ios:OLD",
+    ]
     #expect(idle.orderedDevices.map(\.id) == order)
     #expect(driven.orderedDevices.map(\.id) == order)
   }
@@ -200,13 +213,18 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 
   @Test func foldsTheShortPreparePhasesIntoOneBarSegment() throws {
-    let steps = try build().phaseSteps(history: history, now: now)
     var early = try build()
     early.phase = "cache-lookup"
     early.phaseStartedAt = iso(0)
     #expect(barSteps(early.phaseSteps(history: history, now: now)).map(\.phase) == ["prepare", "prebuild", "pods", "compile", "install"])
     #expect(barSteps(early.phaseSteps(history: history, now: now)).first?.state == .current)
-    #expect(barSteps(steps).count == 5)
+    var lookup = try build()
+    lookup.phase = "cache-lookup"
+    lookup.phaseStartedAt = iso(0)
+    lookup.expectedPhaseMs = 1000
+    let prepare = barSteps(lookup.phaseSteps(history: history, now: now))[0]
+    #expect(prepare.expectedMs == 3000)
+    #expect(prepare.fraction == 2000.0 / 3000.0)
   }
 
   @Test func takesProgressFromTheBuildToolCounts() throws {
