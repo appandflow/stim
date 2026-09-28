@@ -20,6 +20,7 @@ import {
   currentPhaseLabel,
   formatCpu,
   formatMemoryMb,
+  namesPhases,
   otherPlatformLine,
   phaseName,
   phaseSteps,
@@ -343,20 +344,22 @@ function PhaseBar({ steps }: { steps: PhaseStep[] }) {
           </View>
         ))}
       </View>
-      <View style={styles.segments}>
-        {steps.map((step, i) => (
-          <Text
-            key={step.phase}
-            variant="caption2"
-            tone={step.state === 'current' ? 'brand' : 'tertiary'}
-            weight={step.state === 'current' ? 'semibold' : undefined}
-            numberOfLines={1}
-            style={[styles.segmentLabel, { flexGrow: weights[i] }]}
-          >
-            {phaseName(step.phase)}
-          </Text>
-        ))}
-      </View>
+      {namesPhases(steps) ? (
+        <View style={styles.segments}>
+          {steps.map((step, i) => (
+            <Text
+              key={step.phase}
+              variant="caption2"
+              tone={step.state === 'current' ? 'brand' : 'tertiary'}
+              weight={step.state === 'current' ? 'semibold' : undefined}
+              numberOfLines={1}
+              style={[styles.segmentLabel, { flexGrow: weights[i] }]}
+            >
+              {phaseName(step.phase)}
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }

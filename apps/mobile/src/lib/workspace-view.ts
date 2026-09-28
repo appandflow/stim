@@ -426,6 +426,9 @@ export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   return groups;
 }
 
+/** Whether a phase bar or checklist names its phases: only with more than one, since the stage line names a lone phase. */
+export const namesPhases = (steps: readonly PhaseStep[]) => steps.length > 1;
+
 export function currentPhaseLabel(build: BuildReport): { phase: string; counts: string | null } {
   const detail = build.detail;
   const phase = detail?.step ? STEP_NAMES[detail.step] : phaseName(build.phase);

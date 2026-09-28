@@ -126,7 +126,7 @@ struct BuildInProgressCard: View {
           + Text(estimate.map { " / \($0)" } ?? "").font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
       PhaseBar(steps: barSteps(steps))
-      if wide {
+      if wide && namesPhases(steps) {
         PhaseChecklist(steps: steps)
       }
       if let miss = build.missReason?.summary {
@@ -170,20 +170,22 @@ struct PhaseBar: View {
         }
       }
       .frame(height: 5)
-      GeometryReader { geo in
-        let sum = weights.reduce(0, +)
-        let gaps = CGFloat(max(0, steps.count - 1)) * 3
-        HStack(spacing: 3) {
-          ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
-            Text(PhaseStep.name(step.phase))
-              .font(.stim(.caption2, weight: step.state == .current ? .semibold : nil))
-              .foregroundStyle(step.state == .current ? Palette.primary : Palette.tertiary)
-              .lineLimit(1)
-              .frame(width: (geo.size.width - gaps) * weights[i] / sum, alignment: .leading)
+      if namesPhases(steps) {
+        GeometryReader { geo in
+          let sum = weights.reduce(0, +)
+          let gaps = CGFloat(max(0, steps.count - 1)) * 3
+          HStack(spacing: 3) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+              Text(PhaseStep.name(step.phase))
+                .font(.stim(.caption2, weight: step.state == .current ? .semibold : nil))
+                .foregroundStyle(step.state == .current ? Palette.primary : Palette.tertiary)
+                .lineLimit(1)
+                .frame(width: (geo.size.width - gaps) * weights[i] / sum, alignment: .leading)
+            }
           }
         }
+        .frame(height: 13)
       }
-      .frame(height: 13)
     }
     .accessibilityHidden(true)
   }
@@ -216,8 +218,7 @@ struct PhaseChecklist: View {
     let expected = step.expectedMs.map { "~\(clockDuration(ms: $0))" }
     switch step.state {
     case .done, .pending: return expected ?? ""
-    case .current:
-      return [step.elapsedMs.map { clockDuration(ms: $0) }, expected].compactMap { $0 }.joined(separator: " / ")
+    case .current: return step.elapsedMs.map { clockDuration(ms: $0) } ?? ""
     }
   }
 }
