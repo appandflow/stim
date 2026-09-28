@@ -22,6 +22,7 @@ import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '
 import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
 import { mergeState, type MergeState } from '../workspace/merge-state.ts';
 import {
+  parseRemoteRepo,
   selectPullRequest,
   type GhPullRequest,
   type PullRequestFact,
@@ -780,9 +781,49 @@ describe('choosing the pull request of a worktree', () => {
     expect(selectPullRequest([gh(3, 'MERGED', 'base')], 'head', isAncestor)).toMatchObject({ containsHead: false });
   });
 
-  test('a pull request unrelated to HEAD, or from a fork that reuses the branch name, is ignored', () => {
+  test("a pull request unrelated to HEAD, or from a stranger's fork that reuses the branch name, is ignored", () => {
     expect(selectPullRequest([gh(4, 'MERGED', 'unrelated')], 'head', isAncestor)).toBe(null);
     expect(selectPullRequest([{ ...gh(5, 'MERGED', 'head'), isCrossRepository: true }], 'head', isAncestor)).toBe(null);
+    const foreignFork = {
+      ...gh(6, 'OPEN', 'head'),
+      isCrossRepository: true,
+      headRepository: { name: 'r' },
+      headRepositoryOwner: { login: 'stranger' },
+    };
+    expect(selectPullRequest([foreignFork], 'head', isAncestor, new Set(['me/r']))).toBe(null);
+  });
+
+  test("a pull request from the checkout's own fork is accepted", () => {
+    const ownFork = {
+      ...gh(7, 'OPEN', 'head'),
+      isCrossRepository: true,
+      headRepository: { name: 'r' },
+      headRepositoryOwner: { login: 'Me' },
+    };
+    expect(selectPullRequest([ownFork], 'head', isAncestor, new Set(['me/r']))).toMatchObject({ number: 7 });
+    expect(selectPullRequest([ownFork], 'head', isAncestor)).toBe(null);
+  });
+
+  test('a cross-repository pull request with no head repository is ignored even with a matching owner elsewhere', () => {
+    const deletedFork = { ...gh(8, 'OPEN', 'head'), isCrossRepository: true };
+    expect(selectPullRequest([deletedFork], 'head', isAncestor, new Set(['me/r']))).toBe(null);
+  });
+});
+
+describe('parsing a repository out of a git remote URL', () => {
+  test.each([
+    ['https://github.com/janicduplessis/expo.git', 'janicduplessis/expo'],
+    ['https://github.com/janicduplessis/expo', 'janicduplessis/expo'],
+    ['https://x-access-token:abc123@github.com/Janic/Expo.git', 'janic/expo'],
+    ['git@github.com:janicduplessis/expo.git', 'janicduplessis/expo'],
+    ['ssh://git@github.com/janicduplessis/expo.git', 'janicduplessis/expo'],
+    ['https://github.com/janicduplessis/expo.git/', 'janicduplessis/expo'],
+  ])('parses %s as %s', (url, repo) => {
+    expect(parseRemoteRepo(url)).toBe(repo);
+  });
+
+  test.each([['not-a-url'], [''], ['https://github.com/onlyowner']])('rejects %s', (url) => {
+    expect(parseRemoteRepo(url)).toBe(null);
   });
 });
 

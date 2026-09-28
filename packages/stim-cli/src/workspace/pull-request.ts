@@ -2,7 +2,10 @@ import { getExecutor } from '../exec.ts';
 
 const GH_TIMEOUT_MS = 20_000;
 const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
-const GH_FIELDS = 'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository,isDraft';
+const GH_SCALAR_FIELDS = 'number,state,url,headRefOid,mergedAt,closedAt,isCrossRepository,isDraft';
+const GH_REPO_FIELDS = 'headRepository,headRepositoryOwner';
+const GH_FIELDS = `${GH_SCALAR_FIELDS},${GH_REPO_FIELDS}`;
+const GH_GRAPHQL_REPO_SELECTION = 'headRepository { name } headRepositoryOwner { login }';
 const GH_DETAIL_FIELDS =
   'title reviewDecision commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 0) {' +
   ' checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }';
@@ -17,6 +20,8 @@ export interface GhPullRequest {
   closedAt: string | null;
   isCrossRepository?: boolean;
   isDraft?: boolean;
+  headRepository?: { name?: string | null } | null;
+  headRepositoryOwner?: { login?: string | null } | null;
   title?: string;
   reviewDecision?: string | null;
   commits?: { nodes?: { commit?: { statusCheckRollup?: GhCheckRollup | null } }[] };
@@ -107,22 +112,36 @@ function epoch(text: string | null): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
+/** "owner/name", lowercased, from a pull request's head repository fields; null when either is missing. */
+function headRepoOf(pull: GhPullRequest): string | null {
+  const owner = pull.headRepositoryOwner?.login;
+  const name = pull.headRepository?.name;
+  return owner && name ? `${owner.toLowerCase()}/${name.toLowerCase()}` : null;
+}
+
 /**
  * Picks the pull request that describes `head` among those `gh pr list --head <branch>` returned. One whose head is
  * `head` wins, then one whose head contains `head`, then one whose head `head` contains. An open one wins a tier,
- * then the newest. A pull request unrelated to `head` is from an earlier use of the branch name, and one from a fork
- * only shares the branch name; both are ignored.
+ * then the newest. A pull request unrelated to `head` is from an earlier use of the branch name and is ignored. A
+ * cross-repository pull request is kept only when its head repository is one of `ownRepos` (this checkout's own git
+ * remotes, lowercased "owner/name"); otherwise it only shares the branch name with a stranger's fork and is ignored.
  * `isAncestor(a, b)` answers whether commit `a` is an ancestor of commit `b`, and false when git cannot tell.
  */
 export function selectPullRequest(
   pulls: readonly GhPullRequest[],
   head: string,
   isAncestor: (ancestor: string, descendant: string) => boolean,
+  ownRepos: ReadonlySet<string> = new Set(),
 ): PullRequestFact | null {
   const known = pulls.flatMap((pull) => {
     if (!pull || typeof pull !== 'object') return [];
     const state = stateOf(pull.state);
-    return state && pull.headRefOid && !pull.isCrossRepository ? [{ pull, state }] : [];
+    if (!state || !pull.headRefOid) return [];
+    if (pull.isCrossRepository) {
+      const repo = headRepoOf(pull);
+      if (!repo || !ownRepos.has(repo)) return [];
+    }
+    return [{ pull, state }];
   });
   const tiers = [
     known.filter(({ pull }) => pull.headRefOid === head),
@@ -169,6 +188,28 @@ function ancestry(cwd: string): (ancestor: string, descendant: string) => boolea
     exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;
 }
 
+const REMOTE_URL_RE =
+  /^(?:https?:\/\/(?:[^/@]+@)?[^/]+\/|git@[^:/]+:|ssh:\/\/(?:[^/@]+@)?[^/]+\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
+
+/** "owner/name", lowercased, parsed out of a git remote URL (https, ssh, or scp-like), or null when it doesn't match. */
+export function parseRemoteRepo(url: string): string | null {
+  const match = REMOTE_URL_RE.exec(url.trim());
+  const [, owner, name] = match ?? [];
+  return owner && name ? `${owner.toLowerCase()}/${name.toLowerCase()}` : null;
+}
+
+/** "owner/name" of every git remote configured for `cwd`'s repository, lowercased. */
+function localRemoteRepos(cwd: string): ReadonlySet<string> {
+  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'config', '--get-regexp', String.raw`^remote\..*\.url$`]);
+  const repos = new Set<string>();
+  for (const line of out ? out.split('\n') : []) {
+    const url = /^\S+\s+(.*)$/.exec(line)?.[1];
+    const repo = url ? parseRemoteRepo(url) : null;
+    if (repo) repos.add(repo);
+  }
+  return repos;
+}
+
 /**
  * Asks GitHub, through `gh`, which pull requests have `branch` as their head, run from `cwd` so `gh` picks the
  * repository from its remotes. Each call is one fixed `gh pr list` invocation. Once `gh` is missing, signed out or
@@ -198,7 +239,9 @@ export function pullRequestLookup(): (cwd: string, branch: string, head: string)
     } catch {
       return { unavailable: 'gh pr list printed no JSON' };
     }
-    return { pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls, head, ancestry(cwd)) : null };
+    return {
+      pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls, head, ancestry(cwd), localRemoteRepos(cwd)) : null,
+    };
   };
 }
 
@@ -211,7 +254,8 @@ export interface PullRequestQuery {
 
 function branchesQuery(count: number, detail: boolean): string {
   const variables = Array.from({ length: count }, (_, i) => `, $b${i}: String!`).join('');
-  const nodes = `${GH_FIELDS.replaceAll(',', ' ')}${detail ? ` ${GH_DETAIL_FIELDS}` : ''}`;
+  const nodes =
+    `${GH_SCALAR_FIELDS.replaceAll(',', ' ')} ${GH_GRAPHQL_REPO_SELECTION}` + (detail ? ` ${GH_DETAIL_FIELDS}` : '');
   const fields = Array.from(
     { length: count },
     (_, i) =>
@@ -258,10 +302,13 @@ export function pullRequestLookups({ detail = false }: { detail?: boolean } = {}
       return all({ unavailable: 'gh api graphql printed no JSON' });
     }
     if (!found) return all({ unavailable: 'gh api graphql printed no repository' });
+    const ownRepos = localRemoteRepos(repo);
     return queries.map(({ cwd, head }, i) => {
       const pulls = found[`b${i}`]?.nodes;
       return {
-        pullRequest: Array.isArray(pulls) ? selectPullRequest(pulls as GhPullRequest[], head, ancestry(cwd)) : null,
+        pullRequest: Array.isArray(pulls)
+          ? selectPullRequest(pulls as GhPullRequest[], head, ancestry(cwd), ownRepos)
+          : null,
       };
     });
   };
