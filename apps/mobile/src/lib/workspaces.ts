@@ -239,12 +239,17 @@ export function runningBuild(env: EnvironmentState, device?: Pick<DeviceRef, 'pl
   return build;
 }
 
-const deviceRank = (d: DeviceRef) => (d.running ? (d.activity?.state === 'driven' ? 0 : 1) : 2);
+const PLATFORM_RANK: Record<DevicePlatform, number> = { ios: 0, android: 1, web: 2 };
+const platformRank = (d: DeviceRef) => (d.physical ? 3 : PLATFORM_RANK[d.platform]);
 
-/** Driven devices first, then other running ones, then stopped ones; by slot name inside each group. */
+/**
+ * Running devices before stopped ones, then iOS, Android, Web and physical devices, then by slot name. The order
+ * never depends on activity or drivers, so a device keeps its place while tools attach and detach.
+ */
 export function orderDevices(devices: DeviceRef[]): DeviceRef[] {
   return [...devices].sort(
-    (a, b) => deviceRank(a) - deviceRank(b) || a.slot.localeCompare(b.slot) || a.platform.localeCompare(b.platform),
+    (a, b) =>
+      Number(b.running) - Number(a.running) || platformRank(a) - platformRank(b) || a.slot.localeCompare(b.slot),
   );
 }
 
