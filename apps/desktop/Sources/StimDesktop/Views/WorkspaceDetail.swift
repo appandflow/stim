@@ -21,7 +21,10 @@ struct WorkspaceDetail: View {
   var openLogs: () -> Void
   @State private var stats: ProjectStats?
   @State private var contentWidth: CGFloat = 0
-  @State private var takenOver: Set<String> = []
+  @State private var takenOver: String?
+  @State private var logsResizeStart: CGFloat?
+  @AppStorage(AppPreferences.Key.logsPaneWidth) private var logsWidth = Double(WorkspaceDetail.defaultLogsWidth)
+  @AppStorage(AppPreferences.Key.showsLogsPane) private var showsLogsPane = true
   @State private var resizeStartWidth: CGFloat?
   @State private var width: CGFloat = 0
 
@@ -66,11 +69,13 @@ struct WorkspaceDetail: View {
     }
   }
 
+  private var wide: Bool { contentWidth >= Self.wideContentWidth }
+
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       WorkspaceSummary(
         cli: cli, env: env, machine: machine, reportsBundles: reportsBundles, history: history, usage: usage,
-        wide: contentWidth >= Self.wideContentWidth,
+        wide: wide,
         openLogs: { errors in
           if errors {
             openLogs()
@@ -78,25 +83,86 @@ struct WorkspaceDetail: View {
             logQuery.errorsOnly = false
             tab = .logs
           }
+          showsLogsPane = true
         }
       )
       .padding(.horizontal, Space.xxl)
       .padding(.top, Space.lg)
-      Picker("View", selection: $tab) {
-        Text("Device").tag(DetailTab.device)
-        Text("Logs").tag(DetailTab.logs)
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .fixedSize()
-      .padding(.vertical, Space.lg)
+      .padding(.bottom, Space.lg)
       Rectangle().fill(Palette.border).frame(height: 1)
-      switch tab {
-      case .device: deviceView(devices: devices, focused: focused)
-      case .logs: LogsView(cli: cli, env: env, query: $logQuery)
+      if !wide {
+        Picker("View", selection: $tab) {
+          Text("Devices").tag(DetailTab.device)
+          Text("Logs").tag(DetailTab.logs)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .padding(.vertical, Space.md)
+        .help("Show the workspace's devices or its logs. A wider window shows both.")
+        Rectangle().fill(Palette.border).frame(height: 1)
+      }
+      HStack(spacing: 0) {
+        if wide || tab == .device {
+          VStack(spacing: 0) {
+            if wide { canvasBar(devices: devices) }
+            canvas(devices: devices, focused: focused)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+          LogsView(cli: cli, env: env, query: $logQuery)
+        }
+        if wide, showsLogsPane {
+          Rectangle().fill(Palette.border).frame(width: 1).overlay { logsResizeHandle }
+          LogsView(cli: cli, env: env, query: $logQuery)
+            .frame(width: Self.clampedLogsWidth(logsWidth, contentWidth: contentWidth))
+        }
       }
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
+  }
+
+  private func canvasBar(devices: [DeviceRef]) -> some View {
+    HStack(spacing: Space.md) {
+      SectionLabel(title: devices.isEmpty ? "Devices" : "Devices \u{00B7} \(devices.count)")
+      Spacer()
+      Button {
+        showsLogsPane.toggle()
+      } label: {
+        Label(showsLogsPane ? "Hide logs" : "Show logs", systemImage: "text.alignleft")
+      }
+      .buttonStyle(.stim(.plain))
+      .fixedSize()
+      .help(showsLogsPane ? "Hide the logs pane beside the devices" : "Show the workspace's logs beside the devices")
+    }
+    .padding(.horizontal, Space.xxl)
+    .padding(.vertical, Space.sm)
+  }
+
+  static let minimumLogsWidth: CGFloat = 320
+  static let defaultLogsWidth: CGFloat = 420
+  private static let minimumCanvasWidth: CGFloat = 360
+
+  static func clampedLogsWidth(_ proposed: CGFloat, contentWidth: CGFloat) -> CGFloat {
+    max(minimumLogsWidth, min(contentWidth - 1 - minimumCanvasWidth, proposed))
+  }
+
+  private var logsResizeHandle: some View {
+    Color.clear
+      .frame(width: 8)
+      .contentShape(Rectangle())
+      .onHover { inside in
+        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+      }
+      .gesture(
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+          .onChanged { drag in
+            let start = logsResizeStart ?? Self.clampedLogsWidth(logsWidth, contentWidth: contentWidth)
+            logsResizeStart = start
+            logsWidth = Self.clampedLogsWidth(start - drag.translation.width, contentWidth: contentWidth)
+          }
+          .onEnded { _ in logsResizeStart = nil })
+      .help("Drag to resize the logs pane")
   }
 
   static func clampedInspectorWidth(_ proposed: CGFloat, detailWidth: CGFloat) -> CGFloat {
@@ -126,90 +192,70 @@ struct WorkspaceDetail: View {
       .frame(maxHeight: .infinity)
   }
 
-  @ViewBuilder
-  private func devicePicker(devices: [DeviceRef], focused: DeviceRef?) -> some View {
-    let segments = devices.filter { $0.isRunning || $0.id == focused?.id }
-    let stopped = devices.filter { !$0.isRunning }
-    if segments.count > 1 || !stopped.isEmpty {
-      HStack(spacing: Space.md) {
-        if segments.count > 1 {
-          HStack(spacing: Space.xxs) {
-            ForEach(segments) { device in
-              Button { focusedID = device.id } label: {
-                HStack(spacing: Space.sm) {
-                  StatusDot(color: stateColor(device), filled: device.isRunning)
-                  Text(device.label(among: devices)).lineLimit(1)
-                }
-                .padding(.horizontal, Space.md)
-                .padding(.vertical, Space.xs)
-                .background(RoundedRectangle(cornerRadius: Radius.chip).fill(device.id == focused?.id ? Palette.surface : .clear))
-                .contentShape(Rectangle())
-              }
-              .buttonStyle(.plain)
-              .help(device.detail.map { "\(device.label) \u{00B7} \($0) \u{00B7} \(device.state)" } ?? device.state)
-            }
-          }
-          .padding(Space.xxs)
-          .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.border))
-        }
-        if !stopped.isEmpty {
-          Menu {
-            ForEach(stopped) { device in
-              Button("\(device.label(among: devices)) \u{00B7} \(device.state)") { focusedID = device.id }
-            }
-          } label: {
-            Text("+\(stopped.count) stopped")
-          }
-          .menuStyle(.button)
-          .menuIndicator(.hidden)
-          .buttonStyle(.stim())
-          .fixedSize()
-          .help("Devices of this workspace that are not running")
-        }
-      }
-      .font(.stim(.callout))
-    }
-  }
-
-  private func stateColor(_ device: DeviceRef) -> Color {
-    if device.state == "Booting" || env.runningBuild(for: device) != nil { return Palette.warning }
-    return device.isRunning ? Palette.success : Palette.tertiary
-  }
-
-  private func deviceView(devices: [DeviceRef], focused: DeviceRef?) -> some View {
+  private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     GeometryReader { geo in
-      deviceStack(devices: devices, focused: focused, screenHeight: min(640, max(260, geo.size.height - 190)))
-    }
-  }
-
-  private func deviceStack(devices: [DeviceRef], focused: DeviceRef?, screenHeight: CGFloat) -> some View {
-    VStack(spacing: Space.xl) {
-      devicePicker(devices: devices, focused: focused)
-      if let focused {
-        if let target = replayTarget(focused) {
-          ReplayHost(target: target) { replay in
-            ReplayingTile(replay: replay) { replaying in
-              focusedTile(focused, replay: replay, replaying: replaying, screenHeight: screenHeight)
+      ScrollView {
+        if devices.isEmpty {
+          emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
+        } else {
+          let screenHeight = canvasScreenHeight(
+            aspects: devices.map(\.canvasAspect),
+            canvas: CGSize(width: geo.size.width - Space.xxl * 2, height: geo.size.height - Space.xxl * 2),
+            spacing: Space.xl, chrome: 190, padding: 24, minimumWidth: DeviceTile.minimumWidth, minimum: 260,
+            maximum: 640)
+          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
+            ForEach(devices) { device in
+              tile(device, focused: device.id == focused?.id, screenHeight: screenHeight)
             }
           }
-          .id(focused.id)
-        } else {
-          focusedTile(focused, replay: nil, replaying: false, screenHeight: screenHeight)
+          .padding(Space.xxl)
         }
-        AgentFeed(cli: cli, workspace: env.path, device: focused)
-          .id(focused.id)
-          .frame(maxWidth: 520)
-      } else {
-        EmptyState(title: "No devices", message: "This workspace has no recorded simulator or emulator.")
       }
-      Spacer(minLength: 0)
     }
-    .padding(Space.xxxl)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
-}
 
-extension WorkspaceDetail {
+  private var emptyCanvas: some View {
+    TimelineView(.periodic(from: .now, by: 30)) { context in
+      emptyCanvas(stage: env.stage(now: context.date))
+    }
+  }
+
+  @ViewBuilder private func emptyCanvas(stage: WorkspaceStage) -> some View {
+    if stage.label == .warming {
+      VStack(spacing: Space.sm) {
+        ProgressView().controlSize(.small)
+        Text("Warming the workspace").font(.stim(.body)).foregroundStyle(Palette.secondary)
+        if let subtitle = stage.subtitle {
+          Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+        }
+      }
+      .frame(maxWidth: 420, minHeight: 140)
+      .frame(maxWidth: .infinity)
+      .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+    } else {
+      EmptyState(
+        title: "No devices",
+        message: stage.label == .stopped
+          ? "Nothing is running. Ask your agent to run the app."
+          : "No device in this workspace yet. Run stim ios or stim android.")
+    }
+  }
+
+  @ViewBuilder private func tile(_ device: DeviceRef, focused: Bool, screenHeight: CGFloat) -> some View {
+    Group {
+      if let target = replayTarget(device) {
+        ReplayHost(target: target) { replay in
+          ReplayingTile(replay: replay) { replaying in
+            deviceTile(device, focused: focused, screenHeight: screenHeight, replay: replay, replaying: replaying)
+          }
+        }
+      } else {
+        deviceTile(device, focused: focused, screenHeight: screenHeight, replay: nil, replaying: false)
+      }
+    }
+    .simultaneousGesture(TapGesture().onEnded { focusedID = device.id })
+  }
+
   /// Physical and remote devices have no replay, as on the phone.
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
@@ -219,21 +265,27 @@ extension WorkspaceDetail {
     }
   }
 
-  private func focusedTile(_ focused: DeviceRef, replay: ReplayController?, replaying: Bool, screenHeight: CGFloat)
-    -> some View
-  {
+  private func deviceTile(
+    _ device: DeviceRef, focused: Bool, screenHeight: CGFloat, replay: ReplayController?, replaying: Bool
+  ) -> some View {
     DeviceTile(
-      device: focused, screenHeight: screenHeight,
-      interactive: focused.isRunning && takenOver.contains(focused.id) && !replaying, workspace: env.path,
+      device: device, screenHeight: screenHeight,
+      interactive: device.isRunning && takenOver == device.id && !replaying, workspace: env.path,
       workspaceTitle: env.names.title,
-      build: env.runningBuild(for: focused),
-      takenOver: takenOver.contains(focused.id) && !replaying,
-      onToggleTakeOver: focused.isInteractive
+      build: env.runningBuild(for: device),
+      takenOver: takenOver == device.id && !replaying,
+      onToggleTakeOver: device.isInteractive
         ? {
-          if takenOver.contains(focused.id) { takenOver.remove(focused.id) } else { takenOver.insert(focused.id) }
+          takenOver = takenOver == device.id ? nil : device.id
+          focusedID = device.id
         } : nil,
       replay: replay, replaying: replaying, replayOff: env.replayOff,
-      onReplaySeek: { takenOver.remove(focused.id) })
+      onReplaySeek: { if takenOver == device.id { takenOver = nil } },
+      usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
+      presence: env.appPresence(device),
+      cli: cli,
+      showsCovers: true,
+      focused: focused)
   }
 }
 
@@ -243,6 +295,19 @@ private struct ReplayingTile<Content: View>: View {
   @ViewBuilder var content: (Bool) -> Content
 
   var body: some View { content(replay.replay != nil) }
+}
+
+extension DeviceRef {
+  var canvasAspect: CGFloat {
+    if !isRunning { return 0.52 }
+    if case .remote = self { return 0.6 }
+    switch formFactor {
+    case .phone: return 0.52
+    case .tablet: return 0.78
+    case .dual: return 1.4
+    case .desktop: return 1.6
+    }
+  }
 }
 
 struct Inspector: View {

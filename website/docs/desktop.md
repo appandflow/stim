@@ -74,6 +74,12 @@ bundle, and opens the logs. While a build runs, a build card takes the Build
 card's place with the phase, progress against past runs and the latest output
 line. A wide window shows the process list and the phase checklist inline.
 
+Below the cards, every device of the workspace shows at once, side by side
+at one height, wrapping when the window is narrow. Each device shows its CPU,
+memory and disk, and which agent drives it with its last action, or how long
+it has been idle. Click a device to focus it, and use the hand button to take
+it over. On a wide window the logs sit in a resizable pane beside the devices.
+
 ## Run the app
 
 Each workspace's context menu and "..." menu offer **Run on iOS** and **Run on

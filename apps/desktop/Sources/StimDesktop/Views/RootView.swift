@@ -27,6 +27,7 @@ struct RootView: View {
   @State private var focusedDeviceID: String?
   @State private var detailTab = DetailTab.device
   @State private var logQuery = LogQuery()
+  @AppStorage(AppPreferences.Key.showsLogsPane) private var showsLogsPane = true
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
@@ -278,12 +279,14 @@ struct RootView: View {
   private func openErrors(_ path: String) {
     selection = .environment(path)
     detailTab = .logs
+    showsLogsPane = true
     logQuery.errorsOnly = true
   }
 
   private func showLogs(_ path: String) {
     selection = .environment(path)
     detailTab = .logs
+    showsLogsPane = true
   }
 
   @ViewBuilder private var detail: some View {

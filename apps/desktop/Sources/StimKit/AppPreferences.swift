@@ -37,6 +37,8 @@ public enum AppPreferences {
     public static let servesPhones = "servesPhones"
     public static let stimServerExecutable = "stimServerExecutable"
     public static let showsInspector = "showsInspector"
+    public static let showsLogsPane = "workspace.showsLogsPane"
+    public static let logsPaneWidth = "workspace.logsPaneWidth"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }

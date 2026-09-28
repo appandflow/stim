@@ -22,6 +22,11 @@ struct DeviceTile: View {
   var replaying = false
   var replayOff = false
   var onReplaySeek: () -> Void = {}
+  var usage: WorkspaceUsage? = nil
+  var presence: AppPresence? = nil
+  var cli: Task<StimCLI, Never>? = nil
+  var showsCovers = false
+  var focused = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -36,6 +41,7 @@ struct DeviceTile: View {
   @ObservedObject private var server = ServerSession.shared
 
   private let screenPadding: CGFloat = 12
+  static let minimumWidth: CGFloat = 240
 
   var body: some View {
     Card {
@@ -60,6 +66,11 @@ struct DeviceTile: View {
           screen
             .frame(height: screenHeight)
             .background(Media.screen)
+            .overlay { screenCover }
+        }
+        if let cli, let workspace, device.isRunning, !isPhysical, device.activityKey != nil {
+          Rectangle().fill(Palette.border).frame(height: 1)
+          DeviceAgentRow(cli: cli, workspace: workspace, device: device)
         }
         if let replay, replaying || replayOff || replay.timeline != nil {
           Rectangle().fill(Palette.border).frame(height: 1)
@@ -74,6 +85,8 @@ struct DeviceTile: View {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.info, lineWidth: 2)
       } else if interactive {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent, lineWidth: 2)
+      } else if focused {
+        RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.45), lineWidth: 1.5)
       }
     }
     .frame(width: width)
@@ -152,11 +165,18 @@ struct DeviceTile: View {
                 ? "A device Stim uses through this workspace's lease and never owns. Its screen is view only."
                 : "A device Stim uses through this workspace's lease and never owns.")
           if let expires = device.leaseExpiresAt {
-            Text("Leased until \(expires.formatted(date: .omitted, time: .shortened))")
-              .font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+              Pill("Leased \u{00B7} \(shortDuration(expires.timeIntervalSince(context.date))) left")
+                .help("This workspace's lease ends at \(expires.formatted(date: .omitted, time: .shortened)).")
+            }
           }
         }
         Text(source).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+        if let usage, !usage.isEmpty {
+          HStack(spacing: Space.md) { UsageFigures(usage: usage) }
+            .font(.stim(.caption))
+            .accessibilityElement(children: .combine)
+        }
         if let posture = posture ?? emulatorPosture?.label {
           Pill { Text(posture) }.help("Current posture")
         }
@@ -170,26 +190,61 @@ struct DeviceTile: View {
     {
       if takenOver {
         Button("Release", systemImage: "hand.raised.fill", action: onToggleTakeOver)
-          .buttonStyle(.borderedProminent)
-          .tint(Palette.accent)
-          .controlSize(.small)
+          .labelStyle(.iconOnly)
+          .buttonStyle(.stim(.primary))
           .fixedSize()
           .help("Release control so an agent can drive this device again.")
+          .accessibilityLabel("Release control")
       } else {
         Button("Take over", systemImage: "hand.raised", action: onToggleTakeOver)
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+          .labelStyle(.iconOnly)
+          .buttonStyle(.stim())
           .fixedSize()
           .disabled(replaying)
           .help(
             replaying
               ? "Go live to take over this device."
-              : "Send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
+              : "Take over: send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
+          .accessibilityLabel("Take over")
       }
     }
   }
 
   private var isPhysical: Bool { device.isPhysical }
+
+  @ViewBuilder private var screenCover: some View {
+    if !showsCovers || interactive {
+      EmptyView()
+    } else if let build, device.isRunning {
+      let (phase, counts) = build.currentPhaseLabel
+      coverMessage("Waiting for the \(platformName(build.platform)) build", [phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
+    } else if presence == AppPresence.none {
+      coverMessage("No app installed", "Fix the build and run it again")
+    } else if presence == .closed {
+      ZStack {
+        Media.screen.opacity(0.6)
+        Text("App closed")
+          .font(.stim(.footnote, weight: .semibold))
+          .foregroundStyle(.white)
+          .padding(.horizontal, Space.lg)
+          .padding(.vertical, Space.sm)
+          .background(Capsule().fill(.black.opacity(0.6)))
+      }
+      .allowsHitTesting(false)
+    }
+  }
+
+  private func coverMessage(_ title: String, _ subtitle: String) -> some View {
+    VStack(spacing: Space.xs) {
+      Text(title).font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+      if !subtitle.isEmpty { Text(subtitle).font(.stim(.caption)).foregroundStyle(.white.opacity(0.55)) }
+    }
+    .multilineTextAlignment(.center)
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Media.screen.opacity(0.85))
+    .allowsHitTesting(false)
+  }
 
   private var showsStoppedBar: Bool {
     if case .remote = device { return false }
@@ -385,11 +440,11 @@ struct DeviceTile: View {
   private var width: CGFloat {
     let widths = screenIDs.compactMap(screenWidth)
     if widths.count == screenIDs.count {
-      return max(240, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
+      return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
     }
     if case .remote = device { return max(360, screenHeight * 0.6) }
     switch device.formFactor {
-    case .phone: return max(240, screenHeight * 0.52)
+    case .phone: return max(Self.minimumWidth, screenHeight * 0.52)
     case .tablet: return screenHeight * 0.78
     case .dual: return screenHeight * 1.4
     case .desktop: return screenHeight * 1.6
@@ -597,5 +652,48 @@ private struct ScreenMessage: View {
       .multilineTextAlignment(.center)
       .padding()
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+private struct DeviceAgentRow: View {
+  var cli: Task<StimCLI, Never>
+  var workspace: String
+  var device: DeviceRef
+  @State private var shown = false
+  @State private var hovering = false
+
+  var body: some View {
+    AgentFeed(cli: cli, workspace: workspace, device: device) { actions in
+      Button {
+        shown = true
+      } label: {
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+          let latest = actions.last.map { (date: $0.date, message: $0.msg) }
+          let row = AgentRow(activity: device.activity, last: latest, now: context.date)
+          HStack(spacing: Space.md) {
+            Text(row.tool ?? "No agent")
+              .font(.stim(.footnote, weight: .semibold))
+              .foregroundStyle(row.tool == nil ? Palette.tertiary : Palette.primary)
+            Text(row.text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
+            Spacer(minLength: Space.sm)
+            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.tertiary)
+          }
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel("\(row.tool ?? "No agent"), \(row.text)")
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .background(hovering ? Palette.raised : .clear)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .onHover { hovering = $0 }
+      .help("stim logs --source agent: what an agent did on this device. Click for the recent actions.")
+      .popover(isPresented: $shown, arrowEdge: .bottom) {
+        AgentActionsList(actions: actions, driver: device.activity?.driver?.tool)
+          .padding(Space.lg)
+          .frame(width: 380, alignment: .leading)
+      }
+    }
   }
 }

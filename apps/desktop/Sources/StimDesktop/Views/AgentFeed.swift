@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class AgentFeedModel: ObservableObject {
-  static let shown = 6
+  static let shown = 20
 
   @Published private(set) var actions: [LogRecord] = []
   private var deviceID = ""
@@ -32,10 +32,11 @@ final class AgentFeedModel: ObservableObject {
   }
 }
 
-struct AgentFeed: View {
+struct AgentFeed<Content: View>: View {
   var cli: Task<StimCLI, Never>
   var workspace: String
   var device: DeviceRef
+  @ViewBuilder var content: ([LogRecord]) -> Content
   @StateObject private var model = AgentFeedModel()
 
   private struct RunKey: Hashable {
@@ -45,36 +46,39 @@ struct AgentFeed: View {
   }
 
   var body: some View {
-    Group {
-      if !model.actions.isEmpty {
-        VStack(alignment: .leading, spacing: Space.xs) {
-          Text("Agent actions")
-            .font(.stim(.caption, weight: .semibold))
-            .foregroundStyle(Palette.secondary)
-          ForEach(Array(model.actions.enumerated().reversed()), id: \.offset) { _, record in
-            HStack(spacing: Space.md) {
-              Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
-              Text(record.msg)
-                .foregroundStyle(record.level >= .error ? Palette.error : Palette.text)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            }
-            .font(.stim(.caption, mono: true))
-          }
+    content(model.actions)
+      .task(id: device.activityKey.map { RunKey(workspace: workspace, slot: device.slot, deviceID: $0) }) {
+        guard let deviceID = device.activityKey else { return }
+        let cli = await cli.value
+        guard !Task.isCancelled else { return }
+        model.start(cli: cli, workspace: workspace, slot: device.slot, deviceID: deviceID)
+        while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
+        model.stop()
+      }
+  }
+}
+
+struct AgentActionsList: View {
+  var actions: [LogRecord]
+  var driver: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      Text(driver.map { "Driven by \($0)" } ?? "Agent actions").font(.stim(.headline))
+      if actions.isEmpty {
+        Text("No agent action recorded on this device yet.").foregroundStyle(Palette.tertiary)
+      }
+      ForEach(Array(actions.enumerated().reversed()), id: \.offset) { _, record in
+        HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+          Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
+          Text(record.msg)
+            .foregroundStyle(record.level >= .error ? Palette.error : Palette.text)
+            .lineLimit(2)
+            .textSelection(.enabled)
         }
-        .padding(Space.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
-        .help("stim logs --source agent: what an agent did on this device")
+        .font(.stim(.caption, mono: true))
       }
     }
-    .task(id: device.activityKey.map { RunKey(workspace: workspace, slot: device.slot, deviceID: $0) }) {
-      guard let deviceID = device.activityKey else { return }
-      let cli = await cli.value
-      guard !Task.isCancelled else { return }
-      model.start(cli: cli, workspace: workspace, slot: device.slot, deviceID: deviceID)
-      while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
-      model.stop()
-    }
+    .font(.stim(.callout))
   }
 }
