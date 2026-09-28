@@ -44,7 +44,7 @@ function latestBuild(env: EnvironmentState): LastBuild | null {
  * and the latest build failed.
  */
 export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
-  if (!device.running || device.platform === 'web' || device.app?.state === 'running') return null;
+  if (!device.running || device.platform === 'web' || device.physical || device.app?.state === 'running') return null;
   const last = env.lastBuilds?.[device.platform];
   const everBuilt = env.builds?.[device.platform]?.some((entry) => entry.result === 'succeeded') ?? true;
   if (last?.status === 'failed' && !everBuilt) return 'none';
@@ -245,7 +245,8 @@ export function deviceTitle(device: DeviceRef): DeviceTitle {
       detail: join(device.physical ? 'USB' : 'Emulator', slot),
     };
   }
-  if (device.physical) return { name: device.name, detail: join(device.name !== device.model ? device.model : null, slot) };
+  if (device.physical)
+    return { name: device.name, detail: join(device.name !== device.model ? device.model : null, slot) };
   const runtime = /^(.*\S)\s+(\d+(?:\.\d+)*)$/.exec(device.model);
   if (runtime) return { name: runtime[1]!, detail: join(`iOS ${runtime[2]}`, slot) };
   return device.model === 'iOS Simulator'

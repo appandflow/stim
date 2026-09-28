@@ -237,6 +237,18 @@ describe('deviceTitle', () => {
     );
     expect(deviceTitle(other!)).toEqual({ name: 'iPad Pro 13-inch (M5)', detail: 'iOS 26.2 \u00B7 tablet' });
   });
+
+  it('titles a leased iPhone by its own name and model, not as a simulator', () => {
+    const phone = { platform: 'ios', slot: 'default', physical: true, running: true, owned: false } as const;
+    expect(deviceTitle({ ...phone, id: 'U', name: 'Old iPhone', model: 'iPhone 12 Pro', state: 'connected' })).toEqual({
+      name: 'Old iPhone',
+      detail: 'iPhone 12 Pro',
+    });
+    expect(deviceTitle({ ...phone, id: 'U', name: 'iOS device', model: 'iOS device', state: 'connected' })).toEqual({
+      name: 'iOS device',
+      detail: '',
+    });
+  });
 });
 
 describe('buildLine', () => {
