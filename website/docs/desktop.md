@@ -71,6 +71,15 @@ closed or was never launched there, the device shows **App not running**. On a
 Stim-owned simulator or emulator it also has a **Run** button; any other device
 has none.
 
+## See which agent works in a workspace
+
+The inspector's **Agents** section lists the Claude Code and Codex sessions
+working in the workspace, such as "Claude Code · Fix the login bug · 5m ago",
+from `agents` in `stim status`. Click a session to open it in the Claude
+desktop app or the Codex app. A Claude Code session started in a terminal has
+no link, because the Claude app can only open sessions it hosts. The phone app
+shows the same sessions on each workspace row and screen, without a link.
+
 ## See what uses the disk
 
 **Machine** in the sidebar shows what fills the Mac's disk, largest first, and

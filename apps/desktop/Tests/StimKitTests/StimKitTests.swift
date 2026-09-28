@@ -981,3 +981,23 @@ import Testing
     #expect(backoff.delay(afterRunning: 0) == 2)
   }
 }
+
+@Suite struct AgentSessionTests {
+  let agents: [AgentSession] = {
+    let json = """
+      [{"tool":"claude-code","sessionId":"a","cwd":"/w","title":"Fix the login bug","lastActiveAt":"2026-09-28T11:55:00.000Z",
+        "openUrl":"claude://code/continue?session=local_1"},
+       {"tool":"codex","sessionId":"b","cwd":"/w","openUrl":"file:///etc/passwd"}]
+      """
+    return try! JSONDecoder().decode([AgentSession].self, from: Data(json.utf8))
+  }()
+
+  @Test func labelsTheToolTitleAndActivityAge() {
+    let now = ISO8601DateFormatter().date(from: "2026-09-28T12:00:00Z")!
+    #expect(agents.map { $0.label(now: now) } == ["Claude Code \u{00B7} Fix the login bug \u{00B7} 5m ago", "Codex"])
+  }
+
+  @Test func opensOnlyClaudeAndCodexLinks() {
+    #expect(agents.map(\.openURL?.absoluteString) == ["claude://code/continue?session=local_1", nil])
+  }
+}

@@ -55,6 +55,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// Each platform's last runs, newest first; absent from an older `stim`.
   public var builds: BuildHistory?
   public var worktree: WorktreeInfo?
+  /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
+  public var agents: [AgentSession]?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?
 
@@ -62,6 +64,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree
+    case agents
   }
 
   public var id: String { path }
