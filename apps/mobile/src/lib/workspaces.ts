@@ -222,6 +222,26 @@ function webDevice(web: WebBrowserState): DeviceRef {
   };
 }
 
+type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical'>;
+
+/**
+ * Whether the Mac streams and controls `device`: a Stim-owned device, or a leased Android phone when the Mac's
+ * stim-server lists `physical-android` in its features. An older server would ignore `physical` and stream the
+ * slot's owned device instead.
+ */
+export function servesDevice(device: ServedDevice, features: readonly string[]): boolean {
+  if (!device.physical) return device.owned;
+  return device.platform === 'android' && features.includes('physical-android');
+}
+
+/** Why a device the Mac does not serve shows no screen. */
+export function unservedReason(device: ServedDevice): string {
+  if (!device.physical) return 'Frames are only served for devices Stim owns.';
+  return device.platform === 'android'
+    ? "Update stim-server on the Mac to see this phone's screen."
+    : 'Stim does not stream physical iPhones yet.';
+}
+
 export function platformName(platform: DevicePlatform): string {
   return platform === 'ios' ? 'iOS' : platform === 'web' ? 'Web' : 'Android';
 }

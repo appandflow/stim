@@ -324,6 +324,8 @@ export interface FrameTarget {
   workspace: string;
   platform: DevicePlatform;
   slot?: string;
+  /** The physical device the workspace leases in `slot`, instead of its Stim-owned one. */
+  physical?: boolean;
   /** Frames a second, 1 to 30; the server's default is 5. */
   fps?: number;
   /** Pixels on the longer edge, 240 to 2048; the server's default is 1280. */
@@ -338,6 +340,8 @@ export interface ControlBeginParams {
   platform: DevicePlatform;
   slot?: string;
   takeOver?: boolean;
+  /** Controls the physical device the workspace leases in `slot`, while that lease lasts. */
+  physical?: boolean;
 }
 
 /** `postures` lists what `input.posture` takes: none for a device without a hinge. */
@@ -427,6 +431,8 @@ export interface Methods {
       /** `home` is absent from servers older than the `machine.get` method. */
       server: { name: string; version: string; stim: string; home?: string };
       capabilities: string[];
+      /** What the server serves beyond the base protocol; absent from servers that predate it. */
+      features?: string[];
       /** The actions this device may run; absent from servers that predate actions. */
       actions?: ActionName[];
       /** The paired device this connection authenticated as; absent from servers that predate it. */

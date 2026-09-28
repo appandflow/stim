@@ -292,6 +292,7 @@ function hello(deviceToken, deviceName) {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
+    features: ['physical-android'],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
   };

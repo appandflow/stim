@@ -35,17 +35,19 @@ const EMPTY: Omit<StreamState, 'key'> = { frame: null, video: null, error: null,
  * empty, or the server has no H.264 to offer) come back as `frame`.
  */
 export function useDeviceStream(
-  target: { workspace: string; platform: DevicePlatform; slot: string },
+  target: { workspace: string; platform: DevicePlatform; slot: string; physical?: boolean },
   options: { enabled: boolean; fps: number; maxEdge: number; video: 'h264'[] },
 ): DeviceStream {
   const { connection } = useMacConnection();
   const streamId = useId();
-  const { workspace, platform, slot } = target;
+  const { workspace, platform, slot, physical = false } = target;
   const { fps, maxEdge, video } = options;
   const [latest, setLatest] = useState<StreamState | null>(null);
   const subscription = useRef<string | null>(null);
   const key =
-    connection && options.enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}\n${video.join(',')}` : null;
+    connection && options.enabled
+      ? `${workspace}\n${platform}\n${slot}\n${physical}\n${fps}\n${maxEdge}\n${video.join(',')}`
+      : null;
   const [meter] = useState(() => new VideoMeter());
   useEffect(() => {
     if (!connection || key === null) return;
@@ -55,7 +57,7 @@ export function useDeviceStream(
       setLatest((prev) => ({ ...(prev && prev.key === key ? prev : { key, ...EMPTY }), ...patch, key }));
     const unsubscribe = connection.subscribe(
       'frames.subscribe',
-      { workspace, platform, slot, fps, maxEdge, video },
+      { workspace, platform, slot, fps, maxEdge, video, ...(physical ? { physical } : {}) },
       (event) => {
         if (event.event === 'frame') {
           size = '';
@@ -85,7 +87,7 @@ export function useDeviceStream(
       subscription.current = null;
       unsubscribe();
     };
-  }, [connection, key, streamId, workspace, platform, slot, fps, maxEdge, video, meter]);
+  }, [connection, key, streamId, workspace, platform, slot, physical, fps, maxEdge, video, meter]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});

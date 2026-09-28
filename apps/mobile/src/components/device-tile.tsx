@@ -14,7 +14,7 @@ import { useNow } from '@/hooks/use-now';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { shortDuration } from '@/lib/format';
 import { tildeHome } from '@/lib/paths';
-import { deviceSource, shortUrl, type DeviceRef } from '@/lib/workspaces';
+import { deviceSource, servesDevice, shortUrl, unservedReason, type DeviceRef } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 420;
 const SCREEN_PADDING = 12;
@@ -29,13 +29,21 @@ export function DeviceTile({
   warnings: string[];
 }) {
   const { theme } = useUnistyles();
-  const { home, mac } = useMacConnection();
+  const { home, mac, state: link } = useMacConnection();
   const [screenWidth, setScreenWidth] = useState(0);
   const now = useNow(30_000);
-  const streams = device.running && device.owned && !device.physical;
-  const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
+  const streams = device.running && servesDevice(device, link.kind === 'open' ? link.features : []);
+  const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams, {
+    physical: device.physical,
+  });
   const thumbnail = useRef<ViewInstance>(null);
-  const target = { macId: mac?.id ?? '', workspace, platform: device.platform, slot: device.slot };
+  const target = {
+    macId: mac?.id ?? '',
+    workspace,
+    platform: device.platform,
+    slot: device.slot,
+    physical: device.physical,
+  };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const notes = warnings.map((warning) => (
     <Text key={warning} variant="caption" tone="warning" style={styles.note}>
@@ -131,17 +139,11 @@ export function DeviceTile({
           </Touch>
         ) : (
           <Text variant="footnote" tone="tertiary" style={styles.placeholder}>
-            {streams
-              ? (error ?? 'Waiting for frames')
-              : device.physical
-                ? 'Stim does not stream physical devices.'
-                : device.running
-                  ? 'Frames are only served for devices Stim owns.'
-                  : device.state}
+            {streams ? (error ?? 'Waiting for frames') : device.running ? unservedReason(device) : device.state}
           </Text>
         )}
       </View>
-      {streams && device.id && device.platform !== 'web' ? (
+      {streams && device.owned && device.id && device.platform !== 'web' ? (
         <AgentFeed workspace={workspace} slot={device.slot} deviceId={device.id} />
       ) : null}
     </Card>

@@ -42,7 +42,7 @@ import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-conne
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, shortUrl, workspaceTitleAt } from '@/lib/workspaces';
+import { devicesOf, servesDevice, shortUrl, unservedReason, workspaceTitleAt } from '@/lib/workspaces';
 import type { DevicePlatform, DevicePosture, InputButton, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
@@ -71,14 +71,18 @@ const POSTURE_LABELS: Record<DevicePosture, string> = {
   unfolded: 'Unfold',
 };
 
+const NO_FEATURES: readonly string[] = [];
+
 export function DeviceView({
   workspace,
   platform,
   slot,
+  physical,
 }: {
   workspace: string;
   platform: DevicePlatform;
   slot: string;
+  physical: boolean;
 }) {
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
@@ -89,16 +93,19 @@ export function DeviceView({
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
   const status = useStatus();
   const env = status?.environments.find((candidate) => candidate.path === workspace);
-  const device = env ? devicesOf(env).find((entry) => entry.platform === platform && entry.slot === slot) : undefined;
-  const streams = Boolean(device?.running && device.owned && !device.physical);
+  const device = env
+    ? devicesOf(env).find((entry) => entry.platform === platform && entry.slot === slot && entry.physical === physical)
+    : undefined;
+  const { mac, state: link, connection } = useMacConnection();
+  const features = link.kind === 'open' ? link.features : NO_FEATURES;
+  const streams = Boolean(device?.running && servesDevice(device, features));
   const streamOptions = useMemo(
     () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video }),
     [streams, preset.fps, maxEdge, preset.video],
   );
-  const stream = useDeviceStream({ workspace, platform, slot }, streamOptions);
+  const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const source = stream.video ?? stream.frame;
-  const control = useDeviceControl(workspace, platform, slot);
-  const { mac, state: link, connection } = useMacConnection();
+  const control = useDeviceControl(workspace, platform, slot, physical);
   const readOnly = control.allowed === false;
   const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
@@ -112,7 +119,7 @@ export function DeviceView({
   const stage = useRef<ViewInstance>(null);
   const screenZoom = useScreenZoom(!controlling && streams);
   const zoom = useDeviceZoom(
-    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
+    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
     platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !(landscape && readOnly) && !screenZoom.zoomed,
@@ -287,7 +294,7 @@ export function DeviceView({
           <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
         ) : null}
         {platform !== 'web' ? <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} /> : null}
-        {platform === 'android' || (platform === 'ios' && !postures.length && !shown) ? (
+        {(platform === 'android' && !physical) || (platform === 'ios' && !postures.length && !shown) ? (
           <>
             <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
             <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
@@ -368,7 +375,9 @@ export function DeviceView({
                     collapsable={false}
                   >
                     {streams ? null : (
-                      <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+                      <Text style={styles.placeholder}>
+                        {device?.running ? unservedReason(device) : (device?.state ?? 'This device is not running.')}
+                      </Text>
                     )}
                   </View>
                   {landscape ? (

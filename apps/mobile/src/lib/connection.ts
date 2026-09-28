@@ -18,6 +18,8 @@ export type ConnectionState =
       server: Methods['hello']['result']['server'];
       actions: ActionName[] | null;
       capabilities: string[];
+      /** What the server serves beyond the base protocol, such as `physical-android`. */
+      features: string[];
       /** This phone's id on the Mac, as `stim-server devices` lists it; null from a server that predates it. */
       deviceId: string | null;
     }
@@ -197,6 +199,7 @@ export class StimConnection {
             server: hello.server,
             actions: hello.actions ?? null,
             capabilities: hello.capabilities,
+            features: hello.features ?? [],
             deviceId: hello.device?.id ?? null,
           });
           for (const sub of this.subscriptions) this.sendSubscribe(socket, sub);

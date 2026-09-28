@@ -21,6 +21,8 @@ export interface DeviceTarget {
   workspace: string;
   platform: DevicePlatform;
   slot: string;
+  /** The physical device the workspace leases in `slot`, which shares the slot with its Stim-owned one. */
+  physical?: boolean;
 }
 
 /** Where the viewer grows from: the thumbnail's rect in window coordinates and the frame it showed. */
@@ -55,8 +57,8 @@ function subscribe(listener: () => void) {
   };
 }
 
-export function zoomKey({ macId, workspace, platform, slot }: DeviceTarget): string {
-  return `${macId}\n${workspace}\n${platform}\n${slot}`;
+export function zoomKey({ macId, workspace, platform, slot, physical }: DeviceTarget): string {
+  return `${macId}\n${workspace}\n${platform}\n${slot}${physical ? '\nphysical' : ''}`;
 }
 
 /** Opens the device viewer, growing it out of `thumbnail`, which hides until the viewer closes. */
@@ -64,7 +66,13 @@ export function openDeviceViewer(thumbnail: ViewInstance | null, target: DeviceT
   const push = () =>
     router.push({
       pathname: '/mac/[id]/device',
-      params: { id: target.macId, path: target.workspace, platform: target.platform, slot: target.slot },
+      params: {
+        id: target.macId,
+        path: target.workspace,
+        platform: target.platform,
+        slot: target.slot,
+        ...(target.physical ? { physical: '1' } : {}),
+      },
     });
   if (!thumbnail) return push();
   if (opening) return;

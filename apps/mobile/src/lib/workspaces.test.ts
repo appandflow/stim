@@ -13,7 +13,9 @@ import {
   projectOf,
   repositoryRoots,
   runningBuild,
+  servesDevice,
   shortUrl,
+  unservedReason,
   workspaceTitle,
   workspaceTitleAt,
 } from '@/lib/workspaces';
@@ -195,6 +197,16 @@ describe('physical devices', () => {
     const keys = devicesOf(leased).map(deviceKey);
     expect(new Set(keys).size).toBe(keys.length);
     expect(isActive(env('/w', { physicalDevices: leased.physicalDevices }))).toBe(true);
+  });
+
+  it('streams a leased Android phone only from a server that serves physical-android', () => {
+    const [iphone, pixel] = devicesOf(leased).filter((d) => d.physical);
+    expect(servesDevice(pixel!, ['physical-android'])).toBe(true);
+    expect(servesDevice(pixel!, [])).toBe(false);
+    expect(unservedReason(pixel!)).toMatch(/Update stim-server/);
+    expect(servesDevice(iphone!, ['physical-android'])).toBe(false);
+    const owned = devicesOf(leased).find((d) => !d.physical && d.owned)!;
+    expect(servesDevice(owned, [])).toBe(true);
   });
 });
 

@@ -309,15 +309,22 @@ export function useFrame(
   platform: DevicePlatform,
   slot: string,
   enabled: boolean,
-  hint: { fps?: number; maxEdge?: number } = {},
+  hint: { fps?: number; maxEdge?: number; physical?: boolean } = {},
 ): { frame: FrameEvent | null; error: string | null; delayed: boolean } {
   const { connection } = useMacConnection();
   const [latest, setLatest] = useState<FrameState | null>(null);
-  const { fps, maxEdge } = hint;
-  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}` : null;
+  const { fps, maxEdge, physical } = hint;
+  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}\n${physical}` : null;
   useEffect(() => {
     if (!connection || key === null) return;
-    const params = { workspace, platform, slot, ...(fps ? { fps } : {}), ...(maxEdge ? { maxEdge } : {}) };
+    const params = {
+      workspace,
+      platform,
+      slot,
+      ...(fps ? { fps } : {}),
+      ...(maxEdge ? { maxEdge } : {}),
+      ...(physical ? { physical } : {}),
+    };
     return connection.subscribe('frames.subscribe', params, (event) => {
       setLatest((prev) => {
         const base = prev && prev.key === key ? prev : { key, ...EMPTY_FRAME_STATE };
@@ -327,7 +334,7 @@ export function useFrame(
         return base;
       });
     });
-  }, [connection, key, workspace, platform, slot, fps, maxEdge]);
+  }, [connection, key, workspace, platform, slot, fps, maxEdge, physical]);
   return latest && latest.key === key ? latest : EMPTY_FRAME_STATE;
 }
 
@@ -377,9 +384,10 @@ export function useFrameSnapshot(
   slot: string,
   enabled: boolean,
   intervalMs: number,
+  physical = false,
 ): { frame: FrameEvent | null; error: string | null } {
   const [latest, setLatest] = useState<{ key: string; frame: FrameEvent | null; error: string | null } | null>(null);
-  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}` : null;
+  const key = connection && enabled ? `${workspace}\n${platform}\n${slot}\n${physical}` : null;
   useEffect(() => {
     if (!connection || key === null) return;
     let unsubscribe: (() => void) | null = null;
@@ -389,7 +397,7 @@ export function useFrameSnapshot(
     const refresh = () => {
       unsubscribe = connection.subscribe(
         'frames.subscribe',
-        { workspace, platform, slot, maxEdge: SNAPSHOT_EDGE },
+        { workspace, platform, slot, maxEdge: SNAPSHOT_EDGE, ...(physical ? { physical } : {}) },
         (event) => {
           if (event.event !== 'frame' && event.event !== 'error') return;
           if (event.event === 'frame') {
@@ -411,7 +419,7 @@ export function useFrameSnapshot(
       unsubscribe?.();
       if (timer) clearTimeout(timer);
     };
-  }, [connection, key, workspace, platform, slot, intervalMs]);
+  }, [connection, key, workspace, platform, slot, intervalMs, physical]);
   return latest && latest.key === key ? latest : { frame: null, error: null };
 }
 
@@ -507,7 +515,12 @@ type HeldState =
  * ends a disconnected client's sessions), and when the server ends it; input sent while no session is on is
  * dropped.
  */
-export function useDeviceControl(workspace: string, platform: DevicePlatform, slot: string): DeviceControl {
+export function useDeviceControl(
+  workspace: string,
+  platform: DevicePlatform,
+  slot: string,
+  physical = false,
+): DeviceControl {
   const { connection, state: link } = useMacConnection();
   const allowed = link.kind === 'open' ? link.capabilities.includes('control') : null;
   const [held, setHeld] = useState<HeldState>({ kind: 'off' });
@@ -542,7 +555,8 @@ export function useDeviceControl(workspace: string, platform: DevicePlatform, sl
     (takeOver = false) => {
       if (!connection) return;
       setHeld({ kind: 'starting' });
-      connection.request('control.begin', { workspace, platform, slot, ...(takeOver ? { takeOver } : {}) }).then(
+      const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
+      connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
         (result) =>
           setHeld({
             kind: 'on',
@@ -560,7 +574,7 @@ export function useDeviceControl(workspace: string, platform: DevicePlatform, sl
         },
       );
     },
-    [connection, link, workspace, platform, slot],
+    [connection, link, workspace, platform, slot, physical],
   );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
   const send = useCallback(
