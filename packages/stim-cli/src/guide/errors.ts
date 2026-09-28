@@ -175,8 +175,11 @@ Branch on the code, never on the message.`,
   On a release cache hit Stim regenerates this workspace's JS bundle into a
   COPY of the cached artifact before installing it -- \`ios --configuration
   Release\` into a copy of the .app, \`android --variant ...Release\` into a
-  copy of the APK. When any step of that swap fails (the bundle command,
-  hermesc, the re-sign, zipalign, apksigner), the run does NOT install the
+  copy of the APK. An iOS app that sets React Native's RCTUseAssetCatalog
+  Info.plist key also gets its RNAssets.bundle image catalog recompiled with
+  actool from the new bundle. When any step of that swap fails (reading the
+  app's Info.plist, the bundle command, hermesc, actool, the re-sign,
+  zipalign, apksigner), the run does NOT install the
   cached artifact -- its baked-in JS is the builder's, not yours -- and does
   NOT fail: it prints a \`swap        failed at <step>: ... --
   building fresh instead\` note on stderr and falls back to a full build. If

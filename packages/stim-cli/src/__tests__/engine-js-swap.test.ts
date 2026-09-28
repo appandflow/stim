@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   JS_BUNDLE_NAME,
+  assetCatalogTarget,
   bundleCommand,
   detectEntryFile,
   hermesEnabledFromProperties,
@@ -166,7 +167,15 @@ interface Call {
   args?: string[];
 }
 
-function harness({ bundleExit = 0, failOn = null as string | null, hermescExists = true, bundleWritten = true } = {}) {
+function harness({
+  bundleExit = 0,
+  failOn = null as string | null,
+  hermescExists = true,
+  bundleWritten = true,
+  infoPlist = {} as Record<string, unknown>,
+  onBundle = () => {},
+  onActool = (_out: string) => {},
+} = {}) {
   const calls: Call[] = [];
   const appCopy = join(tmp, 'Fixture.app');
   const bundleOutput = join(tmp, JS_BUNDLE_NAME);
@@ -174,11 +183,19 @@ function harness({ bundleExit = 0, failOn = null as string | null, hermescExists
     runFile: (file, args = []) => {
       calls.push({ op: 'runFile', file, args });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
+      if (file === 'plutil') {
+        const [, key, format] = args;
+        const value = infoPlist[key!];
+        if (value === undefined) throw new Error(`Command failed: plutil\nNo value at that key path: ${key}`);
+        return format === 'json' ? JSON.stringify(value) : String(value);
+      }
+      if (file === 'xcrun' && args[0] === 'actool') onActool(args[args.indexOf('--compile') + 1]!);
       return '';
     },
   });
   const spawnFn = (cmd: string, args: string[], _opts: Record<string, unknown>) => {
     calls.push({ op: 'spawn', file: cmd, args });
+    onBundle();
     return makeBundleChild(bundleExit);
   };
   const exists = (p: string) => {
@@ -213,11 +230,11 @@ describe('swapJsBundle', () => {
     expect(result.hermes).toBe(true);
 
     const shape = calls.map((c) => c.file);
-    expect(shape).toEqual(['cp', 'npx', hermescPath(root), 'mv', 'cp', 'cp', 'codesign']);
+    expect(shape).toEqual(['cp', 'plutil', 'npx', hermescPath(root), 'mv', 'cp', 'cp', 'codesign']);
 
     const copyAside = calls[0];
     expect(copyAside?.args).toEqual(['-c', '-R', cachedApp, appCopy]);
-    const bundle = calls[1];
+    const bundle = calls[2];
     expect(bundle?.args?.slice(0, 2)).toEqual(['expo', 'export:embed']);
     expect(bundle?.args).toContain(bundleOutput);
     const codesign = calls.at(-1);
@@ -273,9 +290,17 @@ describe('swapJsBundle', () => {
       mkdirSync(resources, { recursive: true });
       writeFileSync(join(resources, 'asset.txt'), 'cached asset');
       chmodSync(resources, 0o555);
+      const real = getExecutor();
+      const exec = {
+        ...real,
+        runFile: (file: string, args: string[] = []) => {
+          if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
+          return real.runFile(file, args);
+        },
+      };
       try {
         const { run } = harness({ bundleExit: 1 });
-        const result = await run({ cachedAppPath: app, exec: getExecutor() });
+        const result = await run({ cachedAppPath: app, exec });
         expect(result.failed).toBe(true);
         expect(result.step).toBe('bundle');
         expect(existsSync(tmp)).toBe(false);
@@ -283,6 +308,28 @@ describe('swapJsBundle', () => {
         expect(readFileSync(join(resources, 'asset.txt'), 'utf-8')).toBe('cached asset');
       } finally {
         chmodSync(resources, 0o755);
+        rmSync(source, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'an Info.plist holding <data> and <date> still reads as no catalog with the real plutil (macOS only)',
+    async () => {
+      const source = mkdtempSync(join(tmpdir(), 'stim-plist-app-'));
+      const app = join(source, 'Fixture.app');
+      mkdirSync(app);
+      writeFileSync(
+        join(app, 'Info.plist'),
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>' +
+          '<key>Stamp</key><data>AAAA</data><key>Built</key><date>2026-09-28T12:00:00Z</date></dict></plist>',
+      );
+      try {
+        const { calls, run } = harness({ bundleExit: 1 });
+        const result = await run({ cachedAppPath: app, exec: getExecutor() });
+        expect(result.step).toBe('bundle');
+        expect(calls.find((c) => c.op === 'spawn')?.args).not.toContain('--asset-catalog-dest');
+      } finally {
         rmSync(source, { recursive: true, force: true });
       }
     },
@@ -325,6 +372,7 @@ describe('swapJsBundle', () => {
           throw new Error('cp: clonefile failed');
         }
         if (file === 'cp' && fallbackTargetExisted === undefined) fallbackTargetExisted = existsSync(args.at(-1)!);
+        if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
         return '';
       },
     });
@@ -334,5 +382,100 @@ describe('swapJsBundle', () => {
     expect(calls[0]?.args?.[0]).toBe('-c');
     expect(calls[1]?.args).toEqual(['-R', cachedApp, join(tmp, 'Fixture.app')]);
     expect(fallbackTargetExisted).toBe(false);
+  });
+});
+
+describe('assetCatalogTarget', () => {
+  test('reads the RCTUseAssetCatalog opt-in with the values NSBundle boolValue accepts', () => {
+    expect(assetCatalogTarget({})).toBeNull();
+    expect(assetCatalogTarget({ RCTUseAssetCatalog: false })).toBeNull();
+    expect(assetCatalogTarget({ RCTUseAssetCatalog: 'NO' })).toBeNull();
+    for (const on of [true, 1, 'YES', 'true', '1']) {
+      expect(assetCatalogTarget({ RCTUseAssetCatalog: on })).not.toBeNull();
+    }
+  });
+
+  test("compiles for the built app's platform, minimum OS and device families", () => {
+    expect(
+      assetCatalogTarget({
+        RCTUseAssetCatalog: true,
+        DTPlatformName: 'iphonesimulator',
+        MinimumOSVersion: '16.4',
+        UIDeviceFamily: [1, 2],
+      }),
+    ).toEqual({ platform: 'iphonesimulator', minimumDeploymentTarget: '16.4', targetDevices: ['iphone', 'ipad'] });
+  });
+});
+
+describe('swapJsBundle with the React Native asset catalog', () => {
+  const infoPlist = {
+    RCTUseAssetCatalog: true,
+    DTPlatformName: 'iphonesimulator',
+    MinimumOSVersion: '16.4',
+    UIDeviceFamily: [1],
+  };
+  const staging = () => join(tmp, 'rn-assets');
+  const catalogBundle = () => join(tmp, 'Fixture.app', 'RNAssets.bundle');
+  const cachedCatalog = () => {
+    mkdirSync(catalogBundle(), { recursive: true });
+    writeFileSync(join(catalogBundle(), 'Assets.car'), 'cached build images');
+  };
+  const emitImageset = () => mkdirSync(join(staging(), 'RNAssets.xcassets', 'assets_images_logo.imageset'));
+  const writeCar = (out: string) => writeFileSync(join(out, 'Assets.car'), 'new images');
+
+  test('recompiles RNAssets.bundle from the new bundle instead of shipping the cached build images', async () => {
+    cachedCatalog();
+    const { calls, run } = harness({ infoPlist, onBundle: emitImageset, onActool: writeCar });
+    const result = await run();
+    expect(result.ok).toBe(true);
+    const bundle = calls.find((c) => c.op === 'spawn');
+    expect(bundle?.args?.slice(-2)).toEqual(['--asset-catalog-dest', staging()]);
+    const actool = calls.find((c) => c.file === 'xcrun');
+    expect(actool?.args).toEqual([
+      'actool',
+      join(staging(), 'RNAssets.xcassets'),
+      '--compile',
+      catalogBundle(),
+      '--output-format',
+      'human-readable-text',
+      '--errors',
+      '--warnings',
+      '--notices',
+      '--platform',
+      'iphonesimulator',
+      '--minimum-deployment-target',
+      '16.4',
+      '--target-device',
+      'iphone',
+    ]);
+    expect(readFileSync(join(catalogBundle(), 'Assets.car'), 'utf-8')).toBe('new images');
+    expect(readFileSync(join(catalogBundle(), 'Info.plist'), 'utf-8')).toMatch(/org\.reactjs\.RNAssets/);
+    expect(calls.findIndex((c) => c.file === 'xcrun')).toBeLessThan(calls.findIndex((c) => c.file === 'codesign'));
+  });
+
+  test('removes the cached catalog when the new bundle has no images', async () => {
+    cachedCatalog();
+    const { calls, run } = harness({ infoPlist });
+    const result = await run();
+    expect(result.ok).toBe(true);
+    expect(existsSync(catalogBundle())).toBe(false);
+    expect(calls.some((c) => c.file === 'xcrun')).toBe(false);
+  });
+
+  test('an actool run that writes no Assets.car fails the swap, so a full build runs', async () => {
+    cachedCatalog();
+    const { calls, run } = harness({ infoPlist, onBundle: emitImageset });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('actool');
+    expect(calls.some((c) => c.file === 'codesign')).toBe(false);
+  });
+
+  test('an unreadable Info.plist fails the swap before bundling', async () => {
+    const { calls, run } = harness({ failOn: 'plutil' });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('catalog');
+    expect(calls.some((c) => c.op === 'spawn')).toBe(false);
   });
 });
