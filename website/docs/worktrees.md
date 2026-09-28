@@ -210,8 +210,9 @@ Each worktree also reports the GitHub pull request of its branch, once
 to `git`: `{ number, url, title, state, checks, reviewDecision, checkedAt }`,
 where `state` is `open`, `draft`, `merged` or `closed`, and `checks` counts the
 head commit's `passing`, `failing` and `pending` checks. It is `null` when the
-branch has no pull request, and absent when `gh` is missing or signed out, the
-repository has no GitHub remote, or no watcher has looked it up yet. The watcher
+branch has no pull request, and absent when it was never looked up: `gh` is
+missing or signed out, the repository has no GitHub remote, or status could not
+read the worktree's git. A later `gh` failure keeps the last answer. The watcher
 uses the same `gh` lookup as `stim gc`, off its refresh path, once per
 repository for worktrees whose answer is over 5 minutes old or whose HEAD
 moved; one-shot `stim status` only reads the cached answers.

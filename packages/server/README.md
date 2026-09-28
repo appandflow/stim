@@ -138,7 +138,8 @@ Events are `{ "event", "subscription", ... }`.
   and memory history from each payload's `machine.owners`, and every `status`
   event carries it beside the payload as `usage`, once it holds a reading:
   `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
-  minutes in 10-second slots, oldest first, at most 60 points: point `i` of `n`
+  minutes in 15-second slots, the cadence at which `status --watch` rereads
+  machine usage, oldest first, at most 40 points: point `i` of `n`
   is at `endAt - (n - 1 - i) * intervalMs`, and a slot no payload fell in is
   `null`. Each `environments` entry is `{ "workspace", "cpuPercent",
 "memoryMb" }` and sums every machine owner of that environment path; each

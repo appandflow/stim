@@ -142,7 +142,8 @@ export interface StatusMeasurer {
 /**
  * Keeps the disk use and pull request caches fresh for `status --watch`, off its refresh path: one `du -sk` at a
  * time, live environments first, each folder at most every 5 minutes while its environment is live and every hour otherwise, and one `gh api
- * graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD moved. It rechecks
+ * graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD moved. It
+ * runs git only in the repository, never in a worktree, and only for worktrees whose git state status read. It rechecks
  * a folder's cache right before measuring, so two watchers rarely measure the same folder. `updated` runs after each
  * write.
  */
@@ -159,7 +160,6 @@ export function createStatusMeasurer({
   let checking = false;
   let checkedAt = -Infinity;
   const failedAt = new Map<string, number>();
-  const lookup = pullRequestLookups({ detail: true });
 
   async function du(path: string): Promise<number | null> {
     try {
@@ -191,41 +191,50 @@ export function createStatusMeasurer({
     }
   }
 
-  async function headOf(path: string): Promise<string | null> {
+  async function branchHead(repository: string, branch: string): Promise<string | null> {
     try {
-      return (await exec.runFileAsync('git', ['-C', path, 'rev-parse', 'HEAD'], { timeoutMs: GIT_TIMEOUT_MS })).trim();
+      const out = await exec.runFileAsync('git', ['-C', repository, 'rev-parse', '--verify', `refs/heads/${branch}`], {
+        timeoutMs: GIT_TIMEOUT_MS,
+      });
+      return out.trim() || null;
     } catch {
       return null;
     }
   }
 
   async function checkPullRequests(worktrees: WorktreeFacts[]): Promise<void> {
-    const byRepository = new Map<string, PullRequestQuery[]>();
-    for (const { path, branch, repository } of worktrees) {
-      if (!branch || !repository) continue;
-      const head = await headOf(path);
+    const lookup = pullRequestLookups({ detail: true });
+    const byRepository = new Map<string, (PullRequestQuery & { path: string })[]>();
+    for (const { path, branch, repository, git } of worktrees) {
+      if (!branch || !repository || !git) continue;
+      const head = await branchHead(repository, branch);
       if (!head) continue;
       const cached = readPullRequestCache(path);
       const fresh =
         cached?.branch === branch &&
         cached.head === head &&
         now() - Date.parse(cached.checkedAt) < PULL_REQUEST_MAX_AGE_MS;
-      if (!fresh) byRepository.set(repository, [...(byRepository.get(repository) ?? []), { cwd: path, branch, head }]);
+      if (!fresh) {
+        byRepository.set(repository, [
+          ...(byRepository.get(repository) ?? []),
+          { path, cwd: repository, branch, head },
+        ]);
+      }
     }
     for (const [repository, queries] of byRepository) {
       const results = await lookup(repository, queries);
       const at = new Date(now()).toISOString();
       results.forEach((result, i) => {
         if (!('pullRequest' in result)) return;
-        const { cwd, branch, head } = queries[i]!;
+        const { path, branch, head } = queries[i]!;
         const entry: PullRequestCacheEntry = {
-          path: cwd,
+          path,
           branch,
           head,
           checkedAt: at,
           pullRequest: result.pullRequest ? statusPullRequest(result.pullRequest, at) : null,
         };
-        writeCacheFile(pullRequestCacheFile(cwd), entry);
+        writeCacheFile(pullRequestCacheFile(path), entry);
       });
       if (results.some((result) => 'pullRequest' in result)) updated();
     }
@@ -244,16 +253,20 @@ export function createStatusMeasurer({
           }
         }
         measuring = true;
-        void measure([...folders].map(([path, maxAgeMs]) => ({ path, maxAgeMs }))).finally(() => {
-          measuring = false;
-        });
+        void measure([...folders].map(([path, maxAgeMs]) => ({ path, maxAgeMs })))
+          .catch(() => {})
+          .finally(() => {
+            measuring = false;
+          });
       }
       if (!checking && now() - checkedAt >= PULL_REQUEST_CHECK_MS) {
         checking = true;
         checkedAt = now();
-        void checkPullRequests(worktrees).finally(() => {
-          checking = false;
-        });
+        void checkPullRequests(worktrees)
+          .catch(() => {})
+          .finally(() => {
+            checking = false;
+          });
       }
     },
   };

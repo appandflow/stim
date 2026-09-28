@@ -120,6 +120,7 @@ export function selectPullRequest(
   isAncestor: (ancestor: string, descendant: string) => boolean,
 ): PullRequestFact | null {
   const known = pulls.flatMap((pull) => {
+    if (!pull || typeof pull !== 'object') return [];
     const state = stateOf(pull.state);
     return state && pull.headRefOid && !pull.isCrossRepository ? [{ pull, state }] : [];
   });

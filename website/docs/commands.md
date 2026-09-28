@@ -804,8 +804,9 @@ successful runs with that outcome, and `basis` counts them. Both are `null`
 until the project has such a run.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
-in the shape of `lastBuilds.<platform>.missReason` below. While the native
-tool runs, `build` also carries `detail`:
+in the shape of `lastBuilds.<platform>.missReason` below. Once the native
+build tool prints a line Stim reads, `build` also carries `detail` until the run
+ends:
 `{ step, unit, done, total, line, updatedAt }`. `step` is the tool's step:
 `configure`, `compile`, `link`, `resources`, `script`, `dex`, `package` or
 `sign`. For xcodebuild, `unit` is `targets`, `done` counts the targets that

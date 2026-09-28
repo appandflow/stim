@@ -28,7 +28,7 @@ function payload(owners: MachineOwner[] | null): StatusPayload {
   };
 }
 
-test('keeps 60 ten-second points per environment and device, summing an environment over its owners', () => {
+test('keeps 40 fifteen-second points per environment and device, summing an environment over its owners', () => {
   const recorder = new UsageRecorder();
   recorder.record(
     payload([
@@ -53,18 +53,18 @@ test('keeps 60 ten-second points per environment and device, summing an environm
   recorder.record(payload(null), T0 + 30_000);
 
   const history = recorder.history(T0 + 30_000)!;
-  expect(history).toMatchObject({ intervalMs: 10_000, endAt: T0 + 30_000 });
+  expect(history).toMatchObject({ intervalMs: 15_000, endAt: T0 + 30_000 });
   const app = history.environments.find((series) => series.workspace === '/w/app')!;
-  expect(app.cpuPercent).toHaveLength(60);
-  expect(app.cpuPercent.slice(-4)).toEqual([15.3, null, 1, null]);
-  expect(app.memoryMb.slice(-4)).toEqual([2100, null, 590, null]);
+  expect(app.cpuPercent).toHaveLength(40);
+  expect(app.cpuPercent.slice(-3)).toEqual([15.3, 1, null]);
+  expect(app.memoryMb.slice(-3)).toEqual([2100, 590, null]);
   expect(
     history.devices.map(({ kind, id, workspace, slot }) => ({ kind, id, workspace, ...(slot ? { slot } : {}) })),
   ).toEqual([
     { kind: 'simulator', id: 'UDID-1', workspace: '/w/app' },
     { kind: 'emulator', id: 'stim-other', workspace: '/w/other', slot: 'tablet' },
   ]);
-  expect(history.devices[0]!.cpuPercent.slice(-4)).toEqual([12.3, null, null, null]);
+  expect(history.devices[0]!.cpuPercent.slice(-3)).toEqual([12.3, null, null]);
 });
 
 test('drops a series once its last reading is older than 10 minutes', () => {

@@ -7,6 +7,7 @@ import { metroBundleState } from '../metro-bundle.ts';
 
 let server: Server;
 afterEach(async () => {
+  vi.restoreAllMocks();
   server?.closeAllConnections();
   if (server?.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
 });
@@ -94,7 +95,6 @@ test("Metro's multipart progress parts become at most one progress record a seco
     bundling: false,
     last: { platform: 'android', status: 'ok', durationMs: 2200, finishedAt: '2026-09-27T10:00:02.200Z' },
   });
-  vi.restoreAllMocks();
 });
 
 test("Stim's warmup prefetch is recorded apart from app requests, without a client lookup", async () => {

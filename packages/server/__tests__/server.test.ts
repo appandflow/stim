@@ -605,12 +605,12 @@ describe('status.subscribe', () => {
     const event = (await client.next()) as StatusEvent;
     expect(event.payload).toEqual({ ...PAYLOADS[1], machine });
     expect(event.usage).toMatchObject({
-      intervalMs: 10_000,
+      intervalMs: 15_000,
       devices: [{ kind: 'simulator', id: 'UDID-1', workspace: '/work/app' }],
     });
     const [app] = event.usage!.environments;
     expect(app).toMatchObject({ workspace: '/work/app' });
-    expect(app!.cpuPercent).toHaveLength(60);
+    expect(app!.cpuPercent).toHaveLength(40);
     expect(app!.cpuPercent.filter((value) => value !== null)).toEqual([12.5]);
     expect(app!.memoryMb.filter((value) => value !== null)).toEqual([1500]);
   });

@@ -1,8 +1,8 @@
 import type { StatusPayload } from '@stim-cli/core/state';
 import type { DeviceUsageSeries, UsageHistory, UsageSeries } from './protocol.ts';
 
-const INTERVAL_MS = 10_000;
-const POINTS = 60;
+const INTERVAL_MS = 15_000;
+const POINTS = 40;
 
 interface Reading {
   cpuPercent: number;
@@ -14,7 +14,7 @@ type Slots = Map<number, Reading>;
 type DeviceMeta = Omit<DeviceUsageSeries, keyof UsageSeries>;
 
 /**
- * Per-environment and per-device CPU and memory from the status payloads stim-server receives, in 10-second slots
+ * Per-environment and per-device CPU and memory from the status payloads stim-server receives, in 15-second slots, the cadence at which `status --watch` rereads machine usage,
  * over the last 10 minutes. A later payload in the same slot replaces the earlier one. An environment sums every
  * machine owner of its workspace; a device is a simulator or emulator owner, keyed by its UDID or AVD name.
  */

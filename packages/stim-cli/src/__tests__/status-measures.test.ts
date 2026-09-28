@@ -66,7 +66,12 @@ function environment(): EnvironmentState {
     memoryMb: 0,
     warnings: [],
     issues: [],
-    worktree: { path: app, branch: BRANCH, repository: join(home, 'repo') },
+    worktree: {
+      path: app,
+      branch: BRANCH,
+      repository: join(home, 'repo'),
+      git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
+    },
     android: { name: 'stim-t', owned: true, physical: false },
   };
 }
@@ -102,6 +107,9 @@ test('measures stale folders and pull requests in the background, then status re
   });
   expect(calls.filter((call) => call.file === 'du')).toHaveLength(4);
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
+  expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 2))).toEqual([
+    ['-C', join(home, 'repo')],
+  ]);
   expect(updated).toHaveBeenCalled();
 
   calls = [];

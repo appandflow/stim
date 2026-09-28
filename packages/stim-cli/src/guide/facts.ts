@@ -67,8 +67,9 @@ branch and HEAD, once \`status --watch\` has looked it up:
 
   pullRequest     { number, url, title, state, checks, reviewDecision,
                   checkedAt }, null when GitHub has none for the branch and
-                  HEAD, absent when unknown: gh missing or signed out, no
-                  GitHub remote, or not looked up yet
+                  HEAD, absent when never looked up: gh missing or signed
+                  out, no GitHub remote, or status could not read the
+                  worktree's git. A later gh failure keeps the last answer.
   state           "open", "draft", "merged" or "closed"
   checks          { passing, failing, pending } counts of the head commit's
                   check runs and commit statuses, or null when it has none
@@ -77,7 +78,8 @@ branch and HEAD, once \`status --watch\` has looked it up:
 
 \`status --watch\` asks GitHub off its refresh path, through the same gh api
 graphql lookup gc uses, one call per repository, for a worktree whose lookup
-is over 5 minutes old or whose branch or HEAD moved. It caches each answer
+is over 5 minutes old or whose branch or HEAD moved. It runs git in the
+repository, never in the worktree. It caches each answer
 under $STIM_HOME/pull-requests, which one-shot status only reads, and never
 warns when gh is unavailable.
 
