@@ -42,8 +42,8 @@ WHAT RECLAIMS AN OWNED DEVICE
 \`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
 --delete\` also clears workspace build outputs, trims oversized workspace logs
 (\`guide cleanup disk\`) and removes orphaned workspace directories, never a
-checkout. Device recordings are the one exception: stim-server prunes them, and
-turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
+checkout. Device recordings can also go without either: stim-server prunes
+them, and turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 

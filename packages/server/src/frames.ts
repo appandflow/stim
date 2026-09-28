@@ -807,6 +807,11 @@ export class FramePool {
     this.helperSource(device)?.keyframe();
   }
 
+  /** Makes the next frame `device`'s recording encoder writes a keyframe. */
+  recordKeyframe(device: Device): void {
+    this.helperSource(device)?.recordKeyframe();
+  }
+
   /** A subscriber of `device` is behind; called until its socket drains, it lowers the shared bitrate. */
   congested(device: Device): void {
     this.helperSource(device)?.congested();

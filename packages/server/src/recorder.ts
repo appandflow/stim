@@ -27,14 +27,17 @@ import {
   type RecordingPlatform,
   type StatusPayload,
 } from '@stim-cli/core/state';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import type { FeedListener } from './feed.ts';
+import { serverDir } from './registry.ts';
 import { deviceKey, ownedDevice, type Device, type FramePool } from './frames.ts';
 import { VIDEO_FOLDED, VIDEO_KEYFRAME, VIDEO_UNFOLDED, type FrameTarget } from './protocol.ts';
 import type { AccessUnit } from './video.ts';
 
 const HEARTBEAT_MS = 2000;
-/** How long a recording whose helper failed, or had no helper yet, waits before it starts again. */
+/** How long a recording whose helper failed, or had no helper yet, waits before it starts again; doubled per failure. */
 const RETRY_MS = 5000;
+const MAX_RETRY_MS = 5 * 60_000;
 const RESUBSCRIBE_MS = 5000;
 /** A record's header after its u32 length: u8 flags, f64 capture time, u16 width, u16 height. */
 const RECORD_HEADER_BYTES = 13;
@@ -101,6 +104,8 @@ class DeviceRecording {
   readonly device: Device;
   /** When the recording stopped writing because its helper or a write failed; null while it works. */
   brokenAt: number | null = null;
+  /** Whether a unit reached the disk. */
+  wrote = false;
   private readonly dir: string;
   private readonly workspaceDir: string;
   private readonly detach: () => void;
@@ -114,7 +119,7 @@ class DeviceRecording {
   constructor(device: Device, target: Target, frames: FramePool, segmentMs: number) {
     this.device = device;
     this.segmentMs = segmentMs;
-    this.keyframe = () => frames.keyframe(device);
+    this.keyframe = () => frames.recordKeyframe(device);
     this.workspaceDir = workspaceStateDir(target.workspace);
     this.dir = join(workspaceRecordingsDir(target.workspace), recordingDeviceName(target.platform, target.slot));
     const detach = frames.record(device, {
@@ -142,9 +147,9 @@ class DeviceRecording {
     }
   }
 
-  stop(now: number): void {
+  stop(): void {
     this.detach();
-    this.finish(now);
+    this.finish(this.last);
   }
 
   private write(unit: AccessUnit): void {
@@ -160,6 +165,7 @@ class DeviceRecording {
         this.fd = openSync(this.part, 'a', 0o600);
       }
       writeSync(this.fd, recordBytes(unit));
+      this.wrote = true;
       this.last = Math.max(this.last, unit.capturedAt);
     } catch {
       this.fail();
@@ -180,7 +186,7 @@ class DeviceRecording {
 
   private fail(): void {
     this.brokenAt ??= Date.now();
-    this.finish(Date.now());
+    this.finish(this.last);
   }
 }
 
@@ -211,6 +217,9 @@ export class Recorder {
   private resubscribe: NodeJS.Timeout | null = null;
   private payload: StatusPayload | null = null;
   private readonly timers: NodeJS.Timeout[];
+  private readonly failures = new Map<string, number>();
+  private claim: ClaimHandle | null = null;
+  private claimWarned = false;
   private closed = false;
 
   constructor(options: {
@@ -229,6 +238,37 @@ export class Recorder {
       setInterval(() => this.prune(), this.limits.pruneMs),
     ];
     this.prune();
+  }
+
+  /**
+   * One stim-server records and prunes a Stim home at a time, under an exclusive ownership claim; another one
+   * serves replays but records nothing until the claim frees.
+   */
+  private owns(): boolean {
+    if (this.claim) return true;
+    let attempt;
+    try {
+      attempt = tryAcquireClaim({
+        root: join(serverDir(), 'recorder'),
+        mode: 'exclusive',
+        label: 'stim-server recording',
+      });
+    } catch (error) {
+      if (!this.claimWarned) console.error(`stim-server: not recording: ${(error as Error).message}`);
+      this.claimWarned = true;
+      return false;
+    }
+    if (attempt.acquired) {
+      this.claim = attempt.acquired;
+      return true;
+    }
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!this.claimWarned) {
+      const holder = attempt.held?.owner.pid ?? attempt.waitingFor?.[0]?.owner.pid;
+      console.error(`stim-server: another stim-server (pid ${holder ?? 'unknown'}) records this Stim home.`);
+    }
+    this.claimWarned = true;
+    return false;
   }
 
   /** A client watches the device in `target`; recording lasts until the returned function runs. */
@@ -259,8 +299,10 @@ export class Recorder {
     if (this.resubscribe) clearTimeout(this.resubscribe);
     this.unsubscribe?.();
     this.unsubscribe = null;
-    for (const session of this.sessions.values()) session.stop(this.now());
+    for (const session of this.sessions.values()) session.stop();
     this.sessions.clear();
+    releaseClaim(this.claim);
+    this.claim = null;
   }
 
   private subscribe(): void {
@@ -281,7 +323,7 @@ export class Recorder {
 
   private evaluate(): void {
     const payload = this.payload;
-    if (this.closed || !payload || !Array.isArray(payload.environments)) return;
+    if (this.closed || !payload || !Array.isArray(payload.environments) || !this.owns()) return;
     const wanted = new Map<string, Device>();
     for (const environment of payload.environments) {
       if (environment.recording?.enabled === false) {
@@ -299,9 +341,13 @@ export class Recorder {
     const now = this.now();
     for (const [key, session] of this.sessions) {
       const device = wanted.get(key);
-      const retry = session.brokenAt !== null && now - session.brokenAt >= RETRY_MS;
-      if (device && !retry && deviceKey(device) === deviceKey(session.device)) continue;
-      session.stop(this.now());
+      if (session.wrote) this.failures.delete(key);
+      const failures = this.failures.get(key) ?? 0;
+      const broken = session.brokenAt !== null;
+      const retry = broken && now - session.brokenAt! >= Math.min(RETRY_MS * 2 ** failures, MAX_RETRY_MS);
+      if (device && deviceKey(device) === deviceKey(session.device) && !retry) continue;
+      if (broken) this.failures.set(key, failures + 1);
+      session.stop();
       this.sessions.delete(key);
     }
     for (const [key, device] of wanted) {
@@ -318,7 +364,7 @@ export class Recorder {
   private forget(workspace: string): void {
     for (const [key, session] of this.sessions) {
       if ((JSON.parse(key) as string[])[0] !== workspace) continue;
-      session.stop(this.now());
+      session.stop();
       this.sessions.delete(key);
     }
     const dir = workspaceRecordingsDir(workspace);
@@ -336,6 +382,9 @@ export class Recorder {
    * segment no session writes, left by a server that stopped, is closed at its modification time first.
    */
   private prune(): void {
+    const owned = this.claim !== null;
+    if (!this.owns()) return;
+    if (!owned) this.evaluate();
     const writing = new Set([...this.sessions.values()].flatMap((session) => session.openFile ?? []));
     const root = join(configDir(), 'workspaces');
     let names: string[];

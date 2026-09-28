@@ -19,14 +19,25 @@ export function workspaceRecordingEnabled(
   return recordingEnabled(env, [project.settings, repo ? config?.repos?.[repo]?.settings : undefined, config]);
 }
 
-/**
- * Deletes the recordings of every registered workspace whose `recording.enabled` is now false, and returns those
- * workspaces. stim-server stops recording such a workspace once its status shows the change.
- */
-export function deleteDisabledRecordings(env: NodeJS.ProcessEnv): string[] {
+/** Every registered workspace's `recording.enabled` from the settings files alone, without `STIM_RECORDING`. */
+export function recordingLayers(): Map<string, boolean> {
   const config = loadConfig();
-  return Object.entries(config?.projects ?? {}).flatMap(([path, project]) => {
-    if (workspaceRecordingEnabled(path, project, config, env)) return [];
+  return new Map(
+    Object.entries(config?.projects ?? {}).map(([path, project]) => [
+      path,
+      workspaceRecordingEnabled(path, project, config, {}),
+    ]),
+  );
+}
+
+/**
+ * Deletes the recordings of every workspace a settings write turned off, comparing the settings files before
+ * (`before`, from {@link recordingLayers}) and after it, and returns those workspaces. stim-server stops
+ * recording them once `stim status` shows the change.
+ */
+export function deleteTurnedOffRecordings(before: ReadonlyMap<string, boolean>): string[] {
+  return [...recordingLayers()].flatMap(([path, enabled]) => {
+    if (enabled || before.get(path) === false) return [];
     const dir = workspaceRecordingsDir(path);
     if (!existsSync(dir)) return [];
     rmSync(dir, { recursive: true, force: true });

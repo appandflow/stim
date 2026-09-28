@@ -15,8 +15,9 @@ import IOSurface
 // button, as DevTools input events.
 // stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
 // "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second, "record":
-// {"maxEdge": px, "bitrate": bits per second}}, where fps 0 pauses frames and "record",
-// present only while stim-server records the device, runs a second encoder for it; {"keyframe": true} to make the next video frame a keyframe; or an input:
+// {"maxEdge": px, "fps": n, "bitrate": bits per second}}, where fps 0 pauses frames and
+// "record", present only while stim-server records the device, runs a second encoder for it
+// at no more than its own fps; {"recordKeyframe": true} makes that encoder's next frame a keyframe; {"keyframe": true} to make the next video frame a keyframe; or an input:
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
 // and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
 // is Return, "\t" is Tab and "\u{8}" is Delete; and {"input": "button", "button":
@@ -47,6 +48,7 @@ struct Config: Equatable {
 
 struct Recording: Equatable {
   var maxEdge: Int
+  var fps: Double
   var bitrate: Int
 }
 
@@ -189,8 +191,20 @@ func recordEncoder() -> VideoEncoder {
 extension VideoEncoder {
   func configure(record config: Config) {
     configure(
-      enabled: config.record != nil, maxEdge: config.record?.maxEdge ?? config.maxEdge, fps: Int(config.fps),
-      bitrate: config.record?.bitrate ?? config.bitrate)
+      enabled: config.record != nil, maxEdge: config.record?.maxEdge ?? config.maxEdge,
+      fps: Int(config.record?.fps ?? config.fps), bitrate: config.record?.bitrate ?? config.bitrate)
+  }
+}
+
+/// Keeps the recording encoder at its own fps while live video renders faster, the way JpegGate paces JPEG.
+final class RecordGate {
+  private let gate = JpegGate()
+
+  func admit(_ config: Config, pacer: Pacer) -> Bool {
+    guard let record = config.record else { return false }
+    var paced = config
+    paced.jpegFps = record.fps
+    return gate.admit(paced, pacer: pacer)
   }
 }
 
@@ -231,6 +245,7 @@ final class SimulatorSource {
   private let callbackID = NSUUID()
   private let video = videoEncoder()
   private let recorder = recordEncoder()
+  private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
 
   init(udid: String) {
@@ -311,6 +326,10 @@ final class SimulatorSource {
 
   func keyframe() {
     video.requestKeyframe()
+    pacer.changed()
+  }
+
+  func recordKeyframe() {
     recorder.requestKeyframe()
     pacer.changed()
   }
@@ -328,13 +347,14 @@ final class SimulatorSource {
     default: (orientation, quarterTurns) = (.up, 0)
     }
     let ioSurface = unsafeBitCast(surface, to: IOSurfaceRef.self)
-    if config.video || config.record != nil {
+    let record = recordGate.admit(config, pacer: pacer)
+    if config.video || record {
       var buffer: Unmanaged<CVPixelBuffer>?
       CVPixelBufferCreateWithIOSurface(nil, ioSurface, nil, &buffer)
       if let pixels = buffer?.takeRetainedValue() {
         let capturedAt = now()
         if config.video { video.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
-        if config.record != nil { recorder.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
+        if record { recorder.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
       }
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer) else { return }
@@ -357,6 +377,7 @@ final class EmulatorSource {
   private var pacer: Pacer!
   private let video = videoEncoder()
   private let recorder = recordEncoder()
+  private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
 
   init(serial: String) {
@@ -396,6 +417,10 @@ final class EmulatorSource {
 
   func keyframe() {
     video.requestKeyframe()
+    pacer.changed()
+  }
+
+  func recordKeyframe() {
     recorder.requestKeyframe()
     pacer.changed()
   }
@@ -426,7 +451,7 @@ final class EmulatorSource {
   private func render(_ frame: EmulatorFrame, config: Config) {
     let capturedAt = now()
     if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt) }
-    if config.record != nil {
+    if recordGate.admit(config, pacer: pacer) {
       recorder.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt)
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer), let provider = CGDataProvider(data: frame.rgba as CFData),
@@ -452,6 +477,7 @@ final class WebSource {
   private var pacer: Pacer!
   private let video = videoEncoder()
   private let recorder = recordEncoder()
+  private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
   private var pixels: CVPixelBufferPool?
   private var pixelSize = (width: 0, height: 0)
@@ -506,6 +532,10 @@ final class WebSource {
   /// A page that does not change sends no frame, so a keyframe re-encodes the last one.
   func keyframe() {
     video.requestKeyframe()
+    pacer.changed()
+  }
+
+  func recordKeyframe() {
     recorder.requestKeyframe()
     pacer.changed()
   }
@@ -525,14 +555,15 @@ final class WebSource {
 
   private func render(_ frame: ScreencastFrame, config: Config) {
     guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil) else { return }
-    if config.video || config.record != nil, let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+    let record = recordGate.admit(config, pacer: pacer)
+    if config.video || record, let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
       let buffer = pixelBuffer(image)
     {
       let repeated = frame.capturedAt == encodedAt
       encodedAt = frame.capturedAt
       let capturedAt = repeated ? now() : frame.capturedAt
       if config.video { video.encode(buffer, quarterTurns: 0, capturedAt: capturedAt) }
-      if config.record != nil { recorder.encode(buffer, quarterTurns: 0, capturedAt: capturedAt) }
+      if record { recorder.encode(buffer, quarterTurns: 0, capturedAt: capturedAt) }
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer),
       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -595,7 +626,7 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
-    case .config, .keyframe:
+    case .config, .keyframe, .recordKeyframe:
       break
     }
   }
@@ -604,6 +635,7 @@ extension WebSource: Source {
 enum Command {
   case config(Config)
   case keyframe
+  case recordKeyframe
   case touch(TouchPhase, CGPoint, display: Int)
   case text(String)
   case button(String)
@@ -614,6 +646,7 @@ enum Command {
 func parseCommand(_ line: String, base: Config) -> Command? {
   guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
   if object["keyframe"] as? Bool == true { return .keyframe }
+  if object["recordKeyframe"] as? Bool == true { return .recordKeyframe }
   switch object["input"] as? String {
   case "touch":
     let phases: [String: TouchPhase] = ["down": .down, "move": .move, "up": .up]
@@ -641,10 +674,10 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     if let video = object["video"] as? Bool { config.video = video }
     if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
     config.record = (object["record"] as? [String: Any]).flatMap { record in
-      guard let edge = record["maxEdge"] as? Int, edge > 0, let bitrate = record["bitrate"] as? Int, bitrate > 0 else {
-        return nil
-      }
-      return Recording(maxEdge: min(edge, 4096), bitrate: bitrate)
+      guard let edge = record["maxEdge"] as? Int, edge > 0, let bitrate = record["bitrate"] as? Int, bitrate > 0,
+        let fps = record["fps"] as? Double, fps > 0
+      else { return nil }
+      return Recording(maxEdge: min(edge, 4096), fps: min(fps, 60), bitrate: bitrate)
     }
     return .config(config)
   default:
@@ -655,6 +688,7 @@ func parseCommand(_ line: String, base: Config) -> Command? {
 protocol Source: AnyObject {
   func configure(_ config: Config)
   func keyframe()
+  func recordKeyframe()
   func input(_ command: Command)
 }
 
@@ -675,6 +709,8 @@ func readCommands(_ source: Source) {
           source.configure(config)
         case .keyframe?:
           source.keyframe()
+        case .recordKeyframe?:
+          source.recordKeyframe()
         case let command?:
           source.input(command)
         case nil:
@@ -747,7 +783,7 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .rotate, .posture:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture:
       break
     }
   }
@@ -793,7 +829,7 @@ extension EmulatorSource: Source {
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe:
+    case .config, .keyframe, .recordKeyframe:
       break
     }
   }

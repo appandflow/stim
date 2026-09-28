@@ -311,3 +311,15 @@ test('turning recording.enabled off deletes the recordings of each workspace it 
   const { out } = await settings(['get', 'recording.enabled', '--json'], { STIM_RECORDING: '1' });
   expect(JSON.parse(out[0]!)).toMatchObject({ value: true, origin: 'env' });
 });
+
+test('a recording.enabled write that turns nothing off deletes nothing, whatever STIM_RECORDING says', async () => {
+  saveConfig({ version: 2, projects: { [app]: {} }, repos: {} });
+  mkdirSync(join(workspaceRecordingsDir(app), 'ios-default'), { recursive: true });
+
+  const on = await settings(['set', 'recording.enabled', 'true', '--scope', 'machine', '--json'], {
+    STIM_RECORDING: '0',
+  });
+  expect(JSON.parse(on.out[0]!).recordingsDeleted).toEqual([]);
+  await settings(['unset', 'recording.enabled', '--scope', 'workspace']);
+  expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
+});

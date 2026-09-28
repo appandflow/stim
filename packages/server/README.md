@@ -321,9 +321,14 @@ for as long as it runs, shared with status subscribers.
 
 Recording goes through the device's `stim-frames` helper, shared with live
 subscribers. The helper runs a second H.264 encoder for it, at 720 pixels on
-the long edge, 1 Mbps and up to 10 frames a second, so live video keeps its own
-size and bitrate. A device on screenshots, without the helper, is not
-recorded.
+the long edge, 1 Mbps and at most 10 frames a second, so live video keeps its
+own bitrate. Live frames are captured at no less than 720 pixels and 10 frames
+a second while the device is recorded. A device on screenshots, without the
+helper, is not recorded, and a helper that fails is started again after 5
+seconds, doubling up to 5 minutes. One stim-server records and prunes a Stim
+home at a time, under an exclusive ownership claim at
+`$STIM_HOME/server/recorder`; a second one serves replays and records once the
+claim frees.
 
 Footage is stored under `$STIM_HOME/workspaces/<id>/recordings/<platform>-<slot>/`
 as segments of about 5 seconds, each starting at a keyframe; the server asks
@@ -345,8 +350,10 @@ the `.part` segments of a server that stopped. When a status payload shows
 `recording.enabled` false for a workspace (the `recording.enabled` setting, or
 `STIM_RECORDING` in the server's environment), it stops recording that
 workspace within seconds and deletes its recordings. `stim stop` ends recording
-and keeps the footage; `stim worktree remove` and `stim gc` delete it.
-Recordings stay on the Mac and are served only to paired clients.
+and keeps the footage; `stim worktree remove` and `stim gc` delete it. A gc that
+deletes the segment being written loses the rest of that segment; the next one
+is written as usual. Recordings stay on the Mac and are served only to paired
+clients.
 
 ## Push notifications
 

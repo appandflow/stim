@@ -27,6 +27,7 @@ import {
 } from '../src/registry.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceStateDir } from '@stim-cli/core';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -1301,6 +1302,7 @@ if (env.FAKE_HELPER_FAIL && !env.FAKE_HELPER_FAIL_AFTER) {
 let lines = '';
 let config = {};
 let keyframe = true;
+let recordKeyframe = true;
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   lines += chunk;
@@ -1308,6 +1310,7 @@ process.stdin.on('data', (chunk) => {
     const line = JSON.parse(lines.slice(0, at));
     run.configs.push(line);
     if (line.keyframe) keyframe = true;
+    else if (line.recordKeyframe) recordKeyframe = true;
     else config = line;
     lines = lines.slice(at + 1);
   }
@@ -1326,14 +1329,14 @@ setInterval(() => {
     message(3, Buffer.concat([header, Buffer.from([0, 0, 0, 1, keyframe ? 0x65 : 0x41, sent % 256])]));
     keyframe = false;
   }
-  if (config.record && !(env.FAKE_HELPER_STATIC && sent > 0 && !keyframe)) {
+  if (config.record && !(env.FAKE_HELPER_STATIC && !recordKeyframe)) {
     const header = Buffer.alloc(13);
-    header[0] = env.FAKE_HELPER_STATIC || sent % 5 === 0 ? 1 : 0;
+    header[0] = recordKeyframe || sent % 5 === 0 ? 1 : 0;
     header.writeDoubleBE(Date.now() + 0.25, 1);
     header.writeUInt16BE(332, 9);
     header.writeUInt16BE(720, 11);
     message(4, Buffer.concat([header, Buffer.from([0, 0, 0, 1, sent % 5 === 0 ? 0x65 : 0x41, sent % 256])]));
-    keyframe = false;
+    recordKeyframe = false;
   }
   if (config.jpeg === false) return sent++;
   const size = Buffer.alloc(4);
@@ -2598,7 +2601,7 @@ describe('frames.subscribe', () => {
           jpeg: false,
           video: false,
           bitrate: 3_000_000,
-          record: { maxEdge: 720, bitrate: 1_000_000 },
+          record: { maxEdge: 720, fps: 10, bitrate: 1_000_000 },
         });
       },
       10_000,
@@ -2627,7 +2630,7 @@ describe('frames.subscribe', () => {
       expect(segments()).toHaveLength(count);
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.configs).toContainEqual(
-        expect.objectContaining({ fps: 30, video: true, record: { maxEdge: 720, bitrate: 1_000_000 } }),
+        expect.objectContaining({ fps: 30, video: true, record: { maxEdge: 720, fps: 10, bitrate: 1_000_000 } }),
       );
     });
 
@@ -2688,6 +2691,34 @@ describe('frames.subscribe', () => {
           fakeHelper(),
           RECORDING,
         );
+        await until(() => closed().length >= 1);
+      },
+      10_000,
+    );
+
+    test.skipIf(!fakeTailscale)(
+      'records nothing while another stim-server holds the recording claim, and takes over when it frees',
+      async () => {
+        registerWorkspaceDir();
+        const other = tryAcquireClaim({
+          root: join(process.env.STIM_HOME!, 'server', 'recorder'),
+          mode: 'exclusive',
+        }).acquired!;
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
+            FAKE_HELPER_INTERVAL_MS: '10',
+          },
+          undefined,
+          fakeHelper(),
+          { record: true, recordLimits: { segmentMs: 100, pruneMs: 100 } },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        expect(existsSync(deviceDir())).toBe(false);
+        expect(error).toHaveBeenCalledWith(expect.stringContaining('another stim-server'));
+        error.mockRestore();
+        releaseClaim(other);
         await until(() => closed().length >= 1);
       },
       10_000,

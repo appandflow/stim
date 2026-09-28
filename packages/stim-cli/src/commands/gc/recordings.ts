@@ -74,7 +74,7 @@ function planRecordings(
     }
     return kept(
       'retained',
-      'the last 15 minutes of footage per device stay until worktree remove, --cache recordings or --older-than',
+      'the last 15 minutes of footage per device stay until worktree remove, --cache recordings, --older-than or recording.enabled false',
     );
   });
 }

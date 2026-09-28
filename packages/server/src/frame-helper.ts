@@ -249,6 +249,11 @@ export class HelperSource {
     this.child.stdin!.write('{"keyframe":true}\n');
   }
 
+  /** Makes the recording encoder's next frame a keyframe, leaving live video alone. */
+  recordKeyframe(): void {
+    if (!this.stopped) this.child.stdin!.write('{"recordKeyframe":true}\n');
+  }
+
   congested(): void {
     if (this.bitrate.congested(Date.now()) !== null) this.configure();
   }
@@ -271,7 +276,7 @@ export class HelperSource {
       ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
       video: jpegFps.length < viewers.length,
       bitrate: this.bitrate.current,
-      ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, bitrate: RECORD_BITRATE } } : {}),
+      ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, fps: RECORD_HINT.fps, bitrate: RECORD_BITRATE } } : {}),
     });
     if (!jpegFps.length) this.last = null;
     if (config === this.config || this.stopped) return;
