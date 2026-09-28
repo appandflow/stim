@@ -137,6 +137,12 @@ describe('appPresence', () => {
     return appPresence(e, devicesOf(e)[0]!);
   };
 
+  it('never reports the app of a leased phone, which Stim does not track', () => {
+    const e = env({ ios: booted, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } });
+    expect(appPresence(e, devicesOf(e)[0]!)).toBe('none');
+    expect(appPresence(e, { ...devicesOf(e)[0]!, physical: true, owned: false })).toBeNull();
+  });
+
   it('says no app only when the latest build failed and none ever succeeded', () => {
     expect(presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } })).toBe('none');
     expect(
@@ -212,6 +218,11 @@ describe('usage from machine owners', () => {
     const android = devicesOf(e).find((d) => d.platform === 'android')!;
     expect(android.id).toBe('emulator-5554');
     expect(deviceUsage(android, '/w', machine, 5.1e9)).toEqual({ cpuPercent: 14, memoryMb: 2970, diskBytes: 5.1e9 });
+  });
+
+  it("gives a leased phone none of its slot's simulator usage", () => {
+    const phone = { ...devicesOf(e).find((d) => d.platform === 'ios')!, physical: true, owned: false };
+    expect(deviceUsage(phone, '/w', machine, null)).toBeNull();
   });
 
   it('lists devices before Metro in the process table', () => {

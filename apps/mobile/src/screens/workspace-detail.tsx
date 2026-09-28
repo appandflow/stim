@@ -242,7 +242,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const failed = lines.find((line) => line.tone === 'error')?.platform;
   const health = metroHealth(env);
   const reportsBundles = status?.environments.some((e) => e.metro?.bundle) ?? false;
-  const buildTarget = build ? devices.find((d) => d.platform === build.platform && d.slot === build.slot) : undefined;
+  const buildTarget = build
+    ? devices.find((d) => d.platform === build.platform && d.slot === build.slot && !d.physical)
+    : undefined;
   return (
     <>
       <ScrollView

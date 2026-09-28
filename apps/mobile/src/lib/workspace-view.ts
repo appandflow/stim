@@ -156,13 +156,14 @@ const DEVICE_KIND: Record<DeviceRef['platform'], MachineOwner['kind']> = {
 
 /**
  * The owner that holds a device's processes. The emulator owner's id is its AVD name, not the serial a device
- * carries, so devices match on workspace, slot and kind.
+ * carries, so devices match on workspace, slot and kind. A physical device runs no process on the Mac.
  */
 export function deviceOwner(
-  device: Pick<DeviceRef, 'platform' | 'slot'>,
+  device: Pick<DeviceRef, 'platform' | 'slot'> & { physical?: boolean },
   path: string,
   machine: MachineUsageState | null | undefined,
 ): MachineOwner | null {
+  if (device.physical) return null;
   return (
     ownersOf(machine, path).find(
       (owner) => owner.kind === DEVICE_KIND[device.platform] && (owner.slot ?? 'default') === device.slot,
