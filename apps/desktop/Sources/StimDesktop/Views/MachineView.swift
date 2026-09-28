@@ -12,11 +12,9 @@ struct MachineView: View {
   @State private var confirming: [StimCommand]?
   @State private var removing: WorkspaceStorage?
   @State private var expanded: Set<String> = []
-  @State private var showsAllDevices = false
   @State private var width: CGFloat = 1000
 
   private static let sizeWidth: CGFloat = 84
-  private static let deviceLimit = 12
   private var compact: Bool { width < 860 }
 
   var body: some View {
@@ -189,39 +187,36 @@ struct MachineView: View {
     let selected = FreePlan.effective(selection ?? FreePlan.defaultSelection(report.free), items: report.free)
     let commands = FreePlan.commands(selected, home: NSHomeDirectory())
     let bytes = FreePlan.bytes(report.free, selected: selected)
-    return VStack(alignment: .leading, spacing: Space.md) {
-      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-        Text("Safe to free now").font(.stim(.headline))
-        Text("\(report.free.count)").foregroundStyle(Palette.tertiary)
-        Spacer()
-        if let active = actions.active(for: ActionCenter.machineKey) {
-          Button {
-            actions.presented = active
-          } label: {
-            HStack(spacing: Space.sm) {
-              ProgressView().controlSize(.mini)
-              Text("Running")
-            }
+    return CollapsibleSection("machine.free", title: "Safe to free now", items: report.free, capped: false) {
+      Spacer()
+      if let active = actions.active(for: ActionCenter.machineKey) {
+        Button {
+          actions.presented = active
+        } label: {
+          HStack(spacing: Space.sm) {
+            ProgressView().controlSize(.mini)
+            Text("Running")
           }
-          .buttonStyle(.stim())
-        } else {
-          Button("Free \(formatDisk(bytes))\u{2026}") { free(commands) }
-            .buttonStyle(.stim(.primary))
-            .disabled(commands.isEmpty)
-            .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
         }
+        .buttonStyle(.stim())
+      } else {
+        Button("Free \(formatDisk(bytes))\u{2026}") { free(commands) }
+          .buttonStyle(.stim(.primary))
+          .disabled(commands.isEmpty)
+          .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
       }
+    } content: { shown in
       if metrics.gcReport == nil {
         Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
       } else if report.free.isEmpty {
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
-        ListSection(report.free) { item in freeRow(item, selected: selected) }
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
+        ListSection(shown) { item in freeRow(item, selected: selected) }
       }
     }
   }
@@ -284,23 +279,20 @@ struct MachineView: View {
   // MARK: Projects
 
   private func projects(_ report: StorageReport) -> some View {
-    VStack(alignment: .leading, spacing: Space.md) {
-      HStack(spacing: Space.md) {
-        Text("Projects").font(.stim(.headline))
-        Text("\(report.repositories.count)").foregroundStyle(Palette.tertiary)
-        Spacer()
-        if storage.hasGitHubCLI == false {
-          Text("Install the GitHub CLI (gh) to show open pull requests.").font(.stim(.footnote))
-            .foregroundStyle(Palette.tertiary)
-        }
+    CollapsibleSection("machine.projects", title: "Projects", items: report.repositories) {
+      Spacer()
+      if storage.hasGitHubCLI == false {
+        Text("Install the GitHub CLI (gh) to show open pull requests.").font(.stim(.footnote))
+          .foregroundStyle(Palette.tertiary)
       }
+    } content: { shown in
       if report.repositories.isEmpty {
         Text("stim status reports no workspaces.").foregroundStyle(Palette.tertiary)
       } else {
         Card {
           VStack(spacing: 0) {
             if !compact { columnHeader }
-            ForEach(Array(report.repositories.enumerated()), id: \.element.id) { index, repository in
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, repository in
               if index > 0 || !compact { Rectangle().fill(Palette.border).frame(height: 1) }
               if repository.worktrees.count == 1, let workspace = repository.worktrees.first {
                 workspaceRow(workspace, nested: false)
@@ -463,12 +455,7 @@ struct MachineView: View {
   // MARK: Devices
 
   private func devices(_ report: StorageReport) -> some View {
-    let shown = showsAllDevices ? report.devices : Array(report.devices.prefix(Self.deviceLimit))
-    return VStack(alignment: .leading, spacing: Space.md) {
-      HStack(spacing: Space.md) {
-        Text("Simulators and emulators").font(.stim(.headline))
-        Text("\(report.devices.count)").foregroundStyle(Palette.tertiary)
-      }
+    CollapsibleSection("machine.devices", title: "Simulators and emulators", items: report.devices) { shown in
       Text("Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.")
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
@@ -483,15 +470,6 @@ struct MachineView: View {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, device in
               if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               deviceRow(device)
-            }
-            if report.devices.count > Self.deviceLimit {
-              Rectangle().fill(Palette.border).frame(height: 1)
-              Button(showsAllDevices ? "Show the largest \(Self.deviceLimit)" : "Show all \(report.devices.count)") {
-                showsAllDevices.toggle()
-              }
-              .buttonStyle(.plain)
-              .foregroundStyle(Palette.primary)
-              .padding(Space.md)
             }
           }
         }
@@ -576,15 +554,13 @@ struct MachineView: View {
 
   private func runtimes(_ report: StorageReport) -> some View {
     let unused = report.runtimes.filter(\.unused)
-    return VStack(alignment: .leading, spacing: Space.md) {
-      HStack(spacing: Space.md) {
-        Text("Runtimes and system images").font(.stim(.headline))
-        if !unused.isEmpty {
-          Pill(tone: .warning) {
-            Text("\(unused.count) unused \u{00B7} \(formatDisk(unused.compactMap(\.size.bytes).reduce(0, +)))")
-          }
+    return CollapsibleSection("machine.runtimes", title: "Runtimes and system images", items: report.runtimes) {
+      if !unused.isEmpty {
+        Pill(tone: .warning) {
+          Text("\(unused.count) unused \u{00B7} \(formatDisk(unused.compactMap(\.size.bytes).reduce(0, +)))")
         }
       }
+    } content: { shown in
       Text("Stim never deletes these. Copy the vendor command to remove one no device uses.")
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
@@ -595,7 +571,7 @@ struct MachineView: View {
       } else {
         Card {
           VStack(spacing: 0) {
-            ForEach(Array(report.runtimes.enumerated()), id: \.element.id) { index, runtime in
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, runtime in
               if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               runtimeRow(runtime)
             }

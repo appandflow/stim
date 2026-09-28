@@ -196,6 +196,16 @@ when nothing is on disk, an ellipsis while it is measured, **Unknown** when it
 could not be sized, or a dash before the first measurement, with the reason in
 its help tag.
 
+The processes under **Now**, **Safe to free now**, **Projects**,
+**Simulators and emulators** and **Runtimes and system images** each have a
+header with a disclosure chevron and a count. A collapsed section shows only
+its header. An expanded one shows its first 10 rows in their usual order, then
+**Show all** or **Show fewer**. For **Projects** the 10 are repositories; an
+expanded repository lists all of its worktrees. An expanded **Safe to free
+now** always lists every row, so none of the rows **Free** acts on are hidden.
+Free still previews or confirms its commands first, collapsed or not. The app
+remembers each section's choices in its own preferences.
+
 - **Headline**: free space on the fullest volume against the Stim disk budget
   (`budget.minFreeDiskGb`), and one bar split into Stim devices (owned by a
   workspace, parked or orphaned), Stim caches and outputs (shared caches,
@@ -242,7 +252,7 @@ remove` in it, with what that frees: its `node_modules`, build outputs and
   `stim-*` device this home did not create, or **Yours**. Simulator sizes come
   from simctl; AVD sizes from `du -d 1` of the AVD folder (`~/.android/avd`,
   `ANDROID_AVD_HOME` or `ANDROID_USER_HOME/avd`). The app offers no action on a
-  device; the largest 12 show until **Show all**. The CLI's inventory notices,
+  device. The CLI's inventory notices,
   such as a listing that timed out, show above the list.
 - **Runtimes and system images**: iOS simulator runtimes with the size simctl
   reports, and Android system images sized with `du` of the SDK's

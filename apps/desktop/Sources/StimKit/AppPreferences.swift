@@ -40,6 +40,8 @@ public enum AppPreferences {
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
+    public static func sectionCollapsed(_ id: String) -> String { "section.\(id).collapsed" }
+    public static func sectionShowsAll(_ id: String) -> String { "section.\(id).showsAll" }
   }
 
   public static let frameRates: [Double] = [60, 30, 15, 5]
