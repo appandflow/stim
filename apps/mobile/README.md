@@ -168,8 +168,8 @@ reload and stop a workspace:
   missed. **Next build** is what the next build would find, why, and how long
   it should take, from the server's read-only `build.plan`, with the median
   behind its estimate, a refusal's remedy, when it was checked, and **Check
-  again**. The screen asks for each platform with a last build or a device when
-  it opens, one plan at a time, reuses a result for 60 seconds unless that
+  again**. The screen asks for each platform the Build card shows when it
+  opens, one plan at a time, reuses a result for 60 seconds unless that
   platform's last build changes, asks again after a failure or a reconnect,
   ignores a reply that arrives after it closes, and asks nothing while a build
   runs. The **...** menu opens the logs, copies the full path, shows errors, or
