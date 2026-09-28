@@ -175,7 +175,7 @@ function readPairings(): PairingRecord[] {
   );
 }
 
-function writeJson(file: string, value: unknown): void {
+export function writeJson(file: string, value: unknown): void {
   const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.tmp`);
   try {
     writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });

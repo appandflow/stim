@@ -13,9 +13,9 @@ export type Capability = (typeof CAPABILITIES)[number];
  * What this server serves beyond protocol version 1's base, so a client can tell before it asks. `physical-ios` and
  * `physical-android` are `physical: true` on `frames.subscribe` for that platform's leased device, and for an
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
- * the slot's Stim-owned device instead.
+ * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  */
-export const FEATURES = ['physical-ios', 'physical-android'] as const;
+export const FEATURES = ['physical-ios', 'physical-android', 'notifications'] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
@@ -46,6 +46,7 @@ export const METHODS = [
   'input.posture',
   'push.register',
   'push.unregister',
+  'notifications.list',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -552,6 +553,52 @@ export interface PushRegisterParams {
   quietHours?: QuietHours;
 }
 
+/** Why the registered phones did not get a logged notification when it happened. */
+export const NOTIFICATION_SUPPRESSIONS = ['muted', 'quiet-hours'] as const;
+
+export type NotificationSuppression = (typeof NOTIFICATION_SUPPRESSIONS)[number];
+
+/** What a logged notification opens, as its push's `data` does. */
+export type NotificationTarget =
+  | { kind: 'machine' }
+  | { kind: 'workspace'; path: string }
+  | { kind: 'device'; path: string; platform: Platform; slot: string }
+  | { kind: 'build'; path: string; platform: BuildPlatform }
+  | { kind: 'url'; path: string; url: string };
+
+/**
+ * One oversight notification the server generated, whether or not it was pushed. `seq` grows by one per entry in
+ * a log; `id` names the workspace or machine and category, as a push's collapse id does, so a later episode shares
+ * it. `suppressed` is set when no registered phone got it at `at`: `muted` when none wants its category,
+ * `quiet-hours` when those that do were in quiet hours; a problem that still held when they ended was pushed then.
+ */
+export interface NotificationEntry {
+  seq: number;
+  at: string;
+  id: string;
+  category: PushEvent;
+  title: string;
+  body: string;
+  quiet: boolean;
+  target: NotificationTarget;
+  suppressed?: NotificationSuppression;
+}
+
+/** Returns only the entries after `since`, a `cursor` an earlier list returned. */
+export interface NotificationsListParams {
+  since?: number;
+}
+
+/**
+ * The server's notification history, newest first. `log` changes when the history starts over, so a cursor or
+ * read state kept for another `log` no longer applies; `cursor` is the newest `seq`, 0 for an empty log.
+ */
+export interface NotificationsListResult {
+  log: string;
+  cursor: number;
+  notifications: NotificationEntry[];
+}
+
 export interface Methods {
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -579,6 +626,7 @@ export interface Methods {
   'input.posture': { params: InputPostureParams; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
+  'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
 }
 
 export type ClientRequest = {
@@ -690,7 +738,15 @@ export interface ControlEndedEvent {
   message: string;
 }
 
+/** A notification the server just logged, sent to each connection that sent `notifications.list`. */
+export interface NotificationEvent {
+  event: 'notification';
+  log: string;
+  notification: NotificationEntry;
+}
+
 export type ServerEvent =
+  | NotificationEvent
   | StatusEvent
   | LogsEvent
   | FrameEvent
@@ -988,6 +1044,32 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
+      NotificationEntry: {
+        type: 'object',
+        required: ['seq', 'at', 'id', 'category', 'title', 'body', 'quiet', 'target'],
+        additionalProperties: false,
+        properties: {
+          seq: { type: 'integer', minimum: 1 },
+          at: { type: 'string', format: 'date-time' },
+          id: { type: 'string' },
+          category: { enum: [...PUSH_EVENTS] },
+          title: { type: 'string' },
+          body: { type: 'string' },
+          quiet: { type: 'boolean' },
+          target: {
+            type: 'object',
+            required: ['kind'],
+            properties: {
+              kind: { enum: ['machine', 'workspace', 'device', 'build', 'url'] },
+              path: { type: 'string' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string' },
+              url: { type: 'string' },
+            },
+          },
+          suppressed: { enum: [...NOTIFICATION_SUPPRESSIONS] },
+        },
+      },
       MachineHistory: {
         type: 'object',
         required: ['intervalMs', 'samples'],
@@ -1178,6 +1260,11 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('push.unregister'),
+          request('notifications.list', {
+            type: 'object',
+            additionalProperties: false,
+            properties: { since: { type: 'integer', minimum: 0 } },
+          }),
         ],
       },
       ServerResponse: {
@@ -1195,6 +1282,16 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
                   { $ref: '#/$defs/MachineHistory' },
+                  {
+                    type: 'object',
+                    required: ['log', 'cursor', 'notifications'],
+                    additionalProperties: false,
+                    properties: {
+                      log: { type: 'string' },
+                      cursor: { type: 'integer' },
+                      notifications: { type: 'array', items: { $ref: '#/$defs/NotificationEntry' } },
+                    },
+                  },
                   {
                     type: 'object',
                     required: ['at'],
@@ -1273,6 +1370,16 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'log', 'notification'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'notification' },
+              log: { type: 'string' },
+              notification: { $ref: '#/$defs/NotificationEntry' },
+            },
+          },
           {
             type: 'object',
             required: ['event', 'subscription', 'payload'],

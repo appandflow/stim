@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { FeedListener, JsonObject } from '../src/feed.ts';
+import { NotificationLog, type LoggedNotification } from '../src/notification-log.ts';
 import {
   maskPushTokens,
   PushNotifier,
@@ -23,8 +27,10 @@ interface Expo {
 let http: Server;
 let expo: Expo;
 let endpoint: string;
+let logDir: string;
 
 beforeEach(async () => {
+  logDir = mkdtempSync(join(tmpdir(), 'stim-push-log-'));
   expo = {
     sent: [],
     receiptQueries: [],
@@ -53,6 +59,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => http.close(resolve));
+  rmSync(logDir, { recursive: true, force: true });
 });
 
 const registration = (extra: Partial<PushRegistration> = {}): PushRegistration => ({
@@ -140,6 +147,8 @@ function setup(options: Setup = {}) {
   let devices = options.devices ?? [device(registration())];
   const dropped: string[] = [];
   const subscriptions = { opened: 0, closed: 0 };
+  const log = new NotificationLog(join(logDir, 'notifications.json'), () => now);
+  const logged: LoggedNotification[] = [];
   const notifier = new PushNotifier({
     name: 'MacBook Pro',
     endpoint,
@@ -158,6 +167,9 @@ function setup(options: Setup = {}) {
     ownLeases: () => [],
     devices: () => devices,
     dropToken: (token) => dropped.push(token),
+    log,
+    whilePaired: true,
+    logged: (entries) => logged.push(...entries),
     limits: { receiptDelayMs: 0, diskMs: 10, ...options.limits },
     now: () => now,
   });
@@ -166,6 +178,8 @@ function setup(options: Setup = {}) {
     notifier,
     dropped,
     subscriptions,
+    log,
+    logged,
     at: (ms: number) => (now = T0 + ms),
     setFreeGb: (gb: number) => (freeGb = gb),
     emit: (value: JsonObject) => listener!.item(value, JSON.stringify(value)),
@@ -214,7 +228,7 @@ describe('PushNotifier', () => {
           sound: 'default',
           interruptionLevel: 'active',
           collapseId: expect.stringMatching(/^[0-9a-f]{32}$/),
-          data: { ref: 'mac-1', target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
+          data: { ref: 'mac-1', notification: 1, target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
         },
       ],
     ]);
@@ -299,7 +313,7 @@ describe('PushNotifier', () => {
           sound: 'default',
           interruptionLevel: 'active',
           collapseId: expect.any(String),
-          data: { ref: 'mac-1', target: 'machine' },
+          data: { ref: 'mac-1', notification: expect.any(Number), target: 'machine' },
         },
       ],
     ]);
@@ -349,7 +363,13 @@ describe('PushNotifier', () => {
     expect(expo.sent.flat().map((m) => [m.body, m.data])).toEqual([
       [
         'PR #9 is ready for review',
-        { ref: 'mac-1', target: 'url', path: '/u/app/.worktrees/login', url: 'https://github.com/o/r/pull/9' },
+        {
+          ref: 'mac-1',
+          notification: 1,
+          target: 'url',
+          path: '/u/app/.worktrees/login',
+          url: 'https://github.com/o/r/pull/9',
+        },
       ],
     ]);
   });
@@ -373,8 +393,14 @@ describe('PushNotifier', () => {
     t.notifier.control('d2', conflict);
     await settle(1);
     expect(expo.sent.flat().map((m) => [m.to, m.body, m.data])).toEqual([
-      [TOKEN, 'iPad took over', { ref: 'mac-1', target: 'device', path: '/w', platform: 'ios', slot: 'default' }],
+      [
+        TOKEN,
+        'iPad took over',
+        { ref: 'mac-1', notification: 1, target: 'device', path: '/w', platform: 'ios', slot: 'default' },
+      ],
     ]);
+    expect(t.log.list('d1').notifications.map((n) => [n.seq, n.suppressed])).toEqual([[1, undefined]]);
+    expect(t.log.list('d2').notifications.map((n) => [n.seq, n.suppressed])).toEqual([[2, 'muted']]);
   });
 
   it('sums up more than three notifications in one push', async () => {
@@ -466,13 +492,59 @@ describe('PushNotifier', () => {
     expect(expo.sent.flat().map((m) => m.to)).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
   });
 
-  it('holds a status subscription only while a device is registered', () => {
-    const t = (current = setup({ devices: [device()] }));
+  it('holds a status subscription only while a device is paired', () => {
+    const t = (current = setup({ devices: [] }));
     expect(t.subscriptions).toEqual({ opened: 0, closed: 0 });
+    t.setDevices([device()]);
+    expect(t.subscriptions).toEqual({ opened: 1, closed: 0 });
     t.setDevices([device(registration())]);
     expect(t.subscriptions).toEqual({ opened: 1, closed: 0 });
-    t.setDevices([device()]);
+    t.setDevices([]);
     expect(t.subscriptions).toEqual({ opened: 1, closed: 1 });
+  });
+
+  it('logs a stuck agent at the threshold of the phones that want stuck, not of the others', async () => {
+    const t = (current = setup({
+      devices: [
+        device(registration({ events: ['machine'], stuckMinutes: 5 })),
+        { ...device(registration({ token: 'ExponentPushToken[phone-b]', stuckMinutes: 30 })), id: 'd2' },
+      ],
+    }));
+    t.emit(status());
+    t.at(1000);
+    t.emit(status(env(driven(T0 + 1000))));
+    t.at(6 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    expect(t.logged.map((n) => n.category)).toEqual(['started']);
+    t.at(31 * 60_000);
+    t.emit(status(env(driven(T0 + 1000))));
+    expect(t.logged.map((n) => [n.category, n.suppressed])).toEqual([
+      ['started', undefined],
+      ['stuck', undefined],
+    ]);
+    await settle(2);
+  });
+
+  it('logs what no phone is pushed, marking what a muted category or quiet hours held back', async () => {
+    const t = (current = setup({ devices: [device()] }));
+    t.emit(status(env()));
+    t.at(1000);
+    t.emit(status(env(looping(T0 + 1000))));
+    t.setDevices([device(registration({ events: ['machine'] }))]);
+    t.at(2000);
+    t.emit(status(env(looping(T0 + 1000)), env({ path: '/u/b', worktree: undefined, ...looping(T0 + 2000) })));
+    const quietHours = { start: 11 * 60, end: 13 * 60, timeZone: 'UTC' };
+    t.setDevices([device(registration({ quietHours }))]);
+    t.at(3000);
+    t.emit(status(env({ path: '/u/c', worktree: undefined, ...looping(T0 + 3000) })));
+    await settle();
+    expect(expo.sent).toEqual([]);
+    expect(t.logged.map((n) => [n.seq, n.title, n.body, n.suppressed])).toEqual([
+      [1, 'feat/login', 'Same Swift error 3x at AppDelegate.swift:71', undefined],
+      [2, 'b', 'Same Swift error 3x at AppDelegate.swift:71', 'muted'],
+      [3, 'c', 'Same Swift error 3x at AppDelegate.swift:71', 'quiet-hours'],
+    ]);
+    expect(t.log.list('d1').notifications.map((n) => n.seq)).toEqual([3, 2, 1]);
   });
 
   it('keeps quiet pushes out of the hourly budget, so work started cannot crowd out a stuck agent', async () => {

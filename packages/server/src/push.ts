@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { StatusPayload } from '@stim-cli/core/state';
 import type { FeedListener } from './feed.ts';
+import type { LoggedNotification, NewEntry, NotificationLog } from './notification-log.ts';
 import {
+  DEFAULT_STUCK_MINUTES,
   inQuietHours,
+  OVERSIGHT_CATEGORIES,
   oversee,
   type OversightCategory,
   type OversightNotification,
@@ -10,7 +13,7 @@ import {
   type OversightState,
   type OversightTarget,
 } from './oversight.ts';
-import type { MachineVolume, MemoryPressure, QuietHours } from './protocol.ts';
+import type { MachineVolume, MemoryPressure, NotificationSuppression, QuietHours } from './protocol.ts';
 import type { PairedDevice, PushRegistration } from './registry.ts';
 
 export const EXPO_PUSH_API: string = 'https://exp.host/--/api/v2/push';
@@ -59,6 +62,11 @@ export interface PushNotifierOptions {
   ownLeases: () => readonly string[];
   devices: () => PairedDevice[];
   dropToken: (token: string) => void;
+  /** Where every notification the rules produce for this Mac is logged, pushed or not. */
+  log: NotificationLog;
+  /** Whether the rules run while any device is paired, or only while one is registered for pushes. */
+  whilePaired: boolean;
+  logged?: (entries: LoggedNotification[]) => void;
   limits?: Partial<PushLimits>;
   now?: () => number;
 }
@@ -81,7 +89,8 @@ export interface PushMessage {
   /** Replaces a notification the phone still shows for the same workspace and category. */
   collapseId?: string;
   threadId?: string;
-  data: { ref: string } & PushTarget;
+  /** `notification` is the `seq` of the logged entry the push reports, when the log holds it. */
+  data: { ref: string; notification?: number } & PushTarget;
 }
 
 /** A conflict over a device a phone controls, pushed to that phone. */
@@ -128,7 +137,13 @@ function targetData(target: OversightTarget): PushTarget {
 
 const wants = (device: Registered, category: OversightCategory) => device.push.events.includes(category);
 
+function entryOf(notification: OversightNotification, suppressed: NotificationSuppression | null): NewEntry {
+  const { id, category, title, body, quiet, target } = notification;
+  return { id, category, title, body, quiet, target, ...(suppressed ? { suppressed } : {}) };
+}
+
 interface Registered {
+  id: string;
   push: PushRegistration;
   state: OversightState | null;
   bucket: { tokens: number; at: number };
@@ -142,15 +157,17 @@ interface Ticket {
 }
 
 /**
- * Pushes notifications to the devices that asked with `push.register`. While any device is registered it keeps its
- * own `stim status --watch --json` subscription, reads the disks and memory pressure every minute, and, while a
- * device wants `finished`, looks up the pushed worktrees' pull requests every few minutes.
+ * Logs this Mac's notifications and pushes them to the devices that asked with `push.register`. While any device is
+ * paired, or with `whilePaired` false registered, it keeps its own `stim status --watch --json` subscription and
+ * reads the disks and memory pressure every minute, and, while a device wants `finished`, looks up the pushed
+ * worktrees' pull requests every few minutes.
  */
 export class PushNotifier {
   private readonly options: PushNotifierOptions;
   private readonly limits: PushLimits;
   private readonly now: () => number;
   private readonly registered = new Map<string, Registered>();
+  private history: OversightState | null = null;
   private unsubscribe: (() => void) | null = null;
   private status: StatusPayload | null = null;
   private volumes: MachineVolume[] | null = null;
@@ -174,9 +191,8 @@ export class PushNotifier {
   /** Rereads the registrations; a device whose token is new starts from what is already true. */
   refresh(): void {
     if (this.closed) return;
-    const current = new Map(
-      this.options.devices().flatMap((d) => (d.push?.events.length ? [[d.id, d.push] as const] : [])),
-    );
+    const devices = this.options.devices();
+    const current = new Map(devices.flatMap((d) => (d.push?.events.length ? [[d.id, d.push] as const] : [])));
     for (const id of this.registered.keys()) if (!current.has(id)) this.registered.delete(id);
     let added = false;
     for (const [id, push] of current) {
@@ -185,32 +201,33 @@ export class PushNotifier {
         known.push = push;
         continue;
       }
-      this.registered.set(id, { push, state: null, bucket: { tokens: this.limits.perHour, at: this.now() } });
+      this.registered.set(id, { id, push, state: null, bucket: { tokens: this.limits.perHour, at: this.now() } });
       added = true;
     }
-    if (this.registered.size > 0) this.watch();
+    if ((this.options.whilePaired ? devices.length : current.size) > 0) this.watch();
     else this.unwatch();
     if (added) this.evaluate();
   }
 
-  /** Pushes a control conflict to the device `deviceId`, when it registered for `control`. */
+  /** Logs a control conflict for the device `deviceId`, and pushes it when the device registered for `control`. */
   control(deviceId: string, conflict: ControlConflict): void {
+    if (this.closed) return;
     const device = this.registered.get(deviceId);
     const now = this.now();
-    if (this.closed || !device || !wants(device, 'control') || quietNow(device.push.quietHours, now)) return;
-    if (!this.take(device, now)) return;
     const { workspace, platform, slot } = conflict;
-    void this.send([
-      this.message(device.push, {
-        id: `control:${workspace}:${platform}:${slot}`,
-        category: 'control',
-        title: conflict.title,
-        body: conflict.body,
-        quiet: false,
-        thread: null,
-        target: { kind: 'device', path: workspace, platform, slot },
-      }),
-    ]);
+    const notification: OversightNotification = {
+      id: `control:${workspace}:${platform}:${slot}`,
+      category: 'control',
+      title: conflict.title,
+      body: conflict.body,
+      quiet: false,
+      thread: null,
+      target: { kind: 'device', path: workspace, platform, slot },
+    };
+    const suppressed = device ? this.suppression('control', [device], now) : null;
+    this.record([{ ...entryOf(notification, suppressed), device: deviceId }]);
+    if (!device || suppressed !== null || !this.take(device, now)) return;
+    void this.send([this.message(device, notification)]);
   }
 
   close(): void {
@@ -218,6 +235,10 @@ export class PushNotifier {
     this.unwatch();
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
+  }
+
+  private watching(): boolean {
+    return this.options.whilePaired ? this.options.devices().length > 0 : this.registered.size > 0;
   }
 
   private watch(): void {
@@ -237,6 +258,7 @@ export class PushNotifier {
     for (const timer of [this.wake, this.resubscribe]) if (timer) clearTimeout(timer);
     this.tick = this.disk = this.lookups = this.wake = this.resubscribe = null;
     this.status = null;
+    this.history = null;
     this.volumes = null;
     this.pressure = null;
     this.pullRequests = {};
@@ -259,7 +281,7 @@ export class PushNotifier {
         this.status = null;
         this.resubscribe = setTimeout(() => {
           this.resubscribe = null;
-          if (this.registered.size > 0 && !this.closed) this.subscribe();
+          if (this.watching() && !this.closed) this.subscribe();
         }, this.limits.resubscribeMs);
       },
     });
@@ -293,7 +315,7 @@ export class PushNotifier {
     this.lookingUp = true;
     try {
       const found = await this.options.pullRequests(worktrees);
-      if (this.closed || this.registered.size === 0) return;
+      if (this.closed || !this.watching()) return;
       this.pullRequests = Object.fromEntries(found);
       this.evaluate();
     } catch (cause) {
@@ -316,9 +338,20 @@ export class PushNotifier {
       pullRequests: this.pullRequests,
       ownLeases: this.options.ownLeases(),
     };
+    const registered = [...this.registered.values()];
+    const stuckThresholds = registered.flatMap((device) => (wants(device, 'stuck') ? [device.push.stuckMinutes] : []));
+    const lowestStuck = stuckThresholds.length ? Math.min(...stuckThresholds) : DEFAULT_STUCK_MINUTES;
+    const everything = oversee(
+      this.history,
+      input,
+      { categories: OVERSIGHT_CATEGORIES, stuckMinutes: lowestStuck, quiet: false },
+      now,
+    );
+    this.history = everything.state;
+    this.record(everything.notifications.map((n) => entryOf(n, this.suppression(n.category, registered, now))));
     const messages: PushMessage[] = [];
-    let wakeAt: number | null = null;
-    for (const device of this.registered.values()) {
+    let wakeAt = everything.wakeAt;
+    for (const device of registered) {
       const { events, stuckMinutes, quietHours } = device.push;
       const prefs = { categories: events, stuckMinutes, quiet: quietNow(quietHours, now) };
       const result = oversee(device.state, input, prefs, now);
@@ -327,7 +360,7 @@ export class PushNotifier {
       const due =
         result.notifications.length > this.limits.summarizeAbove
           ? [this.summary(device, result.notifications)]
-          : result.notifications.map((n) => this.message(device.push, n));
+          : result.notifications.map((n) => this.message(device, n));
       for (const message of due) {
         if (message.interruptionLevel === 'passive' || this.take(device, now)) messages.push(message);
       }
@@ -349,7 +382,28 @@ export class PushNotifier {
     return true;
   }
 
-  private message(push: PushRegistration, notification: OversightNotification): PushMessage {
+  /** Why none of `devices` gets a `category` notification now, or null when one does. */
+  private suppression(category: OversightCategory, devices: Registered[], now: number): NotificationSuppression | null {
+    const wanting = devices.filter((device) => wants(device, category));
+    if (devices.length === 0 || wanting.some((device) => !quietNow(device.push.quietHours, now))) return null;
+    return wanting.length === 0 ? 'muted' : 'quiet-hours';
+  }
+
+  private record(entries: NewEntry[]): void {
+    if (entries.length === 0) return;
+    let logged: LoggedNotification[];
+    try {
+      logged = this.options.log.append(entries);
+    } catch (cause) {
+      warn(`could not log ${entries.length} notifications: ${(cause as Error).message}`);
+      return;
+    }
+    this.options.logged?.(logged);
+  }
+
+  private message(device: Registered, notification: OversightNotification): PushMessage {
+    const { push } = device;
+    const seq = this.options.log.latest(notification.id, device.id);
     return {
       to: push.token,
       title: notification.title,
@@ -359,7 +413,7 @@ export class PushNotifier {
       interruptionLevel: notification.quiet ? 'passive' : 'active',
       collapseId: collapseId(`${push.ref}\n${notification.id}`),
       ...(notification.thread ? { threadId: notification.thread } : {}),
-      data: { ref: push.ref, ...targetData(notification.target) },
+      data: { ref: push.ref, ...(seq === null ? {} : { notification: seq }), ...targetData(notification.target) },
     };
   }
 

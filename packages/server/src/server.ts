@@ -56,6 +56,7 @@ import {
 } from './protocol.ts';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from './oversight.ts';
+import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
   authenticateDevice,
@@ -107,6 +108,11 @@ export interface ServerOptions {
   /** The `sim-fold` helper that folds an iPhone Duo. Without it, the server builds one on the first fold. */
   foldHelper?: string;
   controlLimits?: Partial<ControlLimits>;
+  /**
+   * False runs the notification rules only while a phone is registered for pushes, so no status child runs for the
+   * notification history alone; true by default.
+   */
+  history?: boolean;
   /** The Expo push API base URL; tests point it at a local server. */
   pushEndpoint?: string;
   pushLimits?: Partial<PushLimits>;
@@ -371,6 +377,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let recordingTurn: Promise<void> = Promise.resolve();
   let closing = false;
   const sessions = new Map<WebSocket, PairedDevice>();
+  const listeners = new Set<WebSocket>();
   const sampler = new UsageSampler();
   const usage = new UsageRecorder();
   let recorders = 0;
@@ -413,6 +420,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     adbEmulators,
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
+  const notificationLog = new NotificationLog(notificationLogFile(serverDir()));
   const push = new PushNotifier({
     name: options.name,
     endpoint: options.pushEndpoint ?? EXPO_PUSH_API,
@@ -423,6 +431,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ownLeases: () => control.ownLeaseTimes(),
     devices: readDevices,
     dropToken: dropPushToken,
+    log: notificationLog,
+    whilePaired: options.history ?? true,
+    logged: (entries) => {
+      for (const socket of listeners) {
+        const device = sessions.get(socket);
+        for (const entry of entries) {
+          if (!device || (entry.device !== undefined && entry.device !== device.id)) continue;
+          send(socket, { event: 'notification', log: notificationLog.id, notification: publicEntry(entry) });
+        }
+      }
+    },
     limits: options.pushLimits,
   });
 
@@ -1345,6 +1364,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       if (message.method === 'push.register') return registerPush(id, message.params, device);
+      if (message.method === 'notifications.list') {
+        const params = message.params ?? {};
+        const since = isJsonObject(params) ? params.since : undefined;
+        if (!isJsonObject(params) || (since !== undefined && !(Number.isInteger(since) && (since as number) >= 0))) {
+          return error(id, 'bad-request', 'notifications.list takes an optional since, a cursor of 0 or more.');
+        }
+        listeners.add(socket);
+        return send(socket, { id, result: notificationLog.list(device.id, since as number | undefined) });
+      }
       if (message.method === 'push.unregister') {
         setDevicePush(device.id, null);
         push.refresh();
@@ -1373,6 +1401,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     socket.on('close', () => {
       clearTimeout(timer);
       sessions.delete(socket);
+      listeners.delete(socket);
       if (sessions.size === 0) sampler.stop();
       const owner = controllers.get(socket);
       if (owner) control.endFor(owner, null, 'The client disconnected.');

@@ -130,7 +130,8 @@ Events are `{ "event", "subscription", ... }`.
   device's `capabilities` (see [Scopes](#scopes)), the server's `features`
   (`physical-ios` and `physical-android` when it serves `physical: true` for
   that platform: see `frames.subscribe` below for an iPhone and
-  [Physical Android devices](#physical-android-devices)),
+  [Physical Android devices](#physical-android-devices), and `notifications`
+  for `notifications.list` and the `notification` event),
   the `actions` it may run
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
@@ -399,6 +400,11 @@ Events are `{ "event", "subscription", ... }`.
   may still send `build-failed`, `log-errors`, `disk`, `app-stopped`,
   `slow-build` and `agentOnly`: `disk` counts as `machine`, and the rest are
   accepted and ignored.
+- `notifications.list` returns the [notification history](#notification-history)
+  as `{ "log", "cursor", "notifications" }`, newest first. `since` (a `cursor`
+  from an earlier list) returns only the entries after it. From then on, the
+  connection gets a `notification` event, `{ "event": "notification", "log",
+"notification" }`, for each entry the server logs. It needs only `read`.
 - `action` runs an [action](#actions) and returns
   `{ "action", "workspace", "output" }`.
 - An `error` event ends a subscription whose source failed, or whose client
@@ -522,7 +528,7 @@ registers does not push. During the phone's quiet hours nothing pushes: a
 problem that still holds when they end pushes then, and what started or
 finished during them does not.
 
-While at least one device is registered, the server keeps its own
+While at least one device is paired, the server keeps its own
 `stim status --watch --json` child running, even with no client connected, and
 reads the free space of Stim's volumes and the memory pressure every minute.
 While a device wants `finished`, it looks up the pull requests of worktree
@@ -552,6 +558,38 @@ the server is not running.
 The rules live in `src/oversight.ts`, a pure module the phone app keeps an
 identical copy of (`apps/mobile/src/lib/oversight.ts`) for its local
 notifications; `__tests__/oversight-agreement.test.ts` fails when they differ.
+
+## Notification history
+
+The server logs the notifications the rules produce for the Mac, whether or not
+a phone was pushed, so a phone can list what it missed. While any device is
+paired, it runs the rules once more for the Mac itself, with every category, no
+quiet hours and the lowest `stuckMinutes` a registered device asked for (15
+without one). Each notification it produces is an entry; a `control` conflict is
+an entry too, listed only to the phone that lost the device. Pull request
+entries need the GitHub lookup, which runs only while a device wants
+`finished`.
+
+An entry is `{ "seq", "at", "id", "category", "title", "body", "quiet",
+"target", "suppressed"? }`. `seq` grows by one per entry. `id` names the
+workspace or machine and category, the key a push's collapse id is made from,
+so a later episode of the same problem shares it. `target` is the screen the
+push opens, as `{ "kind", ... }` with the fields of the push's `data`.
+`suppressed` says why no registered device got the notification when it was
+logged: `muted` when none wants its category, `quiet-hours` when those that do
+were in quiet hours. A problem that still holds when quiet hours end is pushed
+then, so a `quiet-hours` entry may still have reached the phone. Without
+`suppressed`, a registered device was due to get it, or none is registered; a
+device's hourly budget or a summary push can still stand in for the push
+itself. A push for a logged notification carries the entry's `seq` as `data.notification`, so the
+phone can mark it read.
+
+The log keeps the last 200 entries, none older than 7 days, in
+`$STIM_HOME/server/notifications.json`, which only the server writes, under
+`notifications.json.lock`. `log` in `notifications.list` is a random id made
+with the file: a new one means the history started over, so a cursor or read
+state kept for the old one no longer applies. What is already true when the
+server starts is not logged, as it is not pushed.
 
 ## Actions
 

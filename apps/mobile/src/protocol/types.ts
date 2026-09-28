@@ -593,6 +593,40 @@ export interface PushRegisterParams {
   quietHours?: { start: number; end: number; timeZone: string };
 }
 
+/** Why the registered phones did not get a logged notification when it happened. */
+export type NotificationSuppression = 'muted' | 'quiet-hours';
+
+/** What a logged notification opens, as its push's `data` does. */
+export type NotificationTarget =
+  | { kind: 'machine' }
+  | { kind: 'workspace'; path: string }
+  | { kind: 'device'; path: string; platform: DevicePlatform; slot: string }
+  | { kind: 'build'; path: string; platform: Platform }
+  | { kind: 'url'; path: string; url: string };
+
+/**
+ * One oversight notification a Mac generated, pushed or not. `seq` grows by one per entry in a log; `id` names the
+ * workspace or machine and category, so a later episode shares it.
+ */
+export interface NotificationEntry {
+  seq: number;
+  at: string;
+  id: string;
+  category: PushEvent;
+  title: string;
+  body: string;
+  quiet: boolean;
+  target: NotificationTarget;
+  suppressed?: NotificationSuppression;
+}
+
+/** `log` changes when the Mac's history starts over; `cursor` is the newest `seq`. */
+export interface NotificationsListResult {
+  log: string;
+  cursor: number;
+  notifications: NotificationEntry[];
+}
+
 export interface Methods {
   hello: {
     params: { protocol: number; client: { name: string; version: string }; auth: ClientAuth };
@@ -641,6 +675,7 @@ export interface Methods {
   'input.posture': { params: { session: string; posture: DevicePosture }; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
+  'notifications.list': { params: { since?: number }; result: NotificationsListResult };
 }
 
 export type Method = keyof Methods;
@@ -717,6 +752,13 @@ export interface ControlEndedEvent {
   session: string;
   reason: 'idle' | 'taken-over' | 'device-gone' | 'forbidden' | 'failed';
   message: string;
+}
+
+/** A notification the Mac just logged, sent once the app has listed notifications on this connection. */
+export interface NotificationEvent {
+  event: 'notification';
+  log: string;
+  notification: NotificationEntry;
 }
 
 export type ServerEvent =
