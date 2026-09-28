@@ -162,11 +162,12 @@ type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running
 /**
  * Whether stim-server serves the device's screen: an owned one, or a connected physical device whose platform the
  * Mac's stim-server lists in its hello `features` (`physical-ios`, view only, or `physical-android`). An older server
- * ignores `physical` and would stream the slot's owned device instead.
+ * ignores `physical` and would stream the slot's owned device instead. `features` is null while the Mac is not
+ * connected, when nothing streams and the tile waits for it like any other.
  */
-export function streamsFrames(device: ServedDevice, features: readonly string[]): boolean {
+export function streamsFrames(device: ServedDevice, features: readonly string[] | null): boolean {
   if (!device.physical) return device.owned;
-  return device.running && features.includes(`physical-${device.platform}`);
+  return device.running && (features === null || features.includes(`physical-${device.platform}`));
 }
 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */

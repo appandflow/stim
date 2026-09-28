@@ -45,7 +45,7 @@ import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { buildTimeline } from '@/lib/replay';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, shortUrl, streamsFrames, workspaceTitleAt } from '@/lib/workspaces';
+import { devicesOf, shortUrl, streamsFrames, unservedReason, workspaceTitleAt } from '@/lib/workspaces';
 import type { DevicePlatform, DevicePosture, InputButton, ReplayRate, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
@@ -74,8 +74,6 @@ const POSTURE_LABELS: Record<DevicePosture, string> = {
   unfolded: 'Unfold',
 };
 
-const NO_FEATURES: readonly string[] = [];
-
 export function DeviceView({
   workspace,
   platform,
@@ -102,7 +100,7 @@ export function DeviceView({
       )
     : undefined;
   const { mac, state: link, connection } = useMacConnection();
-  const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : NO_FEATURES));
+  const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : null));
   const viewOnly = physical && platform === 'ios';
   const slotRange = useReplayRange({ workspace, platform, slot });
   const range = physical ? null : slotRange;
@@ -413,7 +411,7 @@ export function DeviceView({
                   >
                     {streams ? null : (
                       <Text style={styles.placeholder}>
-                        {device?.state ?? 'This device is not running.'}
+                        {device?.running ? unservedReason(device) : (device?.state ?? 'This device is not running.')}
                         {canReplay ? ' Scrub below to replay what it recorded.' : ''}
                       </Text>
                     )}

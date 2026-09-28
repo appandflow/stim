@@ -226,6 +226,8 @@ describe('physical devices', () => {
     expect(streamsFrames(android, ['physical-ios'])).toBe(false);
     expect(streamsFrames(iphone, ['physical-android'])).toBe(false);
     expect(streamsFrames(iphone, [])).toBe(false);
+    expect(streamsFrames(android, null)).toBe(true);
+    expect(streamsFrames({ ...android, running: false }, null)).toBe(false);
     expect(unservedReason(android)).toMatch(/Update stim-server/);
     expect(unservedReason({ ...android, running: false, state: 'disconnected' })).toBe('disconnected');
     const owned = devicesOf(leased).find((d) => !d.physical && d.owned)!;

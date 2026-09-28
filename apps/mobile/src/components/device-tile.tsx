@@ -49,7 +49,7 @@ export function DeviceTile({
   const workspace = env.path;
   const [screenWidth, setScreenWidth] = useState(0);
   const now = useNow(30_000);
-  const streams = device.running && streamsFrames(device, link.kind === 'open' ? link.features : []);
+  const streams = device.running && streamsFrames(device, link.kind === 'open' ? link.features : null);
   const { frame, error, delayed, delayedReason } = useFrame(workspace, device.platform, device.slot, streams, {
     physical: device.physical,
   });

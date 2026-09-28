@@ -321,10 +321,11 @@ ends when the lease does. The viewer has no rotate buttons for a phone, which
 turns only in hand. A physical device is not recorded, so its viewer has no
 replay timeline or Recording badge.
 
-A phone tile streams only when the Mac's `stim-server` lists `physical-ios` or
-`physical-android` in its hello `features`. An older server would ignore
-`physical` and stream the slot's simulator or emulator instead, so the tile asks
-for a `stim-server` update.
+A phone tile streams only when the connected Mac's `stim-server` lists that
+platform's feature, `physical-ios` or `physical-android`, in its hello
+`features`. An older server would ignore `physical` and stream the slot's
+simulator or emulator instead, so while connected to one the tile asks for a
+`stim-server` update.
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
