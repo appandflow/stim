@@ -25,6 +25,7 @@ const DEPS_MARKER = '.stim-offload-deps';
 const FILES_MARKER = '.stim-offload-files';
 
 const distDir = dirname(fileURLToPath(import.meta.url));
+const workerRoot = process.env.STIM_OFFLOAD_ROOT ?? resolve(distDir, '../../../..');
 
 function emit(value: unknown): void {
   process.stdout.write(`\n${RESULT_MARKER}${JSON.stringify(value)}\n`);
@@ -49,7 +50,7 @@ function probe(): WorkerProbe {
   } catch {}
   let diskFreeBytes: number | null = null;
   try {
-    const s = statfsSync(process.env.HOME ?? '/');
+    const s = statfsSync(workerRoot);
     diskFreeBytes = s.bavail * s.bsize;
   } catch {}
   const xcode = quiet('xcodebuild', ['-version']);
@@ -59,6 +60,7 @@ function probe(): WorkerProbe {
     .map((l) => l.split(' (')[0]!.trim());
   const running = quiet('pgrep', ['-x', 'xcodebuild']);
   return {
+    root: workerRoot,
     stimVersion,
     stimBuildId: distBuildId(distDir),
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
@@ -161,7 +163,7 @@ function simulatorDestination(runtime: string | null): string | null {
 async function buildIosOnWorker(req: WorkerBuildRequest): Promise<WorkerBuildResult> {
   const root = join(req.repoDir, req.projectRel);
   const timings: WorkerTimings = { depsMs: 0, prebuildMs: 0, podsMs: 0, fingerprintMs: 0, buildMs: 0 };
-  const log = createNdjsonWriter(join(dirname(dirname(req.repoDir)), 'logs', `${Date.now()}-ios.ndjson`));
+  const log = createNdjsonWriter(join(workerRoot, 'logs', `${Date.now()}-ios.ndjson`));
   const time = async <T>(key: keyof WorkerTimings, fn: () => Promise<T>): Promise<T> => {
     const started = Date.now();
     try {

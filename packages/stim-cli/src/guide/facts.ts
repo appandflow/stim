@@ -208,6 +208,8 @@ leased until <time>" for each one.`,
                   the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
+  offloadedTo     only when STIM_OFFLOAD_HOST (experimental) compiled the app on
+                  that SSH worker; cacheHit is then false
   compilationCache
                   Xcode compilation-cache activity for a compiled iOS app:
                     { status: "reported", hits, cacheableTasks, hitRatePercent }
@@ -1043,7 +1045,7 @@ RULES
 
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
-               errorCode?, missReason?, diagnostics? }
+               errorCode?, missReason?, offloadedTo?, diagnostics? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -1260,8 +1262,9 @@ RULES
   \`project\` is null outside a project; a platform with no run yet is null.
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
   hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
-  lastPodsMs once the project has compiled or installed pods. Milliseconds are
-  integers.
+  lastPodsMs once the project has compiled or installed pods, and
+  offloadedRuns, offloadedRunMs and lastOffloadHost once a build ran on an
+  offload worker. Milliseconds are integers.
 
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a
@@ -1273,7 +1276,11 @@ HOW A RUN IS COUNTED (\`stats\`)
   success. Otherwise the run's own \`cacheHit\` decides: "local" or "remote"
   is a HIT, false is a MISS -- including a release run on a phone and a swap
   that fell back to a full build. A miss adds its \`durationMs\` to the cold
-  runs; a hit adds it to the hit runs and credits \`timeSavedMs\` with this
+  runs, except a miss whose app was compiled on an offload worker
+  (STIM_OFFLOAD_HOST, experimental): it adds to the offloaded runs instead,
+  records the worker host, and keeps no history sample, so neither the cold
+  average nor the heartbeat estimate mixes remote builds in. A hit adds it
+  to the hit runs and credits \`timeSavedMs\` with this
   project's mean cold run BEFORE it, minus its own duration, floored at zero.
   A hit that WAITED for another workspace's build (\`waitedForBuild\`) counts
   as a hit and is credited nothing: the compile it skipped was paid for in the

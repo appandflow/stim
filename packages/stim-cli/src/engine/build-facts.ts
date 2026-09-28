@@ -49,6 +49,8 @@ export interface IosFacts {
   cacheKey?: string | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
+  /** SSH host that compiled the app when the build was offloaded (STIM_OFFLOAD_HOST); absent otherwise. */
+  offloadedTo?: string;
   compilationCache: CompilationCacheActivity;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath?: string | null;

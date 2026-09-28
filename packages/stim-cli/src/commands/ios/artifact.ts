@@ -137,6 +137,8 @@ export interface PreparedIosArtifact {
     identity: { fingerprint: string; key: string } | null;
     hit: CacheHitLevel;
     providerName: string | null;
+    /** The SSH host that compiled the app, when the build was offloaded. */
+    offloadedTo: string | null;
     readEnabled: boolean;
     missReason: BuildMissReason | null;
     waitedForBuild: WaitedForBuild | null;
@@ -242,6 +244,7 @@ export async function acquireIosArtifact(
   let appPath: string | null = null;
   let bundleId: string | null = null;
   let cacheHit: CacheHitLevel = false;
+  let offloadedTo: string | null = null;
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
@@ -703,7 +706,7 @@ export async function acquireIosArtifact(
     if (outcome.ok && prepared) {
       const w = outcome.timings.worker;
       appPath = prepared;
-      cacheHit = 'local';
+      offloadedTo = decision.host;
       phase(
         'build',
         `offload ok ${formatDuration(outcome.timings.totalMs)}: probe ${formatDuration(outcome.timings.probeMs)}, sync ${formatDuration(outcome.timings.syncMs)}, ` +
@@ -711,7 +714,7 @@ export async function acquireIosArtifact(
           `pods ${formatDuration(w.podsMs)}, fingerprint ${formatDuration(w.fingerprintMs)}, xcodebuild ${formatDuration(w.buildMs)}), ` +
           `fetch ${formatDuration(outcome.timings.fetchMs)}; compilation cache ${outcome.result.compilationCache}`,
       );
-      phase('cache', `hit ${shortHash(storeHash)} (stored from ${decision.host})`);
+      phase('cache', `stored ${shortHash(storeHash)} (built on ${decision.host})`);
       return true;
     }
     phase('build', `offload ${outcome.ok ? 'store failed' : `failed: ${outcome.reason}`} -> building here`);
@@ -947,6 +950,7 @@ export async function acquireIosArtifact(
         identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
         hit: cacheHit,
         providerName: remote?.name ?? providerName,
+        offloadedTo,
         readEnabled: useBuildCache,
         missReason: cacheHit ? null : missReason,
         waitedForBuild,

@@ -112,6 +112,22 @@ describe('the update rule', () => {
     expect(bucketOf(record, '/repo/app').timeSavedMs).toBe(180_000);
   });
 
+  test('an offloaded build is a miss in its own category, kept out of the cold average and the history', () => {
+    let record = updateStats(emptyStats(), run({ durationMs: 200_000, phases: { build: 150_000 } }), T0);
+    record = updateStats(record, run({ durationMs: 80_000, offloadedTo: 'mini', phases: { build: 60_000 } }), T1);
+    record = updateStats(record, run({ cacheHit: 'local', durationMs: 20_000 }), T1);
+
+    const bucket = bucketOf(record, '/repo/app');
+    expect(bucket.misses).toBe(2);
+    expect(bucket.coldRuns).toBe(1);
+    expect(bucket.coldRunMs).toBe(200_000);
+    expect(bucket.offloadedRuns).toBe(1);
+    expect(bucket.offloadedRunMs).toBe(80_000);
+    expect(bucket.lastOffloadHost).toBe('mini');
+    expect(bucket.timeSavedMs).toBe(180_000);
+    expect(record.history?.['/repo/app']?.ios?.cold).toHaveLength(1);
+  });
+
   test('a hit slower than the mean cold run credits nothing rather than a negative', () => {
     let record = updateStats(emptyStats(), run({ durationMs: 20_000 }), T0);
     record = updateStats(record, run({ cacheHit: 'local', durationMs: 90_000 }), T1);

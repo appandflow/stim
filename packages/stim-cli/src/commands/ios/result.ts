@@ -31,7 +31,9 @@ export function lastBuildRecord({
   missReason = null,
   diagnostics = null,
   configuration = null,
+  offloadedTo = null,
 }: {
+  offloadedTo?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -60,6 +62,7 @@ export function lastBuildRecord({
     configuration,
   };
   if (errorCode) record.errorCode = errorCode;
+  if (offloadedTo) record.offloadedTo = offloadedTo;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
@@ -90,7 +93,9 @@ export function iosFacts({
   webPreviewUrl = null,
   lease,
   devServer = null,
+  offloadedTo = null,
 }: {
+  offloadedTo?: string | null;
   slot?: string;
   udid: string;
   deviceName?: string | null;
@@ -128,6 +133,7 @@ export function iosFacts({
     cacheKey,
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
+    ...(offloadedTo ? { offloadedTo } : {}),
     compilationCache,
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
@@ -211,6 +217,7 @@ export interface ReportIosResultArgs {
   launchState: boolean | string;
   launchWarning?: string;
   providerName: string | null;
+  offloadedTo?: string | null;
   closeWriter: () => void;
   webPreviewUrl: string | null;
   lease?: { kind: string; expiresAt: string } | null;
@@ -246,6 +253,7 @@ export function reportIosResult({
   launchState,
   launchWarning,
   providerName,
+  offloadedTo = null,
   closeWriter,
   webPreviewUrl,
   lease,
@@ -254,7 +262,7 @@ export function reportIosResult({
   devServer = null,
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
-  recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs });
+  recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs, offloadedTo });
   writeLastBuild(
     root,
     lastBuildRecord({
@@ -269,6 +277,7 @@ export function reportIosResult({
       startedAt,
       status: 'ok',
       configuration: configuration ?? 'Debug',
+      offloadedTo,
     }),
   );
   closeWriter();
@@ -297,6 +306,7 @@ export function reportIosResult({
     webPreviewUrl,
     lease,
     devServer,
+    offloadedTo,
   });
   if (json) {
     console.log(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
@@ -304,7 +314,7 @@ export function reportIosResult({
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
-      ` (${cacheDescription(cacheHit, providerName)}, ${formatDuration(durationMs)})`;
+      ` (${cacheDescription(cacheHit, providerName, offloadedTo)}, ${formatDuration(durationMs)})`;
     const outcome = launchWarning
       ? chalk.yellow(`${summary} -- ${launchWarning}`)
       : launchState === LAUNCH_UNVERIFIED
@@ -313,7 +323,9 @@ export function reportIosResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary);
     const deviceName = device?.deviceName ?? device?.name ?? udid;
-    const cacheResult = useBuildCache ? cacheDescription(cacheHit, providerName) : 'bypassed; built';
+    const cacheResult = useBuildCache
+      ? cacheDescription(cacheHit, providerName, offloadedTo)
+      : `bypassed; ${cacheDescription(false, null, offloadedTo)}`;
     const metroResult = release
       ? `embedded (${configuration})`
       : !metroCheck
@@ -339,8 +351,12 @@ export function reportIosResult({
   return facts;
 }
 
-export function cacheDescription(cacheHit: CacheHitLevel, providerName: string | null = null): string {
+export function cacheDescription(
+  cacheHit: CacheHitLevel,
+  providerName: string | null = null,
+  offloadedTo: string | null = null,
+): string {
   if (cacheHit === 'remote') return `from ${providerName || 'the remote cache'}`;
   if (cacheHit === 'local') return 'from cache';
-  return 'built';
+  return offloadedTo ? `built on ${offloadedTo}` : 'built';
 }

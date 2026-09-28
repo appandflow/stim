@@ -22,6 +22,9 @@ export interface StatsBucket {
   lastRunAt: string;
   lastColdBuildMs?: number;
   lastPodsMs?: number;
+  offloadedRuns?: number;
+  offloadedRunMs?: number;
+  lastOffloadHost?: string;
 }
 
 export type StatsScope = Partial<Record<StatsPlatform, StatsBucket>>;
@@ -48,6 +51,7 @@ export interface StatsRun {
   cacheHit: CacheHitLevel;
   waitedForBuild: boolean;
   durationMs: number;
+  offloadedTo?: string;
   coldBuildMs?: number;
   podsMs?: number;
   phases?: Record<string, number>;
@@ -77,6 +81,7 @@ interface RunOutcome {
   cacheHit?: CacheHitLevel;
   waited?: unknown;
   durationMs: number;
+  offloadedTo?: string | null;
 }
 
 export interface RunRecorder {
@@ -129,7 +134,7 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
   machine[run.platform] = applyRun(machine[run.platform] ?? null, run, { at, durationMs, credit, phases });
 
   const history = { ...record.history };
-  if (run.phases && !run.failed && !run.waitedForBuild) {
+  if (run.phases && !run.failed && !run.waitedForBuild && !run.offloadedTo) {
     const outcome: RunOutcomeKind = isHit(run.cacheHit) ? 'hit' : 'cold';
     const project: RunHistory = { ...history[run.projectKey] };
     const lists = { ...project[run.platform] };
@@ -239,7 +244,7 @@ export function createRunRecorder({
     setPodsMs(ms: number): void {
       podsMs = wholeMs(ms);
     },
-    record({ failed, cacheHit = false, waited = null, durationMs }: RunOutcome): void {
+    record({ failed, cacheHit = false, waited = null, durationMs, offloadedTo = null }: RunOutcome): void {
       if (!projectKey || !cacheKey || recorded) return;
       recorded = true;
       const ran = failed ? {} : (phases?.() ?? {});
@@ -252,6 +257,7 @@ export function createRunRecorder({
             cacheHit,
             waitedForBuild: Boolean(waited),
             durationMs,
+            ...(offloadedTo ? { offloadedTo } : {}),
             ...(coldBuildMs > 0 ? { coldBuildMs } : {}),
             ...(podsMs > 0 ? { podsMs } : {}),
             ...(Object.keys(ran).length ? { phases: ran } : {}),
@@ -400,6 +406,10 @@ function normalizeBucket(bucket: Record<string, unknown>): StatsBucket {
     lastRunAt: timestamp(bucket.lastRunAt),
     ...(count(bucket.lastColdBuildMs) > 0 ? { lastColdBuildMs: count(bucket.lastColdBuildMs) } : {}),
     ...(count(bucket.lastPodsMs) > 0 ? { lastPodsMs: count(bucket.lastPodsMs) } : {}),
+    ...(count(bucket.offloadedRuns) > 0
+      ? { offloadedRuns: count(bucket.offloadedRuns), offloadedRunMs: count(bucket.offloadedRunMs) }
+      : {}),
+    ...(typeof bucket.lastOffloadHost === 'string' ? { lastOffloadHost: bucket.lastOffloadHost } : {}),
   };
 }
 
@@ -446,6 +456,12 @@ function applyRun(
     return next;
   }
   next.misses += 1;
+  if (run.offloadedTo) {
+    next.offloadedRuns = (next.offloadedRuns ?? 0) + 1;
+    next.offloadedRunMs = (next.offloadedRunMs ?? 0) + durationMs;
+    next.lastOffloadHost = run.offloadedTo;
+    return next;
+  }
   next.coldRuns += 1;
   next.coldRunMs += durationMs;
   return next;

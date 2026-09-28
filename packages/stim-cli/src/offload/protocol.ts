@@ -5,6 +5,8 @@ import { join } from 'node:path';
 export const RESULT_MARKER = 'STIM_OFFLOAD_RESULT ';
 
 export interface WorkerProbe {
+  /** Absolute worker root from STIM_OFFLOAD_ROOT; every file the worker writes lives under it. */
+  root: string;
   stimVersion: string | null;
   stimBuildId: string | null;
   xcode: string | null;

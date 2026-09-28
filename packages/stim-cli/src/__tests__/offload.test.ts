@@ -4,6 +4,7 @@ import { RESULT_MARKER, parseWorkerOutput, type WorkerProbe } from '../offload/p
 
 const toolchain = { xcode: 'Xcode 27.0 / Build version 27A266a', simulatorSdk: '27.0', cocoapods: '1.16.2' };
 const idleWorker: WorkerProbe = {
+  root: '/Volumes/ExternalSSD/stim-offload',
   stimVersion: '1.14.0',
   stimBuildId: 'abc',
   ...toolchain,

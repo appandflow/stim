@@ -15,8 +15,8 @@ import {
   type WorkerTimings,
 } from './protocol.ts';
 
-const WORKER_ROOT = 'stim-offload';
-const WORKER_NODE = `source ~/${WORKER_ROOT}/env.sh && export STIM_HOME=~/${WORKER_ROOT}/home && node ~/${WORKER_ROOT}/stim/node_modules/stim/dist/offload-worker.mjs`;
+const WORKER_ENV = '~/.stim-offload.env';
+const WORKER_NODE = `source ${WORKER_ENV} && node "$STIM_OFFLOAD_ROOT/stim/node_modules/stim/dist/offload-worker.mjs"`;
 const SSH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'ServerAliveInterval=15'];
 const MIN_WORKER_DISK = 8 * 1024 ** 3;
 const MIN_WORKER_MEM = 2 * 1024 ** 3;
@@ -272,12 +272,12 @@ export async function offloadIosBuild({
     return fail(`not a git checkout: ${(e as Error)?.message || e}`);
   }
   const { repoRoot, projectRel, repoId } = identity;
-  const remoteRepo = `${WORKER_ROOT}/repos/${repoId}`;
-  const lockDir = `~/${remoteRepo}.lock`;
+  const remoteRepo = `${decision.worker!.root}/repos/${repoId}`;
+  const lockDir = `${remoteRepo}.lock`;
 
   let t = Date.now();
   try {
-    await ssh(host, `mkdir -p ~/${WORKER_ROOT}/repos ~/${remoteRepo} && mkdir ${lockDir}`, { timeoutMs: 20_000 });
+    await ssh(host, `mkdir -p "${remoteRepo}" && mkdir "${lockDir}"`, { timeoutMs: 20_000 });
   } catch (e) {
     const message = String((e as Error)?.message || e);
     return fail(
@@ -307,7 +307,7 @@ export async function offloadIosBuild({
       ],
       { timeoutMs: 15 * 60_000 },
     );
-    getExecutor().runFile('ssh', sshArgs(host, `${WORKER_NODE} prune ~/${remoteRepo}`), {
+    getExecutor().runFile('ssh', sshArgs(host, `${WORKER_NODE} prune "${remoteRepo}"`), {
       input: list,
       timeoutMs: 60_000,
     });
@@ -318,9 +318,8 @@ export async function offloadIosBuild({
     try {
       packageName = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')).name ?? null;
     } catch {}
-    const remoteHome = (await ssh(host, 'echo $HOME', { timeoutMs: 20_000 })).trim().split('\n').pop()!;
     const request: WorkerBuildRequest = {
-      repoDir: `${remoteHome}/${remoteRepo}`,
+      repoDir: remoteRepo,
       projectRel,
       packageName,
       expectedFingerprint,
@@ -371,7 +370,7 @@ export async function offloadIosBuild({
     return fail(String((e as Error)?.message || e));
   } finally {
     try {
-      await ssh(host, `rmdir ${lockDir}`, { timeoutMs: 20_000 });
+      await ssh(host, `rmdir "${lockDir}"`, { timeoutMs: 20_000 });
     } catch {}
   }
 }
