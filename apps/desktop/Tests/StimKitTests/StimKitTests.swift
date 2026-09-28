@@ -201,7 +201,7 @@ import Testing
     #expect(pathInCheckout("/u/tlonx/app", worktree: "/u/tlon") == nil)
   }
 
-  @Test func ordersDrivenThenRunningThenStoppedDevices() throws {
+  @Test func ordersRunningDevicesByPlatformWhateverDrivesThem() throws {
     let json = """
       {"path":"/w","live":true,"warnings":[],
        "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Shutdown"},

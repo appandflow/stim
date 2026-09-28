@@ -230,6 +230,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     return (String(parsed[..<space]), String(runtime))
   }
 
+  /// The simulator model without its runtime, such as "iPhone 18 Pro"; `model` for any other device.
+  public var modelName: String { iosModel.name }
+
   public var formFactor: FormFactor {
     switch self {
     case .ios(_, let d):

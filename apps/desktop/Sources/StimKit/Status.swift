@@ -72,6 +72,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var agents: [AgentSession]?
   /// Whether stim-server may record this workspace's device screens; absent from a `stim` without replay.
   public var recording: Recording?
+  /// Disk use as a status watcher last measured it; absent until one has, and from an older `stim`.
+  public var disk: WorkspaceDisk?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?
 
@@ -79,7 +81,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
-    case agents
+    case agents, disk
   }
 
   public struct Recording: Decodable, Hashable, Sendable {
@@ -123,15 +125,20 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     return out
   }
 
-  /// `devices` with driven devices first, then other running ones, then stopped ones, by slot inside each group.
+  /// `devices` running first, then iOS, Android, Web, physical and remote devices, then by slot. The order never
+  /// depends on activity or drivers, so a device keeps its place while tools attach and detach.
   public var orderedDevices: [DeviceRef] {
     func rank(_ device: DeviceRef) -> Int {
-      device.isRunning ? (device.activity?.state == "driven" ? 0 : 1) : 2
+      if case .remote = device { return 4 }
+      if device.isPhysical { return 3 }
+      return ["ios": 0, "android": 1, "web": 2][device.platform] ?? 4
     }
     return devices.enumerated().sorted { a, b in
+      if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
       let (ra, rb) = (rank(a.element), rank(b.element))
       if ra != rb { return ra < rb }
-      if a.element.slot != b.element.slot { return a.element.slot < b.element.slot }
+      let slots = a.element.slot.localizedCompare(b.element.slot)
+      if slots != .orderedSame { return slots == .orderedAscending }
       return a.offset < b.offset
     }.map(\.element)
   }
@@ -166,6 +173,41 @@ public struct WorktreeInfo: Decodable, Hashable, Sendable {
   public var branch: String?
   public var repository: String?
   public var git: WorktreeGit?
+  /// The branch's pull request as Stim last asked GitHub; nil when it has none or `stim` did not say.
+  public var pullRequest: PullRequestFacts?
+}
+
+/// `stim status --json` `worktree.pullRequest`; `checks` counts the head commit's checks.
+public struct PullRequestFacts: Decodable, Hashable, Sendable {
+  public struct Checks: Decodable, Hashable, Sendable {
+    public var passing: Int
+    public var failing: Int
+    public var pending: Int
+  }
+
+  public var number: Int
+  public var url: String
+  public var title: String
+  /// `open`, `draft`, `merged` or `closed`.
+  public var state: String
+  public var checks: Checks?
+  public var reviewDecision: String?
+  public var checkedAt: String?
+}
+
+/// `worktreeBytes` is the git worktree folder with node_modules, `nodeModulesBytes` is part of it, and `buildBytes`
+/// is Stim's own folder for the workspace.
+public struct WorkspaceDisk: Decodable, Hashable, Sendable {
+  public var worktreeBytes: Double?
+  public var nodeModulesBytes: Double?
+  public var buildBytes: Double?
+  public var measuredAt: String?
+}
+
+/// A simulator's data folder or an emulator's AVD folder, as a status watcher last measured it.
+public struct DeviceDisk: Decodable, Hashable, Sendable {
+  public var bytes: Double
+  public var measuredAt: String?
 }
 
 /// A worktree's `git status`, as `stim status --json` reports it. `ahead` and `behind` are nil without an upstream.
@@ -236,12 +278,13 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var state: String
   public var activity: DeviceActivity?
   public var app: AppProcess?
+  public var disk: DeviceDisk?
   /// Set only on a device built from `physicalDevices`, never decoded from the `ios` record.
   public var physical = false
   public var model: String?
   public var leaseExpiresAt: String?
 
-  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app }
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, disk }
 
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
@@ -259,6 +302,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
     state = try c.decode(String.self, forKey: .state)
     activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)
     app = try c.decodeIfPresent(AppProcess.self, forKey: .app)
+    disk = try c.decodeIfPresent(DeviceDisk.self, forKey: .disk)
   }
 }
 
@@ -278,6 +322,7 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var deviceProfile: String?
   public var activity: DeviceActivity?
   public var app: AppProcess?
+  public var disk: DeviceDisk?
   public var model: String?
   public var leaseExpiresAt: String?
 }
@@ -356,9 +401,34 @@ public struct RemoteDevice: Decodable, Hashable, Sendable {
 }
 
 public struct Metro: Decodable, Hashable, Sendable {
+  public struct Stop: Decodable, Hashable, Sendable {
+    public var reason: String
+    public var at: String?
+  }
+
   public var port: Int
   public var running: Bool
   public var pid: Int?
+  public var lastStop: Stop?
+  /// Absent when the Metro log has no bundle request, and from a `stim` that does not report bundles.
+  public var bundle: MetroBundle?
+}
+
+/// Metro's bundle requests: `percent` (0 to 100) only while Metro reports progress, `last` the newest finished one.
+public struct MetroBundle: Decodable, Hashable, Sendable {
+  public struct Finished: Decodable, Hashable, Sendable {
+    public var platform: String?
+    /// `ok` or `failed`.
+    public var status: String
+    public var durationMs: Double
+    public var finishedAt: String
+  }
+
+  public var bundling: Bool
+  public var platform: String?
+  public var startedAt: String?
+  public var percent: Double?
+  public var last: Finished?
 }
 
 public struct Supervisor: Decodable, Hashable, Sendable {

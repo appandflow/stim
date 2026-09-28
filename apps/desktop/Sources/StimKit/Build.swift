@@ -12,6 +12,10 @@ public struct Build: Decodable, Hashable, Sendable {
   public var expectedMs: Double?
   public var expectedPhaseMs: Double?
   public var basis: Int
+  /// Present once the build tool printed a recognized line.
+  public var detail: BuildDetail?
+  /// Present once the run knows why the cache missed.
+  public var missReason: BuildMissReason?
 
   public var isRunning: Bool { state == "running" }
 
@@ -28,6 +32,17 @@ public struct Build: Decodable, Hashable, Sendable {
       : remainingMs < 60_000 ? "under a minute left" : "about \(Int((remainingMs / 60_000).rounded(.up))) min left"
     return BuildProgress(elapsedMs: elapsedMs, fraction: min(elapsedMs / expectedMs, 0.99), remaining: remaining)
   }
+}
+
+/// The build tool's step inside a build phase. `done` and `total` count `unit`s: xcodebuild `targets`, or Gradle
+/// `tasks` with no total. `line` is the latest compile, link or task line.
+public struct BuildDetail: Decodable, Hashable, Sendable {
+  public var step: String?
+  public var unit: String?
+  public var done: Int?
+  public var total: Int?
+  public var line: String?
+  public var updatedAt: String?
 }
 
 public struct BuildProgress: Equatable, Sendable {
