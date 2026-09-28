@@ -402,6 +402,9 @@ server.on('connection', (socket) => {
     'machine.get'() {
       return { result: usage() };
     },
+    'machine.details'() {
+      return { result: shiftTimestamps(fixtures.machineDetails, shiftMs) };
+    },
     'machine.history'(params) {
       return { result: history(params.sinceMs) };
     },

@@ -1,0 +1,1737 @@
+{
+  "gc": {
+    "mode": "dry-run",
+    "idle": null,
+    "cacheScope": null,
+    "olderThan": null,
+    "worktreeSweep": {
+      "olderThan": 7,
+      "defaulted": true
+    },
+    "actionable": true,
+    "failures": null,
+    "sections": {
+      "deadProjects": [
+        {
+          "path": "/Users/dev/Developer/old-prototype"
+        }
+      ],
+      "invalidProjects": [],
+      "orphanedPorts": [],
+      "orphanedWorkspaces": [
+        {
+          "dir": "/Users/dev/.stim/workspaces/demo--00000000deadbeef",
+          "projectRoot": "/Users/dev/Developer/demo",
+          "bytes": 3300000000
+        }
+      ],
+      "linkedWorktrees": [
+        {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene",
+          "idleDays": 9,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 9 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer",
+          "idleDays": 21,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 21 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search",
+          "idleDays": 21,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 21 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-running",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-building",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-crashed",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-build-failed",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-warming",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 0 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped",
+          "idleDays": 21,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 21 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/agent-a2812627ae0f6660e",
+          "idleDays": 2,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1097",
+          "idleDays": 12,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1112",
+          "idleDays": 2,
+          "mergedInto": null,
+          "pullRequest": {
+            "number": 1112,
+            "state": "open",
+            "url": "https://github.com/appandflow/stim/pull/1112",
+            "containsHead": true
+          },
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1118",
+          "idleDays": 2,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1118-baseline",
+          "idleDays": 2,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/profile-decode",
+          "idleDays": 12,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1087",
+          "idleDays": 2,
+          "mergedInto": "origin/main",
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": true,
+          "reason": null,
+          "detail": "merged into origin/main",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1088",
+          "idleDays": 2,
+          "mergedInto": "origin/main",
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": true,
+          "reason": null,
+          "detail": "merged into origin/main",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1096",
+          "idleDays": 2,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "not merged",
+          "eligibleAt": null
+        }
+      ],
+      "parkedSimulators": [
+        {
+          "udid": "P4RK0001-0000-4000-8000-000000000001",
+          "name": "stim-parked (iPhone 17 27.0) p4rk",
+          "model": "iPhone 17",
+          "runtime": "27.0",
+          "parkedAt": "2026-09-21T09:23:09.000Z",
+          "bytes": 1840000000,
+          "listed": true
+        }
+      ],
+      "parkedEmulators": [],
+      "orphanedDevices": [
+        {
+          "kind": "android",
+          "id": "stim-old-demo",
+          "name": "stim-old-demo",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-old-demo.avd"
+        }
+      ],
+      "unverifiedDevices": [],
+      "staleDevices": [],
+      "staleDeviceRecords": [],
+      "staleLedgerEntries": [],
+      "idleDevices": [],
+      "orphanedEasSessions": [],
+      "staleBuildLocks": [],
+      "staleBuildSlots": [],
+      "unresolvedBuildClaims": [],
+      "buildsInProgress": [],
+      "expiredDeviceLeases": [],
+      "keptDeviceLeases": [],
+      "deviceSweepNotices": [],
+      "easSessionSweepNotices": [],
+      "skipped": [],
+      "workspaceLogs": [
+        {
+          "dir": "/Users/dev/.stim/workspaces/stim--000000a1b2c3d400",
+          "projectRoot": "/Users/dev/Developer/stim",
+          "bytes": 31000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/helloworld--000000a1b2c3d401",
+          "projectRoot": "/Users/dev/Developer/react-native/private/helloworld",
+          "bytes": 25000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/web-login--000000a1b2c3d402",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
+          "bytes": 30000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-apps--000000a1b2c3d403",
+          "projectRoot": "/Users/dev/Developer/tlon-apps",
+          "bytes": 54000000,
+          "trimBytes": 38000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d404",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
+          "bytes": 54000000,
+          "trimBytes": 38000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/example--000000a1b2c3d405",
+          "projectRoot": "/Users/dev/Developer/react-native-reserved-regions/example",
+          "bytes": 9000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/example--000000a1b2c3d406",
+          "projectRoot": "/Users/dev/Developer/react-native-hinges/example",
+          "bytes": 29000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/react-native-hinges--000000a1b2c3d407",
+          "projectRoot": "/Users/dev/Developer/react-native-hinges",
+          "bytes": 10000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d408",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
+          "bytes": 15000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d409",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile",
+          "bytes": 56000000,
+          "trimBytes": 40000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40a",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "bytes": 37000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40b",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+          "bytes": 26000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40c",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "bytes": 54000000,
+          "trimBytes": 38000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40d",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+          "bytes": 48000000,
+          "trimBytes": 32000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d40e",
+          "projectRoot": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "bytes": 56000000,
+          "trimBytes": 40000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40f",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer/apps/tlon-mobile",
+          "bytes": 40000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d410",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search/apps/tlon-mobile",
+          "bytes": 27000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d411",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "bytes": 11000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d412",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "bytes": 57000000,
+          "trimBytes": 41000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d413",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "bytes": 31000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d414",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "bytes": 22000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d415",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-warming/apps/mobile",
+          "bytes": 47000000,
+          "trimBytes": 31000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d416",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
+          "bytes": 29000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d417",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "bytes": 13000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        }
+      ],
+      "recordings": [
+        {
+          "dir": "/Users/dev/.stim/workspaces/stim--000000a1b2c3d400/recordings",
+          "projectRoot": "/Users/dev/Developer/stim",
+          "bytes": 49000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/web-login--000000a1b2c3d402/recordings",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
+          "bytes": 45000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d404/recordings",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
+          "bytes": 132000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/example--000000a1b2c3d406/recordings",
+          "projectRoot": "/Users/dev/Developer/react-native-hinges/example",
+          "bytes": 210000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d408/recordings",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
+          "bytes": 215000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40a/recordings",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "bytes": 391000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40c/recordings",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "bytes": 177000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d40e/recordings",
+          "projectRoot": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "bytes": 41000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d410/recordings",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search/apps/tlon-mobile",
+          "bytes": 400000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d412/recordings",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "bytes": 146000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d414/recordings",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "bytes": 347000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d416/recordings",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
+          "bytes": 201000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/demo--00000000deadbeef/recordings",
+          "projectRoot": "/Users/dev/Developer/demo",
+          "bytes": 640000000,
+          "deleteBytes": 640000000,
+          "willDelete": true,
+          "withWorkspace": true,
+          "reason": null,
+          "detail": null
+        }
+      ],
+      "workspaceBuildOutputs": [
+        {
+          "dir": "/Users/dev/.stim/workspaces/stim--000000a1b2c3d400",
+          "projectRoot": "/Users/dev/Developer/stim",
+          "bytes": 6700000000,
+          "idleDays": 3,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/helloworld--000000a1b2c3d401",
+          "projectRoot": "/Users/dev/Developer/react-native/private/helloworld",
+          "bytes": 3400000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/web-login--000000a1b2c3d402",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
+          "bytes": 1700000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-apps--000000a1b2c3d403",
+          "projectRoot": "/Users/dev/Developer/tlon-apps",
+          "bytes": 1700000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d404",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
+          "bytes": 9100000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 0 days ago"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/example--000000a1b2c3d405",
+          "projectRoot": "/Users/dev/Developer/react-native-reserved-regions/example",
+          "bytes": 3200000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/example--000000a1b2c3d406",
+          "projectRoot": "/Users/dev/Developer/react-native-hinges/example",
+          "bytes": 8900000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/react-native-hinges--000000a1b2c3d407",
+          "projectRoot": "/Users/dev/Developer/react-native-hinges",
+          "bytes": 8800000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d408",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
+          "bytes": 3300000000,
+          "idleDays": 9,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d409",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile",
+          "bytes": 1600000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40a",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "bytes": 5900000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40b",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+          "bytes": 3800000000,
+          "idleDays": 3,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40c",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "bytes": 3000000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40d",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+          "bytes": 7500000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d40e",
+          "projectRoot": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "bytes": 8600000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d40f",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer/apps/tlon-mobile",
+          "bytes": 9200000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d410",
+          "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search/apps/tlon-mobile",
+          "bytes": 9200000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d411",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "bytes": 2000000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d412",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "bytes": 6900000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d413",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "bytes": 3700000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d414",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "bytes": 6200000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d415",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-warming/apps/mobile",
+          "bytes": 4300000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 0 days ago"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d416",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
+          "bytes": 7100000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d417",
+          "projectRoot": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "bytes": 7100000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        }
+      ],
+      "caches": [
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/dev/.stim/metro-cache/tlon-mobile",
+          "source": "registered",
+          "bytes": 1420000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/dev/.stim/metro-cache/mobile",
+          "source": "registered",
+          "bytes": 880000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/dev/.stim/metro-cache/example",
+          "source": "registered",
+          "bytes": 140000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/dev/.stim/metro-cache/helloworld",
+          "source": "registered",
+          "bytes": 61000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/dev/.stim/metro-cache/reserved-regions-example",
+          "source": "registered",
+          "bytes": 38000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/dev/.stim/metro-cache/hinges-example",
+          "source": "registered",
+          "bytes": 44000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Stim build cache",
+          "dir": "/Users/dev/.stim/build-cache",
+          "source": "registered",
+          "bytes": 21400000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Gradle build cache",
+          "dir": "/Users/dev/.gradle/caches/build-cache-1",
+          "source": "registered",
+          "bytes": 6300000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "ccache",
+          "dir": "/Users/dev/Library/Caches/ccache",
+          "source": "registered",
+          "bytes": 4900000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "CocoaPods cache",
+          "dir": "/Users/dev/Library/Caches/CocoaPods",
+          "source": "registered",
+          "bytes": 2600000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Expo fingerprint cache",
+          "dir": "/Users/dev/.stim/fingerprints",
+          "source": "registered",
+          "bytes": 12000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "EAS build downloads",
+          "dir": "/Users/dev/.stim/eas-builds",
+          "source": "registered",
+          "bytes": 3800000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Android CAS",
+          "dir": "/Users/dev/.stim/android-cas",
+          "source": "registered",
+          "bytes": 9100000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Xcode module cache",
+          "dir": "/Users/dev/Library/Developer/Xcode/DerivedData/ModuleCache.noindex",
+          "source": "registered",
+          "bytes": 1150000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        }
+      ]
+    },
+    "results": [],
+    "inventory": {
+      "devices": [
+        {
+          "kind": "ios",
+          "id": "5D1CA82B-C157-4C68-90D1-E9F821B3B2EA",
+          "name": "stim-react-native-reserved-regions-example (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-25T01:23:09.000Z",
+          "bytes": 3100000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/react-native-reserved-regions/example",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-react-native-reserved-regions-example-f44c281f",
+          "name": "stim-react-native-reserved-regions-example-f44c281f",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-24T12:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-react-native-reserved-regions-example-f44c281f.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/react-native-reserved-regions/example",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "EC33DE7B-AFC0-43F4-AEC1-A16960820B4C",
+          "name": "stim-react-native-hinges-example (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-21T02:23:09.000Z",
+          "bytes": 1900000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/react-native-hinges/example",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-react-native-hinges-example",
+          "name": "stim-react-native-hinges-example",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T14:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-react-native-hinges-example.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/react-native-hinges/example",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-react-native-hinges-example-fold3-camera",
+          "name": "stim-react-native-hinges-example-fold3-camera",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T02:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-react-native-hinges-example-fold3-camera.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/react-native-hinges/example",
+          "slot": "fold3-camera"
+        },
+        {
+          "kind": "android",
+          "id": "stim-react-native-hinges-fold3-camera",
+          "name": "stim-react-native-hinges-fold3-camera",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-25T03:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-react-native-hinges-fold3-camera.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/react-native-hinges",
+          "slot": "fold3-camera"
+        },
+        {
+          "kind": "ios",
+          "id": "BFB4109D-5BA5-446E-8333-B97F47BA444C",
+          "name": "stim-ios27-uiscene-tlon-mobile (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-25T00:23:09.000Z",
+          "bytes": 4900000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-ios27-uiscene-tlon-mobile",
+          "name": "stim-ios27-uiscene-tlon-mobile",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-24T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-ios27-uiscene-tlon-mobile.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-wide-insets-tlon-mobile",
+          "name": "stim-wide-insets-tlon-mobile",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T20:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-wide-insets-tlon-mobile.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A",
+          "name": "stim-wide-insets-tlon-mobile-duo (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-24T22:23:09.000Z",
+          "bytes": 2300000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "slot": "duo"
+        },
+        {
+          "kind": "ios",
+          "id": "A370BA4E-3511-4A47-97C9-B916F6190C90",
+          "name": "stim-wide-insets-tlon-mobile-iphone (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-23T10:23:09.000Z",
+          "bytes": 1600000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "slot": "iphone"
+        },
+        {
+          "kind": "ios",
+          "id": "75D112AC-A6A1-486E-B22F-16EC31E35990",
+          "name": "stim-ipad-support-tlon-mobile (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T03:23:09.000Z",
+          "bytes": 5100000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-ipad-support-tlon-mobile",
+          "name": "stim-ipad-support-tlon-mobile",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T09:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-ipad-support-tlon-mobile.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0",
+          "name": "stim-ipad-support-tlon-mobile-i (iPad Pro 11-inch (M5) 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T22:23:09.000Z",
+          "bytes": 6500000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
+          "slot": "ipad"
+        },
+        {
+          "kind": "ios",
+          "id": "AC99FE46-446F-4D14-B1F9-FF271CE1A2A8",
+          "name": "stim-wide-split-layout-tlon-mobile (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-20T19:23:09.000Z",
+          "bytes": 5200000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-wide-split-layout-tlon-mobile",
+          "name": "stim-wide-split-layout-tlon-mobile",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-wide-split-layout-tlon-mobile.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "C8C0C196-2F11-4D47-A1B2-EFE67BE9817F",
+          "name": "stim-wide-split-layout-tlon-mob (iPad Pro 11-inch (M5) 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T19:23:09.000Z",
+          "bytes": 2900000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "slot": "ipad"
+        },
+        {
+          "kind": "ios",
+          "id": "C32A8423-131B-4242-A57E-73EF00884207",
+          "name": "stim-wide-split-layout-tlon-mobile-duo (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T17:23:09.000Z",
+          "bytes": 6500000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "slot": "duo"
+        },
+        {
+          "kind": "ios",
+          "id": "8B0D2C13-29B8-410C-869D-5BEFE0C58D35",
+          "name": "stim-wide-split-layout-tlon-mobil (iPad mini (A17 Pro) 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-21T01:23:09.000Z",
+          "bytes": 4700000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
+          "slot": "mini"
+        },
+        {
+          "kind": "ios",
+          "id": "18BB5300-FD48-4149-A511-CF4160594B86",
+          "name": "stim-chat-perf-demo-tlon-mobile (iPhone 17 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T21:23:09.000Z",
+          "bytes": 5800000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-chat-perf-demo-tlon-mobile",
+          "name": "stim-chat-perf-demo-tlon-mobile",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-chat-perf-demo-tlon-mobile.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "9C75FB3C-BC64-4883-AD00-C124A5839A37",
+          "name": "stim-chat-perf-demo-tlon-mobile-ios18 (iPhone 16 Pro 18.6)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-23T21:23:09.000Z",
+          "bytes": 3800000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+          "slot": "ios18"
+        },
+        {
+          "kind": "ios",
+          "id": "10D04457-8533-422E-9062-EA62FA64396F",
+          "name": "stim-1123-mobile-app-mobile (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T19:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "F977AD0C-F769-47C0-B00B-698B20244E41",
+          "name": "stim-1123-mobile-app-mobile-phone (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T19:23:09.000Z",
+          "bytes": 4700000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "slot": "phone"
+        },
+        {
+          "kind": "ios",
+          "id": "A4000001-0000-4000-8000-000000000001",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T11:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-running",
+          "name": "stim-a4-running",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-24T13:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-a4-running.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "A4000002-0000-4000-8000-000000000002",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T14:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-building",
+          "name": "stim-a4-building",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T17:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-a4-building.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "A4000003-0000-4000-8000-000000000003",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-24T09:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-crashed",
+          "name": "stim-a4-crashed",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T14:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-a4-crashed.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "A4000004-0000-4000-8000-000000000004",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-23T15:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-build-failed",
+          "name": "stim-a4-build-failed",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T12:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-a4-build-failed.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "A4000006-0000-4000-8000-000000000006",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T13:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "A4000007-0000-4000-8000-000000000007",
+          "name": "stim-a4-a400 (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T17:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-multi-device",
+          "name": "stim-a4-multi-device",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T15:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-a4-multi-device.avd",
+          "owner": "workspace",
+          "project": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "P4RK0001-0000-4000-8000-000000000001",
+          "name": "stim-parked (iPhone 17 27.0) p4rk",
+          "model": "iPhone 17",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-21T17:23:09.000Z",
+          "bytes": 1840000000,
+          "directory": null,
+          "owner": "parked",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "android",
+          "id": "stim-old-demo",
+          "name": "stim-old-demo",
+          "model": "pixel_6",
+          "runtime": "system-images;android-34;google_apis;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-08-15T22:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/stim-old-demo.avd",
+          "owner": "orphaned",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0000-0000-4000-8000-000000000000",
+          "name": "iPhone 18 Pro",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-23T23:23:09.000Z",
+          "bytes": 4210000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0001-0000-4000-8000-000000000000",
+          "name": "iPad Pro 13-inch (M5)",
+          "model": "iPad Pro 13-inch (M5)",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-15T16:23:09.000Z",
+          "bytes": 6020000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0002-0000-4000-8000-000000000000",
+          "name": "iPhone 17",
+          "model": "iPhone 17",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-07-26T22:23:09.000Z",
+          "bytes": 2730000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0003-0000-4000-8000-000000000000",
+          "name": "iPhone SE (3rd generation)",
+          "model": "iPhone SE (3rd generation)",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-05-28T04:23:09.000Z",
+          "bytes": 980000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "android",
+          "id": "Pixel_8_API_35",
+          "name": "Pixel_8_API_35",
+          "model": null,
+          "runtime": "system-images;android-35;google_apis;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-05T03:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/Pixel_8_API_35.avd",
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "android",
+          "id": "Medium_Phone_API_36",
+          "name": "Medium_Phone_API_36",
+          "model": null,
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-04T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/dev/.android/avd/Medium_Phone_API_36.avd",
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "0THER001-0000-4000-8000-000000000000",
+          "name": "stim-demo (iPhone 17 Pro 27.0) 0the",
+          "model": "iPhone 17 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-09T15:23:09.000Z",
+          "bytes": 2050000000,
+          "directory": null,
+          "owner": "otherStimHome",
+          "project": null,
+          "slot": null
+        }
+      ],
+      "runtimes": [
+        {
+          "identifier": "RT0000-0000-4000-8000-000000000000",
+          "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "version": "27.0",
+          "build": "24A434",
+          "bytes": 8067000161,
+          "lastUsedAt": "2026-09-23T15:23:09.000Z",
+          "deviceCount": 25,
+          "command": "xcrun simctl runtime delete RT0000-0000-4000-8000-000000000000"
+        },
+        {
+          "identifier": "RT0001-0000-4000-8000-000000000000",
+          "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+          "version": "26.4",
+          "build": "23E244",
+          "bytes": 7512000000,
+          "lastUsedAt": "2026-09-23T19:23:09.000Z",
+          "deviceCount": 2,
+          "command": "xcrun simctl runtime delete RT0001-0000-4000-8000-000000000000"
+        },
+        {
+          "identifier": "RT0002-0000-4000-8000-000000000000",
+          "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
+          "version": "26.0",
+          "build": "23A343",
+          "bytes": 7390000000,
+          "lastUsedAt": "2026-09-23T08:23:09.000Z",
+          "deviceCount": 0,
+          "command": "xcrun simctl runtime delete RT0002-0000-4000-8000-000000000000"
+        }
+      ],
+      "systemImages": [
+        {
+          "package": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "directory": "/Users/dev/Library/Android/sdk/system-images/android-36/google_apis_playstore/arm64-v8a",
+          "avdCount": 15,
+          "command": "sdkmanager --uninstall \"system-images;android-36;google_apis_playstore;arm64-v8a\""
+        },
+        {
+          "package": "system-images;android-35;google_apis;arm64-v8a",
+          "directory": "/Users/dev/Library/Android/sdk/system-images/android-35/google_apis/arm64-v8a",
+          "avdCount": 1,
+          "command": "sdkmanager --uninstall \"system-images;android-35;google_apis;arm64-v8a\""
+        },
+        {
+          "package": "system-images;android-34;google_apis;arm64-v8a",
+          "directory": "/Users/dev/Library/Android/sdk/system-images/android-34/google_apis/arm64-v8a",
+          "avdCount": 1,
+          "command": "sdkmanager --uninstall \"system-images;android-34;google_apis;arm64-v8a\""
+        },
+        {
+          "package": "system-images;android-33;default;arm64-v8a",
+          "directory": "/Users/dev/Library/Android/sdk/system-images/android-33/default/arm64-v8a",
+          "avdCount": 0,
+          "command": "sdkmanager --uninstall \"system-images;android-33;default;arm64-v8a\""
+        }
+      ],
+      "notices": []
+    }
+  },
+  "stats": {
+    "version": 1,
+    "project": null,
+    "machine": {
+      "ios": {
+        "runs": 359,
+        "failed": 50,
+        "hits": 160,
+        "misses": 149,
+        "coldRuns": 149,
+        "coldRunMs": 29295997,
+        "hitRuns": 153,
+        "hitRunMs": 9076520,
+        "timeSavedMs": 32403346,
+        "firstRunAt": "2026-08-31T16:23:09.000Z",
+        "lastRunAt": "2026-09-24T23:23:09.000Z",
+        "lastColdBuildMs": 520471
+      },
+      "android": {
+        "runs": 178,
+        "failed": 40,
+        "hits": 66,
+        "misses": 72,
+        "coldRuns": 72,
+        "coldRunMs": 12321501,
+        "hitRuns": 65,
+        "hitRunMs": 3189356,
+        "timeSavedMs": 12517184,
+        "firstRunAt": "2026-09-01T19:23:09.000Z",
+        "lastRunAt": "2026-09-24T16:23:09.000Z",
+        "lastColdBuildMs": 130382
+      }
+    }
+  },
+  "measuredAt": "2026-09-25T04:23:09.012Z"
+}

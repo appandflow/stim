@@ -75,18 +75,35 @@ reload and stop a workspace:
   or idle, and to workspaces with errors or with remote sessions. The filters
   are saved on the phone; a dot on the button shows that some are on. Live only
   is the default.
-- **Machine status**: tapping a chip shows that machine's capacity, with Stim's
-  share of memory (what live workspaces use, or an estimate from an older `stim`), charts of CPU, memory used and
-  startup-volume free space over the last hour, load average, memory used and
-  pressure, free disk per volume, Stim budgets, running devices and
-  device leases, **Needs attention**, and its server and `stim` versions.
+- **Machine status**: tapping a chip shows that machine's page, laid out like
+  Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
+  startup-volume free space charts over the last hour, the live workspaces and
+  Stim's share of memory, then **CPU and memory**, the status `machine` owners
+  by memory. **Disk** shows the lowest free space against Stim's disk budget
+  and a bar of what uses it: Stim devices, Stim caches and outputs,
+  `node_modules`, other simulators and AVDs, and runtimes and system images. A
+  figure marked ≥ has parts the Mac has not sized; the phone does not size
+  AVDs or system images itself, as Stim Desktop does. Then come **Safe to
+  free now** (what `stim gc --delete` would free, with the command on the Mac
+  that frees each row), **Projects** (repositories and their worktrees, with each
+  worktree's `node_modules`, devices, build outputs and logs, and whether it is
+  merged, has an open pull request, or is stale), **Simulators and
+  emulators** (every one on the Mac, Stim's and **Yours**), **Leased
+  devices**, **Runtimes and system images**, **Recordings**, **Caches**,
+  **Native builds** (runs, cache hits and time saved per platform), budgets and
+  **Needs attention**. Nothing on the page frees, deletes or stops anything;
+  it says to manage those on the Mac. The disk sections other than Projects and
+  Simulators and emulators come from stim-server's `machine.details`, the `stim
+gc --json` dry run and `stim stats --json`, which the server refreshes at
+  most once a minute; a server without it shows only what `stim status`
+  reports, and says to update. Each section folds from its header, shows its
+  first 10 rows with **Show all N**, and the phone remembers both per section.
   The title shows the pairing's scope; a read-only pairing also says what it
   cannot do, with **Allow control**.
   Needs attention groups status issues by workspace, live workspaces first,
-  then those with an error, shows three workspaces until you expand it, and
-  shows each issue's remedy with **Copy**, which copies it as
-  `cd '<workspace>' && <remedy>`. No remedy maps to Reload or Stop, so none
-  offers an action button.
+  then those with an error, and shows each issue's remedy with **Copy**, which
+  copies it as `cd '<workspace>' && <remedy>`. No remedy maps to Reload or
+  Stop, so none offers an action button.
 - **Menu**: the menu button, or a swipe from the left edge of home, slides
   home right and shows the menu behind it: **Workspaces**, **Devices** and
   **Machines** (the same switch as home's toggle), **Notifications** (see
@@ -606,6 +623,13 @@ iPhone and a disconnected Android phone, added by hand in the
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
 --json`, with a `missReason` added to the Android one by hand.
+`machine.details` answers from `mock-server/fixtures/machine-details.json`, a
+`stim gc --json` dry run and `stim stats --json` payload made for the fixture
+workspaces: build outputs, logs and recordings for them, 44 simulators and
+emulators with every owner kind, runtimes and system images with unused ones,
+14 caches, and merged, stale and open-pull-request worktrees, so the owners,
+Safe to free now, Simulators and emulators, Recordings and Caches sections have
+more than 10 rows to fold.
 
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and
