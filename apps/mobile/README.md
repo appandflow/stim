@@ -488,8 +488,10 @@ icon, the workspace (or the Mac, for a machine problem), the one-line cause,
 the category and the Mac, and how long ago it happened; an entry no phone was
 notified of says **Muted** (no registered phone wants its category) or
 **Quiet hours**. Tapping a row marks it read and opens what its notification
-opens. The filter button marks everything read and filters by category and,
-with several Macs, by Mac. Pull down to list again.
+opens. The filter button marks read what the list shows and filters by
+category and, with several Macs, by Mac. Pull down to list again. What a Mac
+logged before this phone first listed its history, such as right after
+pairing, starts out read.
 
 The app lists each Mac's history with `notifications.list` on every connection
 and adds the `notification` events the Mac sends while connected. The history
@@ -497,7 +499,8 @@ lives in memory; which entries were read is saved per Mac in the notification
 store, which a new build or update keeps, and forgetting the Mac deletes it.
 Tapping a push or local notification marks its entry read: a push carries the
 entry's number, and a local notification the rule's id, which matches the
-newest entry with that id. A Mac whose server predates the history
+newest entry with that id; a tap that launches the app is applied once that
+Mac's history is listed. A Mac whose server predates the history
 (`notifications` missing from `hello`'s `features`) adds nothing, and without
 one the menu has no **Notifications** row. The categories, wording and icons
 are the ones Stim Desktop's inbox uses.

@@ -60,6 +60,7 @@ describe('read state', () => {
     expect(parseReadState(saved, 'M')).toEqual({ log: 'M', readUpTo: 0, read: [] });
     expect(parseReadState('not json', 'L')).toEqual({ log: 'L', readUpTo: 0, read: [] });
     expect(markAllRead(state, 5)).toEqual({ log: 'L', readUpTo: 5, read: [] });
+    expect(markRead(state, [9], 4)).toEqual({ log: 'L', readUpTo: 0, read: [9] });
   });
 
   it('finds the entry a tapped push or local notification reported', () => {

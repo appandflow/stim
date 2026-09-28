@@ -66,9 +66,10 @@ export function parseReadState(raw: string | undefined, log: string): ReadState 
 
 export const isRead = (state: ReadState, seq: number) => seq <= state.readUpTo || state.read.includes(seq);
 
-export function markRead(state: ReadState, seqs: readonly number[]): ReadState {
+/** `state` with `seqs` read, forgetting the ones below `oldest`, which the Mac no longer lists. */
+export function markRead(state: ReadState, seqs: readonly number[], oldest = 0): ReadState {
   const added = seqs.filter((seq) => !isRead(state, seq));
-  return added.length ? { ...state, read: [...state.read, ...added] } : state;
+  return { ...state, read: [...state.read, ...added].filter((seq) => seq >= oldest) };
 }
 
 export function markAllRead(state: ReadState, cursor: number): ReadState {
