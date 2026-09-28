@@ -45,35 +45,51 @@ struct InboxView: View {
   }
 
   private func header(empty: Bool) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-      Text("Notifications").font(.stim(.title))
-      Spacer()
-      Picker("Category", selection: $filter.category) {
-        Text("All categories").tag(OversightCategory?.none)
-        ForEach(OversightCategory.desktop, id: \.self) { category in
-          Label(category.label, systemImage: category.symbol).tag(Optional(category))
-        }
+    ViewThatFits(in: .horizontal) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        title
+        Spacer()
+        filters(empty: empty)
       }
-      .labelsHidden()
-      .fixedSize()
-      .help("Show one category")
-      Picker("Workspace", selection: $filter.workspace) {
-        Text("All workspaces").tag(String?.none)
-        Text("Machine").tag(Optional(""))
-        ForEach(workspaceChoices, id: \.path) { workspace in
-          Text(workspace.title).tag(Optional(workspace.path))
-        }
+      VStack(alignment: .leading, spacing: Space.lg) {
+        title
+        HStack(spacing: Space.md) { filters(empty: empty, compresses: true) }
       }
-      .labelsHidden()
-      .fixedSize()
-      .help("Show one workspace")
-      Button("Mark all read") { inbox.markAllRead(filter) }
-        .buttonStyle(.stim())
-        .disabled(!inbox.inbox.entries.contains { !$0.read && filter.matches($0) })
-      Button("Clear") { confirmsClear = true }
-        .buttonStyle(.stim(.destructive))
-        .disabled(empty)
     }
+  }
+
+  private var title: some View {
+    Text("Notifications").font(.stim(.title)).fixedSize()
+  }
+
+  @ViewBuilder private func filters(empty: Bool, compresses: Bool = false) -> some View {
+    Picker("Category", selection: $filter.category) {
+      Text("All categories").tag(OversightCategory?.none)
+      ForEach(OversightCategory.desktop, id: \.self) { category in
+        Label(category.label, systemImage: category.symbol).tag(Optional(category))
+      }
+    }
+    .labelsHidden()
+    .fixedSize(horizontal: !compresses, vertical: false)
+    .help("Show one category")
+    Picker("Workspace", selection: $filter.workspace) {
+      Text("All workspaces").tag(String?.none)
+      Text("Machine").tag(Optional(""))
+      ForEach(workspaceChoices, id: \.path) { workspace in
+        Text(workspace.title).tag(Optional(workspace.path))
+      }
+    }
+    .labelsHidden()
+    .fixedSize(horizontal: !compresses, vertical: false)
+    .help("Show one workspace")
+    Button("Mark all read") { inbox.markAllRead(filter) }
+      .buttonStyle(.stim())
+      .fixedSize()
+      .disabled(!inbox.inbox.entries.contains { !$0.read && filter.matches($0) })
+    Button("Clear") { confirmsClear = true }
+      .buttonStyle(.stim(.destructive))
+      .fixedSize()
+      .disabled(empty)
   }
 
   private var workspaceChoices: [(path: String, title: String)] {
