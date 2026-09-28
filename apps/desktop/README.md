@@ -444,10 +444,12 @@ page's DevTools target; leaving the page terminates the command.
 ## Build progress
 
 While `stim ios` or `stim android` runs in a workspace, its header on the wall
-and the tile of the device it targets show a progress bar with the build phase,
-the elapsed time against the median of that project's comparable runs, and
-"about N min left". With no finished run to compare against, the bar is
-indeterminate. The figures come from the `build` field of `stim status --json`,
+shows a progress bar with the build phase, the elapsed time against the median
+of that project's comparable runs, and "about N min left". On the workspace
+page, the header line shows the phase, a short bar and the elapsed time over
+that estimate, the device it targets shows the same over its screen, and the
+inspector's **Build** section shows the phase checklist. With no finished run
+to compare against, the bars are indeterminate. The figures come from the `build` field of `stim status --json`,
 which needs a Stim version that reports it.
 
 ## Take over a device
