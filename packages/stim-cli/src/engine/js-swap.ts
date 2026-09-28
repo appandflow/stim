@@ -1,6 +1,6 @@
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -55,12 +55,15 @@ export function bundleCommand({
   entryFile,
   bundleOutput,
   assetsDest,
+  assetCatalogDest = null,
 }: {
   isExpo: boolean;
   entryFile: string;
   bundleOutput: string;
   assetsDest: string;
+  assetCatalogDest?: string | null;
 }): { file: string; args: string[] } {
+  const catalogArgs = assetCatalogDest ? ['--asset-catalog-dest', assetCatalogDest] : [];
   if (isExpo) {
     return {
       file: 'npx',
@@ -75,6 +78,7 @@ export function bundleCommand({
         bundleOutput,
         '--assets-dest',
         assetsDest,
+        ...catalogArgs,
       ],
     };
   }
@@ -93,9 +97,70 @@ export function bundleCommand({
       bundleOutput,
       '--assets-dest',
       assetsDest,
+      ...catalogArgs,
     ],
   };
 }
+
+const ASSET_CATALOG_BUNDLE = 'RNAssets.bundle';
+
+export type AssetCatalogTarget = { platform: string; minimumDeploymentTarget: string; targetDevices: string[] };
+
+/**
+ * Where React Native 0.88+ keeps the app's packager images. With the `RCTUseAssetCatalog` Info.plist
+ * key, `react-native-xcode.sh` compiles them with actool into RNAssets.bundle and the native image
+ * loader reads only that catalog, so a swap has to rebuild it. Null means loose files under assets/.
+ */
+export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | null {
+  if (!infoPlist || typeof infoPlist !== 'object') return null;
+  const plist = infoPlist as Record<string, unknown>;
+  const flag = plist.RCTUseAssetCatalog;
+  const on =
+    flag === true || flag === 1 || (typeof flag === 'string' && ['true', 'yes', '1'].includes(flag.toLowerCase()));
+  if (!on) return null;
+  const families = Array.isArray(plist.UIDeviceFamily) ? plist.UIDeviceFamily : [1];
+  const targetDevices = [...(families.includes(1) ? ['iphone'] : []), ...(families.includes(2) ? ['ipad'] : [])];
+  return {
+    platform: typeof plist.DTPlatformName === 'string' ? plist.DTPlatformName : 'iphoneos',
+    minimumDeploymentTarget: typeof plist.MinimumOSVersion === 'string' ? plist.MinimumOSVersion : '15.1',
+    targetDevices: targetDevices.length ? targetDevices : ['iphone'],
+  };
+}
+
+function actoolArgs({ catalog, out, target }: { catalog: string; out: string; target: AssetCatalogTarget }): string[] {
+  return [
+    'actool',
+    catalog,
+    '--compile',
+    out,
+    '--output-format',
+    'human-readable-text',
+    '--errors',
+    '--warnings',
+    '--notices',
+    '--platform',
+    target.platform,
+    '--minimum-deployment-target',
+    target.minimumDeploymentTarget,
+    ...target.targetDevices.flatMap((device) => ['--target-device', device]),
+  ];
+}
+
+const ASSET_CATALOG_BUNDLE_INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>org.reactjs.RNAssets</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>RNAssets</string>
+  <key>CFBundlePackageType</key>
+  <string>BNDL</string>
+</dict>
+</plist>
+`;
 
 export function hermescPath(root: string, { exists = existsSync }: { exists?: (p: string) => boolean } = {}): string {
   const candidates = [
@@ -176,12 +241,23 @@ export async function swapJsBundle({
     return fail('copy', `could not copy ${cachedAppPath} aside: ${describe(err)}`);
   }
 
+  let catalogTarget: AssetCatalogTarget | null;
+  try {
+    const infoPlist = e.runFile('plutil', ['-convert', 'json', '-o', '-', join(appCopy, 'Info.plist')]);
+    catalogTarget = assetCatalogTarget(JSON.parse(infoPlist));
+  } catch (err) {
+    return fail('catalog', `could not read ${join(appCopy, 'Info.plist')}: ${describe(err)}`);
+  }
+
   const bundleOutput = join(tmp, JS_BUNDLE_NAME);
   const assetsDest = join(tmp, 'assets');
+  const catalogStaging = catalogTarget ? join(tmp, 'rn-assets') : null;
+  const catalogDir = catalogStaging ? join(catalogStaging, 'RNAssets.xcassets') : null;
   const entryFile = isExpo ? 'index.js' : detectEntryFile(root);
-  const command = bundleCommand({ isExpo, entryFile, bundleOutput, assetsDest });
+  const command = bundleCommand({ isExpo, entryFile, bundleOutput, assetsDest, assetCatalogDest: catalogStaging });
   try {
     mkdirSync(assetsDest, { recursive: true });
+    if (catalogDir) mkdirSync(catalogDir, { recursive: true });
   } catch (err) {
     return fail('bundle', `could not create ${assetsDest}: ${describe(err)}`);
   }
@@ -269,6 +345,30 @@ export async function swapJsBundle({
     e.runFile('cp', ['-R', `${assetsDest}/.`, `${appCopy}/`]);
   } catch (err) {
     return fail('replace', `could not replace the JS bundle inside ${appCopy}: ${describe(err)}`);
+  }
+
+  if (catalogTarget && catalogDir) {
+    const catalogBundle = join(appCopy, ASSET_CATALOG_BUNDLE);
+    try {
+      rmSync(catalogBundle, { recursive: true, force: true });
+      if (readdirSync(catalogDir).some((name) => name.endsWith('.imageset'))) {
+        mkdirSync(catalogBundle);
+        const output = e.runFile(
+          'xcrun',
+          actoolArgs({ catalog: catalogDir, out: catalogBundle, target: catalogTarget }),
+        );
+        if (!exists(join(catalogBundle, 'Assets.car'))) {
+          return fail(
+            'actool',
+            `actool wrote no Assets.car into ${catalogBundle}`,
+            tailLines(output.split('\n'), LAST_LINES),
+          );
+        }
+        writeFileSync(join(catalogBundle, 'Info.plist'), ASSET_CATALOG_BUNDLE_INFO_PLIST);
+      }
+    } catch (err) {
+      return fail('actool', `could not compile the image asset catalog into ${catalogBundle}: ${describe(err)}`);
+    }
   }
 
   try {
