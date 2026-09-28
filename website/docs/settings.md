@@ -61,7 +61,8 @@ Stim reads the first value found in this order:
    (`--scope repo`).
 3. Committed `.stim.json` beside the app's `package.json` (`--scope committed`).
 4. Machine defaults in `~/.stim/config.json` (`--scope machine`), for the
-   top-level `optimizations` settings and `android.deviceProfile` only.
+   top-level `optimizations` settings, `android.deviceProfile` and
+   `devices.idleShutdownMinutes` only.
 5. The Stim default.
 
 An environment variable that overrides a setting wins over every layer.
@@ -115,6 +116,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                   |
 | `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60 |
+| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 0 |
 | `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port |
 | `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile      |
 | `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                |
@@ -297,6 +299,11 @@ and what the next command would reclaim.
 ```bash
 stim settings set budget.minFreeDiskGb 40
 ```
+
+Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
+workspace's owned simulators and emulators once they have been idle that long.
+It is off by default; see
+[idle shutdown](./owned-devices.md#idle-shutdown).
 
 Try it with an agent:
 

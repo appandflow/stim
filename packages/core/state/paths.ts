@@ -102,3 +102,8 @@ export function easSessionLedgerFile(root: string = easMachineStateRoot()): stri
 export function easSessionLedgerLock(root: string = easMachineStateRoot()): string {
   return join(root, 'ledger.lock');
 }
+
+/** Where stim-server records, one file per server process, the devices whose frames a client subscribes to. */
+export function deviceViewersDir(): string {
+  return join(configDir(), 'viewers');
+}

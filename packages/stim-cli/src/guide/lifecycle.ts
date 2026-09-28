@@ -1234,6 +1234,27 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
     4. trim shared cache entries nothing has used for 14 days
        (\`gc --delete --older-than 14\` for the caches)
 
+  IDLE SHUTDOWN (OFF BY DEFAULT): with devices.idleShutdownMinutes set, a
+  workspace's supervisor shuts down that workspace's owned simulators and
+  emulators once they have been idle that long, without waiting for a run
+  to go over budget. Idle is step 1 with that many minutes in place of 10:
+  booted, no driver, no Stim or agent-device lock, no build in progress, and
+  no activity. A stim-server client viewing the device (the phone app's
+  device viewer) counts as activity, here and in step 1. The supervisor
+  checks once a minute after the workspace's last Stim command is that old,
+  rechecks under the workspace's native-run lock, and shuts devices down
+  through the same teardown as \`stop\`: never deleted, and physical
+  devices are never touched. It writes a device_idle_shutdown line to
+  metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim
+  status\` shows "shut down after 30m idle" on the device until the next
+  \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
+  shorter, the dev server's idle stop first shuts down the devices idle that
+  long, because no supervisor is left to check afterwards. Nothing checks
+  without a supervisor: release runs, and after \`stim stop\`. The setting
+  is read when the supervisor starts. Stim Desktop's simulator view is not a
+  stim-server client and does not count as a viewer. Turn it on with
+  \`stim settings set devices.idleShutdownMinutes 30 --scope machine\`.
+
   Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
   a run still over them prints one \`budget\` warning and continues. The
   current workspace is never reclaimed.

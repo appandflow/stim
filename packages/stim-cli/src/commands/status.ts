@@ -47,11 +47,13 @@ import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
   readBuildDetail,
+  readDeviceIdleShutdowns,
   readIdleStop,
   readBuildHistory,
   readLastBuilds,
   withStateReadCache,
   type DeviceAppProcess,
+  type DeviceIdleShutdownRecord,
   type LastBuildReport,
   type MachineUsageState,
   type StatusPayload,
@@ -252,6 +254,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
             remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
             idleStop: readIdleStop(saved),
             lastStop: metroLastStop(saved, supervisor),
+            idleShutdowns: readDeviceIdleShutdowns(saved),
             launches,
             leasedIds: new Set(
               deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
@@ -483,7 +486,7 @@ function renderStatus(
           deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
         const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
         out.push(
-          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}`,
+          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}${idleShutdownSuffix(deviceState.ios.idleShutdown)}`,
         );
       }
       if (deviceState.android) {
@@ -492,7 +495,7 @@ function renderStatus(
           ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
           : '';
         out.push(
-          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}`,
+          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}${idleShutdownSuffix(deviceState.android.idleShutdown)}`,
         );
       }
     }
@@ -636,6 +639,12 @@ function lastBuildText(report: LastBuildReport): string {
   const source = report.cacheHit ? `${report.cacheHit} cache` : report.status === 'ok' ? 'compiled' : 'no cache hit';
   const took = report.durationMs === null ? '' : ` in ${formatDuration(report.durationMs)}`;
   return `${report.platform} ${report.status === 'ok' ? source : `failed (${report.errorCode ?? 'error'}), ${source}`}${took}`;
+}
+
+function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): string {
+  return record
+    ? chalk.dim(` -- shut down after ${record.idleMinutes}m idle at ${record.at} (devices.idleShutdownMinutes)`)
+    : '';
 }
 
 function activitySuffix(activity: DeviceActivity | undefined): string {

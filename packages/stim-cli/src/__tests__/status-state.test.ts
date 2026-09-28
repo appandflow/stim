@@ -495,6 +495,32 @@ test('an idle-stopped dev server is reported on metro only while nothing serves 
   expect(restarted.metro).toEqual({ port: 8082, running: true, pid: 42 });
 });
 
+test('an idle shutdown is reported on its slot device only while that device is down', () => {
+  const record = { at: '2026-09-27T10:00:00.000Z', idleMinutes: 30 };
+  const withSlots = project({
+    platforms: { ios: { deviceUdid: 'U1', owned: true }, android: { avdName: 'stim-app', owned: true } },
+    deviceSlots: { fold: { android: { avdName: 'stim-app-fold', owned: true } } },
+  });
+  const idleShutdowns = { ios: record, 'android:fold': record };
+  const down = environmentState(withSlots, {
+    simsByUdid: { U1: SHUTDOWN },
+    androidRuntime: { serial: null, state: 'not-detected' },
+    androidRuntimes: { fold: { serial: null, state: 'not-detected' } },
+    idleShutdowns,
+  });
+  expect(down.ios?.idleShutdown).toEqual(record);
+  expect(down.android?.idleShutdown).toBeUndefined();
+  expect(down.slots?.[0]?.android?.idleShutdown).toEqual(record);
+
+  const booted = environmentState(withSlots, {
+    simsByUdid: { U1: BOOTED },
+    androidRuntimes: { fold: { serial: 'emulator-5556', state: 'detected' } },
+    idleShutdowns,
+  });
+  expect(booted.ios?.idleShutdown).toBeUndefined();
+  expect(booted.slots?.[0]?.android?.idleShutdown).toBeUndefined();
+});
+
 test('a stopped dev server reports its recorded cause, or a vanished supervisor that recorded none', () => {
   const requested = { reason: 'requested', at: '2026-09-26T20:00:00.000Z', by: 'budget reclaim', byPid: 7 };
   const stale = { status: 'stale', pid: 99, startedAt: '2026-09-26T19:00:00.000Z' };

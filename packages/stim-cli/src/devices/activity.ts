@@ -7,7 +7,13 @@ import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import type { ActivityDriver, ActivityRecencyBasis, DeviceActivity } from '@stim-cli/core/state';
+import {
+  readViewedDevices,
+  type ActivityDriver,
+  type ActivityRecencyBasis,
+  type DeviceActivity,
+  type ViewedDevice,
+} from '@stim-cli/core/state';
 
 export type { DeviceActivity } from '@stim-cli/core/state';
 
@@ -343,6 +349,7 @@ export interface ActivityReaderOptions {
   startOf?: (pid: number) => ProcessStart;
   leaseFiles?: () => LeaseFileEntry[];
   tables?: DeviceProcessTables;
+  viewers?: () => ViewedDevice[];
 }
 
 export function createActivityReader({
@@ -351,9 +358,11 @@ export function createActivityReader({
   startOf = inspectProcessStart,
   leaseFiles = listLeaseFiles,
   tables = createDeviceProcessTables(),
+  viewers = readViewedDevices,
 }: ActivityReaderOptions = {}): (target: ActivityTarget) => DeviceActivity {
   let agentDevice: { record: AgentDeviceRecord; liveness: Liveness }[] | undefined;
   let stimLeases: LeaseFileEntry[] | undefined;
+  let viewed: ViewedDevice[] | undefined;
   const logs = new Map<string, string[] | null>();
   const log = (path: string) => {
     if (!logs.has(path)) logs.set(path, tailLines(path));
@@ -400,6 +409,11 @@ export function createActivityReader({
           pid: null,
           since: entry.lease.grantedAt,
         });
+    }
+
+    viewed ??= viewers();
+    if (viewed.some((device) => device.platform === target.platform && device.id === target.id)) {
+      evidence.recency.push({ basis: 'viewer', at: now });
     }
 
     const processes = tables.host();

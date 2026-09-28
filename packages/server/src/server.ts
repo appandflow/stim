@@ -62,6 +62,7 @@ import {
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { DeviceViewers } from './viewers.ts';
 
 export interface ServerOptions {
   name: string;
@@ -297,7 +298,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return helperPath;
   };
   if (options.frameHelper === undefined) buildHelper();
-  const frames = new FramePool(options.env, frameLimits, frameHelper);
+  const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);

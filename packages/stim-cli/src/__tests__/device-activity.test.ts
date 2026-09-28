@@ -232,6 +232,24 @@ describe('createActivityReader', () => {
     expect(read({}, android).state).toBe('unknown');
   });
 
+  test('a device a stim-server client is viewing is active now; other devices keep their own evidence', () => {
+    writeLogs([{ ts: NOW - 5 * 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
+    const reader = createActivityReader({
+      now: NOW,
+      home,
+      startOf: starts({}),
+      leaseFiles: () => [],
+      viewers: () => [{ platform: 'ios', id: UDID }],
+    });
+    expect(reader(target)).toMatchObject({
+      state: 'active',
+      lastActivityAt: new Date(NOW).toISOString(),
+      recent: { viewer: new Date(NOW).toISOString() },
+    });
+    expect(reader({ ...target, id: 'OTHER' }).state).toBe('idle');
+    expect(reader({ ...target, platform: 'android', id: UDID }).recent?.viewer).toBeUndefined();
+  });
+
   test('an unexpired Stim device lock is a live claim', () => {
     const reader = createActivityReader({
       now: NOW,

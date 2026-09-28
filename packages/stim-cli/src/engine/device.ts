@@ -6,6 +6,7 @@ import type { IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { IOS_BOOT_TIMEOUT_MS } from '../devices/ios.ts';
 import { configureNewOwnedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
+import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { ensureIosBooted, ensureOwnedIosDevice, type IosBoot } from './device-ios.ts';
 import { ANDROID_BOOT_TIMEOUT_MS, ensureAndroidBooted, ensureOwnedAndroidDevice } from './device-android.ts';
@@ -99,6 +100,7 @@ export async function ensureOwnedDevice({
   teardownAvd?: typeof teardownOwnedAvd;
   reconcileIosSimulator?: typeof reconcileSimSlim;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
+  clearDeviceIdleShutdown(projectPath, platform, slot);
   if (slot && slot !== 'default') label = `${label}-${slot}`;
   const record = (deviceSlotPlatforms(project, slot)?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {

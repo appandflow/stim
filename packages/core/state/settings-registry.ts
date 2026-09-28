@@ -232,6 +232,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
   },
   {
+    key: 'devices.idleShutdownMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: EVERY,
+    default: 0,
+    description:
+      'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+  },
+  {
     key: 'web.url',
     type: {
       kind: 'string',

@@ -9,6 +9,7 @@ import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
 import { Pending, terminate } from './stim-command.ts';
 import type { AccessUnit } from './video.ts';
+import type { DeviceViewers } from './viewers.ts';
 import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
 /**
@@ -712,18 +713,30 @@ export class FramePool {
   private readonly env: NodeJS.ProcessEnv;
   private readonly limits: FrameLimits;
   private readonly helper: () => string | null;
+  private readonly viewers: DeviceViewers | null;
 
   constructor(
     env: NodeJS.ProcessEnv,
     limits: FrameLimits = DEFAULT_FRAME_LIMITS,
     helper: () => string | null = () => null,
+    viewers: DeviceViewers | null = null,
   ) {
     this.env = env;
     this.limits = limits;
     this.helper = helper;
+    this.viewers = viewers;
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
+    const unview = this.viewers?.add(device);
+    const detach = this.attach(device, listener, hint);
+    return () => {
+      unview?.();
+      detach();
+    };
+  }
+
+  private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
     const helper = this.helper();
     if (helper === null) return this.screenshots(device).add(listener);
     let streamed = false;
@@ -853,6 +866,7 @@ export class FramePool {
   }
 
   async close(): Promise<void> {
+    this.viewers?.clear();
     await Promise.all([...this.sources.values()].map((source) => source.stop()));
     await this.stopping.settled();
   }
