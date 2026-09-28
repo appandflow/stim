@@ -326,7 +326,9 @@ export function DeviceView({
       </ScrollView>
     )
   ) : null;
-  const model = device?.page ? shortUrl(device.page.url) : (device?.model ?? deviceSource({ platform, physical }));
+  const model = device?.page
+    ? shortUrl(device.page.url)
+    : (device?.model ?? (platform === 'web' ? 'Web' : deviceSource({ platform, physical })));
   const title = workspaceTitleAt(workspace, status);
 
   return (
