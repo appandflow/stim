@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listSegments } from '@stim-cli/core/state';
-import { Player, readUnits, recordedSpans, timelineMarkers } from '../src/replay.ts';
+import { Player, readUnits, recordedSpans, segmentKeyframe, timelineMarkers } from '../src/replay.ts';
 import type { AccessUnit } from '../src/video.ts';
 
 let dir: string;
@@ -43,6 +43,26 @@ test('reads the records of a segment and leaves out a record cut short at its en
     [1100, false, 330, 720],
     [1200, false, 330, 720],
   ]);
+});
+
+test("a segment's keyframe is its first record, from the segment seek would show the time from", async () => {
+  segment(1000, 10);
+  segment(7000, 10);
+  const keyframeAt = async (at: number) => {
+    const found = await segmentKeyframe(dir, at);
+    return found && [found.segment.start, found.segment.end, found.unit.capturedAt, found.unit.data[4]];
+  };
+
+  expect(await keyframeAt(1850)).toEqual([1000, 1900, 1000, 0]);
+  expect(await keyframeAt(500)).toEqual([1000, 1900, 1000, 0]);
+  expect(await keyframeAt(4000)).toEqual([7000, 7900, 7000, 0]);
+  expect(await keyframeAt(99_000)).toEqual([7000, 7900, 7000, 0]);
+});
+
+test('no keyframe when nothing was recorded or the first record is cut short', async () => {
+  expect(await segmentKeyframe(dir, 1000)).toBeNull();
+  writeFileSync(join(dir, '1000.part'), record(1000, true).subarray(0, 12));
+  expect(await segmentKeyframe(dir, 1000)).toBeNull();
 });
 
 test('joins adjacent segments into spans and keeps the gap where nothing was recorded', () => {

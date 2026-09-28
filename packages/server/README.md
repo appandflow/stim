@@ -445,6 +445,20 @@ Events are `{ "event", "subscription", ... }`.
   It needs only `read`. A device with no recording gets empty `spans` and
   `markers`, and runs no `stim` command.
 
+  `replay.keyframe` takes the same `workspace`, `platform` and `slot`, and
+  `at` (epoch milliseconds), and returns one still frame for a scrubber
+  preview without touching any subscription. The recording is stored in
+  segments of about 5 seconds that each start at a keyframe; the server picks
+  the segment `frames.seek` would show `at` from (the first one that ends at
+  or after `at`, or the newest one) and reads only its first record. The
+  result has the segment's `start` and `end`, the keyframe's capture time
+  `at`, `width`, `height`, `posture` on an iPhone Duo, and `data`, the
+  base64 Annex-B H.264 access unit with its SPS and PPS, so a client decodes
+  it on its own; the server decodes nothing. The frame is the segment's first,
+  so it can be up to about 5 seconds before `at`. It needs only `read`, fails with `no-recording` when the device
+  has no footage, and a connection can have 8 of these reads in flight; more
+  fail with `limit-exceeded`.
+
   A video subscription can replay the recording instead of the live screen.
   `frames.seek` takes the `subscription`, `at` (epoch milliseconds) and `rate`
   (0, 1 or 2). The server sends the access units from the keyframe at or

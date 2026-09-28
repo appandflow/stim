@@ -3532,6 +3532,47 @@ describe('frames.subscribe', () => {
         expect(packetAt(next.at(-1)!)).toBeLessThan(1_760_000_000_000);
       });
 
+      test.skipIf(!fakeTailscale)(
+        'serves the keyframe of the segment covering a time, a few reads at a time',
+        async () => {
+          registerWorkspaceDir();
+          footage(BASE, 10);
+          footage(BASE + 30_000, 10);
+          const port = await startWithTools(
+            { FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }) },
+            undefined,
+            fakeHelper(),
+            { record: true },
+          );
+          const client = await authed(port);
+          const keyframe = (at: unknown, platform = 'ios') =>
+            client.request('replay.keyframe', { workspace, platform, at });
+
+          expect(await keyframe(BASE + 850)).toMatchObject({
+            result: {
+              start: BASE,
+              end: BASE + 900,
+              at: BASE,
+              width: 330,
+              height: 720,
+              data: Buffer.from([0, 0, 0, 1, 0]).toString('base64'),
+            },
+          });
+          expect(await keyframe(BASE + 10_000)).toMatchObject({ result: { start: BASE + 30_000, at: BASE + 30_000 } });
+          expect(await keyframe(BASE, 'android')).toMatchObject({ error: { code: 'no-recording' } });
+          expect(await keyframe('soon')).toMatchObject({ error: { code: 'bad-request' } });
+
+          const burst = Array.from({ length: 20 }, () => keyframe(BASE));
+          const answers = await Promise.all(burst);
+          const limited = answers.filter((answer) => 'error' in answer);
+          expect(limited.length).toBeGreaterThan(0);
+          expect(limited).toEqual(
+            limited.map(() => expect.objectContaining({ error: expect.objectContaining({ code: 'limit-exceeded' }) })),
+          );
+          expect(await keyframe(BASE)).toMatchObject({ result: { at: BASE } });
+        },
+      );
+
       test.skipIf(!fakeTailscale)('lists the recorded spans and the markers of the device', async () => {
         registerWorkspaceDir();
         footage(BASE, 10);

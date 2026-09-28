@@ -34,6 +34,7 @@ export const METHODS = [
   'frames.seek',
   'frames.live',
   'replay.range',
+  'replay.keyframe',
   'recording.set',
   'build.plan',
   'machine.get',
@@ -318,6 +319,26 @@ export interface ReplayRange {
   recording: boolean;
   spans: ReplaySpan[];
   markers: ReplayMarker[];
+}
+
+/** A device slot, as {@link ReplayTarget} names it, and a time in epoch milliseconds on the Mac's clock. */
+export interface ReplayKeyframeParams extends ReplayTarget {
+  at: number;
+}
+
+/**
+ * The keyframe that starts the recorded segment of about 5 seconds `frames.seek` would show `at` from: the first
+ * segment that ends at or after `at`, or the newest one. `start` and `end` are the segment's times, `at` the
+ * keyframe's capture time, and `data` the base64 Annex-B access unit, which carries its SPS and PPS.
+ */
+export interface ReplayKeyframe {
+  start: number;
+  end: number;
+  at: number;
+  width: number;
+  height: number;
+  posture?: 'folded' | 'unfolded';
+  data: string;
 }
 
 /** Turns `recording.enabled` on or off in the machine layer. Needs `control`. */
@@ -747,6 +768,7 @@ export interface Methods {
   'frames.seek': { params: FramesSeekParams; result: FramesSeekResult };
   'frames.live': { params: FramesLiveParams; result: Record<string, never> };
   'replay.range': { params: ReplayTarget; result: ReplayRange };
+  'replay.keyframe': { params: ReplayKeyframeParams; result: ReplayKeyframe };
   'recording.set': { params: RecordingSetParams; result: RecordingSetResult };
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
   'machine.get': { params?: Record<string, never>; result: MachineUsage };
@@ -1375,6 +1397,17 @@ export function protocolJsonSchema(): JsonSchema {
               slot: { type: 'string', minLength: 1 },
             },
           }),
+          request('replay.keyframe', {
+            type: 'object',
+            required: ['workspace', 'platform', 'at'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string', minLength: 1 },
+              at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
+            },
+          }),
           request('recording.set', {
             type: 'object',
             required: ['enabled'],
@@ -1586,6 +1619,24 @@ export function protocolJsonSchema(): JsonSchema {
                             label: { type: 'string' },
                           },
                         },
+                      },
+                    },
+                  },
+                  {
+                    type: 'object',
+                    required: ['start', 'end', 'at', 'width', 'height', 'data'],
+                    additionalProperties: false,
+                    properties: {
+                      start: { type: 'number' },
+                      end: { type: 'number' },
+                      at: { type: 'number' },
+                      width: { type: 'integer' },
+                      height: { type: 'integer' },
+                      posture: { enum: ['folded', 'unfolded'] },
+                      data: {
+                        type: 'string',
+                        contentEncoding: 'base64',
+                        description: 'One Annex-B H.264 access unit.',
                       },
                     },
                   },
