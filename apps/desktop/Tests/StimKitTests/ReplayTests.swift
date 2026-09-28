@@ -96,6 +96,18 @@ private func range(spans: [ReplaySpan], recording: Bool = true) -> JSONValue {
 
 private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot: "default")
 
+@MainActor private final class TickingClock {
+  var now = 0.0
+  var step = 1.0
+
+  var read: () -> TimeInterval {
+    {
+      defer { self.now += self.step }
+      return self.now
+    }
+  }
+}
+
 @Suite struct ReplayTimelineTests {
   let minute = 60_000.0
   var hour: Double { 60 * minute }
@@ -246,7 +258,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
 
   @Test func aRefusedSeekLeavesTheReplayAsItWas() async throws {
     let server = FakeServer()
-    let controller = ReplayController(target: target, scheduler: ManualScheduler().schedule)
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
     controller.connect(server)
     controller.seek(at: 5_000, rate: 0)
     let sub = try #require(server.subs.first)
@@ -291,6 +304,209 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(params["at"] == .number(1_790_608_626_466.9521) && params["rate"] == .number(0))
     sub.onSubscribed(["subscription": .string("s2"), "video": .string("h264")])
     #expect(controller.replay?.rate == 0)
+  }
+
+  @Test func aDragSendsOnlyTheLatestSeekOnceTheOneOutIsAnswered() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    server.subs[0].onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 6_000, rate: 0)
+    controller.seek(at: 6_500, rate: 0)
+    controller.seek(at: 7_000, rate: 0)
+    await settle()
+    let first = try #require(server.take("frames.seek"))
+    #expect(first.params["at"] == .number(6_000) && server.take("frames.seek") == nil)
+    #expect(controller.replay?.at == 7_000)
+    first.reply.resume(returning: .object(["at": .number(5_990)]))
+    await settle()
+    #expect(controller.replay?.at == 7_000)
+    let latest = try #require(server.take("frames.seek"))
+    #expect(latest.params["at"] == .number(7_000) && server.take("frames.seek") == nil)
+    latest.reply.resume(returning: .object(["at": .number(6_980)]))
+    await settle()
+    #expect(controller.replay == ReplayController.Replay(at: 6_980, rate: 0, ended: false))
+  }
+
+  @Test func seeksGoOutAtMostEveryMinimumInterval() async throws {
+    let scheduler = ManualScheduler()
+    let clock = TickingClock()
+    clock.step = 0
+    let server = FakeServer()
+    let controller = ReplayController(target: target, scheduler: scheduler.schedule, clock: clock.read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    server.subs[0].onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 6_000, rate: 0)
+    await settle()
+    try #require(server.take("frames.seek")).reply.resume(returning: .object(["at": .number(6_000)]))
+    await settle()
+    controller.seek(at: 7_000, rate: 0)
+    await settle()
+    #expect(server.take("frames.seek") == nil)
+    clock.now = ReplaySeekQueue.minimumInterval
+    scheduler.fire(delay: ReplaySeekQueue.minimumInterval)
+    await settle()
+    #expect(try #require(server.take("frames.seek")).params["at"] == .number(7_000))
+  }
+
+  @Test func framesResentForASeekDoNotMoveThePositionBack() async throws {
+    let scheduler = ManualScheduler()
+    let server = FakeServer()
+    let controller = ReplayController(target: target, scheduler: scheduler.schedule, clock: TickingClock().read)
+    var shown = 0
+    controller.onVideo = { _ in shown += 1 }
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    server.subs[0].onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 1_790_608_630_000, rate: 0)
+    await settle()
+    server.subs[0].onVideo(try #require(VideoPacket(fixture("replay-packet.bin"))))
+    scheduler.fire(delay: ReplayController.positionInterval)
+    #expect(shown == 1 && controller.replay?.at == 1_790_608_630_000)
+    try #require(server.take("frames.seek")).reply.resume(returning: .object(["at": .number(1_790_608_629_990)]))
+    await settle()
+    #expect(controller.replay?.at == 1_790_608_629_990)
+  }
+
+  @Test func aSeekLostWithTheConnectionGoesOutOnTheNextSubscription() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    let sub = try #require(server.subs.first)
+    sub.onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 6_000, rate: 1)
+    await settle()
+    try #require(server.take("frames.seek")).reply.resume(
+      throwing: ServerError(code: "connection-lost", message: "Connection lost."))
+    await settle()
+    controller.seek(at: 7_000, rate: 0)
+    await settle()
+    #expect(server.take("frames.seek") == nil && controller.error == nil)
+    #expect(controller.replay == ReplayController.Replay(at: 7_000, rate: 0, ended: false))
+    sub.onSubscribed(["subscription": .string("s2"), "video": .string("h264")])
+    await settle()
+    let seek = try #require(server.take("frames.seek"))
+    #expect(seek.params == ["subscription": .string("s2"), "at": .number(7_000), "rate": .number(0)])
+  }
+
+  @Test func aSeekMadeWhileTheConnectionIsDownWaitsForTheNextSubscription() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    let sub = try #require(server.subs.first)
+    sub.onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    for observer in server.controlObservers {
+      observer(ControlEnded(session: nil, reason: "failed", message: "Connection lost."))
+    }
+    controller.seek(at: 7_000, rate: 0)
+    await settle()
+    #expect(server.take("frames.seek") == nil && controller.error == nil)
+    sub.onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    await settle()
+    #expect(try #require(server.take("frames.seek")).params["at"] == .number(7_000))
+  }
+
+  @Test func aSeekTheServerNoLongerKnowsTheSubscriptionOfWaitsForTheNextOne() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    let sub = try #require(server.subs.first)
+    sub.onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 6_000, rate: 0)
+    await settle()
+    try #require(server.take("frames.seek")).reply.resume(
+      throwing: ServerError(code: "unknown-subscription", message: "No video subscription s1."))
+    await settle()
+    #expect(controller.error == nil && controller.replay?.at == 6_000)
+    sub.onSubscribed(["subscription": .string("s2"), "video": .string("h264")])
+    await settle()
+    #expect(try #require(server.take("frames.seek")).params["subscription"] == .string("s2"))
+  }
+
+  @Test func aRefusedSeekWithANewerOneWaitingSendsTheNewerOneWithoutAnError() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    server.subs[0].onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 6_000, rate: 0)
+    controller.seek(at: 7_000, rate: 0)
+    await settle()
+    try #require(server.take("frames.seek")).reply.resume(
+      throwing: ServerError(code: "no-recording", message: "Nothing was recorded for this device."))
+    await settle()
+    #expect(controller.error == nil && controller.replay?.at == 7_000)
+    #expect(try #require(server.take("frames.seek")).params["at"] == .number(7_000))
+  }
+
+  @Test func aSeekOutWhenTheSubscriptionIsReplacedIsSentAgain() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(
+      target: target, scheduler: ManualScheduler().schedule, clock: TickingClock().read)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 0)
+    let sub = try #require(server.subs.first)
+    sub.onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    controller.seek(at: 6_000, rate: 0)
+    await settle()
+    let lost = try #require(server.take("frames.seek"))
+    sub.onSubscribed(["subscription": .string("s2"), "video": .string("h264")])
+    await settle()
+    let again = try #require(server.take("frames.seek"))
+    #expect(again.params["subscription"] == .string("s2") && again.params["at"] == .number(6_000))
+    lost.reply.resume(throwing: ServerError(code: "connection-lost", message: "Connection lost."))
+    again.reply.resume(returning: .object(["at": .number(6_000)]))
+    await settle()
+    #expect(controller.replay == ReplayController.Replay(at: 6_000, rate: 0, ended: false) && controller.error == nil)
+  }
+}
+
+@Suite struct ReplaySeekQueueTests {
+  typealias Seek = ReplaySeekQueue.Seek
+
+  @Test func keepsOneSeekOutAndOnlyTheLatestWaiting() {
+    var queue = ReplaySeekQueue()
+    queue.ask(Seek(at: 1, rate: 0))
+    #expect(queue.next(now: 10, open: true) == Seek(at: 1, rate: 0))
+    queue.ask(Seek(at: 2, rate: 0))
+    queue.ask(Seek(at: 3, rate: 1))
+    #expect(queue.next(now: 11, open: true) == nil)
+    #expect(queue.finish() == false)
+    #expect(queue.next(now: 12, open: true) == Seek(at: 3, rate: 1))
+    #expect(queue.finish() == true && queue.isSettled)
+  }
+
+  @Test func holdsASeekUntilTheMinimumIntervalAndTheSubscription() {
+    var queue = ReplaySeekQueue()
+    queue.ask(Seek(at: 1, rate: 0))
+    #expect(queue.next(now: 10, open: false) == nil && queue.delay(now: 10, open: false) == nil)
+    #expect(queue.next(now: 10, open: true) == Seek(at: 1, rate: 0))
+    _ = queue.finish()
+    queue.ask(Seek(at: 2, rate: 0))
+    #expect(queue.next(now: 10.02, open: true) == nil)
+    #expect(queue.delay(now: 10.02, open: true).map { abs($0 - 0.03) < 1e-9 } == true)
+    #expect(queue.next(now: 10 + ReplaySeekQueue.minimumInterval, open: true) == Seek(at: 2, rate: 0))
+  }
+
+  @Test func anInterruptedSeekWaitsUnlessANewerOneDoes() {
+    var queue = ReplaySeekQueue()
+    queue.ask(Seek(at: 1, rate: 0))
+    _ = queue.next(now: 0, open: true)
+    queue.interrupt()
+    #expect(queue.next(now: 0, open: true) == Seek(at: 1, rate: 0))
+    queue.ask(Seek(at: 2, rate: 0))
+    queue.interrupt()
+    #expect(queue.next(now: 0, open: true) == Seek(at: 2, rate: 0))
   }
 }
 

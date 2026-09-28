@@ -4,10 +4,13 @@ import Foundation
 import VideoToolbox
 
 /// Decodes an Annex-B H.264 stream into BGRA pixel buffers, one per access unit. A config packet (SPS and
-/// PPS) replaces the session; packets before the first config are dropped.
+/// PPS) with new parameter sets replaces the session, and one that repeats them keeps it. A session VideoToolbox
+/// reports invalid (`kVTInvalidSessionErr`, for example after sleep) is dropped, so the next config packet makes a
+/// new one. Packets before the first config are dropped.
 public final class H264Decoder {
   private var format: CMVideoFormatDescription?
   private var session: VTDecompressionSession?
+  private var parameterSets: [Data] = []
   private let output: (CVPixelBuffer) -> Void
 
   public init(output: @escaping (CVPixelBuffer) -> Void) {
@@ -25,16 +28,21 @@ public final class H264Decoder {
     }
     session = nil
     format = nil
+    parameterSets = []
   }
 
   /// Returns false when the parameter sets could not make a decoder.
   @discardableResult
   public func configure(_ annexB: Data) -> Bool {
-    invalidate()
     let units = AnnexB.units(annexB)
     guard let sps = units.first(where: { ($0.first ?? 0) & 0x1f == 7 }),
       let pps = units.first(where: { ($0.first ?? 0) & 0x1f == 8 })
-    else { return false }
+    else {
+      invalidate()
+      return false
+    }
+    if session != nil, parameterSets == [sps, pps] { return true }
+    invalidate()
     var description: CMVideoFormatDescription?
     let status = sps.withUnsafeBytes { spsBytes in
       pps.withUnsafeBytes { ppsBytes in
@@ -60,13 +68,16 @@ public final class H264Decoder {
     else { return false }
     format = description
     session = created
+    parameterSets = [sps, pps]
     return true
   }
 
-  public func decode(_ annexB: Data) {
-    guard let session, let format else { return }
+  /// Returns false once there is no session, so the caller waits for or asks for a config packet.
+  @discardableResult
+  public func decode(_ annexB: Data) -> Bool {
+    guard let session, let format else { return false }
     let units = AnnexB.units(annexB).filter { !$0.isEmpty && ![7, 8].contains($0[0] & 0x1f) }
-    guard !units.isEmpty else { return }
+    guard !units.isEmpty else { return true }
     let sample = AnnexB.lengthPrefixed(units)
     var block: CMBlockBuffer?
     guard
@@ -75,7 +86,7 @@ public final class H264Decoder {
         offsetToData: 0, dataLength: sample.count, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
         == noErr, let block,
       sample.withUnsafeBytes({ CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: sample.count) }) == noErr
-    else { return }
+    else { return true }
     var buffer: CMSampleBuffer?
     var size = sample.count
     guard
@@ -83,11 +94,13 @@ public final class H264Decoder {
         allocator: nil, dataBuffer: block, formatDescription: format, sampleCount: 1, sampleTimingEntryCount: 0,
         sampleTimingArray: nil, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &buffer) == noErr,
       let buffer
-    else { return }
+    else { return true }
     let output = self.output
-    VTDecompressionSessionDecodeFrame(session, sampleBuffer: buffer, flags: [], infoFlagsOut: nil) {
+    let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: buffer, flags: [], infoFlagsOut: nil) {
       status, _, image, _, _ in
       if status == noErr, let image { output(image) }
     }
+    if status == kVTInvalidSessionErr { invalidate() }
+    return self.session != nil
   }
 }

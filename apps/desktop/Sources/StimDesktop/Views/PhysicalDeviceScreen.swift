@@ -203,7 +203,7 @@ final class PhysicalDisplayView: NSView {
       }
       return
     }
-    decoder.decode(packet.accessUnit)
+    configured = decoder.decode(packet.accessUnit)
     shown(CGSize(width: packet.width, height: packet.height))
   }
 

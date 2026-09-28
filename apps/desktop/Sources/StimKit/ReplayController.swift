@@ -37,14 +37,22 @@ import Foundation
   private var unsubscribe: (() -> Void)?
   private var subscriptionID: String?
   private var subscriptionGeneration = 0
-  private var pendingSeek: (at: Double, rate: Int)?
+  private var seeks = ReplaySeekQueue()
+  private var cancelFlush: (() -> Void)?
+  private var confirmed: Replay?
+  private var cancelDropWatch: (() -> Void)?
+  private let clock: () -> TimeInterval
   private var position: Double?
   private var cancelPosition: (() -> Void)?
   private var startAt: Double = 0
 
-  public init(target: ReplayTarget, scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter) {
+  public init(
+    target: ReplayTarget, scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter,
+    clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+  ) {
     self.target = target
     self.schedule = scheduler
+    self.clock = clock
   }
 
   public var timeline: ReplayTimeline? { range.flatMap { ReplayTimeline(spans: $0.spans) } }
@@ -58,7 +66,16 @@ import Foundation
     cancelPoll?()
     cancelPoll = nil
     self.server = server
+    cancelDropWatch?()
+    cancelDropWatch = nil
     guard let server else { return }
+    if let device = server as? DeviceServer {
+      cancelDropWatch = device.observeControlEnded { [weak self] ended in
+        guard let self, ended.session == nil, self.subscriptionID != nil else { return }
+        self.subscriptionID = nil
+        self.seeks.interrupt()
+      }
+    }
     pollsSupported = true
     poll(server)
     if let replayAt { seek(at: replayAt, rate: 0) }
@@ -70,20 +87,20 @@ import Foundation
   }
 
   /// Shows the recorded frame at `at` and plays on at `rate`, 0 to pause. The first seek opens the replay
-  /// subscription at `at`; a seek made before the server answers it waits for it.
+  /// subscription at `at`. `replay.at` moves to `at` at once and to the frame the server shows once it answers.
+  /// Seeks are coalesced: while one is out, only the latest seek asked for waits, and it goes out when the server
+  /// answers, at most every `ReplaySeekQueue.minimumInterval`. A seek made while the subscription opens, or while
+  /// the connection comes back, waits for the new subscription.
   public func seek(at: Double, rate: Int) {
     guard let server else { return }
     error = nil
-    guard let subscriptionID else {
-      if unsubscribe != nil {
-        pendingSeek = (at, rate)
-        replay = Replay(at: replay?.at, rate: rate, ended: false)
-        return
-      }
+    guard subscriptionID != nil || unsubscribe != nil else {
       open(server, at: at, rate: rate)
       return
     }
-    sendSeek(server, subscription: subscriptionID, at: at, rate: rate)
+    replay = Replay(at: at, rate: rate, ended: false)
+    seeks.ask(ReplaySeekQueue.Seek(at: at, rate: rate))
+    flush(server)
   }
 
   /// Returns to the live screen.
@@ -121,6 +138,7 @@ import Foundation
     let generation = subscriptionGeneration
     startAt = at
     replay = Replay(at: nil, rate: rate, ended: false)
+    confirmed = replay
     var firstRate = rate
     unsubscribe = server.subscribe(
       "frames.subscribe",
@@ -143,12 +161,10 @@ import Foundation
         }
         self.replayable = true
         self.subscriptionID = result["subscription"]?.string
-        if self.replay?.rate != firstRate { self.replay?.rate = firstRate }
+        if self.seeks.isSettled, self.replay?.rate != firstRate { self.replay?.rate = firstRate }
         firstRate = 0
-        if let pending = self.pendingSeek, let id = self.subscriptionID {
-          self.pendingSeek = nil
-          self.sendSeek(server, subscription: id, at: pending.at, rate: pending.rate)
-        }
+        self.seeks.interrupt()
+        self.flush(server)
       },
       onEvent: { [weak self] event in
         guard let self, generation == self.subscriptionGeneration else { return }
@@ -156,7 +172,7 @@ import Foundation
         case "replay-ended":
           let at = event.fields["at"]?.number ?? self.replay?.at
           self.position = at
-          self.replay = Replay(at: at, rate: 0, ended: true)
+          self.show(Replay(at: at, rate: 0, ended: true))
         case "error" where event.subscription.isEmpty:
           let failure = event.error
           if failure?.code == "bad-request" { self.replayable = false }
@@ -176,39 +192,78 @@ import Foundation
       })
   }
 
-  /// A seek the server refuses leaves the replay as it was, and an answer for a subscription since replaced is
-  /// dropped.
-  private func sendSeek(_ server: ReplayServer, subscription: String, at: Double, rate: Int) {
-    let before = replay
-    replay = Replay(at: replay?.at, rate: rate, ended: false)
-    let generation = subscriptionGeneration
-    Task {
-      do {
-        let result = try await server.request(
-          "frames.seek", ["subscription": .string(subscription), "at": .number(at), "rate": .number(Double(rate))])
-        guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
-        let shown = result.objectValue?["at"]?.number ?? at
-        position = shown
-        replay = Replay(at: shown, rate: rate, ended: false)
-      } catch {
-        guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
-        replay = before
-        self.error = error.localizedDescription
+  /// Sends the waiting seek when it may go out, or schedules it for when `ReplaySeekQueue.minimumInterval` allows.
+  private func flush(_ server: ReplayServer) {
+    cancelFlush?()
+    cancelFlush = nil
+    let now = clock()
+    let open = subscriptionID != nil
+    if let subscriptionID, let seek = seeks.next(now: now, open: open) {
+      sendSeek(server, subscription: subscriptionID, seek)
+    } else if let delay = seeks.delay(now: now, open: open) {
+      cancelFlush = schedule(delay) { [weak self, weak server] in
+        guard let self, let server, server === self.server else { return }
+        self.cancelFlush = nil
+        self.flush(server)
       }
     }
   }
 
-  /// Follows the frames played, publishing the position at most every 200 ms.
+  /// Only the answer to the latest seek moves the replay. A seek the server refuses leaves the replay as it was
+  /// confirmed; one lost with the connection, or sent on a subscription the server no longer has, waits for the next
+  /// subscription.
+  private func sendSeek(_ server: ReplayServer, subscription: String, _ seek: ReplaySeekQueue.Seek) {
+    let generation = subscriptionGeneration
+    Task {
+      do {
+        let result = try await server.request(
+          "frames.seek",
+          ["subscription": .string(subscription), "at": .number(seek.at), "rate": .number(Double(seek.rate))])
+        guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
+        if seeks.finish() {
+          let shown = result.objectValue?["at"]?.number ?? seek.at
+          position = shown
+          show(Replay(at: shown, rate: seek.rate, ended: false))
+        }
+        flush(server)
+      } catch let failure as ServerError
+        where ["not-connected", "connection-lost", "unknown-subscription"].contains(failure.code)
+      {
+        guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
+        subscriptionID = nil
+        seeks.interrupt()
+      } catch {
+        guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
+        if seeks.finish() {
+          replay = confirmed
+          self.error = error.localizedDescription
+        }
+        flush(server)
+      }
+    }
+  }
+
+  private func show(_ replay: Replay) {
+    self.replay = replay
+    confirmed = replay
+  }
+
+  /// Follows the frames played, publishing the position at most every 200 ms. Frames that arrive while a seek is
+  /// out come from the keyframe before its target and would move the position back, so they are not followed.
   private func track(_ capturedAt: Double) {
+    guard seeks.isSettled else { return }
     position = capturedAt
     guard cancelPosition == nil else { return }
     if replay?.at == nil {
       replay?.at = capturedAt
+      confirmed?.at = capturedAt
     }
     cancelPosition = schedule(Self.positionInterval) { [weak self] in
       guard let self else { return }
       self.cancelPosition = nil
-      if self.replay != nil, let position = self.position { self.replay?.at = position }
+      guard self.replay != nil, self.seeks.isSettled, let position = self.position else { return }
+      self.replay?.at = position
+      self.confirmed?.at = position
     }
   }
 
@@ -217,7 +272,9 @@ import Foundation
     unsubscribe?()
     unsubscribe = nil
     subscriptionID = nil
-    pendingSeek = nil
+    seeks.clear()
+    cancelFlush?()
+    cancelFlush = nil
     cancelPosition?()
     cancelPosition = nil
   }
