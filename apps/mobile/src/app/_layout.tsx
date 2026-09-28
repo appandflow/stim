@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
@@ -75,6 +76,7 @@ function RootLayoutContent() {
   return (
     <ThemeProvider value={theme}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+      <NavigationBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <SplashOverlay>
         <MacsProvider>
           <DevPairing />

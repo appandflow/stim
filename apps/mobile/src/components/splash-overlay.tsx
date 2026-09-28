@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { NavigationBar } from 'expo-navigation-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
@@ -79,6 +80,7 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
           pointerEvents="none"
           testID="splash-overlay"
         >
+          <NavigationBar style="light" />
           {reduceMotion ? (
             <View style={styles.fill} />
           ) : (
