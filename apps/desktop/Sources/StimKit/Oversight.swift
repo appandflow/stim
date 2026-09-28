@@ -792,7 +792,11 @@ public enum Oversight {
   }
 
   static func formatBytes(_ bytes: Double) -> String {
-    let tenths = { (value: Double) in String(format: "%.1f", (value * 10).rounded() / 10) }
+    let tenths = { (value: Double) -> String in
+      let scaled = value * 10
+      let tie = scaled - scaled.rounded(.down) == 0.5 && (-scaled).addingProduct(value, 10) == 0
+      return String(format: "%.1f", tie ? scaled.rounded(.up) / 10 : value)
+    }
     if bytes >= 1e12 { return "\(tenths(bytes / 1e12)) TB" }
     let gb = bytes / 1e9
     return gb >= 100 ? "\(Int(gb.rounded())) GB" : "\(tenths(gb)) GB"
