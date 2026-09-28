@@ -41,6 +41,8 @@ jobs:
           package-manager-cache: false
       - name: Check the generated design tokens and agent prompts
         run: node scripts/generate-tokens.mjs --check
+      - name: Lint Swift formatting
+        run: scripts/format.sh --check
       - run: swift build
       - run: swift test
       - name: Compile the stim-server frames helper
