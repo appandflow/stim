@@ -49,9 +49,6 @@ struct DeviceTile: View {
         header
           .padding(.horizontal, Space.lg)
           .padding(.vertical, Space.md)
-        if let build {
-          BuildProgressBar(build: build, compact: true).padding(.horizontal, Space.lg).padding(.bottom, Space.md)
-        }
         Rectangle().fill(Palette.border).frame(height: 1)
         if replaying, let replay {
           ReplayScreen(controller: replay) { replaySize = $0 }
@@ -142,8 +139,10 @@ struct DeviceTile: View {
           }
         }
         if device.appStopped {
-          Pill(tone: .warning) { Text("App not running") }
-            .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
+          if presence != AppPresence.none {
+            Pill(tone: .warning) { Text("App not running") }
+              .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
+          }
           if let workspace, let run = runCommand(for: device, cwd: workspace) {
             Button("Run", systemImage: "play.fill") {
               actions.run("Run on \(platformName(device.platform))", run)
@@ -215,22 +214,10 @@ struct DeviceTile: View {
   @ViewBuilder private var screenCover: some View {
     if !showsCovers || interactive {
       EmptyView()
-    } else if let build, device.isRunning {
-      let (phase, counts) = build.currentPhaseLabel
-      coverMessage("Waiting for the \(platformName(build.platform)) build", [phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
+    } else if let build {
+      BuildCover(build: build, opaque: !device.isRunning)
     } else if presence == AppPresence.none {
       coverMessage("No app installed", "Fix the build and run it again")
-    } else if presence == .closed {
-      ZStack {
-        Media.screen.opacity(0.6)
-        Text("App closed")
-          .font(.stim(.footnote, weight: .semibold))
-          .foregroundStyle(.white)
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.sm)
-          .background(Capsule().fill(.black.opacity(0.6)))
-      }
-      .allowsHitTesting(false)
     }
   }
 
@@ -639,6 +626,47 @@ private struct WebScreen: View {
       case .streaming: EmptyView()
       }
     }
+  }
+}
+
+/// Covers a device's screen while its build runs: the phase, a thin bar and elapsed over the estimate.
+private struct BuildCover: View {
+  var build: Build
+  var opaque: Bool
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let progress = build.progress(at: context.date)
+      let (phase, counts) = build.currentPhaseLabel
+      let estimate = build.expectedMs.map { " / ~\(clockDuration(ms: $0))" } ?? ""
+      VStack(spacing: Space.sm) {
+        Text("Waiting for the \(platformName(build.platform)) build").font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+        Text([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
+          .font(.stim(.caption))
+          .foregroundStyle(.white.opacity(0.6))
+          .lineLimit(1)
+        Group {
+          if let fraction = progress.fraction {
+            ProgressView(value: fraction)
+          } else {
+            ProgressView().progressViewStyle(.linear)
+          }
+        }
+        .tint(Palette.accent)
+        .controlSize(.small)
+        .frame(maxWidth: 160)
+        Text(clockDuration(ms: progress.elapsedMs) + estimate)
+          .font(.stim(.caption))
+          .monospacedDigit()
+          .foregroundStyle(.white.opacity(0.6))
+      }
+      .multilineTextAlignment(.center)
+      .padding()
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Media.screen.opacity(opaque ? 1 : 0.85))
+      .accessibilityElement(children: .combine)
+    }
+    .allowsHitTesting(false)
   }
 }
 

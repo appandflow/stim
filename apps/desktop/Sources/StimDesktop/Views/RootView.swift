@@ -25,9 +25,8 @@ struct RootView: View {
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
-  @State private var detailTab = DetailTab.device
   @State private var logQuery = LogQuery()
-  @AppStorage(AppPreferences.Key.showsLogsPane) private var showsLogsPane = true
+  @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
@@ -81,6 +80,11 @@ struct RootView: View {
           }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
+            ToolbarItem(placement: .primaryAction) {
+              LogsToggleButton(isShown: showsLogs, errors: selectedWorkspace?.logs?.errorsSinceMarker ?? 0) {
+                showsLogs.toggle()
+              }
+            }
             ToolbarItem(placement: .primaryAction) {
               InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
             }
@@ -156,6 +160,11 @@ struct RootView: View {
     return false
   }
 
+  private var selectedWorkspace: Workspace? {
+    guard case .environment(let path) = selection else { return nil }
+    return store.payload?.environments.first { $0.path == path }
+  }
+
   private var inspectorFits: Bool {
     windowWidth - (columnVisibility == .detailOnly ? 0 : sidebarWidth) >= WorkspaceDetail.widthWithInspector
   }
@@ -183,7 +192,7 @@ struct RootView: View {
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
-    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 44 : 0)
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1 : 0)
   }
@@ -207,7 +216,6 @@ struct RootView: View {
     openRequests.device = nil
     selection = .environment(owner.workspace.path)
     focusedDeviceID = owner.device.id
-    detailTab = .device
   }
 
   /// `@Published` emits before the property changes, so the link is read once the assignment has landed.
@@ -251,7 +259,6 @@ struct RootView: View {
         action: Toast.Action(title: "Open") {
           selection = .environment(path)
           if let deviceID { focusedDeviceID = deviceID }
-          detailTab = .device
         },
         sticky: true, key: "workspace-link:\(path)"))
   }
@@ -275,7 +282,6 @@ struct RootView: View {
       }) {
         focusedDeviceID = device.id
       }
-      detailTab = .device
     case .build(let path, _):
       selection = .environment(path)
       if inspector == .hidden { toggleInspector() }
@@ -288,15 +294,13 @@ struct RootView: View {
 
   private func openErrors(_ path: String) {
     selection = .environment(path)
-    detailTab = .logs
-    showsLogsPane = true
+    showsLogs = true
     logQuery.errorsOnly = true
   }
 
   private func showLogs(_ path: String) {
     selection = .environment(path)
-    detailTab = .logs
-    showsLogsPane = true
+    showsLogs = true
   }
 
   @ViewBuilder private var detail: some View {
@@ -308,7 +312,7 @@ struct RootView: View {
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
           history: metrics.owners, inspector: inspector,
           inspectorWidth: $inspectorWidth,
-          focusedID: $focusedDeviceID, tab: $detailTab, logQuery: $logQuery, openLogs: { openErrors(env.path) })
+          focusedID: $focusedDeviceID, logQuery: $logQuery)
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
@@ -530,6 +534,37 @@ struct InspectorToggleButton: View {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
     .help(isShown ? "Hide the inspector" : "Show the inspector")
+  }
+}
+
+/// Shows or hides the workspace's logs below its devices, with the error count while they are hidden.
+struct LogsToggleButton: View {
+  var isShown: Bool
+  var errors: Int
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
+    }
+    .overlay(alignment: .topTrailing) {
+      if errors > 0, !isShown {
+        Text(errors > 99 ? "99+" : String(errors))
+          .font(.system(size: 9, weight: .bold))
+          .monospacedDigit()
+          .foregroundStyle(.white)
+          .padding(.horizontal, 4)
+          .frame(minWidth: 15, minHeight: 15)
+          .background(Capsule().fill(Palette.error))
+          .offset(x: 6, y: -5)
+          .allowsHitTesting(false)
+      }
+    }
+    .help(
+      isShown
+        ? "Hide the logs"
+        : errors > 0 ? "Show the logs: \(countLabel(errors, "error")) since the last marker" : "Show the logs")
+    .accessibilityLabel(isShown ? "Hide logs" : errors > 0 ? "Show logs, \(countLabel(errors, "error"))" : "Show logs")
   }
 }
 

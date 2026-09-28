@@ -1,9 +1,11 @@
 import StimKit
 import SwiftUI
 
-/// Each platform's last build and what `stim <platform> --plan` predicts for the next one. Opening the
-/// section checks every platform with a last build or a device, unless a build is running.
-struct BuildCacheSection: View {
+/// Each platform the workspace runs: the running build's phases, output and cache miss, or the last build and what
+/// `stim <platform> --plan` predicts for the next one, with Check and Run. Opening the section checks every platform
+/// it shows, unless a build is running.
+struct BuildSection: View {
+  var cli: Task<StimCLI, Never>
   var env: Workspace
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
@@ -12,14 +14,19 @@ struct BuildCacheSection: View {
 
   private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
 
+  private var platforms: [String] {
+    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms }
+    return env.runPlatforms + [running.platform]
+  }
+
   private var trigger: [String] {
-    [running == nil ? "idle" : "building"] + env.usedPlatforms.map(buildKey)
+    [running == nil ? "idle" : "building"] + platforms.map(buildKey)
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      SectionLabel(title: "Builds")
-      ForEach(env.runPlatforms, id: \.self) { platform in
+      SectionLabel(title: "Build")
+      ForEach(platforms, id: \.self) { platform in
         card(platform)
       }
     }
@@ -30,67 +37,82 @@ struct BuildCacheSection: View {
 
   private func checkUsed() {
     if running != nil { return checks.cancel(workspace: env.path) }
-    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: env.usedPlatforms.map { ($0, buildKey($0)) }))
+    checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: platforms.map { ($0, buildKey($0)) }))
   }
 
   private func card(_ platform: String) -> some View {
     let entry = checks.entry(workspace: env.path, platform: platform)
+    let building = running.flatMap { $0.platform == platform ? $0 : nil }
     return VStack(alignment: .leading, spacing: Space.sm) {
       HStack(spacing: Space.sm) {
-        Text(platformName(platform)).font(.stim(.callout, weight: .semibold))
+        PlatformGlyph(platform: platform, size: 12, color: building == nil ? Palette.text : Palette.primary)
+        Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
+          .font(.stim(.callout, weight: .semibold))
+          .lineLimit(1)
+        if let building { BuildOutcomeBadge(build: building) }
         Spacer()
-        Button {
-          checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
-        } label: {
-          Label("Check", systemImage: "magnifyingglass")
-        }
-        .buttonStyle(.stim())
-        .disabled(running != nil || entry?.state == .checking || actions.active(for: env.path) != nil)
-        .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
-        let failed = env.lastBuilds?.build(for: platform)?.status == "failed"
-        Button {
-          actions.runApp(env, platform: platform)
-        } label: {
-          Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
-        }
-        .buttonStyle(.stim(.primary))
-        .disabled(running != nil || actions.active(for: env.path) != nil)
-        .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
+        if building == nil { buttons(platform, entry: entry) }
       }
-      if let last = env.lastBuilds?.build(for: platform) {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-          Text(
-            "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(context.date.timeIntervalSince($0)))" } ?? "")"
-          )
-          .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
-          .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
-        }
-        if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
-          BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
-        }
-        if let reason = last.missReason {
-          MissReasonButton(reason: reason, help: "Why this build missed the cache")
-        }
+      if let building {
+        RunningBuildDetail(cli: cli, env: env, build: building)
       } else {
-        Text("No build recorded").foregroundStyle(Palette.tertiary)
+        lastBuild(platform)
+        if running != nil {
+          Text("Next build: checked after the running build").foregroundStyle(Palette.tertiary)
+        } else {
+          nextBuild(entry)
+        }
       }
       let history = env.builds?.builds(for: platform) ?? []
       if !history.isEmpty {
         BuildHistoryList(entries: history, workspace: env.path)
       }
-      if let running {
-        if running.platform == platform {
-          BuildProgressBar(build: running, compact: true)
-        } else {
-          Text("Next build: checked after the running build").foregroundStyle(Palette.tertiary)
-        }
-      } else {
-        nextBuild(entry)
-      }
     }
     .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
+  }
+
+  @ViewBuilder private func buttons(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
+    Button {
+      checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
+    } label: {
+      Label("Check", systemImage: "magnifyingglass")
+    }
+    .buttonStyle(.stim())
+    .fixedSize()
+    .disabled(running != nil || entry?.state == .checking || actions.active(for: env.path) != nil)
+    .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
+    let failed = env.lastBuilds?.build(for: platform)?.status == "failed"
+    Button {
+      actions.runApp(env, platform: platform)
+    } label: {
+      Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
+    }
+    .buttonStyle(.stim(.primary))
+    .fixedSize()
+    .disabled(running != nil || actions.active(for: env.path) != nil)
+    .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
+  }
+
+  @ViewBuilder private func lastBuild(_ platform: String) -> some View {
+    if let last = env.lastBuilds?.build(for: platform) {
+      TimelineView(.periodic(from: .now, by: 30)) { context in
+        Text(
+          "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(context.date.timeIntervalSince($0)))" } ?? "")"
+        )
+        .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
+        .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+      }
+      if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
+        BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
+      }
+      if let reason = last.missReason {
+        MissReasonButton(reason: reason, help: "Why this build missed the cache")
+      }
+    } else {
+      Text("No build recorded").foregroundStyle(Palette.tertiary)
+    }
   }
 
   @ViewBuilder
@@ -135,6 +157,45 @@ struct BuildCacheSection: View {
     case nil:
       EmptyView()
     }
+  }
+}
+
+/// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
+/// cache missed, and the latest output.
+private struct RunningBuildDetail: View {
+  var cli: Task<StimCLI, Never>
+  var env: Workspace
+  var build: Build
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let steps = build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)
+      let (phase, counts) = build.currentPhaseLabel
+      let elapsed = clockDuration(ms: build.progress(at: context.date).elapsedMs)
+      let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+          Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
+          if let counts { Text(counts).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1) }
+          Spacer(minLength: Space.sm)
+          (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
+            .font(.stim(.footnote))
+            .monospacedDigit()
+        }
+        PhaseBar(steps: barSteps(steps))
+        if namesPhases(steps) {
+          PhaseChecklist(steps: steps)
+        }
+      }
+      .accessibilityElement(children: .combine)
+    }
+    if let miss = build.missReason {
+      MissReasonButton(reason: miss, help: "Why this build missed the cache")
+    }
+    BuildOutputTail(cli: cli, workspace: env.path, build: build, limit: 6)
+      .padding(Space.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
   }
 }
 

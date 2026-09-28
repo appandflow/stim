@@ -165,36 +165,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 }
 
-@Suite struct BuildLineTests {
-  @Test func showsARunAsTimeAndHitAFailureAndElseThePrediction() throws {
-    let ok = try JSONDecoder().decode(LastBuild.self, from: Data(lastBuild().utf8))
-    #expect(
-      BuildLine.make(platform: "ios", last: ok, plan: nil)
-        == BuildLine(platform: "ios", main: "0:33", sub: "hit", tone: .normal, spoken: "last build 0:33, hit"))
-    let cold = try JSONDecoder().decode(LastBuild.self, from: Data(lastBuild(cacheHit: "false", durationMs: 158_000).utf8))
-    #expect(BuildLine.make(platform: "ios", last: cold, plan: nil).main == "2:38")
-    let failed = try JSONDecoder().decode(LastBuild.self, from: Data(lastBuild(status: "failed").utf8))
-    #expect(BuildLine.make(platform: "ios", last: failed, plan: nil).tone == .error)
-    let plan = try JSONDecoder().decode(
-      BuildPlan.self,
-      from: Data(
-        #"{"platform":"ios","fingerprint":"f","cacheHit":"local","cacheSkipped":false,"outcome":"hit","expectedMs":39000,"basis":2}"#
-          .utf8))
-    #expect(
-      BuildLine.make(platform: "ios", last: nil, plan: .done(.plan(plan)))
-        == BuildLine(
-          platform: "ios", main: "~0:39", sub: "est.", tone: .secondary, isEstimate: true,
-          spoken: "next build about 0:39, hit"))
-    #expect(BuildLine.make(platform: "ios", last: nil, plan: .checking).main == "Checking\u{2026}")
-    #expect(BuildLine.make(platform: "ios", last: nil, plan: .failed("x")).main == "No build")
-  }
-
-  @Test func showsBothPlatformsForAWorkspaceThatUsedNeither() throws {
-    #expect(try workspace("").buildCardPlatforms == ["ios", "android"])
-    #expect(try workspace(#""android":{"name":"a","owned":true,"physical":false,"state":"detected"}"#).buildCardPlatforms == ["android"])
-  }
-}
-
 @Suite struct PhaseStepTests {
   let history = try! JSONDecoder().decode(
     [BuildHistoryEntry].self,
