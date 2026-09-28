@@ -79,7 +79,8 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const now = useNow(30_000);
   const status = useMachineStatus(macId);
   const machine = status?.machine;
-  const platforms = env ? usedPlatforms(env) : [];
+  const used = env ? usedPlatforms(env) : [];
+  const platforms: Platform[] = used.length ? used : ['ios', 'android'];
   const plan = useBuildPlans(
     path,
     Object.fromEntries(platforms.map((platform) => [platform, planKey(env?.lastBuilds?.[platform])])),
@@ -236,9 +237,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const devices = stage.label === 'Stopped' ? [] : all;
   const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/git', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
-  const lines = (platforms.length ? platforms : (['ios', 'android'] as const)).map((platform) =>
-    buildLine(platform, env.lastBuilds?.[platform], plan(platform)),
-  );
+  const lines = platforms.map((platform) => buildLine(platform, env.lastBuilds?.[platform], plan(platform)));
   const failed = lines.find((line) => line.tone === 'error')?.platform;
   const health = metroHealth(env);
   const reportsBundles = status?.environments.some((e) => e.metro?.bundle) ?? false;

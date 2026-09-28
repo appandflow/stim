@@ -286,6 +286,8 @@ describe('buildLine', () => {
       },
     };
     expect(buildLine('ios', undefined, plan)).toMatchObject({ main: '~0:39', sub: 'hit', tone: 'secondary' });
+    expect(buildLine('ios', undefined, { kind: 'checking' })).toMatchObject({ main: 'Checking\u2026' });
+    expect(buildLine('ios', undefined, { kind: 'failed', message: 'x' })).toMatchObject({ main: 'No build' });
   });
 });
 

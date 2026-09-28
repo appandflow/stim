@@ -280,6 +280,7 @@ export function buildLine(platform: Platform, last: LastBuild | undefined, plan:
       tone: 'secondary',
     };
   }
+  if (plan?.kind === 'checking') return { platform, main: 'Checking\u2026', sub: null, tone: 'secondary' };
   return { platform, main: 'No build', sub: null, tone: 'secondary' };
 }
 

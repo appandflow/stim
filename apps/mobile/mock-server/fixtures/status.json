@@ -2324,6 +2324,55 @@
         "warmStep": "refresh"
       },
       {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-ready/apps/mobile",
+        "live": false,
+        "phase": "ready",
+        "phaseSince": "2026-09-25T03:53:09.012Z",
+        "memoryMb": 0,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-ready",
+          "branch": "fix/1721-js-swap-asset-catalog",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/fix/1721-js-swap-asset-catalog",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 1733,
+            "url": "https://github.com/appandflow/stim/pull/1733",
+            "title": "fix(ios): recompile the React Native asset catalog in the Release JS swap",
+            "state": "open",
+            "checks": {
+              "passing": 16,
+              "failing": 0,
+              "pending": 0
+            },
+            "reviewDecision": "review-required",
+            "checkedAt": "2026-09-25T04:21:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "disk": {
+          "worktreeBytes": 120000000,
+          "nodeModulesBytes": null,
+          "buildBytes": null,
+          "measuredAt": "2026-09-25T03:53:30.012Z"
+        }
+      },
+      {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
         "live": false,
         "phase": "idle",
@@ -3106,6 +3155,7 @@
     "environments[path*=react-native-reserved-regions].builds: copied from a real stim status --json build history (hits, misses after an app config change, compile failures, a cancelled and an interrupted run) with paths rewritten; its lastBuilds were replaced with the matching newest entries",
     "environments[].phase and phaseSince: added by hand, live for live workspaces and idle otherwise; the capture predates lifecycle phases. environments[path*=new-composer] (warming, copy step) and environments[path*=fix-search] (ready) were added by hand in the shape stim status --json reports for a worktree being warmed and one warmed and not yet run",
     "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome",
-    "environments[path*=chat-perf-demo].physicalDevices and deviceLeases: added by hand in the PhysicalDeviceState shape, a connected iPhone leased in the default slot and a disconnected Android phone in the pixel slot; the capture machine leased no physical device"
+    "environments[path*=chat-perf-demo].physicalDevices and deviceLeases: added by hand in the PhysicalDeviceState shape, a connected iPhone leased in the default slot and a disconnected Android phone in the pixel slot; the capture machine leased no physical device",
+    "environments[path*=a4-ready]: added by hand in the shape stim status --json reports for a worktree stim worktree warm prepared that never built or ran, with an open pull request whose checks all pass"
   ]
 }

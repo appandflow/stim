@@ -121,8 +121,11 @@ reload and stop a workspace:
     Metro and build, and the disk split with the Mac's free space.
   - **Build**: one row per platform with the Apple or Android glyph, the last
     run's time and whether it hit the cache, **Failed** in red, or the next
-    build's prediction from `build.plan` before any run. It opens the **Build**
-    sheet on that platform.
+    build's prediction from `build.plan` before any run. A workspace that has
+    used neither platform shows both, and the screen asks for both predictions
+    when it opens. A row reads **Checking…** while its prediction is pending,
+    and **No build** only when there is no run and no prediction. It opens the
+    **Build** sheet on that platform.
   - **Logs**: the error count since the marker, with a red dot above zero,
     Metro's port with its health as the dot's color, and the bundle line
     (**Bundling** with Metro's percent, **Bundled in 1.8s** and when, or **Not
@@ -606,9 +609,9 @@ node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-a
 node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
 ```
 
-The status also holds seven workspaces under `.worktrees/a4-*` for the
+The status also holds eight workspaces under `.worktrees/a4-*` for the
 workspace screen, one per stage (running, building, crashed, build failed,
-warming, stopped) and one running iOS, Android and Web, with the status
+warming, ready, stopped) and one running iOS, Android and Web, with the status
 `machine` owners, disk use, bundle state, build detail and pull requests they
 would report. Start the server with `--workspaces a4-` to see only those. Each
 status event carries a usage history drawn around those owners, and
