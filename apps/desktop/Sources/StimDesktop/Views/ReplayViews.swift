@@ -72,9 +72,18 @@ struct ReplayHost<Content: View>: View {
 
   var body: some View {
     content(controller)
-      .onAppear { controller.connect(session.isOpen ? session.client : nil) }
-      .onChange(of: session.state) { _, _ in controller.connect(session.isOpen ? session.client : nil) }
+      .onAppear(perform: attach)
+      .onChange(of: session.state) { _, _ in attach() }
       .onDisappear { controller.stop() }
+  }
+
+  /// A connection that drops keeps the controller, since the client subscribes again once it reconnects.
+  private func attach() {
+    if session.client == nil {
+      controller.connect(nil)
+    } else if session.isOpen {
+      controller.connect(session.client)
+    }
   }
 }
 
@@ -194,7 +203,7 @@ struct ReplayBar: View {
   private func track(_ timeline: ReplayTimeline) -> some View {
     let markers = controller.range?.markers ?? []
     let shownAt = controller.replay?.at
-    let position = dragging ?? (controller.replay == nil ? 1 : shownAt.map(timeline.position(of:)) ?? 0)
+    let position = dragging ?? (controller.replay == nil ? 1 : shownAt.map(timeline.position(of:)) ?? 1)
     return ZStack(alignment: .topLeading) {
       ForEach(Array(timeline.pieces.enumerated()), id: \.offset) { _, piece in
         let x = piece.from * width

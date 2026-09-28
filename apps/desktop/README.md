@@ -424,10 +424,12 @@ the focused device of a workspace page offers a replay bar under its screen,
 like the phone app's device viewer. Stim Desktop connects to that server at
 `ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json` for a
 read-only token, spends it as a device named "Stim Desktop", and keeps the
-device token in the login keychain, one per Stim home. The server issued it to
+device token in a file only you can read under `~/Library/Application
+Support/Stim Desktop/stim-server/`, one per Stim home. The server issued it to
 a loopback connection, so it refuses the token from any other node. When the
-server no longer knows the token, the app pairs once more. The Phones list
-leaves this device out.
+server no longer knows the token, the app pairs once more, so revoking it with
+`stim-server devices revoke` lasts only until the next connection; turn off
+**Serve to phones** to stop it. The Phones list leaves this device out.
 
 The app polls `replay.range` every 10 seconds while the tile shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans

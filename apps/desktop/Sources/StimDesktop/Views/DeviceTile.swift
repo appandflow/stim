@@ -31,6 +31,7 @@ struct DeviceTile: View {
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
   @State private var confirmingStop = false
+  @State private var replaySize: CGSize?
   @EnvironmentObject private var actions: ActionCenter
 
   private let screenPadding: CGFloat = 12
@@ -46,7 +47,7 @@ struct DeviceTile: View {
         }
         Rectangle().fill(Palette.border).frame(height: 1)
         if replaying, let replay {
-          ReplayScreen(controller: replay) { pixelSizes[1] = $0 }
+          ReplayScreen(controller: replay) { replaySize = $0 }
             .frame(width: replayWidth)
             .padding(screenPadding)
             .frame(height: screenHeight)
@@ -370,7 +371,7 @@ struct DeviceTile: View {
   }
 
   private var replayWidth: CGFloat? {
-    guard let size = pixelSizes[1], size.height > 0 else { return nil }
+    guard let size = replaySize, size.height > 0 else { return nil }
     return (screenHeight - screenPadding * 2) * size.width / size.height
   }
 

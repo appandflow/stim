@@ -1,48 +1,41 @@
 import Combine
 import Foundation
-import Security
+import CryptoKit
 import StimKit
 
-/// The device token Stim Desktop holds for the stim-server of one Stim home, in the login keychain. It was issued
-/// to a loopback connection, so the server refuses it from any other node.
+/// The device token Stim Desktop holds for the stim-server of one Stim home, in a file only the user can read under
+/// Application Support. The server issued it to a loopback connection, so it refuses the token from any other node.
 struct LocalServerCredential: Codable, Equatable {
   var deviceID: String
   var deviceToken: String
 
-  private static let service = "dev.stim.desktop.stim-server"
-  /// What this process saved, so a keychain that refuses the item does not make the app pair on every reconnect.
-  @MainActor private static var saved: [String: LocalServerCredential] = [:]
-
-  private static func query(home: String) -> [CFString: Any] {
-    [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: home]
+  private static func file(home: String) -> URL {
+    let digest = SHA256.hash(data: Data(home.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Stim Desktop/stim-server/\(digest).json")
   }
 
-  @MainActor static func load(home: String) -> LocalServerCredential? {
-    if let credential = saved[home] { return credential }
-    var query = query(home: home)
-    query[kSecReturnData] = true
-    query[kSecMatchLimit] = kSecMatchLimitOne
-    var result: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
-      return nil
+  static func load(home: String) -> LocalServerCredential? {
+    (try? Data(contentsOf: file(home: home))).flatMap { try? JSONDecoder().decode(LocalServerCredential.self, from: $0) }
+  }
+
+  func save(home: String) {
+    let file = Self.file(home: home)
+    let manager = FileManager.default
+    guard let data = try? JSONEncoder().encode(self),
+      (try? manager.createDirectory(
+        at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700])) != nil
+    else { return }
+    let temporary = file.appendingPathExtension("tmp")
+    guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+      return
     }
-    return try? JSONDecoder().decode(LocalServerCredential.self, from: data)
+    _ = try? manager.replaceItemAt(file, withItemAt: temporary)
   }
 
-  @MainActor func save(home: String) {
-    Self.saved[home] = self
-    guard let data = try? JSONEncoder().encode(self) else { return }
-    let query = Self.query(home: home)
-    if SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary) == errSecItemNotFound {
-      var item = query
-      item[kSecValueData] = data
-      SecItemAdd(item as CFDictionary, nil)
-    }
-  }
-
-  @MainActor static func delete(home: String) {
-    saved[home] = nil
-    SecItemDelete(query(home: home) as CFDictionary)
+  static func delete(home: String) {
+    try? FileManager.default.removeItem(at: file(home: home))
   }
 }
 

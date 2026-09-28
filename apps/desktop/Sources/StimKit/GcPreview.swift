@@ -154,6 +154,8 @@ public struct GcPreview: Sendable {
       kept = [idle ?? "idle", "stim gc --idle shuts it down"].joined(separator: "; ")
     } else if key == "unverifiedDevices" {
       kept = "This Stim home has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
+    } else if key == "recordings", item["withWorkspace"] as? Bool == true {
+      kept = "deleted with its workspace directory, counted there"
     } else if reportOnly {
       kept = item["detail"] as? String ?? "reported only"
     } else if acted == false {

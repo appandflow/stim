@@ -655,7 +655,9 @@ import Testing
           {"dir":"/s/workspaces/g/recordings","projectRoot":"/pg","bytes":3000,"deleteBytes":0,"willDelete":false,
            "withWorkspace":false,"reason":"retained","detail":"the last 15 minutes of footage per device stay"},
           {"dir":"/s/workspaces/h/recordings","projectRoot":"/ph","bytes":2000,"deleteBytes":1500,"willDelete":true,
-           "withWorkspace":false,"reason":null,"detail":null}],
+           "withWorkspace":false,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/a/recordings","projectRoot":"/p","bytes":800,"deleteBytes":800,"willDelete":true,
+           "withWorkspace":true,"reason":null,"detail":null}],
         "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}],
         "futureSection":[{"id":"z"}]
       }}
@@ -669,9 +671,12 @@ import Testing
       ])
     let recordings = report.sections.first { $0.key == "recordings" }!
     #expect(recordings.title == "Device recordings")
-    #expect(recordings.entries.map(\.label) == ["/pg", "/ph"])
-    #expect(recordings.entries.map(\.bytes) == [3000, 1500])
-    #expect(recordings.entries.map(\.kept) == ["the last 15 minutes of footage per device stay", nil])
+    #expect(recordings.entries.map(\.label) == ["/pg", "/ph", "/p"])
+    #expect(recordings.entries.map(\.bytes) == [3000, 1500, 800])
+    #expect(
+      recordings.entries.map(\.kept) == [
+        "the last 15 minutes of footage per device stay", nil, "deleted with its workspace directory, counted there",
+      ])
     let logs = report.sections.first { $0.key == "workspaceLogs" }!.entries
     #expect(logs.map(\.bytes) == [700, 50])
     #expect(logs.map(\.kept) == [nil, "a device log collector is recorded for ios"])
