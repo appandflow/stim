@@ -17,7 +17,8 @@ struct BuildMachinesView: View {
   @State private var working: String?
   @State private var failure: String?
   @State private var removing: String?
-  @State private var refreshing = false
+  @State private var runs = 0
+  @State private var latestRun = 0
 
   private var checkout: String? {
     doctorCheckouts(store.payload?.environments ?? [], project: store.project(ofPath:)).first?.path
@@ -51,7 +52,7 @@ struct BuildMachinesView: View {
           Text("This Mac builds on")
           Spacer()
           Button("Refresh") { Task { await load() } }
-            .disabled(working != nil || refreshing || probing)
+            .disabled(working != nil || runs > 0 || probing)
         }
       } footer: {
         Text(footer)
@@ -80,7 +81,7 @@ struct BuildMachinesView: View {
     .task(id: waiting) {
       while waiting, !Task.isCancelled {
         try? await Task.sleep(for: .seconds(15))
-        if working == nil, !refreshing, !Task.isCancelled { await refreshStatuses(ask: false) }
+        if working == nil, runs == 0, !Task.isCancelled { await refreshStatuses(ask: false) }
       }
     }
     .confirmationDialog(
@@ -177,10 +178,14 @@ struct BuildMachinesView: View {
       statuses = []
       return
     }
-    refreshing = true
-    defer { refreshing = false }
+    runs += 1
+    latestRun += 1
+    let run = latestRun
+    defer { runs -= 1 }
     let cli = await cli.value
-    switch await Task.detached(operation: { Result { try cli.buildMachines(cwd: checkout, ask: ask) } }).value {
+    let result = await Task.detached(operation: { Result { try cli.buildMachines(cwd: checkout, ask: ask) } }).value
+    guard run == latestRun else { return }
+    switch result {
     case .success(let reported):
       statuses = reported ?? []
       if reported == nil { failure = "This stim does not report build machines; update it." }
