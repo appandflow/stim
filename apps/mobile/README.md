@@ -84,8 +84,8 @@ reload and stop a workspace:
   `node_modules`, other simulators and AVDs, and runtimes and system images. A
   figure marked ≥ has parts the Mac has not sized; the phone does not size
   AVDs or system images itself, as Stim Desktop does. Then come **Safe to
-  free now** (what `stim gc --delete` would free, with the command that frees
-  each row), **Projects** (repositories and their worktrees, with each
+  free now** (what `stim gc --delete` would free, with the command on the Mac
+  that frees each row), **Projects** (repositories and their worktrees, with each
   worktree's `node_modules`, devices, build outputs and logs, and whether it is
   merged, has an open pull request, or is stale), **Simulators and
   emulators** (every one on the Mac, Stim's and **Yours**), **Leased
@@ -627,8 +627,9 @@ generates the native dir for Android, captured from `stim ios|android --plan
 `stim gc --json` dry run and `stim stats --json` payload made for the fixture
 workspaces: build outputs, logs and recordings for them, 44 simulators and
 emulators with every owner kind, runtimes and system images with unused ones,
-14 caches, and merged, stale and open-pull-request worktrees, so every Machine
-section has more than 10 rows to fold.
+14 caches, and merged, stale and open-pull-request worktrees, so the owners,
+Safe to free now, Simulators and emulators, Recordings and Caches sections have
+more than 10 rows to fold.
 
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and

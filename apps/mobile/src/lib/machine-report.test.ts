@@ -153,10 +153,10 @@ describe('machineReport', () => {
 
   it('lists what stim gc --delete frees, largest first, leaving caches and kept outputs out', () => {
     expect(report.free.map((row) => [row.title, row.command])).toEqual([
-      ['Build outputs of feature', 'stim gc --cache workspaces'],
-      ['stim-parked', 'stim gc'],
+      ['Build outputs of feature', 'stim gc --delete --cache workspaces'],
+      ['stim-parked', 'stim gc --delete'],
       ['Worktree feature', 'stim worktree remove'],
-      ['Logs of feature', 'stim gc'],
+      ['Logs of feature', 'stim gc --delete'],
     ]);
   });
 
@@ -187,6 +187,62 @@ describe('machineReport', () => {
       NOW,
     );
     expect(partial.repositories[0]!.worktrees[0]!.total).toEqual({ bytes: 8 * GB, complete: false });
+  });
+
+  it('counts the recordings of a removed workspace once, inside its workspace data', () => {
+    const removed = machineReport(
+      status([]),
+      {
+        sections: {
+          orphanedWorkspaces: [{ dir: '/s/gone', bytes: 3 * GB }],
+          recordings: [
+            {
+              dir: '/s/gone/recordings',
+              projectRoot: null,
+              bytes: 1 * GB,
+              deleteBytes: 1 * GB,
+              willDelete: true,
+              withWorkspace: true,
+            },
+            {
+              dir: '/s/a/recordings',
+              projectRoot: MAIN,
+              bytes: 0.5 * GB,
+              deleteBytes: 0,
+              willDelete: false,
+              withWorkspace: false,
+            },
+          ],
+        },
+      },
+      NOW,
+    );
+    expect(removed.categories.find((category) => category.key === 'stimOutputs')?.total.bytes).toBe(3.5 * GB);
+    expect(removed.free.map((row) => row.title)).toEqual(['Data of a removed workspace']);
+  });
+
+  it('frees a worktree for its pull request only when that pull request holds its head', () => {
+    const worktree = (containsHead: boolean) =>
+      machineReport(
+        status([env(FEATURE, { worktree: feature })]),
+        {
+          sections: {
+            linkedWorktrees: [
+              {
+                path: FEATURE_TREE,
+                idleDays: 30,
+                mergedInto: null,
+                pullRequest: { number: 7, state: 'closed', url: '', containsHead },
+                willRemove: true,
+                detail: '',
+              },
+            ],
+          },
+        },
+        NOW,
+      ).free.map((row) => row.title);
+    expect(worktree(true)).toEqual(['Worktree feature']);
+    expect(worktree(false)).toEqual([]);
   });
 
   it('marks a category with an unsized part as a lower bound', () => {

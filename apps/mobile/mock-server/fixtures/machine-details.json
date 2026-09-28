@@ -624,11 +624,11 @@
           "dir": "/Users/dev/.stim/workspaces/tlon-mobile--000000a1b2c3d410/recordings",
           "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search/apps/tlon-mobile",
           "bytes": 400000000,
-          "deleteBytes": 200000000,
-          "willDelete": true,
+          "deleteBytes": 0,
+          "willDelete": false,
           "withWorkspace": false,
-          "reason": null,
-          "detail": null
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
         },
         {
           "dir": "/Users/dev/.stim/workspaces/mobile--000000a1b2c3d412/recordings",
@@ -659,6 +659,16 @@
           "withWorkspace": false,
           "reason": "retained",
           "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/dev/.stim/workspaces/demo--00000000deadbeef/recordings",
+          "projectRoot": "/Users/dev/Developer/demo",
+          "bytes": 640000000,
+          "deleteBytes": 640000000,
+          "willDelete": true,
+          "withWorkspace": true,
+          "reason": null,
+          "detail": null
         }
       ],
       "workspaceBuildOutputs": [

@@ -11,7 +11,12 @@ export interface GcReport {
       path: string;
       idleDays: number | null;
       mergedInto: string | null;
-      pullRequest: { number: number; state: 'open' | 'merged' | 'closed'; url: string } | null;
+      pullRequest: {
+        number: number;
+        state: 'open' | 'merged' | 'closed';
+        url: string;
+        containsHead: boolean;
+      } | null;
       willRemove: boolean;
       detail: string | null;
     }[];
@@ -237,7 +242,7 @@ function lifecycle(
   if (worktree?.mergedInto)
     return { label: `Merged into ${worktree.mergedInto.replace(/^origin\//, '')}`, tone: 'success' };
   const pull = worktree?.pullRequest ?? null;
-  if (pull?.state === 'merged') return { label: `PR #${pull.number} merged`, tone: 'success' };
+  if (pull?.state === 'merged' && pull.containsHead) return { label: `PR #${pull.number} merged`, tone: 'success' };
   const open =
     pull?.state === 'open'
       ? pull
@@ -254,13 +259,13 @@ function lifecycle(
 
 const STALE_DAYS = 7;
 
-function statusDeviceSizes(env: EnvironmentState): { name: string | null; bytes: number }[] {
+function statusDeviceSizes(env: EnvironmentState): { kind: 'ios' | 'android'; name: string | null; bytes: number }[] {
   const slots = [env, ...(env.slots ?? [])];
-  const sizes: { name: string | null; bytes: number }[] = [];
+  const sizes: { kind: 'ios' | 'android'; name: string | null; bytes: number }[] = [];
   for (const slot of slots) {
-    if (slot.ios?.owned && slot.ios.disk) sizes.push({ name: slot.ios.udid, bytes: slot.ios.disk.bytes });
+    if (slot.ios?.owned && slot.ios.disk) sizes.push({ kind: 'ios', name: slot.ios.udid, bytes: slot.ios.disk.bytes });
     if (slot.android?.owned && !slot.android.physical && slot.android.disk) {
-      sizes.push({ name: slot.android.name ?? null, bytes: slot.android.disk.bytes });
+      sizes.push({ kind: 'android', name: slot.android.name ?? null, bytes: slot.android.disk.bytes });
     }
   }
   return sizes;
@@ -322,9 +327,9 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
         bytes: device.bytes ?? envDeviceSizes.get(device.id) ?? null,
       }))
     : environments.flatMap((env) =>
-        statusDeviceSizes(env).map(({ name, bytes }) => ({
+        statusDeviceSizes(env).map(({ kind, name, bytes }) => ({
           id: `${env.path}:${name}`,
-          kind: env.ios?.udid === name ? ('ios' as const) : ('android' as const),
+          kind,
           name: name ?? 'Device',
           subtitle: '',
           owner: { label: `Stim \u00B7 ${workspaceTitle(env, roots)}`, tone: 'accent' as const },
@@ -400,6 +405,8 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     (row) => row.total?.bytes ?? null,
     (row) => row.path,
   );
+  const rootModules = (root: string) =>
+    Math.min(...rows.filter((row) => row.root === root).map((row) => row.nodeModules ?? 0));
   const grouped = new Map<string, typeof rows>();
   for (const row of rows) grouped.set(row.repository, [...(grouped.get(row.repository) ?? []), row]);
   const repositories: RepositoryRow[] = [...grouped].map(([path, members]) => {
@@ -408,7 +415,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       if (!row.total) return [];
       const shared = seen.has(row.root);
       seen.add(row.root);
-      return [{ bytes: row.total.bytes - (shared ? (row.nodeModules ?? 0) : 0), complete: row.total.complete }];
+      return [{ bytes: row.total.bytes - (shared ? rootModules(row.root) : 0), complete: row.total.complete }];
     });
     return {
       path,
@@ -425,7 +432,13 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
   const gcDevices = (list: GcDevice[] | undefined, detail: string) => {
     for (const device of list ?? []) {
       const id = device.udid ?? device.id ?? device.name ?? '?';
-      free.push({ id: `device:${id}`, title: device.name ?? id, detail, bytes: device.bytes, command: 'stim gc' });
+      free.push({
+        id: `device:${id}`,
+        title: device.name ?? id,
+        detail,
+        bytes: device.bytes,
+        command: 'stim gc --delete',
+      });
     }
   };
   gcDevices(s.parkedSimulators, 'Parked simulator, kept for reuse');
@@ -438,7 +451,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       title: 'Data of a removed workspace',
       detail: dir.dir ?? 'Stim workspace directory',
       bytes: dir.bytes,
-      command: 'stim gc',
+      command: 'stim gc --delete',
     });
   }
   for (const project of s.deadProjects ?? []) {
@@ -447,7 +460,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       title: 'Record of a deleted folder',
       detail: `${project.path} is gone`,
       bytes: null,
-      command: 'stim gc',
+      command: 'stim gc --delete',
     });
   }
   for (const log of s.workspaceLogs ?? []) {
@@ -457,7 +470,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       title: `Logs of ${log.projectRoot ? workspaceTitleAt(log.projectRoot, status) : 'a workspace'}`,
       detail: 'Over the cap; each log keeps its newest 8 MiB',
       bytes: log.trimBytes,
-      command: 'stim gc',
+      command: 'stim gc --delete',
     });
   }
   for (const output of s.workspaceBuildOutputs ?? []) {
@@ -469,11 +482,12 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
         ? `Not used for ${output.idleDays} days; rebuilt on the next run`
         : 'Not in use; rebuilt on the next run',
       bytes: output.bytes,
-      command: 'stim gc --cache workspaces',
+      command: 'stim gc --delete --cache workspaces',
     });
   }
   for (const worktree of s.linkedWorktrees ?? []) {
-    const finished = worktree.pullRequest?.state === 'merged' || worktree.pullRequest?.state === 'closed';
+    const pull = worktree.pullRequest;
+    const finished = !!pull?.containsHead && (pull.state === 'merged' || pull.state === 'closed');
     if (!worktree.willRemove || (!worktree.mergedInto && !finished)) continue;
     const row = rows.find((r) => r.root === worktree.path);
     free.push({
@@ -484,16 +498,6 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
         : 'Its pull request is finished',
       bytes: row?.nodeModules ?? null,
       command: 'stim worktree remove',
-    });
-  }
-  for (const recording of s.recordings ?? []) {
-    if (!recording.willDelete || recording.withWorkspace || recording.deleteBytes <= 0) continue;
-    free.push({
-      id: `recording:${recording.dir}`,
-      title: `Recordings of ${recording.projectRoot ? workspaceTitleAt(recording.projectRoot, status) : 'a removed workspace'}`,
-      detail: 'Older than the footage Stim keeps',
-      bytes: recording.deleteBytes,
-      command: 'stim gc',
     });
   }
   free.sort(
@@ -555,7 +559,9 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     .map((recording) => ({
       id: recording.dir,
       title: recording.projectRoot ? workspaceTitleAt(recording.projectRoot, status) : 'A removed workspace',
-      detail: recording.willDelete && recording.deleteBytes > 0 ? 'stim gc trims the oldest footage' : null,
+      detail: recording.withWorkspace
+        ? 'Its workspace was removed; stim gc --delete deletes it with the workspace data'
+        : null,
       bytes: recording.bytes,
     }))
     .sort(
@@ -565,16 +571,13 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       ),
     );
 
-  const seenModules = new Set<string>();
-  const modules = rows
-    .filter((row) => !seenModules.has(row.root) && seenModules.add(row.root))
-    .map((row) => row.nodeModules);
+  const modules = [...new Set(rows.map((row) => row.root))].map((root) => rootModules(root) || null);
   const stimOutputs = gc
     ? [
         ...allCaches.map((cache) => cache.bytes),
         ...(s.workspaceBuildOutputs ?? []).map((o) => o.bytes),
         ...(s.workspaceLogs ?? []).map((l) => l.bytes),
-        ...(s.recordings ?? []).map((r) => r.bytes),
+        ...(s.recordings ?? []).filter((r) => !r.withWorkspace).map((r) => r.bytes),
         ...(s.orphanedWorkspaces ?? []).map((o) => o.bytes),
       ]
     : environments.map((env) => env.disk?.buildBytes ?? null);
