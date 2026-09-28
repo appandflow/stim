@@ -193,6 +193,7 @@ async function start(
     record?: boolean;
     recordLimits?: ServerOptions['recordLimits'];
     controlLimits?: ServerOptions['controlLimits'];
+    history?: boolean;
     pushEndpoint?: string;
   } = {},
 ): Promise<number> {
@@ -232,6 +233,7 @@ async function start(
     record: overrides.record ?? false,
     recordLimits: overrides.recordLimits,
     controlLimits: overrides.controlLimits,
+    history: overrides.history ?? false,
     pushEndpoint: overrides.pushEndpoint ?? 'http://127.0.0.1:9/push',
     pullRequests: async () => new Map(),
   });
@@ -356,7 +358,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
-        features: ['physical-ios', 'physical-android'],
+        features: ['physical-ios', 'physical-android', 'notifications'],
         actions: [],
       },
     });
@@ -2519,6 +2521,10 @@ describe('frames.subscribe', () => {
         const second = await authed(port, true);
         const token = 'ExponentPushToken[first]';
         await first.request('push.register', { token, events: ['control'], ref: 'mac-1' });
+        const listed = await first.request('notifications.list');
+        expect(listed).toMatchObject({ result: { cursor: 0, notifications: [] } });
+        const { log } = (listed as { result: { log: string } }).result;
+        await second.request('notifications.list', { since: 0 });
         await first.request('control.begin', { workspace, platform: 'ios' });
         await second.request('control.begin', { workspace, platform: 'ios', takeOver: true });
         await until(() => bodies.length > 0);
@@ -2526,9 +2532,34 @@ describe('frames.subscribe', () => {
           expect.objectContaining({
             to: token,
             body: 'Test phone took over the iOS device you were controlling',
-            data: { ref: 'mac-1', target: 'device', path: workspace, platform: 'ios', slot: 'default' },
+            data: {
+              ref: 'mac-1',
+              notification: 1,
+              target: 'device',
+              path: workspace,
+              platform: 'ios',
+              slot: 'default',
+            },
           }),
         ]);
+        const entry = {
+          seq: 1,
+          id: `control:${workspace}:ios:default`,
+          category: 'control',
+          body: 'Test phone took over the iOS device you were controlling',
+          target: { kind: 'device', path: workspace, platform: 'ios', slot: 'default' },
+        };
+        const events = [await first.next(), await first.next()];
+        expect(events).toContainEqual({ event: 'notification', log, notification: expect.objectContaining(entry) });
+        expect(await first.request('notifications.list', { since: 0 })).toMatchObject({
+          result: { log, cursor: 1, notifications: [expect.objectContaining(entry)] },
+        });
+        expect(await second.request('notifications.list', { since: 0 })).toMatchObject({
+          result: { log, cursor: 1, notifications: [] },
+        });
+        expect(await second.request('notifications.list', { since: -1 })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
       } finally {
         await new Promise((resolve) => expo.close(resolve));
       }
