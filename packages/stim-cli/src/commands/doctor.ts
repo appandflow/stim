@@ -23,6 +23,7 @@ import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
+import { inspectBuildMachines } from '../offload/build-machines.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -188,7 +189,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout, and ask each machine in offload.machines for build access. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -236,6 +237,7 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
+      findings.push(...(await inspectBuildMachines({ fix: opts.fix === true })));
 
       if (opts.json) {
         console.log(

@@ -14,18 +14,21 @@ The design is in
 
 ```bash
 stim-server [--port <n>]          # serve paired clients, port 7787 by default
-stim-server pair [--port <n>] [--control]
+stim-server pair [--port <n>] [--control|--build]
                                   # print a single-use pairing payload
-stim-server devices [list]        # list paired devices
-stim-server devices grant <id> --control|--read
-                                  # let a paired device run actions, or only read
-stim-server devices revoke <id>   # revoke a paired device
+stim-server devices [list]        # list paired devices, build clients and build requests
+stim-server devices grant <id> --control|--read|--build
+                                  # let a paired device run actions, or only read;
+                                  # --build approves a Mac's request to build here
+stim-server devices revoke <id>   # revoke a paired device or build client, or deny a request
 stim-server log                   # list the actions paired devices ran
 ```
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
-`identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash.
+`identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash,
+followed by the [build clients](#build-access); a pending build request also
+carries `pendingUntil`.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
@@ -118,6 +121,42 @@ and control session, and ends a device's control sessions when it loses
 the capabilities and actions of the connection's device when it connects; a
 connection sees a new grant after it reconnects.
 
+Every method other than `hello` needs `read`. A device with only `build`
+gets `forbidden` for all of them.
+
+## Build access
+
+`build` lets another Mac on the tailnet run its project's code on this Mac to
+build for it: config plugins, CocoaPods hooks, Xcode script phases and Gradle
+plugins run as the user `stim-server` runs as. It never comes with `read` or
+`control`, and a phone cannot be granted it. Grant it only to Macs you trust
+with that. A connection from this Mac, over loopback, cannot get it: it has no
+tailnet node to bind the token to.
+
+A Mac gets `build` one of two ways:
+
+- **Request and approve.** The client sends `hello` with `auth` set to
+  `{ "request": "build", "deviceName" }`. The server records a pending build
+  client bound to the peer's node, answers with a `deviceToken`, no
+  capabilities and `approval: { "state": "pending", "expiresAt" }`, and closes
+  the connection. `stim-server devices` lists it as `pending build`. On this
+  Mac, `stim-server devices grant <id> --build` approves it and
+  `stim-server devices revoke <id>` denies it. Until then, `hello` with its
+  token fails with `approval-pending`, which does not count as a failed
+  attempt. A request lapses after 15 minutes. Each node has at most one
+  pending request, the newest, and the server holds at most 8; more fail with
+  `limit-exceeded`.
+- **Code.** `stim-server pair --build` prints a payload like the QR payload,
+  plus the Mac's tailnet `node` ID. The Mac that spends it gets `build` at
+  once: running the command is the approval. It refuses unless Tailscale runs
+  and a tailnet-only `tailscale serve` route reaches the server.
+
+`devices grant` never gives `build` to a paired device, or `read` or
+`control` to a build client. Build clients live in
+`$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
+`stim-server` release without `build` does not read them and refuses their
+tokens.
+
 ## Protocol
 
 JSON messages over a WebSocket. Requests are `{ "id", "method", "params" }`,
@@ -125,8 +164,9 @@ answered by `{ "id", "result" }` or `{ "id", "error": { "code", "message" } }`.
 Events are `{ "event", "subscription", ... }`.
 
 - `hello` must come first. Params: `protocol` (1), `client` (`name`,
-  `version`), and `auth`, either `{ "pairingToken", "deviceName" }` or
-  `{ "deviceToken" }`. The result carries the server name and versions, the
+  `version`), and `auth`, one of `{ "pairingToken", "deviceName" }`,
+  `{ "deviceToken" }`, or `{ "request": "build", "deviceName" }` (see
+  [Build access](#build-access)). The result carries the server name and versions, the
   device's `capabilities` (see [Scopes](#scopes)), the server's `features`
   (`physical-ios` and `physical-android` when it serves `physical: true` for
   that platform: see `frames.subscribe` below for an iPhone and
@@ -748,7 +788,8 @@ appends a line to the action log, with `action` set to `control.begin`,
 ended or whom it took the device from. Inputs are not logged.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
-refuse the client until it pairs again or updates; clients retry the others.
+refuse the client until it pairs again or updates; `approval-pending` refuses
+a build client until the Mac approves it; clients retry the others.
 
 The package exports the message types, and the build writes their JSON Schema
 to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.

@@ -11,7 +11,7 @@ const TIMEOUT_MS = 3000;
 const SERVE_PORT = 7443;
 
 export type TailscaleState =
-  | { state: 'running'; ips: string[]; dnsName: string | null; hostName: string | null }
+  | { state: 'running'; ips: string[]; dnsName: string | null; hostName: string | null; nodeId?: string }
   | { state: 'not-running'; backendState: string }
   | { state: 'unavailable'; reason: string };
 
@@ -39,7 +39,8 @@ function parseTailscaleStatus(value: unknown): TailscaleState {
   const ips = Array.isArray(value.TailscaleIPs) ? value.TailscaleIPs.filter((ip) => typeof ip === 'string') : [];
   const dnsName = typeof self.DNSName === 'string' && self.DNSName ? self.DNSName.replace(/\.$/, '') : null;
   const hostName = typeof self.HostName === 'string' && self.HostName ? self.HostName : null;
-  return { state: 'running', ips, dnsName, hostName };
+  const nodeId = typeof self.ID === 'string' && self.ID ? self.ID : null;
+  return { state: 'running', ips, dnsName, hostName, ...(nodeId ? { nodeId } : {}) };
 }
 
 export function tailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): TailscaleState {

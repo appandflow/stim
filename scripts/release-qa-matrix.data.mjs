@@ -126,6 +126,7 @@ export const pathRules = [
   { path: 'packages/stim-cli/src/diagnostics/doctor-storage.ts', rows: ['loop', 'caches'] },
   { path: 'packages/stim-cli/src/diagnostics/error-diagnostics.ts', rows: ['logs'] },
   { path: 'packages/stim-cli/src/diagnostics/error-symbolication.ts', rows: ['logs'] },
+  { path: 'packages/stim-cli/src/offload', rows: everyRow },
   { path: 'packages/stim-cli/src/diagnostics/launch-error-preview.ts', rows: ['logs', 'launch-evidence'] },
   { path: 'packages/stim-cli/src/diagnostics/native-crash.ts', rows: ['logs', 'launch-evidence'] },
   { path: 'packages/stim-cli/src/diagnostics/sandbox.ts', rows: ['loop', 'caches'] },

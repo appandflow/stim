@@ -66,7 +66,9 @@ import {
   parseLevels,
   parseQuietHours,
   pushEvents,
+  readBuildClients,
   readDevices,
+  requestBuildAccess,
   setDevicePush,
   serverDir,
   spendPairingToken,
@@ -211,6 +213,18 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
   'pairing-expired': { code: 'pairing-expired', message: 'This pairing code expired. Pair again.' },
   'device-unknown': { code: 'unauthorized', message: 'This Mac does not recognize this device token. Pair again.' },
   'node-mismatch': { code: 'unauthorized', message: 'This device token was paired from a different tailnet node.' },
+  'approval-pending': {
+    code: 'approval-pending',
+    message: 'This Mac has not approved building here yet. On it, run `stim-server devices` to find the request.',
+  },
+  'build-needs-tailnet': {
+    code: 'forbidden',
+    message: 'Build access is granted only to another Mac on the tailnet, not to a connection from this Mac.',
+  },
+  'build-requests-full': {
+    code: 'limit-exceeded',
+    message: 'This Mac has too many pending build requests. Try again after they are approved or lapse.',
+  },
 };
 
 function isLoopback(address: string | undefined): boolean {
@@ -464,7 +478,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const watcher: FSWatcher = watch(serverDir(), () => {
     revocationCheck ??= setTimeout(() => {
       revocationCheck = null;
-      const paired = new Map(readDevices().map((device) => [device.id, device]));
+      const paired = new Map([...readDevices(), ...readBuildClients()].map((device) => [device.id, device]));
       push.refresh();
       for (const [socket, device] of sessions) {
         if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
@@ -525,16 +539,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return refuse(id, 'identity-unavailable', `tailscale whois did not identify ${peer}.`, CLOSE_UNAUTHORIZED);
       }
       let outcome: AuthOutcome;
-      if (typeof auth.pairingToken === 'string' && typeof auth.deviceName === 'string' && auth.deviceName.trim()) {
-        outcome = spendPairingToken(auth.pairingToken, auth.deviceName.trim(), identity);
+      const deviceName = typeof auth.deviceName === 'string' ? auth.deviceName.trim() : '';
+      if (typeof auth.pairingToken === 'string' && deviceName) {
+        outcome = spendPairingToken(auth.pairingToken, deviceName, identity);
+      } else if (auth.request === 'build' && deviceName) {
+        outcome = requestBuildAccess(deviceName, identity);
       } else if (typeof auth.deviceToken === 'string') {
         outcome = authenticateDevice(auth.deviceToken, identity);
       } else {
-        return refuse(id, 'bad-request', 'auth needs pairingToken and deviceName, or deviceToken.', CLOSE_BAD_REQUEST);
+        return refuse(
+          id,
+          'bad-request',
+          'auth needs pairingToken and deviceName, request and deviceName, or deviceToken.',
+          CLOSE_BAD_REQUEST,
+        );
       }
       if (!outcome.ok) {
         const { code, message } = AUTH_REFUSALS[outcome.reason];
-        return refuse(id, code, message, CLOSE_UNAUTHORIZED);
+        if (outcome.reason !== 'approval-pending') return refuse(id, code, message, CLOSE_UNAUTHORIZED);
+        send(socket, { id, error: { code, message } });
+        return void socket.close(CLOSE_UNAUTHORIZED, code);
+      }
+      if (outcome.device.pendingUntil !== undefined) {
+        const result: HelloResult = {
+          protocol: PROTOCOL_VERSION,
+          server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
+          capabilities: [],
+          features: [...FEATURES],
+          actions: [],
+          device: { id: outcome.device.id, name: outcome.device.name },
+          deviceToken: outcome.deviceToken!,
+          approval: { state: 'pending', expiresAt: outcome.device.pendingUntil },
+        };
+        send(socket, { id, result });
+        return void socket.close(CLOSE_UNAUTHORIZED, 'approval-pending');
       }
       device = outcome.device;
       sessions.set(socket, device);
@@ -1309,6 +1347,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_UNAUTHORIZED);
+      if (!device.capabilities.includes('read')) {
+        return error(id, 'forbidden', `${message.method} needs read access, which build access does not include.`);
+      }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
