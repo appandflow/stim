@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { readdir, readFile, realpath } from 'node:fs/promises';
+import { readFileSync, realpathSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import type { AgentSession, AgentTool } from '@stim-cli/core/state';
@@ -147,9 +147,9 @@ function installedAgentApps(home: string = homedir()): AgentApps {
   return { claude: bundleInstalled(home, APP_BUNDLES.claude), codex: bundleInstalled(home, APP_BUNDLES.codex) };
 }
 
-async function canonical(session: AgentSession): Promise<AgentSession | null> {
+function canonical(session: AgentSession): AgentSession | null {
   try {
-    return { ...session, cwd: await realpath(session.cwd) };
+    return { ...session, cwd: realpathSync(session.cwd) };
   } catch {
     return null;
   }
@@ -175,7 +175,7 @@ async function claudeSessions(home: string, apps: AgentApps): Promise<AgentSessi
     names.map(async (name) => {
       try {
         const session = parseClaudeSession(JSON.parse(await readFile(join(directory, name), 'utf8')), apps);
-        return session && sessionProcessRuns(session) ? await canonical(session) : null;
+        return session && sessionProcessRuns(session) ? canonical(session) : null;
       } catch {
         return null;
       }
@@ -212,7 +212,7 @@ async function codexSessions(codexHome: string, apps: AgentApps, now: number): P
       ],
       { timeoutMs: CODEX_QUERY_TIMEOUT_MS },
     );
-    const sessions = await Promise.all(parseCodexThreads(JSON.parse(out), apps).map(canonical));
+    const sessions = parseCodexThreads(JSON.parse(out), apps).map(canonical);
     return sessions.filter((session): session is AgentSession => session !== null);
   } catch {
     return [];
