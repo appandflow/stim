@@ -190,7 +190,7 @@ export function projectNames(items: HomeItem[]): string[] {
   return [...new Set(items.map((item) => item.project))].sort((a, b) => a.localeCompare(b));
 }
 
-export const LOW_DISK_BYTES = 20e9;
+const LOW_DISK_BYTES = 20e9;
 
 /** Decimal units, like the Finder and Stim Desktop's disk figures. */
 export function formatBytes(bytes: number): string {
@@ -200,7 +200,7 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Binary units labeled GB, like Activity Monitor's memory figures. */
-export const memoryGb = (bytes: number) => bytes / 2 ** 30;
+const memoryGb = (bytes: number) => bytes / 2 ** 30;
 
 export type UsageTone = 'normal' | 'warn' | 'critical';
 
