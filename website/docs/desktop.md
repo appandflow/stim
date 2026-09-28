@@ -205,6 +205,23 @@ while you look at the past. **Record device screens for replay** in the same
 tab turns `recording.enabled` on or off for the Mac. See
 [Replay device screens](./owned-devices.md#replay-device-screens).
 
+## Build on another Mac
+
+Another Mac on your tailnet can build for this one once someone on it
+approves this Mac. On this Mac, **Stim > Settings > Build Machines** lists the
+Macs on your tailnet that run stim-server; **Use for Builds** adds one to the
+`offload.machines` setting and sends it a request. Each listed Mac shows
+whether it approved this Mac, is waiting, revoked it, or is now a different
+tailnet node, which Stim refuses to connect to. **Remove** takes it out of the
+setting.
+
+On the other Mac, with **Serve to phones** on and its `tailscale serve` route
+set up, Stim Desktop notifies "<Mac> wants to build on this Mac". **Review**
+shows the Mac's name and tailnet node; **Allow** lets it build there, and
+**Deny** refuses. The Macs that build there are listed under **Macs that build
+here** in **Stim > Settings > Phones**, each with **Revoke**. Builds do not
+offload yet; see [`offload.machines`](./settings.md#machine-settings).
+
 ## Notifications
 
 Stim Desktop notifies you with the same rules as the phone app: work started,

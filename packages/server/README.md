@@ -147,7 +147,8 @@ with a `deviceToken`, no capabilities and
 `approval: { "state": "pending", "expiresAt" }`, and closes the connection.
 `stim-server devices` lists it as `pending build`. On this Mac,
 `stim-server devices grant <id> --build` approves it and
-`stim-server devices revoke <id>` denies it. Until then, `hello` with its token
+`stim-server devices revoke <id>` denies it; Stim Desktop's **Allow** and
+**Deny** run those commands. Until then, `hello` with its token
 fails with `approval-pending`, which does not count as a failed attempt, while
 the request itself does, so a peer cannot send more requests than failed
 attempts. A request lapses after 15 minutes. Each node has at most one pending

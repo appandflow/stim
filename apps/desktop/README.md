@@ -7,7 +7,7 @@ and memory (the physical footprint `stim status` measures, or resident memory
 from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server the
 Phones tab runs or found, over loopback; see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
@@ -617,7 +617,11 @@ The sheet shows the phone once it pairs. The paired phones list comes from
 control** badge, its short id, the tailnet node it paired from, when it was last
 seen, an **Allow control** checkbox, which runs `stim-server devices grant <id>
 --control` or `--read`, and **Revoke**, which runs `stim-server devices revoke
-<id>` after a confirmation.
+<id>` after a confirmation. Macs that build here are listed apart, under
+**Macs that build here**, without the checkbox: a Mac waiting for approval shows
+**Waiting for you**, when its request lapses, **Review...** and **Deny**; an
+approved one shows **Can build** and **Revoke**. See
+[Build machines](#build-machines).
 
 When the server reports that Tailscale is not running, the tab shows the
 steps: `tailscale up`, restart the server (a button when the app started it),
@@ -634,6 +638,42 @@ dedicated tailnet-only port, `tailscale serve --bg --https=7443
 http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
 to the server is on a port with Funnel on, the tab says the server is public
 and pairing fails with the same explanation; it never suggests a Funnel port.
+
+## Build machines
+
+Another Mac on the tailnet can build for this one once a person on it approves
+this Mac (see [Build access](../../packages/server/README.md#build-access)).
+
+On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
+lists the entries of the `offload.machines` machine setting, each with its
+state from the `buildMachines` field of `stim doctor --json --platform ios`:
+**Approved**, **Waiting for approval** (with the request id), **Not asked**,
+**Revoked** (revoked, denied, or the request lapsed), **Different Mac** (the
+name now belongs to another tailnet node than the one this Mac asked, so Stim
+does not connect to it), **Not on the tailnet**, **Tailscale is off**,
+**Unreachable** or **Not a tailnet name**. Doctor runs in the first workspace
+`stim status` lists, like the doctor checks under Needs attention; with no
+workspace listed, the tab says so. While a machine waits for approval the tab
+checks again every 15 seconds. Below, **Macs on your tailnet** lists the other
+online macOS peers from `tailscale status --json` whose `tailscale serve` route
+on port 7443 answers `GET /health` as stim-server. **Use for Builds** adds a Mac
+to the setting with `stim settings set offload.machines <list> --scope machine`
+and asks it with `stim doctor --json --platform ios --fix`, which also asks
+again any listed Mac that has not approved this one. **Ask** and **Ask Again**
+run the same `--fix`. **Remove** takes a Mac out of the setting after a
+confirmation, unsetting it when the list is empty; removing a **Different Mac**
+also runs `--fix`, which forgets the old node so the Mac can be asked again.
+
+On the Mac that builds, the app checks `stim-server devices --json` every 10
+seconds while a server runs. Each new build request adds "<Mac> wants to build
+on this Mac" to **Notifications** (category **A Mac asks to build here**,
+Alert by default) and shows it as a card or a macOS notification. Its
+**Review** opens a dialog with the Mac's name, its tailnet node and user, the
+request id and when it lapses, and what building here allows. **Allow** runs
+`stim-server devices grant <id> --build`, **Deny** runs `stim-server devices
+revoke <id>`, and **Later** closes the dialog; Allow is never the default
+button, and nothing approves a request without it. The card and the macOS
+notification go away once the request is answered or lapses.
 
 ## Notifications
 
@@ -675,6 +715,8 @@ in the phone app's inbox. The page filters by category and by workspace (or the
 machine), and **Mark all read** and **Clear** act on what the filters show. The
 history keeps the last 200 notifications from the last 7 days in
 `notifications.json` in Stim Desktop's Application Support folder.
+
+Build requests from other Macs also land here; see [Build machines](#build-machines).
 
 **Settings > App > Notify when** sets each category's level, the stuck threshold
 (5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.
