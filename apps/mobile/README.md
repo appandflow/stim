@@ -931,14 +931,13 @@ The Sentry organization is `stim-rn` and the project `stim-mobile`.
 pnpm run format:check
 pnpm run lint
 pnpm run typecheck
-pnpm run knip
 pnpm test
 ```
 
-`pnpm run knip` runs the repository's knip from the root `knip.json`, where
-the app is the `apps/mobile` workspace, so it reports unused files, exports
-and dependencies across the app and the rest of the repository. knip's Expo,
-Jest, Metro and Babel plugins find the `src/app` routes and the config files;
+Run `pnpm run knip` from the repository root instead of from `apps/mobile`: it
+covers the app as one workspace of the root `knip.json`, so it reports unused
+files, exports and dependencies across the app and the rest of the repository.
+knip's Expo, Jest, Metro and Babel plugins find the `src/app` routes and the config files;
 the workspace entry adds the config plugins, the mock server, the scripts and
 `fingerprint.config.js`. It ignores `expo-screen-orientation`, which the app
 never imports: its iOS app delegate is what applies the per-screen
