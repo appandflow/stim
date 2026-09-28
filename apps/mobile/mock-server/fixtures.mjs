@@ -19,6 +19,7 @@ export function loadFixtures() {
     frames[platform] = { ...frame, data: readFileSync(fixture(`frame-${platform}.jpg`)).toString('base64') };
   }
   const plans = JSON.parse(readFileSync(fixture('plans.json'), 'utf8'));
+  const machineDetails = JSON.parse(readFileSync(fixture('machine-details.json'), 'utf8'));
   return {
     capturedAt: status.capturedAt,
     stimVersion: status.stimVersion,
@@ -26,6 +27,7 @@ export function loadFixtures() {
     status: status.payload,
     logs,
     plans,
+    machineDetails,
     frames,
   };
 }
