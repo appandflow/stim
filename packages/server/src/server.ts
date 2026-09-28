@@ -32,6 +32,7 @@ import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } f
 import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
+  FEATURES,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
@@ -167,6 +168,12 @@ const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRec
 const FRAME_BUFFER_FRAMES = 2;
 const FRAME_RETRY_MS = 50;
 const HELPER_RETRY_MS = 5 * 60_000;
+/**
+ * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
+ * lock`, which then streams and takes input over adb as a phone does. It exists to exercise the physical-device
+ * path without a phone.
+ */
+const ADB_EMULATORS_SWITCH = 'STIM_SERVER_TEST_ADB_EMULATORS';
 const CONTROL_LIMITS: ControlLimits = {
   idleMs: 5 * 60_000,
   renewMs: 60_000,
@@ -388,6 +395,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
+  const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -402,6 +410,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     foldHelper,
     foldTimeoutMs: controlLimits.foldTimeoutMs,
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
+    adbEmulators,
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const push = new PushNotifier({
@@ -501,6 +510,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
         capabilities: device.capabilities,
+        features: [...FEATURES],
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(outcome.deviceToken ? { deviceToken: outcome.deviceToken } : {}),
@@ -857,7 +867,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return player;
       };
       const goLive = (): string | null => {
-        const resolved = latest ? ownedDevice(latest, frameTarget, null) : 'The device status is not known yet.';
+        const resolved = latest
+          ? ownedDevice(latest, frameTarget, null, { adbEmulators })
+          : 'The device status is not known yet.';
         if (typeof resolved === 'string') return resolved;
         player?.stop();
         player = null;
@@ -891,7 +903,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (ended) return;
           latest = payload as unknown as StatusPayload;
           if (player) return;
-          const resolved = ownedDevice(latest, frameTarget, attached);
+          const resolved = ownedDevice(latest, frameTarget, attached, { adbEmulators });
           if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
           if (deviceKey(resolved) === attached) return;
           attach(resolved);

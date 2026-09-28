@@ -6,8 +6,8 @@ import type { Device } from './frames.ts';
 
 /**
  * Records which simulators and emulators have frame subscribers, in this server's file under
- * `deviceViewersDir()`, so Stim's idle checks count a device someone is watching as in use. A physical iPhone
- * is left out: its lease is the only state it leaves.
+ * `deviceViewersDir()`, so Stim's idle checks count a device someone is watching as in use. A physical device is
+ * left out: its lease is the only state it leaves.
  */
 export class DeviceViewers {
   private readonly viewed = new Map<string, { device: ViewedDevice; count: number }>();
@@ -19,7 +19,7 @@ export class DeviceViewers {
   }
 
   add(device: Device): () => void {
-    if (device.platform === 'web' || (device.platform === 'ios' && device.physical)) return () => {};
+    if (device.platform === 'web' || device.physical) return () => {};
     const viewed: ViewedDevice =
       device.platform === 'ios' ? { platform: 'ios', id: device.udid } : { platform: 'android', id: device.serial };
     const key = `${viewed.platform}:${viewed.id}`;

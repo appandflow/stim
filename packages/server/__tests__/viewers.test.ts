@@ -40,13 +40,11 @@ describe('DeviceViewers', () => {
     expect(existsSync(join(dir, `${process.pid}.json`))).toBe(false);
   });
 
-  test('a web page is not recorded', () => {
-    new DeviceViewers(dir).add({
-      platform: 'web',
-      endpoint: 'http://127.0.0.1:1',
-      pid: 1,
-      targetId: 't',
-    });
+  test('a web page and a physical device are not recorded', () => {
+    const viewers = new DeviceViewers(dir);
+    viewers.add({ platform: 'web', endpoint: 'http://127.0.0.1:1', pid: 1, targetId: 't' });
+    viewers.add({ platform: 'android', serial: 'R58M1234ABC', physical: true });
+    viewers.add({ platform: 'ios', udid: 'PHONE-1', foldable: false, physical: true });
     expect(existsSync(dir)).toBe(false);
   });
 

@@ -356,6 +356,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
+        features: ['physical-ios', 'physical-android'],
         actions: [],
       },
     });
@@ -2569,6 +2570,175 @@ describe('frames.subscribe', () => {
     server = null;
     expect(lockCalls()).toContain('device unlock ios --json');
   });
+
+  function leasedPhone(leases: Record<string, unknown>[]): string {
+    const lease = {
+      path: '/stim/device-locks/android.json',
+      platform: 'android',
+      deviceName: 'Pixel 8',
+      grantedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      mine: false,
+      expired: false,
+      parsed: true,
+    };
+    const payload = statusPayload({ android: OWNED_EMULATOR }) as Record<string, unknown>;
+    return JSON.stringify([
+      { ...payload, deviceLeases: leases.map((entry) => ({ ...lease, holder: workspace, ...entry })) },
+    ]);
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'streams the phone its workspace leases through the adb helper, and never another workspace or an emulator',
+    async () => {
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: leasedPhone([
+          { id: 'R58M1234ABC' },
+          { id: 'OTHERPHONE', holder: '/work/other', slot: 'tablet' },
+          { id: 'emulator-5556', slot: 'tablet', holder: workspace },
+          { id: 'EXPIREDPHONE', slot: 'old', expired: true },
+        ]),
+      });
+      const client = await authed(port);
+      const subscribed = await client.request('frames.subscribe', { workspace, platform: 'android', physical: true });
+      expect(subscribed).toMatchObject({ result: { subscription: expect.any(String) } });
+      await until(() => existsSync(`${toolCalls}.started`));
+      for (const slot of ['tablet', 'old']) {
+        await client.request('frames.subscribe', { workspace, platform: 'android', physical: true, slot });
+        expect(await client.next()).toMatchObject({
+          event: 'error',
+          error: { code: 'frames-failed', message: expect.stringContaining('leases no physical Android device') },
+        });
+      }
+      await server!.close();
+      server = null;
+      await until(() => helperRuns().length === 1);
+      const [run] = helperRuns();
+      expect(run!.args.slice(0, 2)).toEqual(['android-device', 'R58M1234ABC']);
+      expect(run!.args[2]).toBe('adb');
+      expect(run!.args[3]).toMatch(/scrcpy\/scrcpy-server$/);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'the adb test switch resolves a leased emulator as a phone, and never an iPhone lease on the own simulator',
+    async () => {
+      const lease = {
+        grantedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        mine: false,
+        expired: false,
+        parsed: true,
+        deviceName: null,
+        holder: workspace,
+      };
+      const payload = statusPayload({ ios: OWNED_SIM, android: OWNED_EMULATOR }) as Record<string, unknown>;
+      const port = await startControl({
+        STIM_SERVER_TEST_ADB_EMULATORS: '1',
+        FAKE_STIM_PAYLOADS: JSON.stringify([
+          {
+            ...payload,
+            deviceLeases: [
+              { ...lease, path: '/locks/emu', platform: 'android', id: 'emulator-5554' },
+              { ...lease, path: '/locks/sim', platform: 'ios', id: 'SIM-1' },
+            ],
+          },
+        ]),
+      });
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('leases no physical iPhone') },
+      });
+      await client.request('frames.subscribe', { workspace, platform: 'android', physical: true });
+      await until(() => existsSync(`${toolCalls}.started`));
+      await server!.close();
+      server = null;
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.args.slice(0, 2)).toEqual(['android-device', 'emulator-5554']);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'controls a phone only under the lease its workspace holds, and never takes or releases that lease',
+    async () => {
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC' }, { id: 'OTHERPHONE', slot: 'tablet', holder: '/w/b' }]),
+      });
+      const client = await authed(port, true);
+      for (const takeOver of [false, true]) {
+        expect(
+          await client.request('control.begin', {
+            workspace,
+            platform: 'android',
+            physical: true,
+            slot: 'tablet',
+            takeOver,
+          }),
+        ).toMatchObject({
+          error: { code: 'action-failed', message: expect.stringContaining('leases no physical Android device') },
+        });
+      }
+      const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session, lease, postures } = begun.result as {
+        session: string;
+        lease: { expiresAt: string };
+        postures: [];
+      };
+      expect(lease.expiresAt).toEqual(expect.any(String));
+      expect(postures).toEqual([]);
+      await until(() => existsSync(`${toolCalls}.started`));
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toMatchObject({
+        result: {},
+      });
+      expect(await client.request('input.text', { session, text: 'hi\n' })).toMatchObject({ result: {} });
+      for (const [method, params] of [
+        ['input.rotate', { direction: 'left' }],
+        ['input.posture', { posture: 'folded' }],
+      ] as const) {
+        expect(await client.request(method, { session, ...params })).toMatchObject({
+          error: { code: 'bad-request', message: 'A physical device rotates and folds only in hand.' },
+        });
+      }
+      expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+      await server!.close();
+      server = null;
+      expect(lockCalls()).toEqual([]);
+      await until(() => helperRuns().length === 1);
+      const run = helperRuns().find((entry) => entry.args[0] === 'android-device');
+      expect(run?.configs.slice(1)).toEqual([
+        { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
+        { input: 'text', text: 'hi\n' },
+      ]);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'ends control of a phone once its lease expires, without another status update',
+    async () => {
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: leasedPhone([{ id: 'R58M1234ABC', expiresAt: new Date(Date.now() + 4000).toISOString() }]),
+      });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'android', physical: true });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session } = begun.result as { session: string };
+      await new Promise((resolve) => setTimeout(resolve, 4100));
+      const replies = [
+        await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 }),
+        await client.next(),
+      ];
+      expect(replies).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ event: 'control-ended', session, reason: 'device-gone' }),
+          expect.objectContaining({ error: expect.objectContaining({ code: 'unknown-session' }) }),
+        ]),
+      );
+    },
+    10_000,
+  );
 
   test.skipIf(!fakeTailscale)('refuses frame rates and sizes outside the protocol range', async () => {
     const port = await startWithTools({ FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }), FAKE_FRAMES: '[]' });

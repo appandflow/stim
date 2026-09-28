@@ -8,9 +8,14 @@ import IOSurface
 //
 //   stim-frames ios <udid>
 //   stim-frames android <serial>
+//   stim-frames android-device <serial> <adb> <scrcpy-server>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
 //   stim-frames iphone <udid> [name]
 //
+// android-device streams any adb device through the scrcpy server jar at <scrcpy-server>,
+// decoding its H.264 to re-encode it here; stim-server uses it for physical devices.
+// It takes touch, text and the home, back, app-switch and lock buttons, and does not
+// rotate or fold. It cleans up the device before any exit.
 // A web page streams Chrome's screencast of the owned page: its JPEGs pass through as
 // frames and are decoded for video. Input on a page takes touch, text and the "back"
 // button, as DevTools input events. A USB-cabled iPhone streams its screen and takes no input.
@@ -127,8 +132,12 @@ enum Output {
   }
 }
 
+/// Runs before every exit, so a source can undo what it did on a device.
+var beforeExit: () -> Void = {}
+
 func fail(_ message: String) -> Never {
   Output.notice(["error": message])
+  beforeExit()
   exit(1)
 }
 
@@ -467,6 +476,100 @@ final class EmulatorSource {
   }
 }
 
+final class AndroidDeviceSource {
+  let queue = DispatchQueue(label: "stim.frames.android-device")
+  let stream: AndroidDeviceStream
+  private var latest: CVPixelBuffer?
+  private var pacer: Pacer!
+  private let video = videoEncoder()
+  private let jpegGate = JpegGate()
+
+  init(serial: String, adb: String, serverJar: URL) {
+    stream = AndroidDeviceStream(serial: serial, adb: adb, serverJar: serverJar)
+    pacer = Pacer { [unowned self] config in
+      guard let frame = self.queue.sync(execute: { self.latest }) else { return }
+      self.render(frame, config: config)
+    }
+  }
+
+  func start() {
+    stream.onFrame = { [weak self] frame in
+      guard let self else { return }
+      self.queue.async { self.latest = frame }
+      self.pacer.changed()
+    }
+    stream.onEnd = { fail($0) }
+    stream.start()
+  }
+
+  func configure(_ config: Config) {
+    video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    pacer.queue.async {
+      self.pacer.config = config
+      self.pacer.changed()
+    }
+  }
+
+  /// A device whose screen does not change sends no frame, so a keyframe re-encodes the last one.
+  func keyframe() {
+    video.requestKeyframe()
+    pacer.changed()
+  }
+
+  /// stim-server does not record a physical device.
+  func recordKeyframe() {}
+
+  private func render(_ frame: CVPixelBuffer, config: Config) {
+    if config.video { video.encode(frame, quarterTurns: 0, capturedAt: now()) }
+    guard config.jpeg, jpegGate.admit(config, pacer: pacer),
+      let (data, width, height) = jpeg(CIImage(cvPixelBuffer: frame), config: config)
+    else { return }
+    Output.frame(jpeg: data, width: width, height: height)
+  }
+}
+
+extension AndroidDeviceSource: Source {
+  func input(_ command: Command) {
+    switch command {
+    case .touch(let phase, let point, let display):
+      guard display == 0 else { return Output.notice(["inputError": "Input goes to the device's main display only."]) }
+      guard let size = stream.size else { return Output.notice(["inputError": "The device has sent no frame yet."]) }
+      let action: Scrcpy.TouchAction = phase == .down ? .down : phase == .up ? .up : .move
+      stream.send(
+        Scrcpy.touch(
+          action, x: Int32((point.x * Double(size.width - 1)).rounded()),
+          y: Int32((point.y * Double(size.height - 1)).rounded()), width: UInt16(size.width),
+          height: UInt16(size.height)))
+    case .text(let text):
+      var run = ""
+      let flush = {
+        if !run.isEmpty { self.stream.send(Scrcpy.text(run)) }
+        run = ""
+      }
+      for character in text {
+        if let key = Scrcpy.keycodes[String(character)] {
+          flush()
+          stream.send(Scrcpy.keycode(.down, key))
+          stream.send(Scrcpy.keycode(.up, key))
+        } else {
+          run.append(character)
+        }
+      }
+      flush()
+    case .button(let name):
+      guard ["home", "back", "app-switch", "lock"].contains(name), let key = Scrcpy.keycodes[name] else {
+        return Output.notice(["inputError": "Android has no \(name) button."])
+      }
+      stream.send(Scrcpy.keycode(.down, key))
+      stream.send(Scrcpy.keycode(.up, key))
+    case .rotate, .posture:
+      Output.notice(["inputError": "A physical device rotates and folds only in hand."])
+    case .config, .keyframe, .recordKeyframe:
+      break
+    }
+  }
+}
+
 final class WebSource {
   let queue = DispatchQueue(label: "stim.frames.web")
   private let endpoint: URL
@@ -700,7 +803,10 @@ func readCommands(_ source: Source) {
     var config = Config()
     while true {
       let chunk = FileHandle.standardInput.availableData
-      if chunk.isEmpty { exit(0) }
+      if chunk.isEmpty {
+        beforeExit()
+        exit(0)
+      }
       buffer += chunk
       while let newline = buffer.firstIndex(of: 0x0a) {
         let line = String(decoding: buffer[buffer.startIndex..<newline], as: UTF8.self)
@@ -883,8 +989,9 @@ setvbuf(stdout, nil, _IONBF, 0)
 signal(SIGPIPE, SIG_IGN)
 let arguments = CommandLine.arguments
 let usage =
-  "usage: stim-frames ios <udid> | android <serial> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
-let counts = ["web": [5], "iphone": [3, 4]]
+  "usage: stim-frames ios <udid> | android <serial> | android-device <serial> <adb> <scrcpy-server> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
+let terminated = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+let counts = ["web": [5], "iphone": [3, 4], "android-device": [5]]
 guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
 case "ios":
@@ -896,6 +1003,20 @@ case "ios":
   source.queue.async { source.start() }
 case "android":
   let source = EmulatorSource(serial: arguments[2])
+  Output.requestKeyframe = source.keyframe
+  readCommands(source)
+  source.start()
+case "android-device":
+  let source = AndroidDeviceSource(
+    serial: arguments[2], adb: arguments[3], serverJar: URL(fileURLWithPath: arguments[4]))
+  let stop = source.stream.stop
+  beforeExit = stop
+  signal(SIGTERM, SIG_IGN)
+  terminated.setEventHandler {
+    stop()
+    exit(0)
+  }
+  terminated.resume()
   Output.requestKeyframe = source.keyframe
   readCommands(source)
   source.start()

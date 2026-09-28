@@ -127,7 +127,11 @@ Events are `{ "event", "subscription", ... }`.
 - `hello` must come first. Params: `protocol` (1), `client` (`name`,
   `version`), and `auth`, either `{ "pairingToken", "deviceName" }` or
   `{ "deviceToken" }`. The result carries the server name and versions, the
-  device's `capabilities` (see [Scopes](#scopes)), the `actions` it may run
+  device's `capabilities` (see [Scopes](#scopes)), the server's `features`
+  (`physical-ios` and `physical-android` when it serves `physical: true` for
+  that platform: see `frames.subscribe` below for an iPhone and
+  [Physical Android devices](#physical-android-devices)),
+  the `actions` it may run
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
@@ -169,9 +173,10 @@ Events are `{ "event", "subscription", ... }`.
   or a running emulator that `stim status` lists as owned by that workspace,
   or with `web` the page of the workspace's running Stim-owned Chrome from
   `stim web` (default slot only), or with `physical: true` the physical
-  iPhone the workspace leases in that slot (see below);
-  any other device, a physical Android device from `physicalDevices`
-  included, ends the subscription with a `frames-failed` `error`
+  iPhone (see below) or Android phone (see
+  [Physical Android devices](#physical-android-devices)) the workspace leases
+  in that slot;
+  any other device ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
@@ -580,7 +585,9 @@ replaced by `?`.
 ## Control
 
 A device with `control` can drive a simulator or emulator that `stim status`
-lists as owned by a workspace. Nothing it sends reaches any other device.
+lists as owned by a workspace, or a physical Android phone the workspace
+leases (see [Physical Android devices](#physical-android-devices)). Nothing it
+sends reaches any other device.
 
 - `control.begin` takes `workspace`, `platform`, `slot` (`default` when
   absent), `physical` and `takeOver`, and returns `{ "session", "platform", "lease",
@@ -668,3 +675,51 @@ refuse the client until it pairs again or updates; clients retry the others.
 
 The package exports the message types, and the build writes their JSON Schema
 to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.
+
+## Physical Android devices
+
+A phone reached with `stim android --device <serial>` (or held with
+`stim device lock android <serial>`) is used, not owned. With `physical: true`,
+`frames.subscribe` and `control.begin` pick the phone the workspace holds an
+unexpired lease on in `slot`, as `deviceLeases` in `stim status` reports it,
+instead of the Stim-owned emulator. A workspace without that lease gets
+`frames-failed` or `action-failed`, and so does a slot whose leased device is
+an emulator. Watching needs `read`, as for an emulator. Control needs
+`control` and that lease: the session never takes, renews or releases a
+phone's lease, and `takeOver` cannot move one between workspaces. When the
+lease is released or expires, the control session ends with `device-gone` and
+frame subscriptions end with `frames-failed`. Both follow `stim status
+--watch`: a release reaches the server when status next reports it, usually
+within seconds and at most about 30 seconds plus one refresh. Input after an
+expiry is refused at once. A physical Android device is not recorded, so `at`
+and `frames.seek` answer `no-recording`, and a watched phone is not listed as
+viewed for Stim's idle checks.
+
+The `stim-frames` helper reaches the phone over adb only, with the scrcpy
+server 4.1 (Apache-2.0), shipped in `dist/scrcpy/` with its `LICENSE` and a
+`NOTICE`. Before every push, the helper checks the jar's sha256 against the one
+pinned in its source. It then pushes the jar to
+`/data/local/tmp/stim-scrcpy-<id>.jar`, starts it with `app_process` as the
+shell user, and connects through an `adb forward` port. The server's cleanup
+process deletes the jar as soon as it runs; when the helper stops, it removes
+the forward and deletes the jar again. It installs nothing, and it asks
+scrcpy for no settings change: no `show_touches`, no `stay_awake` and no
+screen power change (`power_on=false`), with clipboard sync off. The phone
+encodes H.264 of its screen as it is oriented, scaled to fit 2048 pixels;
+the helper decodes it with VideoToolbox and feeds the same encoder, JPEG path,
+keyframe requests and bitrate adaptation as a simulator or emulator. The
+stream has no time limit and restarts only with the helper.
+
+Input goes over scrcpy's control socket: touches as finger events in the
+current frame's pixels, text as injected text, and `\n`, `\t`, `\b`,
+`home`, `back`, `app-switch` and `lock` as key events. `input.rotate` and
+`input.posture` fail with `bad-request`, because a phone turns only in hand.
+
+Some Android 15 and 16 devices send no frame until their screen changes
+(scrcpy #6500, #6546), so a tile can stay blank until then. With its screen
+off, a phone streams what its display shows, such as a Samsung always-on
+display, or black; the stream never wakes it.
+
+For testing without a phone, `STIM_SERVER_TEST_ADB_EMULATORS=1` in the
+server's environment lets a `physical: true` target resolve to an emulator the
+workspace leases, which then streams and takes input over adb the same way.

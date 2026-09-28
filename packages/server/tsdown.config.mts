@@ -31,6 +31,10 @@ export default defineConfig({
       }
       copyFileSync('../../apps/desktop/Support/SimFold/main.m', 'dist/stim-frames/sim-fold.m');
       copyFileSync('../../apps/desktop/Support/SimFold/entitlements.plist', 'dist/stim-frames/sim-fold.entitlements');
+      rmSync('dist/scrcpy', { recursive: true, force: true });
+      mkdirSync('dist/scrcpy');
+      for (const name of ['scrcpy-server', 'LICENSE', 'NOTICE'])
+        copyFileSync(`helper/scrcpy/${name}`, `dist/scrcpy/${name}`);
     },
   },
 });

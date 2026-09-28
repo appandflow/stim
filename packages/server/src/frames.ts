@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
-import type { StatusPayload } from '@stim-cli/core/state';
+import type { DeviceLeaseState, StatusPayload } from '@stim-cli/core/state';
 import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
@@ -14,12 +14,13 @@ import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
 /**
  * `foldable` marks an iPhone Duo, whose posture lights one of two panels, and `physical` a leased iPhone, which
- * streams over USB and takes no input; `name` is its device name, which tells it apart when several are cabled. A web device is the owned page `targetId` of the Chrome `pid` serving
- * DevTools at `endpoint`.
+ * streams over USB and takes no input; `name` is its device name, which tells it apart when several are cabled. A
+ * `physical` Android device is a leased phone, streamed and driven over adb instead of the emulator's gRPC API. A web
+ * device is the owned page `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
  */
 export type Device =
   | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
-  | { platform: 'android'; serial: string }
+  | { platform: 'android'; serial: string; physical?: true }
   | { platform: 'web'; endpoint: string; pid: number; targetId: string };
 
 export type Posture = 'folded' | 'unfolded';
@@ -89,32 +90,55 @@ const JPEG_QUALITY = 70;
 
 export function deviceKey(device: Device): string {
   if (device.platform === 'web') return `web:${device.pid}:${device.targetId}`;
-  return device.platform === 'ios' ? `ios:${device.udid}` : `android:${device.serial}`;
+  if (device.platform === 'ios') return `ios:${device.udid}`;
+  return device.physical ? `android-device:${device.serial}` : `android:${device.serial}`;
+}
+
+const EMULATOR_SERIAL = /^emulator-\d+$/;
+
+/** How {@link workspaceLease} picks a lease. */
+export interface LeaseLookup {
+  now?: number;
+  /**
+   * The server's test switch: an emulator the workspace leases, its own included, resolves as a physical Android
+   * device, driven over adb the way a phone is. It never widens an iPhone lookup.
+   */
+  adbEmulators?: boolean;
 }
 
 /**
- * The id and name of the physical device `target.workspace` leases for `target.platform` in its slot. A workspace can also
- * lock its own simulator or emulator, so a lease on the slot's owned device is skipped.
+ * The unexpired lease `target.workspace` holds on a physical device for `target.platform` in its slot. A workspace can
+ * also lock its own simulator or emulator, so a lease on the slot's owned device, or on any emulator, is skipped.
  */
-function leasedDevice(
+export function workspaceLease(
   payload: StatusPayload,
   target: FrameTarget,
-  owned: string | null | undefined,
-): { id: string; name: string | null } | null {
+  { now = Date.now(), adbEmulators = false }: LeaseLookup = {},
+): (DeviceLeaseState & { id: string }) | null {
   const slot = target.slot ?? 'default';
+  const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
+  const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
+  const owned = target.platform === 'ios' ? devices?.ios?.udid : devices?.android?.serial;
   const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
     (candidate) =>
       candidate.holder === target.workspace &&
       candidate.platform === target.platform &&
       (candidate.slot ?? 'default') === slot &&
       !candidate.expired &&
+      (candidate.expiresAt === null ? target.platform === 'ios' : Date.parse(candidate.expiresAt) > now) &&
       candidate.id !== null &&
-      candidate.id !== owned,
+      ((adbEmulators && target.platform === 'android') ||
+        (candidate.id !== owned && !EMULATOR_SERIAL.test(candidate.id))),
   );
-  return lease?.id ? { id: lease.id, name: lease.deviceName } : null;
+  return lease ? (lease as DeviceLeaseState & { id: string }) : null;
 }
 
-export function ownedDevice(payload: StatusPayload, target: FrameTarget, attached: string | null): Device | string {
+export function ownedDevice(
+  payload: StatusPayload,
+  target: FrameTarget,
+  attached: string | null,
+  lookup: LeaseLookup = {},
+): Device | string {
   const slot = target.slot ?? 'default';
   if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
   const environment = payload.environments.find((candidate) => candidate.path === target.workspace);
@@ -125,15 +149,20 @@ export function ownedDevice(payload: StatusPayload, target: FrameTarget, attache
       : environment.slots?.find((candidate) => candidate.slot === slot);
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
   if (target.physical) {
-    if (target.platform !== 'ios') return `Stim does not stream a physical ${target.platform} device.`;
-    const lease = leasedDevice(payload, target, devices?.ios?.udid);
+    if (target.platform === 'web') return 'A web page has no physical device.';
+    const lease = workspaceLease(payload, target, lookup);
+    if (target.platform === 'android') {
+      if (!lease)
+        return `${target.workspace} leases no physical Android device in slot ${slot}. Run stim android --device there.`;
+      return { platform: 'android', serial: lease.id, physical: true };
+    }
     if (!lease) return `${target.workspace} leases no physical iPhone in slot ${slot}. Run stim ios --device there.`;
     return {
       platform: 'ios',
       udid: lease.id,
       foldable: false,
       physical: true,
-      ...(lease.name ? { name: lease.name } : {}),
+      ...(lease.deviceName ? { name: lease.deviceName } : {}),
     };
   }
   if (target.platform === 'web') {
@@ -540,6 +569,7 @@ export async function devicePostures(
 ): Promise<DevicePosture[]> {
   if (device.platform === 'web') return [];
   if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
+  if (device.physical) return [];
   const endpoint = emulatorEndpoint(env, device.serial);
   if (!endpoint) return [];
   const session = grpcSession(endpoint);
@@ -781,10 +811,10 @@ export class FramePool {
 
   private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
     const helper = this.helper();
-    const physical = device.platform === 'ios' && device.physical === true;
+    const physical = device.platform !== 'web' && device.physical === true;
     if (helper === null && physical) {
       queueMicrotask(() =>
-        listener.failed('A physical iPhone streams through the stim-frames helper, which this Mac has not built.'),
+        listener.failed('A physical device streams through the stim-frames helper, which this Mac has not built.'),
       );
       return () => {};
     }

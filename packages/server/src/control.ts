@@ -1,11 +1,17 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
 import type { FeedPool, FeedSpec } from './feed.ts';
-import { deviceKey, devicePostures, ownedDevice, type Device, type DeviceInput, type FramePool } from './frames.ts';
+import { adbPath } from './frame-helper.ts';
+import {
+  deviceKey,
+  devicePostures,
+  ownedDevice,
+  workspaceLease,
+  type Device,
+  type DeviceInput,
+  type FramePool,
+} from './frames.ts';
 import {
   INPUT_BUTTONS,
   PLATFORMS,
@@ -82,10 +88,14 @@ export type InputCommand =
 
 type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture';
 
-/** What a control session accepts: its device's platform and the postures `input.posture` takes. */
+/**
+ * What a control session accepts: its device's platform, the postures `input.posture` takes, and whether it is a
+ * physical device, which turns only in hand.
+ */
 export interface SessionTarget {
   platform: Platform;
   postures: readonly DevicePosture[];
+  physical?: boolean;
 }
 
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
@@ -110,6 +120,9 @@ export function parseInput(
   const session = params.session;
   if (platform === 'web' && (method === 'input.rotate' || method === 'input.posture')) {
     return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
+  }
+  if (target.physical && (method === 'input.rotate' || method === 'input.posture')) {
+    return { code: 'bad-request', message: 'A physical device rotates and folds only in hand.' };
   }
   if (method === 'input.rotate') {
     if (platform === 'ios' && postures.length) {
@@ -204,13 +217,6 @@ function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' 
   return calls;
 }
 
-function adbPath(env: NodeJS.ProcessEnv): string {
-  for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, join(env.HOME ?? homedir(), 'Library/Android/sdk')]) {
-    if (sdk && existsSync(join(sdk, 'platform-tools/adb'))) return join(sdk, 'platform-tools/adb');
-  }
-  return 'adb';
-}
-
 const ADB_TIMEOUT_MS = 10_000;
 
 const POSTURE_TIMEOUT_MS = 5_000;
@@ -251,6 +257,7 @@ function runAdb(env: NodeJS.ProcessEnv, serial: string, args: string[]): Promise
 }
 
 function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceActivity | undefined {
+  if (target.physical) return undefined;
   const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
   const slot = target.slot ?? 'default';
   const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
@@ -281,6 +288,18 @@ interface Lease {
   grantedAt: string | null;
   expiresAt: string;
   mine: boolean;
+}
+
+function heldLease(
+  status: StatusPayload,
+  target: ControlBeginParams,
+  options: { adbEmulators: boolean },
+): Lease | Refusal {
+  const lease = workspaceLease(status, target, options);
+  if (!lease?.expiresAt) {
+    return { code: 'forbidden', message: `${target.workspace} does not hold the lease on this device.` };
+  }
+  return { grantedAt: lease.grantedAt, expiresAt: lease.expiresAt, mine: false };
 }
 
 interface Session {
@@ -327,6 +346,8 @@ export interface ControlOptions {
   foldTimeoutMs: number;
   /** Tells the paired device `deviceId` that someone else took over, or started driving, the device it controls. */
   conflict: (deviceId: string, conflict: ControlConflict) => void;
+  /** Test switch: resolves a `physical` target to an emulator the workspace leases, driven over adb. */
+  adbEmulators?: boolean;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -359,7 +380,11 @@ export class ControlHub {
   targetOf(owner: Controller, session: string): SessionTarget | null {
     const found = this.sessions.get(session);
     return found && found.owner === owner && !found.ended
-      ? { platform: found.target.platform, postures: found.postures }
+      ? {
+          platform: found.target.platform,
+          postures: found.postures,
+          ...(found.target.physical ? { physical: true } : {}),
+        }
       : null;
   }
 
@@ -377,7 +402,8 @@ export class ControlHub {
     if (this.closing) return { code: 'action-failed', message: 'stim-server is stopping.' };
     const status = await this.status();
     if ('code' in status) return status;
-    const device = ownedDevice(status, target, null);
+    const resolve = { adbEmulators: this.options.adbEmulators === true };
+    const device = ownedDevice(status, target, null, resolve);
     if (typeof device === 'string') return { code: 'action-failed', message: device };
     const key = deviceKey(device);
     if (this.starting.has(key)) {
@@ -396,7 +422,9 @@ export class ControlHub {
     try {
       [lease, postures] = await this.pending.track(
         Promise.all([
-          this.lock(device, target, cwd, beganAt),
+          target.physical
+            ? Promise.resolve(heldLease(status, target, resolve))
+            : this.lock(device, target, cwd, beganAt),
           devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
         ]),
       );
@@ -404,7 +432,7 @@ export class ControlHub {
       this.starting.delete(key);
     }
     const granted = lease === null || 'code' in lease ? null : lease;
-    if (lease !== null && !granted && !target.takeOver) return lease as Refusal;
+    if (lease !== null && !granted && (!target.takeOver || target.physical)) return lease as Refusal;
     const current = this.byDevice.get(key);
     const refuse = (refusal: Refusal): Refusal => {
       if (granted?.mine && !current?.lease?.mine) void this.pending.track(this.unlock(target, cwd));
@@ -461,7 +489,10 @@ export class ControlHub {
     session.unwatch = this.options.feeds.subscribe(this.options.statusFeed, {
       item: (payload) => {
         const latest = payload as unknown as StatusPayload;
-        const resolved = ownedDevice(latest, target, key);
+        const resolved = ownedDevice(latest, target, key, resolve);
+        if (target.physical && session.lease && typeof resolved !== 'string') {
+          session.lease.expiresAt = workspaceLease(latest, target, resolve)?.expiresAt ?? session.lease.expiresAt;
+        }
         if (typeof resolved === 'string' || deviceKey(resolved) !== key) {
           const message = typeof resolved === 'string' ? resolved : 'The device changed.';
           queueMicrotask(() => void this.end(session, 'device-gone', message));
@@ -509,11 +540,17 @@ export class ControlHub {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
     }
     session.idle.refresh();
+    if (session.target.physical && session.lease && Date.parse(session.lease.expiresAt) <= Date.now()) {
+      const message = "The workspace's lease on this device expired.";
+      void this.end(session, 'device-gone', message);
+      return Promise.resolve({ code: 'unknown-session', message });
+    }
     if (command.input === 'posture' && session.device.platform === 'ios') {
       return this.fold(session, session.device.udid, command.posture);
     }
     if (
       session.device.platform !== 'android' ||
+      session.device.physical ||
       command.input === 'touch' ||
       command.input === 'rotate' ||
       command.input === 'posture' ||
