@@ -1,4 +1,15 @@
-import { existsSync, readFileSync, renameSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  rmdirSync,
+  statfsSync,
+  writeFileSync,
+} from 'node:fs';
 import { cpus, loadavg } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,16 +19,20 @@ import { getExecutor } from '../exec.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildIos, compilationCacheActivityLine } from '../engine/xcode.ts';
+import { buildAndroid } from '../engine/gradle.ts';
+import { CCACHE_UNAVAILABLE, ccacheActivityLine, resolveCcache } from '../engine/ccache.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
 import {
   RESULT_MARKER,
   distBuildId,
+  javaMajorAt,
   type WorkerBuildRequest,
   type WorkerBuildResult,
   type WorkerProbe,
   type WorkerTimings,
+  type WorkerWarmRequest,
 } from './protocol.ts';
 
 const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
@@ -26,6 +41,10 @@ const FILES_MARKER = '.stim-offload-files';
 
 const distDir = dirname(fileURLToPath(import.meta.url));
 const workerRoot = process.env.STIM_OFFLOAD_ROOT ?? resolve(distDir, '../../../..');
+
+function onNote(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
 
 function emit(value: unknown): void {
   process.stdout.write(`\n${RESULT_MARKER}${JSON.stringify(value)}\n`);
@@ -43,7 +62,22 @@ function availableMemBytes(): number | null {
   return (pages('Pages free') + pages('Pages inactive') + pages('Pages speculative')) * pageSize;
 }
 
+function listDir(sdk: string | null, name: string): string[] {
+  if (!sdk) return [];
+  try {
+    return readdirSync(join(sdk, name)).filter((entry) => !entry.startsWith('.'));
+  } catch {
+    return [];
+  }
+}
+
+function javaMajor(): string | null {
+  const home = process.env.JAVA_HOME || quiet('/usr/libexec/java_home', []);
+  return home ? javaMajorAt(home) : null;
+}
+
 function probe(): WorkerProbe {
+  const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT ?? null;
   let stimVersion: string | null = null;
   try {
     stimVersion = JSON.parse(readFileSync(join(distDir, '..', 'package.json'), 'utf8')).version ?? null;
@@ -74,6 +108,12 @@ function probe(): WorkerProbe {
     availableMemBytes: availableMemBytes(),
     diskFreeBytes,
     xcodebuildRunning: running ? running.trim().split('\n').filter(Boolean).length : 0,
+    gradleRunning: (quiet('pgrep', ['-f', 'GradleDaemon|GradleWrapperMain']) ?? '').split('\n').filter(Boolean).length,
+    javaMajor: javaMajor(),
+    androidSdk: sdk,
+    ndk: listDir(sdk, 'ndk'),
+    buildTools: listDir(sdk, 'build-tools'),
+    platforms: listDir(sdk, 'platforms'),
   };
 }
 
@@ -160,10 +200,11 @@ function simulatorDestination(runtime: string | null): string | null {
   }
 }
 
-async function buildIosOnWorker(req: WorkerBuildRequest): Promise<WorkerBuildResult> {
+async function buildOnWorker(req: WorkerBuildRequest): Promise<WorkerBuildResult> {
+  const platform = req.platform;
   const root = join(req.repoDir, req.projectRel);
   const timings: WorkerTimings = { depsMs: 0, prebuildMs: 0, podsMs: 0, fingerprintMs: 0, buildMs: 0 };
-  const log = createNdjsonWriter(join(workerRoot, 'logs', `${Date.now()}-ios.ndjson`));
+  const log = createNdjsonWriter(join(workerRoot, 'logs', `${Date.now()}-${platform}.ndjson`));
   const time = async <T>(key: keyof WorkerTimings, fn: () => Promise<T>): Promise<T> => {
     const started = Date.now();
     try {
@@ -180,21 +221,27 @@ async function buildIosOnWorker(req: WorkerBuildRequest): Promise<WorkerBuildRes
     return { ok: false, code: 'deps-failed', message: String((e as Error)?.message || e), timings };
   }
 
-  const initial = await time('fingerprintMs', () => fingerprintProject(root, { platform: 'ios' }));
+  const initial = await time('fingerprintMs', () => fingerprintProject(root, { platform }));
   if (!initial) return { ok: false, code: 'no-fingerprint', message: 'worker could not fingerprint', timings };
 
   const mutations: string[] = [];
-  const plan = planPrebuild(root, 'ios', { isExpo: req.isExpo, fingerprint: initial.hash, sources: initial.sources });
+  const plan = planPrebuild(root, platform, {
+    isExpo: req.isExpo,
+    fingerprint: initial.hash,
+    sources: initial.sources,
+  });
   if (plan === 'refuse') return { ok: false, code: 'prebuild-refused', message: 'stale native dir', timings };
   if (plan === 'generate' || plan === 'regenerate') {
-    recordPrebuild(root, 'ios', null);
-    const result = await time('prebuildMs', () => runPrebuild(root, 'ios', log, { clean: plan === 'regenerate' }));
+    recordPrebuild(root, platform, null);
+    const result = await time('prebuildMs', () => runPrebuild(root, platform, log, { clean: plan === 'regenerate' }));
     if (result?.failed) return { ok: false, code: 'prebuild-failed', message: result.reason ?? 'prebuild', timings };
     mutations.push('prebuild');
   }
 
-  const podState = readPodState(root);
-  const action = podAction(podState, podsAreStale(podState.lockText, podState.manifestText));
+  const podState = platform === 'ios' ? readPodState(root) : null;
+  const action = podState
+    ? podAction(podState, podsAreStale(podState.lockText, podState.manifestText))
+    : { install: false };
   if (action.install) {
     const result = await time('podsMs', () =>
       runPodInstall(root, log, { onHeartbeat: (l) => process.stderr.write(`${l}\n`) }),
@@ -207,14 +254,14 @@ async function buildIosOnWorker(req: WorkerBuildRequest): Promise<WorkerBuildRes
   let sources = initial.sources;
   if (mutations.length) {
     const after = await time('fingerprintMs', () =>
-      refingerprintAfterMutation({ projectRoot: root, platform: 'ios', previousHash: initial.hash }),
+      refingerprintAfterMutation({ projectRoot: root, platform, previousHash: initial.hash }),
     );
     if (!after) return { ok: false, code: 'no-fingerprint', message: 'no fingerprint after mutation', timings };
     fingerprint = after.hash;
     sources = after.sources;
-    if (mutations.includes('prebuild')) recordPrebuild(root, 'ios', after.hash);
+    if (mutations.includes('prebuild')) recordPrebuild(root, platform, after.hash);
   }
-  if (fingerprint !== req.expectedFingerprint) {
+  if (req.expectedFingerprint !== null && fingerprint !== req.expectedFingerprint) {
     return {
       ok: false,
       code: 'fingerprint-mismatch',
@@ -225,38 +272,71 @@ async function buildIosOnWorker(req: WorkerBuildRequest): Promise<WorkerBuildRes
     };
   }
 
-  const destination = simulatorDestination(req.runtime);
-  if (req.runtime && !destination) {
-    return { ok: false, code: 'no-runtime', message: `the worker has no iPhone simulator on ${req.runtime}`, timings };
+  let artifactPath: string;
+  let compilerCache: string;
+  if (platform === 'ios') {
+    const destination = simulatorDestination(req.runtime);
+    if (req.runtime && !destination) {
+      return {
+        ok: false,
+        code: 'no-runtime',
+        message: `the worker has no iPhone simulator on ${req.runtime}`,
+        timings,
+      };
+    }
+    const built = await time('buildMs', () =>
+      buildIos({
+        root,
+        destination: destination ?? GENERIC_SIM_DESTINATION,
+        logWriter: log,
+        ...(req.scheme ? { scheme: req.scheme } : {}),
+        ...(req.configuration ? { configuration: req.configuration } : {}),
+        ...(req.optimizations ? { optimizations: req.optimizations as Optimizations['ios'] } : {}),
+        onHeartbeat: (l) => process.stderr.write(`${l}\n`),
+        onNote: (l) => process.stderr.write(`${l}\n`),
+      }),
+    );
+    if (!built.ok) {
+      log.close();
+      return { ok: false, code: built.code, message: built.tail.slice(-5).join('\n'), timings };
+    }
+    artifactPath = built.appPath;
+    compilerCache = compilationCacheActivityLine(built.compilationCache);
+  } else {
+    const gradle = req.android ?? { variant: null, abi: null, buildCache: true, pch: 'auto', compilerCache: 'ccache' };
+    const built = await time('buildMs', () =>
+      buildAndroid(
+        { root, logWriter: log, variant: gradle.variant, abi: gradle.abi },
+        {
+          buildCache: gradle.buildCache,
+          pch: gradle.pch,
+          compilerCacheDisabled: gradle.compilerCache === 'none',
+          ccache: gradle.compilerCache === 'ccache' ? resolveCcache({ root, onNote }) : null,
+          onHeartbeat: onNote,
+          onNote,
+        },
+      ),
+    );
+    if (!built.ok) {
+      log.close();
+      return { ok: false, code: built.code, message: (built.lastLines ?? []).slice(-5).join('\n'), timings };
+    }
+    artifactPath = built.apkPath!;
+    compilerCache = `ccache ${ccacheActivityLine(built.ccache ?? CCACHE_UNAVAILABLE)}`;
   }
-  const built = await time('buildMs', () =>
-    buildIos({
-      root,
-      destination: destination ?? GENERIC_SIM_DESTINATION,
-      logWriter: log,
-      ...(req.scheme ? { scheme: req.scheme } : {}),
-      ...(req.configuration ? { configuration: req.configuration } : {}),
-      ...(req.optimizations ? { optimizations: req.optimizations as Optimizations['ios'] } : {}),
-      onHeartbeat: (l) => process.stderr.write(`${l}\n`),
-      onNote: (l) => process.stderr.write(`${l}\n`),
-    }),
-  );
   log.close();
-  if (!built.ok) {
-    return { ok: false, code: built.code, message: built.tail.slice(-5).join('\n'), timings };
-  }
-  const settled = await refingerprintAfterMutation({ projectRoot: root, platform: 'ios', previousHash: fingerprint });
+  const settled = await refingerprintAfterMutation({ projectRoot: root, platform, previousHash: fingerprint });
   if (!settled || settled.moved) {
     return { ok: false, code: 'fingerprint-moved', message: 'inputs changed during the worker build', timings };
   }
   return {
     ok: true,
-    appPath: built.appPath,
+    appPath: artifactPath,
     fingerprint,
     depsInstalled,
     prebuild: plan,
     podsInstalled: action.install,
-    compilationCache: compilationCacheActivityLine(built.compilationCache),
+    compilationCache: compilerCache,
     timings,
   };
 }
@@ -265,11 +345,41 @@ async function main(): Promise<void> {
   const [mode, arg] = process.argv.slice(2);
   if (mode === 'probe') return emit(probe());
   if (mode === 'prune' && arg) return emit(prune(arg));
-  if (mode === 'build-ios' && arg) {
+  if (mode === 'build' && arg) {
     const req = JSON.parse(Buffer.from(arg, 'base64').toString('utf8')) as WorkerBuildRequest;
-    return emit(await buildIosOnWorker(req));
+    return emit(await buildOnWorker(req));
   }
-  process.stderr.write('usage: offload-worker probe | prune <repoDir> | build-ios <base64 request>\n');
+  if (mode === 'warm' && arg) {
+    const log = join(workerRoot, 'logs', `${Date.now()}-warm.log`);
+    mkdirSync(dirname(log), { recursive: true });
+    const out = openSync(log, 'a');
+    const child = getExecutor().spawn(process.execPath, [fileURLToPath(import.meta.url), 'warm-run', arg], {
+      detached: true,
+      stdio: ['ignore', out, out],
+    });
+    child.unref();
+    return emit({ ok: true, pid: child.pid, log });
+  }
+  if (mode === 'warm-run' && arg) {
+    const req = JSON.parse(Buffer.from(arg, 'base64').toString('utf8')) as WorkerWarmRequest;
+    try {
+      for (const build of req.builds) {
+        const started = Date.now();
+        const result = await buildOnWorker(build);
+        process.stderr.write(
+          `warm ${build.platform}: ${JSON.stringify({ ...result, wallMs: Date.now() - started })}\n`,
+        );
+      }
+    } finally {
+      try {
+        rmdirSync(req.unlockDir);
+      } catch {}
+    }
+    return;
+  }
+  process.stderr.write(
+    'usage: offload-worker probe | prune <repoDir> | build <base64 request> | warm <base64 request>\n',
+  );
   process.exitCode = 2;
 }
 

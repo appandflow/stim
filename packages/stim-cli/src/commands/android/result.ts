@@ -43,7 +43,9 @@ export function androidFacts({
   durationMs,
   lease,
   devServer = null,
+  offloadedTo = null,
 }: {
+  offloadedTo?: string | null;
   slot?: string;
   serial?: string | null;
   avdName?: string | null;
@@ -84,6 +86,7 @@ export function androidFacts({
     metroPort: metroPort ?? null,
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
+    ...(offloadedTo ? { offloadedTo } : {}),
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
@@ -116,7 +119,9 @@ export function lastBuildRecord({
   missReason = null,
   diagnostics = null,
   configuration = null,
+  offloadedTo = null,
 }: {
+  offloadedTo?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -149,6 +154,7 @@ export function lastBuildRecord({
     configuration: configuration ?? null,
   };
   if (errorCode) record.errorCode = errorCode;
+  if (offloadedTo) record.offloadedTo = offloadedTo;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
@@ -239,7 +245,13 @@ export function reportAndroidResult({
   reclaimed = [],
   devServer = null,
 }: ReportAndroidResultArgs): AndroidFacts {
-  recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs });
+  recordRun({
+    failed: false,
+    cacheHit: cacheLevel(record.cacheHit),
+    waited: waitedForBuild,
+    durationMs,
+    offloadedTo: record.offloadedTo ?? null,
+  });
   const facts = androidFacts({
     slot,
     serial,
@@ -266,6 +278,7 @@ export function reportAndroidResult({
     durationMs,
     lease,
     devServer,
+    offloadedTo: record.offloadedTo ?? null,
   });
   writer.close();
 
@@ -275,7 +288,7 @@ export function reportAndroidResult({
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${serial}, ` +
       `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
-      `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName)})`;
+      `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName, record.offloadedTo)})`;
     const outcome = launchWarning
       ? chalk.yellow(`${summary} -- ${launchWarning}`)
       : launchState === LAUNCH_UNVERIFIED
@@ -284,7 +297,9 @@ export function reportAndroidResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary);
     const deviceName = record.avdName || record.deviceName || serial;
-    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name ?? providerName) : 'bypassed; built';
+    const cacheResult = useBuildCache
+      ? cacheOutcome(record.cacheHit, remote?.name ?? providerName, record.offloadedTo)
+      : `bypassed; ${cacheOutcome(false, null, record.offloadedTo)}`;
     const metroResult = release
       ? `embedded (${variant})`
       : !metroCheck
@@ -307,10 +322,10 @@ export function reportAndroidResult({
   return facts;
 }
 
-function cacheOutcome(cacheHit: unknown, providerName: string | null = null): string {
+function cacheOutcome(cacheHit: unknown, providerName: string | null = null, offloadedTo?: string | null): string {
   if (cacheHit === 'remote') return `cache hit from ${providerName || 'the remote cache'}`;
   if (cacheHit === 'local') return 'cache hit';
-  return 'built';
+  return offloadedTo ? `built on ${offloadedTo}` : 'built';
 }
 
 export function persistLastBuild({

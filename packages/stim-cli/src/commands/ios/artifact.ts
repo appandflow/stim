@@ -43,7 +43,7 @@ import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts'
 import { claimFailure } from '../../ownership-claim.ts';
 import {
   offloadHost,
-  offloadIosBuild,
+  offloadBuild,
   planOffload,
   simulatorRuntime,
   type OffloadDecision,
@@ -645,7 +645,7 @@ export async function acquireIosArtifact(
   async function planBuildOffload(): Promise<OffloadDecision | null> {
     const host = offloadHost();
     if (!host || physical || release || remoteDestination) return null;
-    const decision = await planOffload({ host, maxBuilds });
+    const decision = await planOffload({ host, projectRoot: root, maxBuilds });
     phase(
       'build',
       `offload ${decision.offload ? `-> ${host}` : 'declined, building here'}: ${decision.reasons.join('; ')} (probe ${formatDuration(decision.probeMs)})`,
@@ -665,7 +665,8 @@ export async function acquireIosArtifact(
     if (!storeKey || !storeHash || !cachePolicy.write) return false;
 
     const stagingDir = join(workspaceDir(root), 'offload');
-    const outcome = await offloadIosBuild({
+    const outcome = await offloadBuild({
+      platform: PLATFORM,
       decision,
       projectRoot: root,
       expectedFingerprint: storeHash,

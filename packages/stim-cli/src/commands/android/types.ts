@@ -71,6 +71,7 @@ export interface AndroidRecord {
   cacheKey?: string | null;
   cacheHit?: boolean | string;
   cacheSkipped?: boolean;
+  offloadedTo?: string | null;
   appPath?: string | null;
   bundleId?: string | null;
   avdName?: string | null;

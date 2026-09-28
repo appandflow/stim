@@ -20,19 +20,41 @@ export interface WorkerProbe {
   availableMemBytes: number | null;
   diskFreeBytes: number | null;
   xcodebuildRunning: number;
+  gradleRunning: number;
+  javaMajor: string | null;
+  androidSdk: string | null;
+  ndk: string[];
+  buildTools: string[];
+  platforms: string[];
+}
+
+export interface WorkerAndroidOptions {
+  variant: string | null;
+  abi: string | null;
+  buildCache: boolean;
+  pch: 'auto' | 'on' | 'off';
+  compilerCache: string;
 }
 
 export interface WorkerBuildRequest {
+  platform: 'ios' | 'android';
+  android?: WorkerAndroidOptions;
   repoDir: string;
   projectRel: string;
   packageName: string | null;
-  expectedFingerprint: string;
+  /** Null for a warm build, which only fills the worker's caches and skips the parity gate. */
+  expectedFingerprint: string | null;
   configuration: string | null;
   scheme: string | null;
   isExpo: boolean;
   optimizations: unknown;
   /** SimRuntime identifier of the local target simulator, e.g. com.apple.CoreSimulator.SimRuntime.iOS-27-0. */
   runtime: string | null;
+}
+
+export interface WorkerWarmRequest {
+  builds: WorkerBuildRequest[];
+  unlockDir: string;
 }
 
 export interface WorkerTimings {
@@ -87,6 +109,16 @@ export function distBuildId(distDir: string): string | null {
       hash.update(readFileSync(join(distDir, name)));
     }
     return hash.digest('hex').slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+/** The major Java version of the JDK at `home`, read from its `release` file. */
+export function javaMajorAt(home: string): string | null {
+  try {
+    const version = /JAVA_VERSION="([^"]+)"/.exec(readFileSync(join(home.trim(), 'release'), 'utf8'))?.[1];
+    return version ? version.split('.')[0]! : null;
   } catch {
     return null;
   }

@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
@@ -58,6 +60,7 @@ import type { BuildPhase } from '../../engine/build-progress.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
+import { offloadBuild, offloadHost, planOffload, type OffloadDecision } from '../../offload/client.ts';
 import { detectAndroidPackage } from '../../workspace/app-id.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
 import type { androidDeviceAbi } from '../../devices/android.ts';
@@ -533,24 +536,112 @@ export async function acquireAndroidArtifact(
     }
   }
 
+  async function takeSlot(): Promise<boolean> {
+    if (!maxBuilds) return true;
+    try {
+      buildSlot = await acquireSlot({ max: maxBuilds, root, logFile: buildLog, out });
+    } catch (err) {
+      const refusal = claimFailure(err, 'stim android');
+      if (refusal) {
+        phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+        return false;
+      }
+      phase('build', chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`));
+    }
+    return true;
+  }
+
+  async function planBuildOffload(): Promise<OffloadDecision | null> {
+    const host = offloadHost();
+    if (!host || physical || release || cas) return null;
+    const decision = await planOffload({ host, platform: PLATFORM, projectRoot: root, maxBuilds });
+    phase(
+      'build',
+      `offload ${decision.offload ? `-> ${host}` : 'declined, building here'}: ${decision.reasons.join('; ')} (probe ${formatDuration(decision.probeMs)})`,
+    );
+    writer.write({
+      src: 'build',
+      level: 'info',
+      event: 'offload_decision',
+      msg: decision.offload ? `offload to ${host}` : 'build locally',
+      decision,
+    });
+    return decision;
+  }
+
+  /** Builds on the worker and stores the APK under the post-mutation key; false falls back to a local build. */
+  async function compileOnWorker(decision: OffloadDecision): Promise<boolean> {
+    if (!storeKey || !storeHash || !cachePolicy.write) return false;
+    const stagingDir = join(workspaceDir(root), 'offload');
+    const outcome = await offloadBuild({
+      platform: PLATFORM,
+      android: {
+        variant: variant ?? null,
+        abi: buildAbi ?? null,
+        buildCache: buildPlan.gradleBuildCache,
+        pch: buildPlan.pch,
+        compilerCache: buildPlan.compilerCache,
+      },
+      decision,
+      projectRoot: root,
+      expectedFingerprint: storeHash,
+      configuration: null,
+      scheme: null,
+      isExpo,
+      optimizations: null,
+      runtime: null,
+      stagingDir,
+      note: (line) => phase('build', chalk.dim(line)),
+      logWriter: writer,
+    });
+    let stored: string | null = null;
+    if (outcome.ok) {
+      const settled = await refingerprintAfterMutation({
+        projectRoot: root,
+        platform: PLATFORM,
+        previousHash: storeHash,
+        fingerprint,
+      });
+      if (!settled || settled.moved) {
+        phase('build', chalk.yellow('offload: local inputs changed while the worker built; not storing it'));
+      } else {
+        try {
+          stored = storeCached(PLATFORM, storeKey, outcome.appPath, {
+            sources: storeSources,
+            overwrite: !useBuildCache,
+          });
+        } catch (err) {
+          phase('build', chalk.yellow(`could not store the offloaded APK: ${(err as Error)?.message || err}`));
+        }
+      }
+    }
+    try {
+      rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
+    const prepared = stored ? await installableCachedApk(storeKey, stored) : null;
+    if (outcome.ok && prepared) {
+      const w = outcome.timings.worker;
+      apkPath = prepared;
+      record.offloadedTo = decision.host;
+      phase(
+        'build',
+        `offload ok ${formatDuration(outcome.timings.totalMs)}: probe ${formatDuration(outcome.timings.probeMs)}, sync ${formatDuration(outcome.timings.syncMs)}, ` +
+          `worker ${formatDuration(outcome.timings.remoteMs)} (deps ${formatDuration(w.depsMs)}, prebuild ${formatDuration(w.prebuildMs)}, ` +
+          `fingerprint ${formatDuration(w.fingerprintMs)}, gradle ${formatDuration(w.buildMs)}), ` +
+          `fetch ${formatDuration(outcome.timings.fetchMs)}; ${outcome.result.compilationCache}`,
+      );
+      phase('cache', `stored ${shortHash(storeHash)} (built on ${decision.host})`);
+      return true;
+    }
+    phase('build', `offload ${outcome.ok ? 'store failed' : `failed: ${outcome.reason}`} -> building here`);
+    return false;
+  }
+
   async function buildArtifact(): Promise<boolean> {
     if (!apkPath) {
       try {
-        if (maxBuilds) {
-          try {
-            buildSlot = await acquireSlot({ max: maxBuilds, root, logFile: buildLog, out });
-          } catch (err) {
-            const refusal = claimFailure(err, 'stim android');
-            if (refusal) {
-              phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
-              return false;
-            }
-            phase(
-              'build',
-              chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),
-            );
-          }
-        }
+        const offloadDecision = await planBuildOffload();
+        if (!offloadDecision?.offload && !(await takeSlot())) return false;
 
         const rekeyedBy: string[] = [];
         let editedConfig: string[] = [];
@@ -624,8 +715,14 @@ export async function acquireAndroidArtifact(
           }
         }
 
-        if (!apkPath) {
+        if (!apkPath && offloadDecision?.offload && !editedConfig.length) {
           explainMiss(rekeyedBy);
+          step('compile');
+          if (!(await compileOnWorker(offloadDecision)) && !(await takeSlot())) return false;
+        }
+
+        if (!apkPath) {
+          if (!offloadDecision?.offload || editedConfig.length) explainMiss(rekeyedBy);
           step('compile');
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(

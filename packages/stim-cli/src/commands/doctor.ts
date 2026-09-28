@@ -19,6 +19,7 @@ import {
   runDoctor,
 } from '../diagnostics/doctor.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
+import { detectOffloadWorker } from '../diagnostics/doctor-offload.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
@@ -225,6 +226,7 @@ export default function doctorCommand(
       if (parity) findings.push(parity);
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform: opts.platform });
       if (linkedGit) findings.push(linkedGit);
+      findings.push(...(await detectOffloadWorker(root, { platform: opts.platform })));
 
       if (detectHarness()) {
         const sandbox = sandboxFinding(repoRoot(root) ?? root);

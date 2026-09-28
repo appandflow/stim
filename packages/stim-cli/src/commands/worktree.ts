@@ -22,6 +22,7 @@ import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
+import { warmOffloadWorker } from '../offload/client.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
@@ -288,6 +289,7 @@ export function registerWarm(worktree: Command): void {
           if (process.exitCode) return;
         }
         await withWarmClaim({ repositoryRoot: root, phase: 'copy', out: console.error }, (hold) => copy(hold.wait));
+        if (!process.exitCode && workspace) await warmOffloadWorker({ projectRoot: workspace, note: console.error });
       } catch (error) {
         const code = (error as { code?: string })?.code;
         console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
