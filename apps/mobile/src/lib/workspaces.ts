@@ -246,7 +246,7 @@ export function platformName(platform: DevicePlatform): string {
   return platform === 'ios' ? 'iOS' : platform === 'web' ? 'Web' : 'Android';
 }
 
-export function deviceSource(device: DeviceRef): string {
+export function deviceSource(device: Pick<DeviceRef, 'platform' | 'physical'>): string {
   if (device.platform === 'web') return 'Chrome';
   if (device.platform === 'ios') return device.physical ? 'iOS device' : 'iOS Simulator';
   return device.physical ? 'Android device' : 'Android Emulator';

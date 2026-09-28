@@ -42,7 +42,7 @@ import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-conne
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, servesDevice, shortUrl, unservedReason, workspaceTitleAt } from '@/lib/workspaces';
+import { deviceSource, devicesOf, servesDevice, shortUrl, unservedReason, workspaceTitleAt } from '@/lib/workspaces';
 import type { DevicePlatform, DevicePosture, InputButton, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
@@ -326,9 +326,7 @@ export function DeviceView({
       </ScrollView>
     )
   ) : null;
-  const model = device?.page
-    ? shortUrl(device.page.url)
-    : (device?.model ?? (platform === 'ios' ? 'iOS Simulator' : platform === 'web' ? 'Web' : 'Android Emulator'));
+  const model = device?.page ? shortUrl(device.page.url) : (device?.model ?? deviceSource({ platform, physical }));
   const title = workspaceTitleAt(workspace, status);
 
   return (
