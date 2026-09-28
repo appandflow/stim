@@ -38,6 +38,7 @@ import {
   FRAME_EDGE,
   FRAME_FPS,
   LEGACY_PUSH_EVENTS,
+  NOTIFICATION_LEVELS,
   PLATFORMS,
   PROTOCOL_VERSION,
   PUSH_EVENTS,
@@ -62,6 +63,7 @@ import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions 
 import {
   authenticateDevice,
   dropPushToken,
+  parseLevels,
   parseQuietHours,
   pushEvents,
   readDevices,
@@ -1253,6 +1255,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const agentOnly = value.agentOnly ?? false;
       const stuckMinutes = value.stuckMinutes ?? DEFAULT_STUCK_MINUTES;
       const quietHours = value.quietHours === undefined ? null : parseQuietHours(value.quietHours);
+      const levels = value.levels === undefined ? undefined : parseLevels(value.levels);
       if (
         typeof token !== 'string' ||
         !pushToken.test(token) ||
@@ -1264,19 +1267,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ref.length === 0 ||
         ref.length > 128 ||
         !validStuckMinutes(stuckMinutes) ||
-        (value.quietHours !== undefined && quietHours === null)
+        (value.quietHours !== undefined && quietHours === null) ||
+        levels === null
       ) {
         return error(
           id,
           'bad-request',
           'push.register takes an Expo push token, one or more events from ' +
             `${PUSH_EVENTS.join(', ')}, a ref of 1 to 128 characters, and optionally stuckMinutes from 1 to 240 and ` +
-            'quietHours { start, end, timeZone } in minutes after midnight and an IANA time zone.',
+            'quietHours { start, end, timeZone } in minutes after midnight and an IANA time zone, and levels ' +
+            `mapping events to ${NOTIFICATION_LEVELS.join(' or ')}.`,
         );
       }
       const registered = setDevicePush(session.id, {
         token,
         events: pushEvents(events),
+        ...(levels ? { levels } : {}),
         ref,
         registeredAt: new Date().toISOString(),
         stuckMinutes,

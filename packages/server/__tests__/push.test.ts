@@ -227,6 +227,7 @@ describe('PushNotifier', () => {
           body: 'Same Swift error 3x at AppDelegate.swift:71',
           sound: 'default',
           interruptionLevel: 'active',
+          channelId: 'attention',
           collapseId: expect.stringMatching(/^[0-9a-f]{32}$/),
           data: { ref: 'mac-1', notification: 1, target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
         },
@@ -244,6 +245,7 @@ describe('PushNotifier', () => {
       body: 'agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro',
       sound: null,
       interruptionLevel: 'passive',
+      channelId: 'updates',
       threadId: 'started:MacBook Pro',
       data: { target: 'device', path: '/u/app/.worktrees/login', platform: 'ios', slot: 'default' },
     });
@@ -312,6 +314,7 @@ describe('PushNotifier', () => {
           body: "3.0 GB free, below Stim's floor",
           sound: 'default',
           interruptionLevel: 'active',
+          channelId: 'attention',
           collapseId: expect.any(String),
           data: { ref: 'mac-1', notification: expect.any(Number), target: 'machine' },
         },
@@ -419,9 +422,44 @@ describe('PushNotifier', () => {
           body: '4 things need a look',
           sound: 'default',
           interruptionLevel: 'active',
+          channelId: 'attention',
           data: { ref: 'mac-1', target: 'home' },
         },
       ],
+    ]);
+  });
+
+  it('delivers each event at the level the device chose, a summary of silent ones silently too', async () => {
+    const t = (current = setup({
+      devices: [device(registration({ stuckMinutes: 5, levels: { started: 'alert', looping: 'silent' } }))],
+    }));
+    t.emit(status());
+    t.at(1000);
+    t.emit(status(env(driven(T0 + 1000))));
+    t.at(2000);
+    t.emit(status(env({ ...driven(T0 + 1000), ...looping(T0 + 2000) })));
+    t.notifier.control('d1', {
+      workspace: '/w',
+      title: 'feat/login',
+      body: 'iPad took over',
+      platform: 'ios',
+      slot: 'default',
+    });
+    await settle(3);
+    expect(expo.sent.flat().map((m) => [m.body, m.sound, m.interruptionLevel, m.channelId])).toEqual([
+      ['agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro', 'default', 'active', 'attention'],
+      ['Same Swift error 3x at AppDelegate.swift:71', null, 'passive', 'updates'],
+      ['iPad took over', 'default', 'active', 'attention'],
+    ]);
+
+    expo.sent = [];
+    t.at(3000);
+    const broken = (name: string) =>
+      env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, ...looping(T0 + 3000) });
+    t.emit(status(broken('a'), broken('b'), broken('c'), broken('d')));
+    await settle(1);
+    expect(expo.sent.flat().map((m) => [m.body, m.sound, m.interruptionLevel, m.channelId])).toEqual([
+      ['4 things need a look', null, 'passive', 'updates'],
     ]);
   });
 
@@ -556,6 +594,23 @@ describe('PushNotifier', () => {
     t.emit(status(env(driven(T0 + 1000))));
     await settle(2);
     expect(expo.sent.flat().map((m) => m.interruptionLevel)).toEqual(['passive', 'active']);
+  });
+
+  it('keeps silent control conflicts out of the hourly budget too', async () => {
+    const t = (current = setup({
+      limits: { perHour: 1 },
+      devices: [device(registration({ levels: { control: 'silent' } }))],
+    }));
+    t.emit(status());
+    for (const slot of ['a', 'b', 'c']) {
+      t.notifier.control('d1', { workspace: '/w', title: 'feat/login', body: slot, platform: 'ios', slot });
+    }
+    await settle(3);
+    expect(expo.sent.flat().map((m) => [m.body, m.interruptionLevel])).toEqual([
+      ['a', 'passive'],
+      ['b', 'passive'],
+      ['c', 'passive'],
+    ]);
   });
 
   it('stops pushing to a device past its hourly budget', async () => {

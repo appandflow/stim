@@ -543,6 +543,14 @@ export const LEGACY_PUSH_EVENTS = ['build-failed', 'log-errors', 'disk', 'app-st
 export type LegacyPushEvent = (typeof LEGACY_PUSH_EVENTS)[number];
 
 /**
+ * How a pushed event is delivered: `alert` with a banner and sound, `silent` to the notification list only (iOS
+ * `interruptionLevel` `passive`, the Android `updates` channel). An event the device leaves out of `events` is off.
+ */
+export const NOTIFICATION_LEVELS = ['alert', 'silent'] as const;
+
+export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
+
+/**
  * When pushes stay silent, in minutes after midnight in the phone's IANA `timeZone`; an `end` before `start` spans
  * midnight. A problem that still holds when they end is pushed then; events during them are not.
  */
@@ -556,11 +564,14 @@ export interface QuietHours {
  * Asks the server to push this device's notifications through the Expo push service to `token`, an Expo push
  * token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as
  * `data.ref` in every push, so the phone can tell which Mac sent it. `stuckMinutes` is how long a driven workspace
- * must show no activity to look stuck, 15 by default. `agentOnly` is accepted from older phones and ignored.
+ * must show no activity to look stuck, 15 by default. `levels` sets each event's delivery; an event it leaves out
+ * alerts, except `started`, which is silent. An older server ignores `levels`. `agentOnly` is accepted from older
+ * phones and ignored.
  */
 export interface PushRegisterParams {
   token: string;
   events: (PushEvent | LegacyPushEvent)[];
+  levels?: Partial<Record<PushEvent, NotificationLevel>>;
   agentOnly?: boolean;
   ref: string;
   stuckMinutes?: number;
@@ -593,6 +604,7 @@ export interface NotificationEntry {
   category: PushEvent;
   title: string;
   body: string;
+  /** The event's default delivery; a device's `levels` decide how its push was delivered. */
   quiet: boolean;
   target: NotificationTarget;
   suppressed?: NotificationSuppression;
@@ -1271,6 +1283,11 @@ export function protocolJsonSchema(): JsonSchema {
                 minItems: 1,
                 uniqueItems: true,
                 items: { enum: [...PUSH_EVENTS, ...LEGACY_PUSH_EVENTS] },
+              },
+              levels: {
+                type: 'object',
+                additionalProperties: false,
+                properties: Object.fromEntries(PUSH_EVENTS.map((event) => [event, { enum: [...NOTIFICATION_LEVELS] }])),
               },
               agentOnly: { type: 'boolean', default: false },
               ref: { type: 'string', minLength: 1, maxLength: 128 },

@@ -405,9 +405,10 @@ Events are `{ "event", "subscription", ... }`.
   [push notifications](#push-notifications) the phone wants (`started`,
   `stuck`, `looping`, `finished`, `machine`, `control`), `ref`, an opaque
   string of up to 128 characters that every push carries back as `data.ref`,
-  and optionally `stuckMinutes` (1 to 240, default 15) and `quietHours`
+  and optionally `stuckMinutes` (1 to 240, default 15), `quietHours`
   (`{ "start", "end", "timeZone" }`, minutes after midnight in an IANA time
-  zone). It needs only `read`. Registering again replaces the device's
+  zone) and `levels`, each event's [delivery level](#delivery-levels) (for
+  example `{ "stuck": "silent", "machine": "alert" }`). It needs only `read`. Registering again replaces the device's
   registration; `push.unregister` removes it. Phones from before these events
   may still send `build-failed`, `log-errors`, `disk`, `app-stopped`,
   `slow-build` and `agentOnly`: `disk` counts as `machine`, and the rest are
@@ -495,8 +496,7 @@ shows them in its attention strip. The server pushes, per device and only for
 the events the device chose:
 
 - `started`: a workspace began warming (`phase` `warming`), or an agent first
-  drove one of its devices. It is delivered quietly, without sound (iOS
-  `passive`), grouped per Mac, and opens the workspace, or the device viewer
+  drove one of its devices. It is grouped per Mac, and opens the workspace, or the device viewer
   once an agent drives it. An agent driving the workspace updates the warming
   notification in place.
 - `stuck`: an agent drove the workspace, its devices are still up, and nothing
@@ -549,8 +549,8 @@ per repository, the lookup `stim gc` uses. Without `gh`, or when it is signed
 out or does not answer, that round relies on git, and the next round asks
 again.
 
-A device gets at most 20 alerting pushes an hour; quiet `started` pushes do
-not count. More than three at once become one summary push that opens the
+A device gets at most 20 alerting pushes an hour; silent pushes do not
+count. More than three at once become one summary push that opens the
 phone's home screen.
 
 Pushes go to the Expo push service, `https://exp.host/--/api/v2/push/send`,
@@ -566,6 +566,24 @@ receipts 15 minutes later and drops a token that Expo reports as
 `DeviceNotRegistered`, and prints any other refusal, such as missing APNs
 credentials, on stderr. Pushes are not retried, and nothing is pushed while
 the server is not running.
+
+### Delivery levels
+
+Each event the device registers is delivered at one of two levels; an event it
+leaves out of `events` is off and never pushes.
+
+- `alert`: a banner and sound. The push has `sound: "default"`,
+  `interruptionLevel: "active"` and `channelId: "attention"`, the phone's
+  high-importance Android channel.
+- `silent`: no banner or sound, only the notification list.
+  The push has no sound, `interruptionLevel: "passive"` and
+  `channelId: "updates"`, the phone's low-importance Android channel.
+
+`levels` in `push.register` sets each event's level. An event it leaves out,
+and every event of a phone that sends no `levels`, gets the level phones had
+before levels: `started` silent, everything else alert. A summary push is
+silent only when every notification it sums up is. An older server ignores
+`levels` and alerts for every event but `started`.
 
 The rules live in `src/oversight.ts`, a pure module the phone app keeps an
 identical copy of (`apps/mobile/src/lib/oversight.ts`) for its local
@@ -587,6 +605,8 @@ An entry is `{ "seq", "at", "id", "category", "title", "body", "quiet",
 workspace or machine and category, the key a push's collapse id is made from,
 so a later episode of the same problem shares it. `target` is the screen the
 push opens, as `{ "kind", ... }` with the fields of the push's `data`.
+`quiet` is the event's default delivery (only `started` is quiet); a device's
+[levels](#delivery-levels) decide how its push was actually delivered.
 `suppressed` says why no registered device got the notification when it was
 logged: `muted` when none wants its category, `quiet-hours` when those that do
 were in quiet hours. A problem that still holds when quiet hours end is pushed

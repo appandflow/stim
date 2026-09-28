@@ -13,7 +13,13 @@ import {
   type OversightState,
   type OversightTarget,
 } from './oversight.ts';
-import type { MachineVolume, MemoryPressure, NotificationSuppression, QuietHours } from './protocol.ts';
+import type {
+  MachineVolume,
+  MemoryPressure,
+  NotificationLevel,
+  NotificationSuppression,
+  QuietHours,
+} from './protocol.ts';
 import type { PairedDevice, PushRegistration } from './registry.ts';
 
 export const EXPO_PUSH_API: string = 'https://exp.host/--/api/v2/push';
@@ -26,7 +32,7 @@ export interface PushLimits {
   pullRequestMs: number;
   /** Expo keeps receipts for a day and may need minutes to produce them. */
   receiptDelayMs: number;
-  /** Pushes that alert a device may receive per hour; later ones are dropped. Quiet ones do not count. */
+  /** Pushes that alert a device may receive per hour; later ones are dropped. Silent ones do not count. */
   perHour: number;
   /** More notifications than this at once become one summary. */
   summarizeAbove: number;
@@ -86,6 +92,8 @@ export interface PushMessage {
   body: string;
   sound: 'default' | null;
   interruptionLevel: 'active' | 'passive';
+  /** The phone's Android channel: `attention` alerts, `updates` is silent. */
+  channelId: 'attention' | 'updates';
   /** Replaces a notification the phone still shows for the same workspace and category. */
   collapseId?: string;
   threadId?: string;
@@ -141,6 +149,14 @@ function entryOf(notification: OversightNotification, suppressed: NotificationSu
   const { id, category, title, body, quiet, target } = notification;
   return { id, category, title, body, quiet, target, ...(suppressed ? { suppressed } : {}) };
 }
+
+const levelOf = (push: PushRegistration, notification: OversightNotification): NotificationLevel =>
+  push.levels?.[notification.category] ?? (notification.quiet ? 'silent' : 'alert');
+
+const DELIVERY = {
+  alert: { sound: 'default', interruptionLevel: 'active', channelId: 'attention' },
+  silent: { sound: null, interruptionLevel: 'passive', channelId: 'updates' },
+} as const satisfies Record<NotificationLevel, Pick<PushMessage, 'sound' | 'interruptionLevel' | 'channelId'>>;
 
 interface Registered {
   id: string;
@@ -226,8 +242,9 @@ export class PushNotifier {
     };
     const suppressed = device ? this.suppression('control', [device], now) : null;
     this.record([{ ...entryOf(notification, suppressed), device: deviceId }]);
-    if (!device || suppressed !== null || !this.take(device, now)) return;
-    void this.send([this.message(device, notification)]);
+    if (!device || suppressed !== null) return;
+    const message = this.message(device, notification);
+    if (message.interruptionLevel === 'passive' || this.take(device, now)) void this.send([message]);
   }
 
   close(): void {
@@ -409,8 +426,7 @@ export class PushNotifier {
       title: notification.title,
       ...(notification.target.kind === 'machine' ? {} : { subtitle: this.options.name }),
       body: notification.body,
-      sound: notification.quiet ? null : 'default',
-      interruptionLevel: notification.quiet ? 'passive' : 'active',
+      ...DELIVERY[levelOf(push, notification)],
       collapseId: collapseId(`${push.ref}\n${notification.id}`),
       ...(notification.thread ? { threadId: notification.thread } : {}),
       data: { ref: push.ref, ...(seq === null ? {} : { notification: seq }), ...targetData(notification.target) },
@@ -418,13 +434,12 @@ export class PushNotifier {
   }
 
   private summary(device: Registered, notifications: OversightNotification[]): PushMessage {
-    const quiet = notifications.every((n) => n.quiet);
+    const silent = notifications.every((n) => levelOf(device.push, n) === 'silent');
     return {
       to: device.push.token,
       title: this.options.name,
       body: `${notifications.length} things need a look`,
-      sound: quiet ? null : 'default',
-      interruptionLevel: quiet ? 'passive' : 'active',
+      ...DELIVERY[silent ? 'silent' : 'alert'],
       data: { ref: device.push.ref, target: 'home' },
     };
   }
