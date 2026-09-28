@@ -21,7 +21,6 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
   return { payload: null, error: `${label} printed output that is not a JSON object.` };
 }
 
-/** Runs the gc dry run and stats side by side; a failing part leaves the other intact. */
 export async function loadMachineDetails(run: (args: string[]) => Promise<CommandOutcome>): Promise<MachineDetails> {
   const measuredAt = new Date().toISOString();
   const [gc, stats] = await Promise.all([run(GC_DRY_RUN), run(STATS)]);
