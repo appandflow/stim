@@ -39,8 +39,8 @@ public enum AppPreferences {
     /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
     public static let showsInspector = "showsInspector"
-    public static let showsLogsPane = "workspace.showsLogsPane"
-    public static let logsPaneWidth = "workspace.logsPaneWidth"
+    public static let showsLogs = "workspace.showsLogs"
+    public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }

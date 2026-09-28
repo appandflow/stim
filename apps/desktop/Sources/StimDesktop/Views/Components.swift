@@ -294,22 +294,15 @@ struct SetupBadge: View {
 
 struct BuildProgressBar: View {
   var build: Build
-  var compact = false
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 1)) { context in
       let progress = build.progress(at: context.date)
       VStack(alignment: .leading, spacing: Space.xs) {
         HStack(spacing: Space.md) {
-          Group {
-            if compact {
-              Text(build.phase).font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary)
-            } else {
-              Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")  ")
-                .foregroundStyle(Palette.text)
-                + Text(build.phase).font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary)
-            }
-          }
+          (Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")  ")
+            .foregroundStyle(Palette.text)
+            + Text(build.phase).font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary))
           .lineLimit(1)
           .truncationMode(.tail)
           BuildOutcomeBadge(build: build)

@@ -26,7 +26,7 @@ in the workspace directory:
   is listed with **Open logs**. The sidebar count is the number of listed items
   plus finished pull requests.
 - Run: **Run on iOS** and **Run on Android** in a workspace's context menu and
-  "..." menu, and **Run** on each platform of the inspector's **Builds**
+  "..." menu, and **Run** on each platform of the inspector's **Build**
   section (**Rebuild** when that platform's last build failed), run
   `stim ios` or `stim android` in the workspace with no other arguments, so the
   default slot and configuration. The
@@ -35,9 +35,8 @@ in the workspace directory:
   **Reload app** runs `stim reload` and is disabled unless the dev server and a
   local device are running.
 - Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a
-  confirmation that names the worktree and its branch. Each running device,
-  in the device tile and the inspector's device list, has its own **Stop**
-  button, running `stim stop --slot <name>` (`default` for the workspace's
+  confirmation that names the worktree and its branch. Each running device
+  tile has its own **Stop** button, running `stim stop --slot <name>` (`default` for the workspace's
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
@@ -92,12 +91,14 @@ spells it out.
 
 ## Workspace page
 
-A workspace's page starts like the phone app's workspace screen. The **stage
-line** says where the workspace is, with a subtitle: **Running** ("up 42m",
-turning red with "3 errors" or "iOS app closed"), **Building** ("iOS · started
-1m ago"), **Build failed** (the platform and when), **Warming** (the warm step
-and how long), **Ready** ("warmed 48m ago") or **Stopped** (when Metro last
-stopped). Beside it, the **git chip** starts with the branch's pull request
+A workspace's page starts with one line. The **stage line** says where the
+workspace is, with a subtitle: **Running** ("up 42m", turning red with "3
+errors" or "iOS app closed"), **Building** ("iOS · started 1m ago"), **Build
+failed** (the platform and when), **Warming** (the warm step and how long),
+**Ready** ("warmed 48m ago") or **Stopped** (when Metro last stopped). While a
+build runs, the line adds its phase ("Compiling"), a short bar and the elapsed
+time over the estimate ("1:42 / ~2:40"), so a build can be followed with the
+inspector hidden. Next comes the **git chip**, which starts with the branch's pull request
 from `worktree.pullRequest` as "PR #N" coloured by its state (open green,
 draft grey, merged purple, closed red) with one CI mark: a check when every
 check passes, a cross when one fails, a dot while some are pending. Without a
@@ -108,59 +109,53 @@ Clicking it opens a popover with the branch, its upstream, the pull request's
 title, checks and review, and **Open on GitHub**. The "..." menu at the end of
 the line holds the workspace actions.
 
-Below it, three cards summarize the workspace; a card with a problem turns red:
+The inspector, toggled from the toolbar, holds the workspace's details, in
+this order:
 
-- **Resources**: CPU (100% is one core), memory and disk. CPU and memory sum
-  the workspace's owners in the status `machine` section, or the app's own
-  process sample when that section has none for the workspace; disk is the worktree plus Stim's
-  build folder from `disk`. Clicking it opens a popover with CPU and memory
-  charts over the last 10 minutes the app sampled while on screen, every
-  process that counts toward the workspace (simulators and emulators, Chrome,
-  Metro, builds) and the disk breakdown.
-- **Build**: one row per platform the workspace used, or both when it used
-  neither, with the Apple or Android glyph: a finished build's time and
-  "hit" or "cold", **Failed**, or, before any run, the next build's estimate
-  from `stim <platform> --plan --json` in grey, marked "est.". A row reads
-  **Checking…** while its plan runs and **No build** with no run and no
-  prediction. Clicking it opens a popover with each platform's last build,
-  compiler errors, miss reason and five recent builds.
-- **Logs**: the error count since the last marker, Metro's port with a health
-  dot, and the bundle line from `metro.bundle` ("Bundling · 62%", "Bundled in
-  1.8s · 12s ago", "Bundle failed"). Clicking it opens the logs, filtered to
-  errors when there are some.
+- **Build**: one card per platform. While a build runs, its card shows the
+  phase or the build tool's step with its counts ("Compiling 45 of 180
+  targets"), the elapsed time over the estimate, a bar with a segment per
+  phase sized by the reference run, the phase checklist, why the cache missed
+  and the last lines of build output (`stim logs --source build`). Otherwise
+  it shows the last build with its compiler errors and miss reason, the next
+  build from `stim <platform> --plan --json`, **Check** and **Run**. Each card
+  lists its recent builds.
+- **Resources**: CPU (100% is one core) and memory with charts over the last
+  10 minutes the app sampled while on screen, every process that counts
+  toward the workspace (simulators and emulators, Chrome, Metro, builds) and
+  the disk breakdown. CPU and memory sum the workspace's owners in the status
+  `machine` section, or the app's own process sample when that section has
+  none for the workspace; disk is the worktree plus Stim's build folder from
+  `disk`.
+- **Metro & logs**: Metro's port with a health dot, the error count since the
+  last marker, the bundle line from `metro.bundle` ("Bundling · 62%",
+  "Bundled in 1.8s · 12s ago", "Bundle failed") and **Show logs**.
+- **Agents**: the coding-agent sessions working in the workspace.
+- **Build cache · project**: the project's hit rate and time saved per
+  platform.
 
-While a build runs, a build card replaces the Build card: the platform and
-target device, the phase or the build tool's step with its counts ("Compiling
-45 of 180 targets"), the elapsed time over the estimate, a bar with a segment
-per phase sized by the reference run, why the cache missed, the other
-platform's last build and the latest output line. Clicking it opens the phase
-checklist and the last lines of build output (`stim logs --source build`).
-When the page is 820 points wide or more, the Resources card lists its first
-four processes, devices first, and the build card shows the phase checklist
-inline.
+Below the line, the devices take the rest of the page: every device of the
+workspace at once, in the order above, each with its live frame. The frames
+share one height, the tallest at which every tile fits the canvas in one row
+or a few, wrapping when the window is narrow and scrolling past a floor of 260
+points. Clicking a tile focuses it without hiding the others. Each tile's
+header has its **Stop** and adds its CPU, memory and disk (from the machine
+owner matched by slot and kind, and the device's `disk`). A running simulator
+or emulator ends with the agent row: the driving tool and its last action
+("agent-device · Tapped "Allow camera" · 12s ago"), or "No agent" with how
+long it has been idle; clicking it lists the latest agent actions. A device
+whose build is running shows "Waiting for the iOS build" over its frame with
+the phase, a thin bar and the elapsed time over the estimate. One whose app
+process is gone shows **App not running** with **Run**, and one whose platform
+never built here and last failed shows **No app installed** over its frame
+instead. A workspace that is warming with no device yet shows a warming
+placeholder.
 
-The inspector keeps the coding-agent sessions, the device list with each
-device's **Stop**, the **Builds** section and the project's build cache
-figures.
-
-Below the cards, the page shows every device of the workspace at once, in the
-order above, each with its live frame. The frames share one height, the
-tallest at which every tile fits the canvas in one row or a few, wrapping when
-the window is narrow and scrolling past a floor of 260 points. Clicking a
-tile focuses it without hiding the others. Each tile's header adds its CPU,
-memory and disk (from the machine owner matched by slot and kind, and the
-device's `disk`). A running simulator or emulator ends with the agent row: the
-driving tool and its last action ("agent-device · Tapped "Allow camera" · 12s
-ago"), or "No agent" with how long it has been idle; clicking it lists the
-latest agent actions. A device whose build is running shows "Waiting for the
-iOS build" with the phase over its frame, one whose platform never built here
-and last failed shows **No app installed**, and one whose app process is gone
-is dimmed with **App closed**. A workspace that is warming with no device yet
-shows a warming placeholder.
-
-On a page 820 points wide or more, the logs sit in a pane beside the devices,
-resized by dragging its edge and hidden with **Hide logs**; the app remembers
-both. A narrower page switches between **Devices** and **Logs**.
+The logs are hidden by default. The toolbar's logs button, which carries the
+error count while they are hidden, or **Show logs** in the inspector opens
+them in a drawer below the devices, resized by dragging its top edge; the app
+remembers both. **Open logs** from Needs attention, a notification or a
+workspace menu opens the drawer too.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears in the sidebar under its project and
@@ -198,7 +193,7 @@ A running build's progress bar carries its cache outcome: "Cache hit" or "Cold
 build" once the run has reached install or prebuild, pods or compile, and
 "Likely cache hit" or "Likely cold" before that, when `stim status` reports the
 outcome of the project's previous run. Its tooltip names how many runs the time
-estimate comes from. The workspace inspector's **Builds** section shows each
+estimate comes from. The workspace inspector's **Build** section shows each
 platform's last build from `lastBuilds` (local cache, remote cache, compiled,
 or failed, with its duration and age). A compiled build shows why it missed
 the cache from `missReason`; clicking it opens a popover with the changed
@@ -223,8 +218,7 @@ When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running** with
 **Run**, which runs `stim ios` or `stim android` (with `--slot <name>` for a
 named slot). Run appears only on a Stim-owned simulator or emulator, which that
-command targets; a physical device gets no Run. The inspector's device list
-says **App stopped**. Reload app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
+command targets; a physical device gets no Run. Reload app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
 
 A workspace lists its devices like the phone app: running ones first, then
 iOS, Android, Web, physical and remote devices, then by slot name. The order
@@ -486,7 +480,7 @@ emulator without a gRPC endpoint cannot be taken over.
 ## Web
 
 A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web** tile
-on the wall and in the inspector's device list, labelled with the page's URL,
+on the wall and on the workspace page, labelled with the page's URL,
 the in-app route (`web.page.route`) when one moved it after the load.
 Desktop reads the page's frames itself, over the loopback DevTools endpoint
 `stim status --json` reports, and connects only when Chrome reports the pid
@@ -540,8 +534,7 @@ because it deletes the recordings.
 A workspace with a recorded EAS Simulator session from `stim ios --remote eas`
 or `stim android --remote eas` shows a tile with a blue ring. The tile loads the
 session's `webPreviewUrl` from `stim status --json` in a web view and marks the
-session as billable. Its **Stop** button, in the tile and the inspector's device
-list, runs `stim stop` in the workspace after a confirmation, which ends the
+session as billable. Its **Stop** button, in the tile, runs `stim stop` in the workspace after a confirmation, which ends the
 session -- a remote session has no per-slot teardown, so its Stop always
 targets the whole workspace, unlike a local device's `stim stop --slot <name>`.
 A session with no recorded preview URL shows a message instead of the page.

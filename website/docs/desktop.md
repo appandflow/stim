@@ -57,28 +57,33 @@ brew install --cask appandflow/tap/stim
 
 ## A workspace at a glance
 
-A workspace's page opens with the same summary as the phone app. A stage line
-says whether it is **Running**, **Building**, **Build failed**, **Warming**,
-**Ready** or **Stopped**, with how long and any problem ("3 errors", "iOS app
-closed"). Next to it, the git chip shows unpushed commits and uncommitted
-files when there are some, and the branch's pull request coloured by its state
-with a single CI mark; click it for the branch, the pull request and a link to
-GitHub.
+A workspace's page opens with one line. A stage line says whether it is
+**Running**, **Building**, **Build failed**, **Warming**, **Ready** or
+**Stopped**, with how long and any problem ("3 errors", "iOS app closed").
+While a build runs, the line adds its phase, a short progress bar and the
+elapsed time over the estimate. Next to it, the git chip shows unpushed
+commits and uncommitted files when there are some, and the branch's pull
+request coloured by its state with a single CI mark; click it for the branch,
+the pull request and a link to GitHub.
 
-Three cards follow. **Resources** shows the workspace's CPU, memory and disk
-and opens a popover with every process and the last 10 minutes of CPU and
-memory. **Build** shows each platform's last build time and whether it hit the
-cache, or the next build's estimate in grey, and opens the recent builds.
-**Logs** shows the error count, Metro's port and health, and the latest
-bundle, and opens the logs. While a build runs, a build card takes the Build
-card's place with the phase, progress against past runs and the latest output
-line. A wide window shows the process list and the phase checklist inline.
+The devices take the rest of the page: every device of the workspace shows at
+once, side by side at one height, wrapping when the window is narrow. Each
+device shows its CPU, memory and disk, its **Stop** button, and which agent
+drives it with its last action, or how long it has been idle. While its build
+runs, a device shows the phase and progress over its screen. Click a device to
+focus it, and use the hand button to take it over.
 
-Below the cards, every device of the workspace shows at once, side by side
-at one height, wrapping when the window is narrow. Each device shows its CPU,
-memory and disk, and which agent drives it with its last action, or how long
-it has been idle. Click a device to focus it, and use the hand button to take
-it over. On a wide window the logs sit in a resizable pane beside the devices.
+The inspector, toggled from the toolbar, holds the details: **Build** (the
+running build's phases and output, or each platform's last build, the next
+build's estimate, **Check** and **Run**), **Resources** (CPU and memory over
+the last 10 minutes, every process and the disk breakdown), **Metro & logs**
+(Metro's port and health, the error count and the latest bundle), **Agents**
+and the project's **Build cache**.
+
+The logs are hidden until you ask for them. The toolbar's logs button, which
+shows the error count, or **Show logs** in the inspector opens them in a drawer
+below the devices; drag its edge to resize it. The app remembers whether the
+logs are shown and how tall they are.
 
 When nothing runs, on **All devices**, a project, or a workspace with no
 device that is not warming, the page offers three example prompts to copy for your coding agent,
@@ -92,7 +97,7 @@ when it has neither. They run `stim ios` or `stim android` in the workspace
 with no options, so they use the default slot and configuration, and stream
 the output into the activity sheet. **Reload app** is available only while the
 dev server and a local device run. The inspector's
-**Builds** section has a **Run** button per platform, which reads **Rebuild**
+**Build** section has a **Run** button per platform, which reads **Rebuild**
 after a failed build, and a **Check** button that predicts the next build with
 `stim ios --plan` or `stim android --plan` without building.
 
