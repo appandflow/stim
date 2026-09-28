@@ -764,6 +764,21 @@ data, Gradle outputs and logs. The watcher runs `du` off its refresh path, at
 most every 5 minutes per folder while the environment is live and every hour
 otherwise, and one-shot `stim status` reads its cached sizes.
 
+An environment carries `agents` when a coding-agent session works in it:
+`[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl? }]`,
+with `tool` either `claude-code` or `codex`. A session works in an environment
+when its working directory is the environment's path, a folder inside it, or
+its git worktree root. The watcher finds running Claude Code sessions in
+`~/.claude/sessions` and Codex threads updated in the last 30 minutes in
+`~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
+found for 2 minutes. These are the tools' own internal files, so Stim reads them
+best-effort. `start`, `ios`, `android`, `web`, `reload` and `worktree warm` also
+record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
+them, which names the session exactly. `title` is the short name the tool keeps
+for the session; Stim reads no prompts or conversation. `openUrl` opens the
+session in the Claude desktop app or the Codex app when that app is installed,
+and is absent for a Claude Code session started in a terminal.
+
 In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and
 `stim web` Chrome, stim-server, and a shared bucket for machine-wide processes

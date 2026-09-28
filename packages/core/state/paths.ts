@@ -87,6 +87,10 @@ export function pullRequestCacheDir(): string {
   return join(configDir(), 'pull-requests');
 }
 
+export function agentSessionsCacheFile(): string {
+  return join(configDir(), 'agent-sessions.json');
+}
+
 export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }

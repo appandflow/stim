@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
+  agentSessionsCacheFile,
   diskUsageCacheFile,
   pullRequestCacheFile,
+  readAgentSessionsCache,
   readDiskUsage,
   readPullRequestCache,
+  readWorkspaceAgent,
+  readWorkspaceState,
   type DiskMeasure,
   type EnvironmentDisk,
   type EnvironmentState,
@@ -14,6 +18,7 @@ import {
   type WorktreeFacts,
   type WorktreePullRequest,
 } from '@stim-cli/core/state';
+import { attributeAgentSessions, discoverAgentSessions } from './agent-sessions.ts';
 import { ownedAvdDirectory } from './devices/android.ts';
 import { getExecutor } from './exec.ts';
 import { workspaceDir } from './workspace/paths.ts';
@@ -26,6 +31,8 @@ const DU_TIMEOUT_MS = 120_000;
 const PULL_REQUEST_MAX_AGE_MS = 5 * 60_000;
 const PULL_REQUEST_CHECK_MS = 60_000;
 const GIT_TIMEOUT_MS = 5000;
+const AGENT_DISCOVERY_MS = 15_000;
+const AGENT_CACHE_MAX_AGE_MS = 2 * 60_000;
 
 function writeCacheFile(file: string, entry: object): void {
   const temporary = `${file}.${randomUUID()}.tmp`;
@@ -105,11 +112,33 @@ function statusPullRequest(fact: PullRequestFact, checkedAt: string): WorktreePu
   };
 }
 
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function applyAgentSessions(states: EnvironmentState[], now: number): void {
+  const cache = readAgentSessionsCache();
+  const fresh = cache && now - Date.parse(cache.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS;
+  const workspaces = states.map((state) => ({
+    path: canonicalPath(state.path),
+    root: canonicalPath(checkoutDir(state)),
+    recorded: readWorkspaceAgent(readWorkspaceState(state.path)),
+  }));
+  attributeAgentSessions(workspaces, fresh ? cache.sessions : [], now).forEach((agents, i) => {
+    if (agents.length) states[i]!.agents = agents;
+  });
+}
+
 /**
- * Adds the cached measurements to a status read: each environment's `disk`, each owned device's `disk`, and each
- * linked worktree's `pullRequest` when the cache holds a lookup for its current branch. Reads files only.
+ * Adds the cached measurements to a status read: each environment's `disk` and `agents`, each owned device's `disk`,
+ * and each linked worktree's `pullRequest` when the cache holds a lookup for its current branch. Reads files only.
  */
 export function applyStatusMeasures(states: EnvironmentState[], worktrees: WorktreeFacts[]): void {
+  applyAgentSessions(states, Date.now());
   for (const state of states) {
     const disk = environmentDisk(environmentFolders(state));
     if (disk) state.disk = disk;
@@ -140,8 +169,9 @@ export interface StatusMeasurer {
 }
 
 /**
- * Keeps the disk use and pull request caches fresh for `status --watch`, off its refresh path: one `du -sk` at a
- * time, live environments first, each folder at most every 5 minutes while its environment is live and every hour otherwise, and one `gh api
+ * Keeps the disk use, pull request and agent session caches fresh for `status --watch`, off its refresh path: one
+ * agent session discovery at most every 15 seconds, which status ignores once it is over 2 minutes old, one `du -sk` at
+ * a time, live environments first, each folder at most every 5 minutes while its environment is live and every hour otherwise, and one `gh api
  * graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD moved. It
  * runs git only in the repository, never in a worktree, and only for worktrees whose git state status read. It rechecks
  * a folder's cache right before measuring, so two watchers rarely measure the same folder. `updated` runs after each
@@ -159,6 +189,8 @@ export function createStatusMeasurer({
   let duMissing = false;
   let checking = false;
   let checkedAt = -Infinity;
+  let discovering = false;
+  let discoveredAt = -Infinity;
   const failedAt = new Map<string, number>();
 
   async function du(path: string): Promise<number | null> {
@@ -240,8 +272,26 @@ export function createStatusMeasurer({
     }
   }
 
+  async function discoverAgents(): Promise<void> {
+    const at = now();
+    const sessions = await discoverAgentSessions({ now: at });
+    const previous = readAgentSessionsCache();
+    writeCacheFile(agentSessionsCacheFile(), { discoveredAt: new Date(at).toISOString(), sessions });
+    const shown = previous && at - Date.parse(previous.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS;
+    if (!shown || JSON.stringify(previous.sessions) !== JSON.stringify(sessions)) updated();
+  }
+
   return {
     schedule(states, worktrees) {
+      if (!discovering && now() - discoveredAt >= AGENT_DISCOVERY_MS) {
+        discovering = true;
+        discoveredAt = now();
+        void discoverAgents()
+          .catch(() => {})
+          .finally(() => {
+            discovering = false;
+          });
+      }
       if (!measuring) {
         const folders = new Map<string, number>();
         for (const state of states.toSorted((a, b) => Number(b.live) - Number(a.live))) {

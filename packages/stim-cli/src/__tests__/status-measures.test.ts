@@ -17,10 +17,12 @@ let avd: string;
 let calls: { file: string; args: string[] }[];
 let head: string;
 let clock: number;
+const realHome = process.env.HOME;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-status-measures-'));
   process.env.STIM_HOME = home;
+  process.env.HOME = home;
   process.env.ANDROID_AVD_HOME = join(home, 'avd');
   app = join(home, 'app');
   avd = join(home, 'avd', 'stim-t.avd');
@@ -55,6 +57,8 @@ beforeEach(() => {
 afterEach(() => {
   resetExecutor();
   delete process.env.STIM_HOME;
+  if (realHome === undefined) delete process.env.HOME;
+  else process.env.HOME = realHome;
   delete process.env.ANDROID_AVD_HOME;
   rmSync(home, { recursive: true, force: true });
 });

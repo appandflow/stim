@@ -1118,6 +1118,35 @@ RULES
   one-shot status only reads, so the fields appear once a watcher, such as
   stim-server or Stim Desktop, has measured.
 
+  An environment carries agents when coding-agent sessions work in it, most
+  recently active first:
+
+  agents        [{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?,
+                pid?, openUrl? }]
+    tool        claude-code | codex
+    title       the short name the tool keeps for the session; never a
+                prompt or any conversation content
+    cwd         the session's working directory, canonical
+    lastActiveAt the tool's last update of the session, or the last Stim
+                command the session ran here when that is newer
+    openUrl     opens the session in the Claude desktop app
+                (claude://code/continue) or the Codex app
+                (codex://threads/<id>) when that app is installed on the
+                Mac; absent for a Claude Code session started in a terminal
+
+  A session works in an environment when its cwd is the environment's
+  path or inside it (the deepest environment wins), or is the environment's
+  git worktree root. \`status --watch\` looks for sessions at most every 15
+  seconds: Claude Code sessions in ~/.claude/sessions whose process runs,
+  and Codex threads in $CODEX_HOME (~/.codex) updated in the last 30
+  minutes. It caches them in $STIM_HOME/agent-sessions.json, which one-shot
+  status reads and ignores once it is 2 minutes old. Both sources are other
+  tools' internal files; a missing or changed one only drops its sessions.
+  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\` and \`worktree warm\`
+  also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
+  that ran them, so that session is listed for 30 minutes after the command
+  even when status cannot see it, and for as long as it runs.
+
   memorySource says how a memory figure was obtained:
 
   footprint  physical footprint, the figure Activity Monitor's Memory

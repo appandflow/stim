@@ -1,8 +1,15 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
-import { diskUsageCacheDir, pullRequestCacheDir, workspaceBuildDetailFile } from './paths.ts';
-import { NATIVE_BUILD_STEPS, type BuildDetail, type DiskMeasure, type WorktreePullRequest } from './status.ts';
+import { agentSessionsCacheFile, diskUsageCacheDir, pullRequestCacheDir, workspaceBuildDetailFile } from './paths.ts';
+import {
+  AGENT_TOOLS,
+  NATIVE_BUILD_STEPS,
+  type AgentSession,
+  type BuildDetail,
+  type DiskMeasure,
+  type WorktreePullRequest,
+} from './status.ts';
 
 function cacheName(path: string): string {
   return `${createHash('sha256').update(path).digest('hex').slice(0, 32)}.json`;
@@ -96,5 +103,44 @@ export function readBuildDetail(root: string, claimId: string): BuildDetail | nu
     total: countOrNull(raw.total),
     line: typeof raw.line === 'string' ? raw.line : null,
     updatedAt: raw.updatedAt,
+  };
+}
+
+/** The coding-agent sessions `status --watch` last found running on this Mac, and when it looked. */
+export interface AgentSessionsCache {
+  discoveredAt: string;
+  sessions: AgentSession[];
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+/** An agent session as Stim wrote it to its cache or workspace state, or null when it is not one. */
+export function agentSessionOf(value: unknown): AgentSession | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (!(AGENT_TOOLS as readonly unknown[]).includes(raw.tool)) return null;
+  if (typeof raw.sessionId !== 'string' || !raw.sessionId || typeof raw.cwd !== 'string' || !raw.cwd) return null;
+  const session: AgentSession = { tool: raw.tool as AgentSession['tool'], sessionId: raw.sessionId, cwd: raw.cwd };
+  const title = optionalString(raw.title);
+  const startedAt = optionalString(raw.startedAt);
+  const lastActiveAt = optionalString(raw.lastActiveAt);
+  const openUrl = optionalString(raw.openUrl);
+  if (title) session.title = title;
+  if (startedAt) session.startedAt = startedAt;
+  if (lastActiveAt) session.lastActiveAt = lastActiveAt;
+  if (Number.isInteger(raw.pid) && (raw.pid as number) > 0) session.pid = raw.pid as number;
+  if (openUrl) session.openUrl = openUrl;
+  return session;
+}
+
+/** The agent sessions `status --watch` last cached, or null before it cached any. */
+export function readAgentSessionsCache(): AgentSessionsCache | null {
+  const entry = readJsonObject(agentSessionsCacheFile());
+  if (!entry || typeof entry.discoveredAt !== 'string' || !Array.isArray(entry.sessions)) return null;
+  return {
+    discoveredAt: entry.discoveredAt,
+    sessions: entry.sessions.map(agentSessionOf).filter((session): session is AgentSession => session !== null),
   };
 }

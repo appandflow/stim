@@ -60,6 +60,7 @@ import {
   readBuildHistory,
   readLastBuilds,
   withStateReadCache,
+  type AgentSession,
   type DeviceAppProcess,
   type DeviceIdleShutdownRecord,
   type LastBuildReport,
@@ -509,6 +510,7 @@ function renderStatus(
     }
     out.push(...lastBuildsLines(state.lastBuilds));
     if (state.worktree?.git) out.push(chalk.dim(`  git: ${gitSummaryText(state.worktree.git)}`));
+    for (const agent of state.agents ?? []) out.push(chalk.dim(`  agent: ${agentLine(agent)}`));
     if (state.logs) {
       const n = state.logs.errorsSinceMarker;
       const errs = n > 0 ? chalk.yellow(` (${n} error${n === 1 ? '' : 's'} since the last marker)`) : '';
@@ -660,6 +662,11 @@ async function readGitInto(worktrees: WorktreeFacts[], orphans: WorktreeFacts[],
     skip: (w) => process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home),
   });
   for (const worktree of worktrees) worktree.git = byPath.get(worktree.path) ?? null;
+}
+
+function agentLine({ tool, title, sessionId, lastActiveAt }: AgentSession): string {
+  const at = lastActiveAt ? `, active ${lastActiveAt}` : '';
+  return `${tool === 'codex' ? 'Codex' : 'Claude Code'} ${title ? `"${title}"` : sessionId}${at}`;
 }
 
 function orphanWorktreeLine(w: WorktreeFacts): string {

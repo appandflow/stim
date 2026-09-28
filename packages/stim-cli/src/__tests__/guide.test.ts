@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import {
+  AGENT_TOOLS,
   APP_PROCESS_STATES,
   PHYSICAL_DEVICE_CONNECTIONS,
   WEB_PAGE_STATES,
@@ -670,6 +671,12 @@ test('the facts topic documents every machine owner kind', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const kind of MACHINE_OWNER_KINDS) expect(body).toMatch(new RegExp(`^ +(kind +)?${kind} `, 'm'));
+});
+
+test('the facts topic documents every agent tool status can attribute', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  expect(body).toMatch(new RegExp(`^ +tool +${AGENT_TOOLS.join(' \\| ')}$`, 'm'));
 });
 
 test('the facts topic documents every memory source', () => {

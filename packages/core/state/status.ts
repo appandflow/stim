@@ -248,6 +248,28 @@ export interface WorktreeFacts {
   pullRequest?: WorktreePullRequest | null;
 }
 
+/** Every coding-agent tool whose sessions status can attribute to an environment. */
+export const AGENT_TOOLS = ['claude-code', 'codex'] as const;
+
+export type AgentTool = (typeof AGENT_TOOLS)[number];
+
+/**
+ * A coding-agent session working in an environment: one whose working directory `cwd` is the environment's path,
+ * inside it, or its git worktree root, or one that ran a Stim command in it. `title` is the short name the tool keeps
+ * for the session, never its conversation. `lastActiveAt` is the tool's own last update, or the Stim command's time
+ * when that is newer. `openUrl` opens the session in the tool's desktop app when that app is installed on this Mac.
+ */
+export interface AgentSession {
+  tool: AgentTool;
+  sessionId: string;
+  title?: string;
+  cwd: string;
+  startedAt?: string;
+  lastActiveAt?: string;
+  pid?: number;
+  openUrl?: string;
+}
+
 export interface AndroidRuntimeFacts {
   serial: string | null;
   state: 'detected' | 'not-detected' | 'missing' | 'unknown';
@@ -474,6 +496,8 @@ export interface EnvironmentState {
   /** Each platform's recent runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
   builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
   disk?: EnvironmentDisk;
+  /** The coding-agent sessions working in the environment, most recently active first; absent when none. */
+  agents?: AgentSession[];
 }
 
 /** `committedMb` sums the environments' `memoryMb`; `overCapacity` is that sum over 60% of `totalMemoryMb`. */
