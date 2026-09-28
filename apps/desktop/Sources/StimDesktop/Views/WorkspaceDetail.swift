@@ -160,16 +160,16 @@ struct WorkspaceDetail: View {
     VStack(spacing: Space.xl) {
       devicePicker(devices: devices, focused: focused)
       if let focused {
-        DeviceTile(
-          device: focused, screenHeight: 640,
-          interactive: focused.isRunning && takenOver.contains(focused.id), workspace: env.path,
-          workspaceTitle: env.names.title,
-          build: env.runningBuild(for: focused),
-          takenOver: takenOver.contains(focused.id),
-          onToggleTakeOver: focused.isInteractive
-            ? {
-              if takenOver.contains(focused.id) { takenOver.remove(focused.id) } else { takenOver.insert(focused.id) }
-            } : nil)
+        if let target = replayTarget(focused) {
+          ReplayHost(target: target) { replay in
+            ReplayingTile(replay: replay) { replaying in
+              focusedTile(focused, replay: replay, replaying: replaying)
+            }
+          }
+          .id(focused.id)
+        } else {
+          focusedTile(focused, replay: nil, replaying: false)
+        }
         AgentFeed(cli: cli, workspace: env.path, device: focused)
           .id(focused.id)
           .frame(maxWidth: 520)
@@ -181,6 +181,40 @@ struct WorkspaceDetail: View {
     .padding(Space.xxxl)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
+}
+
+extension WorkspaceDetail {
+  /// Physical and remote devices have no replay, as on the phone.
+  private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
+    switch device {
+    case .remote: return nil
+    case _ where device.isPhysical: return nil
+    default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
+    }
+  }
+
+  private func focusedTile(_ focused: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {
+    DeviceTile(
+      device: focused, screenHeight: 640,
+      interactive: focused.isRunning && takenOver.contains(focused.id) && !replaying, workspace: env.path,
+      workspaceTitle: env.names.title,
+      build: env.runningBuild(for: focused),
+      takenOver: takenOver.contains(focused.id) && !replaying,
+      onToggleTakeOver: focused.isInteractive
+        ? {
+          if takenOver.contains(focused.id) { takenOver.remove(focused.id) } else { takenOver.insert(focused.id) }
+        } : nil,
+      replay: replay, replaying: replaying, replayOff: env.replayOff,
+      onReplaySeek: { takenOver.remove(focused.id) })
+  }
+}
+
+/// Re-renders its content as the replay starts, stops or moves.
+private struct ReplayingTile<Content: View>: View {
+  @ObservedObject var replay: ReplayController
+  @ViewBuilder var content: (Bool) -> Content
+
+  var body: some View { content(replay.replay != nil) }
 }
 
 struct Inspector: View {
@@ -325,6 +359,10 @@ struct Inspector: View {
           DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
         }
         GitIndicator(git: env.worktree?.git, chips: true)
+        if env.replayOff {
+          Pill { Text("Replay off") }
+            .help("recording.enabled is false for this workspace, so stim-server records none of its screens.")
+        }
         if usage == nil, let mb = env.memoryMb, mb > 0 {
           MemoryPill(mb: mb, source: env.memorySource)
         }

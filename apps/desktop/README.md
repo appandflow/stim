@@ -7,7 +7,9 @@ and memory (the physical footprint `stim status` measures, or resident memory
 from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`. Its
+`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+Device replay, which only stim-server serves, comes from the stim-server the
+Phones tab runs or found, over loopback; see [Replay](#replay). Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
@@ -414,6 +416,38 @@ and **Close** runs `stim stop --slot web`, which keeps Metro, the devices and th
 profile. A failed page load shows a "Page failed to load" pill and a Needs
 attention item that reruns `stim web`, and a tool attached to the DevTools
 endpoint, such as Playwright MCP, shows as the driver.
+
+## Replay
+
+While a stim-server runs on port 7787 (**Serve to phones**, see [Phones](#phones)),
+the focused device of a workspace page offers a replay bar under its screen,
+like the phone app's device viewer. Stim Desktop connects to that server at
+`ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json` for a
+read-only token, spends it as a device named "Stim Desktop", and keeps the
+device token in the login keychain, one per Stim home. The server issued it to
+a loopback connection, so it refuses the token from any other node. When the
+server no longer knows the token, the app pairs once more. The Phones list
+leaves this device out.
+
+The app polls `replay.range` every 10 seconds while the tile shows. The bar has
+**Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
+with each unrecorded gap at a fixed width. Agent actions, errors and crashes
+are markers; hovering one shows its time, command and log line, and clicking
+near one lands 1.5 seconds before it. Dragging shows the frame under the
+pointer. The first seek opens a `frames.subscribe` with `video: ["h264"]` and
+`at`, which also works for a device that is not running; later seeks send
+`frames.seek`. The app decodes the H.264 itself. A server that answers without
+H.264 cannot replay, and the bar says so. **Live** closes the subscription and
+shows the device's own live screen again. Take over is disabled while
+replaying, and a seek releases it. After a lost connection the replay resumes,
+paused at the frame shown.
+
+The bar shows **Recording** while the server records the device, and **Replay
+off** when `stim status --json` reports `recording.enabled` false for the
+workspace. Physical and remote devices have no replay. **Record device screens
+for replay** in **Stim > Settings > Phones** runs `stim settings set
+recording.enabled true|false --scope machine`; turning it off asks first,
+because it deletes the recordings.
 
 ## Remote sessions
 

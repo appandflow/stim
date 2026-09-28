@@ -1,0 +1,65 @@
+{
+  "enabled": true,
+  "recording": false,
+  "spans": [
+    {
+      "start": 1790608608148,
+      "end": 1790608668503
+    }
+  ],
+  "markers": [
+    {
+      "at": 1790608621703,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped (38, 84)"
+    },
+    {
+      "at": 1790608628515,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped @e16"
+    },
+    {
+      "at": 1790608633743,
+      "kind": "action",
+      "command": "scroll",
+      "label": "Scrolled down by 568px"
+    },
+    {
+      "at": 1790608638148.2852,
+      "kind": "error",
+      "label": "TypeError: undefined is not a function (near fetchFeed)"
+    },
+    {
+      "at": 1790608640844,
+      "kind": "action",
+      "command": "scroll",
+      "label": "Scrolled down by 568px"
+    },
+    {
+      "at": 1790608648150,
+      "kind": "action",
+      "command": "back",
+      "label": "Went back"
+    },
+    {
+      "at": 1790608652900,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped (38, 84)"
+    },
+    {
+      "at": 1790608656693,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped @e8"
+    },
+    {
+      "at": 1790608662646,
+      "kind": "action",
+      "command": "close",
+      "label": "Closed default"
+    }
+  ]
+}

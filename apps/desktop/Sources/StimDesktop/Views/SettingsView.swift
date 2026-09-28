@@ -9,8 +9,10 @@ struct SettingsView: View {
   @State private var workspace: String?
   @AppStorage("settingsTab") private var tab = "app"
   @AppStorage("settingsWorkspace") private var lastWorkspace = ""
+  private let cli: Task<StimCLI, Never>
 
   init(cli: Task<StimCLI, Never>, store: StatusStore) {
+    self.cli = cli
     self.store = store
     _model = StateObject(wrappedValue: SettingsModel(cli: cli))
   }
@@ -20,7 +22,7 @@ struct SettingsView: View {
       AppPreferencesView()
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
-      PhonesView(server: ServerController.shared)
+      PhonesView(server: ServerController.shared, cli: cli)
         .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
         .tag("phones")
       scopeTab(.machine, title: "Machine", icon: "desktopcomputer")
