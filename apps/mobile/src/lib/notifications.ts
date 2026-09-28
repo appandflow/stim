@@ -21,7 +21,7 @@ export interface QuietHours {
 /** How a category is delivered: `alert` with a banner and sound, `silent` to the notification list only, or `off`. */
 export type NotifyLevel = 'alert' | 'silent' | 'off';
 
-export const NOTIFY_LEVELS: readonly NotifyLevel[] = ['alert', 'silent', 'off'];
+const NOTIFY_LEVELS: readonly NotifyLevel[] = ['alert', 'silent', 'off'];
 
 export const DEFAULT_LEVELS: Record<OversightCategory, NotifyLevel> = {
   started: 'silent',
