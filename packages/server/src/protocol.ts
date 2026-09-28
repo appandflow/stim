@@ -9,6 +9,16 @@ export const CAPABILITIES = ['read', 'control'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
+/**
+ * What this server serves beyond protocol version 1's base, so a client can tell before it asks. `physical-ios` and
+ * `physical-android` are `physical: true` on `frames.subscribe` for that platform's leased device, and for an
+ * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
+ * the slot's Stim-owned device instead.
+ */
+export const FEATURES = ['physical-ios', 'physical-android'] as const;
+
+export type Feature = (typeof FEATURES)[number];
+
 export const METHODS = [
   'hello',
   'status.subscribe',
@@ -18,6 +28,10 @@ export const METHODS = [
   'settings.get',
   'frames.subscribe',
   'frames.keyframe',
+  'frames.seek',
+  'frames.live',
+  'replay.range',
+  'recording.set',
   'build.plan',
   'machine.get',
   'machine.history',
@@ -64,6 +78,7 @@ export const ERROR_CODES = [
   'action-failed',
   'device-busy',
   'unknown-session',
+  'no-recording',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -95,6 +110,7 @@ export interface HelloResult {
    */
   server: { name: string; version: string; stim: string; home: string };
   capabilities: Capability[];
+  features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];
   /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
@@ -174,7 +190,9 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
 /**
  * A device `stim status` lists as owned by `workspace`, in `slot` (`default` when absent). Frames come only
  * from a booted simulator or a running emulator Stim created, or from the page of the workspace's running
- * Stim-owned Chrome (`web`, default slot only). `fps` caps how many frames a second this
+ * Stim-owned Chrome (`web`, default slot only). With `physical`, frames come from the physical device the workspace
+ * leases in `slot` instead, as `stim status` lists it under `deviceLeases`; an iPhone streams only over a USB
+ * cable, and an Android phone over adb. `fps` caps how many frames a second this
  * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
  * frames, and larger ones while another subscriber of the same device asks for more.
  */
@@ -182,10 +200,17 @@ export interface FrameTarget {
   workspace: string;
   platform: Platform;
   slot?: string;
+  physical?: boolean;
   fps?: number;
   maxEdge?: number;
   /** The codecs this client decodes. The server picks one when it can encode video; see {@link FramesSubscribeResult}. */
   video?: VideoCodec[];
+  /**
+   * Starts the subscription replaying the footage recorded at `at`, as {@link FramesSeekParams} does, and needs
+   * `video`. It needs no running device until `frames.live`, so a stopped workspace's footage can be replayed.
+   */
+  at?: number;
+  rate?: FramesSeekParams['rate'];
 }
 
 export const VIDEO_CODECS = ['h264'] as const;
@@ -203,6 +228,90 @@ export interface FramesSubscribeResult extends SubscribeResult {
 /** Asks for a keyframe on a video subscription, after the client lost its decoder state. */
 export interface KeyframeParams {
   subscription: string;
+}
+
+/**
+ * Plays recorded footage into a video subscription instead of the live screen: the frame at `at` (epoch
+ * milliseconds on the Mac's clock) arrives at once, as the access units from the keyframe before it, then playback
+ * goes on at `rate` times real time. A `rate` of 0 stays paused on that frame. Time where nothing was recorded is
+ * skipped.
+ */
+export interface FramesSeekParams {
+  subscription: string;
+  at: number;
+  rate: (typeof REPLAY_RATES)[number];
+}
+
+export const REPLAY_RATES = [0, 1, 2] as const;
+
+/** `at` is the capture time of the frame shown, at or before the one asked for. */
+export interface FramesSeekResult {
+  at: number;
+}
+
+/** Returns a subscription that seeked to the live screen. */
+export interface FramesLiveParams {
+  subscription: string;
+}
+
+/** A device slot of a workspace, as `frames.subscribe` names it. */
+export interface ReplayTarget {
+  workspace: string;
+  platform: Platform;
+  slot?: string;
+}
+
+/** A time range with recorded footage, in epoch milliseconds on the Mac's clock. */
+export interface ReplaySpan {
+  start: number;
+  end: number;
+}
+
+/** Kinds of timeline marker: an agent `action` on the device, an app or build `error`, and a `crash`. */
+export const REPLAY_MARKER_KINDS = ['action', 'error', 'crash'] as const;
+
+/**
+ * Something that happened at `at`: an action has agent-device's or the web agent's `command`, such as `press`,
+ * `fill`, `open` or `click`. `label` is one line of the log record.
+ */
+export interface ReplayMarker {
+  at: number;
+  kind: (typeof REPLAY_MARKER_KINDS)[number];
+  command?: string;
+  label: string;
+}
+
+/**
+ * What can be replayed for a device slot. `enabled` is the workspace's `recording.enabled`; `recording` is true
+ * while the server records the device now. `spans` are the recorded ranges, oldest first, and `markers` the agent
+ * actions and errors from the start of the first span on.
+ */
+export interface ReplayRange {
+  enabled: boolean;
+  recording: boolean;
+  spans: ReplaySpan[];
+  markers: ReplayMarker[];
+}
+
+/** Turns `recording.enabled` on or off in the machine layer. Needs `control`. */
+export interface RecordingSetParams {
+  enabled: boolean;
+}
+
+/** `recordingsDeleted` lists the workspaces whose recordings turning recording off deleted. */
+export interface RecordingSetResult {
+  enabled: boolean;
+  recordingsDeleted: string[];
+}
+
+/**
+ * A replaying subscription reached the newest recorded frame, at `at`, and stays paused there; the client can
+ * seek again or return to live with `frames.live`.
+ */
+export interface ReplayEndedEvent {
+  event: 'replay-ended';
+  subscription: string;
+  at: number;
 }
 
 export const VIDEO_HEADER_VERSION = 1;
@@ -255,19 +364,22 @@ export interface ActionResult {
 /**
  * Starts a control session on the device `stim status` lists as owned by `workspace` in `slot`. Needs
  * `control`. Refused with `device-busy` while an agent, a device lock or another client drives the device,
- * unless `takeOver` is true.
+ * unless `takeOver` is true. `physical` picks the physical device the workspace leases instead, and only while that
+ * lease lasts: the server never takes or renews a physical device's lease, so `takeOver` cannot move one between
+ * workspaces. A physical iPhone is view only, so it is refused.
  */
 export interface ControlBeginParams {
   workspace: string;
   platform: Platform;
   slot?: string;
+  physical?: boolean;
   takeOver?: boolean;
 }
 
 /**
  * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
  * as after taking over a device another workspace leases, and always for a web page, which `stim device lock`
- * does not cover. `postures` lists what `input.posture` accepts for
+ * does not cover. For a physical device it is the workspace's own lease, which the session ends with. `postures` lists what `input.posture` accepts for
  * the device: `folded` and `unfolded` for an iPhone Duo, all three for an emulator with a hinge, and none
  * otherwise.
  */
@@ -449,6 +561,10 @@ export interface Methods {
   'settings.get': { params?: WorkspaceParams; result: SettingsResult };
   'frames.subscribe': { params: FrameTarget; result: FramesSubscribeResult };
   'frames.keyframe': { params: KeyframeParams; result: Record<string, never> };
+  'frames.seek': { params: FramesSeekParams; result: FramesSeekResult };
+  'frames.live': { params: FramesLiveParams; result: Record<string, never> };
+  'replay.range': { params: ReplayTarget; result: ReplayRange };
+  'recording.set': { params: RecordingSetParams; result: RecordingSetResult };
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
   'machine.get': { params?: Record<string, never>; result: MachineUsage };
   'machine.history': { params?: MachineHistoryParams; result: MachineHistory };
@@ -478,11 +594,38 @@ export type ServerResponse =
   | { id: RequestId; result: Methods[Method]['result'] }
   | { id: RequestId | null; error: ProtocolError };
 
-/** A full status payload, as `stim status --watch --json` prints it. */
+/** One CPU and memory series of {@link UsageHistory}: `cpuPercent` is ps %CPU, where 100 is one core. */
+export interface UsageSeries {
+  cpuPercent: (number | null)[];
+  memoryMb: (number | null)[];
+}
+
+/** A simulator's or emulator's series; `id` is its UDID or AVD name, as its machine owner names it. */
+export interface DeviceUsageSeries extends UsageSeries {
+  kind: 'simulator' | 'emulator';
+  id: string;
+  workspace: string | null;
+  slot?: string;
+}
+
+/**
+ * The last 10 minutes of CPU and memory the server read from status payloads while a client was connected, in slots
+ * of `intervalMs`, oldest first: point `i` of `n` is at `endAt - (n - 1 - i) * intervalMs`, null where no payload
+ * fell in its slot. An environment's series sums every machine owner of that `workspace`, an environment `path`.
+ */
+export interface UsageHistory {
+  intervalMs: number;
+  endAt: number;
+  environments: (UsageSeries & { workspace: string })[];
+  devices: DeviceUsageSeries[];
+}
+
+/** A full status payload, as `stim status --watch --json` prints it, and the server's usage history, when it has one. */
 export interface StatusEvent {
   event: 'status';
   subscription: string;
   payload: StatusPayload;
+  usage?: UsageHistory;
 }
 
 /**
@@ -524,12 +667,14 @@ export interface FrameEvent {
 
 /**
  * Captures for a `frames.subscribe` subscription are slow or a timed-out capture is being retried; the
- * client keeps showing its last frame. Followed by `delayed: false` once captures recover.
+ * client keeps showing its last frame. Followed by `delayed: false` once captures recover. `reason` says why
+ * frames stopped when the server knows, such as a locked iPhone or one another app captures.
  */
 export interface FrameDelayedEvent {
   event: 'frame-delayed';
   subscription: string;
   delayed: boolean;
+  reason?: string;
 }
 
 export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbidden', 'failed'] as const;
@@ -545,7 +690,14 @@ export interface ControlEndedEvent {
   message: string;
 }
 
-export type ServerEvent = StatusEvent | LogsEvent | FrameEvent | FrameDelayedEvent | ErrorEvent | ControlEndedEvent;
+export type ServerEvent =
+  | StatusEvent
+  | LogsEvent
+  | FrameEvent
+  | FrameDelayedEvent
+  | ReplayEndedEvent
+  | ErrorEvent
+  | ControlEndedEvent;
 
 export type ServerMessage = ServerResponse | ServerEvent;
 
@@ -627,7 +779,7 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloResult: {
         type: 'object',
-        required: ['protocol', 'server', 'capabilities', 'actions', 'device'],
+        required: ['protocol', 'server', 'capabilities', 'features', 'actions', 'device'],
         additionalProperties: false,
         properties: {
           protocol: { type: 'integer' },
@@ -643,6 +795,7 @@ export function protocolJsonSchema(): JsonSchema {
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
+          features: { type: 'array', items: { enum: [...FEATURES] } },
           actions: { type: 'array', items: { enum: [...ACTIONS] } },
           device: {
             type: 'object',
@@ -694,6 +847,7 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
+          physical: { type: 'boolean', default: false },
           fps: {
             type: 'integer',
             minimum: 1,
@@ -708,6 +862,8 @@ export function protocolJsonSchema(): JsonSchema {
             default: FRAME_EDGE.default,
           },
           video: { type: 'array', items: { enum: [...VIDEO_CODECS] } },
+          at: { type: 'number', description: 'Start replaying the footage recorded at this time; needs video.' },
+          rate: { enum: [...REPLAY_RATES] },
         },
       },
       ActionParams: {
@@ -751,6 +907,7 @@ export function protocolJsonSchema(): JsonSchema {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
+          physical: { type: 'boolean', default: false },
           takeOver: { type: 'boolean', default: false },
         },
       },
@@ -792,6 +949,44 @@ export function protocolJsonSchema(): JsonSchema {
         type: 'object',
         additionalProperties: false,
         properties: { workspace: { type: 'string', description: 'An environment path from a status payload.' } },
+      },
+      UsageHistory: {
+        type: 'object',
+        required: ['intervalMs', 'endAt', 'environments', 'devices'],
+        additionalProperties: false,
+        properties: {
+          intervalMs: { type: 'integer' },
+          endAt: { type: 'integer' },
+          environments: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['workspace', 'cpuPercent', 'memoryMb'],
+              additionalProperties: false,
+              properties: {
+                workspace: { type: 'string' },
+                cpuPercent: { type: 'array', items: { type: ['number', 'null'] } },
+                memoryMb: { type: 'array', items: { type: ['number', 'null'] } },
+              },
+            },
+          },
+          devices: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['kind', 'id', 'workspace', 'cpuPercent', 'memoryMb'],
+              additionalProperties: false,
+              properties: {
+                kind: { enum: ['simulator', 'emulator'] },
+                id: { type: 'string' },
+                workspace: { type: ['string', 'null'] },
+                slot: { type: 'string' },
+                cpuPercent: { type: 'array', items: { type: ['number', 'null'] } },
+                memoryMb: { type: 'array', items: { type: ['number', 'null'] } },
+              },
+            },
+          },
+        },
       },
       MachineHistory: {
         type: 'object',
@@ -880,6 +1075,38 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['subscription'],
             additionalProperties: false,
             properties: { subscription: { type: 'string' } },
+          }),
+          request('frames.seek', {
+            type: 'object',
+            required: ['subscription', 'at', 'rate'],
+            additionalProperties: false,
+            properties: {
+              subscription: { type: 'string' },
+              at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
+              rate: { enum: [...REPLAY_RATES] },
+            },
+          }),
+          request('frames.live', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
+          request('replay.range', {
+            type: 'object',
+            required: ['workspace', 'platform'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string', minLength: 1 },
+            },
+          }),
+          request('recording.set', {
+            type: 'object',
+            required: ['enabled'],
+            additionalProperties: false,
+            properties: { enabled: { type: 'boolean' } },
           }),
           request('build.plan', { $ref: '#/$defs/BuildPlanParams' }),
           request('machine.get'),
@@ -970,6 +1197,53 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/MachineHistory' },
                   {
                     type: 'object',
+                    required: ['at'],
+                    additionalProperties: false,
+                    properties: { at: { type: 'number' } },
+                  },
+                  {
+                    type: 'object',
+                    required: ['enabled', 'recording', 'spans', 'markers'],
+                    additionalProperties: false,
+                    properties: {
+                      enabled: { type: 'boolean' },
+                      recording: { type: 'boolean' },
+                      spans: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['start', 'end'],
+                          additionalProperties: false,
+                          properties: { start: { type: 'number' }, end: { type: 'number' } },
+                        },
+                      },
+                      markers: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['at', 'kind', 'label'],
+                          additionalProperties: false,
+                          properties: {
+                            at: { type: 'number' },
+                            kind: { enum: [...REPLAY_MARKER_KINDS] },
+                            command: { type: 'string' },
+                            label: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                  {
+                    type: 'object',
+                    required: ['enabled', 'recordingsDeleted'],
+                    additionalProperties: false,
+                    properties: {
+                      enabled: { type: 'boolean' },
+                      recordingsDeleted: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                  {
+                    type: 'object',
                     required: ['subscription'],
                     additionalProperties: false,
                     properties: { subscription: { type: 'string' }, video: { enum: [...VIDEO_CODECS] } },
@@ -1007,6 +1281,7 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'status' },
               subscription: { type: 'string' },
               payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
+              usage: { $ref: '#/$defs/UsageHistory' },
             },
           },
           {
@@ -1044,6 +1319,17 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'frame-delayed' },
               subscription: { type: 'string' },
               delayed: { type: 'boolean' },
+              reason: { type: 'string' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'at'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'replay-ended' },
+              subscription: { type: 'string' },
+              at: { type: 'number' },
             },
           },
           {

@@ -21,15 +21,21 @@ interface AgentEvent {
   summary: string;
   failed: boolean;
   details: Record<string, unknown> | null;
+  requestId: string | null;
 }
 
 interface ParsedAgentEvents {
   events: AgentEvent[];
+  /** When each request whose start is in these lines started. */
+  started: [string, number][];
+  /** Requests that finished without a failure; their action, if any, is in these lines too. */
+  finished: string[];
   session: string | null;
   unknownVersion: { version: unknown; ts: number | null } | null;
 }
 
 const EVENTS_VERSION = 1;
+const MAX_OPEN_REQUESTS = 64;
 
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -37,6 +43,8 @@ function object(value: unknown): Record<string, unknown> | null {
 
 function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
   const events: AgentEvent[] = [];
+  const started: [string, number][] = [];
+  const finished: string[] = [];
   let session: string | null = null;
   let unknownVersion: ParsedAgentEvents['unknownVersion'] = null;
   for (const line of lines) {
@@ -54,14 +62,28 @@ function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
     }
     if (typeof entry.session === 'string') session ??= entry.session;
     const { kind, command, summary } = entry;
+    const requestId = typeof entry.requestId === 'string' ? entry.requestId : null;
+    if (kind === 'request.started' && requestId && Number.isFinite(ts)) started.push([requestId, ts]);
     if (kind !== 'action.recorded' && kind !== 'request.finished') continue;
     const failed = kind === 'request.finished' && entry.status === 'error';
-    if (kind === 'request.finished' && !failed) continue;
+    if (kind === 'request.finished' && !failed) {
+      if (requestId) finished.push(requestId);
+      continue;
+    }
     if (!Number.isFinite(ts) || typeof entry.session !== 'string' || typeof command !== 'string') continue;
     if (typeof summary !== 'string') continue;
-    events.push({ ts, session: entry.session, kind, command, summary, failed, details: object(entry.details) });
+    events.push({
+      ts,
+      session: entry.session,
+      kind,
+      command,
+      summary,
+      failed,
+      details: object(entry.details),
+      requestId,
+    });
   }
-  return { events, session, unknownVersion };
+  return { events, started, finished, session, unknownVersion };
 }
 
 interface RunnerSpan {
@@ -114,9 +136,10 @@ function spanDevice(spans: readonly RunnerSpan[], ts: number): string | null {
   return device;
 }
 
-function agentRecord(event: AgentEvent, deviceId: string, target: AgentTarget): NdjsonRecord {
+function agentRecord(event: AgentEvent, deviceId: string, target: AgentTarget, startedAt?: number): NdjsonRecord {
   return {
     ts: event.ts,
+    ...(startedAt !== undefined && startedAt <= event.ts ? { startedAt } : {}),
     src: 'agent',
     level: event.failed ? 'error' : 'info',
     msg: event.summary,
@@ -193,6 +216,8 @@ interface SessionCursor {
   runner: { size: number; spans: RunnerSpan[] } | null;
   session: string | null;
   unknownReported: boolean;
+  /** Start times of requests that have not finished yet. */
+  started: Map<string, number>;
 }
 
 export interface AgentActionReaderOptions {
@@ -252,7 +277,7 @@ export function createAgentActionReader({
         } catch {
           continue;
         }
-        cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false };
+        cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false, started: new Map() };
         cursors.set(name, cursor);
         try {
           lines.push(...readFileSync(`${eventsPath}.1`, 'utf8').split('\n'));
@@ -266,8 +291,19 @@ export function createAgentActionReader({
       cursor.offset = chunk.next;
       lines.push(...chunk.text.split('\n'));
       const parsed = parseAgentEvents(lines);
+      for (const [requestId, at] of parsed.started) cursor.started.set(requestId, at);
       cursor.session ??= parsed.session;
       const session = cursor.session;
+      const matched = new Map(
+        parsed.events.flatMap((event) =>
+          event.requestId && cursor.started.has(event.requestId)
+            ? [[event.requestId, cursor.started.get(event.requestId)!] as const]
+            : [],
+        ),
+      );
+      const failed = parsed.events.flatMap((event) => (event.failed && event.requestId ? [event.requestId] : []));
+      for (const requestId of [...parsed.finished, ...failed]) cursor.started.delete(requestId);
+      for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
       if (!parsed.events.length && !parsed.unknownVersion) continue;
 
       const runnerPath = join(dir, 'runner.log');
@@ -300,7 +336,8 @@ export function createAgentActionReader({
         if (event.ts < sinceTs) continue;
         const deviceId = deviceAt(event.ts);
         const target = deviceId ? byId.get(deviceId) : undefined;
-        if (target && deviceId) out.push(agentRecord(event, deviceId, target));
+        const startedAt = event.requestId ? matched.get(event.requestId) : undefined;
+        if (target && deviceId) out.push(agentRecord(event, deviceId, target, startedAt));
       }
     }
     return out.toSorted((a, b) => (a.ts as number) - (b.ts as number));

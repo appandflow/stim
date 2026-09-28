@@ -11,10 +11,12 @@ import { connectOwnedBrowser } from '../web/cdp.ts';
 import { findChrome } from '../web/chrome.ts';
 import { runReload } from '../commands/reload.ts';
 import { liveWebRecord } from '../web/page.ts';
-import { readWebRecord, webLogFile } from '../web/state.ts';
+import { readWebPage, readWebRecord, webLogFile } from '../web/state.ts';
 import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 
-const PAGE = `<!doctype html><title>stim web compat</title><body>ok<script>
+const PAGE = `<!doctype html><title>stim web compat</title><body>ok
+<button id="go" onclick="history.pushState({}, '', '/next')">Go</button><input id="field" aria-label="Field">
+<a id="away" href="/away">Away</a><script>
 console.error('compat console error', { answer: 42 });
 setTimeout(() => { throw new Error('compat uncaught'); }, 20);
 </script>`;
@@ -31,7 +33,7 @@ beforeEach(async () => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'web-compat' }));
   process.env.STIM_HOME = join(home, 'stim');
   server = createServer((request, response) => {
-    if (request.url === '/') {
+    if (request.url === '/' || request.url === '/next' || request.url === '/away') {
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(PAGE);
     } else {
@@ -75,9 +77,52 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
       sessionId,
     )) as { result: { value: unknown } };
     expect(size.result.value).toEqual([1280, 800]);
+
+    const center = async (selector: string) => {
+      const { result: rect } = (await cdp.send(
+        'Runtime.evaluate',
+        {
+          expression: `(() => { const r = document.querySelector('${selector}').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`,
+          returnByValue: true,
+        },
+        sessionId,
+      )) as { result: { value: [number, number] } };
+      return { x: rect.value[0], y: rect.value[1] };
+    };
+    const click = async (selector: string) => {
+      const at = await center(selector);
+      for (const type of ['mousePressed', 'mouseReleased'])
+        await cdp.send('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 }, sessionId);
+    };
+    await click('#go');
+    await click('#field');
+    await cdp.send('Input.insertText', { text: 'secret' }, sessionId);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await cdp.send('Runtime.evaluate', { expression: "window.dispatchEvent(new Event('stim-takeover'))" }, sessionId);
+    await click('#go');
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(readWebPage(root)).toMatchObject({
+      url: `http://127.0.0.1:${port}/`,
+      route: `http://127.0.0.1:${port}/next`,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await click('#away');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   } finally {
     cdp.close();
   }
+
+  const actions = readNdjsonGenerations(webLogFile(root)).filter((entry) => entry.src === 'agent');
+  expect(actions.map((entry) => entry.msg)).toEqual([
+    'Clicked button#go "Go"',
+    'Clicked input#field[type=text] "Field"',
+    'Typed 6 characters into input#field[type=text] "Field"',
+    'Clicked a#away "Away"',
+  ]);
+  expect(actions[0]).toMatchObject({ event: 'agent_action', platform: 'web', deviceId: record.targetId });
+  expect(typeof actions[0]!.driver).toBe('string');
+  expect(readWebPage(root)).toEqual({ url: `http://127.0.0.1:${port}/away`, state: 'loaded' });
   expect(record.profile.startsWith(process.env.STIM_HOME!)).toBe(true);
 
   const deadline = Date.now() + 5000;
@@ -100,6 +145,8 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
     assert(Date.now() < reloadDeadline, 'Page.reload produced no load event');
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  expect(records().findLast((entry) => entry.event === 'web_navigation')).toMatchObject({ reload: true });
+  expect(readWebPage(root)).not.toHaveProperty('route');
 
   expect((await teardownOwnedBrowser(root)).status).toBe('torn-down');
   expect(inspectProcessIdentity(record.chromeProcess)).not.toBe('same');

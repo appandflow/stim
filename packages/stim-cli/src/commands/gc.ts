@@ -17,7 +17,14 @@ import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
 import { recordGcResult, takeGcResults, type GcResult } from './gc/results.ts';
-import { emptyCaches, includesWorkspaceOutputs, planCacheEmptying, selectCaches, trimCaches } from './gc/caches.ts';
+import {
+  emptyCaches,
+  includesRecordings,
+  includesWorkspaceOutputs,
+  planCacheEmptying,
+  selectCaches,
+  trimCaches,
+} from './gc/caches.ts';
 import {
   collectDeviceLeases,
   collectParkedSims,
@@ -63,6 +70,7 @@ import {
 } from './gc/ledger.ts';
 import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
+import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
 import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDevice } from './gc/idle.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
@@ -166,6 +174,7 @@ export async function collectGcReport(
       caches,
       workspaceOutputs: withWorkspaces ? collectWorkspaceOutputs({ olderThan, now }) : null,
       workspaceLogs: [],
+      recordings: includesRecordings(scope) ? collectRecordings({ whole: all, olderThan, now }) : [],
       worktreeSweep: null,
       cacheScope: scope,
       olderThan,
@@ -378,6 +387,7 @@ export async function collectGcReport(
     caches,
     workspaceOutputs: collectWorkspaceOutputs({ olderThan, now, exclude: goneWorkspaceDirs }),
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
+    recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
     worktreeSweep: await collectWorktreeSweep({ idle: worktrees, olderThan, now }),
     cacheScope: null,
     olderThan,
@@ -550,7 +560,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     },
     deps,
   );
-  if (cache && report.caches.length === 0 && report.workspaceOutputs === null) {
+  if (cache && report.caches.length === 0 && report.workspaceOutputs === null && !includesRecordings(cache)) {
     const names = [...new Set(discoverCaches().map((c) => c.name))];
     const message = `No shared cache carries "${cache}" in its name or directory.`;
     console.log(chalk.yellow(message));
@@ -586,6 +596,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     report.orphanedWorkspaces.length > 0 ||
     Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
     report.workspaceLogs.some((entry) => entry.willTrim) ||
+    report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
     Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
     report.parkedSims.length > 0 ||
     report.parkedAvds.length > 0 ||
@@ -641,6 +652,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan })).failures
     : 0;
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs);
+  deleteFailures += deleteRecordings(report.recordings, { whole: all, olderThan, now: Date.now() });
   deleteFailures += deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
 
   removeInvalidProjectEntries(invalidProjects);
@@ -762,7 +774,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--older-than <days>',
-      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time, and clear workspace build outputs only for workspaces idle this long and parked devices only once parked this long',
+      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, and clear workspace build outputs only for workspaces idle this long and parked devices only once parked this long',
       (v: string) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
@@ -773,7 +785,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache and the workspace build outputs with --cache all, or only the workspace build outputs with --cache workspaces; all and workspaces are reserved names that never select a single cache. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, or only the device recordings with --cache recordings; all, workspaces and recordings are reserved names that never select a single cache. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

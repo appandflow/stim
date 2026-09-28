@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledHelper } from '@stim-cli/core';
@@ -17,19 +18,36 @@ export interface FrameHint {
 
 export const DEFAULT_FRAME_HINT: FrameHint = { fps: FRAME_FPS.default, maxEdge: FRAME_EDGE.default };
 
+/** What the recording encoder asks of the helper: at most 10 frames a second, 720 pixels and 1 Mbps. */
+export const RECORD_HINT: FrameHint = { fps: 10, maxEdge: 720 };
+const RECORD_BITRATE = 1_000_000;
+
 const SOURCES_DIR = fileURLToPath(new URL('./stim-frames/', import.meta.url));
+/** The scrcpy server jar (Apache-2.0) the helper pushes to a physical Android device; see `dist/scrcpy/NOTICE`. */
+const SCRCPY_SERVER = fileURLToPath(new URL('./scrcpy/scrcpy-server', import.meta.url));
 const BUILD_TIMEOUT_MS = 180_000;
 const VERSION_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const FRAME_MESSAGE = 1;
 const NOTICE_MESSAGE = 2;
 const VIDEO_MESSAGE = 3;
+const RECORD_MESSAGE = 4;
 const VIDEO_HEADER_BYTES = 14;
 const KEYFRAME_INTERVAL_MS = 250;
 
-function helperArgs(device: Device): string[] {
+export function adbPath(env: NodeJS.ProcessEnv): string {
+  for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, join(env.HOME ?? homedir(), 'Library/Android/sdk')]) {
+    if (sdk && existsSync(join(sdk, 'platform-tools/adb'))) return join(sdk, 'platform-tools/adb');
+  }
+  return 'adb';
+}
+
+function helperArgs(device: Device, env: NodeJS.ProcessEnv): string[] {
   if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
-  return device.platform === 'ios' ? ['ios', device.udid] : ['android', device.serial];
+  if (device.platform === 'ios' && device.physical)
+    return ['iphone', device.udid, ...(device.name ? [device.name] : [])];
+  if (device.platform === 'ios') return ['ios', device.udid];
+  return device.physical ? ['android-device', device.serial, adbPath(env), SCRCPY_SERVER] : ['android', device.serial];
 }
 
 /** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
@@ -167,6 +185,7 @@ export class HelperSource {
   private stopped = false;
   private notice: string | null = null;
   keyboard: boolean | null = null;
+  private stalled: string | null = null;
   private stderr = '';
   private readonly ended: (stopped: Promise<void>) => void;
   private readonly bitrate = new Bitrate(DEFAULT_VIDEO_LIMITS, Date.now());
@@ -188,7 +207,7 @@ export class HelperSource {
     this.ended = ended;
     this.lingerMs = lingerMs;
     this.lit = lit;
-    this.child = spawn(helper, helperArgs(device), { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(helper, helperArgs(device, env), { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
     this.child.stderr!.setEncoding('utf8');
     this.child.stderr!.on('data', (chunk: string) => {
@@ -209,7 +228,8 @@ export class HelperSource {
     this.listeners.set(listener, hint);
     this.configure();
     if (listener.video) this.keyframe();
-    else if (this.last) listener.frame(this.last);
+    else if (this.last && !listener.record) listener.frame(this.last);
+    if (this.stalled) listener.delayed(true, this.stalled);
     return () => {
       if (!this.listeners.delete(listener)) return;
       if (this.listeners.size > 0) this.configure();
@@ -244,6 +264,11 @@ export class HelperSource {
     this.child.stdin!.write('{"keyframe":true}\n');
   }
 
+  /** Makes the recording encoder's next frame a keyframe, leaving live video alone. */
+  recordKeyframe(): void {
+    if (!this.stopped) this.child.stdin!.write('{"recordKeyframe":true}\n');
+  }
+
   congested(): void {
     if (this.bitrate.congested(Date.now()) !== null) this.configure();
   }
@@ -256,14 +281,17 @@ export class HelperSource {
     if (this.listeners.size === 0) return;
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
-    const jpegFps = watching.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
+    const viewers = watching.filter(({ listener }) => !listener.record);
+    const jpegFps = viewers.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
+    const recording = viewers.length < watching.length;
     const config = JSON.stringify({
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
       maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
       jpeg: jpegFps.length > 0,
       ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
-      video: jpegFps.length < hints.length,
+      video: jpegFps.length < viewers.length,
       bitrate: this.bitrate.current,
+      ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, fps: RECORD_HINT.fps, bitrate: RECORD_BITRATE } } : {}),
     });
     if (!jpegFps.length) this.last = null;
     if (config === this.config || this.stopped) return;
@@ -293,6 +321,7 @@ export class HelperSource {
         buffer = buffer.subarray(4 + length);
         if (body[0] === FRAME_MESSAGE && body.length > 5) this.frame(body);
         else if (body[0] === VIDEO_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.video(body);
+        else if (body[0] === RECORD_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.record(body);
         else if (body[0] === NOTICE_MESSAGE) this.readNotice(body.subarray(1).toString('utf8'));
       }
     });
@@ -310,9 +339,8 @@ export class HelperSource {
     for (const listener of this.listeners.keys()) if (!listener.video) listener.frame(this.last);
   }
 
-  private video(body: Buffer): void {
-    if (this.stopped) return;
-    const unit: AccessUnit = {
+  private unit(body: Buffer): AccessUnit {
+    return {
       keyframe: (body[1]! & 1) !== 0,
       capturedAt: body.readDoubleBE(2),
       width: body.readUInt16BE(10),
@@ -320,8 +348,28 @@ export class HelperSource {
       data: body.subarray(VIDEO_HEADER_BYTES),
       ...(this.posture ? { posture: this.posture } : {}),
     };
+  }
+
+  private video(body: Buffer): void {
+    if (this.stopped) return;
+    const unit = this.unit(body);
     if (this.bitrate.tick(Date.now()) !== null) this.configure();
     for (const listener of this.listeners.keys()) listener.video?.(unit);
+  }
+
+  private record(body: Buffer): void {
+    if (this.stopped) return;
+    const unit = this.unit(body);
+    for (const listener of this.listeners.keys()) listener.record?.(unit);
+  }
+
+  private stall(reason: string | null): void {
+    if (this.stopped || reason === this.stalled) return;
+    this.stalled = reason;
+    for (const listener of this.listeners.keys()) {
+      if (reason) listener.delayed(true, reason);
+      else listener.delayed(false);
+    }
   }
 
   private readNotice(text: string): void {
@@ -333,6 +381,8 @@ export class HelperSource {
       if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
       if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
+      const stalled = (notice as { stalled?: unknown } | null)?.stalled;
+      if (stalled === null || typeof stalled === 'string') this.stall(stalled);
       const display = (notice as { display?: unknown } | null)?.display;
       if (this.lit && typeof display === 'number') this.posture = this.lit(display);
     } catch {}

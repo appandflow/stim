@@ -55,6 +55,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildMissReason } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import { detectAndroidPackage } from '../../workspace/app-id.ts';
@@ -89,6 +90,7 @@ interface AndroidArtifactRequest {
     estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs'>;
     step: (phase: BuildPhase) => void;
+    miss: (reason: BuildMissReason) => void;
   };
 }
 
@@ -198,7 +200,7 @@ export async function acquireAndroidArtifact(
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats, step } = progress;
+  const { phase, out, estimates, stats, step, miss } = progress;
   const { variant, release, profile: buildProfile, cas, cache: cachePolicy } = buildPlan;
   const useBuildCache = cachePolicy.read;
   let androidPackage = initialPackage;
@@ -523,6 +525,7 @@ export async function acquireAndroidArtifact(
         );
       }
     }
+    miss(record.missReason);
     phase('cache', `miss: ${record.missReason.summary}`);
     if (record.missReason.kind === 'no-baseline') {
       const line = untrackedMissLine(untracked({ projectRoot: root }));

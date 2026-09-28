@@ -24,12 +24,17 @@ export default defineConfig({
       for (const source of [
         'helper/main.swift',
         'helper/VideoEncoder.swift',
+        'helper/PhoneSource.swift',
         ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
       ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);
       }
       copyFileSync('../../apps/desktop/Support/SimFold/main.m', 'dist/stim-frames/sim-fold.m');
       copyFileSync('../../apps/desktop/Support/SimFold/entitlements.plist', 'dist/stim-frames/sim-fold.entitlements');
+      rmSync('dist/scrcpy', { recursive: true, force: true });
+      mkdirSync('dist/scrcpy');
+      for (const name of ['scrcpy-server', 'LICENSE', 'NOTICE'])
+        copyFileSync(`helper/scrcpy/${name}`, `dist/scrcpy/${name}`);
     },
   },
 });

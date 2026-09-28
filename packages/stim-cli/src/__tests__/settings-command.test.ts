@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
+import { workspaceRecordingsDir } from '@stim-cli/core/state';
 
 let base: string;
 let home: string;
@@ -289,4 +290,36 @@ test('an invalid environment value refuses with STIM_BAD_ARG, like an invalid `s
     expect(failure.code).toBe('STIM_BAD_ARG');
     expect(failure.message).toBe('Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots". Expected a number, 0 or more.');
   }
+});
+
+test('turning recording.enabled off deletes the recordings of each workspace it turns off, and only those', async () => {
+  const other = join(base, 'other');
+  mkdirSync(other);
+  saveConfig({ version: 2, projects: { [app]: {}, [other]: {} }, repos: {} });
+  for (const root of [app, other]) mkdirSync(join(workspaceRecordingsDir(root), 'ios-default'), { recursive: true });
+
+  const workspace = await settings(['set', 'recording.enabled', 'false', '--scope', 'workspace', '--json']);
+  expect(JSON.parse(workspace.out[0]!).recordingsDeleted).toEqual([app]);
+  expect(existsSync(workspaceRecordingsDir(app))).toBe(false);
+  expect(existsSync(workspaceRecordingsDir(other))).toBe(true);
+
+  const machine = await settings(['set', 'recording.enabled', '0', '--scope', 'machine']);
+  expect(machine.exitCode).toBe(0);
+  expect(machine.note).toEqual([`Deleted the device recordings of ${other}.`]);
+  expect(existsSync(workspaceRecordingsDir(other))).toBe(false);
+
+  const { out } = await settings(['get', 'recording.enabled', '--json'], { STIM_RECORDING: '1' });
+  expect(JSON.parse(out[0]!)).toMatchObject({ value: true, origin: 'env' });
+});
+
+test('a recording.enabled write that turns nothing off deletes nothing, whatever STIM_RECORDING says', async () => {
+  saveConfig({ version: 2, projects: { [app]: {} }, repos: {} });
+  mkdirSync(join(workspaceRecordingsDir(app), 'ios-default'), { recursive: true });
+
+  const on = await settings(['set', 'recording.enabled', 'true', '--scope', 'machine', '--json'], {
+    STIM_RECORDING: '0',
+  });
+  expect(JSON.parse(on.out[0]!).recordingsDeleted).toEqual([]);
+  await settings(['unset', 'recording.enabled', '--scope', 'workspace']);
+  expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
 });

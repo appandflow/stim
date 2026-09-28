@@ -3,8 +3,9 @@
 `stim-server` serves Stim state to paired clients, such as the Stim phone app,
 and lets the clients the Mac grants control run `stim reload` and `stim stop`
 in a workspace. It runs on the Mac, next to Stim. It changes Stim state only
-through those two commands, and writes only its own pairing state and action
-log under `$STIM_HOME/server/`.
+through those two commands. It writes only its own pairing state and action
+log under `$STIM_HOME/server/`, and the device recordings described under
+[Recording](#recording).
 
 The design is in
 [`docs/specs/2026-09-25-stim-server-design.md`](../../docs/specs/2026-09-25-stim-server-design.md).
@@ -126,7 +127,10 @@ Events are `{ "event", "subscription", ... }`.
 - `hello` must come first. Params: `protocol` (1), `client` (`name`,
   `version`), and `auth`, either `{ "pairingToken", "deviceName" }` or
   `{ "deviceToken" }`. The result carries the server name and versions, the
-  device's `capabilities` (see [Scopes](#scopes)), the `actions` it may run
+  device's `capabilities` (see [Scopes](#scopes)), the server's `features`
+  (`physical-ios` and `physical-android` when it serves `physical: true` for
+  that platform, see [Physical Android devices](#physical-android-devices)),
+  the `actions` it may run
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
@@ -135,7 +139,19 @@ Events are `{ "event", "subscription", ... }`.
   full payload as `stim status --watch --json` prints it, including each
   environment's `physicalDevices`, the phones it leases. All subscribers share
   one `stim status --watch --json` child, which stops with the last
-  subscriber.
+  subscriber. While any status subscription is open, the server keeps a CPU
+  and memory history from each payload's `machine.owners`, and every `status`
+  event carries it beside the payload as `usage`, once it holds a reading:
+  `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
+  minutes in 15-second slots, the cadence at which `status --watch` rereads
+  machine usage, oldest first, at most 40 points: point `i` of `n`
+  is at `endAt - (n - 1 - i) * intervalMs`, and a slot no payload fell in is
+  `null`. Each `environments` entry is `{ "workspace", "cpuPercent",
+"memoryMb" }` and sums every machine owner of that environment path; each
+  `devices` entry is `{ "kind", "id", "workspace", "slot"?, "cpuPercent",
+"memoryMb" }` for a simulator (`id` its UDID) or emulator (`id` its AVD name).
+  `cpuPercent` is ps %CPU, where 100 is one core. The history lives in the
+  server's memory only.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
   Both take the Stim Desktop log viewer's filters: `workspace` (required),
@@ -155,8 +171,11 @@ Events are `{ "event", "subscription", ... }`.
   second and only when the screen changed. It serves only a booted simulator
   or a running emulator that `stim status` lists as owned by that workspace,
   or with `web` the page of the workspace's running Stim-owned Chrome from
-  `stim web` (default slot only);
-  any other device, a physical device from `physicalDevices` included, ends the subscription with a `frames-failed` `error`
+  `stim web` (default slot only), or with `physical: true` the physical
+  iPhone the workspace leases in that slot (see below), or with `physical: true`
+  the Android phone it leases there (see
+  [Physical Android devices](#physical-android-devices));
+  any other device ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
@@ -239,6 +258,98 @@ Events are `{ "event", "subscription", ... }`.
   the encoder. Chrome draws a frame only when the page changes, so a
   keyframe request re-encodes the last one.
 
+  With `physical: true` and `platform: "ios"`, frames come from the
+  physical iPhone whose unexpired lease `stim status` lists under
+  `deviceLeases` for the workspace and slot. `stim ios --device` holds that
+  lease only while it runs, so `stim device lock ios <udid>` keeps the
+  iPhone watchable between runs. A lease on the workspace's own simulator
+  is skipped. The iPhone must be cabled over USB and trust the Mac; over
+  Wi-Fi it has no screen to capture. The helper, run as
+  `stim-frames iphone <udid> <name>` with the lease's device name, sets
+  CoreMediaIO's `kCMIOHardwarePropertyAllowScreenCaptureDevices`, which
+  makes macOS list cabled iPhones as capture devices, the ones QuickTime
+  Player's New Movie Recording shows. Such a device's unique ID is a
+  random UUID that names neither the UDID nor the USB device, so the
+  helper first checks that an iOS device on USB has the UDID, without
+  dashes, as its serial number. It then opens the iOS capture device
+  named like the lease's device name, or the only one when the lease
+  records no name and one iPhone is cabled. With several iPhones cabled,
+  it waits until each shows a screen and refuses when none or several
+  carry the name. It
+  captures only while a subscriber asks for frames. macOS lets several
+  processes capture the iPhone at once. Frames and video go through the
+  same JPEG and H.264 paths as a simulator. A physical iPhone has no
+  screenshot fallback: a subscription without the helper, or whose helper
+  fails, ends with `frames-failed`, such as when the iPhone is not cabled
+  or is unplugged. While macOS is asking for Camera access, or frames
+  stop, such as while the iPhone is locked, the subscription gets
+  `frame-delayed` with `delayed: true` and a `reason`, keeps its last
+  frame, and gets `delayed: false` once frames can arrive again.
+
+  macOS treats the iPhone's screen as a camera and attributes the helper's
+  request to the app that started stim-server. Stim asks for it with its
+  own Camera usage description and entitlement, so the first capture
+  shows the Camera prompt for Stim. An app without them, such as `node`
+  started from a shell, is denied without a prompt, and the subscription
+  ends with a `frames-failed` that names the Camera pane of System
+  Settings. A physical iPhone is view only: `control.begin` with
+  `physical: true` refuses with `action-failed`. It is never recorded, so
+  `at` and `frames.seek` on it fail with `no-recording`, and it counts
+  toward no idle check.
+
+- **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
+  (`default` when absent), like `frames.subscribe`, and returns what can be
+  replayed of that device slot's [recording](#recording):
+  - `enabled`: the workspace's `recording.enabled`, as the last status showed
+    it.
+  - `recording`: true while the server records the device now.
+  - `spans`: the recorded time ranges `{ start, end }`, in epoch milliseconds on
+    the Mac's clock, oldest first. Segments less than 1.5 seconds apart form
+    one span; the gaps between spans are time nothing was recorded, such as
+    after `stim stop`.
+  - `markers`: `{ at, kind, command?, label }` from the start of the first span
+    on, oldest first: the newest 400 actions and 100 errors. They come from `stim logs --json` in the
+    workspace. `action` markers are the agent's actions on that device, failed
+    ones included, from agent-device's session log and the owned Chrome page's
+    agent input, with their `command`, such as `press`, `fill`, `open` or
+    `click`. An agent-device action is placed when the command started, since
+    it logs it when it finished, after any `--settle` wait. `error` and
+    `crash` markers are error and fatal records of the workspace. Metro,
+    client and build errors name no device, so they appear on every device of
+    the workspace. `label` is the record's first line.
+
+  It needs only `read`. A device with no recording gets empty `spans` and
+  `markers`, and runs no `stim` command.
+
+  A video subscription can replay the recording instead of the live screen.
+  `frames.seek` takes the `subscription`, `at` (epoch milliseconds) and `rate`
+  (0, 1 or 2). The server sends the access units from the keyframe at or
+  before `at` through the frame at `at`, or the newest frame when `at` is past
+  it, as binary video messages right away, then plays on at `rate` times real
+  time; 0 stays paused. The result's `at`
+  is the capture time of the frame shown. Playback skips time nothing was
+  recorded, and at the newest recorded frame it sends a `replay-ended` event
+  with `subscription` and `at` and stays paused there. `frames.live` returns
+  the subscription to the live screen, starting at a keyframe, or fails with
+  `frames-failed` when the device is not running. While a subscription
+  replays, the server sends no live frames on it, and `frames.keyframe`
+  resends the frame shown from its keyframe. A seek on a device with no
+  recording fails with `no-recording` and leaves the subscription live, and a
+  JPEG subscription cannot seek.
+
+  `frames.subscribe` with `at`, and optionally `rate`, starts the subscription
+  replaying, and needs `video: ["h264"]`. It needs no running device, so the
+  footage of a stopped workspace can be replayed; it fails with
+  `no-recording` when nothing was recorded, and sends `replay-ended` at once
+  when that footage holds no frame to show. Clients that never send these
+  messages see no change.
+
+- `recording.set` takes `enabled` and runs
+  `stim settings set recording.enabled <enabled> --scope machine --json` in
+  the home directory. It needs `control`, is logged like an
+  [action](#actions) with `action` `recording.set`, and returns `enabled` and
+  `recordingsDeleted`, the workspaces whose recordings turning recording off
+  deleted.
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
   `stim <platform> --plan --json` run in the workspace: the fingerprint, the
@@ -297,6 +408,52 @@ ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has m
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
 
+## Recording
+
+The server records owned simulators, emulators and the Stim-owned Chrome page
+so clients can replay what happened while nobody watched. It records a device
+while `stim status` shows an automation tool driving it (`activity.state` is
+`driven`), or while a client has a `frames.subscribe` subscription to it. It
+records nothing else, holds no device awake and changes no device setting. To
+see drivers, the server keeps one `stim status --watch --json` child running
+for as long as it runs, shared with status subscribers.
+
+Recording goes through the device's `stim-frames` helper, shared with live
+subscribers. The helper runs a second H.264 encoder for it, at 720 pixels on
+the long edge, 1 Mbps and at most 10 frames a second, so live video keeps its
+own bitrate. Live frames are captured at no less than 720 pixels and 10 frames
+a second while the device is recorded. A device on screenshots, without the
+helper, is not recorded, and a helper that fails is started again after 5
+seconds, doubling up to 5 minutes. One stim-server records and prunes a Stim
+home at a time, under an exclusive ownership claim at
+`$STIM_HOME/server/recorder`; a second one serves replays and records once the
+claim frees.
+
+Footage is stored under `$STIM_HOME/workspaces/<id>/recordings/<platform>-<slot>/`
+as segments of about 5 seconds, each starting at a keyframe; the server asks
+the helper for a keyframe once a segment is 5 seconds old, so a screen that
+does not change still gets new segments, and a keyframe request also restarts
+the recording stream at a keyframe. The segment being
+written is `<start>.part`, and a closed segment is `<start>-<end>.seg`, in epoch
+milliseconds. A segment is a sequence of records: a u32 big-endian length of
+the rest, u8 flags (bit 0 keyframe, bit 1 folded, bit 2 unfolded, as in a video
+packet), f64 capture time in milliseconds since the epoch, u16 width, u16
+height, then one Annex-B access unit. The server creates a segment only while
+the workspace directory has its `workspace.json`, so it never fills a directory
+that `stim worktree remove` or `stim gc` emptied.
+
+Every 30 seconds it keeps the last 15 minutes of footage of each device,
+counting only recorded time, and at most 1 GiB of footage across every
+workspace, deleting the oldest segments first. It closes, at their last write,
+the `.part` segments of a server that stopped. When a status payload shows
+`recording.enabled` false for a workspace (the `recording.enabled` setting, or
+`STIM_RECORDING` in the server's environment), it stops recording that
+workspace within seconds and deletes its recordings. `stim stop` ends recording
+and keeps the footage; `stim worktree remove` and `stim gc` delete it. A gc that
+deletes the segment being written loses the rest of that segment; the next one
+is written as usual. Recordings stay on the Mac and are served only to paired
+clients.
+
 ## Push notifications
 
 A paired phone that sends `push.register` gets notifications while its app is
@@ -320,8 +477,9 @@ the events the device chose:
   happened for `stuckMinutes`: no agent action, build, Stim run, Metro bundle
   request or new log error. App log records do not count, because an idle app keeps
   logging: an idle Stim app writes about 200 UIKit info records a minute. The
-  owned Chrome page counts as a device, and while an agent drives it its page
-  log counts as activity, since Stim sees no agent actions there. It opens the device viewer.
+  owned Chrome page counts as a device: an attached tool's input there is an
+  agent action, and while an agent drives it its page log also counts, since an
+  agent's navigations and scripts are not agent actions. It opens the device viewer.
 - `looping`: the newest three or more iOS or Android builds failed the same
   way, at the same first compiler diagnostic `file:line`, or with the same
   error code when there is none, such as three failed launches
@@ -426,10 +584,12 @@ replaced by `?`.
 ## Control
 
 A device with `control` can drive a simulator or emulator that `stim status`
-lists as owned by a workspace. Nothing it sends reaches any other device.
+lists as owned by a workspace, or a physical Android phone the workspace
+leases (see [Physical Android devices](#physical-android-devices)). Nothing it
+sends reaches any other device.
 
 - `control.begin` takes `workspace`, `platform`, `slot` (`default` when
-  absent) and `takeOver`, and returns `{ "session", "platform", "lease",
+  absent), `physical` and `takeOver`, and returns `{ "session", "platform", "lease",
 "postures" }`. `postures` lists what `input.posture` takes for the device:
   `folded` and `unfolded` for an iPhone Duo, `folded`, `half-open` and
   `unfolded` for an emulator with a hinge, such as a `pixel_fold` AVD, and
@@ -514,3 +674,51 @@ refuse the client until it pairs again or updates; clients retry the others.
 
 The package exports the message types, and the build writes their JSON Schema
 to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.
+
+## Physical Android devices
+
+A phone reached with `stim android --device <serial>` (or held with
+`stim device lock android <serial>`) is used, not owned. With `physical: true`,
+`frames.subscribe` and `control.begin` pick the phone the workspace holds an
+unexpired lease on in `slot`, as `deviceLeases` in `stim status` reports it,
+instead of the Stim-owned emulator. A workspace without that lease gets
+`frames-failed` or `action-failed`, and so does a slot whose leased device is
+an emulator. Watching needs `read`, as for an emulator. Control needs
+`control` and that lease: the session never takes, renews or releases a
+phone's lease, and `takeOver` cannot move one between workspaces. When the
+lease is released or expires, the control session ends with `device-gone` and
+frame subscriptions end with `frames-failed`. Both follow `stim status
+--watch`: a release reaches the server when status next reports it, usually
+within seconds and at most about 30 seconds plus one refresh. Input after an
+expiry is refused at once. A physical Android device is not recorded, so `at`
+and `frames.seek` answer `no-recording`, and a watched phone is not listed as
+viewed for Stim's idle checks.
+
+The `stim-frames` helper reaches the phone over adb only, with the scrcpy
+server 4.1 (Apache-2.0), shipped in `dist/scrcpy/` with its `LICENSE` and a
+`NOTICE`. Before every push, the helper checks the jar's sha256 against the one
+pinned in its source. It then pushes the jar to
+`/data/local/tmp/stim-scrcpy-<id>.jar`, starts it with `app_process` as the
+shell user, and connects through an `adb forward` port. The server's cleanup
+process deletes the jar as soon as it runs; when the helper stops, it removes
+the forward and deletes the jar again. It installs nothing, and it asks
+scrcpy for no settings change: no `show_touches`, no `stay_awake` and no
+screen power change (`power_on=false`), with clipboard sync off. The phone
+encodes H.264 of its screen as it is oriented, scaled to fit 2048 pixels;
+the helper decodes it with VideoToolbox and feeds the same encoder, JPEG path,
+keyframe requests and bitrate adaptation as a simulator or emulator. The
+stream has no time limit and restarts only with the helper.
+
+Input goes over scrcpy's control socket: touches as finger events in the
+current frame's pixels, text as injected text, and `\n`, `\t`, `\b`,
+`home`, `back`, `app-switch` and `lock` as key events. `input.rotate` and
+`input.posture` fail with `bad-request`, because a phone turns only in hand.
+
+Some Android 15 and 16 devices send no frame until their screen changes
+(scrcpy #6500, #6546), so a tile can stay blank until then. With its screen
+off, a phone streams what its display shows, such as a Samsung always-on
+display, or black; the stream never wakes it.
+
+For testing without a phone, `STIM_SERVER_TEST_ADB_EMULATORS=1` in the
+server's environment lets a `physical: true` target resolve to an emulator the
+workspace leases, which then streams and takes input over adb the same way.

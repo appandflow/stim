@@ -10,12 +10,12 @@ import {
   livePlatforms,
   orderDevices,
   pathInCheckout,
+  streamsFrames,
+  unservedReason,
   projectOf,
   repositoryRoots,
   runningBuild,
-  servesDevice,
   shortUrl,
-  unservedReason,
   workspaceTitle,
   workspaceTitleAt,
 } from '@/lib/workspaces';
@@ -144,6 +144,28 @@ describe('the Stim-owned Chrome', () => {
     expect(shortUrl(device!.page!.url)).toBe('localhost:5173/apps/groups');
     expect(livePlatforms(env('/w', { web }))).toEqual(['web']);
   });
+
+  it('shows the in-app route the page moved to after its document loaded', () => {
+    const web: WebBrowserState = {
+      browser: 'chrome',
+      version: null,
+      running: true,
+      pid: 1,
+      supervisorPid: 2,
+      url: 'http://localhost:5173/',
+      headless: true,
+      viewport: 'desktop',
+      profile: '/p',
+      cdpEndpoint: 'http://127.0.0.1:8900',
+      targetId: 'T',
+      page: { url: 'http://localhost:5173/', state: 'loaded', route: 'http://localhost:5173/apps/groups/' },
+    };
+    const [device] = devicesOf(env('/w', { live: true, web }));
+    expect(device).toMatchObject({
+      name: 'localhost:5173/apps/groups',
+      page: { url: 'http://localhost:5173/apps/groups/', error: null },
+    });
+  });
 });
 
 describe('livePlatforms', () => {
@@ -193,20 +215,27 @@ describe('physical devices', () => {
     expect(livePlatforms(env('/w', { physicalDevices: leased.physicalDevices }))).toEqual([]);
   });
 
+  it("streams a connected leased phone only when the Mac's stim-server lists its platform's feature", () => {
+    const phones = devicesOf(leased).filter((d) => d.physical);
+    const iphone = phones.find((d) => d.platform === 'ios')!;
+    const android = { ...phones.find((d) => d.platform === 'android')!, running: true };
+    const both = ['physical-ios', 'physical-android'];
+    expect(streamsFrames(iphone, both)).toBe(true);
+    expect(streamsFrames({ ...iphone, running: false }, both)).toBe(false);
+    expect(streamsFrames(android, both)).toBe(true);
+    expect(streamsFrames(android, ['physical-ios'])).toBe(false);
+    expect(streamsFrames(iphone, ['physical-android'])).toBe(false);
+    expect(streamsFrames(iphone, [])).toBe(false);
+    expect(unservedReason(android)).toMatch(/Update stim-server/);
+    expect(unservedReason({ ...android, running: false, state: 'disconnected' })).toBe('disconnected');
+    const owned = devicesOf(leased).find((d) => !d.physical && d.owned)!;
+    expect(streamsFrames(owned, [])).toBe(true);
+  });
+
   it('keys a leased phone apart from the simulator in its slot, and a lease alone makes the workspace active', () => {
     const keys = devicesOf(leased).map(deviceKey);
     expect(new Set(keys).size).toBe(keys.length);
     expect(isActive(env('/w', { physicalDevices: leased.physicalDevices }))).toBe(true);
-  });
-
-  it('streams a leased Android phone only from a server that serves physical-android', () => {
-    const [iphone, pixel] = devicesOf(leased).filter((d) => d.physical);
-    expect(servesDevice(pixel!, ['physical-android'])).toBe(true);
-    expect(servesDevice(pixel!, [])).toBe(false);
-    expect(unservedReason(pixel!)).toMatch(/Update stim-server/);
-    expect(servesDevice(iphone!, ['physical-android'])).toBe(false);
-    const owned = devicesOf(leased).find((d) => !d.physical && d.owned)!;
-    expect(servesDevice(owned, [])).toBe(true);
   });
 });
 
@@ -245,14 +274,50 @@ describe('orderDevices and deviceWarnings', () => {
     }),
   );
 
-  it('puts driven devices first, then running, then stopped, by slot inside each group', () => {
-    expect(orderDevices(devices).map((d) => `${d.slot}/${d.platform}`)).toEqual([
+  const order = (list: typeof devices) => orderDevices(list).map((d) => `${d.slot}/${d.platform}`);
+
+  it('puts running devices first, then orders by platform and slot', () => {
+    expect(order(devices)).toEqual(['duo/ios', 'tablet/ios', 'default/ios', 'default/android', 'tablet/android']);
+  });
+
+  it('keeps the order when only activity and drivers change', () => {
+    const flipped = devices.map((d) =>
+      d.slot === 'duo'
+        ? { ...d, activity: { state: 'idle' as const, basis: [] } }
+        : d.slot === 'tablet' && d.platform === 'ios'
+          ? {
+              ...d,
+              activity: {
+                state: 'driven' as const,
+                driver: { tool: 'argent', pid: 7, since: '2026-09-27T10:00:00Z' },
+                lastActivityAt: '2026-09-27T10:01:00Z',
+                basis: [],
+              },
+            }
+          : d,
+    );
+    expect(order(flipped)).toEqual(order(devices));
+  });
+
+  it('keeps the others in place when a device is added or removed', () => {
+    const web = devicesOf(env('/w', { web: { running: true, url: 'http://localhost:8081' } as WebBrowserState }));
+    const phone = devicesOf(
+      env('/w', {
+        slots: [
+          { slot: 'aaa', ios: null, android: { name: 'Pixel', owned: false, physical: true, state: 'detected' } },
+        ],
+      }),
+    );
+    expect(order([...devices, ...web, ...phone])).toEqual([
       'duo/ios',
       'tablet/ios',
-      'default/android',
+      'default/web',
+      'aaa/android',
       'default/ios',
+      'default/android',
       'tablet/android',
     ]);
+    expect(order(devices.filter((d) => d.slot !== 'duo'))).toEqual(order(devices).filter((k) => !k.startsWith('duo/')));
   });
 
   it('gives a warning to the device with the longest name it mentions', () => {

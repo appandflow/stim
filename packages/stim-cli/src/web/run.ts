@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { WEB_VIEWPORTS, type WebViewport } from '@stim-cli/core/state';
+import { WEB_VIEWPORTS, type ActivityDriver, type WebViewport } from '@stim-cli/core/state';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { getExecutor } from '../exec.ts';
@@ -18,9 +18,18 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { captureProcessIdentity, captureProcessToken } from '../process-identity.ts';
+import { probeWebDrivers } from '../devices/activity.ts';
 import { connectOwnedBrowser, type CdpConnection, type CdpEvent } from './cdp.ts';
 import { DESKTOP_PAGE, PHONE_SCREEN, chromeArgs } from './chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from './events.ts';
+import {
+  INPUT_BINDING,
+  INPUT_LISTENER,
+  INPUT_STARTED,
+  INPUT_WORLD,
+  parseInputBatch,
+  webAgentRecords,
+} from './input.ts';
 import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from './profile.ts';
 import {
   browserLogFile,
@@ -83,6 +92,7 @@ export function parseArgs(argv: string[]): WebSupervisorOptions | { error: strin
 }
 
 const DEVTOOLS_WAIT_MS = 20_000;
+const ROUTE_THROTTLE_MS = 250;
 const CHROME_EXIT_WAIT_MS = 5_000;
 const POLL_MS = 50;
 
@@ -100,6 +110,19 @@ interface RequestFacts {
   url: string;
   method: string;
   document: boolean;
+}
+
+function createDriverProbe(port: number, ownPids: number[]): () => Promise<ActivityDriver | null> {
+  let running: Promise<ActivityDriver | null> | null = null;
+  return () => {
+    running ??= probeWebDrivers({ port, ownPids })
+      .catch(() => null)
+      .then((drivers) => {
+        running = null;
+        return drivers?.[0] ?? null;
+      });
+    return running;
+  };
 }
 
 export async function runWebSupervisor(
@@ -289,6 +312,22 @@ export async function runWebSupervisor(
     };
 
     const requests = new Map<string, RequestFacts>();
+    const driver = createDriverProbe(options.port, [process.pid, pid]);
+    let batchDriver: Promise<ActivityDriver | null> | null = null;
+    let reloading = false;
+    let route: { written: string | null; latest: string | null; at: number; timer: NodeJS.Timeout | null } = {
+      written: null,
+      latest: null,
+      at: 0,
+      timer: null,
+    };
+    const writeRoute = () => {
+      route.timer = null;
+      if (route.latest === null || route.latest === route.written) return;
+      route.written = route.latest;
+      route.at = Date.now();
+      log('info', 'web_route', `route changed to ${route.latest}`, { url: route.latest });
+    };
     connection.onEvent((event: CdpEvent) => {
       if (event.method === 'Target.targetDestroyed' && event.params.targetId === targetId && !stopping) {
         void stopChrome().then(() => finish(0, 'info', 'web_page_closed', 'the owned page was closed; closed Chrome'));
@@ -312,6 +351,35 @@ export async function runWebSupervisor(
           if (record) writer.write(record);
           return;
         }
+        case 'Runtime.bindingCalled': {
+          if (params.name !== INPUT_BINDING) return;
+          if (params.payload === INPUT_STARTED) {
+            batchDriver = driver();
+            return;
+          }
+          const batch = parseInputBatch(String(params.payload ?? ''));
+          const attributed = batchDriver ?? driver();
+          batchDriver = null;
+          if (!batch.actions.length && !batch.dropped) return;
+          void (async () => {
+            const attached = await attributed;
+            if (!attached) return;
+            for (const record of webAgentRecords(batch, targetId, attached.tool, Date.now())) writer.write(record);
+          })();
+          return;
+        }
+        case 'Page.frameStartedNavigating':
+          if (params.frameId === targetId) reloading = String(params.navigationType).startsWith('reload');
+          return;
+        case 'Page.navigatedWithinDocument': {
+          if (params.frameId !== targetId || typeof params.url !== 'string') return;
+          route.latest = params.url;
+          if (route.timer) return;
+          const wait = route.at + ROUTE_THROTTLE_MS - Date.now();
+          if (wait <= 0) writeRoute();
+          else route.timer = setTimeout(writeRoute, wait);
+          return;
+        }
         case 'Page.loadEventFired':
           log('info', 'web_page_loaded', 'the page fired its load event');
           return;
@@ -319,8 +387,16 @@ export async function runWebSupervisor(
           const request = params.request as { url: string; method: string };
           const document = params.type === 'Document' && params.frameId === targetId;
           requests.set(String(params.requestId), { url: request.url, method: request.method, document });
-          if (document)
-            log('info', 'web_navigation', `navigating to ${request.url}`, { url: request.url, marker: true });
+          if (document) {
+            if (route.timer) clearTimeout(route.timer);
+            route = { written: null, latest: null, at: 0, timer: null };
+            log('info', 'web_navigation', `${reloading ? 'reloading' : 'navigating to'} ${request.url}`, {
+              url: request.url,
+              marker: true,
+              ...(reloading ? { reload: true } : {}),
+            });
+            reloading = false;
+          }
           return;
         }
         case 'Network.responseReceived': {
@@ -364,6 +440,20 @@ export async function runWebSupervisor(
 
     for (const domain of ['Runtime', 'Log', 'Network', 'Page'])
       await connection.send(`${domain}.enable`, {}, sessionId);
+    try {
+      await connection.send(
+        'Runtime.addBinding',
+        { name: INPUT_BINDING, executionContextName: INPUT_WORLD },
+        sessionId,
+      );
+      await connection.send(
+        'Page.addScriptToEvaluateOnNewDocument',
+        { source: INPUT_LISTENER, worldName: INPUT_WORLD },
+        sessionId,
+      );
+    } catch (error) {
+      log('warn', 'web_input_unobserved', `agent input on the page is not recorded: ${describe(error)}`);
+    }
     if (options.viewport === 'phone') {
       await connection.send('Emulation.setDeviceMetricsOverride', { ...PHONE_SCREEN, mobile: true }, sessionId);
       await connection.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sessionId);

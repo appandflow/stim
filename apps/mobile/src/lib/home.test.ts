@@ -61,13 +61,13 @@ const macs = [
 ];
 
 describe('mergeWorkspaces', () => {
-  it('lists every Mac in one list: building, then live, then idle, keeping each item on its Mac', () => {
+  it('lists every Mac in one list by project and name, keeping each item on its Mac', () => {
     const items = mergeWorkspaces(macs);
     expect(items.map((i) => [i.title, i.macName, i.project])).toEqual([
       ['building', 'Mac mini', 'app'],
+      ['idle-one', 'MacBook Pro', 'app'],
       ['live-one', 'MacBook Pro', 'app'],
       ['other', 'Mac mini', 'other'],
-      ['idle-one', 'MacBook Pro', 'app'],
     ]);
     expect(projectNames(items)).toEqual(['app', 'other']);
   });
@@ -88,12 +88,12 @@ describe('warming and ready workspaces', () => {
     },
   ];
 
-  it('shows them under the live filter, above live workspaces', () => {
+  it('shows them under the live filter', () => {
     const items = mergeWorkspaces(setup);
     expect(filterWorkspaces(items, DEFAULT_FILTERS, ['a']).shown.map((i) => i.title)).toEqual([
+      'live-one',
       'ready',
       'warming',
-      'live-one',
     ]);
     expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, activity: 'idle' }, ['a']).shown.map((i) => i.title)).toEqual([
       'idle-one',
@@ -115,7 +115,7 @@ describe('filterWorkspaces', () => {
   });
 
   it('filters by Mac, project, errors and remote sessions', () => {
-    expect(titles({ activity: 'all', macs: ['a'] })).toEqual(['live-one', 'idle-one']);
+    expect(titles({ activity: 'all', macs: ['a'] })).toEqual(['idle-one', 'live-one']);
     expect(titles({ activity: 'all', projects: ['other'] })).toEqual(['other']);
     expect(titles({ errorsOnly: true })).toEqual(['live-one']);
     expect(titles({ remoteOnly: true })).toEqual(['other']);
@@ -153,9 +153,79 @@ describe('runningDevices', () => {
       runningDevices(items, { ...DEFAULT_FILTERS, ...f }, ['a', 'b']).map(
         (t) => `${t.item.title}/${t.device.platform}`,
       );
-    expect(keys({})).toEqual(['other/ios', 'idle-with-sim/ios']);
+    expect(keys({})).toEqual(['idle-with-sim/ios', 'other/ios']);
     expect(keys({ macs: ['a'], errorsOnly: true })).toEqual(['idle-with-sim/ios']);
     expect(keys({ projects: ['other'] })).toEqual(['other/ios']);
+  });
+});
+
+describe('order across status pushes', () => {
+  const sim = (udid: string, extra = {}) => ({
+    name: `stim-${udid} (iPhone 18 Pro 27.0)`,
+    udid,
+    owned: true,
+    state: 'Booted',
+    ...extra,
+  });
+  const emulator = {
+    name: 'stim-emu',
+    serial: 'emulator-5554',
+    owned: true,
+    physical: false,
+    state: 'detected' as const,
+  };
+  const before = [
+    env('/u/app/.worktrees/zeta', { live: true, ios: sim('Z'), android: emulator }),
+    env('/u/app/.worktrees/alpha', { live: true, ios: sim('A'), slots: [{ slot: 'tablet', ios: sim('T') }] }),
+    env('/u/app/.worktrees/idle', { ios: sim('I') }),
+  ];
+  const driven = { state: 'driven' as const, driver: { tool: 'agent-device', pid: 1, since: null }, basis: [] };
+  const after = [
+    env('/u/app/.worktrees/zeta', {
+      live: true,
+      ios: sim('Z', { activity: driven }),
+      android: { ...emulator, activity: driven },
+      build: { ...payload.environments.find((e) => e.build)!.build!, state: 'running' },
+    }),
+    env('/u/app/.worktrees/alpha', {
+      live: true,
+      ios: sim('A', { activity: { state: 'idle', lastActivityAt: '2026-09-27T10:00:00Z', basis: [] } }),
+      slots: [
+        { slot: 'tablet', ios: sim('T', { activity: { ...driven, driver: { tool: 'argent', pid: 2, since: null } } }) },
+      ],
+    }),
+    env('/u/app/.worktrees/idle', { ios: sim('I'), phase: 'warming' }),
+  ];
+  const listed = (environments: EnvironmentState[]) => {
+    const items = mergeWorkspaces([{ id: 'a', name: 'Mac', status: status(environments) }]);
+    return {
+      workspaces: items.map((i) => i.title),
+      tiles: runningDevices(items, DEFAULT_FILTERS, ['a']).map(
+        (t) => `${t.item.title}/${t.device.slot}/${t.device.platform}`,
+      ),
+    };
+  };
+
+  it('does not change when only activity, drivers, builds or setup change', () => {
+    expect(listed(before)).toEqual({
+      workspaces: ['alpha', 'idle', 'zeta'],
+      tiles: ['alpha/default/ios', 'alpha/tablet/ios', 'idle/default/ios', 'zeta/default/ios', 'zeta/default/android'],
+    });
+    expect(listed(after)).toEqual(listed(before));
+  });
+
+  it('keeps the others in place when a workspace or device comes or goes', () => {
+    const added = [...before, env('/u/app/.worktrees/middle', { live: true, ios: sim('M') })];
+    expect(listed(added).tiles).toEqual([
+      'alpha/default/ios',
+      'alpha/tablet/ios',
+      'idle/default/ios',
+      'middle/default/ios',
+      'zeta/default/ios',
+      'zeta/default/android',
+    ]);
+    const stopped = before.map((e) => (e.path.endsWith('alpha') ? { ...e, slots: [] } : e));
+    expect(listed(stopped).tiles).toEqual(listed(before).tiles.filter((t) => t !== 'alpha/tablet/ios'));
   });
 });
 

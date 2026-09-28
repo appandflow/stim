@@ -4,6 +4,7 @@ export type GcResultKind =
   | 'idleDevice'
   | 'deviceRecord'
   | 'workspaceOutputs'
+  | 'recording'
   | 'workspaceDirectory'
   | 'project'
   | 'buildLock'

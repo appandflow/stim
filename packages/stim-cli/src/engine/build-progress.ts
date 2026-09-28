@@ -1,13 +1,21 @@
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { formatElapsed, plural } from '../command-output.ts';
 import { readClaimSet, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
 import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import type { RunHistory, RunOutcomeKind, RunSample, StatsPlatform } from './stats.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
+import { createBuildDetailParser } from './build-detail.ts';
 import {
   BUILD_HISTORY_KEY,
   BUILD_HISTORY_LIMIT,
   BUILD_PHASES,
   LAST_BUILD_KEYS,
+  parseMissReason,
+  workspaceBuildDetailFile,
   type ActiveBuildState,
+  type BuildDetail,
+  type BuildMissReason,
   type BuildPhase,
   type BuildReport,
   type BuildResult,
@@ -33,19 +41,66 @@ export interface ActiveBuildRecord {
   phaseStartedAt: string;
   phases: { phase: BuildPhase; startedAt: string }[];
   claim: ActiveBuildClaim;
+  missReason?: BuildMissReason;
 }
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
+  /** Records why the run's cache lookup missed. */
+  miss(reason: BuildMissReason): void;
+  /** Reads one record the run writes to its build log, for the native tool's progress. */
+  output(record: unknown): void;
   durations(): Record<string, number>;
   clear(): void;
 }
 
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
+  miss: () => {},
+  output: () => {},
   durations: () => ({}),
   clear: () => {},
 };
+
+/** `writer`, with each record it writes also passed to `progress.output`. */
+export function tapBuildLog(writer: NdjsonWriter, progress: BuildProgress): NdjsonWriter {
+  if (progress === NO_BUILD_PROGRESS) return writer;
+  return {
+    get file() {
+      return writer.file;
+    },
+    write(record) {
+      progress.output(record);
+      return writer.write(record);
+    },
+    close: () => writer.close(),
+    get written() {
+      return writer.written;
+    },
+    get dropped() {
+      return writer.dropped;
+    },
+    get lastError() {
+      return writer.lastError;
+    },
+  };
+}
+
+const DETAIL_WRITE_MS = 2000;
+
+function toolLine(record: unknown): string | null {
+  if (!record || typeof record !== 'object') return null;
+  const { src, level, msg } = record as Record<string, unknown>;
+  return src === 'build' && level === 'debug' && typeof msg === 'string' ? msg : null;
+}
+
+function writeBuildDetail(root: string, claimId: string, detail: BuildDetail): void {
+  const file = workspaceBuildDetailFile(root);
+  const tmp = `${file}.tmp-${process.pid}`;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(tmp, JSON.stringify({ claimId, detail }));
+  renameSync(tmp, file);
+}
 
 const COLD_PHASES: readonly BuildPhase[] = ['prebuild', 'pods', 'compile'];
 const DEVICE_PHASES: readonly BuildPhase[] = ['install', 'launch'];
@@ -88,6 +143,15 @@ export function startBuildProgress({
   const write = (before: (state: WorkspaceState) => WorkspaceState = (state) => state) =>
     guard(() => updateWorkspaceState(root, (state) => ({ ...before(state), [ACTIVE_BUILD_KEY]: record })));
   write(withInterruptedBuild);
+  const parser = createBuildDetailParser();
+  let detailWrittenAt = -Infinity;
+  let detailTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushDetail = () => {
+    detailTimer = null;
+    detailWrittenAt = now();
+    const detail = parser.detail(new Date(detailWrittenAt).toISOString());
+    if (detail) guard(() => writeBuildDetail(root, record.claim.claimId, detail));
+  };
   return {
     step(phase) {
       if (phase === record.phase) return;
@@ -97,10 +161,25 @@ export function startBuildProgress({
       record.phases.push({ phase, startedAt: at });
       write();
     },
+    miss(reason) {
+      record.missReason = reason;
+      write();
+    },
+    output(line) {
+      const msg = toolLine(line);
+      if (msg === null || !parser.push(msg) || detailTimer) return;
+      const wait = detailWrittenAt + DETAIL_WRITE_MS - now();
+      if (wait <= 0) return flushDetail();
+      detailTimer = setTimeout(flushDetail, wait);
+      detailTimer.unref?.();
+    },
     durations() {
       return phaseDurations(record.phases, now());
     },
     clear() {
+      if (detailTimer) clearTimeout(detailTimer);
+      detailTimer = null;
+      guard(() => rmSync(workspaceBuildDetailFile(root), { force: true }));
       guard(() => {
         clearWorkspaceStateKey(
           root,
@@ -209,6 +288,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const phases = Array.isArray(record.phases)
     ? record.phases.filter((entry) => isPhase(entry?.phase) && typeof entry?.startedAt === 'string')
     : [];
+  const missReason = parseMissReason(record.missReason);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -216,6 +296,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     phase: record.phase,
     phaseStartedAt: record.phaseStartedAt,
     phases,
+    ...(missReason ? { missReason } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -292,6 +373,7 @@ export function buildReport(
     startedAt: record.startedAt,
     phaseStartedAt: record.phaseStartedAt,
     ...estimateBuild(history, record.platform, liveOutcome(record), record.phase),
+    ...(record.missReason ? { missReason: record.missReason } : {}),
   };
 }
 

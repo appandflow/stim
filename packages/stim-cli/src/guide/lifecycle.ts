@@ -1234,6 +1234,27 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
     4. trim shared cache entries nothing has used for 14 days
        (\`gc --delete --older-than 14\` for the caches)
 
+  IDLE SHUTDOWN (OFF BY DEFAULT): with devices.idleShutdownMinutes set, a
+  workspace's supervisor shuts down that workspace's owned simulators and
+  emulators once they have been idle that long, without waiting for a run
+  to go over budget. Idle is step 1 with that many minutes in place of 10:
+  booted, no driver, no Stim or agent-device lock, no build in progress, and
+  no activity. A stim-server client viewing the device (the phone app's
+  device viewer) counts as activity, here and in step 1. The supervisor
+  checks once a minute after the workspace's last Stim command, in-app log
+  and device log are all that old, rechecks under the workspace's native-run lock, and shuts devices down
+  through the same teardown as \`stop\`: never deleted, and physical
+  devices are never touched. It writes a device_idle_shutdown line to
+  metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim
+  status\` shows "shut down after 30m idle" on the device until the next
+  \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
+  shorter, the dev server's idle stop first shuts down the devices idle that
+  long, because no supervisor is left to check afterwards. Nothing checks
+  without a supervisor: release runs, and after \`stim stop\`. The setting
+  is read when the supervisor starts. Stim Desktop's simulator view is not a
+  stim-server client and does not count as a viewer. Turn it on with
+  \`stim settings set devices.idleShutdownMinutes 30 --scope machine\`.
+
   Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
   a run still over them prints one \`budget\` warning and continues. The
   current workspace is never reclaimed.
@@ -1576,10 +1597,24 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   and the remedy is the cable. Metro is unaffected: a Debug app reaches it
   over the LAN either way.
 
+  WATCHING A LEASED ANDROID PHONE: while this workspace holds the phone's
+  lease, stim-server can stream its screen to paired clients that ask for the
+  physical device, and let one with control tap and type on it. stim-server
+  pushes the scrcpy server to /data/local/tmp for the stream and deletes it
+  when the stream stops; it installs nothing and changes no setting. Control
+  ends when the lease is released or expires, and stim-server never takes a
+  phone's lease itself.
+
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
   the devicectl launch session. \`gc --delete\` removes expired lease files;
   neither command shuts down the phone or uninstalls the app.
+
+  WATCHING THE PHONE: while this workspace holds the lease, stim-server
+  streams a USB-cabled iPhone's screen to the phone app, view only; Stim
+  sends a physical iPhone no input. The lease ends with the run, so
+  \`device lock ios <udid>\` keeps it watchable between runs. A Wi-Fi phone
+  has no stream, and a locked phone shows its last frame until unlocked.
 
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide

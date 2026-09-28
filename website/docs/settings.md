@@ -61,7 +61,8 @@ Stim reads the first value found in this order:
    (`--scope repo`).
 3. Committed `.stim.json` beside the app's `package.json` (`--scope committed`).
 4. Machine defaults in `~/.stim/config.json` (`--scope machine`), for the
-   top-level `optimizations` settings and `android.deviceProfile` only.
+   top-level `optimizations` settings, `android.deviceProfile` and
+   `devices.idleShutdownMinutes` only.
 5. The Stim default.
 
 An environment variable that overrides a setting wins over every layer.
@@ -115,6 +116,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                   |
 | `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60 |
+| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 0 |
 | `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port |
 | `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile      |
 | `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                |
@@ -298,6 +300,11 @@ and what the next command would reclaim.
 stim settings set budget.minFreeDiskGb 40
 ```
 
+Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
+workspace's owned simulators and emulators once they have been idle that long.
+It is off by default; see
+[idle shutdown](./owned-devices.md#idle-shutdown).
+
 Try it with an agent:
 
 ```text
@@ -321,6 +328,30 @@ cross-volume copy costs and invalid values.
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
 
+## Device recordings
+
+`stim-server` records the screens of owned simulators, emulators and the
+Stim-owned Chrome page, so the phone app can scrub back through what an agent
+did while you were not watching. It records a device only while an agent or
+automation tool drives it, or while the phone app watches it. It keeps the
+last 15 minutes of footage per device. Recordings stay on your Mac, under
+`$STIM_HOME/workspaces/<id>/recordings/`, and `stim-server` serves them only to
+paired devices.
+
+Turn recording off for the whole Mac, a repository, or one workspace:
+
+```bash
+stim settings set recording.enabled false --scope machine
+```
+
+`recording.enabled` is true by default. The workspace layer wins over the repo
+layer, which wins over the machine layer. `STIM_RECORDING=0` overrides every
+layer; `stim-server` reads it when it starts. Turning recording off deletes the
+existing recordings of every workspace it turns off, and `stim-server` stops
+recording them within seconds. See
+[Inspect and clean caches](./build-caches.md#device-recordings) for how
+recordings are otherwise cleaned up.
+
 ## Environment variables
 
 | Variable                              | Purpose                                                                                                     |
@@ -341,6 +372,7 @@ control build optimizations on this machine without changing project files.
 | `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
 | `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
 | `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
+| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                  |
 
 `STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
 A relative value would resolve against each process's working directory, so

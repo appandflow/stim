@@ -19,6 +19,7 @@ import { environmentState, withWebFacts } from '../status.ts';
 import { resolveWebUrl } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
+import { parseInputBatch, webAgentRecords } from '../web/input.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
 import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
@@ -199,6 +200,42 @@ describe('page logs', () => {
   });
 });
 
+describe('agent input', () => {
+  test('becomes agent records for the page target, dropping malformed actions and counting lost ones', () => {
+    const batch = parseInputBatch(
+      JSON.stringify({
+        actions: [
+          { command: 'click', at: 1000, target: 'button "Save"', x: 10, y: 20 },
+          { command: 'type', at: 2000, target: 'input#email[type=email]', characters: 12 },
+          { command: 'press', at: 3000, target: null, key: 'Enter', count: 2 },
+          { command: 'scroll', at: 4000, deltaX: 0, deltaY: -480, x: 5, y: 5 },
+          { command: 'click', at: 'soon' },
+          { command: 'hover', at: 5000 },
+        ],
+        dropped: 3,
+      }),
+    );
+    const records = webAgentRecords(batch, 'TARGET', 'playwright', 9000);
+    expect(records.map((record) => [record.ts, record.command, record.msg])).toEqual([
+      [1000, 'click', 'Clicked button "Save"'],
+      [2000, 'type', 'Typed 12 characters into input#email[type=email]'],
+      [3000, 'press', 'Pressed Enter x2'],
+      [4000, 'scroll', 'Scrolled up 480px'],
+      [9000, 'input', '3 more input events were not recorded'],
+    ]);
+    for (const record of records) {
+      expect(record).toMatchObject({
+        src: 'agent',
+        event: 'agent_action',
+        platform: 'web',
+        deviceId: 'TARGET',
+        driver: 'playwright',
+      });
+    }
+    expect(parseInputBatch('not json')).toEqual({ actions: [], dropped: 0 });
+  });
+});
+
 describe('latest page load', () => {
   const line = (record: object) => JSON.stringify({ ts: 1, src: 'device', platform: 'web', ...record });
   const navigation = (url: string) => line({ event: 'web_navigation', url, marker: true, msg: `navigating to ${url}` });
@@ -245,6 +282,22 @@ describe('latest page load', () => {
       [navigation('http://a/'), line({ event: 'web_page_loaded' }), ...chatter, ''].join('\n'),
     );
     expect(readWebPage(root)).toEqual({ url: 'http://a/', state: 'loaded' });
+  });
+
+  test('reports the newest in-app route since the navigation, and none from before it', () => {
+    const route = (url: string) => line({ event: 'web_route', url, msg: `route changed to ${url}` });
+    const lines = [
+      navigation('http://a/'),
+      line({ event: 'web_page_loaded' }),
+      route('http://a/one'),
+      route('http://a/two'),
+    ];
+    expect(latestPageLoad(lines)).toEqual({ url: 'http://a/', state: 'loaded', route: 'http://a/two' });
+    expect(latestPageLoad([...lines, route('http://a/')])).toEqual({ url: 'http://a/', state: 'loaded' });
+    expect(latestPageLoad([...lines, navigation('http://a/settings')])).toEqual({
+      url: 'http://a/settings',
+      state: 'loading',
+    });
   });
 
   test('is null before the first navigation', () => {

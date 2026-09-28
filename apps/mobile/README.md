@@ -12,7 +12,8 @@ reload and stop a workspace:
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  building, warming and ready ones first, then live ones. A workspace
+  in Live and Idle sections, each by project and name, so a workspace keeps its
+  place while builds run and agents attach. A workspace
   `stim worktree warm` is preparing shows **Warming…** with its step and an
   activity indicator, and one it has prepared shows **Ready** until its first
   run; both count as live for the filters. Each is titled by its worktree's
@@ -49,7 +50,10 @@ reload and stop a workspace:
   open the workspace's errors, and every other item opens the workspace.
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
   the list to a grid of every running simulator and emulator on every paired
-  machine, with its latest frame, model, workspace name and machine.
+  machine, with its latest frame, model, workspace name and machine, by project
+  and workspace name and, inside a workspace, iOS, Android, Web and then physical
+  devices, by slot. A tile never moves because a tool starts or stops driving
+  it; its driven badge shows that instead.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile's screen opens the [device view](#device-view); tapping the
@@ -88,53 +92,111 @@ reload and stop a workspace:
   **Machines** (the same switch as home's toggle), **Pair a machine**, and
   **Recent workspaces**, the workspaces most recently live or opened on this
   phone. The button at the bottom shows the number of
-  paired machines and opens **About**, with the app and server versions. A tap
-  on home, a swipe left, or Android's back button closes it. Pairing scans the QR code Stim Desktop
+  paired machines and opens **About**, with the app and server versions, as a
+  sheet over the menu, which stays open when the sheet closes. A tap
+  on home, a swipe left, or Android's back button closes the menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
-- **Workspace**: a status card with the branch and the app's folder inside
-  its checkout, Metro's port and health, the git state as chips, memory, and the error count, which
-  opens the errors; a Build card for each platform the workspace uses: the running
-  build's progress with its cache outcome ("Cache hit" or "Cold build",
-  "Likely ..." before the run reaches a phase that decides it) in place of the
-  platform's name; the last build and why it built that way ("Cache hit (local)",
-  "Cold build: app config changed", or failed), with its duration and age; and what the next build would find, why,
-  and how long it should take ("Next: cache hit (local)" or "Next: cold build, Podfile.lock changed, ~5:40"), from
-  the server's read-only `build.plan`. Tapping a card opens that platform's build details: the running build, the
-  last build with when it ran, a failed build's compiler errors, and why it missed the cache with the changed
-  fingerprint sources; then the next build with the median behind its estimate, why it would miss the cache, a
-  refusal's remedy, when it was checked, and **Check again**. **Recent builds** lists the platform's last 10 runs
-  from status `builds`, newest first, under a bar sparkline of the durations of runs that finished (two or more),
-  colored by result. Each row shows the result (a cache hit, a cold build, failed, cancelled, or interrupted), its
-  duration, and a detail line: the miss reason, a failed run's cache hit, or cache reads off; how long ago it ran;
-  and a slot other than the default. Tapping a row shows its configuration, fingerprint and phase times, its
-  compiler errors and why it missed. The screen asks for each platform with a last build or a device when it opens,
-  one plan at a time, reuses a result for 60 seconds unless that platform's last build changes, asks again after a failure or a
-  reconnect, ignores a reply that arrives after it closes, and asks nothing while a build runs. Below the cards come
-  warnings, remote sessions, and each
-  device: a running device with the latest frame the server sends for it,
-  fitted to the screen's width, and **Folded** or **Unfolded** for an iPhone
-  Duo or an Android foldable emulator, a stopped one as a single row. Tapping
-  the frame opens the [device view](#device-view). Under a running simulator or
-  emulator that Stim owns, **Agent actions** lists the latest agent-device actions on it
-  (taps, typing, app opens, screenshots, failed commands), from
-  `logs.subscribe` with `sources: ["agent"]`. **All** opens the logs on the Agent
-  source and that slot; an action opens them with that action expanded, which for a
-  failed command shows its error code, diagnostic id and duration. The **...** menu opens the logs, copies the
-  full path, shows errors, or opens the machine's status. With control, it
-  also runs **Reload** and **Stop** (see [Actions](#actions)).
-- **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native,
-  Build and Agent sources, a slot, a minimum level, errors only, and a regular
-  expression search. The list follows new records until you scroll up, keeps
-  the newest 5,000, and a tap on a record shows its whole message and stack.
+- **Workspace**: under the title, a centered stage line: a dot and **Running**
+  ("up 42m", red with the error count or a closed app), **Building** (the
+  platform and when it started), **Build failed** (when the newest build of
+  either platform failed), **Warming** (installing dependencies or copying
+  ignored files), **Ready**, or **Stopped** (nothing runs, with when Metro stopped when known). After a thin
+  divider comes the git chip: commits ahead and behind, the count of changed
+  files, **merged into** a branch, **no upstream**, or a check for a clean
+  branch, and the pull request number colored by its state (open, draft,
+  merged, closed) with a dot for its worst check, when `stim status` reports
+  the pull request. It wraps onto its own line when both do not fit, and opens
+  the **Git** sheet: upstream, ahead, behind, changed and untracked files,
+  merged into, and the pull request's title, state, checks and review with
+  **Open in GitHub**. Below, three small cards open more:
+  - **Resources**: the workspace's CPU (`ps` CPU summed over its processes,
+    so above 100% on several cores) and memory from the status `machine`
+    owners, and its disk (the worktree plus Stim's build folder) once a status
+    watcher measured it. It opens the **Resources** sheet: CPU, memory and disk
+    tiles, with sparklines of the last 10 minutes when the server sends usage
+    history, a process table of the workspace's simulators, emulators, Chrome,
+    Metro and build, and the disk split with the Mac's free space.
+  - **Build**: one row per platform with the Apple or Android glyph, the last
+    run's time and whether it hit the cache, **Failed** in red, or the next
+    build's prediction from `build.plan` before any run. It opens the **Build**
+    sheet on that platform.
+  - **Logs**: the error count since the marker, with a red dot above zero,
+    Metro's port with its health as the dot's color, and the bundle line
+    (**Bundling** with Metro's percent, **Bundled in 1.8s** and when, or **Not
+    bundled yet** once the server reports bundles). It opens the logs, on
+    errors when there are some.
+
+  A card with a problem turns red; there is no separate banner. While a build
+  runs, the Build card gives its place to a full-width card: the platform and
+  target device, the tool's step with its counts (such as "Compiling 97 of 214
+  targets") and the elapsed time against the estimate, a bar of the phases
+  sized by the last comparable run, the cache-miss reason, the other
+  platform's last build, and the latest compiler line. Then **Devices**, one
+  card per device: a dot, the model and runtime, and the device's CPU,
+  memory and disk; the latest frame the server sends, fitted to the card, with
+  **Folded** or **Unfolded** for an iPhone Duo or an Android foldable emulator.
+  Tapping the frame opens the [device view](#device-view). A device waiting on
+  a build shows the build's step, a device with a failed build and no app shows
+  **No app installed**, and a closed app dims the frame under **App closed**. A
+  warming workspace shows one card while it warms, and a stopped one says that
+  nothing is running. Under a running simulator, emulator or Web device that
+  Stim owns, the agent row names the driving tool with its latest action and
+  how long ago, or **No agent** and how long the device has been idle. It
+  opens the **Agent** sheet: the device's actions, newest first, from
+  `logs.subscribe` with `sources: ["agent"]`, filtered by all, failed, or the
+  most used commands; an action opens the logs with it expanded, and **Open in
+  logs** opens them on the Agent source and that slot. The **Build** sheet
+  switches between iOS and Android. For the running build it shows the elapsed
+  time against the estimate with the miss reason, a checklist of phases with
+  the current phase's time and the estimates of those left (from the last
+  comparable run), and the live output tail of this build from the build log.
+  Otherwise it shows the last build with when it ran, a failed build's compiler
+  errors, why it missed the cache with the changed fingerprint sources, and its
+  phase times. **Recent builds** lists the platform's last 10 runs from status
+  `builds`, newest first, under a bar sparkline of the durations of runs that
+  finished (two or more), colored by result. Each row shows the result (a cache
+  hit, a cold build, failed, cancelled, or interrupted), its duration, and a
+  detail line: the miss reason, a failed run's cache hit, or cache reads off;
+  how long ago it ran; and a slot other than the default. Tapping a row shows
+  its configuration, fingerprint and phase times, its compiler errors and why it
+  missed. **Next build** is what the next build would find, why, and how long
+  it should take, from the server's read-only `build.plan`, with the median
+  behind its estimate, a refusal's remedy, when it was checked, and **Check
+  again**. The screen asks for each platform with a last build or a device when
+  it opens, one plan at a time, reuses a result for 60 seconds unless that
+  platform's last build changes, asks again after a failure or a reconnect,
+  ignores a reply that arrives after it closes, and asks nothing while a build
+  runs. The **...** menu opens the logs, copies the full path, shows errors, or
+  opens the machine's status. With control, it also runs **Reload** and
+  **Stop** (see [Actions](#actions)).
+
+- **Logs**: opens from the workspace screen's Logs card, on errors from the
+  home screen and notifications, and from the agent feed on the Agent source
+  with the tapped action expanded. A header shows Metro's port and a dot for
+  whether it runs, and how long the last bundle took when the loaded Metro
+  records hold its start and finish. **All**, **Errors** and **Warnings** pick
+  the severity: Errors is `stim logs --errors` and counts the errors since the
+  last launch, from the status; Warnings counts the loaded warnings. Source
+  chips (Metro, App, iOS, Android, Web, Build, Agent) show only the sources the
+  workspace runs or that sent records; none selected shows every source. iOS,
+  Android and Web split the device logs by their platform. The server does not
+  filter by platform or warnings alone, so the phone filters those within the
+  newest 5,000 records it loaded. A slot row and a regular expression search
+  complete the filters. The list follows new records until you scroll up, and
+  again after a filter change. It keeps the newest 5,000, and a tap on a record
+  shows its whole message and stack. Each entry shows a severity dot, its
+  source and time, then the message; a record with a stack shows its top
+  frames, the workspace's own frames in bold, one framework frame dimmed as its
+  package, and a count of the rest.
   The records of one failed Expo bundle (`Bundling failed`, the error line with
   its code frame and stack lines, and a failed bundle response) are one entry.
   An entry leads with the error type and message, then the file and line
   relative to the workspace, such as `App.js:12:31`. Tapping it shows the code
-  frame. Under Errors only, Stim attaches the code frame to the error record.
-  When a level or search filter leaves the code frame lines out, or an older
+  frame. Under Errors, Stim attaches the code frame to the error record.
+  When the severity or a search leaves the code frame lines out, or an older
   Stim does not attach them, the app fetches them from the Metro log. **Copy** copies the message and location,
   and **Share** shares the whole entry.
 
@@ -179,9 +241,55 @@ and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
 
+### Replay
+
+When the Mac has recorded the device, the viewer shows a replay bar under the
+screen. The Mac records while an agent or automation tool drives the device, or
+while a phone watches it, and keeps the last 15 minutes of footage (see
+`packages/server/README.md`, Recording).
+
+- **The bar.** It has **Live**, play or pause, 1x or 2x, and the time of the
+  frame shown. Its scrubber lays the recorded spans end to end, and a dashed
+  "stopped 2h" gap stands for the time nothing was recorded.
+- **Markers.** Agent actions sit on the scrubber in the accent color, errors
+  in orange and crashes in red.
+- **Moving through it.**
+  - Dragging shows the frame under the finger, seeking at most every 120 ms,
+    and holds off the viewer's swipe to close.
+  - Tapping within 14 points of a marker lands 1.5 seconds before it, paused;
+    tapping elsewhere shows the frame there. Past the newest frame, the newest
+    frame shows.
+  - A device that stops while you scrub stays on its recording, and one that
+    starts stays on the recording until **Live**.
+  - Play plays on at the chosen speed and pauses at the newest frame.
+  - **Live** returns to the live screen.
+- **While not live.** Control and **Take over** are disabled, and turning
+  Control on is refused until Live.
+- **Stopped devices.** A device that is not running can still be replayed:
+  the first scrub opens the stream on its recording, with no live screen to go
+  back to.
+- **Indicators.** A red **Recording** chip next to the model shows while the
+  Mac records the device. A **Replay off** pill replaces the bar when
+  `recording.enabled` is off for the workspace. If the timeline goes away
+  while you replay, the bar keeps only **Live**.
+- **Where it runs.** The app polls `replay.range` every 10 seconds while the
+  viewer is open; seeking goes through `frames.seek` and `frames.live` on the
+  same video subscription. Replay needs video: with Data saver, which asks for
+  JPEG frames, or when the server answers the subscription with JPEG because
+  it has no H.264, the bar is hidden. A server without replay answers
+  `unknown-method`, and the bar stays hidden. The timeline math is in
+  `src/lib/replay.ts`.
+
+Settings has a **Replay** section with one switch per Mac this phone can
+control, **Record on <Mac>**. It reads `recording.enabled` with `settings.get`
+and changes it at machine scope with `recording.set`, which deletes the Mac's
+recordings when it turns them off. When `STIM_RECORDING` decides on the Mac,
+the switch is disabled and says so. The switch sets the machine layer; a repo
+or workspace `recording.enabled` on the Mac still wins for its workspaces.
+
 A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web**
 tile, in the devices grid and on the workspace screen, labelled with the page's
-URL, with a "Page failed to load" pill when its latest load failed. It opens in
+URL (the in-app route when one moved it after the load, `web.page.route`), with a "Page failed to load" pill when its latest load failed. It opens in
 the same viewer, streamed from the page's DevTools screencast as H.264 through
 `stim-server`. With Control on, a tap clicks, a drag scrolls, and **Keyboard**
 types into the page; the toolbar has **Keyboard** and **Back** (the page's
@@ -196,16 +304,27 @@ A physical iPhone, iPad or Android phone the workspace leases with
 own tile, from the environment's `physicalDevices` in `stim status`, next to
 any simulator or emulator in the same slot. The tile names the device and its
 model, carries a **Physical** pill and the time left on the lease, and counts
-as running while the Mac reaches the device. A connected Android phone streams
-like an emulator and opens the same viewer (`physical: true` on
-`frames.subscribe` and `control.begin`), when the Mac's `stim-server` lists
-`physical-android` in its hello `features`; an older server would stream the
-slot's emulator instead, so the tile asks for an update. With **Control** on,
-taps, typing, **Home**, **Back**, **Apps** and **Lock** reach the phone while
-the workspace holds its lease, and the session ends when the lease does. The
-viewer has no rotate buttons for a phone, which turns only in hand. Physical
-iPhones are not streamed yet, so their tile shows no screen and does not open
-the viewer. A lease alone puts the workspace under Live.
+as running while the Mac reaches the device. A lease alone puts the workspace
+under Live.
+
+A connected physical iPhone or iPad streams its screen, view only: the tile
+and the viewer show it like a simulator's, the viewer has no Control, and the
+app sends it no input. The Mac captures it only over a USB cable, so a phone
+paired over Wi-Fi shows the server's message instead of a screen. While the
+iPhone is locked or QuickTime Player records it, the last frame stays with a
+**Screen paused** pill, and the viewer names the reason.
+
+A connected physical Android phone streams like an emulator and opens the same
+viewer. With **Control** on, taps, typing, **Home**, **Back**, **Apps** and
+**Lock** reach the phone while the workspace holds its lease, and the session
+ends when the lease does. The viewer has no rotate buttons for a phone, which
+turns only in hand. A physical device is not recorded, so its viewer has no
+replay timeline or Recording badge.
+
+A phone tile streams only when the Mac's `stim-server` lists `physical-ios` or
+`physical-android` in its hello `features`. An older server would ignore
+`physical` and stream the slot's simulator or emulator instead, so the tile asks
+for a `stim-server` update.
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
@@ -462,6 +581,21 @@ for a platform, and the mock server refuses a reload without one, like
 `pnpm run mock-server --read` to see a read-only pairing, which gets no
 actions.
 
+A phone that asks iOS devices for H.264 gets video from
+`mock-server/fixtures/recording-ios.seg`. That is 60 seconds of an iOS
+simulator that stim-server recorded while agent-device drove it, stored in
+stim-server's segment format, with its agent-action markers in
+`recording-ios.json`.
+
+- **Live.** The live stream loops that footage.
+- **`replay.range`.** It serves the footage twice, once ending two hours
+  before the mock started and once ending when it started, so the timeline
+  shows a stopped gap.
+- **Seeking.** `frames.seek` and `frames.live` behave like stim-server's.
+  Seeking past the footage shows its last frame.
+- **The switch.** `recording.set` flips a flag that `replay.range`,
+  `settings.get` and every status environment's `recording.enabled` follow.
+
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the workspaces whose path matches, and
 `--free-gb <n>` sets the free disk `machine.get` reports:
@@ -470,6 +604,16 @@ To try the home screen with two Macs, run two mock servers on different ports.
 node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-apps
 node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
 ```
+
+The status also holds seven workspaces under `.worktrees/a4-*` for the
+workspace screen, one per stage (running, building, crashed, build failed,
+warming, stopped) and one running iOS, Android and Web, with the status
+`machine` owners, disk use, bundle state, build detail and pull requests they
+would report. Start the server with `--workspaces a4-` to see only those. Each
+status event carries a usage history drawn around those owners, and
+`logs.ndjson` holds agent actions on their devices. Log timestamps move forward
+with the status. Android and Web devices show `frame-android.jpg` and
+`frame-web.jpg`.
 
 `--overlay <file>` changes the status while the server runs, to try
 notifications. The server rereads the JSON file for each status push (every 5
@@ -714,6 +858,13 @@ pnpm run lint
 pnpm run typecheck
 pnpm test
 ```
+
+`pnpm run lint` runs oxlint with `.oxlintrc.json`, which includes oxlint's React
+Compiler rules. A component or hook the compiler would skip fails lint, so fix
+the code rather than suppress the rule. oxlint ports the compiler from React's
+main branch, while the app builds with `babel-plugin-react-compiler` 1.0.0, so
+a few 1.0.0 bailouts pass lint. One is a conditional, `??`, `||` or optional
+chain inside a `try` block.
 
 `.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
 the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.

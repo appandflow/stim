@@ -1,5 +1,5 @@
 import type { WebViewport } from './settings-registry.ts';
-import type { IdleStopRecord, MetroLastStop } from './workspace-state.ts';
+import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 export type RunOutcomeKind = 'hit' | 'cold';
@@ -30,6 +30,39 @@ export interface BuildReport {
   expectedMs: number | null;
   expectedPhaseMs: number | null;
   basis: number;
+  /** Why the run's cache lookup missed, once the run knows; `baseline` omits `cacheKey`. */
+  missReason?: BuildMissReason;
+  /** What the native build tool is doing now, once it printed a line Stim recognizes. */
+  detail?: BuildDetail;
+}
+
+/** The native build tool's step inside a build's `compile` phase. */
+export const NATIVE_BUILD_STEPS = [
+  'configure',
+  'compile',
+  'link',
+  'resources',
+  'script',
+  'dex',
+  'package',
+  'sign',
+] as const;
+
+export type NativeBuildStep = (typeof NATIVE_BUILD_STEPS)[number];
+
+/**
+ * A running build's progress as its tool reports it. `unit` is `targets` for xcodebuild and `tasks` for Gradle.
+ * xcodebuild's `done` counts targets that started work and `total` the targets in its dependency graph; Gradle's
+ * `done` counts the tasks it reported, with a null `total`. They are counts, not a completion fraction. `line` is
+ * the latest compile, link or task line with paths shortened to file names.
+ */
+export interface BuildDetail {
+  step: NativeBuildStep | null;
+  unit: 'targets' | 'tasks' | null;
+  done: number | null;
+  total: number | null;
+  line: string | null;
+  updatedAt: string;
 }
 
 /** Where a build's app came from: a cache tier, or `false` when it compiled or failed before one was found. */
@@ -147,6 +180,7 @@ export const ACTIVITY_RECENCY_BASES = [
   'workspace-use',
   'supervisor-start',
   'page-log',
+  'viewer',
 ] as const;
 
 export type ActivityRecencyBasis = (typeof ACTIVITY_RECENCY_BASES)[number];
@@ -189,12 +223,29 @@ export interface WorktreeGit {
   mergedInto: string | null;
 }
 
+/**
+ * The GitHub pull request of a worktree's branch and HEAD, as `status --watch` last looked it up through `gh`.
+ * `state` is `draft` for an open draft. `checks` counts the head commit's check runs and commit statuses, null when it
+ * has none. `checkedAt` is when Stim last asked GitHub.
+ */
+export interface WorktreePullRequest {
+  number: number;
+  url: string;
+  title: string;
+  state: 'open' | 'draft' | 'merged' | 'closed';
+  checks: { passing: number; failing: number; pending: number } | null;
+  reviewDecision: 'approved' | 'changes-requested' | 'review-required' | null;
+  checkedAt: string;
+}
+
 export interface WorktreeFacts {
   path: string;
   branch?: string;
   repository?: string;
   /** Null when git could not be read in time, or the worktree is in a folder status does not open. */
   git?: WorktreeGit | null;
+  /** Null when GitHub has no pull request for the branch; absent when unknown, such as without `gh`. */
+  pullRequest?: WorktreePullRequest | null;
 }
 
 export interface AndroidRuntimeFacts {
@@ -275,12 +326,14 @@ export const WEB_PAGE_STATES = ['loading', 'loaded', 'failed'] as const;
 /**
  * The owned page's latest load, from the page-load marker in the workspace's web log: `url` is the document it
  * loaded, `state` is `failed` when that document did not load or the page crashed, with the log message as
- * `error`.
+ * `error`. `route`, present only when an in-app route change (history API or fragment) moved the page off `url`
+ * since the load, is the URL it shows now.
  */
 export interface WebPageState {
   url: string;
   state: (typeof WEB_PAGE_STATES)[number];
   error?: string;
+  route?: string;
 }
 
 /**
@@ -318,6 +371,39 @@ export const WORKSPACE_PHASES = ['warming', 'ready', 'live', 'idle'] as const;
 
 export type WorkspacePhase = (typeof WORKSPACE_PHASES)[number];
 
+/** A folder's size on disk as `status --watch` last measured it. */
+export interface DiskMeasure {
+  bytes: number;
+  measuredAt: string;
+}
+
+/**
+ * An environment's disk use as `status --watch` last measured it. `worktreeBytes` is the git worktree folder, or the
+ * workspace folder outside one, node_modules included. `nodeModulesBytes` is node_modules at the worktree root and,
+ * when different, at the workspace path, and is part of `worktreeBytes`. `buildBytes` is Stim's own folder for the
+ * workspace: Xcode derived data, Gradle outputs and logs. A figure is null until it was measured; `measuredAt` is the
+ * oldest measurement.
+ */
+export interface EnvironmentDisk {
+  worktreeBytes: number | null;
+  nodeModulesBytes: number | null;
+  buildBytes: number | null;
+  measuredAt: string;
+}
+
+/**
+ * A Metro bundle request: `bundling` while one is in flight on the workspace's Metro, with its `platform`,
+ * `startedAt` and, when Metro reported progress for it, `percent` (0-100). `last` is the newest finished request,
+ * `durationMs` from request to response end.
+ */
+export interface MetroBundleState {
+  bundling: boolean;
+  platform?: StatsPlatform;
+  startedAt?: string;
+  percent?: number;
+  last?: { platform: StatsPlatform; status: 'ok' | 'failed'; durationMs: number; finishedAt: string };
+}
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
   path: string;
@@ -325,6 +411,8 @@ export interface EnvironmentState {
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
   phaseSince?: string | null;
+  /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
+  recording?: { enabled: boolean };
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**
@@ -344,6 +432,10 @@ export interface EnvironmentState {
     state: string;
     activity?: DeviceActivity;
     app?: DeviceAppProcess;
+    /** The simulator's data folder, for an owned simulator once measured. */
+    disk?: DiskMeasure;
+    /** Present while the device is not booted after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+    idleShutdown?: DeviceIdleShutdownRecord;
   } | null;
   android?: {
     name: string | undefined;
@@ -354,6 +446,10 @@ export interface EnvironmentState {
     deviceProfile?: string | null;
     activity?: DeviceActivity;
     app?: DeviceAppProcess;
+    /** The AVD's folder, for an owned emulator once measured. */
+    disk?: DiskMeasure;
+    /** Present while the emulator is not running after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+    idleShutdown?: DeviceIdleShutdownRecord;
   } | null;
   metro?: {
     port: number;
@@ -363,6 +459,8 @@ export interface EnvironmentState {
     lastStop?: MetroLastStop;
     /** The other process that answers Metro on `port`; `cwd` is null when its directory could not be read. */
     heldBy?: { pid: number; cwd: string | null };
+    /** Absent when the Metro log holds no bundle request. */
+    bundle?: MetroBundleState;
   } | null;
   web?: WebBrowserState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
@@ -375,6 +473,7 @@ export interface EnvironmentState {
   lastBuilds?: Partial<Record<StatsPlatform, LastBuildReport>>;
   /** Each platform's recent runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
   builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
+  disk?: EnvironmentDisk;
 }
 
 /** `committedMb` sums the environments' `memoryMb`; `overCapacity` is that sum over 60% of `totalMemoryMb`. */

@@ -18,6 +18,11 @@ export function workspaceLogsDir(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'logs');
 }
 
+/** Device screen footage stim-server records for the workspace, one directory per platform and slot. */
+export function workspaceRecordingsDir(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'recordings');
+}
+
 export function workspaceLogErrorIndex(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'log-error-index.json');
 }
@@ -28,6 +33,10 @@ export function workspaceDerivedData(projectRoot: string): string {
 
 export function workspaceGradleBuild(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'gradle-build');
+}
+
+export function workspaceBuildDetailFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'build-detail.json');
 }
 
 export function supervisorPidFile(projectRoot: string): string {
@@ -74,6 +83,14 @@ export function gitMergeCacheDir(): string {
   return join(configDir(), 'git-merge');
 }
 
+export function pullRequestCacheDir(): string {
+  return join(configDir(), 'pull-requests');
+}
+
+export function diskUsageCacheDir(): string {
+  return join(configDir(), 'disk-usage');
+}
+
 export function createdDevicesLock(): string {
   return join(configDir(), 'created-devices.lock');
 }
@@ -89,4 +106,9 @@ export function easSessionLedgerFile(root: string = easMachineStateRoot()): stri
 
 export function easSessionLedgerLock(root: string = easMachineStateRoot()): string {
   return join(root, 'ledger.lock');
+}
+
+/** Where stim-server records, one file per server process, the devices whose frames a client subscribes to. */
+export function deviceViewersDir(): string {
+  return join(configDir(), 'viewers');
 }

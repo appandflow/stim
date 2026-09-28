@@ -22,6 +22,13 @@ type Step =
   | { kind: 'connecting'; endpoint: string }
   | { kind: 'name'; id: string; name: string };
 
+async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name: string }> {
+  const paired = await pair(payload.endpoint, payload.pairingToken, Constants.deviceName ?? 'Phone', CLIENT);
+  const name = payload.name || paired.serverName;
+  const mac = await saveMac({ name, endpoint: payload.endpoint }, paired.deviceToken);
+  return { id: mac.id, name };
+}
+
 export function Pair() {
   const { theme } = useUnistyles();
   const router = useRouter();
@@ -39,19 +46,15 @@ export function Pair() {
     setError(null);
     setStep({ kind: 'connecting', endpoint: payload.endpoint });
     try {
-      const deviceName = Constants.deviceName ?? 'Phone';
-      const paired = await pair(payload.endpoint, payload.pairingToken, deviceName, CLIENT);
-      const suggested = payload.name || paired.serverName;
-      const mac = await saveMac({ name: suggested, endpoint: payload.endpoint }, paired.deviceToken);
+      const saved = await pairAndSave(payload);
       reload();
-      setName(suggested);
-      setStep({ kind: 'name', id: mac.id, name: suggested });
+      setName(saved.name);
+      setStep({ kind: 'name', ...saved });
     } catch (e) {
       setError((e as Error).message);
       setStep({ kind: from });
-    } finally {
-      busy.current = false;
     }
+    busy.current = false;
   };
 
   const onScanned = (result: BarcodeScanningResult) => {

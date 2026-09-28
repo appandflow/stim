@@ -9,6 +9,7 @@ import { cdpEndpoint, type WebFacts } from './web/state.ts';
 import type {
   AndroidRuntimeFacts,
   DeviceActivity,
+  DeviceIdleShutdownRecord,
   DeviceLeaseState,
   EnvironmentState,
   IdleStopRecord,
@@ -131,6 +132,7 @@ function androidStatus(
   android: NonNullable<ProjectRecord['platforms']>['android'],
   androidRuntime: AndroidRuntimeFacts | null,
   androidDeviceProfile: string | null,
+  facts: { idleShutdown?: DeviceIdleShutdownRecord },
 ): EnvironmentState['android'] {
   if (!android) return null;
   return {
@@ -139,7 +141,15 @@ function androidStatus(
     physical: Boolean(android.serial && !android.avdName),
     ...(androidRuntime ? { serial: androidRuntime.serial, state: androidRuntime.state } : {}),
     ...(androidDeviceProfile ? { deviceProfile: androidDeviceProfile } : {}),
+    ...facts,
   };
+}
+
+function idleShutdownFact(
+  stopped: unknown,
+  record: DeviceIdleShutdownRecord | undefined,
+): { idleShutdown?: DeviceIdleShutdownRecord } {
+  return stopped && record ? { idleShutdown: record } : {};
 }
 
 function stoppedMetroFacts(
@@ -165,6 +175,7 @@ export function environmentState(
     remote = null,
     idleStop = null,
     lastStop = null,
+    idleShutdowns = {},
     launches = {},
     leasedIds = new Set(),
     now = Date.now(),
@@ -185,6 +196,7 @@ export function environmentState(
     remote?: RemoteDeviceState | null;
     idleStop?: IdleStopRecord | null;
     lastStop?: MetroLastStop | null;
+    idleShutdowns?: Readonly<Record<string, DeviceIdleShutdownRecord>>;
     launches?: Readonly<Record<string, { launchedAt: string }>>;
     leasedIds?: ReadonlySet<string>;
     now?: number;
@@ -257,6 +269,7 @@ export function environmentState(
         metro,
         androidRuntime: androidRuntimes[name],
         androidDeviceProfile: androidDeviceProfiles[name],
+        idleShutdowns,
         launches,
         leasedIds,
         now,
@@ -284,9 +297,15 @@ export function environmentState(
           udid: ios.deviceUdid as string,
           owned: Boolean(ios.owned),
           state: sim?.state ?? (simsAvailable ? 'missing' : 'unknown'),
+          ...idleShutdownFact(!simBooted && sim, idleShutdowns[deviceSlotKey('ios', slot)]),
         }
       : null,
-    android: androidStatus(android, androidRuntime, androidDeviceProfile),
+    android: androidStatus(
+      android,
+      androidRuntime,
+      androidDeviceProfile,
+      idleShutdownFact(!androidDetected, idleShutdowns[deviceSlotKey('android', slot)]),
+    ),
     metro: project.metroPort
       ? {
           port: project.metroPort,

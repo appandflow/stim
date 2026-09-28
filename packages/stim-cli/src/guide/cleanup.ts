@@ -42,7 +42,8 @@ WHAT RECLAIMS AN OWNED DEVICE
 \`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
 --delete\` also clears workspace build outputs, trims oversized workspace logs
 (\`guide cleanup disk\`) and removes orphaned workspace directories, never a
-checkout. \`stim stop\` shuts a device
+checkout. Device recordings can also go without either: stim-server prunes
+them, and turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
@@ -411,7 +412,7 @@ THE ONE CASE GC WILL NOT REAP
     },
     disk: {
       summary:
-        'disk usage, workspace build outputs and logs, AVD and build-log sizes, the data partition, trimming the shared caches',
+        'disk usage, workspace build outputs, logs and device recordings, AVD and build-log sizes, the data partition, trimming the shared caches',
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
   directory, and \`worktree remove\` reclaims them. \`gc --delete\` clears the
@@ -497,6 +498,33 @@ WORKSPACE LOGS
   log collector recorded; \`stim stop\`
   stops the collector. Build transcripts keep the whole run and are never
   trimmed, and nothing else under logs/ is touched.
+
+DEVICE RECORDINGS
+  stim-server records owned simulators, emulators and the Stim-owned Chrome
+  page while an automation tool drives them or a paired client watches them,
+  into recordings/ in the workspace directory (\`guide settings\`). It keeps
+  the last 15 minutes of recorded footage per device; idle time and time after
+  \`stim stop\` age nothing out, so \`stop\` ends recording and the footage
+  stays replayable. Across every workspace of this Stim home it keeps at most
+  1 GiB, deleting the oldest footage first. Recordings are deleted by:
+
+    stim worktree remove          that workspace's recordings, with its
+                                  workspace directory
+    stim gc --delete              the recordings of dead or orphaned
+                                  workspaces, with their workspace directory;
+                                  a workspace whose project root cannot be
+                                  proven gone keeps them
+    stim gc --delete --older-than <days>
+                                  also footage recorded before that many days
+                                  ago, in every workspace
+    stim gc --delete --cache recordings
+                                  every workspace's recordings, and nothing
+                                  else; --cache all includes them
+    recording.enabled false       the recordings of each workspace it turns off
+
+  \`gc\` lists them in the recordings section of \`gc --json\` with each
+  workspace's bytes, what a delete would remove (deleteBytes), and why the rest
+  stays.
 
 SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and never

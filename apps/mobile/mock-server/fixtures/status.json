@@ -1270,6 +1270,1563 @@
         "remoteDevices": [],
         "build": null,
         "issues": []
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 6550,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "udid": "A4000001-0000-4000-8000-000000000001",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:17:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-a4-running",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5560",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 41000,
+              "since": "2026-09-25T04:05:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        },
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "pid": 58084,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "ios",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:22:57.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57084,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile-a4-running/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-running",
+          "branch": "feat/1690-phone-android-video",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/1690-phone-android-video",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 1695,
+            "url": "https://github.com/appandflow/stim/pull/1695",
+            "title": "feat(server): live video and control of a leased physical Android phone",
+            "state": "open",
+            "checks": {
+              "passing": 14,
+              "failing": 0,
+              "pending": 2
+            },
+            "reviewDecision": "review-required",
+            "checkedAt": "2026-09-25T04:21:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 9360,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "udid": "A4000002-0000-4000-8000-000000000002",
+          "owned": true,
+          "state": "Booted",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:19:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-a4-building",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5562",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:14:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "metro": {
+          "port": 8085,
+          "running": true,
+          "pid": 58085,
+          "bundle": {
+            "bundling": true,
+            "platform": "android",
+            "startedAt": "2026-09-25T04:23:05.012Z",
+            "percent": 62
+          }
+        },
+        "supervisor": {
+          "pid": 57085,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile-a4-building/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-building",
+          "branch": "feat/1701-splash-ripple",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/feat/1701-splash-ripple",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 1706,
+            "url": "https://github.com/appandflow/stim/pull/1706",
+            "title": "feat(mobile): replace the splash dismiss with the pixel ripple",
+            "state": "draft",
+            "checks": null,
+            "reviewDecision": null,
+            "checkedAt": "2026-09-25T04:20:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-25T04:21:57.012Z",
+          "phaseStartedAt": "2026-09-25T04:22:22.012Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3,
+          "detail": {
+            "step": "compile",
+            "unit": "targets",
+            "done": 97,
+            "total": 214,
+            "line": "CompileC RNGestureHandler.mm (in target RNGestureHandler)",
+            "updatedAt": "2026-09-25T04:23:08.012Z"
+          },
+          "missReason": {
+            "kind": "changed",
+            "summary": "Podfile.lock changed",
+            "changes": [
+              {
+                "source": "ios/Podfile.lock",
+                "change": "changed",
+                "category": "native-dependency"
+              }
+            ],
+            "changeCount": 1,
+            "baseline": {
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "from": "workspace"
+            },
+            "rekeyedBy": []
+          }
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 6150,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "udid": "A4000003-0000-4000-8000-000000000003",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "stopped"
+          },
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:21:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-a4-crashed",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5564",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:09:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "metro": {
+          "port": 8086,
+          "running": true,
+          "pid": 58086,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "ios",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:19:09.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57086,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile-a4-crashed/logs",
+          "errorsSinceMarker": 3
+        },
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-crashed",
+          "branch": "fix/1688-pair-crash",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 1,
+            "untracked": 1,
+            "upstream": "origin/fix/1688-pair-crash",
+            "ahead": 0,
+            "behind": 3,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 1692,
+            "url": "https://github.com/appandflow/stim/pull/1692",
+            "title": "fix(mobile): keep the pair screen from crashing on a stale token",
+            "state": "open",
+            "checks": {
+              "passing": 11,
+              "failing": 2,
+              "pending": 0
+            },
+            "reviewDecision": "changes-requested",
+            "checkedAt": "2026-09-25T04:22:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 5490,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "udid": "A4000004-0000-4000-8000-000000000004",
+          "owned": true,
+          "state": "Booted",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:20:09.012Z",
+            "basis": ["workspace-use"]
+          },
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "stopped"
+          }
+        },
+        "android": {
+          "name": "stim-a4-build-failed",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5566",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:03:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "metro": {
+          "port": 8087,
+          "running": true,
+          "pid": 58087,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "android",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:17:09.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57087,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile-a4-build-failed/logs",
+          "errorsSinceMarker": 1
+        },
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-build-failed",
+          "branch": "chore/1699-signing",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": null,
+            "ahead": null,
+            "behind": null,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 52000,
+            "fingerprint": "a4f00d0000000000000000000000000000000001",
+            "startedAt": "2026-09-25T04:19:17.012Z",
+            "finishedAt": "2026-09-25T04:20:09.012Z",
+            "errorCode": "STIM_BUILD_FAILED",
+            "diagnostics": [
+              {
+                "file": null,
+                "line": null,
+                "column": null,
+                "message": "No profiles for 'dev.stim.mobile' were found: Xcode couldn't find any iOS App Development provisioning profiles."
+              }
+            ]
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000001",
+              "startedAt": "2026-09-25T04:19:17.012Z",
+              "finishedAt": "2026-09-25T04:20:09.012Z",
+              "errorCode": "STIM_BUILD_FAILED",
+              "diagnostics": [
+                {
+                  "file": null,
+                  "line": null,
+                  "column": null,
+                  "message": "No profiles for 'dev.stim.mobile' were found: Xcode couldn't find any iOS App Development provisioning profiles."
+                }
+              ],
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              }
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-warming/apps/mobile",
+        "live": false,
+        "phase": "warming",
+        "phaseSince": "2026-09-25T04:22:31.012Z",
+        "memoryMb": 0,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-warming",
+          "branch": "feat/1702-logs-restyle",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/feat/1702-logs-restyle",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "disk": {
+          "worktreeBytes": 800000000,
+          "nodeModulesBytes": 400000000,
+          "buildBytes": null,
+          "measuredAt": "2026-09-25T04:22:49.012Z"
+        },
+        "warmStep": "refresh"
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
+        "live": false,
+        "phase": "idle",
+        "phaseSince": null,
+        "memoryMb": 0,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "udid": "A4000006-0000-4000-8000-000000000006",
+          "owned": true,
+          "state": "Shutdown",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          }
+        },
+        "android": null,
+        "metro": {
+          "port": 8089,
+          "running": false,
+          "pid": null,
+          "lastStop": {
+            "reason": "requested",
+            "at": "2026-09-25T02:23:09.012Z",
+            "by": "stop",
+            "byPid": 1
+          }
+        },
+        "supervisor": null,
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile-a4-stopped/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped",
+          "branch": "feat/1650-web-tile",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/feat/1650-web-tile",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": "main"
+          },
+          "pullRequest": {
+            "number": 1650,
+            "url": "https://github.com/appandflow/stim/pull/1650",
+            "title": "feat(mobile): show the owned Chrome as a Web tile",
+            "state": "merged",
+            "checks": {
+              "passing": 18,
+              "failing": 0,
+              "pending": 0
+            },
+            "reviewDecision": "approved",
+            "checkedAt": "2026-09-25T04:13:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 7170,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-a4-a400 (iPhone 18 Pro 27.0)",
+          "udid": "A4000007-0000-4000-8000-000000000007",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:15:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-a4-multi-device",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5568",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 41000,
+              "since": "2026-09-25T04:17:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        },
+        "metro": {
+          "port": 8090,
+          "running": true,
+          "pid": 58090,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "ios",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:22:57.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57090,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/mobile-a4-multi-device/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device",
+          "branch": "feat/1686-web-agent-actions",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/1686-web-agent-actions",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "web": {
+          "browser": "chrome",
+          "version": "141.0.7390.54",
+          "running": true,
+          "pid": 61000,
+          "supervisorPid": 60999,
+          "url": "http://localhost:8090",
+          "headless": false,
+          "viewport": "desktop",
+          "profile": "/Users/dev/.stim/workspaces/mobile-a4-multi-device/web/profile",
+          "cdpEndpoint": "ws://127.0.0.1:9322/devtools/browser/a4",
+          "targetId": "A4WEBTARGET0007",
+          "page": {
+            "url": "http://localhost:8090/",
+            "state": "loaded",
+            "route": "http://localhost:8090/settings"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "playwright-mcp",
+              "pid": 41000,
+              "since": "2026-09-25T04:20:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        }
       }
     ],
     "capacity": {
@@ -1346,7 +2903,199 @@
         "branch": "fix/1096-ios-remote-lease-platform"
       }
     ],
-    "simctlAvailable": true
+    "simctlAvailable": true,
+    "machine": {
+      "memorySource": "footprint",
+      "owners": [
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "id": "A4000001-0000-4000-8000-000000000001",
+          "owned": true,
+          "cpuPercent": 9,
+          "residentMb": 2795,
+          "memoryMb": 2150,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "id": "stim-a4-running",
+          "owned": true,
+          "cpuPercent": 14,
+          "residentMb": 3861,
+          "memoryMb": 2970,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
+          "id": "8084",
+          "owned": true,
+          "cpuPercent": 9,
+          "residentMb": 1859,
+          "memoryMb": 1430,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "id": "A4000002-0000-4000-8000-000000000002",
+          "owned": true,
+          "cpuPercent": 4,
+          "residentMb": 2392,
+          "memoryMb": 1840,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "id": "stim-a4-building",
+          "owned": true,
+          "cpuPercent": 11,
+          "residentMb": 3770,
+          "memoryMb": 2900,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "id": "8085",
+          "owned": true,
+          "cpuPercent": 38,
+          "residentMb": 1976,
+          "memoryMb": 1520,
+          "processes": 3
+        },
+        {
+          "kind": "build",
+          "name": "build",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "id": "ios",
+          "owned": true,
+          "cpuPercent": 259,
+          "residentMb": 4030,
+          "memoryMb": 3100,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "id": "A4000003-0000-4000-8000-000000000003",
+          "owned": true,
+          "cpuPercent": 1,
+          "residentMb": 2392,
+          "memoryMb": 1840,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "id": "stim-a4-crashed",
+          "owned": true,
+          "cpuPercent": 12,
+          "residentMb": 3809,
+          "memoryMb": 2930,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-crashed/apps/mobile",
+          "id": "8086",
+          "owned": true,
+          "cpuPercent": 3,
+          "residentMb": 1794,
+          "memoryMb": 1380,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "id": "A4000004-0000-4000-8000-000000000004",
+          "owned": true,
+          "cpuPercent": 0,
+          "residentMb": 1599,
+          "memoryMb": 1230,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "id": "stim-a4-build-failed",
+          "owned": true,
+          "cpuPercent": 13,
+          "residentMb": 3835,
+          "memoryMb": 2950,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-build-failed/apps/mobile",
+          "id": "8087",
+          "owned": true,
+          "cpuPercent": 2,
+          "residentMb": 1703,
+          "memoryMb": 1310,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "id": "A4000007-0000-4000-8000-000000000007",
+          "owned": true,
+          "cpuPercent": 8,
+          "residentMb": 2860,
+          "memoryMb": 2200,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "id": "stim-a4-multi-device",
+          "owned": true,
+          "cpuPercent": 16,
+          "residentMb": 3913,
+          "memoryMb": 3010,
+          "processes": 3
+        },
+        {
+          "kind": "browser",
+          "name": "browser",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "id": null,
+          "owned": true,
+          "cpuPercent": 6,
+          "residentMb": 663,
+          "memoryMb": 510,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+          "id": "8090",
+          "owned": true,
+          "cpuPercent": 7,
+          "residentMb": 1885,
+          "memoryMb": 1450,
+          "processes": 3
+        }
+      ]
+    }
   },
   "edits": [
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",

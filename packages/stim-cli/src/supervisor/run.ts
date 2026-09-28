@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../workspace/config.ts';
@@ -23,7 +23,14 @@ import {
   type DevServerStopRecord,
 } from '@stim-cli/core/state';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { trackDevServerActivity, watchIdleDevServer, workspaceIdleProbe, type IdleProbe } from './idle-stop.ts';
+import {
+  trackDevServerActivity,
+  watchIdleDevices,
+  watchIdleDevServer,
+  workspaceIdleProbe,
+  type IdleProbe,
+} from './idle-stop.ts';
+import { dueIdleDevices, shutDownIdleDevices as shutDownWorkspaceIdleDevices } from '../devices/idle-shutdown.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import {
   describeDevServerStop,
@@ -48,10 +55,12 @@ interface ParsedSupervisorArgs {
   tunnel?: boolean;
   resetCache?: boolean;
   idleStopMinutes?: number;
+  deviceIdleMinutes?: number;
   error?: string;
 }
 
-const USAGE = 'Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache] [--idle-stop-minutes <n>]';
+const USAGE =
+  'Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache] [--idle-stop-minutes <n>] [--device-idle-minutes <n>]';
 
 export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   let root: string | undefined;
@@ -59,6 +68,7 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   let tunnel = false;
   let resetCache = false;
   let idleStopMinutes = '0';
+  let deviceIdleMinutes = '0';
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--root') {
@@ -81,6 +91,10 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
       idleStopMinutes = argv[++i] ?? '';
       continue;
     }
+    if (arg === '--device-idle-minutes') {
+      deviceIdleMinutes = argv[++i] ?? '';
+      continue;
+    }
     return { error: `Unknown supervisor argument "${arg}". ${USAGE}` };
   }
   if (!root) return { error: `Missing --root. ${USAGE}` };
@@ -89,10 +103,20 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
     return { error: `--port must be a TCP port number, got "${port}".` };
   }
-  if (!/^\d+$/.test(idleStopMinutes)) {
-    return { error: `--idle-stop-minutes must be a whole number of minutes, got "${idleStopMinutes}".` };
+  for (const [flag, value] of [
+    ['--idle-stop-minutes', idleStopMinutes],
+    ['--device-idle-minutes', deviceIdleMinutes],
+  ]) {
+    if (!/^\d+$/.test(value!)) return { error: `${flag} must be a whole number of minutes, got "${value}".` };
   }
-  return { root: resolve(root), port: parsedPort, tunnel, resetCache, idleStopMinutes: Number(idleStopMinutes) };
+  return {
+    root: resolve(root),
+    port: parsedPort,
+    tunnel,
+    resetCache,
+    idleStopMinutes: Number(idleStopMinutes),
+    deviceIdleMinutes: Number(deviceIdleMinutes),
+  };
 }
 
 export interface ServerExitInfo {
@@ -118,6 +142,13 @@ type ServerStarter = (opts: {
   onTunnelUrl?: ((url: string) => void) | null;
 }) => Promise<ServerHandle>;
 
+export interface DeviceIdleOps {
+  due: typeof dueIdleDevices;
+  shutDown: typeof shutDownWorkspaceIdleDevices;
+}
+
+const DEVICE_IDLE_OPS: DeviceIdleOps = { due: dueIdleDevices, shutDown: shutDownWorkspaceIdleDevices };
+
 export interface RunSupervisorOptions {
   root: string;
   port: number;
@@ -125,6 +156,8 @@ export interface RunSupervisorOptions {
   resetCache?: boolean;
   idleStopMinutes?: number;
   idleProbe?: IdleProbe;
+  deviceIdleMinutes?: number;
+  deviceIdle?: DeviceIdleOps;
   isExpo?: (projectRoot: string) => boolean;
   startBare?: ServerStarter | null;
   startExpo?: ServerStarter | null;
@@ -141,6 +174,8 @@ export async function runSupervisor({
   resetCache = false,
   idleStopMinutes = 0,
   idleProbe,
+  deviceIdleMinutes = 0,
+  deviceIdle = DEVICE_IDLE_OPS,
   isExpo = detectIsExpo,
   startBare = null,
   startExpo = null,
@@ -195,6 +230,7 @@ export async function runSupervisor({
 
   let stopping = false;
   let stopWatchingIdle: (() => void) | null = null;
+  let stopWatchingDevices: (() => void) | null = null;
   const stopCause = (trigger: SupervisorExitTrigger): DevServerStopRecord => {
     const request = readDevServerStopRequest(readWorkspaceState(root));
     return devServerStopRecord(
@@ -205,6 +241,7 @@ export async function runSupervisor({
   };
   const finish = (code: number, event: string, level: string, msg: string, stop?: DevServerStopRecord) => {
     stopWatchingIdle?.();
+    stopWatchingDevices?.();
     writer.write({ src: 'metro', level, event, msg, ...(stop ? { stop } : {}) });
     try {
       withWorkspaceStateLock(root, () => {
@@ -234,6 +271,7 @@ export async function runSupervisor({
     if (stopping || !server) return;
     stopping = true;
     stopWatchingIdle?.();
+    stopWatchingDevices?.();
     try {
       await server.close();
     } catch (err) {
@@ -331,6 +369,40 @@ export async function runSupervisor({
     msg: `${mode} dev server listening on port ${port}`,
   });
 
+  const deviceIdleMs = deviceIdleMinutes * 60_000;
+  const workspaceProbe = workspaceIdleProbe(root);
+  const shutDownIdleDevices = (idleMs: number) =>
+    deviceIdle.shutDown(root, idleMs, (entry) => writer.write({ src: 'metro', ...entry }));
+
+  if (deviceIdleMinutes > 0) {
+    stopWatchingDevices = watchIdleDevices({
+      idleMs: deviceIdleMs,
+      now,
+      lastUseAt: () => {
+        let deviceLog = NaN;
+        try {
+          deviceLog = statSync(join(logsDir, 'device.ndjson')).mtimeMs;
+        } catch {}
+        const times = [workspaceProbe.lastActivityAt(), deviceLog].filter(Number.isFinite);
+        return times.length ? Math.max(...times) : NaN;
+      },
+      hasDue: () => deviceIdle.due(root, deviceIdleMs).length > 0,
+      onDue: async () => {
+        try {
+          await withIdleWorkspace(
+            root,
+            () => {
+              if (!stopping) shutDownIdleDevices(deviceIdleMs);
+            },
+            { purpose: 'device idle shutdown', supervisor: false, managedLocks: false },
+          );
+        } catch (err) {
+          stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
+        }
+      },
+    });
+  }
+
   if (idleStopMinutes > 0) {
     stopWatchingIdle = watchIdleDevServer({
       idleStopMs: idleStopMinutes * 60_000,
@@ -341,6 +413,13 @@ export async function runSupervisor({
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;
+          if (deviceIdleMinutes > 0) {
+            try {
+              shutDownIdleDevices(Math.min(deviceIdleMs, idleStopMinutes * 60_000));
+            } catch (err) {
+              stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
+            }
+          }
           const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
           withWorkspaceStateLock(root, () => {
             if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
@@ -412,6 +491,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     tunnel: parsed.tunnel ?? false,
     resetCache: parsed.resetCache ?? false,
     idleStopMinutes: parsed.idleStopMinutes ?? 0,
+    deviceIdleMinutes: parsed.deviceIdleMinutes ?? 0,
   });
 }
 

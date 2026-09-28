@@ -4,6 +4,7 @@ import {
   background,
   buttonStyle,
   contentShape,
+  disabled,
   font,
   foregroundStyle,
   frame,
@@ -25,8 +26,9 @@ import { useMacs } from '@/hooks/mac-connection';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { NOTIFY_CATEGORIES } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
+import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
-import { pairingScope } from '@/lib/connection';
+import { pairingScope, type StimConnection } from '@/lib/connection';
 import {
   APPEARANCE_OPTIONS,
   HOME_FOOTER,
@@ -38,6 +40,7 @@ import {
   quietHoursValue,
   STUCK_MINUTES_OPTIONS,
   READ_ONLY_FOOTER,
+  REPLAY_FOOTER,
   VIDEO_QUALITY_FOOTER,
   VIDEO_QUALITY_OPTIONS,
   type Option,
@@ -123,6 +126,21 @@ export function Settings() {
             })}
           </Section>
         ) : null}
+        {connections.some(({ state }) => pairingScope(state) === 'control') ? (
+          <Section title="Replay" footer={<Text>{REPLAY_FOOTER}</Text>}>
+            {connections
+              .filter(({ state }) => pairingScope(state) === 'control')
+              .map(({ mac, connection }) => (
+                <RecordingToggle
+                  key={mac.id}
+                  colors={colors}
+                  name={mac.name}
+                  connection={connection}
+                  modifiers={rowModifiers}
+                />
+              ))}
+          </Section>
+        ) : null}
         <Section title="More">
           <LinkRow
             colors={colors}
@@ -204,6 +222,35 @@ function NotificationsSection({
         />
       ) : null}
     </Section>
+  );
+}
+
+function RecordingToggle({
+  colors,
+  name,
+  connection,
+  modifiers,
+}: {
+  colors: Theme['colors'];
+  name: string;
+  connection: StimConnection | null;
+  modifiers: ReturnType<typeof listRowBackground>[];
+}) {
+  const setting = useRecordingSetting(connection);
+  if (setting.enabled === null) return null;
+  const title = setting.fromEnvironment
+    ? `Record on ${name} (set by STIM_RECORDING)`
+    : setting.error
+      ? `Record on ${name}: ${setting.error}`
+      : `Record on ${name}`;
+  return (
+    <Toggle
+      isOn={setting.enabled}
+      onIsOnChange={setting.set}
+      modifiers={[...modifiers, disabled(setting.fromEnvironment || setting.saving)]}
+    >
+      <RowLabel colors={colors} title={title} symbol="record.circle" />
+    </Toggle>
   );
 }
 

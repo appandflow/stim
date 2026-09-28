@@ -33,6 +33,7 @@ import { unverifiedDeviceCommand } from './devices.ts';
 import type { StaleLedgerEntry } from './ledger.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
+import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 
 export interface GcReport {
   skipped: GcSkip[];
@@ -56,6 +57,7 @@ export interface GcReport {
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
   workspaceLogs: WorkspaceLogs[];
+  recordings: WorkspaceRecordings[];
   worktreeSweep?: WorktreeSweep | null;
   cacheScope: string | null;
   olderThan: number | null;
@@ -146,6 +148,7 @@ export function formatGcReport(
     caches = [],
     workspaceOutputs = null,
     workspaceLogs = [],
+    recordings = [],
     worktreeSweep = null,
     cacheScope = null,
     olderThan = null,
@@ -309,6 +312,7 @@ export function formatGcReport(
   }
 
   lines.push(...workspaceLogLines(workspaceLogs));
+  lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
 
   return lines;
@@ -548,6 +552,16 @@ export interface GcJsonSections {
     reason: WorkspaceLogsKeptCode | null;
     detail: string | null;
   }[];
+  recordings: {
+    dir: string;
+    projectRoot: string | null;
+    bytes: number;
+    deleteBytes: number;
+    willDelete: boolean;
+    withWorkspace: boolean;
+    reason: RecordingKeptCode | null;
+    detail: string | null;
+  }[];
   workspaceBuildOutputs: {
     dir: string;
     projectRoot: string | null;
@@ -590,6 +604,7 @@ export function gcReportSections({
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
   workspaceLogs = [],
+  recordings = [],
   caches = [],
 }: Partial<GcReport>): GcJsonSections {
   return {
@@ -707,6 +722,16 @@ export function gcReportSections({
       willTrim: w.willTrim,
       reason: w.keptCode,
       detail: w.keptReason,
+    })),
+    recordings: recordings.map((r) => ({
+      dir: r.dir,
+      projectRoot: r.projectRoot,
+      bytes: r.bytes,
+      deleteBytes: r.deleteBytes,
+      willDelete: r.willDelete,
+      withWorkspace: r.withWorkspace,
+      reason: r.keptCode,
+      detail: r.keptReason,
     })),
     workspaceBuildOutputs: (workspaceOutputs?.workspaces ?? []).map((w) => ({
       dir: w.dir,

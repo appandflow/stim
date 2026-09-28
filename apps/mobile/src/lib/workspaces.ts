@@ -147,12 +147,33 @@ export interface DeviceRef {
   app?: DeviceAppProcess;
   /** The Stim-owned Chrome's current page and, when its latest load failed, why. */
   page?: { url: string; error: string | null };
+  /** Bytes the device's data holds, when status measures it. */
+  diskBytes?: number | null;
   /** When the workspace's lease on a physical device ends. */
   leaseExpiresAt?: string;
 }
 
 export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physical'>): string {
   return `${device.platform}\n${device.slot}${device.physical ? '\nphysical' : ''}`;
+}
+
+type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running' | 'state'>;
+
+/**
+ * Whether stim-server serves the device's screen: an owned one, or a connected physical device whose platform the
+ * Mac's stim-server lists in its hello `features` (`physical-ios`, view only, or `physical-android`). An older server
+ * ignores `physical` and would stream the slot's owned device instead.
+ */
+export function streamsFrames(device: ServedDevice, features: readonly string[]): boolean {
+  if (!device.physical) return device.owned;
+  return device.running && features.includes(`physical-${device.platform}`);
+}
+
+/** Why a device {@link streamsFrames} does not serve shows no screen. */
+export function unservedReason(device: ServedDevice): string {
+  if (!device.physical) return 'Frames are only served for devices Stim owns.';
+  if (!device.running) return device.state;
+  return "Update stim-server on the Mac to see this device's screen.";
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
@@ -169,6 +190,7 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
     physical: false,
     activity: sim.activity,
     app: sim.app,
+    diskBytes: sim.disk?.bytes ?? null,
   };
 }
 
@@ -185,6 +207,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     physical: avd.physical,
     activity: avd.activity,
     app: avd.app,
+    diskBytes: avd.disk?.bytes ?? null,
   };
 }
 
@@ -204,11 +227,12 @@ function physicalDevice(device: PhysicalDeviceState): DeviceRef {
 }
 
 function webDevice(web: WebBrowserState): DeviceRef {
+  const url = web.page?.route ?? web.page?.url ?? web.url;
   return {
     platform: 'web',
     slot: 'default',
     id: web.targetId ?? null,
-    name: shortUrl(web.page?.url ?? web.url),
+    name: shortUrl(url),
     model: 'Web',
     state: web.running ? 'running' : 'closed',
     running: web.running,
@@ -216,37 +240,17 @@ function webDevice(web: WebBrowserState): DeviceRef {
     physical: false,
     activity: web.activity,
     page: {
-      url: web.page?.url ?? web.url,
+      url,
       error: web.running && web.page?.state === 'failed' ? (web.page.error ?? 'The page failed to load.') : null,
     },
   };
-}
-
-type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical'>;
-
-/**
- * Whether the Mac streams and controls `device`: a Stim-owned device, or a leased Android phone when the Mac's
- * stim-server lists `physical-android` in its features. An older server would ignore `physical` and stream the
- * slot's owned device instead.
- */
-export function servesDevice(device: ServedDevice, features: readonly string[]): boolean {
-  if (!device.physical) return device.owned;
-  return device.platform === 'android' && features.includes('physical-android');
-}
-
-/** Why a device the Mac does not serve shows no screen. */
-export function unservedReason(device: ServedDevice): string {
-  if (!device.physical) return 'Frames are only served for devices Stim owns.';
-  return device.platform === 'android'
-    ? "Update stim-server on the Mac to see this phone's screen."
-    : 'Stim does not stream physical iPhones yet.';
 }
 
 export function platformName(platform: DevicePlatform): string {
   return platform === 'ios' ? 'iOS' : platform === 'web' ? 'Web' : 'Android';
 }
 
-export function deviceSource(device: Pick<DeviceRef, 'platform' | 'physical'>): string {
+export function deviceSource(device: DeviceRef): string {
   if (device.platform === 'web') return 'Chrome';
   if (device.platform === 'ios') return device.physical ? 'iOS device' : 'iOS Simulator';
   return device.physical ? 'Android device' : 'Android Emulator';
@@ -289,12 +293,17 @@ export function runningBuild(
   return build;
 }
 
-const deviceRank = (d: DeviceRef) => (d.running ? (d.activity?.state === 'driven' ? 0 : 1) : 2);
+const PLATFORM_RANK: Record<DevicePlatform, number> = { ios: 0, android: 1, web: 2 };
+const platformRank = (d: DeviceRef) => (d.physical ? 3 : PLATFORM_RANK[d.platform]);
 
-/** Driven devices first, then other running ones, then stopped ones; by slot name inside each group. */
+/**
+ * Running devices before stopped ones, then iOS, Android, Web and physical devices, then by slot name. The order
+ * never depends on activity or drivers, so a device keeps its place while tools attach and detach.
+ */
 export function orderDevices(devices: DeviceRef[]): DeviceRef[] {
   return [...devices].sort(
-    (a, b) => deviceRank(a) - deviceRank(b) || a.slot.localeCompare(b.slot) || a.platform.localeCompare(b.platform),
+    (a, b) =>
+      Number(b.running) - Number(a.running) || platformRank(a) - platformRank(b) || a.slot.localeCompare(b.slot),
   );
 }
 

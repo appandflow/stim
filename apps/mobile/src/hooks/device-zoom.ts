@@ -21,7 +21,7 @@ export interface DeviceTarget {
   workspace: string;
   platform: DevicePlatform;
   slot: string;
-  /** The physical device the workspace leases in `slot`, which shares the slot with its Stim-owned one. */
+  /** The physical device the workspace leases in `slot`, not its simulator or emulator. */
   physical?: boolean;
 }
 

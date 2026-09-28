@@ -22,7 +22,7 @@ mkdir -p "$out"
 
 if [ -n "$identity" ]; then
   sign() { codesign --force --options runtime --timestamp --sign "$identity" "$@"; }
-  app_entitlements=
+  app_entitlements="--entitlements Support/app.entitlements"
 else
   echo "release.sh: DESKTOP_SIGNING_IDENTITY is not set, so this build is signed ad hoc and is not notarized. Use it for testing only." >&2
   sign() { codesign --force --options runtime --sign - "$@"; }

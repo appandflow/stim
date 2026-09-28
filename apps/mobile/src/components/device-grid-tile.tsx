@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
-import { servesDevice, shortUrl, unservedReason } from '@/lib/workspaces';
+import { shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -37,7 +37,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const { theme } = useUnistyles();
   const { connection, state: link } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
-  const streams = servesDevice(device, link.kind === 'open' ? link.features : []);
+  const streams = streamsFrames(device, link.kind === 'open' ? link.features : []);
   const { frame, error } = useFrameSnapshot(
     connection,
     item.env.path,
