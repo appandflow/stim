@@ -6,27 +6,22 @@ const COLUMNS = 10;
 /** Neighbouring pixels overlap so no hairline of the content shows between them before they move. */
 const OVERLAP = 1;
 const PIXEL_MS = 160;
-const SPREAD_MS = 300;
-const VANISHED = { scale: 0, rotate: 45 };
-const COVERING = { scale: 1, rotate: 0 };
+const SPREAD_MS = 450;
+const VANISHED = { scale: 0 };
+const COVERING = { scale: 1 };
 
 /** Longest time from `dismissed` until the last pixel is gone, not counting `delay`. */
 export const PIXEL_DISMISS_MS = SPREAD_MS + PIXEL_MS;
 
-/**
- * Delay before the pixel at `row`, `column` starts to vanish. It grows with the distance from the centre of the grid
- * to the pixel's centre, scaled so the grid's outer corners would be at `spreadMs`.
- */
-export function rippleDelay(row: number, column: number, rows: number, columns: number, spreadMs: number) {
-  const distance = Math.hypot(column + 0.5 - columns / 2, row + 0.5 - rows / 2);
-  const maxDistance = Math.hypot(columns / 2, rows / 2);
-  return Math.round((distance / maxDistance) * spreadMs);
+/** Delay before a pixel starts to vanish: a random time up to `spreadMs`, so the pixels go in no order. */
+export function dissolveDelay(spreadMs: number) {
+  return Math.round(Math.random() * spreadMs);
 }
 
 /**
- * Covers the screen with square pixels of `color`. When `dismissed` turns true, the pixels shrink and turn away,
- * rippling outward from the centre after `delay` ms. Each pixel is an `EaseView`, so the whole ripple runs on native
- * animations from a single render.
+ * Covers the screen with square pixels of `color`. When `dismissed` turns true, the pixels shrink away in random
+ * order after `delay` ms. Each pixel is an `EaseView`, so the whole dissolve runs on native animations from a single
+ * render.
  */
 export function PixelDismiss({ color, dismissed, delay }: { color: string; dismissed: boolean; delay: number }) {
   const { width, height } = useWindowDimensions();
@@ -35,12 +30,12 @@ export function PixelDismiss({ color, dismissed, delay }: { color: string; dismi
   return (
     <View style={styles.center}>
       <View style={{ width, height: grid.height }}>
-        {grid.pixels.map(({ key, left, top, rippleMs }) => (
+        {grid.pixels.map(({ key, left, top, delayMs }) => (
           <EaseView
             key={key}
             style={[styles.pixel, { left, top, width: grid.pixelSize, height: grid.pixelSize, backgroundColor: color }]}
             animate={dismissed ? VANISHED : COVERING}
-            transition={{ type: 'timing', duration: PIXEL_MS, delay: delay + rippleMs, easing: 'easeOut' }}
+            transition={{ type: 'timing', duration: PIXEL_MS, delay: delay + delayMs, easing: 'easeOut' }}
           />
         ))}
       </View>
@@ -58,7 +53,7 @@ function pixelGrid(width: number, height: number) {
         key: `${row}:${column}`,
         left: column * size,
         top: row * size,
-        rippleMs: rippleDelay(row, column, rows, COLUMNS, SPREAD_MS),
+        delayMs: dissolveDelay(SPREAD_MS),
       });
     }
   }
