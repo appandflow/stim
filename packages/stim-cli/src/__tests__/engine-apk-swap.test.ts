@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -293,6 +293,7 @@ function harness({
   bundleWritten = true,
   fresh = STORED as AssetManifest | null,
   stored = STORED as AssetManifest | null,
+  embeddedManifest = null as string | null,
 } = {}) {
   const calls: Call[] = [];
   const base = 'app-production-release.apk';
@@ -307,6 +308,10 @@ function harness({
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
       if (file === hermesc) writeFileSync(args[args.indexOf('-out') + 1]!, 'hermes bytecode');
       if (file === 'cp') writeFileSync(args[2]!, 'cloned apk bytes');
+      if (args[0] === '--extract' && embeddedManifest !== null) {
+        mkdirSync(join(String(opts.cwd), 'assets'), { recursive: true });
+        writeFileSync(join(String(opts.cwd), 'assets', 'app.manifest'), embeddedManifest);
+      }
       return '';
     },
   });
@@ -350,7 +355,7 @@ describe('swapApkBundle', () => {
     expect(result.tmpDir).toBe(tmp);
     expect(result.hermes).toBe(true);
 
-    expect(calls.map((c) => c.file)).toEqual(['npx', hermesc, jarPath(), buildTools.path, apksigner]);
+    expect(calls.map((c) => c.file)).toEqual(['npx', hermesc, jarPath(), jarPath(), buildTools.path, apksigner]);
 
     expect(readFileSync(work, 'utf-8')).toBe('cached apk bytes');
     expect(readFileSync(cachedApk, 'utf-8')).toBe('cached apk bytes');
@@ -364,10 +369,31 @@ describe('swapApkBundle', () => {
     expect(readFileSync(bundleOutput, 'utf-8')).toBe('hermes bytecode');
     expect(existsSync(`${bundleOutput}.hbc`)).toBe(false);
 
-    expect(calls[2]?.args).toEqual(['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
+    expect(calls[2]?.args).toEqual(['--extract', '--file', work, 'assets/app.manifest']);
+    expect(calls[2]?.opts?.cwd).toBe(stage);
+    expect(existsSync(join(stage, 'assets', 'app.manifest'))).toBe(false);
+    expect(calls[3]?.args).toEqual(['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
 
-    expect(calls[3]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
-    expect(calls[4]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
+    expect(calls[4]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
+    expect(calls[5]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
+  });
+
+  test('the expo-updates embedded manifest is repacked with a fresh id and this swap as its commitTime', async () => {
+    const embeddedManifest = JSON.stringify({ id: 'build-id', commitTime: 1000, assets: [] });
+    const { run, stage } = harness({ embeddedManifest });
+    const result = await run({ now: () => 5000 });
+    expect(result.ok).toBe(true);
+    const refreshed = JSON.parse(readFileSync(join(stage, 'assets', 'app.manifest'), 'utf-8'));
+    expect(refreshed).toMatchObject({ commitTime: 5000, assets: [] });
+    expect(refreshed.id).not.toBe('build-id');
+  });
+
+  test('an unreadable embedded manifest fails the swap before the APK is repacked', async () => {
+    const { run, calls } = harness({ embeddedManifest: 'not json' });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('updates');
+    expect(calls.map((c) => c.args?.[0])).not.toContain('--update');
   });
 
   test('bare project: the bundle step is `react-native bundle` with the detected entry file', async () => {
@@ -484,7 +510,7 @@ describe('swapApkBundle', () => {
   });
 
   test('a jar failure fails at the zip step, and nothing is aligned or signed', async () => {
-    const { calls, run } = harness({ failOn: jarPath() });
+    const { calls, run } = harness({ failOn: '--update' });
     const result = await run();
     expect(result.failed).toBe(true);
     expect(result.step).toBe('zip');

@@ -1,5 +1,6 @@
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
@@ -183,6 +184,34 @@ const ASSET_CATALOG_BUNDLE_INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>
 `;
+
+export const UPDATES_MANIFEST_NAME = 'app.manifest';
+
+/**
+ * expo-updates launches the update with the newest `commitTime` among those built for the binary's
+ * runtime version, and the embedded one is only a row in that race. A swapped copy keeps the id and
+ * `commitTime` the cached build wrote, so an update downloaded after that build would launch instead
+ * of the injected bundle. A full build writes a fresh id and `commitTime`; this does the same.
+ */
+export function refreshUpdatesManifest(text: string, { id, commitTime }: { id: string; commitTime: number }): string {
+  const manifest: unknown = JSON.parse(text);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new Error(`${UPDATES_MANIFEST_NAME} is not a JSON object`);
+  }
+  return JSON.stringify({ ...manifest, id, commitTime });
+}
+
+export function refreshUpdatesManifestFile(path: string, commitTime: number): void {
+  writeFileSync(path, refreshUpdatesManifest(readFileSync(path, 'utf-8'), { id: randomUUID(), commitTime }));
+}
+
+const IOS_UPDATES_MANIFESTS = [join('EXUpdates.bundle', UPDATES_MANIFEST_NAME), UPDATES_MANIFEST_NAME];
+const IOS_FRAMEWORK_UPDATES_MANIFEST = join(
+  'Frameworks',
+  'EXUpdates.framework',
+  'EXUpdates.bundle',
+  UPDATES_MANIFEST_NAME,
+);
 
 export function hermescPath(root: string, { exists = existsSync }: { exists?: (p: string) => boolean } = {}): string {
   const candidates = [
@@ -401,6 +430,20 @@ export async function swapJsBundle({
         `could not compile the image asset catalog into ${catalogBundle}: ${describe(err)}`,
         tailLines(stdout.split('\n'), LAST_LINES),
       );
+    }
+  }
+
+  if (exists(join(appCopy, IOS_FRAMEWORK_UPDATES_MANIFEST))) {
+    return fail(
+      'updates',
+      `the expo-updates manifest sits inside a nested framework (${IOS_FRAMEWORK_UPDATES_MANIFEST}), where a swap cannot refresh it without re-signing that framework`,
+    );
+  }
+  for (const manifest of IOS_UPDATES_MANIFESTS.map((name) => join(appCopy, name)).filter(exists)) {
+    try {
+      refreshUpdatesManifestFile(manifest, now());
+    } catch (err) {
+      return fail('updates', `could not refresh the expo-updates manifest ${manifest}: ${describe(err)}`);
     }
   }
 

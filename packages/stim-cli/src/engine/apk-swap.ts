@@ -15,7 +15,7 @@ import {
   type AssetManifest,
   type AssetManifestDiff,
 } from './asset-manifest.ts';
-import { detectEntryFile } from './js-swap.ts';
+import { detectEntryFile, refreshUpdatesManifestFile, UPDATES_MANIFEST_NAME } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
@@ -374,6 +374,14 @@ export async function swapApkBundle({
   if (!diff.same) return refuse(assetDiffReason(diff), diff);
 
   const jar = jarPath();
+  const updatesManifest = join(stage, 'assets', UPDATES_MANIFEST_NAME);
+  try {
+    e.runFile(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], { cwd: stage });
+    if (exists(updatesManifest)) refreshUpdatesManifestFile(updatesManifest, now());
+  } catch (err) {
+    return fail('updates', `could not refresh the expo-updates manifest from ${work}: ${describe(err)}`);
+  }
+
   try {
     // --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
     // runtime can mmap it straight out of the APK, and a deflated entry fails to

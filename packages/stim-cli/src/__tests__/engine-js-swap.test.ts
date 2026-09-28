@@ -12,6 +12,7 @@ import {
   hermescPath,
   pickEntryFile,
   readHermesEnabled,
+  refreshUpdatesManifest,
   swapJsBundle,
 } from '../engine/js-swap.ts';
 import { getExecutor } from '../exec.ts';
@@ -382,6 +383,56 @@ describe('swapJsBundle', () => {
     expect(calls[0]?.args?.[0]).toBe('-c');
     expect(calls[1]?.args).toEqual(['-R', cachedApp, join(tmp, 'Fixture.app')]);
     expect(fallbackTargetExisted).toBe(false);
+  });
+});
+
+describe('the expo-updates embedded manifest in a swapped copy', () => {
+  const EMBEDDED = JSON.stringify({ id: 'build-id', commitTime: 1000, assets: [{ name: 'logo', type: 'png' }] });
+  const writeManifest = (dir: string, text = EMBEDDED) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'app.manifest'), text);
+  };
+
+  test('refreshUpdatesManifest replaces only the id and commitTime and rejects a non-object', () => {
+    expect(JSON.parse(refreshUpdatesManifest(EMBEDDED, { id: 'new-id', commitTime: 2000 }))).toEqual({
+      id: 'new-id',
+      commitTime: 2000,
+      assets: [{ name: 'logo', type: 'png' }],
+    });
+    expect(() => refreshUpdatesManifest('[]', { id: 'x', commitTime: 1 })).toThrow(/not a JSON object/);
+  });
+
+  test('gets a fresh id and a commitTime from this swap, so an update downloaded after the cached build cannot outrank it', async () => {
+    const { run, appCopy, calls } = harness({
+      onBundle: () => writeManifest(join(tmp, 'Fixture.app', 'EXUpdates.bundle')),
+    });
+    const result = await run({ now: () => 5000 });
+    expect(result.ok).toBe(true);
+    const refreshed = JSON.parse(readFileSync(join(appCopy, 'EXUpdates.bundle', 'app.manifest'), 'utf-8'));
+    expect(refreshed.commitTime).toBe(5000);
+    expect(refreshed.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(refreshed.id).not.toBe('build-id');
+    expect(calls.at(-1)?.file).toBe('codesign');
+  });
+
+  test('a manifest that cannot be refreshed fails the swap before signing, so a full build runs', async () => {
+    const { run, calls } = harness({
+      onBundle: () => writeManifest(join(tmp, 'Fixture.app', 'EXUpdates.bundle'), 'not json'),
+    });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('updates');
+    expect(calls.map((c) => c.file)).not.toContain('codesign');
+  });
+
+  test('a manifest inside a nested dynamic framework fails the swap, since re-signing only the app would break that seal', async () => {
+    const { run, calls } = harness({
+      onBundle: () => writeManifest(join(tmp, 'Fixture.app', 'Frameworks', 'EXUpdates.framework', 'EXUpdates.bundle')),
+    });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('updates');
+    expect(calls.map((c) => c.file)).not.toContain('codesign');
   });
 });
 

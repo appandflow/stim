@@ -1822,6 +1822,17 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   android.keystorePassword override it (see \`guide settings\`). The cache
   entry itself is never modified.
 
+  AN EXPO-UPDATES APP GETS A FRESH EMBEDDED UPDATE. expo-updates launches the
+  update with the newest commitTime for the binary's runtime version, and the
+  embedded bundle is one of those updates. The cached artifact's embedded
+  manifest (app.manifest) carries the CACHED build's id and time, so an
+  update the app downloaded after that build would launch instead of the
+  swapped JS. The swap gives the copy's manifest a new id and this run's time,
+  exactly as a full build does, on both platforms. An update published after
+  the swap can still download and launch on a later start, as it would on a
+  fresh build. A manifest the swap cannot rewrite, or one inside a dynamic
+  EXUpdates.framework on iOS, falls back to a full build.
+
   Before re-packing, THE ASSET GATE compares CONTENT HASHES of the assets
   React Native emits: what this workspace just emitted under --assets-dest
   against a manifest of what the cached build emitted, recorded as
@@ -1866,7 +1877,8 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   its builder's baked-in JS, a cache hit regenerates THIS workspace's bundle
   (the project's own \`expo export:embed\` / \`react-native bundle\`, plus
   its own hermesc when Hermes is enabled) into a copy of the artifact,
-  re-signs it and installs that; any swap failure falls back to a full build
+  refreshes an expo-updates manifest as described above, re-signs it and
+  installs that; any swap failure falls back to a full build
   rather than ever installing stale JS. Device logs are still collected, so
   \`logs --errors\` answers "does it repro in release/Hermes bytecode".
   A run with no \`--device\` installs on the simulator only. \`ios --device\`
