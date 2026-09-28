@@ -29,6 +29,7 @@ import {
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
+import { loadMachineDetails, MachineDetailsCache } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
@@ -196,6 +197,7 @@ const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), kee
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 const PLAN_TIMEOUT_MS = 150_000;
+const DETAILS_TIMEOUT_MS = 150_000;
 const AUDIT_FIELD_CHARS = 256;
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
 
@@ -374,6 +376,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
+  const machineDetails = new MachineDetailsCache(() =>
+    loadMachineDetails((args) => {
+      const run = runStim(options.stimCli, options.env, args, homedir(), {
+        ...commandLimits,
+        timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+      });
+      running.add(run.cancel);
+      return run.outcome.finally(() => running.delete(run.cancel));
+    }),
+  );
   let recordingTurn: Promise<void> = Promise.resolve();
   let closing = false;
   const sessions = new Map<WebSocket, PairedDevice>();
@@ -1329,6 +1341,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'recording.set') return setRecording(id, message.params, device);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
+      if (message.method === 'machine.details') {
+        void machineDetails.get().then((result) => send(socket, { id, result }));
+        return;
+      }
       if (message.method === 'machine.history') {
         const params = message.params ?? {};
         const sinceMs = isJsonObject(params) ? params.sinceMs : undefined;

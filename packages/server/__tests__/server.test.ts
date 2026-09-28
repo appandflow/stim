@@ -112,7 +112,7 @@ if (command === 'status') {
 } else if (env.FAKE_STIM_JSON_FAIL) {
   print({ code: 'STIM_NO_LIVE_APP', message: 'No live app in this workspace.', remedy: 'Run stim ios.' });
   exit(1);
-} else if (env.FAKE_STIM_FAIL) {
+} else if (env.FAKE_STIM_FAIL || env.FAKE_STIM_FAIL_COMMAND === command) {
   process.stderr.write(command + ' failed on purpose');
   exit(1);
 } else {
@@ -921,6 +921,40 @@ describe('machine.history', () => {
     const client = await authed(port);
     expect(await client.request('machine.history', { sinceMs: 'soon' })).toMatchObject({
       error: { code: 'bad-request' },
+    });
+  });
+});
+
+describe('machine.details', () => {
+  it('runs only the gc dry run and stats in the home directory, once for every read-only phone within a minute', async () => {
+    const port = await start();
+    const first = await authed(port);
+    const second = await authed(port);
+    const home = realpathSync(homedir());
+    const expected = {
+      gc: { command: 'gc', cwd: home },
+      stats: { command: 'stats', cwd: home },
+      measuredAt: expect.any(String),
+    };
+    const reply = await first.request('machine.details');
+    expect(reply).toEqual({ id: 2, result: expected });
+    expect(await second.request('machine.details')).toEqual(reply);
+    expect(
+      stimCalls()
+        .map((call) => call.args)
+        .toSorted(),
+    ).toEqual(['gc --json', 'stats --json']);
+  });
+
+  it('keeps the stats when gc fails, and says why gc is missing', async () => {
+    const port = await start({ env: { FAKE_STIM_FAIL_COMMAND: 'gc' } });
+    const client = await authed(port);
+    expect(await client.request('machine.details')).toMatchObject({
+      result: {
+        gc: null,
+        gcError: 'stim gc exited (code 1): gc failed on purpose',
+        stats: { command: 'stats' },
+      },
     });
   });
 });
