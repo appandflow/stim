@@ -93,7 +93,10 @@ export function Logs({
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
   useLogs(logFilter(path, active), onLogs);
 
-  const update = (patch: Partial<LogFilterState>) => setFilter((f) => ({ ...f, ...patch }));
+  const update = (patch: Partial<LogFilterState>) => {
+    setFilter((f) => ({ ...f, ...patch }));
+    setFollowing(true);
+  };
   const toggleChip = (chip: LogChip) =>
     update({ chips: filter.chips.includes(chip) ? filter.chips.filter((c) => c !== chip) : [...filter.chips, chip] });
   const chips = presentChips(env, seen, filter.chips);

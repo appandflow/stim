@@ -137,13 +137,13 @@ reload and stop a workspace:
   workspace runs or that sent records; none selected shows every source. iOS,
   Android and Web split the device logs by their platform. The server does not
   filter by platform or warnings alone, so the phone filters those within the
-  newest 5,000 records it loaded. A slot row and a
-  regular expression search complete the filters. The list follows new records
-  until you scroll up, keeps the newest 5,000, and a tap on a record shows its
-  whole message and stack. Each entry shows a severity dot, its source and time,
-  then the message; a record with a stack shows its top frames, the
-  workspace's own frames in bold, one framework frame dimmed as its package, and
-  a count of the rest.
+  newest 5,000 records it loaded. A slot row and a regular expression search
+  complete the filters. The list follows new records until you scroll up, and
+  again after a filter change. It keeps the newest 5,000, and a tap on a record
+  shows its whole message and stack. Each entry shows a severity dot, its
+  source and time, then the message; a record with a stack shows its top
+  frames, the workspace's own frames in bold, one framework frame dimmed as its
+  package, and a count of the rest.
   The records of one failed Expo bundle (`Bundling failed`, the error line with
   its code frame and stack lines, and a failed bundle response) are one entry.
   An entry leads with the error type and message, then the file and line
