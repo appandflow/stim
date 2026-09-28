@@ -39,8 +39,8 @@ import Foundation
   private var subscriptionGeneration = 0
   private var seeks = ReplaySeekQueue()
   private var cancelFlush: (() -> Void)?
-  /// The replay as the server last confirmed it, which a refused seek returns to.
   private var confirmed: Replay?
+  private var cancelDropWatch: (() -> Void)?
   private let clock: () -> TimeInterval
   private var position: Double?
   private var cancelPosition: (() -> Void)?
@@ -66,7 +66,16 @@ import Foundation
     cancelPoll?()
     cancelPoll = nil
     self.server = server
+    cancelDropWatch?()
+    cancelDropWatch = nil
     guard let server else { return }
+    if let device = server as? DeviceServer {
+      cancelDropWatch = device.observeControlEnded { [weak self] ended in
+        guard let self, ended.session == nil, self.subscriptionID != nil else { return }
+        self.subscriptionID = nil
+        self.seeks.interrupt()
+      }
+    }
     pollsSupported = true
     poll(server)
     if let replayAt { seek(at: replayAt, rate: 0) }
@@ -90,7 +99,7 @@ import Foundation
       return
     }
     replay = Replay(at: at, rate: rate, ended: false)
-    _ = seeks.ask(ReplaySeekQueue.Seek(at: at, rate: rate), now: clock(), open: false)
+    seeks.ask(ReplaySeekQueue.Seek(at: at, rate: rate))
     flush(server)
   }
 
@@ -152,7 +161,7 @@ import Foundation
         }
         self.replayable = true
         self.subscriptionID = result["subscription"]?.string
-        if self.replay?.rate != firstRate { self.replay?.rate = firstRate }
+        if self.seeks.isSettled, self.replay?.rate != firstRate { self.replay?.rate = firstRate }
         firstRate = 0
         self.seeks.interrupt()
         self.flush(server)
@@ -201,7 +210,8 @@ import Foundation
   }
 
   /// Only the answer to the latest seek moves the replay. A seek the server refuses leaves the replay as it was
-  /// confirmed; one lost with the connection waits for the next subscription.
+  /// confirmed; one lost with the connection, or sent on a subscription the server no longer has, waits for the next
+  /// subscription.
   private func sendSeek(_ server: ReplayServer, subscription: String, _ seek: ReplaySeekQueue.Seek) {
     let generation = subscriptionGeneration
     Task {
@@ -216,7 +226,9 @@ import Foundation
           show(Replay(at: shown, rate: seek.rate, ended: false))
         }
         flush(server)
-      } catch let failure as ServerError where failure.code == "not-connected" || failure.code == "connection-lost" {
+      } catch let failure as ServerError
+        where ["not-connected", "connection-lost", "unknown-subscription"].contains(failure.code)
+      {
         guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
         subscriptionID = nil
         seeks.interrupt()

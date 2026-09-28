@@ -3,7 +3,7 @@ import Foundation
 /// The `frames.seek` requests of one replay: at most one is out at a time, at most one waits, and a newer seek
 /// replaces the one waiting. Each seek makes stim-server resend the frames from the keyframe before it, so a drag
 /// sends the pointer's latest time at most every `minimumInterval` instead of one seek per pointer event.
-struct ReplaySeekQueue: Equatable, Sendable {
+struct ReplaySeekQueue: Sendable {
   struct Seek: Equatable, Sendable {
     var at: Double
     var rate: Int
@@ -18,13 +18,9 @@ struct ReplaySeekQueue: Equatable, Sendable {
   /// Nothing is out or waiting, so the frames that arrive belong to the position shown.
   var isSettled: Bool { sending == nil && waiting == nil }
 
-  /// The seek the user is heading to: the one waiting, else the one out.
-  var target: Seek? { waiting ?? sending }
-
-  /// Queues `seek` and returns the seek to send now, if any.
-  mutating func ask(_ seek: Seek, now: TimeInterval, open: Bool) -> Seek? {
+  /// Makes `seek` the one waiting, in place of any older one; `next` sends it.
+  mutating func ask(_ seek: Seek) {
     waiting = seek
-    return next(now: now, open: open)
   }
 
   /// Returns the waiting seek when it can go out now: the subscription is open, nothing is out, and the last seek
