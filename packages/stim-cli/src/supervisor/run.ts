@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearSupervisor, setSupervisor } from '../workspace/config.ts';
@@ -370,6 +370,7 @@ export async function runSupervisor({
   });
 
   const deviceIdleMs = deviceIdleMinutes * 60_000;
+  const workspaceProbe = workspaceIdleProbe(root);
   const shutDownIdleDevices = (idleMs: number) =>
     deviceIdle.shutDown(root, idleMs, (entry) => writer.write({ src: 'metro', ...entry }));
 
@@ -377,7 +378,14 @@ export async function runSupervisor({
     stopWatchingDevices = watchIdleDevices({
       idleMs: deviceIdleMs,
       now,
-      lastUseAt: () => Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? '')),
+      lastUseAt: () => {
+        let deviceLog = NaN;
+        try {
+          deviceLog = statSync(join(logsDir, 'device.ndjson')).mtimeMs;
+        } catch {}
+        const times = [workspaceProbe.lastActivityAt(), deviceLog].filter(Number.isFinite);
+        return times.length ? Math.max(...times) : NaN;
+      },
       hasDue: () => deviceIdle.due(root, deviceIdleMs).length > 0,
       onDue: async () => {
         try {
@@ -405,7 +413,13 @@ export async function runSupervisor({
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;
-          if (deviceIdleMinutes > 0) shutDownIdleDevices(Math.min(deviceIdleMs, idleStopMinutes * 60_000));
+          if (deviceIdleMinutes > 0) {
+            try {
+              shutDownIdleDevices(Math.min(deviceIdleMs, idleStopMinutes * 60_000));
+            } catch (err) {
+              stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
+            }
+          }
           const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
           withWorkspaceStateLock(root, () => {
             if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {

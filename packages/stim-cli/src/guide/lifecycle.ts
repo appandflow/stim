@@ -1241,8 +1241,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   booted, no driver, no Stim or agent-device lock, no build in progress, and
   no activity. A stim-server client viewing the device (the phone app's
   device viewer) counts as activity, here and in step 1. The supervisor
-  checks once a minute after the workspace's last Stim command is that old,
-  rechecks under the workspace's native-run lock, and shuts devices down
+  checks once a minute after the workspace's last Stim command, in-app log
+  and device log are all that old, rechecks under the workspace's native-run lock, and shuts devices down
   through the same teardown as \`stop\`: never deleted, and physical
   devices are never touched. It writes a device_idle_shutdown line to
   metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim

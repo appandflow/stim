@@ -728,8 +728,8 @@ export class FramePool {
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
-    const unview = this.viewers?.add(device);
     const detach = this.attach(device, listener, hint);
+    const unview = this.viewers?.add(device);
     return () => {
       unview?.();
       detach();

@@ -1089,6 +1089,20 @@ describe('device idle shutdown', () => {
     expect(seen.shutDowns).toHaveLength(1);
   });
 
+  test('a recent device log also postpones the device check, so an app in use is not probed each minute', async () => {
+    const seen = await startDeviceIdleSupervisor();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    const deviceLog = join(workspaceLogsDir(root), 'device.ndjson');
+    writeFileSync(deviceLog, '{}\n');
+    const at = new Date(Date.now());
+    utimesSync(deviceLog, at, at);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.checks).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.shutDowns).toEqual([2 * MINUTE]);
+  });
+
   test('a device that is not due is left running', async () => {
     const seen = await startDeviceIdleSupervisor({ due: () => false });
     await vi.advanceTimersByTimeAsync(30 * MINUTE);

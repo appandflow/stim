@@ -870,8 +870,8 @@ RULES
   lastActivityAt   the newest of this device's app log records, this
                    platform's Metro bundle requests, the workspace's last
                    Stim run, while agent-device drives it the agent's last
-                   recorded action, and while a stim-server client views it
-                   now, rounded down to the minute; absent when none is
+                   recorded action, and now while a stim-server client views
+                   it, rounded down to the minute; absent when none is
                    recorded
   recent           the newest time of each kind of evidence behind
                    lastActivityAt: agent-action, device-log, metro-bundle,

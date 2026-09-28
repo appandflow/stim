@@ -18,9 +18,18 @@ const MINUTE_MS = 60_000;
  */
 export function idleShutdownDueMs(
   activity: DeviceActivity,
-  { idleMs, now, buildInProgress }: { idleMs: number; now: number; buildInProgress: boolean },
+  {
+    idleMs,
+    now,
+    buildInProgress,
+    platform = process.platform,
+  }: { idleMs: number; now: number; buildInProgress: boolean; platform?: NodeJS.Platform },
 ): number | null {
-  if (buildInProgress || activity.state === 'driven' || activity.state === 'unknown') return null;
+  if (buildInProgress || activity.state === 'driven') return null;
+  // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
+  // drivers run on-device instrumentation the adb probe reads.
+  const unknown = platform === 'win32' ? activity.basis.filter((basis) => basis !== 'driver-process') : activity.basis;
+  if (activity.state === 'unknown' && unknown.length > 0) return null;
   const last = Date.parse(activity.lastActivityAt ?? '');
   if (!Number.isFinite(last)) return null;
   const idle = now - last;
@@ -81,23 +90,32 @@ export function shutDownIdleDevices(
     const what = `${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
     const outcome =
       device.kind === 'ios'
-        ? teardownOwnedIosSim(device.id, { label: device.name })
+        ? teardownOwnedIosSim(device.id, { label: device.name, workspace: root })
         : teardownOwnedAvd(device.id, {
             owner: { projectPath: device.project, slot: device.slot },
+            workspace: root,
           });
     if (outcome.status === 'torn-down') {
       shutDown++;
       const idleMinutes = Math.floor(idleForMs / MINUTE_MS);
-      updateWorkspaceState(root, (state) => ({
-        ...state,
-        [DEVICE_IDLE_SHUTDOWN_KEY]: {
-          ...readDeviceIdleShutdowns(state),
-          [deviceSlotKey(device.kind, device.slot)]: {
-            at: new Date(now).toISOString(),
-            idleMinutes,
+      try {
+        updateWorkspaceState(root, (state) => ({
+          ...state,
+          [DEVICE_IDLE_SHUTDOWN_KEY]: {
+            ...readDeviceIdleShutdowns(state),
+            [deviceSlotKey(device.kind, device.slot)]: {
+              at: new Date(now).toISOString(),
+              idleMinutes,
+            },
           },
-        },
-      }));
+        }));
+      } catch (error) {
+        log({
+          level: 'warn',
+          event: 'device_idle_shutdown_failed',
+          msg: `shut down idle ${what} but could not record it: ${(error as Error)?.message || error}`,
+        });
+      }
       log({
         level: 'info',
         event: 'device_idle_shutdown',
