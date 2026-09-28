@@ -934,6 +934,12 @@ pnpm run typecheck
 pnpm test
 ```
 
+The app uses TypeScript 7, the same version as the root. TypeScript 7 has no
+JavaScript compiler API, so Expo loads `app.config.ts` by stripping its types
+with Node, which does not add default-import interop. Import only types in
+`app.config.ts`, and name config plugins by string in `plugins` instead of
+importing them (expo/expo#49564).
+
 `pnpm run lint` runs oxlint with `.oxlintrc.json`, which includes oxlint's React
 Compiler rules. A component or hook the compiler would skip fails lint, so fix
 the code rather than suppress the rule. oxlint ports the compiler from React's
