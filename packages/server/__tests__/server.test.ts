@@ -2795,11 +2795,15 @@ describe('frames.subscribe', () => {
           expect(await client.request('frames.live', { subscription: 's1' })).toMatchObject({
             error: { code: 'frames-failed', message: expect.stringContaining('not booted') },
           });
-          expect(await client.request('frames.seek', { subscription: 's1', at: BASE + 60_000, rate: 0 })).toMatchObject(
-            {
-              error: { code: 'no-recording' },
-            },
+          client.socket.send(
+            JSON.stringify({
+              id: 70,
+              method: 'frames.seek',
+              params: { subscription: 's1', at: BASE + 60_000, rate: 0 },
+            }),
           );
+          const past = await untilMessage(client, (message) => 'id' in message && message.id === 70);
+          expect(past.at(-1)).toEqual({ id: 70, result: { at: BASE + 30_400 } });
           expect(
             await client.request('frames.subscribe', {
               workspace,
@@ -2848,6 +2852,29 @@ describe('frames.subscribe', () => {
         const live = await untilMessage(client, (message) => 'binary' in message);
         expect(packetAt(live.at(-1)!)).toBeLessThan(1_800_000_000_000);
         expect(packetAt(live.at(-1)!)).toBeGreaterThan(1_758_000_000_000);
+      });
+
+      test.skipIf(!fakeTailscale)('a seek on a device with no recording stays live', async () => {
+        registerWorkspaceDir();
+        const port = await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
+            FAKE_HELPER_INTERVAL_MS: '10',
+          },
+          undefined,
+          fakeHelper(),
+          { record: false },
+        );
+        const client = await authed(port);
+        await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
+        await untilMessage(client, (message) => 'binary' in message);
+        client.socket.send(
+          JSON.stringify({ id: 80, method: 'frames.seek', params: { subscription: 's1', at: BASE, rate: 0 } }),
+        );
+        const refused = await untilMessage(client, (message) => 'id' in message && message.id === 80);
+        expect(refused.at(-1)).toMatchObject({ id: 80, error: { code: 'no-recording' } });
+        const next = await untilMessage(client, (message) => 'binary' in message);
+        expect(packetAt(next.at(-1)!)).toBeLessThan(1_760_000_000_000);
       });
 
       test.skipIf(!fakeTailscale)('lists the recorded spans and the markers of the device', async () => {

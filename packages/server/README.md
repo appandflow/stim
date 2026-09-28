@@ -278,23 +278,25 @@ Events are `{ "event", "subscription", ... }`.
   A video subscription can replay the recording instead of the live screen.
   `frames.seek` takes the `subscription`, `at` (epoch milliseconds) and `rate`
   (0, 1 or 2). The server sends the access units from the keyframe at or
-  before `at` through the frame at `at` as binary video messages right away,
-  then plays on at `rate` times real time; 0 stays paused. The result's `at`
+  before `at` through the frame at `at`, or the newest frame when `at` is past
+  it, as binary video messages right away, then plays on at `rate` times real
+  time; 0 stays paused. The result's `at`
   is the capture time of the frame shown. Playback skips time nothing was
   recorded, and at the newest recorded frame it sends a `replay-ended` event
   with `subscription` and `at` and stays paused there. `frames.live` returns
   the subscription to the live screen, starting at a keyframe, or fails with
   `frames-failed` when the device is not running. While a subscription
   replays, the server sends no live frames on it, and `frames.keyframe`
-  resends the frame shown from its keyframe. A seek past the newest recorded
-  frame fails with `no-recording`, and a JPEG subscription cannot seek.
+  resends the frame shown from its keyframe. A seek on a device with no
+  recording fails with `no-recording` and leaves the subscription live, and a
+  JPEG subscription cannot seek.
 
   `frames.subscribe` with `at`, and optionally `rate`, starts the subscription
   replaying, and needs `video: ["h264"]`. It needs no running device, so the
   footage of a stopped workspace can be replayed; it fails with
-  `no-recording` when nothing was recorded at or after `at`, and sends
-  `replay-ended` at once when that footage holds no frame to show. Clients that
-  never send these messages see no change.
+  `no-recording` when nothing was recorded, and sends `replay-ended` at once
+  when that footage holds no frame to show. Clients that never send these
+  messages see no change.
 
 - `recording.set` takes `enabled` and runs
   `stim settings set recording.enabled <enabled> --scope machine --json` in

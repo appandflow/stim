@@ -301,8 +301,8 @@ function parseReplay(at: unknown, rate: unknown): { at: number; rate: FramesSeek
   return { at, rate: parsed as FramesSeekParams['rate'] };
 }
 
-function hasFootage(dir: string, at: number): boolean {
-  return listSegments(dir).some((segment) => segment.end >= at);
+function hasFootage(dir: string): boolean {
+  return listSegments(dir).length > 0;
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
@@ -727,8 +727,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       if (!workspaceDir(id, workspace, true)) return;
       const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
-      if (replayAt && !hasFootage(replayDir, replayAt.at)) {
-        return error(id, 'no-recording', `Nothing was recorded for ${platform} in ${workspace} at or after that time.`);
+      if (replayAt && !hasFootage(replayDir)) {
+        return error(id, 'no-recording', `Nothing was recorded for ${platform} in ${workspace}.`);
       }
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
@@ -841,6 +841,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
         return player;
       };
+      const goLive = (): string | null => {
+        const resolved = latest ? ownedDevice(latest, frameTarget, null) : 'The device status is not known yet.';
+        if (typeof resolved === 'string') return resolved;
+        player?.stop();
+        player = null;
+        attach(resolved);
+        return null;
+      };
       if (offersVideo) {
         keyframes.set(subscription, () => {
           if (player) return player.resend();
@@ -848,15 +856,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (streamed) frames.keyframe(streamed);
         });
         replays.set(subscription, {
-          seek: (seekAt, seekRate) => replay().seek(seekAt, seekRate),
-          live: () => {
-            const resolved = latest ? ownedDevice(latest, frameTarget, null) : 'The device status is not known yet.';
-            if (typeof resolved === 'string') return resolved;
-            player?.stop();
-            player = null;
-            attach(resolved);
-            return null;
+          seek: (seekAt, seekRate) => {
+            if (!hasFootage(replayDir)) return null;
+            const wasLive = player === null;
+            const shown = replay().seek(seekAt, seekRate);
+            if (shown === null && wasLive) goLive();
+            return shown;
           },
+          live: goLive,
         });
       }
       if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
@@ -1255,7 +1262,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'bad-request', parsed ?? 'frames.seek needs params.at and params.rate.');
         }
         const shown = replayable.seek(parsed.at, parsed.rate);
-        if (shown === null) return error(id, 'no-recording', 'Nothing was recorded at or after that time.');
+        if (shown === null) return error(id, 'no-recording', 'Nothing was recorded for this device.');
         return send(socket, { id, result: { at: shown } });
       }
       if (message.method === 'replay.range') return replayRange(id, message.params);

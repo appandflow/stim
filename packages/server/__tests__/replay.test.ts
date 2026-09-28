@@ -123,7 +123,9 @@ test('a paused seek sends the units from the keyframe before the time through th
   expect(sent.map((unit) => unit.capturedAt)).toEqual([1500, 1600, 1700]);
   expect(sent[0]!.keyframe).toBe(true);
   expect(paused.seek(500, 0)).toBe(1000);
-  expect(paused.seek(10_000, 0)).toBeNull();
+  expect(paused.seek(10_000, 0)).toBe(2900);
+  rmSync(join(dir, '1000-2900.seg'));
+  expect(paused.seek(1000, 0)).toBeNull();
 });
 
 test('a seek waits for the client to drain before it sends the frame, and a newer seek replaces it', async () => {
