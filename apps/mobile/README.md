@@ -304,9 +304,16 @@ A physical iPhone, iPad or Android phone the workspace leases with
 own tile, from the environment's `physicalDevices` in `stim status`, next to
 any simulator or emulator in the same slot. The tile names the device and its
 model, carries a **Physical** pill and the time left on the lease, and counts
-as running while the Mac reaches the device. Stim does not stream a physical
-device, so the tile shows no screen and does not open the viewer. A lease
-alone puts the workspace under Live.
+as running while the Mac reaches the device. A lease alone puts the workspace
+under Live.
+
+A connected physical iPhone or iPad streams its screen, view only: the tile
+and the viewer show it like a simulator's, the viewer has no Control, and the
+app sends it no input. The Mac captures it only over a USB cable, so a phone
+paired over Wi-Fi shows the server's message instead of a screen. While the
+iPhone is locked or QuickTime Player records it, the last frame stays with a
+**Screen paused** pill, and the viewer names the reason. A physical Android
+phone shows no screen.
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on

@@ -14,6 +14,8 @@ export interface DeviceStream {
   video: { width: number; height: number; posture?: 'folded' | 'unfolded' } | null;
   error: string | null;
   delayed: boolean;
+  /** Why frames stopped, such as a locked iPhone, when the server says. */
+  delayedReason: string | null;
   meter: VideoMeter;
   /** Asks the server for a keyframe, after the decoder lost its state. */
   requestKeyframe: () => void;
@@ -43,6 +45,7 @@ interface StreamState {
   delayed: boolean;
   replay: Replay | null;
   replayable: boolean | null;
+  delayedReason: string | null;
 }
 
 const EMPTY: Omit<StreamState, 'key'> = {
@@ -52,6 +55,7 @@ const EMPTY: Omit<StreamState, 'key'> = {
   delayed: false,
   replay: null,
   replayable: null,
+  delayedReason: null,
 };
 const POSITION_MS = 200;
 
@@ -63,12 +67,12 @@ const POSITION_MS = 200;
  * running.
  */
 export function useDeviceStream(
-  target: { workspace: string; platform: DevicePlatform; slot: string },
+  target: { workspace: string; platform: DevicePlatform; slot: string; physical?: boolean },
   options: { enabled: boolean; fps: number; maxEdge: number; video: 'h264'[]; startAt?: number | null },
 ): DeviceStream {
   const { connection } = useMacConnection();
   const streamId = useId();
-  const { workspace, platform, slot } = target;
+  const { workspace, platform, slot, physical } = target;
   const { fps, maxEdge, video } = options;
   const startAt = options.startAt ?? null;
   const [latest, setLatest] = useState<StreamState | null>(null);
@@ -78,7 +82,7 @@ export function useDeviceStream(
   const pendingSeek = useRef<{ at: number; rate: ReplayRate } | null>(null);
   const key =
     connection && options.enabled
-      ? `${workspace}\n${platform}\n${slot}\n${fps}\n${maxEdge}\n${video.join(',')}\n${startAt ?? ''}`
+      ? `${workspace}\n${platform}\n${slot}\n${physical ? 'physical' : ''}\n${fps}\n${maxEdge}\n${video.join(',')}\n${startAt ?? ''}`
       : null;
   const [meter] = useState(() => new VideoMeter());
   /**
@@ -117,6 +121,7 @@ export function useDeviceStream(
         workspace,
         platform,
         slot,
+        ...(physical ? { physical } : {}),
         fps,
         maxEdge,
         video,
@@ -125,14 +130,15 @@ export function useDeviceStream(
       (event) => {
         if (event.event === 'frame') {
           size = '';
-          update({ frame: event, video: null, error: null, delayed: false });
-        } else if (event.event === 'frame-delayed') update({ delayed: event.delayed });
-        else if (event.event === 'replay-ended') {
+          update({ frame: event, video: null, error: null, delayed: false, delayedReason: null });
+        } else if (event.event === 'frame-delayed') {
+          update({ delayed: event.delayed, delayedReason: event.delayed ? (event.reason ?? null) : null });
+        } else if (event.event === 'replay-ended') {
           if (replaying.current) Object.assign(replaying.current, { at: event.at, rate: 0, ended: true });
           update({ replay: { at: event.at, rate: 0, ended: true } });
         } else if (event.event === 'error') {
           size = '';
-          update({ frame: null, video: null, error: event.error.message, delayed: false });
+          update({ frame: null, video: null, error: event.error.message, delayed: false, delayedReason: null });
         }
       },
       (result) => {
@@ -182,7 +188,7 @@ export function useDeviceStream(
       pendingSeek.current = null;
       unsubscribe();
     };
-  }, [connection, key, streamId, workspace, platform, slot, fps, maxEdge, video, meter, startAt]);
+  }, [connection, key, streamId, workspace, platform, slot, physical, fps, maxEdge, video, meter, startAt]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});

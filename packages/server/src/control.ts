@@ -37,7 +37,7 @@ const TEXT = /^[\x20-\x7e\n\t\b]+$/;
 
 export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (!isJsonObject(params)) return { code: 'bad-request', message: 'params must be an object.' };
-  const { workspace, platform, slot, takeOver, ...rest } = params;
+  const { workspace, platform, slot, physical, takeOver, ...rest } = params;
   if (Object.keys(rest).length) {
     return { code: 'bad-request', message: `control.begin does not take ${Object.keys(rest).join(', ')}.` };
   }
@@ -53,8 +53,23 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (takeOver !== undefined && typeof takeOver !== 'boolean') {
     return { code: 'bad-request', message: 'params.takeOver must be true or false.' };
   }
+  if (physical !== undefined && typeof physical !== 'boolean') {
+    return { code: 'bad-request', message: 'params.physical must be true or false.' };
+  }
+  if (physical && platform === 'ios') {
+    return {
+      code: 'action-failed',
+      message: 'A physical iPhone is view only: Stim shows its screen but sends it no input.',
+    };
+  }
   return {
-    value: { workspace, platform: platform as Platform, ...(slot ? { slot } : {}), ...(takeOver ? { takeOver } : {}) },
+    value: {
+      workspace,
+      platform: platform as Platform,
+      ...(slot ? { slot } : {}),
+      ...(physical ? { physical } : {}),
+      ...(takeOver ? { takeOver } : {}),
+    },
   };
 }
 

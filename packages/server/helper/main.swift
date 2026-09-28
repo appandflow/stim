@@ -9,10 +9,11 @@ import IOSurface
 //   stim-frames ios <udid>
 //   stim-frames android <serial>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
+//   stim-frames iphone <udid> [name]
 //
 // A web page streams Chrome's screencast of the owned page: its JPEGs pass through as
 // frames and are decoded for video. Input on a page takes touch, text and the "back"
-// button, as DevTools input events.
+// button, as DevTools input events. A USB-cabled iPhone streams its screen and takes no input.
 // stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
 // "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second, "record":
 // {"maxEdge": px, "fps": n, "bitrate": bits per second}}, where fps 0 pauses frames and
@@ -29,7 +30,8 @@ import IOSurface
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
 // ({"error": message} before a failed exit, {"inputError": message}, on a simulator
 // with several displays {"display": n} when display n is the one lit and streamed, or
-// on an emulator {"keyboard": "yes|no"} once it reports its hardware), 3 is an H.264 access unit (1-byte
+// on an emulator {"keyboard": "yes|no"} once it reports its hardware, or on an iPhone
+// {"stalled": message} while frames cannot arrive and {"stalled": null} once they can), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes), and 4 is an
 // access unit of the recording encoder, laid out like 3.
@@ -880,8 +882,10 @@ extension EmulatorSource: Source {
 setvbuf(stdout, nil, _IONBF, 0)
 signal(SIGPIPE, SIG_IGN)
 let arguments = CommandLine.arguments
-let usage = "usage: stim-frames ios <udid> | android <serial> | web <cdpEndpoint> <chromePid> <targetId>"
-guard arguments.count == (arguments.count > 1 && arguments[1] == "web" ? 5 : 3) else { fail(usage) }
+let usage =
+  "usage: stim-frames ios <udid> | android <serial> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
+let counts = ["web": [5], "iphone": [3, 4]]
+guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
@@ -901,6 +905,11 @@ case "web":
   Output.requestKeyframe = source.keyframe
   readCommands(source)
   source.start()
+case "iphone":
+  let source = PhoneSource(udid: arguments[2], name: arguments.count > 3 ? arguments[3] : nil)
+  Output.requestKeyframe = source.keyframe
+  readCommands(source)
+  source.queue.async { source.start() }
 default:
   fail(usage)
 }

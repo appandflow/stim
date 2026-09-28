@@ -27,7 +27,7 @@ import {
   formatMemoryMb,
   type Usage,
 } from '@/lib/workspace-view';
-import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
+import { platformName, runningBuild, streamsFrames, type DeviceRef } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
 const SCREEN_HEIGHT = 480;
@@ -49,10 +49,18 @@ export function DeviceTile({
   const workspace = env.path;
   const [screenWidth, setScreenWidth] = useState(0);
   const now = useNow(30_000);
-  const streams = device.running && device.owned && !device.physical;
-  const { frame, error, delayed } = useFrame(workspace, device.platform, device.slot, streams);
+  const streams = device.running && streamsFrames(device);
+  const { frame, error, delayed, delayedReason } = useFrame(workspace, device.platform, device.slot, streams, {
+    physical: device.physical,
+  });
   const thumbnail = useRef<ViewInstance>(null);
-  const target = { macId: mac?.id ?? '', workspace, platform: device.platform, slot: device.slot };
+  const target = {
+    macId: mac?.id ?? '',
+    workspace,
+    platform: device.platform,
+    slot: device.slot,
+    physical: device.physical,
+  };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const build = device.platform === 'web' ? null : runningBuild(env, device);
   const app = appPresence(env, device);
@@ -116,7 +124,7 @@ export function DeviceTile({
     streams && frame?.posture ? <Pill key="posture">{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Pill> : null,
     streams && delayed ? (
       <Pill key="delayed" tone="warning">
-        Screen updates delayed
+        {delayedReason ? 'Screen paused' : 'Screen updates delayed'}
       </Pill>
     ) : null,
   ].filter(Boolean);
@@ -131,7 +139,9 @@ export function DeviceTile({
     <Placeholder
       title="No live screen"
       subtitle={
-        device.physical ? 'Stim does not stream physical devices.' : 'Frames are only served for devices Stim owns.'
+        device.physical
+          ? 'Stim does not stream physical Android devices.'
+          : 'Frames are only served for devices Stim owns.'
       }
     />
   ) : null;
@@ -181,7 +191,7 @@ export function DeviceTile({
           )}
         </View>
       )}
-      {streams && device.id ? <AgentRow env={env} device={device} deviceId={device.id} /> : null}
+      {streams && device.id && !device.physical ? <AgentRow env={env} device={device} deviceId={device.id} /> : null}
     </Card>
   );
 }

@@ -168,8 +168,10 @@ Events are `{ "event", "subscription", ... }`.
   second and only when the screen changed. It serves only a booted simulator
   or a running emulator that `stim status` lists as owned by that workspace,
   or with `web` the page of the workspace's running Stim-owned Chrome from
-  `stim web` (default slot only);
-  any other device, a physical device from `physicalDevices` included, ends the subscription with a `frames-failed` `error`
+  `stim web` (default slot only), or with `physical: true` the physical
+  iPhone the workspace leases in that slot (see below);
+  any other device, a physical Android device from `physicalDevices`
+  included, ends the subscription with a `frames-failed` `error`
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
@@ -251,6 +253,45 @@ Events are `{ "event", "subscription", ... }`.
   frame; JPEG subscribers get Chrome's JPEG as is, and video decodes it for
   the encoder. Chrome draws a frame only when the page changes, so a
   keyframe request re-encodes the last one.
+
+  With `physical: true` and `platform: "ios"`, frames come from the
+  physical iPhone whose unexpired lease `stim status` lists under
+  `deviceLeases` for the workspace and slot. `stim ios --device` holds that
+  lease only while it runs, so `stim device lock ios <udid>` keeps the
+  iPhone watchable between runs. A lease on the workspace's own simulator
+  is skipped. The iPhone must be cabled over USB and trust the Mac; over
+  Wi-Fi it has no screen to capture. The helper, run as
+  `stim-frames iphone <udid> <name>` with the lease's device name, sets
+  CoreMediaIO's `kCMIOHardwarePropertyAllowScreenCaptureDevices`, which
+  makes macOS list cabled iPhones as capture devices, the ones QuickTime
+  Player's New Movie Recording shows. Such a device's unique ID is a
+  random UUID that names neither the UDID nor the USB device, so the
+  helper first checks that an iOS device on USB has the UDID, without
+  dashes, as its serial number. It then opens the iOS capture device
+  named like the lease's device name, or the only one when the lease
+  records no name and one iPhone is cabled. With several iPhones cabled,
+  it waits until each shows a screen and refuses when none or several
+  carry the name. It
+  captures only while a subscriber asks for frames. macOS lets several
+  processes capture the iPhone at once. Frames and video go through the
+  same JPEG and H.264 paths as a simulator. A physical iPhone has no
+  screenshot fallback: a subscription without the helper, or whose helper
+  fails, ends with `frames-failed`, such as when the iPhone is not cabled
+  or is unplugged. While macOS is asking for Camera access, or frames
+  stop, such as while the iPhone is locked, the subscription gets
+  `frame-delayed` with `delayed: true` and a `reason`, keeps its last
+  frame, and gets `delayed: false` once frames can arrive again.
+
+  macOS treats the iPhone's screen as a camera and attributes the helper's
+  request to the app that started stim-server. Stim asks for it with its
+  own Camera usage description and entitlement, so the first capture
+  shows the Camera prompt for Stim. An app without them, such as `node`
+  started from a shell, is denied without a prompt, and the subscription
+  ends with a `frames-failed` that names the Camera pane of System
+  Settings. A physical iPhone is view only: `control.begin` with
+  `physical: true` refuses with `action-failed`. It is never recorded, so
+  `at` and `frames.seek` on it fail with `no-recording`, and it counts
+  toward no idle check.
 
 - **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
   (`default` when absent), like `frames.subscribe`, and returns what can be
@@ -542,7 +583,7 @@ A device with `control` can drive a simulator or emulator that `stim status`
 lists as owned by a workspace. Nothing it sends reaches any other device.
 
 - `control.begin` takes `workspace`, `platform`, `slot` (`default` when
-  absent) and `takeOver`, and returns `{ "session", "platform", "lease",
+  absent), `physical` and `takeOver`, and returns `{ "session", "platform", "lease",
 "postures" }`. `postures` lists what `input.posture` takes for the device:
   `folded` and `unfolded` for an iPhone Duo, `folded`, `half-open` and
   `unfolded` for an emulator with a hinge, such as a `pixel_fold` AVD, and
