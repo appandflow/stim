@@ -21,15 +21,18 @@ struct ReplayScreen: NSViewRepresentable {
   }
 
   static func dismantleNSView(_ view: ReplayScreenView, coordinator: ()) {
-    view.decoder.invalidate()
+    view.invalidate()
   }
 }
 
+/// Decodes on its own queue: a seek resends every frame from the keyframe before it, and decoding those on the
+/// main thread would stall scrubbing.
 final class ReplayScreenView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   private var size: CGSize?
+  private let queue = DispatchQueue(label: "dev.stim.desktop.replay-decode")
   private var configured = false
-  lazy var decoder = H264Decoder { [weak self] image in
+  private lazy var decoder = H264Decoder { [weak self] image in
     guard let surface = CVPixelBufferGetIOSurface(image)?.takeUnretainedValue() else { return }
     DispatchQueue.main.async { self?.layer?.contents = surface }
   }
@@ -45,14 +48,19 @@ final class ReplayScreenView: NSView {
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
   @MainActor func show(_ packet: VideoPacket) {
-    if packet.keyframe { configured = decoder.configure(packet.accessUnit) }
-    guard configured else { return }
-    decoder.decode(packet.accessUnit)
+    queue.async { [self] in
+      if packet.keyframe { configured = decoder.configure(packet.accessUnit) }
+      if configured { decoder.decode(packet.accessUnit) }
+    }
     let size = CGSize(width: packet.width, height: packet.height)
     if size != self.size {
       self.size = size
       onPixelSizeChange(size)
     }
+  }
+
+  func invalidate() {
+    queue.async { [self] in decoder.invalidate() }
   }
 }
 
@@ -97,13 +105,7 @@ struct ReplayBar: View {
   var replayOff: Bool
   var onSeek: () -> Void = {}
 
-  private static let dragSeekInterval: TimeInterval = 0.12
-  private static let markerReach: CGFloat = 6
   @State private var speed = 1
-  @State private var dragging: Double?
-  @State private var lastSeek = Date.distantPast
-  @State private var hover: (x: CGFloat, marker: ReplayMarker?)?
-  @State private var width: CGFloat = 0
 
   var body: some View {
     let timeline = replayOff || controller.replayable == false ? nil : controller.timeline
@@ -136,7 +138,9 @@ struct ReplayBar: View {
         }
       }
       if let timeline {
-        track(timeline)
+        ReplayTrack(
+          timeline: timeline, markers: controller.range?.markers ?? [], shownAt: controller.replay?.at,
+          isLive: controller.replay == nil, seek: seek)
       }
       if let error = controller.error {
         Text(error).font(.stim(.caption)).foregroundStyle(Palette.warning).lineLimit(2)
@@ -199,18 +203,35 @@ struct ReplayBar: View {
     onSeek()
     controller.seek(at: at, rate: rate)
   }
+}
 
-  private func track(_ timeline: ReplayTimeline) -> some View {
-    let markers = controller.range?.markers ?? []
-    let shownAt = controller.replay?.at
-    let position = dragging ?? (controller.replay == nil ? 1 : shownAt.map(timeline.position(of:)) ?? 1)
-    return ZStack(alignment: .topLeading) {
+/// The scrubber: recorded spans, gaps, markers and the playhead. Hovering shows the time or the marker under the
+/// pointer in a tooltip that stays out of the layout; dragging shows the frame under the pointer, and a click near a
+/// marker lands just before it. Its hover and drag state stay in this view, so moving the pointer redraws only the
+/// track.
+struct ReplayTrack: View {
+  var timeline: ReplayTimeline
+  var markers: [ReplayMarker]
+  /// The time of the frame shown; nil before the first frame.
+  var shownAt: Double?
+  var isLive: Bool
+  var seek: (_ at: Double, _ rate: Int) -> Void
+
+  private static let markerReach: CGFloat = 6
+  private static let dragThreshold: CGFloat = 3
+  private static let tooltipWidth: CGFloat = 280
+  @State private var dragging: CGFloat?
+  @State private var hover: CGFloat?
+  @State private var width: CGFloat = 0
+
+  var body: some View {
+    let position = dragging.map { fraction($0) } ?? (isLive ? 1 : shownAt.map(timeline.position(of:)) ?? 1)
+    ZStack(alignment: .topLeading) {
       ForEach(Array(timeline.pieces.enumerated()), id: \.offset) { _, piece in
         let x = piece.from * width
         let w = max(1, (piece.to - piece.from) * width)
         if piece.isGap {
           Rectangle().fill(Palette.border).frame(width: w, height: 2).offset(x: x, y: 13)
-            .help("Not recorded for \(ReplayTimeline.shortDuration(ms: piece.end - piece.start))")
         } else {
           RoundedRectangle(cornerRadius: Radius.small).fill(Palette.raised).frame(width: w, height: 16).offset(x: x, y: 6)
         }
@@ -222,47 +243,50 @@ struct ReplayBar: View {
           .offset(x: timeline.position(of: marker.at) * width - 1.5, y: 6)
       }
       Rectangle()
-        .fill(controller.replay == nil ? Palette.tertiary : Palette.text)
+        .fill(isLive ? Palette.tertiary : Palette.text)
         .frame(width: 2, height: 24)
         .offset(x: position * width - 1, y: 2)
-      if let hover {
-        hoverLabel(timeline, hover)
-      }
     }
     .frame(height: 28)
     .frame(maxWidth: .infinity, alignment: .leading)
     .contentShape(Rectangle())
+    .overlay(alignment: .topLeading) {
+      let x = dragging ?? hover
+      tooltip(x: x ?? 0, marker: dragging == nil ? x.flatMap(nearestMarker) : nil)
+        .opacity(x == nil ? 0 : 1)
+    }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     .onContinuousHover { phase in
       switch phase {
-      case .active(let point): hover = (point.x, nearestMarker(timeline, markers, x: point.x))
+      case .active(let point): hover = point.x.rounded()
       case .ended: hover = nil
       }
     }
     .gesture(
       DragGesture(minimumDistance: 0)
         .onChanged { drag in
-          guard abs(drag.translation.width) >= 3 else { return }
-          let fraction = min(1, max(0, drag.location.x / max(width, 1)))
-          dragging = fraction
-          guard Date().timeIntervalSince(lastSeek) >= Self.dragSeekInterval else { return }
-          lastSeek = Date()
-          seek(timeline.time(at: fraction), rate: 0)
+          guard dragging != nil || abs(drag.translation.width) >= Self.dragThreshold else { return }
+          let x = min(max(0, drag.location.x), width)
+          guard x != dragging else { return }
+          dragging = x
+          seek(timeline.time(at: fraction(x)), 0)
         }
         .onEnded { drag in
-          let fraction = min(1, max(0, drag.location.x / max(width, 1)))
+          let x = min(max(0, drag.location.x), width)
+          let dragged = dragging != nil
           dragging = nil
-          if abs(drag.translation.width) >= 3 {
-            seek(timeline.time(at: fraction), rate: 0)
-          } else if let marker = nearestMarker(timeline, markers, x: drag.location.x) {
-            seek(timeline.seekTime(for: marker), rate: 0)
+          if dragged { hover = nil }
+          if !dragged, let marker = nearestMarker(x: x) {
+            seek(timeline.seekTime(for: marker), 0)
           } else {
-            seek(timeline.time(at: fraction), rate: 0)
+            seek(timeline.time(at: fraction(x)), 0)
           }
         })
   }
 
-  private func nearestMarker(_ timeline: ReplayTimeline, _ markers: [ReplayMarker], x: CGFloat) -> ReplayMarker? {
+  private func fraction(_ x: CGFloat) -> Double { x / max(width, 1) }
+
+  private func nearestMarker(x: CGFloat) -> ReplayMarker? {
     markers
       .map { ($0, abs(timeline.position(of: $0.at) * width - x)) }
       .filter { $0.1 <= Self.markerReach }
@@ -277,27 +301,36 @@ struct ReplayBar: View {
     }
   }
 
-  @ViewBuilder private func hoverLabel(_ timeline: ReplayTimeline, _ hover: (x: CGFloat, marker: ReplayMarker?)) -> some View {
-    let at = hover.marker?.at ?? timeline.time(at: hover.x / max(width, 1))
+  /// Drawn in an overlay, so neither its size nor its text moves the track or the tile around it. It stays in the
+  /// overlay while hidden: SwiftUI drops the alignment guides of a view inside an `if` there.
+  private func tooltip(x: CGFloat, marker: ReplayMarker?) -> some View {
+    let at = marker?.at ?? timeline.time(at: fraction(x))
     let time = Date(timeIntervalSince1970: at / 1000).formatted(date: .omitted, time: .standard)
+    let gap = timeline.pieces.first { $0.isGap && fraction(x) >= $0.from && fraction(x) <= $0.to }
     let text =
-      hover.marker.map { marker in
+      marker.map { marker in
         "\(marker.title)\(marker.command.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(time)\n\(marker.label)"
-      } ?? time
-    Text(text)
-      .font(.stim(.caption))
-      .foregroundStyle(Palette.text)
-      .lineLimit(3)
-      .fixedSize()
-      .padding(.horizontal, Space.md)
-      .padding(.vertical, Space.xs)
-      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
-      .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
-      .shadow(color: Palette.shadow.opacity(0.15), radius: 6)
-      .alignmentGuide(.leading) { dimensions in
-        -min(max(0, hover.x - dimensions.width / 2), max(0, width - dimensions.width))
+      } ?? gap.map { "Not recorded for \(ReplayTimeline.shortDuration(ms: $0.end - $0.start))" } ?? time
+    return Group {
+      if marker != nil {
+        Text(text).lineLimit(3)
+          .frame(width: max(0, min(Self.tooltipWidth, width) - 2 * Space.md), alignment: .leading)
+          .fixedSize(horizontal: false, vertical: true)
+      } else {
+        Text(text).fixedSize()
       }
-      .alignmentGuide(.top) { dimensions in dimensions.height + Space.sm }
-      .allowsHitTesting(false)
+    }
+    .font(.stim(.caption))
+    .foregroundStyle(Palette.text)
+    .padding(.horizontal, Space.md)
+    .padding(.vertical, Space.xs)
+    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
+    .shadow(color: Palette.shadow.opacity(0.15), radius: 6)
+    .alignmentGuide(.leading) { dimensions in
+      -min(max(0, x - dimensions.width / 2), max(0, width - dimensions.width))
+    }
+    .alignmentGuide(.top) { dimensions in dimensions.height + Space.sm }
+    .allowsHitTesting(false)
   }
 }
