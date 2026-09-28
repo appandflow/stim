@@ -580,8 +580,7 @@ leaves out of `events` is off and never pushes.
   `channelId: "updates"`, the phone's low-importance Android channel.
 
 `levels` in `push.register` sets each event's level. An event it leaves out,
-and every event of a phone that sends no `levels`, gets the level phones had
-before levels: `started` silent, everything else alert. A summary push is
+and every event of a phone that sends no `levels`, is silent. A summary push is
 silent only when every notification it sums up is. An older server ignores
 `levels` and alerts for every event but `started`.
 
@@ -605,7 +604,7 @@ An entry is `{ "seq", "at", "id", "category", "title", "body", "quiet",
 workspace or machine and category, the key a push's collapse id is made from,
 so a later episode of the same problem shares it. `target` is the screen the
 push opens, as `{ "kind", ... }` with the fields of the push's `data`.
-`quiet` is the event's default delivery (only `started` is quiet); a device's
+`quiet` is the event's default delivery, always silent; a device's
 [levels](#delivery-levels) decide how its push was actually delivered.
 `suppressed` says why no registered device got the notification when it was
 logged: `muted` when none wants its category, `quiet-hours` when those that do

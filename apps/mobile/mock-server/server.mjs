@@ -177,7 +177,7 @@ const notificationSamples = (() => {
 })();
 const notifications = notificationSamples
   .toReversed()
-  .map(({ ago, quiet = false, ...rest }, i) => ({
+  .map(({ ago, quiet = true, ...rest }, i) => ({
     seq: i + 1,
     at: new Date(startedAt - ago * MINUTE).toISOString(),
     quiet,
@@ -188,7 +188,7 @@ const notificationListeners = new Set();
 const LIVE_NOTIFICATION_MS = 120_000;
 setInterval(() => {
   const sample = notificationSamples[notifications.length % notificationSamples.length];
-  const { ago: _ago, quiet = false, ...rest } = sample;
+  const { ago: _ago, quiet = true, ...rest } = sample;
   const entry = { seq: notifications[0].seq + 1, at: new Date().toISOString(), quiet, ...rest };
   delete entry.suppressed;
   notifications.unshift(entry);
