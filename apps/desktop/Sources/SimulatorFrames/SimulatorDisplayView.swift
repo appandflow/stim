@@ -17,16 +17,19 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var interactive: Bool
   public var onPixelSizeChange: (CGSize) -> Void
   public var onLitChange: ((Bool) -> Void)?
+  public var buttons: SimulatorButtons?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
-    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
+    buttons: SimulatorButtons? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
     self.interactive = interactive
     self.onPixelSizeChange = onPixelSizeChange
     self.onLitChange = onLitChange
+    self.buttons = buttons
   }
 
   public func makeNSView(context: Context) -> SimulatorDisplayNSView {
@@ -35,6 +38,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
+    buttons?.view = view
     return view
   }
 
@@ -43,10 +47,24 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
+    buttons?.view = view
   }
 
   public static func dismantleNSView(_ view: SimulatorDisplayNSView, coordinator: ()) {
     view.detach()
+  }
+}
+
+/// Presses a simulator's hardware buttons through the input client of the display view it is attached to, which
+/// accepts them only while that view is interactive.
+@MainActor
+public final class SimulatorButtons {
+  weak var view: SimulatorDisplayNSView?
+
+  public init() {}
+
+  public func press(_ button: SimulatorButton) {
+    view?.press(button)
   }
 }
 
@@ -237,6 +255,12 @@ public final class SimulatorDisplayNSView: NSView {
     guard interactive, let udid, display != nil else { return nil }
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     return hid
+  }
+
+  func press(_ button: SimulatorButton) {
+    guard let hid = inputClient() else { return }
+    hid.button(button, down: true)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { hid.button(button, down: false) }
   }
 
   private func screenPoint(_ event: NSEvent, clamped: Bool) -> CGPoint? {

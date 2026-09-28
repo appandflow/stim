@@ -19,15 +19,17 @@ public struct EmulatorDisplayView: NSViewRepresentable {
   public var interactive: Bool
   public var onStatus: (EmulatorStreamStatus) -> Void
   public var onPixelSizeChange: (CGSize) -> Void
+  public var buttons: EmulatorButtons?
 
   public init(
     serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void,
-    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil
   ) {
     self.serial = serial
     self.interactive = interactive
     self.onStatus = onStatus
     self.onPixelSizeChange = onPixelSizeChange
+    self.buttons = buttons
   }
 
   public func makeNSView(context: Context) -> EmulatorDisplayNSView {
@@ -36,6 +38,7 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     view.onPixelSizeChange = onPixelSizeChange
     view.attach(serial: serial)
     view.setInteractive(interactive)
+    buttons?.view = view
     return view
   }
 
@@ -44,10 +47,49 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     view.onPixelSizeChange = onPixelSizeChange
     view.attach(serial: serial)
     view.setInteractive(interactive)
+    buttons?.view = view
   }
 
   public static func dismantleNSView(_ view: EmulatorDisplayNSView, coordinator: ()) {
     view.detach()
+  }
+}
+
+/// An emulator's hardware buttons, with the DOM key name the emulator's gRPC `sendKey` takes and the key event
+/// `adb shell input keyevent` takes. The emulator's gRPC `sendKey` accepts the `Power` key name but leaves the screen
+/// on, so Lock has no key name and always goes through adb.
+public enum EmulatorButton: Sendable {
+  case home, back, apps, lock
+
+  var domKey: String? {
+    switch self {
+    case .home: return "GoHome"
+    case .back: return "GoBack"
+    case .apps: return "AppSwitch"
+    case .lock: return nil
+    }
+  }
+
+  var keyEvent: String {
+    switch self {
+    case .home: return "KEYCODE_HOME"
+    case .back: return "KEYCODE_BACK"
+    case .apps: return "KEYCODE_APP_SWITCH"
+    case .lock: return "KEYCODE_POWER"
+    }
+  }
+}
+
+/// Presses an emulator's hardware buttons through the input client of the display view it is attached to, which
+/// accepts them only while that view is interactive.
+@MainActor
+public final class EmulatorButtons {
+  weak var view: EmulatorDisplayNSView?
+
+  public init() {}
+
+  public func press(_ button: EmulatorButton) {
+    view?.press(button)
   }
 }
 
@@ -250,6 +292,17 @@ public final class EmulatorDisplayNSView: NSView {
       }
     }
     return input
+  }
+
+  func press(_ button: EmulatorButton) {
+    guard interactive else { return }
+    if hasKeyboard != false, let key = button.domKey, let input = inputClient() {
+      input.call("sendKey", InputMessages.namedKey(key))
+    } else if let serial {
+      let adb = self.adb ?? AdbInput(serial: serial)
+      self.adb = adb
+      adb.keyEvent(button.keyEvent)
+    }
   }
 
   private func screenPoint(_ event: NSEvent, clamped: Bool) -> CGPoint? {

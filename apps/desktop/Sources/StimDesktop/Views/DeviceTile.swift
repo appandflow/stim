@@ -27,6 +27,13 @@ struct DeviceTile: View {
   var cli: Task<StimCLI, Never>? = nil
   var showsCovers = false
   var focused = false
+  /// The device viewer: take over, hardware buttons, rotation, replay, the agent row and Stop. A tile without it is
+  /// a preview with no controls.
+  var viewer = false
+  /// The widest the viewer can draw the tile; the screen shrinks below `screenHeight` to fit it.
+  var maxWidth: CGFloat? = nil
+  /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
+  var showsScreen = true
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -37,6 +44,8 @@ struct DeviceTile: View {
   @State private var postureFailed = false
   @State private var confirmingStop = false
   @State private var replaySize: CGSize?
+  @State private var simulatorButtons = SimulatorButtons()
+  @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
   @ObservedObject private var server = ServerSession.shared
 
@@ -54,22 +63,31 @@ struct DeviceTile: View {
           ReplayScreen(controller: replay) { replaySize = $0 }
             .frame(width: replayWidth)
             .padding(screenPadding)
-            .frame(height: screenHeight)
+            .frame(height: fittedHeight)
             .frame(maxWidth: .infinity)
             .background(Media.screen)
         } else if let workspace, showsStoppedBar {
           stoppedBar(runCommand(for: device, cwd: workspace))
+        } else if !showsScreen {
+          placeholder("Open in the viewer")
+            .frame(height: fittedHeight)
+            .background(Media.screen)
         } else {
           screen
-            .frame(height: screenHeight)
+            .frame(height: fittedHeight)
             .background(Media.screen)
             .overlay { screenCover }
         }
-        if let cli, let workspace, device.isRunning, !isPhysical, device.activityKey != nil {
+        if viewer, interactive, !isPhysical, device.platform != "web" {
+          hardwareButtons
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.md)
+        }
+        if viewer, let cli, let workspace, device.isRunning, !isPhysical, device.activityKey != nil {
           Rectangle().fill(Palette.border).frame(height: 1)
           DeviceAgentRow(cli: cli, workspace: workspace, device: device)
         }
-        if let replay, replaying || replayOff || replay.timeline != nil {
+        if viewer, let replay, replaying || replayOff || replay.timeline != nil {
           Rectangle().fill(Palette.border).frame(height: 1)
           ReplayBar(controller: replay, running: device.isRunning, replayOff: replayOff, onSeek: onReplaySeek)
             .padding(.horizontal, Space.lg)
@@ -108,26 +126,11 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
-        takeOverButton
-        if case .remote = device {
-          remoteControls
-        } else if case .web(let browser) = device, let workspace {
-          webControls(browser, workspace: workspace)
-        } else if device.isRunning, !isPhysical, let workspace {
-          stopButton(workspace: workspace)
+        if case .remote = device, !viewer {
+          Pill(tone: .warning) { Text("billable") }
+            .help("This remote session is billed while it runs.")
         }
-        if interactive, device.platform != "web", !isPhysical {
-          rotateButton(clockwise: false)
-          rotateButton(clockwise: true)
-        }
-        if interactive, device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable,
-          case .ios(_, let sim) = device
-        {
-          foldButton(udid: sim.udid)
-        }
-        if interactive, let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
-          postureMenu(serial: serial, current: emulatorPosture)
-        }
+        if viewer { controls }
       }
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -143,7 +146,7 @@ struct DeviceTile: View {
             Pill(tone: .warning) { Text("App not running") }
               .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
           }
-          if let workspace, let run = runCommand(for: device, cwd: workspace) {
+          if viewer, let workspace, let run = runCommand(for: device, cwd: workspace) {
             Button("Run", systemImage: "play.fill") {
               actions.run("Run on \(platformName(device.platform))", run)
             }
@@ -181,6 +184,56 @@ struct DeviceTile: View {
         }
       }
     }
+  }
+
+  @ViewBuilder private var controls: some View {
+    takeOverButton
+    if case .remote = device {
+      remoteControls
+    } else if case .web(let browser) = device, let workspace {
+      webControls(browser, workspace: workspace)
+    } else if device.isRunning, !isPhysical, let workspace {
+      stopButton(workspace: workspace)
+    }
+  }
+
+  /// Home, Back, Apps and Lock as the device has them, then rotation and fold or posture. A physical Android phone's
+  /// buttons come from its own screen view.
+  @ViewBuilder private var hardwareButtons: some View {
+    HStack(spacing: Space.sm) {
+      switch device {
+      case .ios:
+        hardwareButton("Home", systemImage: "circle") { simulatorButtons.press(.home) }
+        hardwareButton("Lock", systemImage: "lock") { simulatorButtons.press(.lock) }
+      case .android:
+        hardwareButton("Home", systemImage: "circle") { emulatorButtons.press(.home) }
+        hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
+        hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
+        hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
+      case .web, .remote:
+        EmptyView()
+      }
+      if device.platform != "web" {
+        Rectangle().fill(Palette.border).frame(width: 1, height: 16)
+        rotateButton(clockwise: false)
+        rotateButton(clockwise: true)
+      }
+      if device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable, case .ios(_, let sim) = device {
+        foldButton(udid: sim.udid)
+      }
+      if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
+        postureMenu(serial: serial, current: emulatorPosture)
+      }
+    }
+    .frame(maxWidth: .infinity)
+  }
+
+  private func hardwareButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    Button(title, systemImage: systemImage, action: action)
+      .labelStyle(.iconOnly)
+      .buttonStyle(.stim())
+      .help("Press the device's \(title) button")
+      .accessibilityLabel("Press \(title)")
   }
 
   @ViewBuilder private var takeOverButton: some View {
@@ -251,7 +304,7 @@ struct DeviceTile: View {
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
-      if let run {
+      if viewer, let run {
         Button("Run") { actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run) }
           .buttonStyle(.stim())
           .fixedSize()
@@ -410,7 +463,7 @@ struct DeviceTile: View {
   }
 
   private func screenHeight(_ screenID: UInt32) -> CGFloat {
-    let full = screenHeight - screenPadding * 2
+    let full = fittedHeight - screenPadding * 2
     return screenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
   }
 
@@ -421,7 +474,7 @@ struct DeviceTile: View {
 
   private var replayWidth: CGFloat? {
     guard let size = replaySize, size.height > 0 else { return nil }
-    return (screenHeight - screenPadding * 2) * size.width / size.height
+    return (fittedHeight - screenPadding * 2) * size.width / size.height
   }
 
   private var width: CGFloat {
@@ -429,12 +482,34 @@ struct DeviceTile: View {
     if widths.count == screenIDs.count {
       return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
     }
-    if case .remote = device { return max(360, screenHeight * 0.6) }
+    if case .remote = device { return max(360, fittedHeight * 0.6) }
     switch device.formFactor {
-    case .phone: return max(Self.minimumWidth, screenHeight * 0.52)
-    case .tablet: return screenHeight * 0.78
-    case .dual: return screenHeight * 1.4
-    case .desktop: return screenHeight * 1.6
+    case .phone: return max(Self.minimumWidth, fittedHeight * 0.52)
+    case .tablet: return fittedHeight * 0.78
+    case .dual: return fittedHeight * 1.4
+    case .desktop: return fittedHeight * 1.6
+    }
+  }
+
+  private var fittedHeight: CGFloat {
+    guard let maxWidth else { return screenHeight }
+    if replaying, let size = replaySize, size.width > 0, size.height > 0 {
+      return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
+    }
+    let ratios = screenIDs.compactMap { screenID -> CGFloat? in
+      guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
+      return size.width / size.height * (screenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
+    }
+    if ratios.count == screenIDs.count, !ratios.isEmpty {
+      let room = maxWidth - screenPadding * CGFloat(screenIDs.count + 1)
+      return min(screenHeight, room / ratios.reduce(0, +) + screenPadding * 2)
+    }
+    if case .remote = device { return min(screenHeight, maxWidth / 0.6) }
+    switch device.formFactor {
+    case .phone: return min(screenHeight, maxWidth / 0.52)
+    case .tablet: return min(screenHeight, maxWidth / 0.78)
+    case .dual: return min(screenHeight, maxWidth / 1.4)
+    case .desktop: return min(screenHeight, maxWidth / 1.6)
     }
   }
 
@@ -455,7 +530,8 @@ struct DeviceTile: View {
           SimulatorDisplayView(
             udid: sim.udid, screenID: screenID, interactive: interactive,
             onPixelSizeChange: { pixelSizes[screenID] = $0 },
-            onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil
+            onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil,
+            buttons: screenID == mainScreenID ? simulatorButtons : nil
           )
           .frame(width: screenWidth(screenID), height: screenHeight(screenID))
           .opacity(screenID == mainScreenID ? 1 : 0.4)
@@ -472,7 +548,7 @@ struct DeviceTile: View {
       }
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
       if let serial = avd.serial {
-        EmulatorScreen(serial: serial, interactive: interactive) { pixelSizes[1] = $0 }
+        EmulatorScreen(serial: serial, interactive: interactive, buttons: emulatorButtons) { pixelSizes[1] = $0 }
           .frame(width: screenWidth(1))
           .padding(screenPadding)
           .task(id: "\(serial) \(String(describing: pixelSizes[1]))") {
@@ -588,6 +664,7 @@ private struct RemotePreview: NSViewRepresentable {
 private struct EmulatorScreen: View {
   var serial: String
   var interactive: Bool
+  var buttons: EmulatorButtons
   var onPixelSizeChange: (CGSize) -> Void
   @State private var status = EmulatorStreamStatus.connecting
 
@@ -595,7 +672,7 @@ private struct EmulatorScreen: View {
     EmulatorDisplayView(
       serial: serial, interactive: interactive,
       onStatus: { status in DispatchQueue.main.async { self.status = status } },
-      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } })
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons)
     .overlay {
       switch status {
       case .connecting: ScreenMessage(text: "Connecting to the emulator")

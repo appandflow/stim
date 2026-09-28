@@ -32,7 +32,7 @@ enum SimulatorKit {
 // Indigo event sources for IndigoHIDMessageForButton, and the HID consumer
 // usages CoreDevice takes for the same buttons; SimulatorKit exports no names
 // for them.
-enum SimulatorButton {
+public enum SimulatorButton: Sendable {
   case home, lock
 
   var indigoSource: UInt32 {
