@@ -79,8 +79,8 @@ the options hide every row, the list says so and offers **Show all** or
 keys move through the menu, Return picks, and Right and Left open and close a
 submenu.
 
-When **All devices** or a project has nothing running, or a workspace has no
-device, the page shows three example prompts for a coding agent, picked at
+When **All devices** or a project has nothing running, or a workspace that is
+not warming has no device, the page shows three example prompts for a coding agent, picked at
 random from the phone app's list each time the page appears, with a **Copy**
 button that reads **Copied** once the prompt is on the clipboard.
 
