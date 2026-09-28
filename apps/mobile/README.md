@@ -270,11 +270,13 @@ while a phone watches it, and keeps the last 15 minutes of footage (see
   back to.
 - **Indicators.** A red **Recording** chip next to the model shows while the
   Mac records the device. A **Replay off** pill replaces the bar when
-  `recording.enabled` is off for the workspace.
+  `recording.enabled` is off for the workspace. If the timeline goes away
+  while you replay, the bar keeps only **Live**.
 - **Where it runs.** The app polls `replay.range` every 10 seconds while the
   viewer is open; seeking goes through `frames.seek` and `frames.live` on the
   same video subscription. Replay needs video: with Data saver, which asks for
-  JPEG frames, the bar is hidden. A server without replay answers
+  JPEG frames, or when the server answers the subscription with JPEG because
+  it has no H.264, the bar is hidden. A server without replay answers
   `unknown-method`, and the bar stays hidden. The timeline math is in
   `src/lib/replay.ts`.
 
