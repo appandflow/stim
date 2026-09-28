@@ -74,12 +74,12 @@ public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
 }
 
 extension StatusPayload {
-  /// The workspace a link names, and the device of its platform and slot when it has one.
+  /// The workspace a link names, and the device of its platform and slot when it has one, a running one first.
   public func target(of request: WorkspaceOpenRequest) -> (workspace: Workspace, device: DeviceRef?)? {
     guard let env = environments.first(where: { $0.path == request.path }) else { return nil }
     let slot = request.slot ?? DeviceRef.defaultSlot
     let device = request.platform.flatMap { platform in
-      env.devices.first { $0.platform == platform && $0.slot == slot }
+      env.orderedDevices.first { $0.platform == platform && $0.slot == slot }
     }
     return (env, device)
   }

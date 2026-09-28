@@ -204,19 +204,25 @@ struct RootView: View {
       showWorkspaceNotFound("The link does not name a workspace.")
       return
     }
-    let pending = PendingWorkspaceLink(request: request)
-    pendingLink = pending
+    pendingLink = PendingWorkspaceLink(request: request)
     showWorkspaceLink(in: store.payload)
-    Task {
-      try? await Task.sleep(for: .seconds(10))
-      guard pendingLink?.id == pending.id else { return }
-      pendingLink = nil
-      showWorkspaceNotFound("Stim does not list \(abbreviatingHome(request.path)) as a workspace.")
-    }
   }
 
+  /// A link waits for the payloads that follow it, which a cold launch only has once `stim status` answers, and
+  /// gives up 10 seconds after the first one that does not list its workspace.
   private func showWorkspaceLink(in payload: StatusPayload?) {
-    guard let request = pendingLink?.request, let target = payload?.target(of: request) else { return }
+    guard let pending = pendingLink, let payload else { return }
+    guard let target = payload.target(of: pending.request) else {
+      guard !pending.expiring else { return }
+      pendingLink?.expiring = true
+      Task {
+        try? await Task.sleep(for: .seconds(10))
+        guard pendingLink?.id == pending.id else { return }
+        pendingLink = nil
+        showWorkspaceNotFound("Stim does not list \(abbreviatingHome(pending.request.path)) as a workspace.")
+      }
+      return
+    }
     pendingLink = nil
     let path = target.workspace.path
     let deviceID = target.device?.id
@@ -229,7 +235,7 @@ struct RootView: View {
           if let deviceID { focusedDeviceID = deviceID }
           detailTab = .device
         },
-        sticky: true))
+        sticky: true, key: "workspace-link:\(path)"))
   }
 
   private func showWorkspaceNotFound(_ body: String) {
@@ -277,6 +283,7 @@ struct RootView: View {
 private struct PendingWorkspaceLink {
   let id = UUID()
   let request: WorkspaceOpenRequest
+  var expiring = false
 }
 
 struct MachineSummary: View {

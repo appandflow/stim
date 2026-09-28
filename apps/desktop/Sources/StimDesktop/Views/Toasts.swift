@@ -14,6 +14,8 @@ struct Toast: Identifiable {
   var action: Action?
   /// A sticky toast stays until the user acts on it or dismisses it; any other one leaves after a few seconds.
   var sticky = false
+  /// Showing a toast replaces any shown one with the same key.
+  var key: String?
 }
 
 @MainActor
@@ -24,6 +26,7 @@ final class ToastCenter: ObservableObject {
   @Published private(set) var toasts: [Toast] = []
 
   func show(_ toast: Toast) {
+    if let key = toast.key { toasts.removeAll { $0.key == key } }
     toasts.append(toast)
     guard !toast.sticky else { return }
     Task {
