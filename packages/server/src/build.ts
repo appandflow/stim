@@ -30,6 +30,7 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { isJsonObject, loadConfig } from '@stim-cli/core/state';
 import {
   BUILD_REPO_PATTERN,
+  type BuildAndroidOptions,
   type BuildArtifactResult,
   type BuildFile,
   type BuildJobOutcome,
@@ -94,6 +95,20 @@ const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
 const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
+const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+
+/** The Gradle choices of an Android `build.start`, or null when they are malformed. */
+function androidOptions(value: unknown): BuildAndroidOptions | null {
+  if (!isJsonObject(value)) return null;
+  const { variant, abi, gradleBuildCache, pch, compilerCache } = value;
+  if (variant !== null && !(typeof variant === 'string' && GRADLE_NAME.test(variant))) return null;
+  if (abi !== null && !(typeof abi === 'string' && GRADLE_NAME.test(abi))) return null;
+  if (typeof gradleBuildCache !== 'boolean') return null;
+  if (pch !== 'auto' && pch !== 'on' && pch !== 'off') return null;
+  if (compilerCache !== 'ccache' && compilerCache !== 'none') return null;
+  return { variant, abi, gradleBuildCache, pch, compilerCache };
+}
+
 function freeBytes(path: string): number | null {
   try {
     const stats = statfsSync(path);
@@ -137,7 +152,7 @@ export interface BuildHostOptions {
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
 }
 
-/** Runs other Macs' iOS builds here for clients with `build`, each in its own area under the worker root. */
+/** Runs other Macs' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
@@ -286,6 +301,7 @@ export class BuildHost {
           CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
           CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
           npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
+          GRADLE_USER_HOME: join(clientDir, 'cache', 'gradle'),
         },
       });
     } catch (error) {
@@ -503,11 +519,21 @@ export class BuildSession {
   async start(params: unknown): Promise<{ result: { job: string } } | Refusal> {
     if (!isJsonObject(params) || !validRepo(params.repo))
       return refusal('bad-request', 'build.start needs params.repo.');
-    const strings = ['runtime', 'fingerprint', 'stimBuild'] as const;
+    const strings = ['fingerprint', 'stimBuild'] as const;
     if (strings.some((key) => typeof params[key] !== 'string' || !params[key])) {
       return refusal('bad-request', `build.start needs params.${strings.join(', params.')}.`);
     }
-    if (params.platform !== 'ios') return refusal('bad-request', 'This Mac builds only platform ios.');
+    const platform = params.platform;
+    if (platform !== 'ios' && platform !== 'android') {
+      return refusal('bad-request', 'params.platform must be ios or android.');
+    }
+    if (platform === 'ios' && (typeof params.runtime !== 'string' || !params.runtime)) {
+      return refusal('bad-request', 'An ios build needs params.runtime.');
+    }
+    const android = platform === 'android' ? androidOptions(params.android) : null;
+    if (platform === 'android' && !android) {
+      return refusal('bad-request', 'An android build needs params.android with variant, abi, and its caches.');
+    }
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');
     }
@@ -533,12 +559,14 @@ export class BuildSession {
       send: this.send,
       job: {
         manifest: [...this.files.values()],
+        platform,
+        android,
         project: params.project,
         packageName: optional(params.packageName),
         isExpo: params.isExpo === true,
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
-        runtime: params.runtime,
+        runtime: optional(params.runtime),
         expectedFingerprint: params.fingerprint,
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },

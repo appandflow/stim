@@ -15,13 +15,14 @@ import { basename, dirname, join, relative } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
 import { isJsonObject, OFFLOAD_MODES, type BuildMachineCredential, type OffloadMode } from '@stim-cli/core/state';
-import type { CompilationCacheActivity } from '../engine/build-facts.ts';
+import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
+import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
-import { iosToolchain, toolchainMismatches, type IosToolchain, type WorkerToolchain } from './toolchain.ts';
+import { toolchainMismatches, type BuildTarget, type WorkerToolchain } from './toolchain.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
@@ -74,8 +75,8 @@ export interface BuildOffer {
 }
 
 /** Why a machine's offer cannot take this build; null when it can. */
-function offerRefusal(offer: BuildOffer, local: IosToolchain, runtime: string): string | null {
-  const mismatches = toolchainMismatches(local, offer.toolchain, runtime);
+function offerRefusal(offer: BuildOffer, target: BuildTarget): string | null {
+  const mismatches = toolchainMismatches(target, offer.toolchain);
   if (mismatches.length) return `toolchain differs: ${mismatches.join('; ')}`;
   const { running, max, diskFreeBytes, minDiskFreeBytes } = offer.capacity;
   if (running >= max) return `busy with ${running} offloaded build(s)`;
@@ -86,10 +87,10 @@ function offerRefusal(offer: BuildOffer, local: IosToolchain, runtime: string): 
 }
 
 /** The index of the warmest acceptable offer, the least busy among equals; null when none can build. */
-export function pickOffer(offers: Array<BuildOffer | null>, local: IosToolchain, runtime: string): number | null {
+export function pickOffer(offers: Array<BuildOffer | null>, target: BuildTarget): number | null {
   let best: { index: number; score: number; running: number } | null = null;
   offers.forEach((offer, index) => {
-    if (!offer || offerRefusal(offer, local, runtime)) return;
+    if (!offer || offerRefusal(offer, target)) return;
     const score = Number(offer.warm.checkout) + Number(offer.warm.dependencies) + Number(offer.warm.build);
     const running = offer.capacity.running;
     if (!best || score > best.score || (score === best.score && running < best.running)) {
@@ -325,15 +326,17 @@ export type OffloadOutcome =
   | {
       ok: true;
       machine: string;
-      appPath: string;
+      /** The `.app` directory or the `.apk` file, under the staging directory. */
+      artifactPath: string;
       compilationCache: CompilationCacheActivity;
+      ccache: CcacheActivity;
       timings: OffloadTimings;
     }
   | { ok: false; machine: string | null; reason: string };
 
 export interface OffloadChoice {
   machine: string;
-  local: IosToolchain;
+  target: BuildTarget;
   connection: BuildConnection;
   offerMs: number;
   identity: RepoIdentity;
@@ -345,16 +348,14 @@ export interface OffloadChoice {
  */
 export async function chooseBuildMachine({
   projectRoot,
-  runtime,
+  target,
   note,
   machines = pairedMachines(),
-  local = iosToolchain(),
 }: {
   projectRoot: string;
-  runtime: string;
+  target: BuildTarget;
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
-  local?: IosToolchain;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
   let identity: RepoIdentity;
@@ -368,9 +369,9 @@ export async function chooseBuildMachine({
     | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
   const asked: Asked[] = await Promise.all(
     machines.map(async (credential): Promise<Asked> => {
-      const target = pinnedEndpoint(credential);
-      if (typeof target === 'string') return { credential, failure: target };
-      const connection = await BuildConnection.open(target, credential.deviceToken);
+      const endpoint = pinnedEndpoint(credential);
+      if (typeof endpoint === 'string') return { credential, failure: endpoint };
+      const connection = await BuildConnection.open(endpoint, credential.deviceToken);
       if (typeof connection === 'string') return { credential, failure: connection };
       const reply = await connection.request(
         'build.offer',
@@ -386,11 +387,11 @@ export async function chooseBuildMachine({
     }),
   );
   const offers = asked.map((each) => ('offer' in each ? each.offer : null));
-  const chosen = pickOffer(offers, local, runtime);
+  const chosen = pickOffer(offers, target);
   const reasons: string[] = [];
   asked.forEach((each, index) => {
     if (index !== chosen && 'connection' in each) each.connection.close();
-    const why = 'failure' in each ? each.failure : offers[index] ? offerRefusal(offers[index]!, local, runtime) : null;
+    const why = 'failure' in each ? each.failure : offers[index] ? offerRefusal(offers[index]!, target) : null;
     if (why) reasons.push(`${each.credential.machine}: ${why}`);
   });
   if (chosen === null) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
@@ -398,36 +399,51 @@ export async function chooseBuildMachine({
   const pick = asked[chosen] as { credential: BuildMachineCredential; connection: BuildConnection };
   return {
     machine: pick.credential.machine,
-    local,
+    target,
     connection: pick.connection,
     offerMs: Date.now() - started,
     identity,
   };
 }
 
+/** The Gradle choices that shape the APK, so the machine builds what this Mac's cache key describes. */
+interface AndroidBuildOptions {
+  variant: string | null;
+  abi: string | null;
+  gradleBuildCache: boolean;
+  pch: 'auto' | 'on' | 'off';
+  compilerCache: 'ccache' | 'none';
+}
+
+/** What `build.start` builds besides the synced checkout. */
+export type BuildRequest =
+  | {
+      platform: 'ios';
+      runtime: string;
+      configuration: string | null;
+      scheme: string | null;
+      isExpo: boolean;
+      optimizations: unknown;
+    }
+  | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions };
+
+const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/ } as const;
+
 /**
- * Builds on the chosen machine and brings the `.app` back into `stagingDir`, verified against the sha256 the
- * machine reports. The caller re-fingerprints and stores it.
+ * Builds on the chosen machine and brings the `.app` or `.apk` back into `stagingDir`, verified against the
+ * sha256 the machine reports. The caller re-fingerprints and stores it.
  */
-export async function offloadIosBuild({
+export async function offloadBuild({
   choice,
   expectedFingerprint,
-  runtime,
-  configuration,
-  scheme,
-  isExpo,
-  optimizations,
+  request,
   stagingDir,
   onPhase,
   onRecord,
 }: {
   choice: OffloadChoice;
   expectedFingerprint: string;
-  runtime: string;
-  configuration: string | null;
-  scheme: string | null;
-  isExpo: boolean;
-  optimizations: unknown;
+  request: BuildRequest;
   stagingDir: string;
   onPhase: (phase: string, msg: string) => void;
   onRecord: (record: Record<string, unknown>) => void;
@@ -495,15 +511,16 @@ export async function offloadIosBuild({
     const reply = await connection.request('build.start', {
       repo: identity.repo,
       project: identity.project,
-      platform: 'ios',
-      configuration,
-      scheme,
-      runtime,
+      platform: request.platform,
+      configuration: request.platform === 'ios' ? request.configuration : null,
+      scheme: request.platform === 'ios' ? request.scheme : null,
+      runtime: request.platform === 'ios' ? request.runtime : null,
       fingerprint: expectedFingerprint,
       packageName: packageName(join(identity.repoRoot, identity.project)),
-      isExpo,
-      optimizations: isJsonObject(optimizations) ? optimizations : null,
-      stimBuild: choice.local.stimBuild,
+      isExpo: request.isExpo,
+      optimizations: request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
+      ...(request.platform === 'android' ? { android: request.android } : {}),
+      stimBuild: choice.target.local.stimBuild,
     });
     const refused = replyError(reply);
     if (refused || !('result' in reply)) return fail(`start: ${refused ?? 'no reply'}`);
@@ -520,8 +537,8 @@ export async function offloadIosBuild({
     if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
     const name = typeof artifact?.name === 'string' ? artifact.name : '';
-    if (!/^[^/]+\.app$/.test(name) || typeof artifact.sha256 !== 'string') {
-      return fail('the machine reported no .app artifact');
+    if (!ARTIFACT_NAME[request.platform].test(name) || typeof artifact.sha256 !== 'string') {
+      return fail(`the machine reported no .${request.platform === 'ios' ? 'app' : 'apk'} artifact`);
     }
 
     const fetchStarted = Date.now();
@@ -562,15 +579,22 @@ export async function offloadIosBuild({
     }
     await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
     rmSync(archive, { force: true });
-    const appPath = join(stagingDir, name);
-    if (!existsSync(join(appPath, 'Info.plist'))) return fail(`fetch: ${name} has no Info.plist`);
+    const artifactPath = join(stagingDir, name);
+    if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
+      return fail(`fetch: ${name} has no Info.plist`);
+    }
+    if (request.platform === 'android' && !(lstatSync(artifactPath, { throwIfNoEntry: false })?.isFile() ?? false)) {
+      return fail(`fetch: ${name} is not a file`);
+    }
     const fetchMs = Date.now() - fetchStarted;
     connection.close();
     return {
       ok: true,
       machine,
-      appPath,
-      compilationCache: compilationActivity(result.compilationCache),
+      artifactPath,
+      compilationCache:
+        request.platform === 'ios' ? compilationActivity(result.compilationCache) : COMPILATION_CACHE_UNAVAILABLE,
+      ccache: request.platform === 'android' ? ccacheActivity(result.compilationCache) : CCACHE_UNAVAILABLE,
       timings: {
         offerMs: choice.offerMs,
         syncMs,
@@ -604,6 +628,16 @@ function compilationActivity(value: unknown): CompilationCacheActivity {
     status: 'reported',
     hits: numberOrNull(value.hits),
     cacheableTasks: numberOrNull(value.cacheableTasks),
+    hitRatePercent: numberOrNull(value.hitRatePercent),
+  };
+}
+
+function ccacheActivity(value: unknown): CcacheActivity {
+  if (!isJsonObject(value) || value.status !== 'reported') return CCACHE_UNAVAILABLE;
+  return {
+    status: 'reported',
+    hits: numberOrNull(value.hits),
+    misses: numberOrNull(value.misses),
     hitRatePercent: numberOrNull(value.hitRatePercent),
   };
 }

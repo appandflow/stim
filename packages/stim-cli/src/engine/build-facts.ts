@@ -79,6 +79,8 @@ export interface AndroidFacts {
   metroPort: number | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
+  /** The build machine that compiled the APK when the build was offloaded; absent otherwise. */
+  offloadedTo?: string;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath: string | null;
   bundleId: string | null;

@@ -77,6 +77,8 @@ export interface AndroidRecord {
   deviceName?: string | null;
   systemImage?: string | null;
   deviceProfile?: string | null;
+  /** The build machine that compiled the APK, when the build was offloaded. */
+  offloadedTo?: string | null;
 }
 
 export interface RunAndroidResult {

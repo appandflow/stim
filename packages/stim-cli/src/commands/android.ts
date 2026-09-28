@@ -1063,6 +1063,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         isExpo,
         device,
         physical,
+        remote: Boolean(remoteDevice),
         buildPlan,
         cacheProviderConfig,
         requestedBuildCache,
