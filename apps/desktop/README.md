@@ -34,7 +34,7 @@ in the workspace directory:
   neither is recorded. Run is disabled while a build runs in the workspace.
   **Reload app** runs `stim reload` and is disabled unless the dev server and a
   local device are running.
-- Workspace inspector: `stim stop`, and `stim worktree remove` after a
+- Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch. Each running device,
   in the device tile and the inspector's device list, has its own **Stop**
   button, running `stim stop --slot <name>` (`default` for the workspace's
@@ -82,9 +82,61 @@ submenu.
 Each workspace row shows its worktree's git state from `stim status --json`: a
 dot with the number of uncommitted files, arrows for commits ahead of and
 behind the upstream, and **merged** when `gc` would call the branch merged. A
-clean branch level with its upstream shows nothing. The inspector's workspace
-header shows the same as chips, with "↑4 unpushed" and "↓3 behind" in place of
-the arrows, and hovering the row indicator or a chip spells it out.
+clean branch level with its upstream shows nothing. Hovering the row indicator
+spells it out.
+
+## Workspace page
+
+A workspace's page starts like the phone app's workspace screen. The **stage
+line** says where the workspace is, with a subtitle: **Running** ("up 42m",
+turning red with "3 errors" or "iOS app closed"), **Building** ("iOS · started
+1m ago"), **Build failed** (the platform and when), **Warming** (the warm step
+and how long), **Ready** ("warmed 48m ago") or **Stopped** (when Metro last
+stopped). Beside it, the **git chip** starts with the branch's pull request
+from `worktree.pullRequest` as "PR #N" coloured by its state (open green,
+draft grey, merged purple, closed red) with one CI mark: a check when every
+check passes, a cross when one fails, a dot while some are pending. Without a
+pull request it starts with a branch icon. Commits ahead and behind,
+uncommitted files, "merged into main" (left out when the pull request itself
+is merged) or "no upstream" follow only when there are some.
+Clicking it opens a popover with the branch, its upstream, the pull request's
+title, checks and review, and **Open on GitHub**. The "..." menu at the end of
+the line holds the workspace actions.
+
+Below it, three cards summarize the workspace; a card with a problem turns red:
+
+- **Resources**: CPU (100% is one core), memory and disk. CPU and memory sum
+  the workspace's owners in the status `machine` section, or the app's own
+  process sample when that section has none for the workspace; disk is the worktree plus Stim's
+  build folder from `disk`. Clicking it opens a popover with CPU and memory
+  charts over the last 10 minutes the app sampled while on screen, every
+  process that counts toward the workspace (simulators and emulators, Chrome,
+  Metro, builds) and the disk breakdown.
+- **Build**: one row per platform the workspace used, or both when it used
+  neither, with the Apple or Android glyph: a finished build's time and
+  "hit" or "cold", **Failed**, or, before any run, the next build's estimate
+  from `stim <platform> --plan --json` in grey, marked "est.". A row reads
+  **Checking…** while its plan runs and **No build** with no run and no
+  prediction. Clicking it opens a popover with each platform's last build,
+  compiler errors, miss reason and five recent builds.
+- **Logs**: the error count since the last marker, Metro's port with a health
+  dot, and the bundle line from `metro.bundle` ("Bundling · 62%", "Bundled in
+  1.8s · 12s ago", "Bundle failed"). Clicking it opens the logs, filtered to
+  errors when there are some.
+
+While a build runs, a build card replaces the Build card: the platform and
+target device, the phase or the build tool's step with its counts ("Compiling
+45 of 180 targets"), the elapsed time over the estimate, a bar with a segment
+per phase sized by the reference run, why the cache missed, the other
+platform's last build and the latest output line. Clicking it opens the phase
+checklist and the last lines of build output (`stim logs --source build`).
+When the page is wider than 820 points, the Resources card lists its first
+four processes, devices first, and the build card shows the phase checklist
+inline.
+
+The inspector keeps the coding-agent sessions, the device list with each
+device's **Stop**, the **Builds** section and the project's build cache
+figures.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears in the sidebar under its project and
@@ -340,7 +392,8 @@ notification is on by default and needs the bundled app.
 ## Logs
 
 A workspace's detail view has a **Logs** tab next to its device, and the error
-count on the device wall and in the inspector opens it with **Errors only** on.
+count on the device wall and the page's Logs card open it with **Errors only**
+on when there are errors.
 The tab runs `stim logs --json --follow --tail 5000` in the workspace and adds
 the filters you pick: the Metro, App (`client`), Native (`device`), Build and
 Agent (`agent`, what agent-device did on the workspace's devices) sources, a

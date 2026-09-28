@@ -291,7 +291,9 @@ struct RootView: View {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
         WorkspaceDetail(
-          cli: cli, env: env, usage: metrics.usage[env.path], inspector: inspector,
+          cli: cli, env: env, usage: metrics.usage[env.path], machine: store.payload?.machine,
+          reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
+          history: metrics.owners, inspector: inspector,
           inspectorWidth: $inspectorWidth,
           focusedID: $focusedDeviceID, tab: $detailTab, logQuery: $logQuery, openLogs: { openErrors(env.path) })
       } else {

@@ -159,7 +159,7 @@ private struct BuildHistoryList: View {
   }
 }
 
-private struct BuildHistoryRow: View {
+struct BuildHistoryRow: View {
   var entry: BuildHistoryEntry
   var workspace: String
   var now: Date
@@ -223,7 +223,7 @@ private struct BuildHistoryRow: View {
   }
 }
 
-private struct BuildDiagnosticsView: View {
+struct BuildDiagnosticsView: View {
   var diagnostics: [BuildDiagnostic]
   var workspace: String
   @State private var expanded = false
@@ -248,7 +248,7 @@ private struct BuildDiagnosticsView: View {
   }
 }
 
-private struct MissReasonButton: View {
+struct MissReasonButton: View {
   var reason: BuildMissReason
   var help: String
   @State private var shown = false

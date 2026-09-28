@@ -14,50 +14,31 @@ struct StatusDot: View {
   }
 }
 
-/// A worktree's git state: the uncommitted count after a plus-minus sign, arrows for commits ahead and behind, and "merged".
-/// Compact for sidebar rows; `chips` for the workspace header. Shows nothing for a clean branch level with its upstream.
+/// A worktree's git state for a sidebar row: the uncommitted count after a plus-minus sign, arrows for commits ahead
+/// and behind, and "merged". Shows nothing for a clean branch level with its upstream.
 struct GitIndicator: View {
   var git: WorktreeGit?
-  var chips = false
 
   var body: some View {
     if let git, git.isNotable {
-      if chips {
+      HStack(spacing: Space.xs) {
         if git.uncommitted > 0 {
-          Pill(tone: .warning) { Text("\(git.uncommitted) uncommitted") }
-            .help("\(git.uncommitted) uncommitted \(git.uncommitted == 1 ? "change" : "changes")")
+          Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Palette.secondary)
         }
-        if let ahead = git.ahead, ahead > 0 {
-          Pill { Text("\u{2191}\(ahead) unpushed").monospacedDigit() }
-            .help(git.unpushedLabel(ahead))
-            .accessibilityLabel(git.unpushedLabel(ahead))
+        if let arrows = git.arrows { Text(arrows).foregroundStyle(Palette.secondary) }
+        if git.mergedInto != nil {
+          Text("merged")
+            .foregroundStyle(Palette.primary)
+            .padding(.horizontal, Space.xs)
+            .background(RoundedRectangle(cornerRadius: Radius.small).fill(Palette.primary.opacity(Opacity.tint)))
         }
-        if let behind = git.behind, behind > 0 {
-          Pill { Text("\u{2193}\(behind) behind").monospacedDigit() }
-            .help(git.behindLabel(behind))
-            .accessibilityLabel(git.behindLabel(behind))
-        }
-        if let mergedInto = git.mergedInto { Pill(tone: .accent) { Text("merged") }.help("merged into \(mergedInto)") }
-      } else {
-        HStack(spacing: Space.xs) {
-          if git.uncommitted > 0 {
-            Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Palette.secondary)
-          }
-          if let arrows = git.arrows { Text(arrows).foregroundStyle(Palette.secondary) }
-          if git.mergedInto != nil {
-            Text("merged")
-              .foregroundStyle(Palette.primary)
-              .padding(.horizontal, Space.xs)
-              .background(RoundedRectangle(cornerRadius: Radius.small).fill(Palette.primary.opacity(Opacity.tint)))
-          }
-        }
-        .font(.stim(.caption2, weight: .semibold))
-        .monospacedDigit()
-        .fixedSize()
-        .help(git.summary)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(git.summary)
       }
+      .font(.stim(.caption2, weight: .semibold))
+      .monospacedDigit()
+      .fixedSize()
+      .help(git.summary)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(git.summary)
     }
   }
 }

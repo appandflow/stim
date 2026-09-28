@@ -10,6 +10,9 @@ struct WorkspaceDetail: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var usage: UsageHistory?
+  var machine: MachineUsage?
+  var reportsBundles: Bool
+  var history: OwnerHistory
   var inspector: InspectorPresentation
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
@@ -17,6 +20,7 @@ struct WorkspaceDetail: View {
   @Binding var logQuery: LogQuery
   var openLogs: () -> Void
   @State private var stats: ProjectStats?
+  @State private var contentWidth: CGFloat = 0
   @State private var takenOver: Set<String> = []
   @State private var resizeStartWidth: CGFloat?
   @State private var width: CGFloat = 0
@@ -26,6 +30,7 @@ struct WorkspaceDetail: View {
   static let minimumInspectorWidth: CGFloat = 280
   static let maximumInspectorWidth: CGFloat = 420
   private static let minimumContentWidth: CGFloat = 440
+  static let wideContentWidth: CGFloat = 820
 
   var body: some View {
     let devices = env.orderedDevices
@@ -63,6 +68,20 @@ struct WorkspaceDetail: View {
 
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
+      WorkspaceSummary(
+        cli: cli, env: env, machine: machine, reportsBundles: reportsBundles, history: history, usage: usage,
+        wide: contentWidth >= Self.wideContentWidth,
+        openLogs: { errors in
+          if errors {
+            openLogs()
+          } else {
+            logQuery.errorsOnly = false
+            tab = .logs
+          }
+        }
+      )
+      .padding(.horizontal, Space.xxl)
+      .padding(.top, Space.lg)
       Picker("View", selection: $tab) {
         Text("Device").tag(DetailTab.device)
         Text("Logs").tag(DetailTab.logs)
@@ -77,6 +96,7 @@ struct WorkspaceDetail: View {
       case .logs: LogsView(cli: cli, env: env, query: $logQuery)
       }
     }
+    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
   }
 
   static func clampedInspectorWidth(_ proposed: CGFloat, detailWidth: CGFloat) -> CGFloat {
@@ -102,7 +122,7 @@ struct WorkspaceDetail: View {
   }
 
   private var inspectorPanel: some View {
-    Inspector(env: env, usage: usage, stats: stats, openLogs: openLogs)
+    Inspector(env: env, stats: stats)
       .frame(maxHeight: .infinity)
   }
 
@@ -157,18 +177,24 @@ struct WorkspaceDetail: View {
   }
 
   private func deviceView(devices: [DeviceRef], focused: DeviceRef?) -> some View {
+    GeometryReader { geo in
+      deviceStack(devices: devices, focused: focused, screenHeight: min(640, max(260, geo.size.height - 190)))
+    }
+  }
+
+  private func deviceStack(devices: [DeviceRef], focused: DeviceRef?, screenHeight: CGFloat) -> some View {
     VStack(spacing: Space.xl) {
       devicePicker(devices: devices, focused: focused)
       if let focused {
         if let target = replayTarget(focused) {
           ReplayHost(target: target) { replay in
             ReplayingTile(replay: replay) { replaying in
-              focusedTile(focused, replay: replay, replaying: replaying)
+              focusedTile(focused, replay: replay, replaying: replaying, screenHeight: screenHeight)
             }
           }
           .id(focused.id)
         } else {
-          focusedTile(focused, replay: nil, replaying: false)
+          focusedTile(focused, replay: nil, replaying: false, screenHeight: screenHeight)
         }
         AgentFeed(cli: cli, workspace: env.path, device: focused)
           .id(focused.id)
@@ -193,9 +219,11 @@ extension WorkspaceDetail {
     }
   }
 
-  private func focusedTile(_ focused: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {
+  private func focusedTile(_ focused: DeviceRef, replay: ReplayController?, replaying: Bool, screenHeight: CGFloat)
+    -> some View
+  {
     DeviceTile(
-      device: focused, screenHeight: 640,
+      device: focused, screenHeight: screenHeight,
       interactive: focused.isRunning && takenOver.contains(focused.id) && !replaying, workspace: env.path,
       workspaceTitle: env.names.title,
       build: env.runningBuild(for: focused),
@@ -219,31 +247,15 @@ private struct ReplayingTile<Content: View>: View {
 
 struct Inspector: View {
   var env: Workspace
-  var usage: UsageHistory?
   var stats: ProjectStats?
-  var openLogs: () -> Void
   @EnvironmentObject private var actions: ActionCenter
-  @State private var removal: WorktreeRemoval?
-  @State private var confirmingStop = false
   @State private var confirmingStopDevice: DeviceRef?
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        statusCard
-
         if let agents = env.agents, !agents.isEmpty {
           AgentSessionsSection(agents: agents)
-        }
-
-        if let usage {
-          VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Resources \u{00B7} " + countLabel(usage.latest.processCount, "process", plural: "processes"))
-            ViewThatFits(in: .horizontal) {
-              HStack(alignment: .top, spacing: Space.md) { usageCards(usage) }
-              VStack(spacing: Space.md) { usageCards(usage) }
-            }
-          }
         }
 
         ListSection("Devices", env.orderedDevices, style: .separated) { device in
@@ -334,145 +346,9 @@ struct Inspector: View {
     )
   }
 
-  private var statusCard: some View {
-    let errors = env.logs?.errorsSinceMarker ?? 0
-    let metroHealthy = env.metro?.running == true && env.supervisor?.healthy != false
-    return VStack(alignment: .leading, spacing: Space.md) {
-      HStack(spacing: Space.md) {
-        if let branch = env.worktree?.branch {
-          Text(branch).font(.stim(.callout, weight: .semibold)).lineLimit(1)
-        }
-        if let folder = pathInCheckout(env.path, worktree: env.worktree?.path) {
-          Text(folder).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
-        }
-        Spacer(minLength: 0)
-        actionsMenu
-      }
-      FlowLayout(spacing: Space.sm) {
-        if let metro = env.metro {
-          Pill(tone: metroHealthy ? .success : .error) {
-            Text("Metro :\(String(metro.port)) \u{00B7} \(metro.running ? (metroHealthy ? "healthy" : "unhealthy") : "stopped")")
-          }
-          .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \($0.healthy == true ? "healthy" : "unhealthy")" } ?? "")
-        }
-        if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
-          DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
-        }
-        GitIndicator(git: env.worktree?.git, chips: true)
-        if env.replayOff {
-          Pill { Text("Replay off") }
-            .help("recording.enabled is false for this workspace, so stim-server records none of its screens.")
-        }
-        if usage == nil, let mb = env.memoryMb, mb > 0 {
-          MemoryPill(mb: mb, source: env.memorySource)
-        }
-        if env.logs != nil {
-          Button(action: openLogs) {
-            Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
-          }
-          .buttonStyle(.plain)
-          .help("\(countLabel(errors, "error")) in the logs since the last marker \u{2014} click to open the logs filtered to errors")
-        }
-      }
-      if let active = actions.active(for: env.path) {
-        HStack(spacing: Space.md) {
-          ProgressView().controlSize(.small)
-          Text(active.title).lineLimit(1)
-          Spacer()
-          Button("Show output") { actions.presented = active }
-        }
-      }
-    }
-    .padding(Space.lg)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(Palette.border))
-    .controlSize(.small)
-  }
-
-  private var actionsMenu: some View {
-    let busy = actions.active(for: env.path) != nil
-    return Menu {
-      WorkspaceActionsMenu(
-        kind: .workspace(metroRunning: env.metro?.running == true, platforms: env.runPlatforms),
-        path: env.path,
-        busy: busy,
-        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
-        building: env.build?.isRunning == true,
-        reloadAllowed: env.canReload,
-        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
-        onRun: { platform in actions.runApp(env, platform: platform) },
-        onReload: { actions.run("Reload \(env.names.title)", StimCommand(["reload"], cwd: env.path)) },
-        onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
-        onStopDevServer: {
-          if env.remoteDevices?.isEmpty == false {
-            confirmingStop = true
-          } else {
-            stop()
-          }
-        },
-        onShowLogs: openLogs,
-        onRemoveWorktree: { requestRemoval() })
-    } label: {
-      Image(systemName: "ellipsis")
-    }
-    .menuStyle(.button)
-    .menuIndicator(.hidden)
-    .buttonStyle(.borderless)
-    .fixedSize()
-    .help("Workspace actions")
-    .accessibilityLabel("Workspace actions")
-    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
-      Button("Run stim stop", role: .destructive) { stop() }
-    } message: {
-      Text("This also ends the workspace's billable EAS Simulator session.")
-    }
-    .confirmationDialog(
-      "Remove this worktree?",
-      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
-      titleVisibility: .visible,
-      presenting: removal
-    ) { _ in
-      Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
-      }
-    } message: { removal in
-      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
-    }
-  }
-
-  private func stop() {
-    actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
-  }
-
-  private func requestRemoval() {
-    resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) }
-  }
-
-  @ViewBuilder private func usageCards(_ usage: UsageHistory) -> some View {
-    usageCard("cpu", "CPU", usage.latest.cpuPercent.map(formatPercent) ?? "--", values: usage.cpu, minimumPeak: 100)
-    usageCard(
-      "memorychip", usage.isFootprint ? "Memory" : "Resident memory", formatMemory(usage.memoryBytes),
-      values: usage.memory,
-      minimumPeak: 1_073_741_824)
-  }
-
   @ViewBuilder private func statCards(_ project: ProjectStats.Scope) -> some View {
     if let ios = project.ios { statCard("iOS", ios) }
     if let android = project.android { statCard("Android", android) }
-  }
-
-  private func usageCard(_ icon: String, _ title: String, _ value: String, values: [Double], minimumPeak: Double)
-    -> some View
-  {
-    VStack(alignment: .leading, spacing: Space.sm) {
-      Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
-      Text(value).font(.stim(.title))
-      Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 32)
-    }
-    .padding(Space.lg)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 
   private func statCard(_ title: String, _ platform: ProjectStats.Platform) -> some View {

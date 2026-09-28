@@ -30,6 +30,7 @@ final class MetricsStore: ObservableObject {
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
   @Published private(set) var memoryUsed: [Double] = []
   @Published private(set) var ownersCpu: [Double] = []
+  @Published private(set) var owners = OwnerHistory()
 
   private let status: StatusStore
   let gc: GcReportStore
@@ -111,6 +112,7 @@ final class MetricsStore: ObservableObject {
         self.volumes = volumes
         self.memory = memory
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
+        self.owners.append(self.status.payload?.machine, at: Date())
         if let machine = self.status.payload?.machine {
           self.ownersCpu = Array((self.ownersCpu + [machine.cpuPercent]).suffix(UsageHistory.limit))
         } else {
