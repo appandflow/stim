@@ -289,14 +289,18 @@ describe('swapJsBundle', () => {
       const resources = join(app, 'Resources');
       mkdirSync(resources, { recursive: true });
       writeFileSync(join(resources, 'asset.txt'), 'cached asset');
-      writeFileSync(
-        join(app, 'Info.plist'),
-        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Stamp</key><data>AAAA</data></dict></plist>',
-      );
       chmodSync(resources, 0o555);
+      const real = getExecutor();
+      const exec = {
+        ...real,
+        runFile: (file: string, args: string[] = []) => {
+          if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
+          return real.runFile(file, args);
+        },
+      };
       try {
         const { run } = harness({ bundleExit: 1 });
-        const result = await run({ cachedAppPath: app, exec: getExecutor() });
+        const result = await run({ cachedAppPath: app, exec });
         expect(result.failed).toBe(true);
         expect(result.step).toBe('bundle');
         expect(existsSync(tmp)).toBe(false);
@@ -304,6 +308,28 @@ describe('swapJsBundle', () => {
         expect(readFileSync(join(resources, 'asset.txt'), 'utf-8')).toBe('cached asset');
       } finally {
         chmodSync(resources, 0o755);
+        rmSync(source, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'an Info.plist holding <data> and <date> still reads as no catalog with the real plutil (macOS only)',
+    async () => {
+      const source = mkdtempSync(join(tmpdir(), 'stim-plist-app-'));
+      const app = join(source, 'Fixture.app');
+      mkdirSync(app);
+      writeFileSync(
+        join(app, 'Info.plist'),
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>' +
+          '<key>Stamp</key><data>AAAA</data><key>Built</key><date>2026-09-28T12:00:00Z</date></dict></plist>',
+      );
+      try {
+        const { calls, run } = harness({ bundleExit: 1 });
+        const result = await run({ cachedAppPath: app, exec: getExecutor() });
+        expect(result.step).toBe('bundle');
+        expect(calls.find((c) => c.op === 'spawn')?.args).not.toContain('--asset-catalog-dest');
+      } finally {
         rmSync(source, { recursive: true, force: true });
       }
     },
