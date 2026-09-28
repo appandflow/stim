@@ -17,6 +17,7 @@ struct BuildMachinesView: View {
   @State private var working: String?
   @State private var failure: String?
   @State private var removing: String?
+  @State private var refreshing = false
 
   private var checkout: String? {
     doctorCheckouts(store.payload?.environments ?? [], project: store.project(ofPath:)).first?.path
@@ -50,7 +51,7 @@ struct BuildMachinesView: View {
           Text("This Mac builds on")
           Spacer()
           Button("Refresh") { Task { await load() } }
-            .disabled(working != nil)
+            .disabled(working != nil || refreshing || probing)
         }
       } footer: {
         Text(footer)
@@ -79,7 +80,7 @@ struct BuildMachinesView: View {
     .task(id: waiting) {
       while waiting, !Task.isCancelled {
         try? await Task.sleep(for: .seconds(15))
-        if working == nil, !Task.isCancelled { await refreshStatuses(ask: false) }
+        if working == nil, !refreshing, !Task.isCancelled { await refreshStatuses(ask: false) }
       }
     }
     .confirmationDialog(
@@ -87,9 +88,17 @@ struct BuildMachinesView: View {
       presenting: removing
     ) { entry in
       Button("Remove", role: .destructive) { remove(entry) }
-    } message: { _ in
-      Text("Removes it from offload.machines. The next stim doctor --fix forgets its pairing.")
+    } message: { entry in
+      Text(removalMessage(entry))
     }
+  }
+
+  private func removalMessage(_ entry: String) -> String {
+    guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
+      return "Removes it from offload.machines. The next stim doctor --fix forgets its pairing."
+    }
+    return
+      "Removes it from offload.machines and runs stim doctor --fix, which forgets the old node and asks again any listed Mac that has not approved this one."
   }
 
   private var waiting: Bool { statuses?.contains { $0.state == .pending } == true }
@@ -168,6 +177,8 @@ struct BuildMachinesView: View {
       statuses = []
       return
     }
+    refreshing = true
+    defer { refreshing = false }
     let cli = await cli.value
     switch await Task.detached(operation: { Result { try cli.buildMachines(cwd: checkout, ask: ask) } }).value {
     case .success(let reported):
@@ -253,10 +264,11 @@ private struct MachineRow: View {
       }
       Spacer()
       if working { ProgressView().controlSize(.small) }
-      if let status, status.state.canAsk {
+      if let status, status.state.canAsk(requested: status.deviceId != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
       }
-      Button("Remove", role: .destructive, action: remove).disabled(working)
+      Button("Remove", role: .destructive, action: remove)
+        .disabled(working || (status?.state == .nodeChanged && !canAsk))
     }
     .padding(.vertical, Space.xxs)
   }

@@ -1542,7 +1542,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           void answerHealth(response);
           return;
         }
-        if (request.method === 'GET' && request.url === '/health' && peerAddress(request) !== null) {
+        if (
+          request.method === 'GET' &&
+          request.url === '/health' &&
+          peerAddress(request) !== null &&
+          request.headers.origin === undefined &&
+          request.headers['sec-fetch-site'] === undefined
+        ) {
           const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
           response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(peerHealth));
           return;

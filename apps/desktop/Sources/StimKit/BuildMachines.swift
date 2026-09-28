@@ -95,8 +95,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       }
     }
 
-    /// Whether asking again through `stim doctor --fix` can change it.
-    public var canAsk: Bool { self == .notAsked || self == .revoked }
+    /// Whether asking again through `stim doctor --fix` can change it, given whether this Mac already has a request.
+    public func canAsk(requested: Bool) -> Bool {
+      self == .notAsked || self == .revoked || (self == .unreachable && !requested)
+    }
   }
 
   public var machine: String

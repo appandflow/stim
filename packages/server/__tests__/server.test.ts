@@ -528,6 +528,10 @@ describe('health', () => {
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
     expect(await forwarded.json()).toEqual({ server: 'stim-server', version: '1.2.3', protocol: 1 });
+    const fromPage = await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' },
+    });
+    expect(fromPage.status).toBe(426);
     const rebound = await new Promise<number | undefined>((resolve, reject) => {
       get({ host: '127.0.0.1', port, path: '/health', headers: { host: `attacker.example:${port}` } }, (response) => {
         response.resume();

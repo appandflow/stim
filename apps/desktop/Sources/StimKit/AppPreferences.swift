@@ -36,8 +36,7 @@ public enum AppPreferences {
     public static let notifiesWorktreeRemoval = "notify.worktreeRemoval"
     public static let servesPhones = "servesPhones"
     public static let stimServerExecutable = "stimServerExecutable"
-    /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. There is no control for it:
-    /// test copies set it with `defaults write` so they never adopt the Mac's own server.
+    /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
     public static let showsInspector = "showsInspector"
     public static let showsLogsPane = "workspace.showsLogsPane"

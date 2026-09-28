@@ -593,7 +593,9 @@ preference off, followed by SIGKILL if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
 next write fails. A server the app did not start keeps running after the app
 quits. `stim-server` is found on the login shell's `PATH`, or at the path you
-choose in the same tab. While a server runs, the tab re-checks it every 5
+choose in the same tab. A test copy can move the port from 7787 with
+`defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
+the Mac's own server. While a server runs, the tab re-checks it every 5
 seconds, and the pairing and device commands use the `STIM_HOME` its health
 reports, so they act on that server's pairing state. When that `STIM_HOME` is
 not `~/.stim`, the tab names it and warns that phones paired now are stored
@@ -619,7 +621,7 @@ seen, an **Allow control** checkbox, which runs `stim-server devices grant <id>
 --control` or `--read`, and **Revoke**, which runs `stim-server devices revoke
 <id>` after a confirmation. Macs that build here are listed apart, under
 **Macs that build here**, without the checkbox: a Mac waiting for approval shows
-**Waiting for you**, when its request lapses, **Review...** and **Deny**; an
+**Waiting for you** with the time its request lapses, **Review...** and **Deny**; an
 approved one shows **Can build** and **Revoke**. See
 [Build machines](#build-machines).
 
@@ -696,7 +698,8 @@ through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases.
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
-**Off**. Every category is Silent by default. An Alert
+**Off**. Every category is Silent by default, except **A Mac asks to build
+here**, which is Alert because a request lapses after 15 minutes. An Alert
 appears as a card in the main window's top right corner while that window is in
 front, newest on top, with its call to action (**Open workspace**, **Show
 device**, **Show page**, **Show build**, **Show machine**) and a dismiss button; clicking the

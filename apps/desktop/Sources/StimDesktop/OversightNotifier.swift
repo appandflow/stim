@@ -127,7 +127,7 @@ enum NoticeRouter {
       return
     }
     if case .buildRequest(let id) = target {
-      BuildRequestPrompt.present(id: id)
+      DispatchQueue.main.async { MainActor.assumeIsolated { BuildRequestPrompt.present(id: id) } }
       return
     }
     NSApp.activate(ignoringOtherApps: true)

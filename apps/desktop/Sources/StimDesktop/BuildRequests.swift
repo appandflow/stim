@@ -11,7 +11,7 @@ final class BuildRequestNotifier {
 
   private let server: ServerController
   private var subscription: AnyCancellable?
-  private var announced: Set<String> = []
+  private var announced: [String: String] = [:]
 
   init(server: ServerController) {
     self.server = server
@@ -25,14 +25,17 @@ final class BuildRequestNotifier {
   private func receive(_ devices: [PairedDevice]) {
     let pending = devices.filter { $0.pendingUntil != nil }
     let ids = Set(pending.map(\.id))
-    for id in announced.subtracting(ids) { withdraw(id) }
-    for device in pending where !announced.contains(device.id) { announce(device) }
-    announced = ids
+    for (id, entry) in announced where !ids.contains(id) {
+      withdraw(id)
+      NotificationInbox.shared.markRead(entry)
+      announced[id] = nil
+    }
+    for device in pending where announced[device.id] == nil { announced[device.id] = announce(device) }
   }
 
   static func notificationID(_ id: String) -> String { "build-request:\(id)" }
 
-  private func announce(_ device: PairedDevice) {
+  private func announce(_ device: PairedDevice) -> String {
     let notification = OversightNotification(
       id: Self.notificationID(device.id), category: .buildRequest, title: "\(device.name) wants to build on this Mac",
       body: "From \(device.node). Review it to allow or deny.", quiet: false, thread: "build-requests",
@@ -42,19 +45,22 @@ final class BuildRequestNotifier {
     let delivery = Inbox.delivery(NotificationSettings.level(.buildRequest, .standard), quiet: quiet)
     let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
     NotificationInbox.shared.add(entry)
-    guard delivery.interrupts else { return }
+    guard delivery.interrupts else { return entry.id }
     if OversightNotifier.mainWindowInFront {
       ToastCenter.shared.show(OversightNotifier.toast(notification, entry: entry.id))
     } else {
       Notifier.postOversight(notification, entry: entry.id)
     }
+    return entry.id
   }
 
   private func withdraw(_ id: String) {
     let key = Self.notificationID(id)
     ToastCenter.shared.dismiss(key: key)
     guard Notifier.isAvailable else { return }
-    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Notifier.oversightPrefix + key])
+    let center = UNUserNotificationCenter.current()
+    center.removePendingNotificationRequests(withIdentifiers: [Notifier.oversightPrefix + key])
+    center.removeDeliveredNotifications(withIdentifiers: [Notifier.oversightPrefix + key])
   }
 }
 
