@@ -18,34 +18,65 @@ export interface QuietHours {
   end: number;
 }
 
+/** How a category is delivered: `alert` with a banner and sound, `silent` to the notification list only, or `off`. */
+export type NotifyLevel = 'alert' | 'silent' | 'off';
+
+export const NOTIFY_LEVELS: readonly NotifyLevel[] = ['alert', 'silent', 'off'];
+
+export const DEFAULT_LEVELS: Record<OversightCategory, NotifyLevel> = {
+  started: 'silent',
+  stuck: 'silent',
+  looping: 'silent',
+  finished: 'silent',
+  machine: 'alert',
+  control: 'alert',
+};
+
 export interface NotificationPrefs {
   enabled: boolean;
-  categories: OversightCategory[];
+  levels: Record<OversightCategory, NotifyLevel>;
   stuckMinutes: number;
   quietHours: QuietHours | null;
 }
 
 export const DEFAULT_PREFS: NotificationPrefs = {
   enabled: false,
-  categories: [...NOTIFY_CATEGORIES],
+  levels: DEFAULT_LEVELS,
   stuckMinutes: DEFAULT_STUCK_MINUTES,
   quietHours: null,
 };
 
+/** The categories that notify at all. */
+export const notifiedCategories = (prefs: NotificationPrefs): OversightCategory[] =>
+  NOTIFY_CATEGORIES.filter((category) => prefs.levels[category] !== 'off');
+
 const minute = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440;
 
-/** Stored preferences; ones saved before the categories existed keep `enabled` and get every category. */
+/**
+ * Each category's stored level. Preferences saved with on/off `categories` give a category that was on its default
+ * level and keep one that was off off; ones saved before categories give every category its default level.
+ */
+function parseLevels(levels: unknown, categories: unknown): Record<OversightCategory, NotifyLevel> {
+  const stored = (levels ?? {}) as Partial<Record<string, unknown>>;
+  return Object.fromEntries(
+    NOTIFY_CATEGORIES.map((category) => {
+      const level = stored[category];
+      if (typeof level === 'string' && (NOTIFY_LEVELS as readonly string[]).includes(level)) return [category, level];
+      if (Array.isArray(categories) && !categories.includes(category)) return [category, 'off'];
+      return [category, DEFAULT_LEVELS[category]];
+    }),
+  ) as Record<OversightCategory, NotifyLevel>;
+}
+
+/** Stored preferences, with older on/off categories read as levels. */
 export function parsePrefs(raw: string | undefined): NotificationPrefs {
   try {
-    const value = JSON.parse(raw ?? '') as Partial<Record<keyof NotificationPrefs, unknown>>;
-    const categories = value.categories;
+    const value = JSON.parse(raw ?? '') as Partial<Record<keyof NotificationPrefs | 'categories', unknown>>;
     const quiet = value.quietHours as Partial<QuietHours> | null | undefined;
     const stuck = value.stuckMinutes;
     return {
       enabled: value.enabled === true,
-      categories: Array.isArray(categories)
-        ? NOTIFY_CATEGORIES.filter((c) => categories.includes(c))
-        : [...NOTIFY_CATEGORIES],
+      levels: parseLevels(value.levels, value.levels === undefined ? value.categories : undefined),
       stuckMinutes:
         Number.isInteger(stuck) && (stuck as number) >= 1 && (stuck as number) <= 240
           ? (stuck as number)
@@ -120,6 +151,7 @@ export function localNotifications(
   const due: LocalNotification[] = [];
   let wakeAt: number | null = null;
   const quiet = inQuietHours(prefs.quietHours, minuteOfDay);
+  const categories = notifiedCategories(prefs);
   const run = (scope: string, mac: AttentionMachine, categories: readonly OversightCategory[], live: boolean) => {
     const result = oversee(
       state[scope] ?? null,
@@ -137,17 +169,17 @@ export function localNotifications(
       awakeSince,
     );
     next[scope] = result.state;
-    due.push(...result.notifications.map((n) => notificationOf(mac, n)));
+    due.push(...result.notifications.map((n) => notificationOf(mac, n, prefs.levels[n.category] === 'silent')));
     if (result.wakeAt !== null) wakeAt = wakeAt === null ? result.wakeAt : Math.min(wakeAt, result.wakeAt);
   };
   for (const { mac, live, pushed } of machines) {
-    run(`link:${mac.id}`, mac, prefs.categories, false);
+    run(`link:${mac.id}`, mac, categories, false);
     const status = `status:${mac.id}`;
     if (!live) {
       if (state[status]) next[status] = state[status];
       continue;
     }
-    run(status, mac, pushed ? [] : prefs.categories, true);
+    run(status, mac, pushed ? [] : categories, true);
   }
   if (due.length > SUMMARIZE_ABOVE) {
     return {
@@ -168,14 +200,14 @@ export function localNotifications(
   return { state: next, notifications: due, wakeAt };
 }
 
-function notificationOf(mac: AttentionMachine, n: OversightNotification): LocalNotification {
+function notificationOf(mac: AttentionMachine, n: OversightNotification, quiet: boolean): LocalNotification {
   const { kind, ...target } = n.target;
   return {
     id: `${mac.id}:${n.id}`,
     title: n.title,
     ...(kind === 'machine' ? {} : { subtitle: mac.name }),
     body: n.body,
-    quiet: n.quiet,
+    quiet,
     thread: n.thread,
     data: { ref: mac.id, target: kind, key: n.id, ...target },
   };

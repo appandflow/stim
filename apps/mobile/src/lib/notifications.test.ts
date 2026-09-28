@@ -3,6 +3,7 @@ import fixture from '../../mock-server/fixtures/status.json';
 import type { AttentionMachine } from '@/lib/attention';
 import type { ConnectionState } from '@/lib/connection';
 import {
+  DEFAULT_LEVELS,
   DEFAULT_PREFS,
   localNotifications,
   notificationRoute,
@@ -142,7 +143,7 @@ describe('localNotifications', () => {
           title: 'feat/login',
           subtitle: 'MacBook Pro',
           body: 'Same Swift error 3x at AppDelegate.swift:71',
-          quiet: false,
+          quiet: true,
           thread: null,
           data: {
             ref: 'a',
@@ -242,7 +243,7 @@ describe('localNotifications', () => {
   });
 
   it('skips categories that are off, holds what lasts through quiet hours, and drops what started then', () => {
-    const noLoops = { ...ON, categories: ON.categories.filter((c) => c !== 'looping') };
+    const noLoops: NotificationPrefs = { ...ON, levels: { ...ON.levels, looping: 'off' } };
     const quiet = { ...ON, quietHours: { start: 22 * 60, end: 7 * 60 } };
     expect(
       texts(
@@ -269,6 +270,32 @@ describe('localNotifications', () => {
     ).toEqual([[], [], ["MacBook Pro: 3.0 GB free, below Stim's floor"]]);
   });
 
+  it('delivers each category at its level: alert where the user raised it, silent by default', () => {
+    const alerting: NotificationPrefs = { ...ON, levels: { ...ON.levels, started: 'alert' } };
+    const quietness = (prefs: NotificationPrefs) =>
+      run([
+        { at: 0, machines: [mac([env({ ios: sim('running') })])], prefs },
+        { at: 60_000, machines: [mac([env({ ios: sim('running', 'driven') })], { usage: usage(3) })], prefs },
+        {
+          at: 120_000,
+          machines: [mac([env({ ios: sim('running', 'driven'), ...looping(T0 + 120_000) })], { usage: usage(3) })],
+          prefs,
+        },
+      ]).map((step) => step.map((n) => [n.id, n.quiet]));
+    expect(quietness(ON)).toEqual([
+      [],
+      [
+        ['a:machine:disk', false],
+        ['a:started:/u/app/.worktrees/login', true],
+      ],
+      [['a:looping-ios:/u/app/.worktrees/login', true]],
+    ]);
+    expect(quietness(alerting)[1]).toEqual([
+      ['a:machine:disk', false],
+      ['a:started:/u/app/.worktrees/login', false],
+    ]);
+  });
+
   it('sums up more than three at once', () => {
     const broken = (name: string) => env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, ...looping(T0) });
     expect(
@@ -283,7 +310,7 @@ describe('localNotifications', () => {
 });
 
 describe('parsePrefs', () => {
-  it('keeps notifications on for preferences saved before the categories, with every category', () => {
+  it('keeps notifications on for preferences saved before the categories, at every default level', () => {
     expect(parsePrefs(JSON.stringify({ enabled: true, events: ['build-failed'], agentOnly: true }))).toEqual({
       ...DEFAULT_PREFS,
       enabled: true,
@@ -297,8 +324,34 @@ describe('parsePrefs', () => {
           quietHours: { start: 1, end: 2 },
         }),
       ),
-    ).toEqual({ enabled: true, categories: ['stuck'], stuckMinutes: 30, quietHours: { start: 1, end: 2 } });
+    ).toEqual({
+      enabled: true,
+      levels: { started: 'off', stuck: 'silent', looping: 'off', finished: 'off', machine: 'off', control: 'off' },
+      stuckMinutes: 30,
+      quietHours: { start: 1, end: 2 },
+    });
     expect(parsePrefs(JSON.stringify({ stuckMinutes: 0, quietHours: { start: 1440, end: 0 } }))).toEqual(DEFAULT_PREFS);
+  });
+
+  it('moves on/off categories to levels: on takes the default level, off stays off', () => {
+    const migrated = parsePrefs(JSON.stringify({ enabled: true, categories: ['started', 'machine', 'control'] }));
+    expect(migrated.levels).toEqual({
+      started: 'silent',
+      stuck: 'off',
+      looping: 'off',
+      finished: 'off',
+      machine: 'alert',
+      control: 'alert',
+    });
+    expect(parsePrefs(JSON.stringify(migrated))).toEqual(migrated);
+  });
+
+  it('keeps stored levels over categories, and gives an unknown or missing level its default', () => {
+    expect(
+      parsePrefs(
+        JSON.stringify({ levels: { stuck: 'alert', machine: 'off', looping: 'loud' }, categories: ['started'] }),
+      ).levels,
+    ).toEqual({ ...DEFAULT_LEVELS, stuck: 'alert', machine: 'off' });
   });
 });
 
