@@ -66,7 +66,6 @@ export interface PushNotifierOptions {
   log: NotificationLog;
   /** Whether the rules run while any device is paired, or only while one is registered for pushes. */
   whilePaired: boolean;
-  /** Called with the entries just logged. */
   logged?: (entries: LoggedNotification[]) => void;
   limits?: Partial<PushLimits>;
   now?: () => number;
@@ -316,7 +315,7 @@ export class PushNotifier {
     this.lookingUp = true;
     try {
       const found = await this.options.pullRequests(worktrees);
-      if (this.closed) return;
+      if (this.closed || !this.watching()) return;
       this.pullRequests = Object.fromEntries(found);
       this.evaluate();
     } catch (cause) {
@@ -340,9 +339,8 @@ export class PushNotifier {
       ownLeases: this.options.ownLeases(),
     };
     const registered = [...this.registered.values()];
-    const lowestStuck = registered.length
-      ? Math.min(...registered.map((device) => device.push.stuckMinutes))
-      : DEFAULT_STUCK_MINUTES;
+    const stuckThresholds = registered.flatMap((device) => (wants(device, 'stuck') ? [device.push.stuckMinutes] : []));
+    const lowestStuck = stuckThresholds.length ? Math.min(...stuckThresholds) : DEFAULT_STUCK_MINUTES;
     const everything = oversee(
       this.history,
       input,
@@ -393,11 +391,14 @@ export class PushNotifier {
 
   private record(entries: NewEntry[]): void {
     if (entries.length === 0) return;
+    let logged: LoggedNotification[];
     try {
-      this.options.logged?.(this.options.log.append(entries));
+      logged = this.options.log.append(entries);
     } catch (cause) {
       warn(`could not log ${entries.length} notifications: ${(cause as Error).message}`);
+      return;
     }
+    this.options.logged?.(logged);
   }
 
   private message(device: Registered, notification: OversightNotification): PushMessage {

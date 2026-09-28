@@ -19,17 +19,15 @@ export interface LoggedNotification extends NotificationEntry {
   device?: string;
 }
 
-type Stored = LoggedNotification;
-
-export type NewEntry = Omit<Stored, 'seq' | 'at'>;
+export type NewEntry = Omit<LoggedNotification, 'seq' | 'at'>;
 
 interface LogFile {
   log: string;
   nextSeq: number;
-  entries: Stored[];
+  entries: LoggedNotification[];
 }
 
-function parseEntry(value: unknown): Stored | null {
+function parseEntry(value: unknown): LoggedNotification | null {
   if (!isJsonObject(value)) return null;
   const { seq, at, id, category, title, body, quiet, target, suppressed, device } = value;
   if (!Number.isInteger(seq) || typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return null;
@@ -41,11 +39,11 @@ function parseEntry(value: unknown): Stored | null {
     seq: seq as number,
     at,
     id,
-    category: category as Stored['category'],
+    category: category as LoggedNotification['category'],
     title,
     body,
     quiet,
-    target: target as unknown as Stored['target'],
+    target: target as unknown as LoggedNotification['target'],
     ...(suppressed ? { suppressed: suppressed as NotificationSuppression } : {}),
     ...(typeof device === 'string' ? { device } : {}),
   };
@@ -58,8 +56,7 @@ function parseLog(value: Record<string, unknown> | null): LogFile | null {
 }
 
 /**
- * The oversight notifications this server generated, newest last, kept in `file`: the last 200 entries, none
- * older than 7 days. Sequence numbers only grow, and `log` names the
+ * The oversight notifications this server generated, newest last, kept in `file` within {@link LIMITS}. Sequence numbers only grow, and `log` names the
  * file's lifetime, so a client can tell a cursor from a log that was deleted since.
  */
 export class NotificationLog {
@@ -74,7 +71,7 @@ export class NotificationLog {
   }
 
   /** Appends `entries` in order and returns them as stored; the write reads the file first, under its lock. */
-  append(entries: NewEntry[]): Stored[] {
+  append(entries: NewEntry[]): LoggedNotification[] {
     if (entries.length === 0) return [];
     const at = new Date(this.now()).toISOString();
     return withDirLock(
@@ -116,13 +113,13 @@ export class NotificationLog {
     return this.state.log;
   }
 
-  private bounded(entries: Stored[]): Stored[] {
+  private bounded(entries: LoggedNotification[]): LoggedNotification[] {
     const oldest = this.now() - LIMITS.ageMs;
     return entries.filter((entry) => Date.parse(entry.at) >= oldest).slice(-LIMITS.entries);
   }
 }
 
-export function publicEntry({ device: _device, ...entry }: Stored): NotificationEntry {
+export function publicEntry({ device: _device, ...entry }: LoggedNotification): NotificationEntry {
   return entry;
 }
 
