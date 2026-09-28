@@ -30,6 +30,7 @@ import Foundation
   private var subscriptionID: String?
   private var generation = 0
   private var beginGeneration = 0
+  private var pressed: (x: Double, y: Double)?
 
   public init(target: ReplayTarget) {
     self.target = target
@@ -39,8 +40,12 @@ import Foundation
   public func connect(_ server: DeviceServer?) {
     guard server !== self.server else { return }
     close()
-    if case .on = control { control = .off(ended: "The connection to stim-server changed.") }
-    if control == .starting { control = .off(ended: nil) }
+    switch control {
+    case .on: control = .off(ended: "The connection to stim-server changed.")
+    case .starting: control = .off(ended: nil)
+    case .off, .failed: break
+    }
+    pressed = nil
     self.server = server
     guard let server else { return }
     generation += 1
@@ -49,6 +54,7 @@ import Foundation
       guard let self, case .on(let session) = self.control, ended.session == nil || ended.session == session else {
         return
       }
+      self.pressed = nil
       self.control = .off(ended: ended.message)
     }
     unsubscribe = server.subscribe(
@@ -123,22 +129,30 @@ import Foundation
         }
         control = .on(session: session)
       } catch {
-        guard current == beginGeneration, control == .starting else { return }
+        guard current == beginGeneration, control == .starting, server === self.server else { return }
         control = .failed(error.localizedDescription)
       }
     }
   }
 
+  /// Ends the session, lifting a finger still down first. A message from a session that already ended stays.
   public func end() {
     beginGeneration += 1
-    if case .on(let session) = control, let server {
-      Task { _ = try? await server.request("control.end", ["session": .string(session)]) }
+    switch control {
+    case .on(let session):
+      if let pressed { touch("up", x: pressed.x, y: pressed.y) }
+      if let server { Task { _ = try? await server.request("control.end", ["session": .string(session)]) } }
+    case .starting: break
+    case .off, .failed: return
     }
+    pressed = nil
     control = .off(ended: nil)
   }
 
   /// `x` and `y` are fractions of the upright screen, origin top-left.
   public func touch(_ phase: String, x: Double, y: Double) {
+    guard case .on = control else { return }
+    pressed = phase == "up" ? nil : (x, y)
     send("input.touch", ["phase": .string(phase), "x": .number(x), "y": .number(y)])
   }
 

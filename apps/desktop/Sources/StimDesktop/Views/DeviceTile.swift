@@ -165,7 +165,9 @@ struct DeviceTile: View {
   }
 
   @ViewBuilder private var takeOverButton: some View {
-    if let onToggleTakeOver, !isPhysical || PhysicalScreen(device: device, link: server.link, now: Date()).canControl {
+    if let onToggleTakeOver,
+      !isPhysical || takenOver || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
+    {
       if takenOver {
         Button("Release", systemImage: "hand.raised.fill", action: onToggleTakeOver)
           .buttonStyle(.borderedProminent)
@@ -463,6 +465,7 @@ struct DeviceTile: View {
           onPixelSizeChange: { pixelSizes[1] = $0 },
           onControlLost: { if takenOver { onToggleTakeOver?() } }
         )
+        .id(device.id)
         .frame(width: screenWidth(1))
         .padding(screenPadding)
       } else {

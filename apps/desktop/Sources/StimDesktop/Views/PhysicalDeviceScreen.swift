@@ -11,7 +11,7 @@ struct PhysicalDeviceScreen: View {
   var workspace: String
   var interactive: Bool
   var onPixelSizeChange: (CGSize) -> Void
-  /// The server ended control, or refused it, while `interactive`.
+  /// Control ended, or was refused, while `interactive`, other than by the user's Release.
   var onControlLost: () -> Void
   @ObservedObject private var session = ServerSession.shared
   @StateObject private var stream: PhysicalStream
@@ -41,8 +41,8 @@ struct PhysicalDeviceScreen: View {
     }
     .onChange(of: stream.control) { _, control in
       switch control {
-      case .off(ended: .some), .failed: if interactive { onControlLost() }
-      default: break
+      case .off, .failed: if interactive { onControlLost() }
+      case .starting, .on: break
       }
     }
     .onDisappear { stream.stop() }
@@ -107,6 +107,7 @@ struct PhysicalDeviceScreen: View {
   private func follow(_ screen: PhysicalScreen) {
     if case .stream = screen, session.isOpen {
       stream.connect(session.client)
+      if interactive { stream.begin() }
     } else {
       stream.stop()
     }

@@ -42,7 +42,7 @@ struct LocalServerCredential: Codable, Equatable {
 /// Stim Desktop's own connection to the stim-server `ServerController` runs or found on this Mac, over loopback.
 /// It pairs with control through `stim-server pair --control` the first time, and once more when the server no longer
 /// knows its token, then stops until the server restarts. A read-only pairing gets control through
-/// `stim-server devices grant`, once per connection.
+/// `stim-server devices grant`, once per server.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
   static let deviceName = "Stim Desktop"

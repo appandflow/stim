@@ -45,18 +45,6 @@ import Testing
     #expect(button.params == ["session": .string("c1"), "button": .string("back")])
   }
 
-  @Test func showsWhyTheServerRefusedControl() async throws {
-    let server = FakeServer()
-    let stream = PhysicalStream(target: target)
-    stream.connect(server)
-    stream.begin()
-    await settle()
-    try #require(server.take("control.begin")).reply.resume(
-      throwing: ServerError(code: "forbidden", message: "/w does not hold the lease on this device."))
-    await settle()
-    #expect(stream.control == .failed("/w does not hold the lease on this device."))
-  }
-
   @Test func endsASessionTheServerGrantsAfterTheUserReleased() async throws {
     let server = FakeServer()
     let stream = PhysicalStream(target: target)
@@ -90,6 +78,39 @@ import Testing
       observer(ControlEnded(session: nil, reason: "failed", message: "Connection lost."))
     }
     #expect(dropped.control == .off(ended: "Connection lost."))
+  }
+
+  @Test func liftsAFingerStillDownBeforeEndingTheSession() async throws {
+    let (stream, server, session) = try await started()
+    stream.touch("down", x: 0.2, y: 0.3)
+    stream.touch("move", x: 0.4, y: 0.5)
+    stream.end()
+    await settle()
+    let touches = server.requests.filter { $0.method == "input.touch" }.map { $0.params["phase"] }
+    #expect(touches == [.string("down"), .string("move"), .string("up")])
+    let up = try #require(server.requests.last { $0.method == "input.touch" })
+    #expect(up.params["x"] == .number(0.4) && up.params["session"] == .string(session))
+    #expect(server.requests.contains { $0.method == "control.end" })
+  }
+
+  @Test func keepsWhyControlEndedWhenTheTileReleasesAfterwards() async throws {
+    let (stream, server, session) = try await started()
+    for observer in server.controlObservers {
+      observer(ControlEnded(session: session, reason: "idle", message: "No input for 5 minutes."))
+    }
+    stream.end()
+    #expect(stream.control == .off(ended: "No input for 5 minutes."))
+
+    let refused = FakeServer()
+    let other = PhysicalStream(target: target)
+    other.connect(refused)
+    other.begin()
+    await settle()
+    try #require(refused.take("control.begin")).reply.resume(
+      throwing: ServerError(code: "forbidden", message: "/w does not hold the lease on this device."))
+    await settle()
+    other.end()
+    #expect(other.control == .failed("/w does not hold the lease on this device."))
   }
 
   @Test func showsWhyFramesStoppedUntilTheyFlowAgain() throws {
