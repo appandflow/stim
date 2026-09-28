@@ -257,6 +257,7 @@ struct MachineSummary: View {
           StatusDot(color: Palette.success)
           Text("\(cap.liveCount) live")
         }
+        .help("\(countLabel(cap.liveCount, "live workspace")) on this Mac")
         if let cpu = metrics.totalCpu {
           statItem(icon: "cpu", value: formatPercent(cpu), tone: UsageThresholds.cpu(fraction: metrics.totalCpuFraction))
             .help("CPU of every live workspace's processes, simulators and emulators, as a percent of one core")
@@ -300,6 +301,7 @@ struct MachineSummary: View {
           Text("\(max(0, Int(context.date.timeIntervalSince(at))))s ago")
             .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.tertiary)
+            .help("Time since the last stim status refresh")
         }
       }
     }
@@ -401,7 +403,10 @@ struct ActivityToolbarIndicator: View {
           if active.count > 1 { Text("\(active.count)").font(.stim(.caption, mono: true)) }
         }
       }
-      .help(active.count == 1 ? latest.title : "\(active.count) commands running")
+      .help(
+        (active.count == 1 ? "Running: \(latest.title)" : "\(active.count) commands running")
+          + " \u{2014} click to show the latest output")
+      .accessibilityLabel(active.count == 1 ? "Running: \(latest.title)" : "\(active.count) commands running")
     }
   }
 }

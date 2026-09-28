@@ -108,12 +108,14 @@ struct WorkspaceHeader: View {
           Text("Metro")
           Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
         }
+        .help("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
       }
       if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
         DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
       }
       if let supervisor = env.supervisor, supervisor.healthy != true {
         Pill(tone: .warning) { Text("supervisor unhealthy") }
+          .help("stim status reports this workspace's \(supervisor.mode ?? "dev server") supervisor as unhealthy")
       }
       if let usage {
         if let cpu = usage.latest.cpuPercent {
@@ -142,7 +144,7 @@ struct WorkspaceHeader: View {
           Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
         }
         .buttonStyle(.plain)
-        .help("Open logs")
+        .help("\(countLabel(errors, "error")) in the logs since the last marker \u{2014} click to open the logs")
       }
     }
   }

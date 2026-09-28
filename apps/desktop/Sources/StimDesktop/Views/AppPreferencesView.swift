@@ -219,6 +219,7 @@ private struct AutopilotLogRow: View {
     HStack(alignment: .firstTextBaseline, spacing: Space.md) {
       Image(systemName: entry.exitStatus == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
         .foregroundStyle(entry.exitStatus == 0 ? Palette.success : Palette.error)
+        .help(entry.exitStatus.map { $0 == 0 ? "Succeeded" : "Failed with exit status \($0)" } ?? "Did not finish")
       VStack(alignment: .leading, spacing: Space.xxs) {
         HStack {
           Text(entry.trigger.title)

@@ -329,7 +329,7 @@ struct Inspector: View {
             Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
           }
           .buttonStyle(.plain)
-          .help("Open the logs filtered to errors")
+          .help("\(countLabel(errors, "error")) in the logs since the last marker \u{2014} click to open the logs filtered to errors")
         }
       }
       if let active = actions.active(for: env.path) {
@@ -379,6 +379,7 @@ struct Inspector: View {
     .buttonStyle(.borderless)
     .fixedSize()
     .help("Workspace actions")
+    .accessibilityLabel("Workspace actions")
     .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) { stop() }
     } message: {
