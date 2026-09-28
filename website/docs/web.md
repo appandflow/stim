@@ -274,7 +274,9 @@ The phone app shows the page as a **Web** tile in the devices grid and on the
 workspace screen, with an attached tool's latest actions under it. Tapping it opens the device viewer, streamed as H.264 video
 through `stim-server`. With **Control** on, taps click, drags scroll, the
 keyboard types, and **Back** goes back in the page's history. **Reload** in the
-workspace menu runs `stim reload web`.
+workspace menu runs `stim reload web`. See
+[Replay device screens](./owned-devices.md#replay-device-screens) to scrub back
+through what an agent did on the page.
 
 Chrome and Chromium are the only engines.
 

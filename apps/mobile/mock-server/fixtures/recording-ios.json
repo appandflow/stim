@@ -1,0 +1,54 @@
+{
+  "start": 1790568878125,
+  "end": 1790568938480,
+  "markers": [
+    {
+      "at": 1790568891680,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped (38, 84)"
+    },
+    {
+      "at": 1790568898492,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped @e16"
+    },
+    {
+      "at": 1790568903720,
+      "kind": "action",
+      "command": "scroll",
+      "label": "Scrolled down by 568px"
+    },
+    {
+      "at": 1790568910821,
+      "kind": "action",
+      "command": "scroll",
+      "label": "Scrolled down by 568px"
+    },
+    {
+      "at": 1790568918127,
+      "kind": "action",
+      "command": "back",
+      "label": "Went back"
+    },
+    {
+      "at": 1790568922877,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped (38, 84)"
+    },
+    {
+      "at": 1790568926670,
+      "kind": "action",
+      "command": "press",
+      "label": "Tapped @e8"
+    },
+    {
+      "at": 1790568932623,
+      "kind": "action",
+      "command": "close",
+      "label": "Closed default"
+    }
+  ]
+}
