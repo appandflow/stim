@@ -103,14 +103,6 @@ function freeBytes(path: string): number | null {
   }
 }
 
-function listDir(path: string): string[] {
-  try {
-    return readdirSync(path);
-  } catch {
-    return [];
-  }
-}
-
 function nonEmptyDir(path: string): boolean {
   try {
     return readdirSync(path).length > 0;
@@ -157,17 +149,6 @@ export class BuildHost {
   constructor(options: BuildHostOptions) {
     this.options = options;
     this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
-    this.sweepArtifacts();
-  }
-
-  /** Deletes archives no connection can fetch anymore: they belong to jobs of an earlier server. */
-  private sweepArtifacts(): void {
-    const root = this.root();
-    for (const client of listDir(root)) {
-      for (const repo of listDir(join(root, client, 'repos'))) {
-        rmSync(join(root, client, 'repos', repo, 'out'), { recursive: true, force: true });
-      }
-    }
   }
 
   root(): string {
