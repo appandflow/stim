@@ -38,6 +38,19 @@ function latestBuild(env: EnvironmentState): LastBuild | null {
   );
 }
 
+/**
+ * Status reports `app` whenever it knows the bundle id, and a process that is not running cannot tell a closed app
+ * from one never installed. A device counts as having no app only when its platform never built successfully here
+ * and the latest build failed.
+ */
+export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
+  if (!device.running || device.platform === 'web' || device.app?.state === 'running') return null;
+  const last = env.lastBuilds?.[device.platform];
+  const everBuilt = env.builds?.[device.platform]?.some((entry) => entry.result === 'succeeded') ?? true;
+  if (last?.status === 'failed' && !everBuilt) return 'none';
+  return device.app?.state === 'stopped' ? 'closed' : null;
+}
+
 export function closedApps(devices: DeviceRef[]): DeviceRef[] {
   return devices.filter((d) => d.running && d.app?.state === 'stopped');
 }

@@ -2072,6 +2072,10 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:20:09.012Z",
             "basis": ["workspace-use"]
+          },
+          "app": {
+            "id": "com.appandflow.stim",
+            "state": "stopped"
           }
         },
         "android": {
@@ -2169,76 +2173,22 @@
           "ios": [
             {
               "platform": "ios",
-              "status": "ok",
-              "cacheHit": "local",
-              "cacheSkipped": false,
-              "durationMs": 33000,
-              "fingerprint": "a4f00d0000000000000000000000000000000000",
-              "startedAt": "2026-09-25T03:56:36.012Z",
-              "finishedAt": "2026-09-25T03:57:09.012Z",
-              "result": "succeeded",
-              "slot": "default",
-              "configuration": "Debug",
-              "cacheKey": null,
-              "phases": {
-                "prepare": 1700,
-                "cache-lookup": 1300,
-                "install": 9000,
-                "launch": 21000
-              }
-            },
-            {
-              "platform": "ios",
-              "status": "ok",
-              "cacheHit": "local",
-              "cacheSkipped": false,
-              "durationMs": 31000,
-              "fingerprint": "a4f00d0000000000000000000000000000000000",
-              "startedAt": "2026-09-25T02:22:38.012Z",
-              "finishedAt": "2026-09-25T02:23:09.012Z",
-              "result": "succeeded",
-              "slot": "default",
-              "configuration": "Debug",
-              "cacheKey": null,
-              "phases": {
-                "prepare": 1700,
-                "cache-lookup": 1300,
-                "install": 9000,
-                "launch": 21000
-              }
-            },
-            {
-              "platform": "ios",
-              "status": "ok",
-              "cacheHit": false,
-              "cacheSkipped": false,
-              "durationMs": 158000,
-              "fingerprint": "a4f00d0000000000000000000000000000000000",
-              "startedAt": "2026-09-24T02:20:31.012Z",
-              "finishedAt": "2026-09-24T02:23:09.012Z",
-              "result": "succeeded",
-              "slot": "default",
-              "configuration": "Debug",
-              "cacheKey": null,
-              "phases": {
-                "prepare": 2100,
-                "cache-lookup": 1400,
-                "prebuild": 4000,
-                "pods": 21000,
-                "compile": 94000,
-                "install": 8000,
-                "launch": 27500
-              }
-            },
-            {
-              "platform": "ios",
               "status": "failed",
               "cacheHit": false,
               "cacheSkipped": false,
               "durationMs": 52000,
-              "fingerprint": "a4f00d0000000000000000000000000000000000",
-              "startedAt": "2026-09-24T01:22:17.012Z",
-              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "fingerprint": "a4f00d0000000000000000000000000000000001",
+              "startedAt": "2026-09-25T04:19:17.012Z",
+              "finishedAt": "2026-09-25T04:20:09.012Z",
+              "errorCode": "STIM_BUILD_FAILED",
+              "diagnostics": [
+                {
+                  "file": null,
+                  "line": null,
+                  "column": null,
+                  "message": "No profiles for 'dev.stim.mobile' were found: Xcode couldn't find any iOS App Development provisioning profiles."
+                }
+              ],
               "result": "failed",
               "slot": "default",
               "configuration": "Debug",
@@ -2249,8 +2199,7 @@
                 "prebuild": 3800,
                 "pods": 20000,
                 "compile": 24800
-              },
-              "errorCode": "STIM_BUILD_FAILED"
+              }
             }
           ],
           "android": [

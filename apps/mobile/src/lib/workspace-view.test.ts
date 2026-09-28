@@ -1,6 +1,7 @@
 import { devicesOf } from '@/lib/workspaces';
 import {
   agentRow,
+  appPresence,
   barSteps,
   buildLine,
   bundleLine,
@@ -117,6 +118,34 @@ describe('workspaceStage', () => {
       },
     });
     expect(workspaceStage(e, [], NOW).label).toBe('Running');
+  });
+});
+
+describe('appPresence', () => {
+  const failed = last({ status: 'failed' });
+  const entry = (result: BuildHistoryEntry['result']): BuildHistoryEntry => ({
+    ...last(),
+    result,
+    slot: 'default',
+    configuration: 'Debug',
+    cacheKey: null,
+    phases: {},
+  });
+  const stopped = { ...booted, app: { id: 'a', state: 'stopped' as const } };
+  const presence = (patch: Partial<EnvironmentState>) => {
+    const e = env(patch);
+    return appPresence(e, devicesOf(e)[0]!);
+  };
+
+  it('says no app only when the latest build failed and none ever succeeded', () => {
+    expect(presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } })).toBe('none');
+    expect(
+      presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed'), entry('succeeded')] } }),
+    ).toBe('closed');
+  });
+
+  it('does not guess from a missing app, which status leaves out when it does not know the bundle id', () => {
+    expect(presence({ ios: booted, lastBuilds: { ios: failed } })).toBeNull();
   });
 });
 

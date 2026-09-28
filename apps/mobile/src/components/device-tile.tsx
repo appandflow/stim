@@ -17,7 +17,15 @@ import { usageLabel } from '@/components/workspace-cards';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { formatBytes } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
-import { agentRow, currentPhaseLabel, deviceTitle, formatCpu, formatMemoryMb, type Usage } from '@/lib/workspace-view';
+import {
+  agentRow,
+  appPresence,
+  currentPhaseLabel,
+  deviceTitle,
+  formatCpu,
+  formatMemoryMb,
+  type Usage,
+} from '@/lib/workspace-view';
 import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
@@ -45,9 +53,9 @@ export function DeviceTile({
   const target = { macId: mac?.id ?? '', workspace, platform: device.platform, slot: device.slot };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const build = device.platform === 'web' ? null : runningBuild(env, device);
-  const appClosed = device.running && device.app?.state === 'stopped';
-  const lastBuild = device.platform === 'web' ? undefined : env.lastBuilds?.[device.platform];
-  const noApp = device.running && !device.app && lastBuild?.status === 'failed';
+  const app = appPresence(env, device);
+  const appClosed = app === 'closed';
+  const noApp = app === 'none';
   const title = deviceTitle(device);
   const dot = !device.running
     ? theme.colors.tertiary
