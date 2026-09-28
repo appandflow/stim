@@ -38,28 +38,39 @@ struct BuildInlineProgress: View {
       let (phase, counts) = build.currentPhaseLabel
       let elapsed = clockDuration(ms: progress.elapsedMs)
       let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
-      HStack(spacing: Space.sm) {
-        Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary).lineLimit(1)
-        Group {
-          if let fraction = progress.fraction {
-            ProgressView(value: fraction)
-          } else {
-            ProgressView().progressViewStyle(.linear)
-          }
+      let time = (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
+        .font(.stim(.footnote))
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize()
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: Space.sm) {
+          Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary).fixedSize()
+          bar(progress).frame(width: 96)
+          time
         }
-        .tint(Palette.primary)
-        .controlSize(.small)
-        .frame(width: 96)
-        (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
-          .font(.stim(.footnote))
-          .monospacedDigit()
-          .lineLimit(1)
-          .fixedSize()
+        HStack(spacing: Space.sm) {
+          bar(progress).frame(width: 56)
+          time
+        }
+        time
       }
       .help([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
       .accessibilityElement(children: .ignore)
       .accessibilityLabel("\(phase)\(counts.map { " \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")")
     }
+  }
+
+  private func bar(_ progress: BuildProgress) -> some View {
+    Group {
+      if let fraction = progress.fraction {
+        ProgressView(value: fraction)
+      } else {
+        ProgressView().progressViewStyle(.linear)
+      }
+    }
+    .tint(Palette.primary)
+    .controlSize(.small)
   }
 }
 
@@ -88,19 +99,20 @@ struct StageLine: View {
     HStack(spacing: Space.md) {
       HStack(spacing: Space.sm) {
         StatusDot(color: stage.tone.color)
-        Text(stage.label.rawValue).font(.stim(.callout, weight: .semibold))
+        Text(stage.label.rawValue).font(.stim(.callout, weight: .semibold)).fixedSize()
         if let subtitle = stage.subtitle {
           Text(subtitle).font(.stim(.callout)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
         }
       }
       .accessibilityElement(children: .ignore)
       .accessibilityLabel([stage.label.rawValue, stage.subtitle].compactMap { $0 }.joined(separator: ", "))
+      .layoutPriority(-1)
       if let build = env.build, build.isRunning {
         BuildInlineProgress(build: build)
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(chip: chip, worktree: env.worktree!)
+        GitChipButton(chip: chip, worktree: env.worktree!).fixedSize()
       }
     }
   }
