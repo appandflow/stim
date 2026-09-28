@@ -24,6 +24,8 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @AppStorage(AppPreferences.Key.autopilotPullRequests) private var removesFinishedWorktrees = true
   @AppStorage(AppPreferences.Key.notifiesWorktreeRemoval) private var notifiesWorktreeRemoval = true
+  @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
+  @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
   @EnvironmentObject private var autopilot: AutopilotRunner
   @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
@@ -112,6 +114,27 @@ struct AppPreferencesView: View {
             Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
           }
         }
+      }
+
+      Section {
+        ForEach(OversightCategory.desktop, id: \.self) { category in
+          OversightLevelPicker(category: category)
+        }
+        Picker("Stuck after", selection: $stuckMinutes) {
+          ForEach(NotificationSettings.stuckMinuteChoices, id: \.self) { Text("\($0) min").tag($0) }
+        }
+        Picker("Quiet hours", selection: $quietHours) {
+          ForEach(NotificationSettings.quietHoursChoices, id: \.value) { Text($0.label).tag($0.value) }
+        }
+      } header: {
+        Text("Notify when")
+      } footer: {
+        Text(
+          "The same rules as the phone app. Alert shows a card in the Stim window's top right corner while it is in front, and a macOS notification with sound otherwise; macOS asks for permission the first time. Silent and Off never interrupt. A stuck agent, a repeated failure or a machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
+        )
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(Palette.tertiary)
       }
 
       Section("Notifications") {
@@ -209,6 +232,24 @@ private struct NotificationToggle: View {
     Toggle(kind.title, isOn: $enabled)
       .disabled(!Notifier.isAvailable)
       .onChange(of: enabled) { _, on in if on { Notifier.requestAuthorization() } }
+  }
+}
+
+private struct OversightLevelPicker: View {
+  var category: OversightCategory
+  @AppStorage private var level: String
+
+  init(category: OversightCategory) {
+    self.category = category
+    _level = AppStorage(wrappedValue: category.defaultLevel.rawValue, NotificationSettings.key(category))
+  }
+
+  var body: some View {
+    Picker(selection: $level) {
+      ForEach(NotificationLevel.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+    } label: {
+      Label(category.label, systemImage: category.symbol)
+    }
   }
 }
 

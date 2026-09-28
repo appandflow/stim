@@ -58,6 +58,34 @@ final class Notifier: ObservableObject {
       UNNotificationRequest(identifier: "worktrees-\(Date().timeIntervalSince1970)", content: content, trigger: nil))
   }
 
+  nonisolated static let oversightPrefix = "oversight:"
+  nonisolated static let targetKey = "target"
+
+  /// Posts an oversight notification as a banner with sound, asking for permission the first time one is needed. The
+  /// request id is the notification's, so a later episode replaces the earlier one in Notification Center.
+  static func postOversight(_ notification: OversightNotification) {
+    guard isAvailable, let target = try? JSONEncoder().encode(notification.target) else { return }
+    let content = UNMutableNotificationContent()
+    content.title = notification.title
+    content.body = notification.body
+    content.sound = .default
+    if let thread = notification.thread { content.threadIdentifier = thread }
+    content.userInfo = [targetKey: String(decoding: target, as: UTF8.self)]
+    let request = UNNotificationRequest(
+      identifier: oversightPrefix + notification.id, content: content, trigger: nil)
+    let center = UNUserNotificationCenter.current()
+    center.getNotificationSettings { settings in
+      switch settings.authorizationStatus {
+      case .notDetermined:
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in if granted { center.add(request) } }
+      case .denied:
+        break
+      default:
+        center.add(request)
+      }
+    }
+  }
+
   func start() {
     guard subscription == nil else { return }
     subscription = store.$payload.compactMap { $0 }.sink { [weak self] payload in
@@ -113,17 +141,24 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
           self.runPlan?()
         } else if id.hasPrefix("pressure") {
           OpenRequests.shared.showsMachine = true
+        } else if id.hasPrefix(Notifier.oversightPrefix),
+          let json = response.notification.request.content.userInfo[Notifier.targetKey] as? String,
+          let target = try? JSONDecoder().decode(OversightTarget.self, from: Data(json.utf8))
+        {
+          NoticeRouter.open(target)
         }
       }
       completionHandler()
     }
   }
 
-  /// Without a delegate macOS shows no banner while the app is active; only pressure notifications change that.
+  /// Without a delegate macOS shows no banner while the app is active; only pressure and oversight notifications
+  /// change that. An oversight one is posted only while the main window is not in front.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    completionHandler(notification.request.identifier.hasPrefix("pressure") ? [.banner, .sound] : [])
+    let id = notification.request.identifier
+    completionHandler(id.hasPrefix("pressure") || id.hasPrefix(Notifier.oversightPrefix) ? [.banner, .sound] : [])
   }
 }

@@ -36,6 +36,7 @@ struct RootView: View {
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var toasts = ToastCenter.shared
   @State private var pendingLink: PendingWorkspaceLink?
+  @Environment(\.openWindow) private var openWindow
 
   private let cli: Task<StimCLI, Never>
 
@@ -99,7 +100,9 @@ struct RootView: View {
     .onAppear {
       store.start()
       metrics.start()
+      openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
+    .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
     .onReceive(openRequests.$workspaceLink) { link in
       guard link != nil else { return }
@@ -108,6 +111,7 @@ struct RootView: View {
     .onReceive(store.$payload) { payload in
       showDevice(openRequests.device, in: payload)
       showWorkspaceLink(in: payload)
+      show(openRequests.target, in: payload)
       if case .worktree(let path) = selection, payload?.environments.contains(where: { $0.path == path }) == true {
         selection = .environment(path)
       }
@@ -244,6 +248,30 @@ struct RootView: View {
 
   private func showWorkspaceNotFound(_ body: String, key: String? = nil) {
     toasts.show(Toast(icon: "questionmark.folder", tone: .warning, title: "Workspace not found", body: body, key: key))
+  }
+
+  private func show(_ target: OversightTarget?, in payload: StatusPayload?) {
+    guard let target, let payload else { return }
+    let env = target.path.flatMap { path in payload.environments.first { $0.path == path } }
+    openRequests.target = nil
+    switch target {
+    case .machine:
+      selection = .machine
+    case .device(let path, let platform, let slot):
+      selection = .environment(path)
+      if let device = env?.devices.first(where: { device in
+        if case .remote = device { return false }
+        return device.platform == platform && device.slot == slot
+      }) {
+        focusedDeviceID = device.id
+      }
+      detailTab = .device
+    case .build(let path, _):
+      selection = .environment(path)
+      if inspector == .hidden { toggleInspector() }
+    case .workspace(let path), .url(let path, _):
+      selection = .environment(path)
+    }
   }
 
   private func openErrors(_ path: String) {

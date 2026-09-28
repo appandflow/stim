@@ -13,6 +13,8 @@ final class OpenRequests: ObservableObject {
   @Published var selectedWorkspace: String?
   @Published var showsMachine = false
   @Published var pairsPhone = false
+  @Published var target: OversightTarget?
+  var openMainWindow: (() -> Void)?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -71,6 +73,7 @@ struct StimDesktopApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @StateObject private var store: StatusStore
   @StateObject private var notifier: Notifier
+  @StateObject private var oversight: OversightNotifier
   @StateObject private var actions: ActionCenter
   @StateObject private var autopilot: AutopilotRunner
   @StateObject private var onboarding: Onboarding
@@ -97,6 +100,8 @@ struct StimDesktopApp: App {
     let store = StatusStore(cli: cli)
     _store = StateObject(wrappedValue: store)
     _notifier = StateObject(wrappedValue: Notifier(store: store))
+    let oversight = OversightNotifier(store: store)
+    _oversight = StateObject(wrappedValue: oversight)
     let actions = ActionCenter(cli: cli)
     _actions = StateObject(wrappedValue: actions)
     let gc = GcReportStore(cli: cli)
@@ -115,6 +120,7 @@ struct StimDesktopApp: App {
     _onboarding = StateObject(wrappedValue: onboarding)
     DispatchQueue.main.async {
       store.start()
+      oversight.start()
       autopilot.start()
       onboarding.check()
     }

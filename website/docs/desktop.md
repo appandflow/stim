@@ -161,6 +161,17 @@ while you look at the past. **Record device screens for replay** in the same
 tab turns `recording.enabled` on or off for the Mac. See
 [Replay device screens](./owned-devices.md#replay-device-screens).
 
+## Notifications
+
+Stim Desktop notifies you with the same rules as the phone app: work started,
+an agent that looks stuck, an agent that repeats the same build failure, work
+finished, and a machine low on disk or memory. Each category is Alert, Silent or
+Off; a machine problem alerts by default. An alert appears as a card in the
+corner while the window is in front, with a button that opens the workspace,
+device or build, and as a macOS notification otherwise; macOS asks for
+permission the first time. The levels, the stuck threshold and quiet hours are
+under **Settings > App > Notify when**.
+
 ## Remove worktrees of finished pull requests
 
 The autopilot in **Stim > Settings > App** removes a worktree soon after its

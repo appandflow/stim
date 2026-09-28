@@ -61,7 +61,7 @@ public enum AppPreferences {
       Key.notifiesDiskPressure: true,
       Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
-    ]
+    ].merging(NotificationSettings.defaults) { current, _ in current }
   }
 
   /// Carries the retired "Show idle workspaces" switch over to the sidebar's Status option.

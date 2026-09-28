@@ -3,6 +3,7 @@ import SwiftUI
 enum BannerTone: CaseIterable {
   case neutral
   case accent
+  case success
   case warning
   case error
 
@@ -10,6 +11,7 @@ enum BannerTone: CaseIterable {
     switch self {
     case .neutral: return Palette.secondary
     case .accent: return Palette.accent
+    case .success: return Palette.success
     case .warning: return Palette.warning
     case .error: return Palette.error
     }
