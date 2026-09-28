@@ -168,7 +168,9 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 @Suite struct BuildLineTests {
   @Test func showsARunAsTimeAndHitAFailureAndElseThePrediction() throws {
     let ok = try JSONDecoder().decode(LastBuild.self, from: Data(lastBuild().utf8))
-    #expect(BuildLine.make(platform: "ios", last: ok, plan: nil) == BuildLine(platform: "ios", main: "0:33", sub: "hit", tone: .normal))
+    #expect(
+      BuildLine.make(platform: "ios", last: ok, plan: nil)
+        == BuildLine(platform: "ios", main: "0:33", sub: "hit", tone: .normal, spoken: "last build 0:33, hit"))
     let cold = try JSONDecoder().decode(LastBuild.self, from: Data(lastBuild(cacheHit: "false", durationMs: 158_000).utf8))
     #expect(BuildLine.make(platform: "ios", last: cold, plan: nil).main == "2:38")
     let failed = try JSONDecoder().decode(LastBuild.self, from: Data(lastBuild(status: "failed").utf8))
@@ -180,7 +182,9 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
           .utf8))
     #expect(
       BuildLine.make(platform: "ios", last: nil, plan: .done(.plan(plan)))
-        == BuildLine(platform: "ios", main: "~0:39", sub: "hit", tone: .secondary, isEstimate: true))
+        == BuildLine(
+          platform: "ios", main: "~0:39", sub: "est.", tone: .secondary, isEstimate: true,
+          spoken: "next build about 0:39, hit"))
     #expect(BuildLine.make(platform: "ios", last: nil, plan: .checking).main == "Checking\u{2026}")
     #expect(BuildLine.make(platform: "ios", last: nil, plan: .failed("x")).main == "No build")
   }
@@ -291,9 +295,12 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(open?.pullRequest?.text == "PR #1695")
     #expect(open?.pullRequest?.tone == .success)
     #expect(open?.pullRequest?.checks == .failing)
-    #expect(open?.label == "pull request 1695, open, checks 1 failing, 2 pending, 12 passing")
-    let merged = try GitChip(worktree(pullRequest: pr.replacingOccurrences(of: "\"open\"", with: "\"merged\"")))
+    #expect(open?.label == "Pull request 1695, open, checks failing")
+    let merged = try GitChip(
+      worktree(#","mergedInto":"main""#, pullRequest: pr.replacingOccurrences(of: "\"open\"", with: "\"merged\"")))
     #expect(merged?.pullRequest?.tone == .brand)
+    #expect(merged?.parts == [])
+    #expect(try GitChip(worktree())?.label == "Branch, up to date")
     #expect(try GitChip(worktree(pullRequest: "null"))?.pullRequest == nil)
   }
 }

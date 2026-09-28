@@ -245,35 +245,48 @@ public struct BuildLine: Equatable, Sendable {
   /// A prediction from `stim <platform> --plan`, not a finished run.
   public var isEstimate: Bool
 
-  public init(platform: String, main: String, sub: String?, tone: Tone, isEstimate: Bool = false) {
+  public init(platform: String, main: String, sub: String?, tone: Tone, isEstimate: Bool = false, spoken: String) {
     self.platform = platform
     self.main = main
     self.sub = sub
     self.tone = tone
     self.isEstimate = isEstimate
+    self.spoken = "\(platformName(platform)) \(spoken)"
   }
 
   /// "iOS 0:33 hit", "Android next ~0:40 hit" for accessibility and help.
-  public var spoken: String {
-    [platformName(platform), isEstimate ? "next" : nil, main, sub].compactMap { $0 }.joined(separator: " ")
-  }
+  /// "iOS last build 0:33, hit" or "Android next build about 0:40, hit", for accessibility and help.
+  public var spoken: String
 
   public static func make(platform: String, last: LastBuild?, plan: BuildPlanChecks.State?) -> BuildLine {
     if let last {
-      if last.status == "failed" { return BuildLine(platform: platform, main: "Failed", sub: nil, tone: .error) }
-      return BuildLine(
-        platform: platform, main: last.durationMs.map { clockDuration(ms: $0) } ?? "\u{2014}",
-        sub: last.cacheHit == .none ? "cold" : "hit", tone: .normal)
+      if last.status == "failed" {
+        return BuildLine(platform: platform, main: "Failed", sub: nil, tone: .error, spoken: "last build failed")
+      }
+      let cache = last.cacheHit == .none ? "cold" : "hit"
+      guard let duration = last.durationMs else {
+        return BuildLine(platform: platform, main: "\u{2014}", sub: cache, tone: .normal, spoken: "last build \(cache)")
+      }
+      let took = clockDuration(ms: duration)
+      return BuildLine(platform: platform, main: took, sub: cache, tone: .normal, spoken: "last build \(took), \(cache)")
     }
     switch plan {
-    case .checking:
-      return BuildLine(platform: platform, main: "Checking\u{2026}", sub: nil, tone: .secondary)
     case .done(.plan(let plan)) where plan.refusal == nil:
+      let cache = plan.cacheHit == .none ? "cold" : "hit"
+      guard let expected = plan.expectedMs else {
+        return BuildLine(
+          platform: platform, main: "\u{2014}", sub: "est. \(cache)", tone: .secondary, isEstimate: true,
+          spoken: "next build \(cache)")
+      }
+      let took = clockDuration(ms: expected)
       return BuildLine(
-        platform: platform, main: plan.expectedMs.map { "~\(clockDuration(ms: $0))" } ?? "\u{2014}",
-        sub: plan.cacheHit == .none ? "cold" : "hit", tone: .secondary, isEstimate: true)
+        platform: platform, main: "~\(took)", sub: "est.", tone: .secondary, isEstimate: true,
+        spoken: "next build about \(took), \(cache)")
+    case .checking:
+      return BuildLine(
+        platform: platform, main: "Checking\u{2026}", sub: nil, tone: .secondary, spoken: "checking the next build")
     default:
-      return BuildLine(platform: platform, main: "No build", sub: nil, tone: .secondary)
+      return BuildLine(platform: platform, main: "No build", sub: nil, tone: .secondary, spoken: "no build")
     }
   }
 }
@@ -387,29 +400,28 @@ public struct GitChip: Equatable, Sendable {
 
   public init?(_ worktree: WorktreeInfo?) {
     guard let worktree, let git = worktree.git else { return nil }
+    let pull = worktree.pullRequest
     var parts: [Part] = []
     if let arrows = git.arrows { parts.append(Part(text: arrows, tone: .normal)) }
     if git.uncommitted > 0 { parts.append(Part(text: "\(git.uncommitted) changed", tone: .secondary)) }
     if let merged = git.mergedInto {
-      parts.append(Part(text: "merged into \(merged)", tone: .brand))
+      if pull?.state != "merged" { parts.append(Part(text: "merged into \(merged)", tone: .brand)) }
     } else if git.upstream == nil {
       parts.append(Part(text: "no upstream", tone: .tertiary))
     }
     self.parts = parts
-    let pull = worktree.pullRequest
+    let checks = pull.flatMap { Self.checks($0.checks) }
     pullRequest = pull.map {
       PullRequest(
-        text: "PR #\($0.number)", tone: Self.tone(ofPullRequest: $0.state), checks: Self.checks($0.checks),
-        url: URL(string: $0.url))
+        text: "PR #\($0.number)", tone: Self.tone(ofPullRequest: $0.state), checks: checks, url: URL(string: $0.url))
     }
-    var spoken = git.isNotable ? [git.summary] : []
-    if git.mergedInto == nil, git.upstream == nil { spoken.append("no upstream") }
-    if let pull {
-      spoken.append(
-        ["pull request \(pull.number), \(pull.state)", Self.checksSummary(pull.checks).map { "checks \($0)" }]
-          .compactMap { $0 }.joined(separator: ", "))
-    }
-    label = spoken.isEmpty ? "No uncommitted or unpushed changes" : spoken.joined(separator: "; ")
+    label = [
+      pull.map { "Pull request \($0.number), \($0.state)" } ?? "Branch",
+      checks.map { "checks \($0)" },
+      git.isNotable ? git.summary : nil,
+      git.mergedInto == nil && git.upstream == nil ? "no upstream" : nil,
+      pull == nil && parts.isEmpty ? "up to date" : nil,
+    ].compactMap { $0 }.joined(separator: ", ")
   }
 
   public static func tone(ofPullRequest state: String) -> Tone {
