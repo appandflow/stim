@@ -13,6 +13,7 @@ import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
+import { useInbox } from '@/hooks/inbox';
 import { useMacs } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
 import { drawerStatus, UPDATE_READY_TEXT, type DrawerMachine } from '@/lib/drawer-status';
@@ -31,6 +32,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const { view, setView } = useHomeFilters();
   const { recents } = useRecents();
   const update = useAppUpdate();
+  const inbox = useInbox();
   const [aboutOpen, setAboutOpen] = useState(false);
   const go = (href: Href) => {
     onClose();
@@ -94,6 +96,15 @@ export function Menu({ onClose }: { onClose: () => void }) {
           selected={pathname === '/' && view === 'machines'}
           onPress={() => show('machines')}
         />
+        {inbox.supported ? (
+          <NavRow
+            icon="bell"
+            title="Notifications"
+            count={inbox.unread}
+            selected={pathname === '/inbox'}
+            onPress={() => go('/inbox')}
+          />
+        ) : null}
         <NavRow icon="plus" title="Pair a machine" selected={false} onPress={() => go('/pair')} />
         {recentRows.length > 0 ? (
           <>
@@ -177,11 +188,14 @@ export function Menu({ onClose }: { onClose: () => void }) {
 function NavRow({
   icon,
   title,
+  count = 0,
   selected,
   onPress,
 }: {
   icon: IconName;
   title: string;
+  /** Shown as a pill, and read out as unread, when above zero. */
+  count?: number;
   selected: boolean;
   onPress: () => void;
 }) {
@@ -190,14 +204,21 @@ function NavRow({
     <Touch
       feedback="row"
       onPress={onPress}
-      accessibilityLabel={title}
+      accessibilityLabel={count > 0 ? `${title}, ${count} unread` : title}
       accessibilityState={{ selected }}
       style={styles.row(selected)}
     >
       <Icon name={icon} size={20} color={theme.colors.text} />
-      <Text variant="headline" weight="medium">
+      <Text variant="headline" weight="medium" style={styles.grow}>
         {title}
       </Text>
+      {count > 0 ? (
+        <View style={styles.count}>
+          <Text variant="caption" weight="semibold" style={styles.countText}>
+            {count > 99 ? '99+' : count}
+          </Text>
+        </View>
+      ) : null}
     </Touch>
   );
 }
@@ -265,5 +286,15 @@ const styles = StyleSheet.create((theme) => ({
     overflow: 'hidden',
     backgroundColor: theme.colors.background,
   },
+  count: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: theme.space.sm,
+    borderRadius: theme.radius.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+  },
+  countText: { color: theme.colors.onPrimary, fontVariant: ['tabular-nums'] },
   updateDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
 }));

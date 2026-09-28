@@ -4,6 +4,7 @@ import {
   type ClientAuth,
   type ControlEndedEvent,
   type Method,
+  type NotificationEvent,
   type Methods,
   type ProtocolError,
   type ServerEvent,
@@ -87,6 +88,7 @@ export class StimConnection {
   private pending = new Map<number, Pending>();
   private subscriptions = new Set<Subscription>();
   private controlListeners = new Set<(event: ControlEndedEvent) => void>();
+  private notificationListeners = new Set<(event: NotificationEvent) => void>();
   private retryMs = MIN_RETRY_MS;
   private timer: unknown = null;
   private stopped = false;
@@ -177,6 +179,12 @@ export class StimConnection {
   onControlEnded(listener: (event: ControlEndedEvent) => void): () => void {
     this.controlListeners.add(listener);
     return () => this.controlListeners.delete(listener);
+  }
+
+  /** Notifications the Mac logs, sent once this connection has sent `notifications.list`. */
+  onNotification(listener: (event: NotificationEvent) => void): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
   }
 
   private connect(): void {
@@ -287,6 +295,10 @@ export class StimConnection {
     }
     if (message.event === 'control-ended') {
       for (const listener of this.controlListeners) listener(message);
+      return;
+    }
+    if (message.event === 'notification') {
+      for (const listener of this.notificationListeners) listener(message);
       return;
     }
     for (const sub of this.subscriptions) {

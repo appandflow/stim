@@ -65,6 +65,10 @@ export interface NotificationData {
   platform?: DevicePlatform;
   slot?: string;
   url?: string;
+  /** The Mac's notification history entry a push reports. */
+  notification?: number;
+  /** The rules' notification id a local notification reports, shared by every episode of it. */
+  key?: string;
 }
 
 export interface LocalNotification {
@@ -173,7 +177,7 @@ function notificationOf(mac: AttentionMachine, n: OversightNotification): LocalN
     body: n.body,
     quiet: n.quiet,
     thread: n.thread,
-    data: { ref: mac.id, target: kind, ...target },
+    data: { ref: mac.id, target: kind, key: n.id, ...target },
   };
 }
 

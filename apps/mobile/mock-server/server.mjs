@@ -98,6 +98,103 @@ const status = () => {
     },
   };
 };
+const NOTIFICATION_LOG = `mock-${randomBytes(4).toString('hex')}`;
+const MINUTE = 60_000;
+const notificationSamples = (() => {
+  const login = '/Users/dev/Developer/tlon-apps/.worktrees/web-login';
+  const hinges = '/Users/dev/Developer/react-native-hinges/example';
+  const pr = 'https://github.com/appandflow/react-native-hinges/pull/42';
+  return [
+    {
+      ago: 2,
+      id: `stuck:${login}`,
+      category: 'stuck',
+      title: 'web-login',
+      body: 'No agent activity for 15 min; iPhone 17 Pro 26.0 still up',
+      target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 18,
+      id: `started:${login}`,
+      category: 'started',
+      title: 'web-login',
+      body: `agent-device started driving iPhone 17 Pro 26.0 on ${values.name}`,
+      quiet: true,
+      target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 47,
+      id: `looping-android:${hinges}`,
+      category: 'looping',
+      title: 'example',
+      body: 'Same Kotlin error 3x at MainActivity.kt:42',
+      target: { kind: 'build', path: hinges, platform: 'android' },
+    },
+    {
+      ago: 95,
+      id: `finished:${hinges}`,
+      category: 'finished',
+      title: 'example',
+      body: 'PR #42 is ready for review',
+      target: { kind: 'url', path: hinges, url: pr },
+    },
+    {
+      ago: 60 * 20,
+      id: 'machine:disk',
+      category: 'machine',
+      title: values.name,
+      body: "4.2 GB free, below Stim's floor",
+      target: { kind: 'machine' },
+      suppressed: 'quiet-hours',
+    },
+    {
+      ago: 60 * 26,
+      id: `control:${login}:ios:default`,
+      category: 'control',
+      title: 'web-login',
+      body: 'iPad took over the iOS device you were controlling',
+      target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 60 * 30,
+      id: `finished:${login}`,
+      category: 'finished',
+      title: 'web-login',
+      body: 'Agent stopped after a green iOS build',
+      target: { kind: 'workspace', path: login },
+      suppressed: 'muted',
+    },
+    {
+      ago: 60 * 50,
+      id: `started:${hinges}`,
+      category: 'started',
+      title: 'example',
+      body: `Warming on ${values.name}`,
+      quiet: true,
+      target: { kind: 'workspace', path: hinges },
+    },
+  ];
+})();
+const notifications = notificationSamples
+  .toReversed()
+  .map(({ ago, quiet = false, ...rest }, i) => ({
+    seq: i + 1,
+    at: new Date(startedAt - ago * MINUTE).toISOString(),
+    quiet,
+    ...rest,
+  }))
+  .toReversed();
+const notificationListeners = new Set();
+const LIVE_NOTIFICATION_MS = 120_000;
+setInterval(() => {
+  const sample = notificationSamples[notifications.length % notificationSamples.length];
+  const { ago: _ago, quiet = false, ...rest } = sample;
+  const entry = { seq: notifications[0].seq + 1, at: new Date().toISOString(), quiet, ...rest };
+  delete entry.suppressed;
+  notifications.unshift(entry);
+  for (const send of notificationListeners) send({ event: 'notification', log: NOTIFICATION_LOG, notification: entry });
+}, LIVE_NOTIFICATION_MS);
+
 const GB = 1e9;
 const usage = () => ({
   volumes: [
@@ -308,6 +405,17 @@ server.on('connection', (socket) => {
     'machine.history'(params) {
       return { result: history(params.sinceMs) };
     },
+    'notifications.list'(params) {
+      notificationListeners.add(send);
+      const since = params.since ?? 0;
+      return {
+        result: {
+          log: NOTIFICATION_LOG,
+          cursor: notifications[0].seq,
+          notifications: notifications.filter((entry) => entry.seq > since),
+        },
+      };
+    },
     unsubscribe(params) {
       stop(params.subscription);
       return { result: {} };
@@ -339,6 +447,7 @@ server.on('connection', (socket) => {
     if (!outcome.deferred) send({ id, result: outcome.result });
   });
   socket.on('close', () => {
+    notificationListeners.delete(send);
     for (const subscription of new Set([...timers.keys(), ...feeds.keys()])) stop(subscription);
   });
 });
@@ -353,7 +462,7 @@ function hello(deviceToken, deviceName) {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
-    features: ['physical-ios', 'physical-android'],
+    features: ['physical-ios', 'physical-android', 'notifications'],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
   };

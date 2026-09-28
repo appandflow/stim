@@ -144,7 +144,13 @@ describe('localNotifications', () => {
           body: 'Same Swift error 3x at AppDelegate.swift:71',
           quiet: false,
           thread: null,
-          data: { ref: 'a', target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
+          data: {
+            ref: 'a',
+            target: 'build',
+            key: 'looping-ios:/u/app/.worktrees/login',
+            path: '/u/app/.worktrees/login',
+            platform: 'ios',
+          },
         },
       ],
       [],
@@ -179,7 +185,14 @@ describe('localNotifications', () => {
         id: 'a:started:/u/app/.worktrees/login',
         quiet: true,
         thread: 'started:MacBook Pro',
-        data: { ref: 'a', target: 'device', path: '/u/app/.worktrees/login', platform: 'ios', slot: 'default' },
+        data: {
+          ref: 'a',
+          target: 'device',
+          key: 'started:/u/app/.worktrees/login',
+          path: '/u/app/.worktrees/login',
+          platform: 'ios',
+          slot: 'default',
+        },
       }),
     ]);
   });

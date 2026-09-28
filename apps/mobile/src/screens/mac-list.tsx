@@ -10,6 +10,7 @@ import { StatusDot } from '@/components/pill';
 import { ScopeChip } from '@/components/read-only';
 import { Text } from '@/components/text';
 import { useMacs } from '@/hooks/mac-connection';
+import { forgetInbox } from '@/hooks/inbox';
 import { unregisterPush } from '@/hooks/notifications';
 import { forgetMac, type PairedMac } from '@/lib/macs';
 
@@ -26,6 +27,7 @@ export function MacList() {
         style: 'destructive',
         onPress: () => {
           unregisterPush(connections.find((c) => c.mac.id === mac.id)?.connection ?? null, mac.id);
+          forgetInbox(mac.id);
           void forgetMac(mac.id).then(reload);
         },
       },

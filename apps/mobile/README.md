@@ -89,7 +89,8 @@ reload and stop a workspace:
   offers an action button.
 - **Menu**: the menu button, or a swipe from the left edge of home, slides
   home right and shows the menu behind it: **Workspaces**, **Devices** and
-  **Machines** (the same switch as home's toggle), **Pair a machine**, and
+  **Machines** (the same switch as home's toggle), **Notifications** (see
+  [Inbox](#inbox)) with its unread count, **Pair a machine**, and
   **Recent workspaces**, the workspaces most recently live or opened on this
   phone. The button at the bottom shows the number of
   paired machines and opens **About**, with the app and server versions, as a
@@ -477,6 +478,30 @@ When notifications can arrive:
   without push, a branch counts as merged when git finds it merged into the
   default branch.
 
+### Inbox
+
+**Notifications** in the menu lists what each paired Mac's `stim-server`
+logged in the last 7 days (at most 200 per Mac), newest first, in sections by
+day and merged across Macs, whether or not it notified this phone. The menu
+button and the menu row show the unread count. A row shows the category's
+icon, the workspace (or the Mac, for a machine problem), the one-line cause,
+the category and the Mac, and how long ago it happened; an entry no phone was
+notified of says **Muted** (no registered phone wants its category) or
+**Quiet hours**. Tapping a row marks it read and opens what its notification
+opens. The filter button marks everything read and filters by category and,
+with several Macs, by Mac. Pull down to list again.
+
+The app lists each Mac's history with `notifications.list` on every connection
+and adds the `notification` events the Mac sends while connected. The history
+lives in memory; which entries were read is saved per Mac in the notification
+store, which a new build or update keeps, and forgetting the Mac deletes it.
+Tapping a push or local notification marks its entry read: a push carries the
+entry's number, and a local notification the rule's id, which matches the
+newest entry with that id. A Mac whose server predates the history
+(`notifications` missing from `hello`'s `features`) adds nothing, and without
+one the menu has no **Notifications** row. The categories, wording and icons
+are the ones Stim Desktop's inbox uses.
+
 A background check was not added: `expo-background-task` runs at most every
 15 minutes on Android, and on iOS it schedules a `BGProcessingTask` that the
 system runs rarely and at times of its choosing, often only while the phone
@@ -615,6 +640,10 @@ status event carries a usage history drawn around those owners, and
 `logs.ndjson` holds agent actions on their devices. Log timestamps move forward
 with the status. Android and Web devices show `frame-android.jpg` and
 `frame-web.jpg`.
+
+The mock server answers `notifications.list` with eight entries of every
+category, two of them held back (`suppressed`), and sends a new `notification`
+event every 2 minutes to each connection that listed.
 
 `--overlay <file>` changes the status while the server runs, to try
 notifications. The server rereads the JSON file for each status push (every 5
