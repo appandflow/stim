@@ -519,7 +519,6 @@ found**. Another link to the same workspace replaces its card. With only the men
 running and the main window closed, the card appears when the window next
 opens, because the link cannot open a window from the app delegate.
 
-
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
 - `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup
   preview needs a `stim` with `gc --json`. At launch the app reads the
