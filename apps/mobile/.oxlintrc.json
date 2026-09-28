@@ -37,7 +37,8 @@
         "vars": "all",
         "args": "none",
         "ignoreRestSiblings": true,
-        "caughtErrors": "all"
+        "caughtErrors": "all",
+        "caughtErrorsIgnorePattern": "^_"
       }
     ],
     "no-useless-constructor": "warn",
@@ -125,6 +126,12 @@
       "files": ["**/*.js", "**/*.mjs", "**/*.cjs", "app.config.ts", "scripts/**", "mock-server/**", "plugins/**"],
       "env": {
         "node": true
+      }
+    },
+    {
+      "files": ["**/*.js", "**/*.mjs", "**/*.cjs"],
+      "rules": {
+        "no-undef": "error"
       }
     }
   ]
