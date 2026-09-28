@@ -1,15 +1,17 @@
-import { rippleDelay } from '@/components/pixel-dismiss';
+import { fallDelay } from '@/components/pixel-dismiss';
 
-describe('rippleDelay', () => {
-  it('starts at the centre and grows with the distance from it', () => {
-    const delays = Array.from({ length: 4 }, (_, row) =>
-      Array.from({ length: 4 }, (_, column) => rippleDelay(row, column, 4, 4, 300)),
-    );
-    expect(delays).toEqual([
-      [225, 168, 168, 225],
-      [168, 75, 75, 168],
-      [168, 75, 75, 168],
-      [225, 168, 168, 225],
-    ]);
+describe('fallDelay', () => {
+  it('drops the bottom of the left column first and the top of the right column last', () => {
+    for (let i = 0; i < 100; i++) {
+      const bottomLeft = fallDelay(9, 0, 10, 10, 500);
+      const topLeft = fallDelay(0, 0, 10, 10, 500);
+      const bottomRight = fallDelay(9, 9, 10, 10, 500);
+      const topRight = fallDelay(0, 9, 10, 10, 500);
+      expect(bottomLeft).toBeLessThan(topLeft);
+      expect(bottomLeft).toBeLessThan(bottomRight);
+      expect(topRight).toBeGreaterThan(topLeft);
+      expect(topRight).toBeGreaterThan(bottomRight);
+      expect(topRight).toBeLessThanOrEqual(500);
+    }
   });
 });
