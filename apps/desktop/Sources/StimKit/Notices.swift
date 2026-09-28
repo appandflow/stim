@@ -111,12 +111,4 @@ public enum NotificationSettings {
       categories: OversightCategory.desktop,
       stuckMinutes: (1...240).contains(stuck) ? stuck : Oversight.defaultStuckMinutes, quiet: false)
   }
-
-  /// How a notification of `category` is presented now: quiet hours turn an alert silent.
-  public static func presentation(
-    _ category: OversightCategory, _ defaults: UserDefaults, minuteOfDay: Int
-  ) -> NotificationLevel {
-    let level = level(category, defaults)
-    return level == .alert && isQuiet(defaults, minuteOfDay: minuteOfDay) ? .silent : level
-  }
 }

@@ -5,6 +5,7 @@ struct Sidebar: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var autopilot: AutopilotRunner
   @ObservedObject var onboarding: Onboarding
+  @ObservedObject private var inbox = NotificationInbox.shared
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
@@ -61,6 +62,15 @@ struct Sidebar: View {
     VStack(spacing: Space.xxs) {
       PinnedRow(item: .wall, selection: $selection) {
         SidebarLabel(title: "All devices", icon: "square.grid.2x2", selected: selection == .wall)
+      }
+      PinnedRow(item: .notifications, selection: $selection) {
+        SidebarLabel(title: "Notifications", icon: "bell", selected: selection == .notifications)
+        Spacer()
+        let unread = inbox.inbox.unreadCount
+        if unread > 0 {
+          Pill(unread > 99 ? "99+" : "\(unread)", tone: .accent, size: .small)
+            .help("\(unread) unread notification\(unread == 1 ? "" : "s")")
+        }
       }
       PinnedRow(item: .attention, selection: $selection) {
         SidebarLabel(title: "Needs attention", icon: "exclamationmark.triangle", selected: selection == .attention)

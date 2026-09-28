@@ -20,14 +20,14 @@ struct NotificationSettingsTests {
     #expect(prefs.quiet == false)
   }
 
-  @Test func quietHoursAcrossMidnightTurnAnAlertSilentAndLeaveOffAlone() throws {
+  @Test func readsQuietHoursAcrossMidnightAndAStoredLevel() throws {
     let defaults = try defaults("NotificationSettingsTests.quiet")
     defaults.set("1320-420", forKey: NotificationSettings.quietHoursKey)
     defaults.set("off", forKey: NotificationSettings.key(.started))
-    #expect(NotificationSettings.presentation(.machine, defaults, minuteOfDay: 23 * 60) == .silent)
-    #expect(NotificationSettings.presentation(.machine, defaults, minuteOfDay: 6 * 60) == .silent)
-    #expect(NotificationSettings.presentation(.machine, defaults, minuteOfDay: 12 * 60) == .alert)
-    #expect(NotificationSettings.presentation(.started, defaults, minuteOfDay: 23 * 60) == .off)
+    #expect(NotificationSettings.isQuiet(defaults, minuteOfDay: 23 * 60))
+    #expect(NotificationSettings.isQuiet(defaults, minuteOfDay: 6 * 60))
+    #expect(!NotificationSettings.isQuiet(defaults, minuteOfDay: 12 * 60))
+    #expect(NotificationSettings.level(.started, defaults) == .off)
   }
 
   @Test func fallsBackOnStoredValuesItCannotRead() throws {

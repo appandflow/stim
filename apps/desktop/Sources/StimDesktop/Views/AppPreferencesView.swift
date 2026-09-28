@@ -130,7 +130,7 @@ struct AppPreferencesView: View {
         Text("Notify when")
       } footer: {
         Text(
-          "The same rules as the phone app. Alert shows a card in the Stim window's top right corner while it is in front, and a macOS notification with sound otherwise; macOS asks for permission the first time. Silent and Off never interrupt. A stuck agent, a repeated failure or a machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
+          "The same rules as the phone app. Alert shows a card in the Stim window's top right corner while it is in front, and a macOS notification with sound otherwise; macOS asks for permission the first time. Silent and Off never interrupt; every notification is kept in Notifications in the sidebar, an Off one marked Muted. A stuck agent, a repeated failure or a machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
