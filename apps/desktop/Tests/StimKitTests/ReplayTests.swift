@@ -7,7 +7,7 @@ private func fixture(_ name: String) throws -> Data {
   try Data(contentsOf: Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: nil)!)
 }
 
-@MainActor private func settle() async {
+@MainActor func settle() async {
   for _ in 0..<20 { await Task.yield() }
 }
 
@@ -31,7 +31,7 @@ private func fixture(_ name: String) throws -> Data {
   }
 }
 
-@MainActor private final class FakeServer: ReplayServer {
+@MainActor final class FakeServer: DeviceServer {
   struct Request {
     var method: String
     var params: [String: JSONValue]
@@ -59,6 +59,7 @@ private func fixture(_ name: String) throws -> Data {
 
   var requests: [Request] = []
   var subs: [Sub] = []
+  var controlObservers: [@MainActor (ControlEnded) -> Void] = []
 
   func request(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
     try await withCheckedThrowingContinuation { requests.append(Request(method: method, params: params, reply: $0)) }
@@ -72,6 +73,11 @@ private func fixture(_ name: String) throws -> Data {
     let sub = Sub(params: params, onSubscribed: onSubscribed, onEvent: onEvent, onVideo: onVideo)
     subs.append(sub)
     return { sub.cancelled = true }
+  }
+
+  func observeControlEnded(_ onEnded: @escaping @MainActor (ControlEnded) -> Void) -> () -> Void {
+    controlObservers.append(onEnded)
+    return {}
   }
 
   func take(_ method: String) -> Request? {
@@ -288,7 +294,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   }
 }
 
-@MainActor private final class FakeTransport: ServerTransport {
+@MainActor final class FakeTransport: ServerTransport {
   var sent: [[String: JSONValue]] = []
   var closed = false
   let onEvent: @MainActor (ServerTransportEvent) -> Void

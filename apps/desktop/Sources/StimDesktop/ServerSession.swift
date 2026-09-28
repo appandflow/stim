@@ -40,8 +40,9 @@ struct LocalServerCredential: Codable, Equatable {
 }
 
 /// Stim Desktop's own connection to the stim-server `ServerController` runs or found on this Mac, over loopback.
-/// It pairs read-only through `stim-server pair` the first time, and once more when the server no longer knows its
-/// token, then stops until the server restarts.
+/// It pairs with control through `stim-server pair --control` the first time, and once more when the server no longer
+/// knows its token, then stops until the server restarts. A read-only pairing gets control through
+/// `stim-server devices grant`, once per server.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
   static let deviceName = "Stim Desktop"
@@ -53,6 +54,7 @@ struct LocalServerCredential: Codable, Equatable {
   private var watch: AnyCancellable?
   private var key: String?
   private var repaired = false
+  private var granted = false
 
   init(controller: ServerController) {
     self.controller = controller
@@ -67,6 +69,22 @@ struct LocalServerCredential: Codable, Equatable {
   }
 
   var isOpen: Bool { client?.isOpen == true }
+
+  var link: ServerLink {
+    guard client != nil else {
+      switch controller.state {
+      case .starting: return .connecting
+      case .failed(let message): return .unavailable(message)
+      case .off, .running: return .off
+      }
+    }
+    switch state {
+    case .idle, .connecting: return .connecting
+    case .open(let hello): return .open(features: hello.features, capabilities: hello.capabilities)
+    case .waiting(_, let reason): return .unavailable("stim-server is unreachable: \(reason) Retrying.")
+    case .refused(let error): return .unavailable(error.message)
+    }
+  }
 
   private func follow(_ state: ServerController.State) {
     guard case .running(let health, _) = state else {
@@ -83,6 +101,7 @@ struct LocalServerCredential: Codable, Equatable {
     self.key = key
     self.state = .idle
     repaired = false
+    granted = false
     guard let health, let endpoint = URL(string: "ws://127.0.0.1:\(controller.port)") else { return }
     let home = health.stimHome
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -96,7 +115,7 @@ struct LocalServerCredential: Codable, Equatable {
         }
         let cli = await controller.cli()
         let port = controller.port
-        let code = try await Task.detached { try cli.pair(port: port, control: false) }.value
+        let code = try await Task.detached { try cli.pair(port: port, control: true) }.value
         pairing = true
         return .pairing(token: code.qr.pairingToken, deviceName: Self.deviceName)
       })
@@ -110,6 +129,17 @@ struct LocalServerCredential: Codable, Equatable {
           self.controller.reloadDevices()
         }
         self.repaired = false
+        if !hello.capabilities.contains("control"), !self.granted, let id = hello.device?.id {
+          self.granted = true
+          Task {
+            let cli = await self.controller.cli()
+            guard (try? await Task.detached(operation: { try cli.grant(id, control: true) }).value) != nil,
+              client === self.client
+            else { return }
+            client.stop()
+            client.start()
+          }
+        }
       case .refused(let error) where error.code == "unauthorized" && !pairing && !self.repaired:
         self.repaired = true
         LocalServerCredential.delete(home: home)
