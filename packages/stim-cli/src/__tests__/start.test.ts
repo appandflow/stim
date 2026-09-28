@@ -117,7 +117,7 @@ interface MetroExecutorMock {
   run(): string;
   runFile(): string;
   runQuiet(cmd: string): string;
-  runFileQuiet(): string;
+  runFileQuiet(file: string): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
@@ -617,6 +617,33 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(result.errs.join('\n')).toMatch(/started outside Stim/);
     expect(readWorkspaceState(root)?.devServerStop).toBeUndefined();
   });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'start gives the Stim Desktop link in the one JSON payload, and on stderr in plain output',
+    async () => {
+      const { server, port } = await metroListener();
+      const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+      exec.runFileQuiet = (file: string) => (file === 'osascript' ? '/Applications/Stim.app' : '');
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port });
+      const link = `stim-desktop://workspace?path=${realpathSync(root)}`;
+
+      let json;
+      let plain;
+      try {
+        json = await runAction({ json: true });
+        plain = await runAction({});
+      } finally {
+        server.close();
+      }
+
+      expect(json.logs.length).toBe(1);
+      expect(JSON.parse(json.logs[0] ?? '').links).toEqual({ desktop: link });
+      expect(json.errs.join('\n')).not.toContain(link);
+      expect(plain.logs.join('\n')).not.toContain(link);
+      expect(plain.errs.join('\n')).toContain(`Open in Stim Desktop: ${link}`);
+    },
+  );
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {
     writeFileSync(

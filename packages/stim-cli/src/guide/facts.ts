@@ -139,6 +139,11 @@ leased until <time>" for each one.`,
   mode            "bare-inproc" | "expo-child" | null (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written
   alreadyRunning  true when nothing needed starting
+  links           { desktop }: a stim-desktop://workspace?path=<workspace>
+                  link that shows this workspace in Stim Desktop. Absent when
+                  no app on this Mac opens stim-desktop links. Plain output
+                  prints it on stderr as "Open in Stim Desktop: <link>"; so
+                  does worktree warm, which has no JSON payload
 
   stim ios --json
 
@@ -365,6 +370,8 @@ leased until <time>" for each one.`,
                     { started: true, reason }
                   reason is "not running" or "stopped (idle)" when the
                   supervisor had stopped it after metro.idleStopMinutes
+  links           as in start, with &platform= and, for a named slot, &slot=,
+                  so Stim Desktop can focus that device
 
   stim reload [ios|android|web] --json
 
@@ -423,6 +430,7 @@ leased until <time>" for each one.`,
                   that does not use {port:metro}
   logs            { dir }: web.ndjson holds the page records
   durationMs      wall time of the run
+  links           as in start, with &platform=web
 
   stim doctor --json
 

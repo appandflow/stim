@@ -75,6 +75,12 @@ other apps or other workspaces' devices.
   stim start
   stim ios                             # or: stim android, or: stim web
 
+When Stim Desktop is installed, worktree warm, start, ios, android and web
+print "Open in Stim Desktop: <link>" on stderr (links.desktop in JSON). The
+first time one prints it in a workspace, tell the user once: "You can watch
+this workspace in Stim Desktop: <link>". Do not repeat it after later
+commands. No line means Desktop is not installed; do not mention it.
+
 For the web target, stim web opens the page in a Stim-owned headless Chrome
 and captures its console and errors in stim logs. It never starts a web
 server: start the dev server first, then run stim web. For Expo web the dev

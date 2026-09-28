@@ -30,6 +30,17 @@ stim stop`}
 `ios` and `android` require a running dev server for a Debug build. Release
 builds embed the JavaScript bundle and skip that requirement.
 
+When [Stim Desktop](./desktop.md) is installed, `worktree warm`, `start`,
+`ios`, `android` and `web` print a link that opens the workspace in it, on
+stderr, and add it to their `--json` payload as `links.desktop`:
+
+```text
+Open in Stim Desktop: stim-desktop://workspace?path=/Users/me/app-feature
+```
+
+The agent guide tells agents to share this link with you once, when they
+begin work in a workspace.
+
 `reload` is a recovery command that reloads JavaScript in the live app and never
 restarts it. Use it when an error screen remains after a fix, not after every
 JavaScript edit. It also recovers an Android app whose first bundle failed; an

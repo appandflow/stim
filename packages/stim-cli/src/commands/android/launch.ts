@@ -60,6 +60,7 @@ import { remoteAndroidDeps } from '../../engine/device-remote.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
 import { type LoadProjectProviderResult, exitAfterFlush } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { detectAndroidPackage } from '../../workspace/app-id.ts';
@@ -799,6 +800,7 @@ export async function finishAndroidRun({
     recordRun,
     reclaimed,
     devServer,
+    links: workspaceLinks(root, { platform: 'android', slot }),
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return { ok: true, facts };

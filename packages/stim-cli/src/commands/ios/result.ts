@@ -16,6 +16,7 @@ import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
+import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 
 export function lastBuildRecord({
   fingerprint = null,
@@ -217,6 +218,7 @@ export interface ReportIosResultArgs {
   recordRun: RunRecorder['record'];
   reclaimed?: ReclaimedStep[];
   devServer?: DevServerStart | null;
+  links?: WorkspaceLinks;
 }
 
 export function reportIosResult({
@@ -252,6 +254,7 @@ export function reportIosResult({
   recordRun,
   reclaimed = [],
   devServer = null,
+  links,
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
   recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs });
@@ -299,7 +302,7 @@ export function reportIosResult({
     devServer,
   });
   if (json) {
-    console.log(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
+    console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${deviceLabel(device, udid)}, ` +
@@ -335,6 +338,7 @@ export function reportIosResult({
       ].join('\n'),
     );
     if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
+    if (links) console.error(chalk.dim(workspaceLinkLine(links)));
   }
   return facts;
 }
