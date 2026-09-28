@@ -3,6 +3,10 @@
 const { randomUUID } = require('node:crypto');
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+// Metro writes each progress update of a multipart bundle response as its own JSON part:
+// https://github.com/facebook/metro/blob/main/packages/metro/src/Server.js (`writeChunk` with done, total, percent).
+const PROGRESS_PART = /^\{"done":(\d+),"total":(\d+),"percent":(\d+)\}$/;
+const PROGRESS_INTERVAL_MS = 1000;
 
 function clientPidFromLsof(output, clientPort, serverPort) {
   const connection = new RegExp(`:${clientPort}->\\S*:${serverPort}$`);
@@ -30,7 +34,7 @@ function bundleResponseMiddleware(write, { runLsof } = {}) {
       res.end('ready');
       return;
     }
-    if (req.headers['x-stim-metro-warmup'] === '1') return next();
+    const prefetch = req.headers['x-stim-metro-warmup'] === '1';
     let url;
     try {
       url = new URL(req.url, 'http://localhost');
@@ -42,34 +46,46 @@ function bundleResponseMiddleware(write, { runLsof } = {}) {
       return next();
     }
     const requestId = randomUUID();
-    const clientPid = platform === 'ios' ? lookupClientPid(req, runLsof) : null;
-    const send = (ts, event, statusCode, pid) => {
+    const kind = prefetch ? 'prefetch' : 'response';
+    const clientPid = platform === 'ios' && !prefetch ? lookupClientPid(req, runLsof) : null;
+    const send = (ts, stage, statusCode, pid, progress) => {
       try {
         write({
           ts,
           src: 'metro',
-          level: event === 'bundle_response_failed' ? 'error' : 'debug',
-          event,
+          level: stage === 'failed' && !prefetch ? 'error' : 'debug',
+          event: `bundle_${kind}_${stage}`,
           platform,
           requestId,
-          statusCode,
-          msg: `${platform} bundle response ${event.slice('bundle_response_'.length)}`,
+          ...(progress ?? { statusCode }),
+          msg: progress ? `${platform} bundle ${progress.percent}%` : `${platform} bundle ${kind} ${stage}`,
           ...(pid ? { clientPid: pid } : {}),
         });
       } catch {}
     };
-    const emit = (event, statusCode) => {
+    const emit = (stage, statusCode, progress) => {
       const ts = Date.now();
-      if (clientPid) clientPid.then((pid) => send(ts, event, statusCode, pid));
-      else send(ts, event, statusCode, null);
+      if (clientPid) clientPid.then((pid) => send(ts, stage, statusCode, pid, progress));
+      else send(ts, stage, statusCode, null, progress);
     };
-    emit('bundle_response_started');
+    emit('started');
+    const writeChunk = res.write;
+    let progressAt = 0;
+    res.write = function (chunk, ...rest) {
+      const part = typeof chunk === 'string' && chunk.length < 100 ? PROGRESS_PART.exec(chunk) : null;
+      const now = part ? Date.now() : 0;
+      if (part && now - progressAt >= PROGRESS_INTERVAL_MS) {
+        progressAt = now;
+        emit('progress', undefined, { done: Number(part[1]), total: Number(part[2]), percent: Number(part[3]) });
+      }
+      return writeChunk.call(this, chunk, ...rest);
+    };
     let ended = false;
     const finish = (complete) => {
       if (ended) return;
       ended = true;
       const success = complete && (res.statusCode === 200 || res.statusCode === 304);
-      emit(success ? 'bundle_response_finished' : 'bundle_response_failed', res.statusCode);
+      emit(success ? 'finished' : 'failed', res.statusCode);
     };
     res.once('finish', () => finish(true));
     res.once('close', () => finish(false));

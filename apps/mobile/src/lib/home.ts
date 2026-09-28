@@ -1,8 +1,8 @@
 import {
+  deviceKey,
   devicesOf,
-  isActive,
-  isSettingUp,
   isShownLive,
+  orderDevices,
   pathInCheckout,
   projectOf,
   repositoryRoots,
@@ -27,12 +27,9 @@ export interface HomeItem {
   env: EnvironmentState;
 }
 
-const activityRank = (env: EnvironmentState) =>
-  env.build?.state === 'running' || isSettingUp(env) ? 2 : isActive(env) ? 1 : 0;
-
 /**
- * Every workspace of every Mac: building or being set up first, then live, then idle; by project and name inside
- * each.
+ * Every workspace of every Mac, by project, name and Mac. The order never depends on activity, builds or setup, so
+ * a workspace keeps its place; the home screen groups live and idle ones into sections.
  */
 export function mergeWorkspaces(macs: MacSnapshot[]): HomeItem[] {
   const items: HomeItem[] = [];
@@ -53,10 +50,7 @@ export function mergeWorkspaces(macs: MacSnapshot[]): HomeItem[] {
   }
   return items.sort(
     (a, b) =>
-      activityRank(b.env) - activityRank(a.env) ||
-      a.project.localeCompare(b.project) ||
-      a.title.localeCompare(b.title) ||
-      a.macName.localeCompare(b.macName),
+      a.project.localeCompare(b.project) || a.title.localeCompare(b.title) || a.macName.localeCompare(b.macName),
   );
 }
 
@@ -177,7 +171,7 @@ export function gridRows(tiles: DeviceTileItem[], aspects: ReadonlyMap<string, n
 
 /**
  * Every running device of the workspaces the machine and project filters keep, whatever their activity,
- * errors or remote sessions, in the list's order.
+ * errors or remote sessions, in the list's order and each workspace's devices in `orderDevices` order.
  */
 export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: string[]): DeviceTileItem[] {
   const { shown } = filterWorkspaces(
@@ -186,9 +180,9 @@ export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: 
     macIds,
   );
   return shown.flatMap((item) =>
-    devicesOf(item.env)
+    orderDevices(devicesOf(item.env))
       .filter((device) => device.running)
-      .map((device) => ({ key: `${item.key}\n${device.platform}\n${device.slot}`, item, device })),
+      .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device })),
   );
 }
 

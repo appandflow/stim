@@ -30,20 +30,23 @@ import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
 import { Pill } from '@/components/pill';
+import { ReplayBar } from '@/components/replay-bar';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { withAlpha } from '@/design/color';
 import { useDeviceStream } from '@/hooks/device-stream';
+import { useReplayRange } from '@/hooks/replay-range';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
+import { buildTimeline } from '@/lib/replay';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, shortUrl, workspaceTitleAt } from '@/lib/workspaces';
-import type { DevicePlatform, DevicePosture, InputButton, RotateDirection } from '@/protocol/types';
+import { devicesOf, shortUrl, streamsFrames, workspaceTitleAt } from '@/lib/workspaces';
+import type { DevicePlatform, DevicePosture, InputButton, ReplayRate, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
 const MAX_EDGE = 1600;
@@ -75,10 +78,12 @@ export function DeviceView({
   workspace,
   platform,
   slot,
+  physical = false,
 }: {
   workspace: string;
   platform: DevicePlatform;
   slot: string;
+  physical?: boolean;
 }) {
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
@@ -89,17 +94,42 @@ export function DeviceView({
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
   const status = useStatus();
   const env = status?.environments.find((candidate) => candidate.path === workspace);
-  const device = env ? devicesOf(env).find((entry) => entry.platform === platform && entry.slot === slot) : undefined;
-  const streams = Boolean(device?.running && device.owned && !device.physical);
+  const device = env
+    ? devicesOf(env).find(
+        (entry) => entry.platform === platform && entry.slot === slot && Boolean(entry.physical) === physical,
+      )
+    : undefined;
+  const running = Boolean(device?.running && streamsFrames(device));
+  const viewOnly = physical && platform === 'ios';
+  const slotRange = useReplayRange({ workspace, platform, slot });
+  const range = physical ? null : slotRange;
+  const replayOff = !physical && env?.recording?.enabled === false;
+  const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
+  const hasFootage = timeline !== null && preset.video.length > 0;
+  const [startAt, setStartAt] = useState<number | null>(null);
+  const replayStart = hasFootage ? startAt : null;
+  const streams = running || replayStart !== null;
+  const [scrubbing, setScrubbing] = useState(false);
   const streamOptions = useMemo(
-    () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video }),
-    [streams, preset.fps, maxEdge, preset.video],
+    () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video, startAt: replayStart }),
+    [streams, preset.fps, maxEdge, preset.video, replayStart],
   );
-  const stream = useDeviceStream({ workspace, platform, slot }, streamOptions);
+  const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
+  const canReplay = hasFootage && stream.replayable !== false;
+  const replaying = stream.replay !== null;
+  const [lastReplay, setLastReplay] = useState<{ running: boolean; at: number | null } | null>(null);
+  if (stream.replay && (lastReplay?.at !== stream.replay.at || lastReplay.running !== running)) {
+    setLastReplay({ running, at: stream.replay.at });
+  }
+  if (!stream.replay && running && lastReplay) setLastReplay(null);
+  if (lastReplay?.running && !running && startAt === null) {
+    setLastReplay({ running, at: lastReplay.at });
+    setStartAt(lastReplay.at ?? timeline?.start ?? null);
+  }
   const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot);
   const { mac, state: link, connection } = useMacConnection();
-  const readOnly = control.allowed === false;
+  const readOnly = !viewOnly && control.allowed === false;
   const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
@@ -112,10 +142,10 @@ export function DeviceView({
   const stage = useRef<ViewInstance>(null);
   const screenZoom = useScreenZoom(!controlling && streams);
   const zoom = useDeviceZoom(
-    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot }),
+    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
     platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
-    !controlling && !(landscape && readOnly) && !screenZoom.zoomed,
+    !controlling && !(landscape && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,
     screenZoom.lens,
@@ -233,6 +263,15 @@ export function DeviceView({
         },
       ],
     );
+  const seek = (at: number, rate: ReplayRate) => {
+    if (controlling) control.end();
+    if (!running && replayStart === null) setStartAt(at);
+    stream.seek(at, rate);
+  };
+  const goLive = () => {
+    if (startAt !== null) return setStartAt(null);
+    stream.live();
+  };
   const toggle = () => {
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
@@ -351,13 +390,16 @@ export function DeviceView({
                 {landscape ? null : readOnlyBanner}
                 <Banner
                   control={control.state}
-                  canTakeOver={control.allowed === true}
+                  canTakeOver={control.allowed === true && !replaying}
                   readOnly={readOnly}
                   onTakeOver={takeOver}
                 />
-                {stream.delayed ? (
+                {stream.delayed || replayOff ? (
                   <View style={styles.chips}>
-                    <Pill tone="warning">Screen updates delayed</Pill>
+                    {stream.delayed ? (
+                      <Pill tone="warning">{stream.delayedReason ?? 'Screen updates delayed'}</Pill>
+                    ) : null}
+                    {replayOff ? <Pill>Replay off</Pill> : null}
                   </View>
                 ) : null}
                 <View style={landscape ? styles.row : styles.root}>
@@ -368,7 +410,10 @@ export function DeviceView({
                     collapsable={false}
                   >
                     {streams ? null : (
-                      <Text style={styles.placeholder}>{device?.state ?? 'This device is not running.'}</Text>
+                      <Text style={styles.placeholder}>
+                        {device?.state ?? 'This device is not running.'}
+                        {canReplay ? ' Scrub below to replay what it recorded.' : ''}
+                      </Text>
                     )}
                   </View>
                   {landscape ? (
@@ -382,6 +427,17 @@ export function DeviceView({
                     toolbars
                   )}
                 </View>
+                {(timeline && canReplay) || replaying ? (
+                  <ReplayBar
+                    timeline={canReplay ? timeline : null}
+                    markers={range?.markers ?? []}
+                    replay={stream.replay}
+                    canGoLive={running}
+                    onSeek={seek}
+                    onLive={goLive}
+                    onScrubbing={setScrubbing}
+                  />
+                ) : null}
               </View>
             </View>
           </Animated.View>
@@ -455,6 +511,14 @@ export function DeviceView({
                   <Text variant="caption" style={styles.subtitle} numberOfLines={1}>
                     {platform === 'web' ? `Web \u00B7 ${model}` : `${model} \u00B7 ${slot}`}
                   </Text>
+                  {range?.recording && !replayOff ? (
+                    <View style={styles.driver} accessible accessibilityLabel="Recording for replay">
+                      <View style={styles.recordingDot} />
+                      <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
+                        Recording
+                      </Text>
+                    </View>
+                  ) : null}
                   {driver ? (
                     <View
                       style={styles.driver}
@@ -475,8 +539,8 @@ export function DeviceView({
                   setBarSides(([left]) => [left, width]);
                 }}
               >
-                {control.allowed !== null ? (
-                  <ControlButton on={controlling} disabled={readOnly} onPress={toggle} />
+                {!viewOnly && control.allowed !== null ? (
+                  <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
                 ) : null}
               </View>
             </View>
@@ -666,8 +730,14 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.media.fill,
   },
   driverDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.accent },
+  recordingDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.error },
   driverText: { color: theme.media.textSecondary },
-  chips: { flexDirection: 'row', paddingHorizontal: theme.space.xl, paddingBottom: theme.space.sm },
+  chips: {
+    flexDirection: 'row',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.xl,
+    paddingBottom: theme.space.sm,
+  },
   noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
   note: {
     overflow: 'hidden',

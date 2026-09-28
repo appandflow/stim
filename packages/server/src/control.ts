@@ -43,7 +43,7 @@ const TEXT = /^[\x20-\x7e\n\t\b]+$/;
 
 export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (!isJsonObject(params)) return { code: 'bad-request', message: 'params must be an object.' };
-  const { workspace, platform, slot, takeOver, physical, ...rest } = params;
+  const { workspace, platform, slot, physical, takeOver, ...rest } = params;
   if (Object.keys(rest).length) {
     return { code: 'bad-request', message: `control.begin does not take ${Object.keys(rest).join(', ')}.` };
   }
@@ -62,13 +62,19 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (physical !== undefined && typeof physical !== 'boolean') {
     return { code: 'bad-request', message: 'params.physical must be true or false.' };
   }
+  if (physical && platform === 'ios') {
+    return {
+      code: 'action-failed',
+      message: 'A physical iPhone is view only: Stim shows its screen but sends it no input.',
+    };
+  }
   return {
     value: {
       workspace,
       platform: platform as Platform,
       ...(slot ? { slot } : {}),
-      ...(takeOver ? { takeOver } : {}),
       ...(physical ? { physical } : {}),
+      ...(takeOver ? { takeOver } : {}),
     },
   };
 }
@@ -290,7 +296,7 @@ function heldLease(
   options: { adbEmulators: boolean },
 ): Lease | Refusal {
   const lease = workspaceLease(status, target, options);
-  if (!lease) {
+  if (!lease?.expiresAt) {
     return { code: 'forbidden', message: `${target.workspace} does not hold the lease on this device.` };
   }
   return { grantedAt: lease.grantedAt, expiresAt: lease.expiresAt, mine: false };

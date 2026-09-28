@@ -344,9 +344,11 @@ directory from `stim status`.
 
 Under the device on the **Device** tab, **Agent actions** lists the latest
 agent-device actions on that simulator or emulator, newest first: taps, typing,
-app opens, screenshots, and failed commands in red. It runs `stim logs --json
---follow --tail 200 --source agent --slot <slot>` in the workspace and keeps
-the records whose `deviceId` is the device's UDID or serial. It shows nothing
+app opens, screenshots, and failed commands in red. On the Web device it lists
+the clicks, typing and scrolls an attached tool such as Playwright sent to the
+page. It runs `stim logs --json --follow --tail 200 --source agent --slot
+<slot>` in the workspace and keeps the records whose `deviceId` is the device's
+UDID or serial, or the page's DevTools target. It shows nothing
 until the focused device has an action, and switching devices or tabs
 terminates the command.
 
@@ -391,7 +393,8 @@ emulator without a gRPC endpoint cannot be taken over.
 ## Web
 
 A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web** tile
-on the wall and in the inspector's device list, labelled with the page's URL.
+on the wall and in the inspector's device list, labelled with the page's URL,
+the in-app route (`web.page.route`) when one moved it after the load.
 Desktop reads the page's frames itself, over the loopback DevTools endpoint
 `stim status --json` reports, and connects only when Chrome reports the pid
 status names. **Take over** sends clicks, drags, hover, trackpad scrolls and
@@ -412,6 +415,17 @@ list, runs `stim stop` in the workspace after a confirmation, which ends the
 session -- a remote session has no per-slot teardown, so its Stop always
 targets the whole workspace, unlike a local device's `stim stop --slot <name>`.
 A session with no recorded preview URL shows a message instead of the page.
+
+## Physical devices
+
+A physical iPhone, iPad or Android phone the workspace leases with
+`stim ios --device`, `stim android --device` or `stim device lock` shows as its
+own tile, from the environment's `physicalDevices` in `stim status --json`, next
+to any simulator or emulator in the same slot. The tile names the device and
+its model, carries a **Physical** pill and the time the lease ends, and counts
+as running while the Mac reaches the device. Stim does not stream a physical
+device, so the tile shows no screen, no Take over and no Stop. A lease alone
+puts the workspace under Live.
 
 ## Phones
 

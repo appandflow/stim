@@ -29,10 +29,11 @@ import {
   settingShapeErrors,
   tunnelModeSetting,
   metroIdleStopMinutesSetting,
+  deviceIdleShutdownMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
-import { saveConfig, setProjectSetting, setRepoSetting, upsertProject } from '../workspace/config.ts';
+import { saveConfig, setProjectSetting, setRepoSetting, upsertProject, type Config } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { SETTINGS } from '@stim-cli/core/state';
 
@@ -403,6 +404,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.remote': { valid: 'eas', invalid: 'cloud', expected: 'one of: proxy, eas' },
   'metro.tunnel': { valid: 'ngrok', invalid: 'bogus', expected: 'one of: auto, off, expo, cloudflared, ngrok' },
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
+  'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
   'web.url': { valid: 'http://localhost:{port:web}/', invalid: 8080, expected: 'a string' },
@@ -836,6 +838,14 @@ test('a machine android.deviceProfile applies under every project layer, and onl
   expect(resolveSettings({})).toEqual({ android: { deviceProfile: 'pixel_tablet' } });
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ android: { deviceProfile: 'pixel_fold' } }));
   expect(resolveSettings({ repoRoot: tmpHome }).android).toEqual({ deviceProfile: 'pixel_fold' });
+});
+
+test('devices.idleShutdownMinutes is off by default, set per machine, and a project layer overrides it', () => {
+  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(0);
+  saveConfig({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 30 } } as Config);
+  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(30);
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
+  expect(deviceIdleShutdownMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
 });
 
 test('a repository can enable Metro optimizations over a machine opt-out', () => {

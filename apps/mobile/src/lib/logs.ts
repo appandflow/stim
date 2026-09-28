@@ -1,58 +1,123 @@
 import { relativeTo, tildeHome } from '@/lib/paths';
-import type { LogFilter, LogLevel, LogRecord, LogSource, StackFrame } from '@/protocol/types';
+import type { EnvironmentState, LogFilter, LogRecord, LogSource, StackFrame } from '@/protocol/types';
 
-export const SOURCES: { source: LogSource; label: string }[] = [
-  { source: 'metro', label: 'Metro' },
-  { source: 'client', label: 'App' },
-  { source: 'device', label: 'Native' },
-  { source: 'build', label: 'Build' },
-  { source: 'agent', label: 'Agent' },
+/**
+ * The source chips of the Logs screen. iOS, Android and Web split the `device` source by the records' `platform`,
+ * which the server cannot filter on, so the screen filters those on the phone.
+ */
+export type LogChip = 'metro' | 'client' | 'ios' | 'android' | 'web' | 'build' | 'agent';
+
+export const CHIPS: { chip: LogChip; label: string; source: LogSource }[] = [
+  { chip: 'metro', label: 'Metro', source: 'metro' },
+  { chip: 'client', label: 'App', source: 'client' },
+  { chip: 'ios', label: 'iOS', source: 'device' },
+  { chip: 'android', label: 'Android', source: 'device' },
+  { chip: 'web', label: 'Web', source: 'device' },
+  { chip: 'build', label: 'Build', source: 'build' },
+  { chip: 'agent', label: 'Agent', source: 'agent' },
 ];
 
-export const LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+const DEVICE_CHIPS: LogChip[] = ['ios', 'android', 'web'];
+const SOURCE_COUNT = new Set(CHIPS.map((c) => c.source)).size;
+
+export type Severity = 'all' | 'errors' | 'warnings';
 
 export const MAX_RECORDS = 5000;
 
 export interface LogFilterState {
-  sources: LogSource[];
-  level: LogLevel;
-  errors: boolean;
+  /** Empty shows every source. */
+  chips: LogChip[];
+  severity: Severity;
   grep: string;
   slot: string | null;
 }
 
-export const DEFAULT_FILTER: LogFilterState = {
-  sources: SOURCES.map((s) => s.source),
-  level: 'debug',
-  errors: false,
-  grep: '',
-  slot: null,
-};
+export const DEFAULT_FILTER: LogFilterState = { chips: [], severity: 'all', grep: '', slot: null };
 
 /** The filter the Logs screen opens with, from its route params. */
 export function initialFilter(params: { errors?: string; source?: string; slot?: string }): LogFilterState {
-  const source = SOURCES.find((s) => s.source === params.source)?.source;
+  const chip = CHIPS.find((c) => c.chip === params.source)?.chip;
   return {
     ...DEFAULT_FILTER,
-    errors: params.errors === '1',
-    ...(source ? { sources: [source] } : {}),
+    severity: params.errors === '1' ? 'errors' : 'all',
+    chips: chip ? [chip] : [],
     slot: params.slot || null,
   };
 }
 
 /**
- * The same arguments apps/desktop passes to `stim logs`: every source selected sends no
- * `sources`, so "errors only" keeps the CLI's default scope.
+ * The same arguments apps/desktop passes to `stim logs`: every source selected sends no `sources`, so Errors keeps
+ * the CLI's default scope. Warnings asks for `warn` and up; `showsEntry` keeps the warnings.
  */
 export function logFilter(workspace: string, state: LogFilterState, tail = MAX_RECORDS): LogFilter {
   const filter: LogFilter = { workspace, tail };
-  if (state.sources.length < SOURCES.length)
-    filter.sources = SOURCES.map((s) => s.source).filter((s) => state.sources.includes(s));
-  if (state.level !== 'debug') filter.level = state.level;
-  if (state.errors) filter.errors = true;
+  const sources = [...new Set(CHIPS.filter((c) => state.chips.includes(c.chip)).map((c) => c.source))];
+  if (sources.length > 0 && sources.length < SOURCE_COUNT) filter.sources = sources;
+  if (state.severity === 'warnings') filter.level = 'warn';
+  if (state.severity === 'errors') filter.errors = true;
   if (state.grep.trim() !== '') filter.grep = state.grep.trim();
   if (state.slot) filter.slot = state.slot;
   return filter;
+}
+
+function recordPlatform(record: LogRecord): string | null {
+  return typeof record.platform === 'string' ? record.platform : null;
+}
+
+/** The chip a record belongs to; null for a device record with no platform Stim knows. */
+export function chipOf(record: LogRecord): LogChip | null {
+  if (record.src !== 'device') return CHIPS.find((c) => c.source === record.src)?.chip ?? null;
+  const platform = recordPlatform(record);
+  return DEVICE_CHIPS.find((c) => c === platform) ?? null;
+}
+
+/** The part of the filter the server cannot apply: the platform of device records, and warnings without errors. */
+export function showsEntry(state: LogFilterState, entry: LogEntry): boolean {
+  const { lead } = entry;
+  if (state.severity === 'warnings' && lead.level !== 'warn') return false;
+  if (lead.src !== 'device' || state.chips.length === 0) return true;
+  const chip = chipOf(lead);
+  return chip === null || state.chips.includes(chip);
+}
+
+/**
+ * The chips worth showing for a workspace: the sources its status says it runs, the ones its records came from,
+ * and the ones selected.
+ */
+export function presentChips(
+  env: EnvironmentState | undefined,
+  seen: ReadonlySet<LogChip>,
+  selected: readonly LogChip[],
+): LogChip[] {
+  const present = new Set<LogChip>([...seen, ...selected]);
+  if (env?.metro) present.add('metro').add('client');
+  if (env?.ios || env?.slots?.some((s) => s.ios)) present.add('ios');
+  if (env?.android || env?.slots?.some((s) => s.android)) present.add('android');
+  if (env?.web) present.add('web');
+  if (env?.build || env?.lastBuilds?.ios || env?.lastBuilds?.android) present.add('build');
+  return CHIPS.map((c) => c.chip).filter((c) => present.has(c));
+}
+
+const BUNDLE_PAIRS: Record<string, { start: string; id: string }> = {
+  bundle_build_done: { start: 'bundle_build_started', id: 'buildID' },
+  bundle_response_finished: { start: 'bundle_response_started', id: 'requestId' },
+};
+const BUNDLE_STARTS = new Map(Object.values(BUNDLE_PAIRS).map((pair) => [pair.start, pair.id]));
+
+/** How long the newest finished Metro bundle took, from its start and finish records; null without both. */
+export function lastBundleMs(records: readonly LogRecord[]): number | null {
+  const started = new Map<string, number>();
+  let last: number | null = null;
+  for (const record of records) {
+    if (record.src !== 'metro' || typeof record.event !== 'string') continue;
+    const startId = BUNDLE_STARTS.get(record.event);
+    if (startId && typeof record[startId] === 'string') started.set(`${record.event}\n${record[startId]}`, record.ts);
+    const pair = BUNDLE_PAIRS[record.event];
+    const at =
+      pair && typeof record[pair.id] === 'string' ? started.get(`${pair.start}\n${record[pair.id]}`) : undefined;
+    if (at !== undefined) last = record.ts - at;
+  }
+  return last;
 }
 
 export function appendRecords(existing: LogRecord[], incoming: LogRecord[], max = MAX_RECORDS): LogRecord[] {
@@ -88,6 +153,65 @@ export interface LogEntry {
   related: LogRecord[];
   /** Lines Expo printed under the lead's message: its code frame and parser stack. */
   context: string[];
+}
+
+export interface PreviewFrame {
+  fn: string;
+  where: string;
+  /** Code in the workspace, outside `node_modules`. */
+  app: boolean;
+}
+
+export interface StackPreview {
+  frames: PreviewFrame[];
+  /** Frames left out of `frames`. */
+  hidden: number;
+  /** Whether every hidden frame is framework code. */
+  hiddenFramework: boolean;
+}
+
+const PREVIEW_FRAMES = 3;
+
+function scriptName(file: string): string | null {
+  if (!/^https?:\/\//.test(file)) return null;
+  const path = file.split(/[?#]/)[0]!;
+  return path.slice(path.lastIndexOf('/') + 1) || null;
+}
+const PACKAGE = /node_modules\/((?:@[^/]+\/)?[^/]+)/g;
+
+/**
+ * The top frames of a stack for a collapsed row: the workspace's own frames, and at most one framework frame, which
+ * shows as its package.
+ */
+export function stackPreview(stack: unknown, root: string, home: string | null | undefined): StackPreview | null {
+  if (!Array.isArray(stack)) return null;
+  const all = (stack as StackFrame[]).flatMap((frame): PreviewFrame[] => {
+    if (!frame || typeof frame !== 'object') return [];
+    const file = typeof frame.file === 'string' ? frame.file : '';
+    const relative = relativeTo(file, root);
+    const app = relative !== file && !relative.includes('node_modules/');
+    const where = app
+      ? [relative, frame.line].filter((p) => p !== undefined && p !== null && p !== '').join(':')
+      : ([...file.matchAll(PACKAGE)].at(-1)?.[1] ?? scriptName(file) ?? tildeHome(file, home));
+    const fn = typeof frame.fn === 'string' ? frame.fn : '';
+    return fn || where ? [{ fn, where, app }] : [];
+  });
+  if (all.length === 0) return null;
+  const shown = new Set<number>();
+  let framework = false;
+  all.forEach((frame, i) => {
+    if (shown.size >= PREVIEW_FRAMES) return;
+    if (frame.app) shown.add(i);
+    else if (!framework) {
+      framework = true;
+      shown.add(i);
+    }
+  });
+  return {
+    frames: all.filter((_, i) => shown.has(i)),
+    hidden: all.length - shown.size,
+    hiddenFramework: all.every((frame, i) => shown.has(i) || !frame.app),
+  };
 }
 
 const BUNDLE_LINE_WINDOW_MS = 1000;
@@ -229,8 +353,8 @@ export function groupRecords(records: LogRecord[]): LogEntry[] {
 }
 
 /**
- * An Expo error line whose code frame lines the current filter left out: a level or search filter, or
- * Errors only from a Stim that does not attach them as `context`.
+ * An Expo error line whose code frame lines the current filter left out: Warnings, a search, or Errors from a
+ * Stim that does not attach them as `context`.
  */
 export function needsContext(entry: LogEntry): boolean {
   return isExpoLine(entry.lead) && isError(entry.lead) && entry.context.length === 0;
@@ -297,8 +421,6 @@ export function shareText(view: EntryView, entry: LogEntry, workspace: string): 
   return parts.join('\n\n');
 }
 
-export const AGENT_FEED_SIZE = 5;
-
 export function agentFeedFilter(workspace: string, slot: string): LogFilter {
   return { workspace, sources: ['agent'], slot, tail: 200 };
 }
@@ -308,10 +430,46 @@ export interface AgentAction {
   record: LogRecord;
 }
 
-export function agentActions(existing: AgentAction[], incoming: LogRecord[], deviceId: string): AgentAction[] {
+export function agentActions(
+  existing: AgentAction[],
+  incoming: LogRecord[],
+  deviceId: string,
+  max: number,
+): AgentAction[] {
   const mine = incoming.filter((record) => record.src === 'agent' && record.deviceId === deviceId);
   if (mine.length === 0) return existing;
   const base = existing[0]?.key ?? 0;
   const added = mine.map((record, i) => ({ key: base + i + 1, record })).reverse();
-  return added.concat(existing).slice(0, AGENT_FEED_SIZE);
+  return added.concat(existing).slice(0, max);
+}
+
+export type AgentFilter = { kind: 'all' } | { kind: 'failed' } | { kind: 'command'; command: string };
+
+export interface AgentFilterOption {
+  filter: AgentFilter;
+  label: string;
+  count: number;
+}
+
+const commandOf = (record: LogRecord) => (typeof record.command === 'string' ? record.command : null);
+
+export function agentFilterOptions(actions: AgentAction[]): AgentFilterOption[] {
+  const failed = actions.filter((a) => a.record.level === 'error').length;
+  const counts = new Map<string, number>();
+  for (const { record } of actions) {
+    const command = commandOf(record);
+    if (command) counts.set(command, (counts.get(command) ?? 0) + 1);
+  }
+  const commands = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 2);
+  return [
+    { filter: { kind: 'all' }, label: 'All', count: actions.length },
+    ...(failed ? [{ filter: { kind: 'failed' } as const, label: 'Failed', count: failed }] : []),
+    ...commands.map(([command, count]) => ({ filter: { kind: 'command', command } as const, label: command, count })),
+  ];
+}
+
+export function matchesAgentFilter(action: AgentAction, filter: AgentFilter): boolean {
+  if (filter.kind === 'all') return true;
+  if (filter.kind === 'failed') return action.record.level === 'error';
+  return commandOf(action.record) === filter.command;
 }

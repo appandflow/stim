@@ -151,3 +151,44 @@ export function watchIdleDevServer({
   timer.unref?.();
   return () => clearInterval(timer);
 }
+
+/**
+ * Checks each minute, once the workspace has gone `idleMs` without a Stim command, whether an owned device is due
+ * for idle shutdown, and runs `onDue` for it.
+ */
+export function watchIdleDevices({
+  idleMs,
+  now,
+  lastUseAt,
+  hasDue,
+  onDue,
+  checkMs = IDLE_CHECK_MS,
+}: {
+  idleMs: number;
+  now: () => number;
+  lastUseAt: () => number;
+  hasDue: () => boolean;
+  onDue: () => Promise<void>;
+  checkMs?: number;
+}): () => void {
+  let deciding = false;
+  const timer = setInterval(
+    () => {
+      if (deciding || now() - lastUseAt() < idleMs) return;
+      let due: boolean;
+      try {
+        due = hasDue();
+      } catch {
+        return;
+      }
+      if (!due) return;
+      deciding = true;
+      void onDue().finally(() => {
+        deciding = false;
+      });
+    },
+    Math.min(checkMs, idleMs),
+  );
+  timer.unref?.();
+  return () => clearInterval(timer);
+}

@@ -6,18 +6,20 @@ import { join } from 'node:path';
 import type { DeviceLeaseState, StatusPayload } from '@stim-cli/core/state';
 import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
-import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
+import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
 import { Pending, terminate } from './stim-command.ts';
 import type { AccessUnit } from './video.ts';
+import type { DeviceViewers } from './viewers.ts';
 import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 
 /**
- * `foldable` marks an iPhone Duo, whose posture lights one of two panels. A `physical` Android device is one the
- * workspace leases, streamed and driven over adb instead of the emulator's gRPC API. A web device is the owned
- * page `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
+ * `foldable` marks an iPhone Duo, whose posture lights one of two panels, and `physical` a leased iPhone, which
+ * streams over USB and takes no input; `name` is its device name, which tells it apart when several are cabled. A
+ * `physical` Android device is a leased phone, streamed and driven over adb instead of the emulator's gRPC API. A web
+ * device is the owned page `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
  */
 export type Device =
-  | { platform: 'ios'; udid: string; foldable: boolean }
+  | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
   | { platform: 'android'; serial: string; physical?: true }
   | { platform: 'web'; endpoint: string; pid: number; targetId: string };
 
@@ -45,8 +47,16 @@ export interface FrameListener {
    * screenshots still sends `frame`.
    */
   video?: (unit: AccessUnit) => void;
-  /** A capture is taking longer than usual, or a timed-out capture is being retried; the last frame stays valid. */
-  delayed: (delayed: boolean) => void;
+  /**
+   * Makes the listener a recorder: the helper runs a second encoder at {@link RECORD_HINT} and sends its access
+   * units here, and the listener gets no JPEG frames.
+   */
+  record?: (unit: AccessUnit) => void;
+  /**
+   * A capture is taking longer than usual, or a timed-out capture is being retried, or the device cannot send
+   * frames for `reason`; the last frame stays valid.
+   */
+  delayed: (delayed: boolean, reason?: string) => void;
   failed: (message: string) => void;
 }
 
@@ -72,9 +82,6 @@ export const DEFAULT_FRAME_LIMITS: FrameLimits = {
   lingerMs: 10_000,
 };
 
-const PHYSICAL_NEEDS_HELPER =
-  'A physical device streams only through the stim-frames helper, which this Mac has not built.';
-
 const MIN_INTERVAL_MS = 200;
 const MAX_INTERVAL_MS = 1000;
 const MAX_CAPTURES = 2;
@@ -89,61 +96,74 @@ export function deviceKey(device: Device): string {
 
 const EMULATOR_SERIAL = /^emulator-\d+$/;
 
+/** How {@link workspaceLease} picks a lease. */
+export interface LeaseLookup {
+  now?: number;
+  /**
+   * The server's test switch: an emulator the workspace leases, its own included, resolves as a physical Android
+   * device, driven over adb the way a phone is.
+   */
+  adbEmulators?: boolean;
+}
+
 /**
- * The unexpired lease `target.workspace` holds on a physical device in `slot`. An emulator's serial is refused
- * unless `adbEmulators`, the server's test switch that drives an emulator the workspace leases through the
- * physical-device path.
+ * The unexpired lease `target.workspace` holds on a physical device for `target.platform` in its slot. A workspace can
+ * also lock its own simulator or emulator, so a lease on the slot's owned device, or on any emulator, is skipped.
  */
 export function workspaceLease(
   payload: StatusPayload,
   target: FrameTarget,
-  { now = Date.now(), adbEmulators = false }: { now?: number; adbEmulators?: boolean } = {},
-): (DeviceLeaseState & { id: string; expiresAt: string }) | null {
+  { now = Date.now(), adbEmulators = false }: LeaseLookup = {},
+): (DeviceLeaseState & { id: string }) | null {
   const slot = target.slot ?? 'default';
+  const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
+  const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
+  const owned = target.platform === 'ios' ? devices?.ios?.udid : devices?.android?.serial;
   const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
     (candidate) =>
       candidate.holder === target.workspace &&
       candidate.platform === target.platform &&
       (candidate.slot ?? 'default') === slot &&
       !candidate.expired &&
-      candidate.expiresAt !== null &&
-      Date.parse(candidate.expiresAt) > now &&
+      (candidate.expiresAt === null || Date.parse(candidate.expiresAt) > now) &&
       candidate.id !== null &&
-      (adbEmulators || !EMULATOR_SERIAL.test(candidate.id)),
+      (adbEmulators || (candidate.id !== owned && !EMULATOR_SERIAL.test(candidate.id))),
   );
-  return lease ? (lease as DeviceLeaseState & { id: string; expiresAt: string }) : null;
-}
-
-function leasedDevice(
-  payload: StatusPayload,
-  target: FrameTarget,
-  options: { now?: number; adbEmulators?: boolean },
-): Device | string {
-  if (target.platform === 'web') return 'A web page has no physical device.';
-  const lease = workspaceLease(payload, target, options);
-  if (!lease) {
-    return `${target.workspace} holds no lease on a physical ${target.platform} device in slot ${target.slot ?? 'default'}.`;
-  }
-  if (target.platform === 'ios') return 'Live video and control of a physical iPhone are not supported yet.';
-  return { platform: 'android', serial: lease.id, physical: true };
+  return lease ? (lease as DeviceLeaseState & { id: string }) : null;
 }
 
 export function ownedDevice(
   payload: StatusPayload,
   target: FrameTarget,
   attached: string | null,
-  options: { now?: number; adbEmulators?: boolean } = {},
+  lookup: LeaseLookup = {},
 ): Device | string {
   const slot = target.slot ?? 'default';
   if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
   const environment = payload.environments.find((candidate) => candidate.path === target.workspace);
   if (!environment) return `${target.workspace} is not a Stim workspace on this Mac.`;
-  if (target.physical) return leasedDevice(payload, target, options);
   const devices =
     slot === 'default'
       ? { ios: environment.ios, android: environment.android }
       : environment.slots?.find((candidate) => candidate.slot === slot);
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
+  if (target.physical) {
+    if (target.platform === 'web') return 'A web page has no physical device.';
+    const lease = workspaceLease(payload, target, lookup);
+    if (target.platform === 'android') {
+      if (!lease)
+        return `${target.workspace} leases no physical Android device in slot ${slot}. Run stim android --device there.`;
+      return { platform: 'android', serial: lease.id, physical: true };
+    }
+    if (!lease) return `${target.workspace} leases no physical iPhone in slot ${slot}. Run stim ios --device there.`;
+    return {
+      platform: 'ios',
+      udid: lease.id,
+      foldable: false,
+      physical: true,
+      ...(lease.deviceName ? { name: lease.deviceName } : {}),
+    };
+  }
   if (target.platform === 'web') {
     if (slot !== 'default') return `A workspace has one Stim-owned Chrome, in the default slot, not in slot ${slot}.`;
     const web = environment.web;
@@ -765,21 +785,36 @@ export class FramePool {
   private readonly env: NodeJS.ProcessEnv;
   private readonly limits: FrameLimits;
   private readonly helper: () => string | null;
+  private readonly viewers: DeviceViewers | null;
 
   constructor(
     env: NodeJS.ProcessEnv,
     limits: FrameLimits = DEFAULT_FRAME_LIMITS,
     helper: () => string | null = () => null,
+    viewers: DeviceViewers | null = null,
   ) {
     this.env = env;
     this.limits = limits;
     this.helper = helper;
+    this.viewers = viewers;
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
+    const detach = this.attach(device, listener, hint);
+    const unview = this.viewers?.add(device);
+    return () => {
+      unview?.();
+      detach();
+    };
+  }
+
+  private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
     const helper = this.helper();
-    if (helper === null && device.platform === 'android' && device.physical) {
-      queueMicrotask(() => listener.failed(PHYSICAL_NEEDS_HELPER));
+    const physical = device.platform !== 'web' && device.physical === true;
+    if (helper === null && physical) {
+      queueMicrotask(() =>
+        listener.failed('A physical device streams through the stim-frames helper, which this Mac has not built.'),
+      );
       return () => {};
     }
     if (helper === null) return this.screenshots(device).add(listener);
@@ -802,9 +837,7 @@ export class FramePool {
           : {}),
         delayed: listener.delayed,
         failed: (message) => {
-          if (streamed || cancelled || (device.platform === 'android' && device.physical)) {
-            return listener.failed(message);
-          }
+          if (streamed || cancelled || physical) return listener.failed(message);
           console.error(`stim-server: ${message} Falling back to screenshots.`);
           detach = this.screenshots(device).add(listener);
         },
@@ -815,6 +848,15 @@ export class FramePool {
       cancelled = true;
       detach();
     };
+  }
+
+  /**
+   * Records `device` through its `stim-frames` helper, sharing it with live subscribers, or returns null without a
+   * helper: screenshots are not recorded.
+   */
+  record(device: Device, listener: FrameListener): (() => void) | null {
+    const helper = this.helper();
+    return helper === null ? null : this.stream(helper, device).add(listener, RECORD_HINT);
   }
 
   /** The posture of an iPhone Duo as its last frame showed it; null before a frame and for other devices. */
@@ -837,6 +879,11 @@ export class FramePool {
   /** Makes the next video frame of `device` a keyframe, for a subscriber whose decoder lost its state. */
   keyframe(device: Device): void {
     this.helperSource(device)?.keyframe();
+  }
+
+  /** Makes the next frame `device`'s recording encoder writes a keyframe. */
+  recordKeyframe(device: Device): void {
+    this.helperSource(device)?.recordKeyframe();
   }
 
   /** A subscriber of `device` is behind; called until its socket drains, it lowers the shared bitrate. */
@@ -912,6 +959,7 @@ export class FramePool {
   }
 
   async close(): Promise<void> {
+    this.viewers?.clear();
     await Promise.all([...this.sources.values()].map((source) => source.stop()));
     await this.stopping.settled();
   }

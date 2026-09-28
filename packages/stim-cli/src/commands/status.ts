@@ -10,7 +10,7 @@ import type { StatusSources } from '../status-watch.ts';
 import chalk from 'chalk';
 import { existsSync, fstatSync } from 'fs';
 import { homedir, totalmem } from 'os';
-import { basename, dirname } from 'path';
+import { basename, dirname, join } from 'path';
 import type { Command } from 'commander';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../workspace/config.ts';
@@ -25,7 +25,13 @@ import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts'
 import { readSupervisorState } from './stop.ts';
 import { detectIsExpo, findServerWorkspace, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync, parseSimctlList } from '../devices/ios.ts';
-import { ownedAvdDeviceProfile, ownedAvdSerialResolver, type ResolvedAvdSerial } from '../devices/android.ts';
+import {
+  listAdbDevices,
+  ownedAvdDeviceProfile,
+  ownedAvdSerialResolver,
+  type AdbDevices,
+  type ResolvedAvdSerial,
+} from '../devices/android.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from '../workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from '../workspace/git-summary.ts';
@@ -41,16 +47,21 @@ import {
 } from '../engine/build-progress.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
+import { workspaceRecordingEnabled } from '../workspace/recordings.ts';
 import { formatDuration } from '../command-output.ts';
-import { listLeaseFiles } from '../engine/device-lease.ts';
+import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
+import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
+  readBuildDetail,
+  readDeviceIdleShutdowns,
   readIdleStop,
   readBuildHistory,
   readLastBuilds,
   withStateReadCache,
   type DeviceAppProcess,
+  type DeviceIdleShutdownRecord,
   type LastBuildReport,
   type MachineUsageState,
   type StatusPayload,
@@ -58,6 +69,7 @@ import {
 import {
   createActivityReader,
   readWebActivity,
+  tailLines,
   createDeviceProcessTables,
   type ActivityTarget,
   type DeviceActivity,
@@ -87,9 +99,18 @@ import {
 } from '../status.ts';
 import { readWebPage, readWebRecord, webFacts, type WebFacts } from '../web/state.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from '../machine-usage.ts';
+import { metroBundleState } from '../metro-bundle.ts';
+import { applyStatusMeasures, createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts';
 import { readFootprints } from '../footprint.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { AndroidRuntimeFacts, EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
+import {
+  androidPhysicalReading,
+  iosPhysicalReading,
+  physicalDeviceLine,
+  physicalDeviceStates,
+  type PhysicalDeviceReading,
+} from '../physical-devices.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -127,6 +148,7 @@ interface StatusSnapshot {
   leases: ReturnType<typeof deviceLeaseStates>;
   leaseNow: number;
   orphanWorktrees: WorktreeFacts[];
+  worktrees: WorktreeFacts[];
   simsAvailable: boolean;
   simctlError: string | null;
   cwdRoot: string | null;
@@ -215,6 +237,15 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
   const leaseFiles = listLeaseFiles();
   const leases = deviceLeaseStates(leaseFiles, { root: cwdRoot, now: leaseNow });
   const roots: WorkspaceProcessRoots[] = [];
+  const readPhysicalDevice = physicalDeviceReader();
+  const simulatorUdids = new Set(
+    [
+      ...Object.keys(simsByUdid),
+      ...projects.flatMap(([, proj]) =>
+        projectDeviceSlots(proj).flatMap(({ platforms }) => platforms.ios?.deviceUdid ?? []),
+      ),
+    ].map((udid) => udid.toUpperCase()),
+  );
   for (const [i, [path, proj]] of projects.entries()) {
     const { metro, supervisor } = running[i]!;
     const saved = readWorkspaceState(path);
@@ -247,6 +278,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
             remote: remoteDeviceState(readRemoteSession(path), easLedger, path),
             idleStop: readIdleStop(saved),
             lastStop: metroLastStop(saved, supervisor),
+            idleShutdowns: readDeviceIdleShutdowns(saved),
             launches,
             leasedIds: new Set(
               deviceLeaseStates(leaseFiles, { root: path, now: leaseNow }).flatMap((lease) =>
@@ -261,12 +293,25 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
       ),
     );
     const state = states[states.length - 1];
-    if (state) Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }));
+    if (state) {
+      Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
+        recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
+      });
+    }
+    const physicalDevices = physicalDeviceStates(leaseFiles, parseWorkspaceLeases(saved?.deviceLeases), {
+      root: path,
+      now: leaseNow,
+      simulatorUdids,
+      read: readPhysicalDevice,
+    });
+    if (state && physicalDevices.length) state.physicalDevices = physicalDevices;
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android && !state?.web),
     );
   }
 
+  applyStatusMeasures(states, worktrees);
+  readLogDerivedFacts(states);
   const tables = createDeviceProcessTables();
   readDeviceProcesses(states, tables, { projects, launchesByState });
   readMetroReverses(states, launchesByState);
@@ -281,6 +326,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     leases,
     leaseNow,
     orphanWorktrees,
+    worktrees,
     simsAvailable,
     simctlError,
     cwdRoot,
@@ -289,6 +335,26 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     roots,
     simNames,
   };
+}
+
+/** Sets the facts status derives from workspace logs and the running build's detail file. */
+function readLogDerivedFacts(states: EnvironmentState[]): void {
+  const now = Date.now();
+  for (const state of states) {
+    if (state.metro) {
+      const bundle = metroBundleState(tailLines(join(workspaceLogsDir(state.path), 'metro.ndjson')) ?? [], {
+        running: state.metro.running,
+        now,
+      });
+      if (bundle) state.metro.bundle = bundle;
+      else delete state.metro.bundle;
+    }
+    if (state.build?.state === 'running') {
+      const record = parseActiveBuild(readWorkspaceState(state.path)?.[ACTIVE_BUILD_KEY]);
+      const detail = record ? readBuildDetail(state.path, record.claim.claimId) : null;
+      if (detail) state.build.detail = detail;
+    }
+  }
 }
 
 function phaseMarker({ phase, live, warmStep }: EnvironmentState): string {
@@ -345,6 +411,8 @@ async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Pr
   };
   withStateReadCache(() => {
     for (const state of snapshot.states) state.logs = logFacts(state.path);
+    applyStatusMeasures(snapshot.states, snapshot.worktrees);
+    readLogDerivedFacts(snapshot.states);
     readDeviceProcesses(snapshot.states, snapshot.tables, null);
   });
   if (machine && snapshot.machine) {
@@ -453,7 +521,7 @@ function renderStatus(
           deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
         const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
         out.push(
-          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}`,
+          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}${idleShutdownSuffix(deviceState.ios.idleShutdown)}`,
         );
       }
       if (deviceState.android) {
@@ -462,7 +530,7 @@ function renderStatus(
           ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
           : '';
         out.push(
-          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}`,
+          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}${idleShutdownSuffix(deviceState.android.idleShutdown)}`,
         );
       }
     }
@@ -476,6 +544,7 @@ function renderStatus(
         `  web: ${chalk.cyan(page?.url ?? state.web.url)} ${browser}${state.web.headless ? '' : chalk.dim(' (headed)')}${activitySuffix(state.web.activity)}${failed}`,
       );
     }
+    for (const device of state.physicalDevices ?? []) out.push(`  ${physicalDeviceLine(device, leaseNow)}`);
     for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
     for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));
     for (const note of state.issues.filter((issue) => issue.severity === 'info')) {
@@ -535,6 +604,7 @@ async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
   let snapshot: StatusSnapshot | null = null;
   let sources: StatusSources | null = null;
+  const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
@@ -543,6 +613,7 @@ async function watchStatus(json: boolean): Promise<void> {
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
         else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
+        measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));
@@ -604,6 +675,12 @@ function lastBuildText(report: LastBuildReport): string {
   const source = report.cacheHit ? `${report.cacheHit} cache` : report.status === 'ok' ? 'compiled' : 'no cache hit';
   const took = report.durationMs === null ? '' : ` in ${formatDuration(report.durationMs)}`;
   return `${report.platform} ${report.status === 'ok' ? source : `failed (${report.errorCode ?? 'error'}), ${source}`}${took}`;
+}
+
+function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): string {
+  return record
+    ? chalk.dim(` -- shut down after ${record.idleMinutes}m idle at ${record.at} (devices.idleShutdownMinutes)`)
+    : '';
 }
 
 function activitySuffix(activity: DeviceActivity | undefined): string {
@@ -706,6 +783,38 @@ function workspaceBuild(
   if (!record) return null;
   const projectKey = statsProjectKey({ root: path, commonDir: gitCommonDir(path), repoRoot: repoRoot(path) });
   return buildReport(record, { state: activeBuildState(record.claim), history: history?.[projectKey] });
+}
+
+const PHYSICAL_DEVICE_LIST_TIMEOUT_MS = 5000;
+const PHYSICAL_DEVICE_LIST_MAX_AGE_MS = 30_000;
+
+const physicalDeviceLists: {
+  ios?: { at: number; devices: IosDeviceEntry[] | null };
+  android?: { at: number; devices: AdbDevices | null };
+} = {};
+
+function freshList<T>(entry: { at: number; devices: T } | undefined, read: () => T): { at: number; devices: T } {
+  const now = Date.now();
+  return entry && now - entry.at < PHYSICAL_DEVICE_LIST_MAX_AGE_MS ? entry : { at: now, devices: read() };
+}
+
+function physicalDeviceReader(): (platform: 'ios' | 'android', id: string) => PhysicalDeviceReading {
+  return (platform, id) => {
+    if (platform === 'ios') {
+      physicalDeviceLists.ios = freshList(physicalDeviceLists.ios, () =>
+        readIosDevices({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+      );
+      return iosPhysicalReading(physicalDeviceLists.ios.devices, id);
+    }
+    physicalDeviceLists.android = freshList(physicalDeviceLists.android, () => {
+      try {
+        return listAdbDevices({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS });
+      } catch {
+        return null;
+      }
+    });
+    return androidPhysicalReading(physicalDeviceLists.android.devices, id);
+  };
 }
 
 function androidRuntimeReader(): (avdName: string) => AndroidRuntimeFacts {

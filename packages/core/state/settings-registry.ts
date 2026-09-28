@@ -75,6 +75,7 @@ export type WebViewport = (typeof WEB_VIEWPORTS)[number];
 const PROJECT: readonly SettingScope[] = ['workspace', 'repo', 'committed'];
 const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committed'];
 const MACHINE: readonly SettingScope[] = ['machine'];
+const RECORDING: readonly SettingScope[] = ['machine', 'workspace', 'repo'];
 
 const STRING = { kind: 'string' } as const;
 const PATH = { kind: 'path' } as const;
@@ -232,6 +233,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
   },
   {
+    key: 'devices.idleShutdownMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: EVERY,
+    default: 0,
+    description:
+      'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+  },
+  {
     key: 'web.url',
     type: {
       kind: 'string',
@@ -254,6 +263,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     default: 'desktop',
     description: 'Viewport of the owned Chrome page: desktop, or phone for a 390x844 touch screen',
+  },
+  {
+    key: 'recording.enabled',
+    type: BOOLEAN,
+    scopes: RECORDING,
+    default: true,
+    env: 'STIM_RECORDING',
+    description: 'Let stim-server record device screens for replay; false stops it and deletes the recordings',
   },
   {
     key: 'worktree.exclude',
@@ -513,10 +530,11 @@ const JSON_ENCODED_KINDS: readonly SettingType['kind'][] = ['boolean', 'number',
  * Coerces raw text (a CLI argument or an environment variable) through a setting's
  * registry type, the same way for both sources. Types whose values are not written
  * as bare text (boolean, number, strings, object) are read as JSON; a value that
- * fails to parse is left as the original string so `settingValueError` reports it.
+ * fails to parse is left as the original string so `settingValueError` reports it. A boolean also reads `1` and `0`.
  */
 export function coerceSettingText(setting: SettingDefinition, raw: string): unknown {
   if (!JSON_ENCODED_KINDS.includes(setting.type.kind)) return raw;
+  if (setting.type.kind === 'boolean' && (raw === '1' || raw === '0')) return raw === '1';
   try {
     return JSON.parse(raw);
   } catch {

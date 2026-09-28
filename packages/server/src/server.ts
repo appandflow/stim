@@ -4,9 +4,18 @@ import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
-import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  listSegments,
+  loadConfig,
+  parseNdjsonLine,
+  type NdjsonRecord,
+  type StatusPayload,
+} from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
+import { Recorder, type RecordLimits } from './recorder.ts';
+import { Player, recordedSpans, recordingDir, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
@@ -20,6 +29,7 @@ import {
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
+import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
   FEATURES,
@@ -31,7 +41,9 @@ import {
   PROTOCOL_VERSION,
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
+  REPLAY_RATES,
   type BuildPlanResult,
+  type FramesSeekParams,
   type ErrorCode,
   type FrameTarget,
   type HelloResult,
@@ -62,6 +74,7 @@ import {
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { DeviceViewers } from './viewers.ts';
 
 export interface ServerOptions {
   name: string;
@@ -80,6 +93,12 @@ export interface ServerOptions {
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
   frameLimits?: Partial<FrameLimits>;
+  /**
+   * False runs no recorder, and so no status child while no client asks for status; true by default. The limits
+   * say how much footage it keeps.
+   */
+  record?: boolean;
+  recordLimits?: Partial<RecordLimits>;
   /**
    * The `stim-frames` helper to stream frames with, or null for screenshots only. Without it, the server builds
    * one at startup, and devices subscribed before the build finishes get screenshots.
@@ -272,6 +291,27 @@ function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
   return { dir };
 }
 
+interface Replayable {
+  seek: (at: number, rate: FramesSeekParams['rate']) => number | null;
+  /** Returns why the subscription cannot go live, or null once it is live. */
+  live: () => string | null;
+}
+
+/** `at` and `rate` of a seek, null when neither is given, or why they are refused. */
+function parseReplay(at: unknown, rate: unknown): { at: number; rate: FramesSeekParams['rate'] } | string | null {
+  if (at === undefined && rate === undefined) return null;
+  if (typeof at !== 'number' || !Number.isFinite(at)) return 'at must be epoch milliseconds.';
+  const parsed = rate === undefined ? 0 : rate;
+  if (!REPLAY_RATES.includes(parsed as FramesSeekParams['rate'])) {
+    return `rate must be one of ${REPLAY_RATES.join(', ')}.`;
+  }
+  return { at, rate: parsed as FramesSeekParams['rate'] };
+}
+
+function hasFootage(dir: string): boolean {
+  return listSegments(dir).length > 0;
+}
+
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
@@ -303,7 +343,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return helperPath;
   };
   if (options.frameHelper === undefined) buildHelper();
-  const frames = new FramePool(options.env, frameLimits, frameHelper);
+  const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
+  const recorder =
+    options.record === false
+      ? null
+      : new Recorder({
+          frames,
+          subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+          limits: options.recordLimits,
+        });
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -320,8 +368,31 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
+  let recordingTurn: Promise<void> = Promise.resolve();
+  let closing = false;
   const sessions = new Map<WebSocket, PairedDevice>();
   const sampler = new UsageSampler();
+  const usage = new UsageRecorder();
+  let recorders = 0;
+  let stopRecording: (() => void) | null = null;
+  const recordUsage = (): (() => void) => {
+    recorders += 1;
+    stopRecording ??= feeds.subscribe(STATUS_FEED, {
+      item: (payload) => usage.record(payload as unknown as StatusPayload),
+      failed: () => {
+        stopRecording = null;
+      },
+    });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      recorders -= 1;
+      if (recorders > 0) return;
+      stopRecording?.();
+      stopRecording = null;
+    };
+  };
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
@@ -378,6 +449,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
+    const replays = new Map<string, Replayable>();
     const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
@@ -562,14 +634,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const subscription = openSubscription(id);
       if (!subscription) return;
       const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
+      const stopUsage = recordUsage();
       const unsubscribe = feeds.subscribe(STATUS_FEED, {
-        item: (_payload, text) => send(socket, `${envelope}${text}}`),
+        item: (_payload, text) => {
+          const history = usage.history();
+          send(socket, `${envelope}${text}${history ? `,"usage":${JSON.stringify(history)}` : ''}}`);
+        },
         failed: (message) => {
+          stopUsage();
           subscriptions.delete(subscription);
           send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
         },
       });
-      subscriptions.set(subscription, unsubscribe);
+      subscriptions.set(subscription, () => {
+        stopUsage();
+        unsubscribe();
+      });
     }
 
     function subscribeLogs(id: RequestId, params: unknown): void {
@@ -618,7 +698,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, fps, maxEdge, video, physical } = target;
+      const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate } = target;
       if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
         return error(
           id,
@@ -626,8 +706,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'frames.subscribe needs params.workspace and params.platform (ios, android or web).',
         );
       }
-      if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
-        return error(id, 'bad-request', 'slot must be a slot name.');
+      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+        return error(id, 'bad-request', 'slot must be 1-64 letters, digits, underscores or hyphens.');
       }
       if (physical !== undefined && typeof physical !== 'boolean') {
         return error(id, 'bad-request', 'physical must be true or false.');
@@ -651,11 +731,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `maxEdge must be a whole number of pixels from ${FRAME_EDGE.min} to ${FRAME_EDGE.max}.`,
         );
       }
+      const replayAt = parseReplay(at, rate);
+      if (typeof replayAt === 'string') return error(id, 'bad-request', replayAt);
+      if (replayAt && !offersVideo) {
+        return error(id, 'bad-request', 'Replay needs a video subscription: pass video: ["h264"].');
+      }
       const hint: FrameHint = {
         fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
       if (!workspaceDir(id, workspace, true)) return;
+      const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
+      if (replayAt && (physical || !hasFootage(replayDir))) {
+        return error(
+          id,
+          'no-recording',
+          `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${workspace}.`,
+        );
+      }
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
       const frameTarget: FrameTarget = {
@@ -707,6 +800,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const cleanup = () => {
         ended = true;
+        player?.stop();
+        replays.delete(subscription);
+        stopViewing?.();
         keyframes.delete(subscription);
         if (retry) clearTimeout(retry);
         if (draining) clearTimeout(draining);
@@ -725,14 +821,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           pending = frame;
           if (!retry) flush();
         },
-        delayed: (delayed: boolean) => {
-          if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed });
+        delayed: (delayed: boolean, reason?: string) => {
+          if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
         },
         failed: end,
         ...(offersVideo
           ? {
               video: (unit: AccessUnit) => {
-                if (ended || socket.readyState !== socket.OPEN) return;
+                if (ended || player || socket.readyState !== socket.OPEN) return;
                 const verdict = gate.admit(unit, socket.bufferedAmount);
                 if (verdict === 'send') socket.send(videoPacket(subscription, sequence++, unit));
                 else if (verdict === 'congested' && !draining) drain();
@@ -740,24 +836,77 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             }
           : {}),
       };
+      let player: Player | null = null;
+      let latest: StatusPayload | null = null;
+      const attach = (resolved: Device) => {
+        detach?.();
+        gate.reset();
+        streamed = resolved;
+        attached = deviceKey(resolved);
+        detach = frames.subscribe(resolved, listener, hint);
+      };
+      const replay = (): Player => {
+        if (player) return player;
+        detach?.();
+        detach = null;
+        attached = null;
+        player = new Player(
+          replayDir,
+          {
+            unit: (unit) => {
+              if (!ended && socket.readyState === socket.OPEN) socket.send(videoPacket(subscription, sequence++, unit));
+            },
+            bufferedBytes: () => socket.bufferedAmount,
+            ended: (position) =>
+              queueMicrotask(() => {
+                if (!ended) send(socket, { event: 'replay-ended', subscription, at: position });
+              }),
+          },
+          DEFAULT_VIDEO_LIMITS.congestedBytes,
+        );
+        return player;
+      };
+      const goLive = (): string | null => {
+        const resolved = latest
+          ? ownedDevice(latest, frameTarget, null, { adbEmulators })
+          : 'The device status is not known yet.';
+        if (typeof resolved === 'string') return resolved;
+        player?.stop();
+        player = null;
+        attach(resolved);
+        return null;
+      };
       if (offersVideo) {
         keyframes.set(subscription, () => {
+          if (player) return player.resend();
           gate.reset();
           if (streamed) frames.keyframe(streamed);
         });
+        replays.set(subscription, {
+          seek: (seekAt, seekRate) => {
+            if (physical || !hasFootage(replayDir)) return null;
+            const wasLive = player === null;
+            const shown = replay().seek(seekAt, seekRate);
+            if (shown === null && wasLive) goLive();
+            return shown;
+          },
+          live: goLive,
+        });
       }
+      if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
+        send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
+      }
+      const stopViewing = physical ? undefined : recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
         item: (payload) => {
           if (ended) return;
-          const resolved = ownedDevice(payload as unknown as StatusPayload, frameTarget, attached, { adbEmulators });
+          latest = payload as unknown as StatusPayload;
+          if (player) return;
+          const resolved = ownedDevice(latest, frameTarget, attached, { adbEmulators });
           if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
           if (deviceKey(resolved) === attached) return;
-          detach?.();
-          gate.reset();
-          streamed = resolved;
-          attached = deviceKey(resolved);
-          detach = frames.subscribe(resolved, listener, hint);
+          attach(resolved);
         },
         failed: (message) => queueMicrotask(() => end(message)),
       });
@@ -912,6 +1061,130 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
     }
 
+    function collect(args: string[], cwd: string): Promise<NdjsonRecord[] | string> {
+      const run = runStim(options.stimCli, options.env, args, cwd, commandLimits);
+      const cancel = () => run.cancel();
+      commands.add(cancel);
+      running.add(cancel);
+      return run.outcome.then((outcome) => {
+        commands.delete(cancel);
+        running.delete(cancel);
+        if (!outcome.ok) return outcome.message;
+        return outcome.stdout.split('\n').flatMap((line) => {
+          const record = parseNdjsonLine(line);
+          return record ? [record] : [];
+        });
+      });
+    }
+
+    function replayRange(id: RequestId, params: unknown): void {
+      const target = isJsonObject(params) ? params : {};
+      const { workspace, platform, slot } = target;
+      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+        return error(
+          id,
+          'bad-request',
+          'replay.range needs params.workspace and params.platform (ios, android or web).',
+        );
+      }
+      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+        return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
+      }
+      const cwd = workspaceDir(id, workspace, true);
+      if (!cwd) return;
+      if (commands.size + 2 > MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
+      const slotName = slot ?? 'default';
+      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as Platform, slotName)));
+      const replayTarget = { workspace, platform: platform as Platform, slot: slotName };
+      const state = {
+        enabled: recorder?.enabled(workspace) ?? false,
+        recording: recorder?.recording(replayTarget) ?? false,
+        spans,
+      };
+      if (!spans.length) return send(socket, { id, result: { ...state, markers: [] } });
+      const since = `--since=${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
+      void Promise.all([
+        collect(['logs', '--json', '--source', 'agent', since, '--tail=5000'], cwd),
+        collect(
+          ['logs', '--json', '--source', 'metro', 'client', 'build', 'device', '--level=error', since, '--tail=5000'],
+          cwd,
+        ),
+      ]).then(([actions, errors]) => {
+        const failed = [actions, errors].find((result) => typeof result === 'string');
+        if (typeof failed === 'string') return error(id, 'stim-failed', failed);
+        const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
+        const markers = timelineMarkers(records, platform as Platform, slotName, spans[0]!.start);
+        return send(socket, { id, result: { ...state, markers } });
+      });
+    }
+
+    function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {
+      const enabled = isJsonObject(params) ? params.enabled : undefined;
+      const record: AuditRecord = {
+        at: new Date().toISOString(),
+        device: { id: session.id, name: session.name },
+        action: 'recording.set',
+        workspace: null,
+        ok: false,
+      };
+      const audit = (outcome: Pick<AuditRecord, 'ok' | 'error'>) => {
+        try {
+          appendAudit({ ...record, ...outcome });
+        } catch (cause) {
+          console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
+        }
+      };
+      const refuseSetting = (code: ErrorCode, message: string) => {
+        audit({ ok: false, error: { code, message } });
+        error(id, code, message);
+      };
+      if (
+        !readDevices()
+          .find((entry) => entry.id === session.id)
+          ?.capabilities.includes('control')
+      ) {
+        return refuseSetting(
+          'forbidden',
+          `This device can only read. On the Mac, run \`stim-server devices grant ${session.id} --control\` to let it change settings.`,
+        );
+      }
+      if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
+      recordingTurn = cancelling.track(
+        recordingTurn
+          .catch(() => {})
+          .then(async () => {
+            if (closing) return;
+            const run = runStim(
+              options.stimCli,
+              options.env,
+              ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
+              homedir(),
+              actionLimits,
+            );
+            let stop!: () => void;
+            const stopped = new Promise<null>((resolve) => {
+              stop = () => resolve(null);
+            });
+            const cancel = () => {
+              stop();
+              return run.cancel();
+            };
+            running.add(cancel);
+            const outcome = await Promise.race([run.outcome, stopped]);
+            running.delete(cancel);
+            if (!outcome) return;
+            const printed = actionOutcome(outcome);
+            if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
+            audit({ ok: true });
+            const deleted = printed.output.recordingsDeleted;
+            const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
+            return send(socket, { id, result: { enabled, recordingsDeleted } });
+          }),
+      );
+    }
+
     function planBuild(id: RequestId, params: unknown): void {
       if (!isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
       const { platform, slot } = params;
@@ -1015,6 +1288,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         keyframe();
         return send(socket, { id, result: {} });
       }
+      if (message.method === 'frames.seek' || message.method === 'frames.live') {
+        const params = isJsonObject(message.params) ? message.params : {};
+        const replayable = typeof params.subscription === 'string' ? replays.get(params.subscription) : undefined;
+        if (!replayable) {
+          return error(id, 'unknown-subscription', `No video subscription ${String(params.subscription)}.`);
+        }
+        if (message.method === 'frames.live') {
+          const refused = replayable.live();
+          return refused ? error(id, 'frames-failed', refused) : send(socket, { id, result: {} });
+        }
+        const parsed = parseReplay(params.at, params.rate);
+        if (!parsed || typeof parsed === 'string') {
+          return error(id, 'bad-request', parsed ?? 'frames.seek needs params.at and params.rate.');
+        }
+        const shown = replayable.seek(parsed.at, parsed.rate);
+        if (shown === null) return error(id, 'no-recording', 'Nothing was recorded for this device.');
+        return send(socket, { id, result: { at: shown } });
+      }
+      if (message.method === 'replay.range') return replayRange(id, message.params);
+      if (message.method === 'recording.set') return setRecording(id, message.params, device);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'machine.history') {
@@ -1124,6 +1417,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const addresses: RunningServer['addresses'] = [];
   push.refresh();
   const close = async () => {
+    closing = true;
     push.close();
     watcher.close();
     helperAbort.abort();
@@ -1131,6 +1425,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
     await control.close();
+    recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));

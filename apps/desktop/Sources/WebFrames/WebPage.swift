@@ -66,6 +66,7 @@ public final class WebPage: @unchecked Sendable {
   private var endHandler: ((String) -> Void)?
   private var ended: String?
   private var touching = false
+  private var markedAt: DispatchTime?
 
   private init(client: DevToolsClient, targetId: String, sessionId: String) {
     self.client = client
@@ -140,6 +141,7 @@ public final class WebPage: @unchecked Sendable {
   public func touch(_ phase: WebTouchPhase, x: Double, y: Double) {
     queue.async {
       guard let point = self.point(x, y) else { return }
+      self.markTakeover()
       let type: String
       switch phase {
       case .down:
@@ -162,6 +164,7 @@ public final class WebPage: @unchecked Sendable {
   ) {
     queue.async {
       guard let point = self.point(x, y) else { return }
+      if event != .moved || pressed { self.markTakeover() }
       var params: [String: Any] = [
         "type": event.rawValue, "x": point.x, "y": point.y, "modifiers": modifiers.rawValue,
         "button": event == .moved && !pressed ? "none" : "left", "buttons": pressed ? 1 : 0,
@@ -175,6 +178,7 @@ public final class WebPage: @unchecked Sendable {
   public func wheel(x: Double, y: Double, deltaX: Double, deltaY: Double, modifiers: WebModifiers = []) {
     queue.async {
       guard let point = self.point(x, y) else { return }
+      self.markTakeover()
       self.command(
         "Input.dispatchMouseEvent",
         [
@@ -187,6 +191,7 @@ public final class WebPage: @unchecked Sendable {
   /// Types printable text as key presses; `\n` presses Enter, `\t` Tab and `\u{8}` Backspace.
   public func type(_ text: String) {
     queue.async {
+      self.markTakeover()
       for character in text {
         switch character {
         case "\n", "\r": self.sendKey(.enter, [])
@@ -203,7 +208,19 @@ public final class WebPage: @unchecked Sendable {
   }
 
   public func press(_ key: WebKey, modifiers: WebModifiers = []) {
-    queue.async { self.sendKey(key, modifiers) }
+    queue.async {
+      self.markTakeover()
+      self.sendKey(key, modifiers)
+    }
+  }
+
+  /// Tells the Stim browser supervisor's page listener that the input that follows is Take over, not an agent: it
+  /// drops input within 3 seconds of a `stim-takeover` event on the window. Sent at most once a second.
+  private func markTakeover() {
+    let now = DispatchTime.now()
+    if let markedAt, now.uptimeNanoseconds - markedAt.uptimeNanoseconds < 1_000_000_000 { return }
+    markedAt = now
+    command("Runtime.evaluate", ["expression": "window.dispatchEvent(new Event('stim-takeover'))"])
   }
 
   private func sendKey(_ key: WebKey, _ modifiers: WebModifiers) {

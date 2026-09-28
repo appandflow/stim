@@ -1,38 +1,44 @@
-import { Host, Picker } from '@expo/ui';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Share, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { FlatList, ScrollView } from '@/components/lists';
-import { Switch } from '@/components/switch';
+import { StatusDot } from '@/components/pill';
+import { PlatformLogo } from '@/components/platform-logo';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
 import {
   appendRecords,
+  chipOf,
+  CHIPS,
   copyText,
   expoContext,
   groupRecords,
   initialFilter,
-  LEVELS,
+  lastBundleMs,
   logFilter,
   MAX_RECORDS,
   needsContext,
+  presentChips,
   shareText,
-  SOURCES,
+  showsEntry,
+  stackPreview,
   viewEntry,
+  type LogChip,
   type LogEntry,
   type LogFilterState,
+  type Severity,
 } from '@/lib/logs';
 import { workspaceTitleAt } from '@/lib/workspaces';
 import type { Theme } from '@/design/theme';
-import type { LogLevel, LogRecord } from '@/protocol/types';
+import type { EnvironmentState, LogRecord } from '@/protocol/types';
 
-const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.source, s.label]));
+const CHIP_LABEL = Object.fromEntries(CHIPS.map((c) => [c.chip, c.label])) as Record<LogChip, string>;
 
 export function Logs({
   path,
@@ -55,14 +61,28 @@ export function Logs({
   const generation = useRef(0);
   const [following, setFollowing] = useState(true);
   const list = useRef<FlatList<LogEntry>>(null);
-  const entries = useMemo(() => groupRecords(records), [records]);
+  const [seen, setSeen] = useState<ReadonlySet<LogChip>>(new Set());
+  const grouped = useMemo(() => groupRecords(records), [records]);
+  const entries = useMemo(() => grouped.filter((entry) => showsEntry(filter, entry)), [grouped, filter]);
+  const warnings = useMemo(
+    () => (filter.severity === 'errors' ? undefined : entries.filter((e) => e.lead.level === 'warn').length),
+    [entries, filter.severity],
+  );
+  const bundleMs = useMemo(() => lastBundleMs(records), [records]);
 
   const [problem, setProblem] = useState<string | null>(null);
   const onLogs = useCallback(
     (change: LogsChange) => {
-      if (change.kind === 'records') return setRecords((existing) => appendRecords(existing, change.records));
+      if (change.kind === 'records') {
+        setSeen((existing) => {
+          const added = change.records.map(chipOf).filter((c): c is LogChip => c !== null && !existing.has(c));
+          return added.length === 0 ? existing : new Set([...existing, ...added]);
+        });
+        return setRecords((existing) => appendRecords(existing, change.records));
+      }
       if (change.kind === 'error') return setProblem(change.message);
       setRecords([]);
+      setFollowing(true);
       setExpanded(new Set(opened ? [opened] : []));
       setFetched(new Map());
       generation.current += 1;
@@ -73,15 +93,13 @@ export function Logs({
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
   useLogs(logFilter(path, active), onLogs);
 
-  const update = (patch: Partial<LogFilterState>) => setFilter((f) => ({ ...f, ...patch }));
-  const toggleSource = (source: LogFilterState['sources'][number]) => {
-    if (filter.sources.length === 1 && filter.sources[0] === source) return;
-    update({
-      sources: filter.sources.includes(source)
-        ? filter.sources.filter((s) => s !== source)
-        : [...filter.sources, source],
-    });
+  const update = (patch: Partial<LogFilterState>) => {
+    setFilter((f) => ({ ...f, ...patch }));
+    setFollowing(true);
   };
+  const toggleChip = (chip: LogChip) =>
+    update({ chips: filter.chips.includes(chip) ? filter.chips.filter((c) => c !== chip) : [...filter.chips, chip] });
+  const chips = presentChips(env, seen, filter.chips);
 
   const applyGrep = () => {
     try {
@@ -93,41 +111,85 @@ export function Logs({
     update({ grep: grepDraft });
   };
 
-  const hidesContext = active.errors || active.level === 'warn' || active.level === 'error' || active.grep !== '';
-  const fetchContext = (entry: LogEntry) => {
-    if (!connection || !hidesContext || !needsContext(entry) || fetched.has(entry.key)) return;
-    const started = generation.current;
-    setFetched((map) => new Map(map).set(entry.key, []));
-    connection
-      .request('logs.query', { workspace: path, sources: ['metro'], tail: MAX_RECORDS })
-      .then(({ records: metro }) => {
-        const context = expoContext(metro, entry.lead).map((r) => r.msg);
-        if (context.length > 0 && generation.current === started)
-          setFetched((map) => new Map(map).set(entry.key, context));
-      })
-      .catch(() => {});
-  };
+  const hidesContext = active.severity !== 'all' || active.grep !== '';
+  const onToggle = useCallback(
+    (entry: LogEntry, open: boolean) => {
+      if (!open && connection && hidesContext && needsContext(entry) && !fetched.has(entry.key)) {
+        const started = generation.current;
+        setFetched((map) => new Map(map).set(entry.key, []));
+        connection
+          .request('logs.query', { workspace: path, sources: ['metro'], tail: MAX_RECORDS })
+          .then(({ records: metro }) => {
+            const context = expoContext(metro, entry.lead).map((r) => r.msg);
+            if (context.length > 0 && generation.current === started)
+              setFetched((map) => new Map(map).set(entry.key, context));
+          })
+          .catch(() => {});
+      }
+      setExpanded((set) => {
+        const next = new Set(set);
+        if (!next.delete(entry.key)) next.add(entry.key);
+        return next;
+      });
+    },
+    [connection, hidesContext, fetched, path],
+  );
 
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const dragging = useRef(false);
+  const settle = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     setFollowing(contentOffset.y + layoutMeasurement.height >= contentSize.height - 40);
   };
 
+  const severity = (value: Severity) => () => update({ severity: value });
+
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: `Logs \u00B7 ${workspaceTitleAt(path, status)}` }} />
+      <Stack.Screen options={{ title: `Logs · ${workspaceTitleAt(path, status)}` }} />
       <ConnectionBanner state={state} />
       <View style={styles.filters}>
+        <MetroLine metro={env?.metro} bundleMs={bundleMs} />
         <View style={styles.row}>
-          {SOURCES.map(({ source, label }) => (
-            <Toggle
-              key={source}
-              label={label}
-              on={filter.sources.includes(source)}
-              onPress={() => toggleSource(source)}
-            />
-          ))}
+          <Toggle label="All" on={filter.severity === 'all'} onPress={severity('all')} />
+          <Toggle
+            label="Errors"
+            count={env?.logs?.errorsSinceMarker}
+            countTone="error"
+            on={filter.severity === 'errors'}
+            onPress={severity('errors')}
+          />
+          <Toggle
+            label="Warnings"
+            count={warnings}
+            countTone="warning"
+            on={filter.severity === 'warnings'}
+            onPress={severity('warnings')}
+          />
         </View>
+        {chips.length > 0 ? (
+          <View style={styles.row}>
+            {chips.map((chip) => {
+              const on = filter.chips.includes(chip);
+              return (
+                <Toggle
+                  key={chip}
+                  label={CHIP_LABEL[chip]}
+                  icon={
+                    chip === 'ios' || chip === 'android' || chip === 'web' ? (
+                      <PlatformLogo
+                        platform={chip}
+                        size={13}
+                        color={on ? theme.colors.primary : theme.colors.secondary}
+                      />
+                    ) : null
+                  }
+                  on={on}
+                  onPress={() => toggleChip(chip)}
+                />
+              );
+            })}
+          </View>
+        ) : null}
         {slots.length > 1 ? (
           <View style={styles.row}>
             <Toggle label="All slots" on={active.slot === null} onPress={() => update({ slot: null })} />
@@ -136,19 +198,6 @@ export function Logs({
             ))}
           </View>
         ) : null}
-        <View style={styles.row}>
-          <Host matchContents seedColor={theme.colors.primary}>
-            <Picker selectedValue={filter.level} onValueChange={(level) => update({ level: level as LogLevel })}>
-              {LEVELS.map((level) => (
-                <Picker.Item key={level} label={level === 'debug' ? 'All levels' : `${level} and up`} value={level} />
-              ))}
-            </Picker>
-          </Host>
-          <View style={styles.spacer} />
-          <Host matchContents seedColor={theme.colors.primary}>
-            <Switch label="Errors only" value={filter.errors} onValueChange={(errors) => update({ errors })} />
-          </Host>
-        </View>
         <TextInput
           value={grepDraft}
           onChangeText={setGrepDraft}
@@ -172,7 +221,17 @@ export function Logs({
         ref={list}
         data={entries}
         keyExtractor={(entry) => entry.key}
-        onScroll={onScroll}
+        onScrollBeginDrag={() => {
+          dragging.current = true;
+        }}
+        onScroll={(e) => {
+          if (dragging.current) settle(e);
+        }}
+        onScrollEndDrag={(e) => {
+          dragging.current = false;
+          settle(e);
+        }}
+        onMomentumScrollEnd={settle}
         scrollEventThrottle={100}
         onContentSizeChange={() => {
           if (following) list.current?.scrollToEnd({ animated: false });
@@ -190,14 +249,7 @@ export function Logs({
               workspace={path}
               home={home}
               expanded={expanded.has(item.key)}
-              onPress={() => {
-                if (!expanded.has(item.key)) fetchContext(item);
-                setExpanded((set) => {
-                  const next = new Set(set);
-                  if (!next.delete(item.key)) next.add(item.key);
-                  return next;
-                });
-              }}
+              onToggle={onToggle}
             />
           );
         }}
@@ -220,95 +272,144 @@ export function Logs({
   );
 }
 
+function MetroLine({ metro, bundleMs }: { metro: EnvironmentState['metro']; bundleMs: number | null }) {
+  const { theme } = useUnistyles();
+  if (!metro) return null;
+  const parts = [metro.running ? 'running' : 'stopped'];
+  if (bundleMs !== null) parts.push(`last bundle ${(bundleMs / 1000).toFixed(1)}s`);
+  return (
+    <View style={styles.metro}>
+      <StatusDot color={metro.running ? theme.colors.success : theme.colors.tertiary} filled={metro.running} />
+      <Text variant="footnote" weight="semibold">
+        Metro :{metro.port}
+      </Text>
+      <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
+        {parts.join(' · ')}
+      </Text>
+    </View>
+  );
+}
+
 function levelColor(theme: Theme, level: string): string {
   if (level === 'error' || level === 'fatal') return theme.colors.error;
   if (level === 'warn') return theme.colors.warning;
-  if (level === 'debug') return theme.colors.tertiary;
-  return theme.colors.secondary;
+  if (level === 'debug') return theme.colors.border;
+  return theme.colors.tertiary;
 }
 
-function LogRow({
+const LogRow = memo(function LogRow({
   entry,
   workspace,
   home,
   expanded,
-  onPress,
+  onToggle,
 }: {
   entry: LogEntry;
   workspace: string;
   home: string | null;
   expanded: boolean;
-  onPress: () => void;
+  onToggle: (entry: LogEntry, open: boolean) => void;
 }) {
+  const { theme } = useUnistyles();
   const record = entry.lead;
   const time = new Date(record.ts).toTimeString().slice(0, 8);
   const error = record.level === 'error' || record.level === 'fatal';
-  const view = viewEntry(entry, workspace, home);
+  const chip = chipOf(record);
+  const view = useMemo(() => viewEntry(entry, workspace, home), [entry, workspace, home]);
+  const preview = useMemo(
+    () => (expanded ? null : stackPreview(record.stack, workspace, home)),
+    [expanded, record.stack, workspace, home],
+  );
   const [copied, setCopied] = useState(false);
   return (
-    <Touch feedback="row" onPress={onPress} accessibilityRole="none" style={styles.logRow}>
-      <View style={styles.levelBar(record.level)} />
-      <View style={styles.logBody}>
-        <Text variant="caption2" tone="tertiary" mono>
-          {time} {SOURCE_LABEL[record.src] ?? record.src}
-          {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''} {record.level}
-          {entry.related.length > 0 ? ` \u00B7 ${entry.related.length + 1} records` : ''}
-        </Text>
-        <Text
-          variant={error ? 'footnote' : 'caption'}
-          weight={error ? 'semibold' : undefined}
-          tone={error ? 'error' : 'default'}
-          mono
-          numberOfLines={expanded ? undefined : 3}
-          selectable={expanded}
-        >
-          {view.title}
-        </Text>
-        {view.location ? (
-          <Text variant="caption" weight="semibold" mono numberOfLines={expanded ? undefined : 1} selectable={expanded}>
-            {view.location}
+    <Touch feedback="row" onPress={() => onToggle(entry, expanded)} accessibilityRole="none" style={styles.logRow}>
+      <View style={styles.meta}>
+        <StatusDot color={levelColor(theme, record.level)} />
+        <View style={styles.tag}>
+          <Text variant="caption2" tone="secondary">
+            {chip ? CHIP_LABEL[chip] : record.src}
           </Text>
-        ) : null}
-        {expanded && view.codeFrame.length > 0 ? (
-          <View style={styles.codeFrame}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <Text variant="caption" mono selectable>
-                {view.codeFrame.join('\n')}
-              </Text>
-            </ScrollView>
-          </View>
-        ) : null}
-        {expanded ? (
-          <View style={styles.actions}>
-            <Touch
-              onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
-              accessibilityLabel="Copy message and location"
-              style={styles.action}
-            >
-              <Text weight="semibold" tone="brand">
-                {copied ? 'Copied' : 'Copy'}
-              </Text>
-            </Touch>
-            <Touch
-              onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
-              accessibilityLabel="Share entry"
-              style={styles.action}
-            >
-              <Text weight="semibold" tone="brand">
-                Share
-              </Text>
-            </Touch>
-          </View>
-        ) : null}
-        {expanded && view.details.length > 0 ? (
-          <Text variant="caption" tone="secondary" mono selectable>
-            {view.details.join('\n')}
-          </Text>
-        ) : null}
+        </View>
+        <Text variant="caption2" tone="tertiary" numberOfLines={1} style={styles.shrink}>
+          {time}
+          {record.slot && record.slot !== 'default' ? ` · ${record.slot}` : ''}
+          {entry.related.length > 0 ? ` · ${entry.related.length + 1} records` : ''}
+        </Text>
       </View>
+      <Text
+        variant="footnote"
+        weight={error ? 'medium' : undefined}
+        numberOfLines={expanded ? undefined : 3}
+        selectable={expanded}
+      >
+        {view.title}
+      </Text>
+      {view.location ? (
+        <Text variant="caption" weight="semibold" mono numberOfLines={expanded ? undefined : 1} selectable={expanded}>
+          {view.location}
+        </Text>
+      ) : null}
+      {preview ? (
+        <View style={styles.frames}>
+          {preview.frames.map((frame, i) => (
+            <Text
+              key={i}
+              variant="caption2"
+              mono
+              weight={frame.app ? 'semibold' : undefined}
+              tone={frame.app ? 'default' : 'tertiary'}
+              numberOfLines={1}
+              ellipsizeMode="middle"
+            >
+              {[frame.fn, frame.where].filter(Boolean).join('  ')}
+            </Text>
+          ))}
+          {preview.hidden > 0 ? (
+            <Text variant="caption2" tone="tertiary">
+              +{preview.hidden} {preview.hiddenFramework ? 'framework frames' : 'more frames'}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {expanded && view.codeFrame.length > 0 ? (
+        <View style={styles.codeFrame}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <Text variant="caption" mono selectable>
+              {view.codeFrame.join('\n')}
+            </Text>
+          </ScrollView>
+        </View>
+      ) : null}
+      {expanded ? (
+        <View style={styles.actions}>
+          <Touch
+            onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
+            accessibilityLabel="Copy message and location"
+            style={styles.action}
+          >
+            <Text weight="semibold" tone="brand">
+              {copied ? 'Copied' : 'Copy'}
+            </Text>
+          </Touch>
+          <Touch
+            onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
+            accessibilityLabel="Share entry"
+            style={styles.action}
+          >
+            <Text weight="semibold" tone="brand">
+              Share
+            </Text>
+          </Touch>
+        </View>
+      ) : null}
+      {expanded && view.details.length > 0 ? (
+        <Text variant="caption" tone="secondary" mono selectable>
+          {view.details.join('\n')}
+        </Text>
+      ) : null}
     </Touch>
   );
-}
+});
 
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.colors.background },
@@ -318,8 +419,9 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.border,
   },
+  metro: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  shrink: { flexShrink: 1 },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.sm },
-  spacer: { flex: 1 },
   search: {
     borderWidth: 1,
     borderRadius: theme.radius.control,
@@ -331,9 +433,27 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
   },
   empty: { textAlign: 'center', padding: theme.space.huge },
-  logRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border },
-  levelBar: (level: string) => ({ width: 3, backgroundColor: levelColor(theme, level) }),
-  logBody: { flex: 1, paddingHorizontal: theme.space.md, paddingVertical: theme.space.sm, gap: theme.space.xxs },
+  logRow: {
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    gap: theme.space.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.separator,
+  },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  tag: {
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: 1,
+    borderRadius: theme.radius.small,
+    backgroundColor: theme.colors.raised,
+  },
+  frames: {
+    gap: theme.space.xxs,
+    paddingHorizontal: theme.space.md,
+    paddingVertical: theme.space.sm,
+    borderRadius: theme.radius.control,
+    backgroundColor: theme.colors.sidebar,
+  },
   codeFrame: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: theme.radius.control,

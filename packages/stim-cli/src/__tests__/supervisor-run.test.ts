@@ -31,6 +31,7 @@ import { goneClaimOwner, liveClaimOwner, recycledClaimOwner } from './_factories
 import {
   MODE_BARE,
   MODE_EXPO,
+  type DeviceIdleOps,
   type ServerExitInfo,
   clearWorkspaceSupervisor,
   parseArgs,
@@ -106,6 +107,7 @@ describe('parseArgs', () => {
       tunnel: false,
       resetCache: false,
       idleStopMinutes: 0,
+      deviceIdleMinutes: 0,
     });
   });
 
@@ -113,6 +115,8 @@ describe('parseArgs', () => {
     expect(parseArgs(['--root', absRoot, '--port', '1', '--idle-stop-minutes', '60']).idleStopMinutes).toBe(60);
     expect(parseArgs(['--root', absRoot, '--port', '1', '--idle-stop-minutes', '1.5']).error).toMatch(/whole number/);
     expect(parseArgs(['--root', absRoot, '--port', '1', '--idle-stop-minutes']).error).toMatch(/whole number/);
+    expect(parseArgs(['--root', absRoot, '--port', '1', '--device-idle-minutes', '30']).deviceIdleMinutes).toBe(30);
+    expect(parseArgs(['--root', absRoot, '--port', '1', '--device-idle-minutes', '-1']).error).toMatch(/whole number/);
   });
 
   test('accepts --tunnel', () => {
@@ -122,6 +126,7 @@ describe('parseArgs', () => {
       tunnel: true,
       resetCache: false,
       idleStopMinutes: 0,
+      deviceIdleMinutes: 0,
     });
   });
 
@@ -1016,5 +1021,122 @@ describe('idle stop', () => {
     writeWorkspaceState(root, { devServerStop: { reason: 'idle', at: new Date().toISOString(), idleMinutes: 60 } });
     await startIdleSupervisor({ probe: quiet });
     expect(readIdleStop(readWorkspaceState(root))).toBe(null);
+  });
+});
+
+describe('device idle shutdown', () => {
+  const MINUTE = 60_000;
+  const quiet: IdleProbe = { lastActivityAt: () => NaN, blocker: () => null };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startDeviceIdleSupervisor({
+    deviceMinutes = 2,
+    metroMinutes = 0,
+    due = () => true,
+  }: { deviceMinutes?: number; metroMinutes?: number; due?: () => boolean } = {}) {
+    const seen = { closed: 0, checks: 0, shutDowns: [] as number[] };
+    const deviceIdle: DeviceIdleOps = {
+      due: () => {
+        seen.checks++;
+        return due() ? [{ device: {} as never, idleForMs: deviceMinutes * MINUTE }] : [];
+      },
+      shutDown: (_root, idleMs, log) => {
+        seen.shutDowns.push(idleMs);
+        log({ level: 'info', event: 'device_idle_shutdown', msg: 'shut down simulator stim-test, idle 2m' });
+        return 1;
+      },
+    };
+    recordWorkspaceUse(root);
+    const running = await runSupervisor({
+      root,
+      port: 8096,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      idleStopMinutes: metroMinutes,
+      idleProbe: quiet,
+      deviceIdleMinutes: deviceMinutes,
+      deviceIdle,
+      startBare: async () => ({
+        close() {
+          seen.closed += 1;
+        },
+      }),
+    });
+    assert(running);
+    return seen;
+  }
+
+  test('checks devices only after devices.idleShutdownMinutes without a Stim command, then shuts down the due ones', async () => {
+    const seen = await startDeviceIdleSupervisor();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.checks).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.shutDowns).toEqual([2 * MINUTE]);
+    expect(seen.closed).toBe(0);
+    expect(readMetroLog().find((record) => record.event === 'device_idle_shutdown')?.msg).toMatch(/stim-test/);
+
+    recordWorkspaceUse(root);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.shutDowns).toHaveLength(1);
+  });
+
+  test('a recent device log also postpones the device check, so an app in use is not probed each minute', async () => {
+    const seen = await startDeviceIdleSupervisor();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    const deviceLog = join(workspaceLogsDir(root), 'device.ndjson');
+    writeFileSync(deviceLog, '{}\n');
+    const at = new Date(Date.now());
+    utimesSync(deviceLog, at, at);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.checks).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.shutDowns).toEqual([2 * MINUTE]);
+  });
+
+  test('a device that is not due is left running', async () => {
+    const seen = await startDeviceIdleSupervisor({ due: () => false });
+    await vi.advanceTimersByTimeAsync(30 * MINUTE);
+    expect(seen.checks).toBeGreaterThan(0);
+    expect(seen.shutDowns).toEqual([]);
+  });
+
+  test('a stim ios or android run holding native-run defers the shutdown until it releases', async () => {
+    const attempt = tryAcquireClaim({
+      root: workspaceProcessLockPath(dirname(workspaceLogsDir(root)), 'native-run', true),
+      mode: 'exclusive',
+      label: 'native-run lock',
+    });
+    assert(attempt.acquired);
+    const seen = await startDeviceIdleSupervisor();
+    await vi.advanceTimersByTimeAsync(10 * MINUTE);
+    expect(seen.shutDowns).toEqual([]);
+
+    releaseClaim(attempt.acquired);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(seen.shutDowns).toEqual([2 * MINUTE]);
+  });
+
+  test("Metro's idle stop first shuts down devices idle for metro.idleStopMinutes when that is shorter", async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 90, metroMinutes: 60, due: () => false });
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    expect(seen.shutDowns).toEqual([60 * MINUTE]);
+    expect(seen.closed).toBe(1);
+  });
+
+  test('devices.idleShutdownMinutes 0 never checks devices', async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 0 });
+    await vi.advanceTimersByTimeAsync(24 * 60 * MINUTE);
+    expect(seen.checks).toBe(0);
+    expect(seen.shutDowns).toEqual([]);
   });
 });

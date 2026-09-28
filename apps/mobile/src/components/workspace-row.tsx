@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
 import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
-import { devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
+import { deviceKey, devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
 
 export const WorkspaceRow = memo(function WorkspaceRow({
   item,
@@ -115,7 +115,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             {running.map((d) => {
               const driven = d.activity?.state === 'driven';
               return (
-                <Fragment key={`${d.platform}-${d.slot}`}>
+                <Fragment key={deviceKey(d)}>
                   <Pill tone={offline ? 'neutral' : driven ? 'accent' : 'success'} dot={driven}>
                     {deviceName(d)}
                   </Pill>

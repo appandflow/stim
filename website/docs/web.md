@@ -176,17 +176,20 @@ Page records carry `platform: "web"`:
 
 - `client`: console calls at their level, and uncaught errors with stack
   frames.
-- `device`: failed requests, browser messages such as CSP violations, and the
-  browser's own lifecycle. A failed page document is an error, whatever its
-  status. For other requests, a network failure or an HTTP 5xx is an error, a
-  4xx a warning, and a canceled request debug. `stim logs --errors` includes
-  these device errors.
+- `device`: failed requests, browser messages such as CSP violations, the
+  browser's own lifecycle, and in-app route changes (`web_route`). A failed
+  page document is an error, whatever its status. For other requests, a
+  network failure or an HTTP 5xx is an error, a 4xx a warning, and a canceled
+  request debug. `stim logs --errors` includes these device errors.
+- `agent`: clicks, typing, key presses and scrolls that an attached tool sent
+  to the page (see below).
 
 Expo also prints web console calls on Metro, so they can appear twice: once
 from the page and once from Metro.
 
 Each load of the page's top-level document starts a new error window: `stim
-web`, `stim reload`, and a reload or navigation the page makes itself.
+web`, `stim reload`, and a reload or navigation the page makes itself. A
+reload's record carries `reload: true`.
 `stim logs --errors` and the `status` error count report the page's errors from
 the latest load only, the way Chrome DevTools clears its console when the page
 navigates. A page load does not hide the native app's errors, and a `stim ios`
@@ -206,11 +209,43 @@ While a tool is connected, `stim status` names it as the browser's driver
 simulator. `web.targetId` is the owned page; a tab another tool opens is not
 captured.
 
+The input that tool sends to the page is recorded as agent actions, the way
+agent-device's taps are on a simulator:
+
+```text
+14:02:11.204 info  agent  Clicked button "Sign in"
+14:02:12.918 info  agent  Typed 16 characters into input#email[type=email] "Email"
+14:02:13.402 info  agent  Pressed Enter in input#email[type=email] "Email"
+```
+
+`stim logs --source agent` lists them, with `driver` naming the tool in
+`--json`. `web.activity.recent["agent-action"]` in `stim status --json` dates
+the newest, and Stim Desktop and the phone show them under the Web device.
+Stim records clicks, key presses, text input and wheel scrolls in the page's
+top frame; a burst of typing, of one key or of scrolling is one record, and
+pointer moves and iframes are not recorded. Typed text is never recorded, only
+its length. Input from **Take over** in Stim Desktop or the phone app is not an
+agent action, and neither is any other input within 3 seconds of it. Input
+while no tool is connected is not recorded. A person clicking a headed Chrome window
+while a tool is connected counts as that tool, and a script that disconnects
+within a few hundred milliseconds of its first input goes unrecorded, since
+Stim checks which tool is connected when the input starts. Navigations and reloads are page
+records, not agent actions.
+
 `web.page` reports the document the page loaded last and how that load went:
-`{ url, state, error? }`, with `state` one of `loading`, `loaded` or `failed`.
-In-app routes that load no document are not tracked. A failed load (the dev
-server is down, a certificate error, a crash) shows on the `web:` line of
-`stim status`.
+`{ url, state, error?, route? }`, with `state` one of `loading`, `loaded` or
+`failed`. `route` is the URL the page shows after an in-app route change
+(history API or fragment) since that load; it is absent when none happened. A
+failed load (the dev server is down, a certificate error, a crash) shows on the
+`web:` line of `stim status`.
+
+Try it with an agent:
+
+```text
+Read stim guide web. Run stim web, attach Playwright MCP to the cdpEndpoint in
+stim status --json, sign in to the app, then run stim logs --source agent and
+tell me which actions Stim recorded for the page.
+```
 
 ## Cleanup
 
@@ -228,18 +263,20 @@ and deletes a profile only when its ledger lists it.
 ## Stim Desktop
 
 Stim Desktop shows the owned Chrome as a **Web** tile next to the simulators,
-with live frames of the page, its URL, a "Page failed to load" pill, and
-"Driven by" when a tool is attached. **Take over** sends clicks, scrolls and
+with live frames of the page, its URL, a "Page failed to load" pill,
+"Driven by" when a tool is attached, and the tool's latest actions under it. **Take over** sends clicks, scrolls and
 keys to the page. The tile opens the URL in your own browser, reloads the page
 (`stim reload web`), and closes Chrome (`stim stop --slot web`).
 
 ## The phone app
 
 The phone app shows the page as a **Web** tile in the devices grid and on the
-workspace screen. Tapping it opens the device viewer, streamed as H.264 video
+workspace screen, with an attached tool's latest actions under it. Tapping it opens the device viewer, streamed as H.264 video
 through `stim-server`. With **Control** on, taps click, drags scroll, the
 keyboard types, and **Back** goes back in the page's history. **Reload** in the
-workspace menu runs `stim reload web`.
+workspace menu runs `stim reload web`. See
+[Replay device screens](./owned-devices.md#replay-device-screens) to scrub back
+through what an agent did on the page.
 
 Chrome and Chromium are the only engines.
 

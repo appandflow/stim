@@ -451,6 +451,8 @@ function machineLayerSettings(machine: unknown): SettingsObject | null {
   if (optimizations !== undefined) settings.optimizations = optimizations;
   const deviceProfile = settingValueAt(machine, 'android.deviceProfile');
   if (deviceProfile !== undefined) settings.android = { deviceProfile };
+  const idleShutdownMinutes = settingValueAt(machine, 'devices.idleShutdownMinutes');
+  if (idleShutdownMinutes !== undefined) settings.devices = { idleShutdownMinutes };
   return Object.keys(settings).length > 0 ? settings : null;
 }
 
@@ -602,14 +604,21 @@ function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): R
     : null;
 }
 
-export function metroIdleStopMinutesSetting(settings: SettingsObject): number {
-  const block = settings.metro;
-  const value =
-    typeof block === 'object' && block !== null ? (block as { idleStopMinutes?: unknown }).idleStopMinutes : undefined;
-  const setting = settingDefinition('metro.idleStopMinutes');
+function minutesSetting(settings: SettingsObject, block: string, name: string): number {
+  const parent = settings[block];
+  const value = isPlainObject(parent) ? parent[name] : undefined;
+  const setting = settingDefinition(`${block}.${name}`);
   return setting && value !== undefined && settingValueError(setting, value) === null
     ? (value as number)
     : Number(setting?.default);
+}
+
+export function metroIdleStopMinutesSetting(settings: SettingsObject): number {
+  return minutesSetting(settings, 'metro', 'idleStopMinutes');
+}
+
+export function deviceIdleShutdownMinutesSetting(settings: SettingsObject): number {
+  return minutesSetting(settings, 'devices', 'idleShutdownMinutes');
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {

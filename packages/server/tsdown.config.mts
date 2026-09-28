@@ -24,6 +24,7 @@ export default defineConfig({
       for (const source of [
         'helper/main.swift',
         'helper/VideoEncoder.swift',
+        'helper/PhoneSource.swift',
         ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
       ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);

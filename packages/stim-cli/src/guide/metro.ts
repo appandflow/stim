@@ -125,7 +125,10 @@ WHAT THE SUPERVISOR IS
   connected app alone does not keep the server. It records a
   supervisor_idle_stopped line in metro.ndjson and devServerStop in
   state.json, so \`status\` shows "stopped (idle)" rather than a crash.
-  Devices stay booted. The next \`stim start\` starts it again and clears the
+  Devices stay booted, unless devices.idleShutdownMinutes is set: then the
+  idle stop first shuts down the workspace's owned devices idle for the
+  shorter of the two (\`guide lifecycle budget\`). The next \`stim start\`
+  starts it again and clears the
   record, also when it reuses a dev server that another process started. A
   Debug \`ios\` or \`android\` run starts it the same way and reports
   devServer.reason "stopped (idle)". The setting

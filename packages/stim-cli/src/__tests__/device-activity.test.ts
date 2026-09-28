@@ -232,6 +232,24 @@ describe('createActivityReader', () => {
     expect(read({}, android).state).toBe('unknown');
   });
 
+  test('a device a stim-server client is viewing is active now; other devices keep their own evidence', () => {
+    writeLogs([{ ts: NOW - 5 * 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
+    const reader = createActivityReader({
+      now: NOW,
+      home,
+      startOf: starts({}),
+      leaseFiles: () => [],
+      viewers: () => [{ platform: 'ios', id: UDID }],
+    });
+    expect(reader(target)).toMatchObject({
+      state: 'active',
+      lastActivityAt: new Date(NOW).toISOString(),
+      recent: { viewer: new Date(NOW).toISOString() },
+    });
+    expect(reader({ ...target, id: 'OTHER' }).state).toBe('idle');
+    expect(reader({ ...target, platform: 'android', id: UDID }).recent?.viewer).toBeUndefined();
+  });
+
   test('an unexpired Stim device lock is a live claim', () => {
     const reader = createActivityReader({
       now: NOW,
@@ -334,6 +352,28 @@ describe('readWebActivity', () => {
       lastActivityAt: new Date(NOW - 60_000).toISOString(),
       recent: { 'page-log': new Date(NOW - 60_000).toISOString() },
       basis: ['page-log'],
+    });
+  });
+
+  test('agent input the supervisor recorded dates agent-action, and page-log keeps to page records', () => {
+    const dir = workspaceLogsDir(workspace);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'web.ndjson'),
+      [
+        { ts: NOW - 120_000, src: 'client', msg: 'hi' },
+        { ts: NOW - 60_000, src: 'agent', event: 'agent_action', msg: 'Clicked button "Save"' },
+      ]
+        .map((record) => `${JSON.stringify(record)}\n`)
+        .join(''),
+    );
+    const activity = readWebActivity(target, tables(chromeSide, []), NOW);
+    expect(activity).toMatchObject({
+      lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      recent: {
+        'agent-action': new Date(NOW - 60_000).toISOString(),
+        'page-log': new Date(NOW - 120_000).toISOString(),
+      },
     });
   });
 

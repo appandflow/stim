@@ -1,0 +1,100 @@
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { readJsonObject } from './json-file.ts';
+import { diskUsageCacheDir, pullRequestCacheDir, workspaceBuildDetailFile } from './paths.ts';
+import { NATIVE_BUILD_STEPS, type BuildDetail, type DiskMeasure, type WorktreePullRequest } from './status.ts';
+
+function cacheName(path: string): string {
+  return `${createHash('sha256').update(path).digest('hex').slice(0, 32)}.json`;
+}
+
+/** The file that caches `path`'s measured size, one file per folder. */
+export function diskUsageCacheFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path));
+}
+
+/** The file that caches the pull request of the worktree at `path`. */
+export function pullRequestCacheFile(path: string): string {
+  return join(pullRequestCacheDir(), cacheName(path));
+}
+
+/** A worktree's cached pull request lookup: the branch and HEAD it was looked up for, and when. */
+export interface PullRequestCacheEntry {
+  path: string;
+  branch: string;
+  head: string;
+  checkedAt: string;
+  pullRequest: WorktreePullRequest | null;
+}
+
+const PR_STATES = new Set(['open', 'draft', 'merged', 'closed']);
+const REVIEW_DECISIONS = new Set(['approved', 'changes-requested', 'review-required']);
+
+function pullRequestOf(value: unknown): WorktreePullRequest | null | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const pr = value as Record<string, unknown>;
+  if (!Number.isInteger(pr.number) || typeof pr.url !== 'string' || typeof pr.title !== 'string') return undefined;
+  if (!PR_STATES.has(pr.state as string) || typeof pr.checkedAt !== 'string') return undefined;
+  const checks = pr.checks as Record<string, unknown> | null | undefined;
+  const counts =
+    checks && typeof checks === 'object'
+      ? [checks.passing, checks.failing, checks.pending].map((count) => countOrNull(count))
+      : null;
+  return {
+    number: pr.number as number,
+    url: pr.url,
+    title: pr.title,
+    state: pr.state as WorktreePullRequest['state'],
+    checks:
+      counts && counts.every((count) => count !== null)
+        ? { passing: counts[0]!, failing: counts[1]!, pending: counts[2]! }
+        : null,
+    reviewDecision: REVIEW_DECISIONS.has(pr.reviewDecision as string)
+      ? (pr.reviewDecision as WorktreePullRequest['reviewDecision'])
+      : null,
+    checkedAt: pr.checkedAt,
+  };
+}
+
+/** The cached pull request lookup of the worktree at `path`, or null before one succeeded. */
+export function readPullRequestCache(path: string): PullRequestCacheEntry | null {
+  const entry = readJsonObject(pullRequestCacheFile(path));
+  if (!entry || entry.path !== path || typeof entry.branch !== 'string' || typeof entry.head !== 'string') return null;
+  if (typeof entry.checkedAt !== 'string') return null;
+  const pullRequest = pullRequestOf(entry.pullRequest);
+  if (pullRequest === undefined) return null;
+  return { path, branch: entry.branch, head: entry.head, checkedAt: entry.checkedAt, pullRequest };
+}
+
+/** The cached size of the folder at `path`, or null before it was measured. */
+export function readDiskUsage(path: string): DiskMeasure | null {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  if (!entry || entry.path !== path) return null;
+  const { bytes, measuredAt } = entry;
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || typeof measuredAt !== 'string') return null;
+  if (!Number.isFinite(Date.parse(measuredAt))) return null;
+  return { bytes, measuredAt };
+}
+
+function countOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/** The running build's tool detail its process last wrote, when the file belongs to the build with `claimId`. */
+export function readBuildDetail(root: string, claimId: string): BuildDetail | null {
+  const file = readJsonObject(workspaceBuildDetailFile(root));
+  if (!file || file.claimId !== claimId) return null;
+  const detail = file.detail;
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null;
+  const raw = detail as Record<string, unknown>;
+  if (typeof raw.updatedAt !== 'string') return null;
+  return {
+    step: (NATIVE_BUILD_STEPS as readonly unknown[]).includes(raw.step) ? (raw.step as BuildDetail['step']) : null,
+    unit: raw.unit === 'targets' || raw.unit === 'tasks' ? raw.unit : null,
+    done: countOrNull(raw.done),
+    total: countOrNull(raw.total),
+    line: typeof raw.line === 'string' ? raw.line : null,
+    updatedAt: raw.updatedAt,
+  };
+}

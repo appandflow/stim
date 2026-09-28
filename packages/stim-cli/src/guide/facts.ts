@@ -62,6 +62,27 @@ change, and for at most 60 s, so a file edit, creation or deletion that is
 not staged can take up to a minute to show. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
 each environment, and the same after each worktree with no environment.
 
+A worktree entry also carries pullRequest, the GitHub pull request of its
+branch and HEAD, once \`status --watch\` has looked it up:
+
+  pullRequest     { number, url, title, state, checks, reviewDecision,
+                  checkedAt }, null when GitHub has none for the branch and
+                  HEAD, absent when never looked up: gh missing or signed
+                  out, no GitHub remote, or status could not read the
+                  worktree's git. A later gh failure keeps the last answer.
+  state           "open", "draft", "merged" or "closed"
+  checks          { passing, failing, pending } counts of the head commit's
+                  check runs and commit statuses, or null when it has none
+  reviewDecision  "approved", "changes-requested", "review-required" or null
+  checkedAt       when Stim last asked GitHub
+
+\`status --watch\` asks GitHub off its refresh path, through the same gh api
+graphql lookup gc uses, one call per repository, for a worktree whose lookup
+is over 5 minutes old or whose branch or HEAD moved. It runs git in the
+repository, never in the worktree. It caches each answer
+under $STIM_HOME/pull-requests, which one-shot status only reads, and never
+warns when gh is unavailable.
+
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
 live. status reads only local records; it does not ask EAS whether the session
@@ -79,7 +100,34 @@ is still running.
                   Stim created the session, or null
 
 Plain status prints one "remote <platform>: EAS session <id> billable" line
-per session, with the preview URL.`,
+per session, with the preview URL.
+
+status's physicalDevices lists each physical phone or tablet the environment
+holds an unexpired lease on, from \`ios --device\`, \`android --device\` or
+\`device lock\`, in every slot. A run lease ends with its run, so a phone
+stays listed after the run only while \`device lock\` holds it. A
+simulator or emulator lease is not listed. The field is absent when the
+workspace leases no physical device.
+
+  physicalDevices  [{ platform, slot, id, name, model, owned, physical,
+                   connection, lease }]
+  id               the UDID or adb serial
+  name             the device's own name, else the name the lease recorded
+  model            devicectl's marketing name ("iPhone 12 Pro"), null when
+                   unread, or the Android model the lease recorded
+  owned            always false: Stim uses a physical device, never owns it
+  physical         always true
+  connection       "connected"     devicectl can reach the phone, or adb lists
+                                   the serial as device
+                   "disconnected"  the tool answered without it
+                   "unknown"       the tool could not be read in time
+                   status reuses one devicectl or adb listing for 30 s
+                   under \`status --watch\`
+  lease            { holder, kind, grantedAt, expiresAt }: holder is the
+                   workspace path, kind "declared" (device lock) or "run"
+
+Plain status prints "ios: Old iPhone (physical, iPhone 12 Pro) connected --
+leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary: 'every field of the start, ios, android, web and reload payloads, the error contract, the device rules',
@@ -547,7 +595,7 @@ RULES
     },
     gc: {
       summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
-      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
+      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings>]
           [--worktrees] [--idle <duration>] --json
 
   The report the text prints, as one payload. Show the user its sections
@@ -574,8 +622,9 @@ RULES
                   run. status is "done", "kept" (left alone, detail says
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, idleDevice, deviceRecord,
-                  workspaceOutputs, workspaceDirectory, project, buildLock,
-                  buildSlot, deviceLease, easSession, worktree, cache.
+                  workspaceOutputs, recording, workspaceDirectory, project,
+                  buildLock, buildSlot, deviceLease, easSession, worktree,
+                  cache.
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null
   inventory       null except on a dry run without --cache or --idle. Report
@@ -675,6 +724,12 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
+    recordings              { dir, projectRoot, bytes, deleteBytes,
+                              willDelete, withWorkspace, reason, detail }
+                              recordings/ of each workspace; deleteBytes is
+                              what --delete would remove; withWorkspace
+                              marks those of a gone workspace, removed with
+                              its workspace directory
     workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
                               reason, detail }  derived-data, gradle-build,
                               android-cas and cache-provider of each
@@ -694,6 +749,7 @@ RULES
     workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
                             recently-used
     workspaceLogs           unresolved | in-use | collector
+    recordings              unresolved | retained | recently-recorded
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
                             locked | in-use | status-unreadable | dirty |
@@ -728,6 +784,8 @@ RULES
               for "live" and "idle"
   warmStep    "refresh" or "copy", the step a warming workspace is in;
               absent in other phases
+  recording   { enabled }: whether stim-server may record the workspace's
+              device screens for replay, from recording.enabled
 
   A warm records warming under its own ownership claim, so a warm that was
   killed or failed reads as idle, never as warming. Plain \`stim status\`
@@ -803,8 +861,8 @@ RULES
                  pid, supervisorPid, cdpEndpoint and targetId are null when
                  false, and page and activity are absent
   url            the page stim web opened; page.url is the document the page
-                 loaded last (in-app routes that do not load a document are
-                 not tracked)
+                 loaded last, and page.route the URL an in-app route change
+                 (history API or fragment) moved it to since
   cdpEndpoint    http://127.0.0.1:<port>, the reserved loopback DevTools
                  endpoint of that Chrome. Attach Playwright MCP
                  (--cdp-endpoint) or agent-browser (--cdp <port>) to it; it
@@ -812,8 +870,10 @@ RULES
   targetId       the DevTools target id of the owned page, the one Stim
                  Desktop and the phone stream; other tabs are not the page
   profile        the Stim-owned user data directory under STIM_HOME
-  page           { url, state, error? }: the page's latest load, from the
-                 newest page-load marker in web.ndjson; null before the first
+  page           { url, state, error?, route? }: the page's latest load, from
+                 the newest page-load marker in web.ndjson; null before the
+                 first. route is absent until an in-app route change after
+                 that load
                  "loading"  the document was requested; no load event yet
                  "loaded"   the load event fired
                  "failed"   the document failed (connection refused, HTTP
@@ -825,7 +885,9 @@ RULES
                  chrome-devtools-mcp, or the executable's name); Stim's own
                  connections (the browser supervisor, stim-server, Stim
                  Desktop, the stim CLI) are not drivers. basis: cdp-client
-                 (one lsof of the DevTools port), page-log (the newest
+                 (one lsof of the DevTools port); agent-action (the newest
+                 agent input the browser supervisor recorded in web.ndjson)
+                 and page-log (the newest other
                  web.ndjson record) for recency
 
   Each booted simulator and detected emulator in environments (and in
@@ -844,13 +906,15 @@ RULES
                    the claim does not record them
   lastActivityAt   the newest of this device's app log records, this
                    platform's Metro bundle requests, the workspace's last
-                   Stim run and, while agent-device drives it, the agent's
-                   last recorded action, rounded down to the minute; absent
-                   when none is recorded
+                   Stim run, while agent-device drives it the agent's last
+                   recorded action, and now while a stim-server client views
+                   it, rounded down to the minute; absent when none is
+                   recorded
   recent           the newest time of each kind of evidence behind
                    lastActivityAt: agent-action, device-log, metro-bundle,
-                   workspace-use, supervisor-start or page-log, each
-                   rounded down to the minute
+                   workspace-use, supervisor-start, page-log or viewer, each
+                   rounded down to the minute. viewer is now while a
+                   stim-server client streams the device's frames
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
@@ -860,11 +924,18 @@ RULES
                    instrumentation      an on-device uiautomator, androidx.test or
                                         argent helper process (one adb shell ps
                                         per emulator)
-                   device-log, metro-bundle, workspace-use, agent-action
-                                        recency
+                   device-log, metro-bundle, workspace-use, agent-action,
+                   viewer               recency
 
   Plain \`stim status\` appends it to each device line: "driven by
   agent-device for 12m", "active", "idle 3h", or "activity unknown (...)".
+
+  An owned device that is not booted after its supervisor shut it down for
+  devices.idleShutdownMinutes carries idleShutdown, and plain \`status\`
+  appends "shut down after 30m idle at <at>" to its line; the next \`ios\` or
+  \`android\` run for that slot clears it (\`guide lifecycle budget\`):
+
+  idleShutdown  { at, idleMinutes }
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 
@@ -906,11 +977,27 @@ RULES
   When another process answers Metro on the port, metro carries
   heldBy { pid, cwd }, cwd null when its directory could not be read.
 
+  metro also carries bundle, from the bundle requests Stim's middleware
+  records in the workspace's metro log: an app's, and Stim's own prefetch
+  before a launch. It is absent when the log's tail holds none.
+
+  bundle     { bundling, platform?, startedAt?, percent?, last? }
+  bundling   true while a request is in flight: Metro runs, and the request
+             started under the current dev server less than 10 minutes ago
+  platform   with bundling, the in-flight request's "ios" or "android";
+  startedAt  when it started
+  percent    0-100, only when Metro reported progress for that request,
+             which it does for clients that accept multipart responses
+  last       { platform, status, durationMs, finishedAt }: the newest
+             finished request, status "ok" or "failed", durationMs from the
+             request to the end of the response
+
   Each entry of environments also carries build: null, or the ios or android
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
-            outcome, expectedMs, expectedPhaseMs, basis }
+            outcome, expectedMs, expectedPhaseMs, basis, missReason?,
+            detail? }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -931,6 +1018,21 @@ RULES
                    no history
   expectedPhaseMs  the median duration of this phase in those runs, or null
   basis            how many runs the medians come from (at most 10)
+  missReason       once the run knows its cache lookup missed, why, in the
+                   shape of lastBuilds missReason below
+  detail           on a running build whose tool printed a line Stim reads:
+                   { step, unit, done, total, line, updatedAt }
+    step           the tool's step: configure, compile, link, resources,
+                   script, dex, package or sign; null before one is known
+    unit           "targets" for xcodebuild, "tasks" for Gradle
+    done           xcodebuild: targets that started work; Gradle: tasks it
+                   reported so far
+    total          xcodebuild: targets in its dependency graph; Gradle: null,
+                   since its plain output gives no total
+    line           the latest compile, link or task line, paths shortened
+                   to file names, at most 160 characters
+    updatedAt      when the build last wrote it; the run writes it at most
+                   every 2 seconds
 
   Plain \`stim status\` prints the same as one line per workspace:
 
@@ -990,8 +1092,31 @@ RULES
   Only runs that record a last build are listed: a run that stops before
   looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.
 
-  There is no completion fraction: a compile's log volume depends on what
-  is already built, so it does not measure progress.
+  done and total are counts, not a completion fraction: a target or task
+  can take a second or ten minutes, and cached work finishes instantly.
+
+  Each environment also carries disk, and each owned simulator and owned
+  emulator in ios, android and slots carries disk, once \`status --watch\` has
+  measured them:
+
+  disk (environment)  { worktreeBytes, nodeModulesBytes, buildBytes,
+                      measuredAt }
+    worktreeBytes     the linked worktree, or else the checkout holding the
+                      workspace, node_modules included
+    nodeModulesBytes  node_modules at that root and at the workspace path;
+                      part of worktreeBytes
+    buildBytes        Stim's folder for the workspace: Xcode derived data,
+                      Gradle outputs and logs
+    measuredAt        the oldest of the three measurements; a figure not
+                      measured yet is null
+  disk (device)       { bytes, measuredAt }: the simulator's data folder
+                      under CoreSimulator/Devices, or the AVD's .avd folder
+
+  \`status --watch\` runs one du at a time off its refresh path, and measures
+  a folder at most every 5 minutes while its environment is live and every
+  hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
+  one-shot status only reads, so the fields appear once a watcher, such as
+  stim-server or Stim Desktop, has measured.
 
   memorySource says how a memory figure was obtained:
 

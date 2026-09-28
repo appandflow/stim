@@ -5,6 +5,7 @@ import type {
   DeviceAppProcess,
   DevicePlatform,
   EnvironmentState,
+  PhysicalDeviceState,
   SimState,
   StatusIssue,
   StatusPayload,
@@ -114,7 +115,12 @@ export function workspaceTitleAt(
 }
 
 export function isActive(env: EnvironmentState): boolean {
-  return env.live || env.build?.state === 'running' || (env.remoteDevices?.length ?? 0) > 0;
+  return (
+    env.live ||
+    env.build?.state === 'running' ||
+    (env.remoteDevices?.length ?? 0) > 0 ||
+    (env.physicalDevices?.length ?? 0) > 0
+  );
 }
 
 /** A workspace `stim worktree warm` is preparing, or has prepared and nothing has run in yet. */
@@ -141,6 +147,19 @@ export interface DeviceRef {
   app?: DeviceAppProcess;
   /** The Stim-owned Chrome's current page and, when its latest load failed, why. */
   page?: { url: string; error: string | null };
+  /** Bytes the device's data holds, when status measures it. */
+  diskBytes?: number | null;
+  /** When the workspace's lease on a physical device ends. */
+  leaseExpiresAt?: string;
+}
+
+export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physical'>): string {
+  return `${device.platform}\n${device.slot}${device.physical ? '\nphysical' : ''}`;
+}
+
+/** Whether stim-server serves the device's screen: an owned one, or a connected physical iPhone, view only. */
+export function streamsFrames(device: Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running'>): boolean {
+  return device.physical ? device.platform === 'ios' && device.running : device.owned;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
@@ -157,6 +176,7 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
     physical: false,
     activity: sim.activity,
     app: sim.app,
+    diskBytes: sim.disk?.bytes ?? null,
   };
 }
 
@@ -173,15 +193,32 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     physical: avd.physical,
     activity: avd.activity,
     app: avd.app,
+    diskBytes: avd.disk?.bytes ?? null,
+  };
+}
+
+function physicalDevice(device: PhysicalDeviceState): DeviceRef {
+  return {
+    platform: device.platform,
+    slot: device.slot,
+    id: device.id,
+    name: device.name ?? device.id,
+    model: device.model ?? (device.platform === 'ios' ? 'iOS device' : 'Android device'),
+    state: device.connection,
+    running: device.connection === 'connected',
+    owned: false,
+    physical: true,
+    leaseExpiresAt: device.lease.expiresAt,
   };
 }
 
 function webDevice(web: WebBrowserState): DeviceRef {
+  const url = web.page?.route ?? web.page?.url ?? web.url;
   return {
     platform: 'web',
     slot: 'default',
     id: web.targetId ?? null,
-    name: shortUrl(web.page?.url ?? web.url),
+    name: shortUrl(url),
     model: 'Web',
     state: web.running ? 'running' : 'closed',
     running: web.running,
@@ -189,7 +226,7 @@ function webDevice(web: WebBrowserState): DeviceRef {
     physical: false,
     activity: web.activity,
     page: {
-      url: web.page?.url ?? web.url,
+      url,
       error: web.running && web.page?.state === 'failed' ? (web.page.error ?? 'The page failed to load.') : null,
     },
   };
@@ -201,7 +238,7 @@ export function platformName(platform: DevicePlatform): string {
 
 export function deviceSource(device: DeviceRef): string {
   if (device.platform === 'web') return 'Chrome';
-  if (device.platform === 'ios') return 'iOS Simulator';
+  if (device.platform === 'ios') return device.physical ? 'iOS device' : 'iOS Simulator';
   return device.physical ? 'Android device' : 'Android Emulator';
 }
 
@@ -218,6 +255,7 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
   add('default', env.ios, env.android);
   if (env.web) out.push(webDevice(env.web));
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
+  for (const device of env.physicalDevices ?? []) out.push(physicalDevice(device));
   return out;
 }
 
@@ -231,19 +269,27 @@ export function livePlatforms(env: EnvironmentState): DevicePlatform[] {
   ];
 }
 
-export function runningBuild(env: EnvironmentState, device?: Pick<DeviceRef, 'platform' | 'slot'>): BuildReport | null {
+export function runningBuild(
+  env: EnvironmentState,
+  device?: Pick<DeviceRef, 'platform' | 'slot'> & { physical?: boolean },
+): BuildReport | null {
   const build = env.build;
-  if (!build || build.state !== 'running') return null;
+  if (!build || build.state !== 'running' || device?.physical) return null;
   if (device && (build.platform !== device.platform || build.slot !== device.slot)) return null;
   return build;
 }
 
-const deviceRank = (d: DeviceRef) => (d.running ? (d.activity?.state === 'driven' ? 0 : 1) : 2);
+const PLATFORM_RANK: Record<DevicePlatform, number> = { ios: 0, android: 1, web: 2 };
+const platformRank = (d: DeviceRef) => (d.physical ? 3 : PLATFORM_RANK[d.platform]);
 
-/** Driven devices first, then other running ones, then stopped ones; by slot name inside each group. */
+/**
+ * Running devices before stopped ones, then iOS, Android, Web and physical devices, then by slot name. The order
+ * never depends on activity or drivers, so a device keeps its place while tools attach and detach.
+ */
 export function orderDevices(devices: DeviceRef[]): DeviceRef[] {
   return [...devices].sort(
-    (a, b) => deviceRank(a) - deviceRank(b) || a.slot.localeCompare(b.slot) || a.platform.localeCompare(b.platform),
+    (a, b) =>
+      Number(b.running) - Number(a.running) || platformRank(a) - platformRank(b) || a.slot.localeCompare(b.slot),
   );
 }
 

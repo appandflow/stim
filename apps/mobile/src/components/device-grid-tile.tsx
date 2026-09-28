@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
-import { shortUrl } from '@/lib/workspaces';
+import { shortUrl, streamsFrames } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -37,7 +37,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const { theme } = useUnistyles();
   const { connection } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
-  const streams = device.owned && !device.physical;
+  const streams = streamsFrames(device);
   const { frame, error } = useFrameSnapshot(
     connection,
     item.env.path,
@@ -45,6 +45,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     device.slot,
     visible && streams,
     REFRESH_MS,
+    device.physical,
   );
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : device.platform === 'web' ? 1.6 : 0.46;
   useEffect(() => {
@@ -52,7 +53,13 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   }, [frame, aspect, tile.key, onAspect]);
   const where = [...new Set([item.title, item.project])].join(' \u00B7 ');
   const thumbnail = useRef<ViewInstance>(null);
-  const target = { macId: item.macId, workspace: item.env.path, platform: device.platform, slot: device.slot };
+  const target = {
+    macId: item.macId,
+    workspace: item.env.path,
+    platform: device.platform,
+    slot: device.slot,
+    physical: device.physical,
+  };
   const zoomedAway = useZoomedAway(zoomKey(target));
   return (
     <Card
@@ -83,7 +90,13 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           </Touch>
         ) : (
           <Text variant="caption" tone="tertiary" style={styles.placeholder}>
-            {streams ? (error ?? 'Waiting for a frame') : 'Frames are only served for devices Stim owns.'}
+            {streams
+              ? (error ?? 'Waiting for a frame')
+              : device.physical && device.platform !== 'ios'
+                ? 'Stim does not stream physical Android devices.'
+                : device.physical
+                  ? device.state
+                  : 'Frames are only served for devices Stim owns.'}
           </Text>
         )}
       </View>
@@ -94,8 +107,13 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
       ) : null}
       <View style={styles.meta}>
         <Text variant="callout" weight="semibold" numberOfLines={1}>
-          {device.model}
+          {device.physical ? device.name : device.model}
         </Text>
+        {device.physical && device.name !== device.model ? (
+          <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1}>
+            {device.model}
+          </Text>
+        ) : null}
         {device.page ? (
           <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
             {shortUrl(device.page.url)}
@@ -112,6 +130,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         </View>
         <View style={styles.badge}>
           <ActivityChip activity={device.activity} />
+          {device.physical ? <Pill>Physical</Pill> : null}
           {device.page?.error ? <Pill tone="warning">Page failed to load</Pill> : null}
         </View>
       </View>

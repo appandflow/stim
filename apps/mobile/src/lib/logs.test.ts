@@ -1,37 +1,40 @@
 import captured from '@/lib/fixtures/metro-errors.json';
 import {
   agentActions,
+  agentFilterOptions,
+  matchesAgentFilter,
   appendRecords,
   copyText,
   DEFAULT_FILTER,
   expoContext,
   groupRecords,
   initialFilter,
+  lastBundleMs,
   logFilter,
   needsContext,
+  presentChips,
   shareText,
+  showsEntry,
   stackLines,
+  stackPreview,
   viewEntry,
+  type LogChip,
 } from '@/lib/logs';
-import type { LogRecord } from '@/protocol/types';
+import type { EnvironmentState, LogRecord } from '@/protocol/types';
 
 describe('logFilter', () => {
-  it('sends no sources when every source is on, so errors-only keeps the CLI default scope', () => {
-    expect(logFilter('/w', { ...DEFAULT_FILTER, errors: true }, 100)).toEqual({
+  it('sends no sources when every source is on, so Errors keeps the CLI default scope', () => {
+    expect(logFilter('/w', { ...DEFAULT_FILTER, severity: 'errors' }, 100)).toEqual({
       workspace: '/w',
       tail: 100,
       errors: true,
     });
   });
 
-  it('sends the chosen sources, level, slot and search', () => {
+  it('asks for one device source for the platform chips, and warn and up for Warnings', () => {
     expect(
-      logFilter(
-        '/w',
-        { sources: ['client', 'metro'], level: 'warn', errors: false, grep: ' Error ', slot: 'ipad' },
-        100,
-      ),
-    ).toEqual({ workspace: '/w', tail: 100, sources: ['metro', 'client'], level: 'warn', grep: 'Error', slot: 'ipad' });
+      logFilter('/w', { chips: ['ios', 'metro', 'android'], severity: 'warnings', grep: ' Error ', slot: 'ipad' }, 100),
+    ).toEqual({ workspace: '/w', tail: 100, sources: ['metro', 'device'], level: 'warn', grep: 'Error', slot: 'ipad' });
   });
 });
 
@@ -51,6 +54,97 @@ describe('initialFilter', () => {
       tail: 100,
       errors: true,
     });
+  });
+});
+
+describe('showsEntry', () => {
+  const entry = (lead: Partial<LogRecord>) => ({
+    key: '1:0',
+    lead: { ts: 1, src: 'device', level: 'info', msg: 'x', ...lead } as LogRecord,
+    related: [],
+    context: [],
+  });
+
+  it('keeps only the chosen platforms of device records, which the server cannot filter', () => {
+    const state = { ...DEFAULT_FILTER, chips: ['ios', 'metro'] as LogChip[] };
+    expect(showsEntry(state, entry({ platform: 'ios' }))).toBe(true);
+    expect(showsEntry(state, entry({ platform: 'android' }))).toBe(false);
+    expect(showsEntry(state, entry({ src: 'metro', platform: 'android' }))).toBe(true);
+  });
+
+  it('under Warnings, leaves out the errors the server sends with warn and up', () => {
+    const state = { ...DEFAULT_FILTER, severity: 'warnings' as const };
+    expect(showsEntry(state, entry({ level: 'warn' }))).toBe(true);
+    expect(showsEntry(state, entry({ level: 'error' }))).toBe(false);
+  });
+});
+
+describe('presentChips', () => {
+  it('shows the sources the workspace runs, the ones its records came from, and the selected ones', () => {
+    const env = { metro: { port: 8081, running: true, pid: 1 }, slots: [{ slot: 'ipad', ios: {} }] };
+    expect(presentChips(env as unknown as EnvironmentState, new Set(['build']), ['agent'])).toEqual([
+      'metro',
+      'client',
+      'ios',
+      'build',
+      'agent',
+    ]);
+  });
+});
+
+describe('lastBundleMs', () => {
+  it('times the newest finished bundle by its start with the same request id', () => {
+    const metro = (ts: number, event: string, requestId: string): LogRecord => ({
+      ts,
+      src: 'metro',
+      level: 'debug',
+      msg: event,
+      event,
+      requestId,
+    });
+    expect(
+      lastBundleMs([
+        metro(100, 'bundle_response_started', 'a'),
+        metro(200, 'bundle_response_started', 'b'),
+        metro(2000, 'bundle_response_finished', 'b'),
+        metro(2500, 'bundle_response_finished', 'a'),
+      ]),
+    ).toBe(2400);
+    expect(lastBundleMs([metro(2000, 'bundle_response_finished', 'b')])).toBeNull();
+  });
+});
+
+describe('stackPreview', () => {
+  const root = '/Users/me/app';
+  it('bolds workspace frames, keeps one framework frame as its package, and counts the rest', () => {
+    expect(
+      stackPreview(
+        [
+          { fn: 'PairScreen', file: `${root}/src/screens/pair.tsx`, line: 88, column: 3 },
+          { fn: 'renderWithHooks', file: `${root}/node_modules/react-native/Libraries/Renderer/x.js`, line: 1 },
+          { fn: 'usePairing', file: `${root}/src/hooks/pairing.ts`, line: 41 },
+          { fn: 'beginWork', file: `${root}/node_modules/react-native/Libraries/Renderer/x.js`, line: 2 },
+          { fn: 'performWork', file: `${root}/node_modules/@babel/runtime/y.js`, line: 3 },
+        ],
+        root,
+        null,
+      ),
+    ).toEqual({
+      frames: [
+        { fn: 'PairScreen', where: 'src/screens/pair.tsx:88', app: true },
+        { fn: 'renderWithHooks', where: 'react-native', app: false },
+        { fn: 'usePairing', where: 'src/hooks/pairing.ts:41', app: true },
+      ],
+      hidden: 2,
+      hiddenFramework: true,
+    });
+  });
+
+  it('names a web frame by its script, not its bundle URL', () => {
+    const file = 'http://localhost:8094/index.ts.bundle?platform=web&dev=true';
+    expect(stackPreview([{ fn: 'ChannelList', file, line: 48213 }], root, null)?.frames).toEqual([
+      { fn: 'ChannelList', where: 'index.ts.bundle', app: false },
+    ]);
   });
 });
 
@@ -98,24 +192,45 @@ describe('agentActions', () => {
 
   it('keeps only the device own actions, newest first, up to five', () => {
     const sim = '2FA9C340-A259-4420-A617-316DC159FF84';
-    const first = agentActions([], [action(1, sim), action(2, 'emulator-5554'), action(3, sim)], sim);
+    const first = agentActions([], [action(1, sim), action(2, 'emulator-5554'), action(3, sim)], sim, 5);
     expect(first.map((a) => a.record.ts)).toEqual([3, 1]);
     const next = agentActions(
       first,
       [4, 5, 6, 7].map((ts) => action(ts, sim)),
       sim,
+      5,
     );
     expect(next.map((a) => a.record.ts)).toEqual([7, 6, 5, 4, 3]);
   });
 
   it('keeps two identical actions in the same millisecond as two rows with distinct, stable keys', () => {
     const sim = 'sim';
-    const first = agentActions([], [action(1, sim), action(1, sim)], sim);
+    const first = agentActions([], [action(1, sim), action(1, sim)], sim, 5);
     expect(first.map((a) => a.record)).toEqual([action(1, sim), action(1, sim)]);
     expect(new Set(first.map((a) => a.key)).size).toBe(2);
-    const next = agentActions(first, [action(1, sim)], sim);
+    const next = agentActions(first, [action(1, sim)], sim, 5);
     expect(next.slice(1)).toEqual(first);
     expect(new Set(next.map((a) => a.key)).size).toBe(3);
+  });
+});
+
+describe('agentFilterOptions', () => {
+  it('offers failed actions when any failed, then the most used commands, each with its count', () => {
+    const actions = [
+      ['tap', 'info'],
+      ['tap', 'info'],
+      ['find', 'error'],
+      ['snapshot', 'info'],
+      ['tap', 'info'],
+    ].map(([command, level], key) => ({
+      key,
+      record: { ts: key, src: 'agent' as const, level: level as LogRecord['level'], msg: command!, command },
+    }));
+    const options = agentFilterOptions(actions);
+    expect(options.map((o) => `${o.label} ${o.count}`)).toEqual(['All 5', 'Failed 1', 'tap 3', 'find 1']);
+    expect(actions.filter((a) => matchesAgentFilter(a, options[1]!.filter)).map((a) => a.record.command)).toEqual([
+      'find',
+    ]);
   });
 });
 

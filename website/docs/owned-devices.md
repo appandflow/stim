@@ -47,17 +47,39 @@ for the run, then releases the lease. Use `stim device lock` to hold it across
 runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
-While a workspace holds an Android phone's lease, `stim-server` can stream the
-phone's screen to paired clients that ask for the physical device, and a client
-paired with control can tap, swipe, type and press Home, Back, Apps and Lock on
-it. The phone app does not ask for it yet. The stream runs over
+While a workspace holds the lease, `stim status` lists the device under that
+workspace with its name, model, whether the Mac reaches it, and when the lease
+ends, and Stim Desktop and the Stim phone app show it as a tile with a
+Physical badge. To keep a phone on screen while you work, lock it:
+
+```bash
+stim device lock ios --for 30m
+stim status
+```
+
+Or ask an agent:
+
+```text
+Lease my connected iPhone to this workspace with stim device lock for 30 minutes, then run stim status and tell me whether it shows as connected.
+```
+
+A leased iPhone cabled over USB also streams its screen to the phone app
+through `stim-server`, view only: Stim sends a physical iPhone no taps, text
+or buttons. Over Wi-Fi it shows no screen. The iPhone must be unlocked and
+trust the Mac. macOS
+counts the iPhone's screen as a camera, so the first stream asks for Camera
+access for Stim, the app that runs `stim-server`.
+
+While a workspace holds an Android phone's lease, the phone app also shows the
+phone's screen live through `stim-server`, and a phone paired with control can
+tap, swipe, type and press Home, Back, Apps and Lock on it. The stream runs over
 adb with the [scrcpy](https://github.com/Genymobile/scrcpy) server, which
 `stim-server` pushes to `/data/local/tmp` and deletes when the stream stops. It
 installs nothing, changes no setting, and cannot rotate the phone. Control ends
 when the workspace releases the lease or it expires. Some Android 15 and 16
 phones send no picture until their screen changes. With the screen off, you see
 what the phone's display shows, such as an always-on display, and watching never
-wakes it. Physical iPhones are not streamed yet.
+wakes it.
 
 Each workspace keeps its owned-device assignments for later runs.
 After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
@@ -274,6 +296,43 @@ Stop an unneeded device with `stim stop` only in a workspace you own, then rerun
 `stim android` with the same build options. Read
 `stim guide errors STIM_NO_DEVICE` for recovery details.
 
+## Idle shutdown
+
+A stalled agent can leave its simulator or emulator booted for hours. Set
+`devices.idleShutdownMinutes` to have the workspace's dev server supervisor
+shut its owned devices down after that many idle minutes. It is off by default
+(`0`) and can be set for the machine or for one project:
+
+```bash
+stim settings set devices.idleShutdownMinutes 30 --scope machine
+```
+
+A device counts as idle when it is booted, no tool drives it, no `stim device
+lock` or agent-device session holds it, no build runs in the workspace, and it
+has shown no activity (app logs, bundle requests, Stim commands, agent actions)
+for that long. A phone app viewing the device through `stim-server` keeps it
+up. Stim Desktop's own simulator view does not.
+
+The device is shut down, never deleted, through the same path as `stim stop`.
+Physical devices are never touched. `stim status` shows
+`shut down after 30m idle` on the device, and the next `stim ios` or
+`stim android` boots it again.
+
+The supervisor checks once a minute and reads the setting when it starts, so
+restart the dev server with `stim stop` and `stim start` after changing it.
+Nothing checks after `stim stop` or for release runs, which have no
+supervisor. When `metro.idleStopMinutes` is shorter, the dev server's idle stop
+shuts down the devices idle that long first.
+
+Agent prompt:
+
+```text
+Turn on Stim's idle device shutdown for this project at 30 minutes with
+`stim settings set devices.idleShutdownMinutes 30 --scope workspace`, restart
+the dev server with `stim stop` and `stim start`, and confirm with
+`stim settings get devices.idleShutdownMinutes`.
+```
+
 ## Remote devices
 
 Stim supports two optional remote backends:
@@ -319,6 +378,43 @@ ends the session and the tunnel.
 
 An install or launch failure leaves the session running and billed. The remedy
 names the session: rerun the command to reuse it, or run `stim stop` to end it.
+
+## Replay device screens
+
+`stim-server` records owned simulators, emulators and the Stim-owned Chrome
+page while an agent or automation tool drives them, or while the phone app
+watches them. It keeps the last 15 minutes of footage per device, so you can
+see what an agent did while you were away.
+
+In the phone app, the device viewer shows a replay bar under the screen:
+
+- **Scrub.** Drag to show the frame at that time.
+- **Markers.** Tap one to land just before an agent action or an app error.
+- **Play.** Play at 1x or 2x, then tap **Live** to return.
+
+Control is off while you look at the past. Time when nothing was recorded, such
+as after `stim stop`, shows as a gap, and a stopped device's last footage stays
+replayable.
+
+Recordings stay on your Mac and are served only to paired phones. Turn them off
+for the whole Mac in the phone's Settings, or on the Mac, where a repository or
+workspace can also be set on its own:
+
+```bash
+stim settings set recording.enabled false --scope machine
+```
+
+See [Device recordings](./settings.md#device-recordings) for scopes and
+`STIM_RECORDING`, and
+[Inspect and clean caches](./build-caches.md#device-recordings) for cleanup.
+
+Try it with an agent:
+
+```text
+Run this app with stim ios, then drive it with agent-device for a minute:
+open a few screens and fill a form. Tell me when you are done so I can scrub
+back through it in the Stim phone app.
+```
 
 ## Cleanup behavior
 

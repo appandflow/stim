@@ -22,8 +22,9 @@ import { useMacs } from '@/hooks/mac-connection';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { NOTIFY_CATEGORIES } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
+import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
-import { pairingScope } from '@/lib/connection';
+import { pairingScope, type StimConnection } from '@/lib/connection';
 import {
   APPEARANCE_OPTIONS,
   HOME_FOOTER,
@@ -36,6 +37,7 @@ import {
   quietHoursValue,
   STUCK_MINUTES_OPTIONS,
   READ_ONLY_FOOTER,
+  REPLAY_FOOTER,
   VIDEO_QUALITY_FOOTER,
   VIDEO_QUALITY_OPTIONS,
   type Option,
@@ -194,6 +196,15 @@ export function Settings() {
             })}
           </Section>
         ) : null}
+        {connections.some(({ state }) => pairingScope(state) === 'control') ? (
+          <Section colors={colors} title="Replay" footer={REPLAY_FOOTER}>
+            {connections
+              .filter(({ state }) => pairingScope(state) === 'control')
+              .map(({ mac, connection }) => (
+                <RecordingRow key={mac.id} colors={colors} name={mac.name} connection={connection} />
+              ))}
+          </Section>
+        ) : null}
         <Section colors={colors} title="More">
           <Row colors={colors} title="About Stim" icon={ICONS.about} onPress={() => router.push('/about')} />
         </Section>
@@ -204,6 +215,38 @@ export function Settings() {
 
 const FULL = 20;
 const JOIN = 4;
+
+function RecordingRow({
+  colors,
+  name,
+  connection,
+}: {
+  colors: Theme['colors'];
+  name: string;
+  connection: StimConnection | null;
+}) {
+  const setting = useRecordingSetting(connection);
+  if (setting.enabled === null) return null;
+  const locked = setting.fromEnvironment || setting.saving;
+  return (
+    <Row
+      colors={colors}
+      title={`Record on ${name}`}
+      icon={ICONS.video}
+      value={setting.fromEnvironment ? 'Set by STIM_RECORDING on the Mac' : (setting.error ?? undefined)}
+      valueColor={setting.error ? colors.error : undefined}
+      onPress={() => !locked && setting.set(!setting.enabled)}
+      trailing={
+        <Switch
+          value={setting.enabled}
+          enabled={!locked}
+          onCheckedChange={setting.set}
+          colors={{ checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary }}
+        />
+      }
+    />
+  );
+}
 
 function Section({
   colors,

@@ -91,7 +91,8 @@ A build that misses the cache says why before it compiles:
 
 Stim compares the build's fingerprint sources with the last build of the same
 platform in this workspace, or else with the newest build of the same project
-in another worktree. `stim status --json` keeps the reason under
+in another worktree. `stim status --json` reports the reason as
+`build.missReason` while the build runs and keeps it under
 `lastBuilds.<platform>.missReason`, and Stim Desktop and the phone app show it
 on the workspace's build row. `builds.<platform>` keeps the same facts for the
 last 10 runs, so you can see which run turned a hit into a miss. `stim ios --plan` and `stim android --plan` give
@@ -207,6 +208,31 @@ The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React
 Native 0.86, Swift does not use that cache because explicit modules are off,
 so the first iOS build after a native change recompiles Swift.
+
+### Device recordings
+
+`stim-server` records owned simulators, emulators and the Stim-owned Chrome
+page while an agent or automation tool drives them, or while the phone app
+watches them. The phone app uses these recordings to scrub back through what
+happened. They live in `recordings/` in each workspace directory. `stim-server`
+keeps the last 15 minutes of footage per device and at most 1 GiB across the
+Stim home, deleting the oldest footage first. Idle time and time after
+`stim stop` do not age footage out, so a stopped workspace stays replayable.
+
+<StimTabs
+code={`stim gc
+stim gc --delete --cache recordings
+stim gc --delete --older-than 7`}
+/>
+
+`gc` lists each workspace's recordings and their size. Plain `gc --delete`
+deletes only the recordings of dead or orphaned workspaces, with their
+workspace directory, and keeps them when it cannot prove the project is gone.
+`--cache recordings` deletes every workspace's recordings and nothing else, and
+`--cache all` includes them. `--older-than <days>` deletes footage recorded
+before then. `stim worktree remove` deletes the workspace's recordings with its
+directory. To stop recording altogether, see
+[Device recordings](./settings.md#device-recordings).
 
 Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to an absolute path to place the
 shared caches on a different volume. The same values can live in the machine config under
