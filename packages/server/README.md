@@ -388,6 +388,18 @@ Events are `{ "event", "subscription", ... }`.
   sample), `memoryUsedBytes`, `memoryPressure` (0 normal, 1 warning, 2
   critical) and `diskFreeBytes` of the startup volume; a field is null when it
   cannot be read. `sinceMs` returns only the samples taken after it.
+- `machine.details` returns `{ "gc", "stats", "measuredAt" }`: the payloads of
+  `stim gc --json` and `stim stats --json`, both run in the home directory, so
+  a phone can show what Stim Desktop's Machine page shows about disk: every
+  simulator, AVD, iOS runtime and system image, shared caches, recordings,
+  workspace build outputs and logs, and what `stim gc --delete` would free. The
+  `gc` run is always the dry run with no other flag; the server never deletes
+  anything for this request. A part is null when its command failed, and
+  `gcError` or `statsError` says why. It needs only `read`. The server keeps
+  one result for 60 seconds, shared by every connection: a request while the
+  commands run waits for them, and `measuredAt` says when they started. The
+  commands fail after 150 seconds. Servers that predate it answer
+  `unknown-method`.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
   [push notifications](#push-notifications) the phone wants (`started`,

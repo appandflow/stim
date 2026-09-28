@@ -35,6 +35,7 @@ export const METHODS = [
   'build.plan',
   'machine.get',
   'machine.history',
+  'machine.details',
   'unsubscribe',
   'action',
   'control.begin',
@@ -514,6 +515,19 @@ export interface MachineHistory {
 }
 
 /**
+ * The Mac's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
+ * the home directory. A part is null when its command failed, and its `gcError` or `statsError` says why.
+ * `measuredAt` is when the commands started. The server keeps one result for 60 seconds, shared by every connection.
+ */
+export interface MachineDetails {
+  gc: Record<string, unknown> | null;
+  gcError?: string;
+  stats: Record<string, unknown> | null;
+  statsError?: string;
+  measuredAt: string;
+}
+
+/**
  * What stim-server can push, named like the phone's notification settings: work `started` (a workspace began
  * warming or an agent first drove its device), an agent that looks `stuck`, one that is `looping` on the same
  * failure, work `finished` (the agent stopped after a green build, or the workspace's pull request became ready for
@@ -615,6 +629,7 @@ export interface Methods {
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };
   'machine.get': { params?: Record<string, never>; result: MachineUsage };
   'machine.history': { params?: MachineHistoryParams; result: MachineHistory };
+  'machine.details': { params?: Record<string, never>; result: MachineDetails };
   unsubscribe: { params: UnsubscribeParams; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
   'control.begin': { params: ControlBeginParams; result: ControlBeginResult };
@@ -1070,6 +1085,18 @@ export function protocolJsonSchema(): JsonSchema {
           suppressed: { enum: [...NOTIFICATION_SUPPRESSIONS] },
         },
       },
+      MachineDetails: {
+        type: 'object',
+        required: ['gc', 'stats', 'measuredAt'],
+        additionalProperties: false,
+        properties: {
+          gc: { type: ['object', 'null'], description: 'The payload of the `stim gc --json` dry run.' },
+          gcError: { type: 'string' },
+          stats: { type: ['object', 'null'], description: 'The payload of `stim stats --json`.' },
+          statsError: { type: 'string' },
+          measuredAt: { type: 'string' },
+        },
+      },
       MachineHistory: {
         type: 'object',
         required: ['intervalMs', 'samples'],
@@ -1197,6 +1224,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { sinceMs: { type: 'number' } },
           }),
+          request('machine.details'),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
           optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
           request('unsubscribe', {
@@ -1282,6 +1310,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
                   { $ref: '#/$defs/MachineHistory' },
+                  { $ref: '#/$defs/MachineDetails' },
                   {
                     type: 'object',
                     required: ['log', 'cursor', 'notifications'],

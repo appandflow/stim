@@ -576,6 +576,18 @@ export interface MachineHistory {
   samples: UsageSample[];
 }
 
+/**
+ * The `stim gc --json` dry run and `stim stats --json` payloads, each null when its command failed, with the reason
+ * in `gcError` or `statsError`. The server shares one result for 60 seconds; `measuredAt` is when it ran.
+ */
+export interface MachineDetails {
+  gc: Record<string, unknown> | null;
+  gcError?: string;
+  stats: Record<string, unknown> | null;
+  statsError?: string;
+  measuredAt: string;
+}
+
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
 /** What stim-server can push, the categories of `@/lib/oversight`. */
@@ -659,6 +671,8 @@ export interface Methods {
   'build.plan': { params: BuildPlanParams; result: BuildPlan };
   'machine.get': { params: Record<string, never>; result: MachineUsage };
   'machine.history': { params: { sinceMs?: number }; result: MachineHistory };
+  /** Absent from servers that predate it, which answer `unknown-method`. */
+  'machine.details': { params: Record<string, never>; result: MachineDetails };
   unsubscribe: { params: { subscription: string }; result: Record<string, never> };
   action: { params: ActionParams; result: ActionResult };
   'control.begin': { params: ControlBeginParams; result: ControlBeginResult };
