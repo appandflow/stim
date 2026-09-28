@@ -209,11 +209,13 @@ test('the standalone Expo build cache provider keys iOS Debug simulator builds b
     const other = hostSimulatorArch() === 'arm64' ? 'x86_64' : 'arm64';
     await upload('host', { configuration: 'Debug' });
     await upload('release', { configuration: 'Release' });
+    await upload('generic', { device: 'generic' });
 
     expect(await identity({ arch: hostSimulatorArch() })).toBe('host');
     expect(await identity({})).toBe('host');
     expect(await identity({ arch: other })).toBeNull();
     expect(await identity({ configuration: 'Release' })).toBe('release');
+    expect(await identity({ device: 'generic' })).toBe('generic');
     expect(resolveBuild('ios', buildCacheKey('ios', 'fp', { isSimulator: true, arch: hostSimulatorArch() }))).toBe(
       await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'fp', runOptions: {} }),
     );
