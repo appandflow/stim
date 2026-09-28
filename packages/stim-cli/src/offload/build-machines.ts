@@ -162,6 +162,33 @@ function updateCredentials(change: (credentials: BuildMachineCredential[]) => Bu
   );
 }
 
+/**
+ * Where this Mac stands with one `offload.machines` entry, as `stim doctor --json` reports it under
+ * `buildMachines`. `dnsName` is the peer's MagicDNS name when the name resolved; `deviceId` is the id the worker
+ * lists this Mac under once it asked.
+ */
+interface BuildMachineReport {
+  machine: string;
+  state:
+    | 'invalid'
+    | 'tailscale-off'
+    | 'not-on-tailnet'
+    | 'node-changed'
+    | 'not-asked'
+    | 'pending'
+    | 'approved'
+    | 'revoked'
+    | 'unreachable';
+  dnsName?: string;
+  deviceId?: string;
+  requestedAt?: string;
+}
+
+export interface BuildMachinesInspection {
+  findings: Finding[];
+  machines: BuildMachineReport[];
+}
+
 function note(title: string, detail: string, fix: string | null = null): Finding {
   return { code: 'build-machine', level: 'note', title, detail, fix };
 }
@@ -169,17 +196,22 @@ function note(title: string, detail: string, fix: string | null = null): Finding
 const approval = (entry: string, deviceId: string) =>
   `A person on ${entry} approves it with \`stim-server devices grant ${deviceId} --build\`.`;
 
+type Inspected = { report: BuildMachineReport; finding: Finding | null };
+
 async function requestAccess(
   entry: string,
   peer: TailnetPeer,
   port: number,
   deviceName: string,
   io: BuildMachineIo,
-): Promise<Finding> {
+): Promise<Inspected> {
   const reply = await io.hello(endpoint(peer, port), { request: 'build', deviceName });
   if (!('result' in reply) || !reply.result.approval || !reply.result.deviceToken) {
     const reason = 'failed' in reply ? reply.failed : 'error' in reply ? reply.error.message : 'it granted no request';
-    return note(`Could not ask ${entry} for build access`, reason);
+    return {
+      report: { machine: entry, state: 'unreachable', dnsName: peer.dnsName },
+      finding: note(`Could not ask ${entry} for build access`, reason),
+    };
   }
   const credential: BuildMachineCredential = {
     machine: entry,
@@ -191,34 +223,129 @@ async function requestAccess(
     requestedAt: new Date().toISOString(),
   };
   updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), credential]);
-  return note(
-    `Asked ${entry} for build access`,
-    `The request lapses at ${reply.result.approval.expiresAt}.`,
-    approval(entry, credential.deviceId),
-  );
+  return {
+    report: {
+      machine: entry,
+      state: 'pending',
+      dnsName: peer.dnsName,
+      deviceId: credential.deviceId,
+      requestedAt: credential.requestedAt,
+    },
+    finding: note(
+      `Asked ${entry} for build access`,
+      `The request lapses at ${reply.result.approval.expiresAt}.`,
+      approval(entry, credential.deviceId),
+    ),
+  };
+}
+
+async function inspectMachine(
+  entry: string,
+  status: Record<string, unknown>,
+  deviceName: string,
+  fix: boolean,
+  io: BuildMachineIo,
+): Promise<Inspected> {
+  const parsed = parseMachine(entry);
+  if (!parsed) {
+    return {
+      report: { machine: entry, state: 'invalid' },
+      finding: note(`Build machine ${entry} is not a tailnet name`, 'Expected `name` or `name:port`.'),
+    };
+  }
+  const peer = findPeer(status, parsed.name);
+  if (peer === 'missing' || peer === 'ambiguous') {
+    const detail = peer === 'missing' ? 'No peer on this tailnet has that name.' : 'Several peers match that name.';
+    return {
+      report: { machine: entry, state: 'not-on-tailnet' },
+      finding: note(`Build machine ${entry} is not on this tailnet`, detail),
+    };
+  }
+  const credential = readBuildMachines().find((each) => each.machine === entry);
+  const known = { machine: entry, dnsName: peer.dnsName };
+  if (credential && credential.nodeId !== peer.nodeId) {
+    return {
+      report: { ...known, state: 'node-changed', deviceId: credential.deviceId, requestedAt: credential.requestedAt },
+      finding: note(
+        `Build machine ${entry} is a different tailnet node`,
+        `This Mac paired with node ${credential.nodeId}, but ${peer.dnsName} is now node ${peer.nodeId}. Stim does not connect to it.`,
+        `If that Mac was replaced, remove ${entry} from offload.machines, run \`stim doctor --fix\` to forget the old pairing, then add it back and run \`stim doctor --fix\` again.`,
+      ),
+    };
+  }
+  if (!credential) {
+    if (fix) return requestAccess(entry, peer, parsed.port, deviceName, io);
+    return {
+      report: { ...known, state: 'not-asked' },
+      finding: note(
+        `Build machine ${entry} has not approved this Mac`,
+        'This Mac has not asked it for build access.',
+        'Run `stim doctor --fix` to ask.',
+      ),
+    };
+  }
+  const paired = { ...known, deviceId: credential.deviceId, requestedAt: credential.requestedAt };
+  const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
+  if ('result' in reply && reply.result.capabilities.includes('build')) {
+    if (credential.state !== 'approved') {
+      updateCredentials((credentials) =>
+        credentials.map((each) => (each.machine === entry ? { ...each, state: 'approved' } : each)),
+      );
+    }
+    return { report: { ...paired, state: 'approved' }, finding: null };
+  }
+  if ('error' in reply && reply.error.code === 'approval-pending') {
+    return {
+      report: { ...paired, state: 'pending' },
+      finding: note(
+        `Build machine ${entry} has not approved this Mac yet`,
+        `Requested at ${credential.requestedAt}.`,
+        approval(entry, credential.deviceId),
+      ),
+    };
+  }
+  if ('error' in reply && reply.error.code === 'unauthorized') {
+    if (fix) return requestAccess(entry, peer, parsed.port, deviceName, io);
+    return {
+      report: { ...paired, state: 'revoked' },
+      finding: note(
+        `Build machine ${entry} no longer accepts this Mac`,
+        `${reply.error.message} It was revoked, or the request lapsed before approval.`,
+        'Run `stim doctor --fix` to ask again.',
+      ),
+    };
+  }
+  const reason = 'failed' in reply ? reply.failed : 'error' in reply ? reply.error.message : 'unexpected reply';
+  return {
+    report: { ...paired, state: 'unreachable' },
+    finding: note(`Could not reach build machine ${entry}`, reason),
+  };
 }
 
 /**
- * Doctor findings for each `offload.machines` entry. The worker's node is pinned when access is requested; a
- * later connection goes only to the current MagicDNS name of that same node, checked before the token is sent.
- * With `fix`, requests access from a named machine this Mac holds no pairing for, requests again when the
+ * Doctor findings and a report for each `offload.machines` entry. The worker's node is pinned when access is
+ * requested; a later connection goes only to the current MagicDNS name of that same node, checked before the token
+ * is sent. With `fix`, requests access from a named machine this Mac holds no pairing for, requests again when the
  * pinned node forgot this Mac, and forgets pairings of machines no longer named.
  */
 export async function inspectBuildMachines(
   { fix }: { fix: boolean },
   io: BuildMachineIo = realIo,
   entries: string[] = configuredMachines(),
-): Promise<Finding[]> {
+): Promise<BuildMachinesInspection> {
   const unnamed = (each: BuildMachineCredential) => !entries.includes(each.machine);
   if (fix && readBuildMachines().some(unnamed)) {
     updateCredentials((credentials) => credentials.filter((each) => !unnamed(each)));
   }
-  if (entries.length === 0) return [];
+  if (entries.length === 0) return { findings: [], machines: [] };
   const status = io.status();
   if (!isJsonObject(status)) {
-    return [
-      note('Build machines are unreachable', 'offload.machines names build machines, but Tailscale is not running.'),
-    ];
+    return {
+      findings: [
+        note('Build machines are unreachable', 'offload.machines names build machines, but Tailscale is not running.'),
+      ],
+      machines: entries.map((machine) => ({ machine, state: 'tailscale-off' })),
+    };
   }
   const self = isJsonObject(status.Self) ? status.Self : {};
   const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
@@ -227,75 +354,11 @@ export async function inspectBuildMachines(
       .replace(/[\p{Cc}\p{Cf}]/gu, '')
       .trim()
       .slice(0, 64) || 'Mac';
-  const findings: Finding[] = [];
+  const inspection: BuildMachinesInspection = { findings: [], machines: [] };
   for (const entry of entries) {
-    const parsed = parseMachine(entry);
-    if (!parsed) {
-      findings.push(note(`Build machine ${entry} is not a tailnet name`, 'Expected `name` or `name:port`.'));
-      continue;
-    }
-    const peer = findPeer(status, parsed.name);
-    if (peer === 'missing' || peer === 'ambiguous') {
-      const detail = peer === 'missing' ? 'No peer on this tailnet has that name.' : 'Several peers match that name.';
-      findings.push(note(`Build machine ${entry} is not on this tailnet`, detail));
-      continue;
-    }
-    const credential = readBuildMachines().find((each) => each.machine === entry);
-    if (credential && credential.nodeId !== peer.nodeId) {
-      findings.push(
-        note(
-          `Build machine ${entry} is a different tailnet node`,
-          `This Mac paired with node ${credential.nodeId}, but ${peer.dnsName} is now node ${peer.nodeId}. Stim does not connect to it.`,
-          `If that Mac was replaced, remove ${entry} from offload.machines, run \`stim doctor --fix\` to forget the old pairing, then add it back and run \`stim doctor --fix\` again.`,
-        ),
-      );
-      continue;
-    }
-    if (!credential) {
-      findings.push(
-        fix
-          ? await requestAccess(entry, peer, parsed.port, deviceName, io)
-          : note(
-              `Build machine ${entry} has not approved this Mac`,
-              'This Mac has not asked it for build access.',
-              'Run `stim doctor --fix` to ask.',
-            ),
-      );
-      continue;
-    }
-    const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
-    if ('result' in reply && reply.result.capabilities.includes('build')) {
-      if (credential.state !== 'approved') {
-        updateCredentials((credentials) =>
-          credentials.map((each) => (each.machine === entry ? { ...each, state: 'approved' } : each)),
-        );
-      }
-      continue;
-    }
-    if ('error' in reply && reply.error.code === 'approval-pending') {
-      findings.push(
-        note(
-          `Build machine ${entry} has not approved this Mac yet`,
-          `Requested at ${credential.requestedAt}.`,
-          approval(entry, credential.deviceId),
-        ),
-      );
-      continue;
-    }
-    if ('error' in reply && reply.error.code === 'unauthorized') {
-      findings.push(
-        fix
-          ? await requestAccess(entry, peer, parsed.port, deviceName, io)
-          : note(
-              `Build machine ${entry} no longer accepts this Mac`,
-              `${reply.error.message} It was revoked, or the request lapsed before approval.`,
-              'Run `stim doctor --fix` to ask again.',
-            ),
-      );
-      continue;
-    }
-    const reason = 'failed' in reply ? reply.failed : 'error' in reply ? reply.error.message : 'unexpected reply';
-    findings.push(note(`Could not reach build machine ${entry}`, reason));
+    const { report, finding } = await inspectMachine(entry, status, deviceName, fix, io);
+    inspection.machines.push(report);
+    if (finding) inspection.findings.push(finding);
   }
-  return findings;
+  return inspection;
 }

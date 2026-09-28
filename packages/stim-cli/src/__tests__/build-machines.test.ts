@@ -70,7 +70,7 @@ describe('findPeer', () => {
 describe('inspectBuildMachines', () => {
   it('requests access with --fix and pins the node it asked', async () => {
     const { io, calls } = fakeIo('nMini', [pending]);
-    const findings = await inspectBuildMachines({ fix: true }, io, ['mini']);
+    const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([
       {
         endpoint: { url: 'wss://100.64.0.7:7443', servername: 'mini.tail1.ts.net', host: 'mini.tail1.ts.net:7443' },
@@ -78,18 +78,25 @@ describe('inspectBuildMachines', () => {
       },
     ]);
     expect(findings[0]!.fix).toContain('stim-server devices grant ab12 --build');
+    expect(machines).toEqual([
+      expect.objectContaining({ machine: 'mini', state: 'pending', dnsName: 'mini.tail1.ts.net', deviceId: 'ab12' }),
+    ]);
     expect(readBuildMachines()).toEqual([
       expect.objectContaining({ machine: 'mini', nodeId: 'nMini', deviceToken: 'secret', state: 'pending' }),
     ]);
-    expect(await inspectBuildMachines({ fix: false }, fakeIo('nMini', []).io, [])).toEqual([]);
+    expect(await inspectBuildMachines({ fix: false }, fakeIo('nMini', []).io, [])).toEqual({
+      findings: [],
+      machines: [],
+    });
   });
 
   it('never sends the token to a node other than the pinned one', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
     const { io, calls } = fakeIo('nImpostor', []);
-    const findings = await inspectBuildMachines({ fix: true }, io, ['mini']);
+    const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([]);
     expect(findings).toEqual([expect.objectContaining({ title: 'Build machine mini is a different tailnet node' })]);
+    expect(machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'node-changed' })]);
     expect(readBuildMachines()[0]!.nodeId).toBe('nMini');
   });
 
@@ -97,12 +104,31 @@ describe('inspectBuildMachines', () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
     const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
     const { io, calls } = fakeIo('nMini', [{ error: { code: 'approval-pending', message: 'wait' } }, approved]);
-    expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual([
-      expect.objectContaining({ title: 'Build machine mini has not approved this Mac yet' }),
-    ]);
-    expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual([]);
+    expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
+      findings: [expect.objectContaining({ title: 'Build machine mini has not approved this Mac yet' })],
+      machines: [expect.objectContaining({ state: 'pending', deviceId: 'ab12' })],
+    });
+    expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
+      findings: [],
+      machines: [expect.objectContaining({ machine: 'mini', state: 'approved', deviceId: 'ab12' })],
+    });
     expect(calls.map((call) => call.auth)).toEqual([{ deviceToken: 'secret' }, { deviceToken: 'secret' }]);
     expect(readBuildMachines()[0]!.state).toBe('approved');
+  });
+
+  it('reports a revoked machine and one never asked without asking either', async () => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    const { io, calls } = fakeIo('nMini', [{ error: { code: 'unauthorized', message: 'Unknown device.' } }]);
+    const { machines } = await inspectBuildMachines({ fix: false }, io, ['mini', 'minimal', 'nope', 'bad;name']);
+    expect(machines).toEqual([
+      expect.objectContaining({ machine: 'mini', state: 'revoked', deviceId: 'ab12' }),
+      { machine: 'minimal', state: 'not-asked', dnsName: 'minimal.tail1.ts.net' },
+      { machine: 'nope', state: 'not-on-tailnet' },
+      { machine: 'bad;name', state: 'invalid' },
+    ]);
+    expect(calls.map((call) => call.auth)).toEqual([{ deviceToken: 'secret' }]);
+    const off = await inspectBuildMachines({ fix: false }, { status: () => null, hello: io.hello }, ['mini']);
+    expect(off.machines).toEqual([{ machine: 'mini', state: 'tailscale-off' }]);
   });
 
   it('forgets the pairing of a machine no longer named, with --fix only', async () => {

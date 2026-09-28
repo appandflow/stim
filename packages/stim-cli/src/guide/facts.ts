@@ -451,6 +451,11 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
+  buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt? }
+                  per offload.machines entry; state is "approved",
+                  "pending", "not-asked", "revoked" (revoked, or the request
+                  lapsed), "node-changed", "not-on-tailnet", "tailscale-off",
+                  "unreachable" or "invalid"
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
 
