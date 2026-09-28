@@ -37,19 +37,15 @@ private let personIssues: Set<String> = ["port-not-ours", "supervisor-unverified
 private let signingCodes: Set<String> = [
   "STIM_NO_SIGNING_IDENTITY", "STIM_CODESIGN_FAILED", "STIM_NO_PROFILE", "STIM_PROFILE_MISMATCH",
 ]
-private let budgetCodes: Set<String> = [
-  "STIM_LOW_DISK", "STIM_AT_CAPACITY", "STIM_BUDGET_MAX_LIVE_WORKSPACES", "STIM_BUDGET_MAX_COMMITTED_MEMORY_GB",
-  "STIM_BUDGET_HARD_FLOOR_DISK_GB", "STIM_BUDGET_MIN_FREE_DISK_GB",
-]
 private let diskFloorBytes: Double = 5e9
 private let loopCount = 3
+private let staleLoopMs: Double = 24 * 60 * 60 * 1000
 private let workEvidence = ["agent-action", "metro-bundle", "workspace-use"]
 private let languages = [
   "swift": "Swift", "m": "Objective-C", "mm": "Objective-C++", "kt": "Kotlin", "java": "Java", "c": "C", "cc": "C++",
   "cpp": "C++", "h": "C", "hpp": "C++", "js": "JavaScript", "ts": "TypeScript", "tsx": "TypeScript",
   "gradle": "Gradle", "kts": "Gradle",
 ]
-
 
 private func epochMs(_ text: String?) -> Double? {
   text.flatMap(parseTimestamp).map { $0.timeIntervalSince1970 * 1000 }
@@ -61,36 +57,26 @@ private func formatFreeBytes(_ bytes: Double) -> String {
   return gb >= 100 ? "\(Int(gb.rounded())) GB" : String(format: "%.1f GB", gb)
 }
 
-private func runItem(_ env: Workspace, _ platform: String, _ build: LastBuild) -> NeedsAttentionItem? {
-  let code = build.errorCode ?? ""
-  let name = platformName(platform)
-  let body: String
-  if signingCodes.contains(code) {
-    body = "\(name) signing or provisioning failed (\(code))"
-  } else if budgetCodes.contains(code) {
-    body = "\(name) run refused by the machine's budget (\(code))"
-  } else if code == "STIM_CONFIG_CORRUPT" {
-    body = "\(name) run refused: Stim's config is corrupt"
-  } else if code == "STIM_EAS_BUILD_MISSING" {
-    body = "No compatible EAS build for \(name); starting one is billable"
-  } else {
-    return nil
-  }
+private func signingItem(_ env: Workspace, _ platform: String, _ build: LastBuild) -> NeedsAttentionItem? {
+  guard let code = build.errorCode, signingCodes.contains(code) else { return nil }
   return NeedsAttentionItem(
-    id: "run-\(platform):\(env.path)", category: .attention,
-    severity: code == "STIM_EAS_BUILD_MISSING" ? "warning" : "error", workspace: env.path, body: body, remedy: nil)
+    id: "run-\(platform):\(env.path)", category: .attention, severity: "error", workspace: env.path,
+    body: "\(platformName(platform)) signing or provisioning failed (\(code))", remedy: nil)
 }
 
-private func loopItem(_ env: Workspace, _ platform: String) -> NeedsAttentionItem? {
+private func loopItem(_ env: Workspace, _ platform: String, now: Double) -> NeedsAttentionItem? {
   let history = env.builds?.builds(for: platform) ?? []
   func failed(_ entry: BuildHistoryEntry) -> Bool { entry.result == "failed" }
   func cause(_ build: LastBuild) -> (key: String, at: BuildDiagnostic?) {
-    if let at = build.diagnostics?.first(where: { $0.file != nil && $0.line != nil }) {
+    if let at = build.diagnostics?.first(where: { !($0.file ?? "").isEmpty && $0.line != nil }) {
       return ("\(at.file!):\(at.line!)", at)
     }
     return (build.errorCode ?? "failed", nil)
   }
   guard let head = history.first, failed(head) else { return nil }
+  if !env.live {
+    guard let ended = epochMs(head.build.finishedAt ?? head.build.startedAt), now - ended < staleLoopMs else { return nil }
+  }
   let headCause = cause(head.build)
   let count = history.prefix { failed($0) && cause($0.build).key == headCause.key }.count
   guard count >= loopCount else { return nil }
@@ -168,9 +154,14 @@ private func stuckItem(_ env: Workspace, now: Double, stuckMinutes: Int) -> Need
     let since = quietSince(env, devices), now - since >= Double(stuckMinutes) * 60_000
   else { return nil }
   let minutes = Int(((now - since) / 60_000).rounded(.down))
+  let newest = [env.lastBuilds?.ios, env.lastBuilds?.android].compactMap { $0 }.reduce(nil as LastBuild?) { a, b in
+    guard let a else { return b }
+    return (epochMs(b.startedAt) ?? -.infinity) > (epochMs(a.startedAt) ?? -.infinity) ? b : a
+  }
+  let after = newest.flatMap { $0.status == "ok" ? " after a green \(platformName($0.platform)) build" : nil } ?? ""
   return NeedsAttentionItem(
     id: "stuck:\(env.path)", category: .stuck, severity: "warning", workspace: env.path,
-    body: "No agent activity for \(minutes) min; \(driven.model) still up", remedy: nil)
+    body: "No agent activity for \(minutes) min\(after); \(driven.model) still up", remedy: nil)
 }
 
 private func workspaceItems(_ env: Workspace, now: Double, stuckMinutes: Int, easSessionMinutes: Int)
@@ -187,8 +178,8 @@ private func workspaceItems(_ env: Workspace, now: Double, stuckMinutes: Int, ea
   for platform in ["ios", "android"] {
     let building = env.build?.isRunning == true && env.build?.platform == platform
     let last = env.lastBuilds?.build(for: platform)
-    let run = last.flatMap { $0.status == "failed" && !building ? runItem(env, platform, $0) : nil }
-    if let item = run ?? loopItem(env, platform) { items.append(item) }
+    let signing = last.flatMap { $0.status == "failed" && !building ? signingItem(env, platform, $0) : nil }
+    if let item = signing ?? loopItem(env, platform, now: now) { items.append(item) }
   }
   for device in env.physicalDevices ?? [] {
     guard let expires = epochMs(device.lease.expiresAt), expires <= now else { continue }

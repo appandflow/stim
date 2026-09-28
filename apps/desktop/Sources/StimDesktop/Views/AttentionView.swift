@@ -28,7 +28,7 @@ struct AttentionView: View {
           VStack(spacing: Space.md) {
             Image(systemName: "checkmark.circle").font(.system(size: 28)).foregroundStyle(Palette.success)
             Text("Nothing needs you right now").font(.stim(.headline))
-            Text("Agents handle log errors and failed runs themselves. Setup, signing, leases and stuck agents show up here.")
+            Text("Agents handle log errors and failed runs themselves. Signing failures, expired leases and stuck agents show up here.")
               .foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
           }
           .frame(maxWidth: .infinity)
@@ -128,7 +128,7 @@ struct AttentionView: View {
         }
       }
       Spacer()
-      if let workspace, item.category == .looping || item.category == .stuck || item.id.hasPrefix("run-") {
+      if let workspace, item.category == .looping || item.id.hasPrefix("run-") {
         Button("Open logs") { openLogs(workspace) }
           .help("Show this workspace's errors")
       }

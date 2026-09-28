@@ -126,7 +126,7 @@ describe('homeAttention', () => {
           [
             env('idle-error', { lastBuilds: { ios: failedBuild('STIM_NO_PROFILE') } }),
             env('live-warning', { live: true, physicalDevices: lease(expired) }),
-            env('live-error', { live: true, lastBuilds: { ios: failedBuild('STIM_LOW_DISK') } }),
+            env('live-error', { live: true, lastBuilds: { ios: failedBuild('STIM_CODESIGN_FAILED') } }),
           ],
           { usage: usage(2) },
         ),

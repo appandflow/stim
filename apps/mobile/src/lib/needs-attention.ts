@@ -36,19 +36,12 @@ const SIGNING_CODES = new Set([
   'STIM_PROFILE_MISMATCH',
 ]);
 
-const BUDGET_CODES = new Set([
-  'STIM_LOW_DISK',
-  'STIM_AT_CAPACITY',
-  'STIM_BUDGET_MAX_LIVE_WORKSPACES',
-  'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
-  'STIM_BUDGET_HARD_FLOOR_DISK_GB',
-  'STIM_BUDGET_MIN_FREE_DISK_GB',
-]);
-
 /** Oversight's `DISK_CRITICAL_BYTES`: free space below Stim's hard floor. */
 const DISK_FLOOR_BYTES = 5e9;
 /** Oversight's `LOOP_COUNT`. */
 const LOOP_COUNT = 3;
+/** How long an idle workspace's repeated failure stays listed. */
+const STALE_LOOP_MS = 24 * 60 * 60 * 1000;
 /** Oversight's `WORK_EVIDENCE`. */
 const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
@@ -80,31 +73,26 @@ function formatBytes(bytes: number): string {
   return gb >= 100 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
 }
 
-function runItem(env: EnvironmentState, platform: 'ios' | 'android', build: LastBuild): NeedsAttentionItem | null {
+function signingItem(env: EnvironmentState, platform: 'ios' | 'android', build: LastBuild): NeedsAttentionItem | null {
   const code = build.errorCode ?? '';
-  const name = platformName(platform);
-  let body: string;
-  if (SIGNING_CODES.has(code)) body = `${name} signing or provisioning failed (${code})`;
-  else if (BUDGET_CODES.has(code)) body = `${name} run refused by the machine's budget (${code})`;
-  else if (code === 'STIM_CONFIG_CORRUPT') body = `${name} run refused: Stim's config is corrupt`;
-  else if (code === 'STIM_EAS_BUILD_MISSING') body = `No compatible EAS build for ${name}; starting one is billable`;
-  else return null;
+  if (!SIGNING_CODES.has(code)) return null;
   return {
     id: `run-${platform}:${env.path}`,
     category: 'attention',
-    severity: code === 'STIM_EAS_BUILD_MISSING' ? 'warning' : 'error',
+    severity: 'error',
     workspace: env.path,
-    body,
+    body: `${platformName(platform)} signing or provisioning failed (${code})`,
     remedy: null,
   };
 }
 
 /** Oversight's `failureStreak` body for three or more newest runs that failed with the same cause. */
-function loopItem(env: EnvironmentState, platform: 'ios' | 'android'): NeedsAttentionItem | null {
+function loopItem(env: EnvironmentState, platform: 'ios' | 'android', now: number): NeedsAttentionItem | null {
   const history = env.builds?.[platform];
   const failed = (build: { result?: string; status: string }) => (build.result ?? build.status) === 'failed';
   const head = history?.[0];
   if (!history || !head || !failed(head)) return null;
+  if (!env.live && !(now - time(head.finishedAt ?? head.startedAt) < STALE_LOOP_MS)) return null;
   const causeOf = (build: LastBuild) => {
     const at = build.diagnostics?.find((d) => d.file && d.line !== null && d.line !== undefined);
     return at ? { key: `${at.file}:${at.line}`, at } : { key: build.errorCode ?? 'failed', at: null };
@@ -187,12 +175,16 @@ function stuckItem(env: EnvironmentState, input: NeedsAttentionInput): NeedsAtte
   const since = quietSince(env, devices);
   if (since === null || input.now - since < input.stuckMinutes * 60_000) return null;
   const minutes = Math.floor((input.now - since) / 60_000);
+  const newest = [env.lastBuilds?.ios, env.lastBuilds?.android]
+    .filter((b): b is LastBuild => b !== undefined)
+    .reduce<LastBuild | null>((a, b) => (a === null || time(b.startedAt) > time(a.startedAt) ? b : a), null);
+  const after = newest?.status === 'ok' ? ` after a green ${platformName(newest.platform)} build` : '';
   return {
     id: `stuck:${env.path}`,
     category: 'stuck',
     severity: 'warning',
     workspace: env.path,
-    body: `No agent activity for ${minutes} min; ${driven.model} still up`,
+    body: `No agent activity for ${minutes} min${after}; ${driven.model} still up`,
     remedy: null,
   };
 }
@@ -213,8 +205,8 @@ function workspaceItems(env: EnvironmentState, input: NeedsAttentionInput): Need
   for (const platform of ['ios', 'android'] as const) {
     const last = env.lastBuilds?.[platform];
     const building = env.build?.state === 'running' && env.build.platform === platform;
-    const run = last && last.status === 'failed' && !building ? runItem(env, platform, last) : null;
-    const item = run ?? loopItem(env, platform);
+    const signing = last && last.status === 'failed' && !building ? signingItem(env, platform, last) : null;
+    const item = signing ?? loopItem(env, platform, input.now);
     if (item) items.push(item);
   }
   for (const device of env.physicalDevices ?? []) {
