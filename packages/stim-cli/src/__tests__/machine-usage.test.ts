@@ -165,6 +165,21 @@ test('a simulator two workspaces both record counts in one of them only', () => 
   expect(residentByWorkspace(machine.owners)).toEqual({ '/w/c': 3 });
 });
 
+test('an emulator counts in its workspace while adb does not list it', () => {
+  const booting = makeEnvironmentState({
+    path: '/w/e',
+    android: { name: 'stim-b', owned: true, physical: false, serial: null, state: 'not-detected' },
+  });
+  const machine = attributeMachineUsage({
+    processes,
+    footprints: null,
+    environments: [booting],
+    roots: [],
+    simNames: {},
+  });
+  expect(machine.owners.find((o) => o.kind === 'emulator')).toMatchObject({ workspace: '/w/e', processes: 3 });
+});
+
 test('a recorded pid that is no longer in the table claims nothing', () => {
   const machine = attributeMachineUsage({
     processes,
