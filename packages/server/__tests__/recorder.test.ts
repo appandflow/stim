@@ -30,7 +30,7 @@ function closedSegments(dir: string, ...ranges: [number, number][]): void {
   for (const [start, end] of ranges) writeFileSync(join(dir, `${start}-${end}.seg`), 'x');
 }
 
-test('keeps a segment it cannot delete, logs it, and prunes the rest', () => {
+test.skipIf(process.platform === 'win32')('keeps a segment it cannot delete, logs it, and prunes the rest', () => {
   const locked = join(process.env.STIM_HOME!, 'workspaces', 'a', 'recordings', 'ios-default');
   const open = join(process.env.STIM_HOME!, 'workspaces', 'b', 'recordings', 'ios-default');
   closedSegments(locked, [1000, 2000], [3000, 4000]);
