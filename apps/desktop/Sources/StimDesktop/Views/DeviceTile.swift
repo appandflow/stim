@@ -113,7 +113,7 @@ struct DeviceTile: View {
           remoteControls
         } else if case .web(let browser) = device, let workspace {
           webControls(browser, workspace: workspace)
-        } else if device.isRunning, let workspace {
+        } else if device.isRunning, !isPhysical, let workspace {
           stopButton(workspace: workspace)
         }
         if interactive, device.platform != "web", !isPhysical {

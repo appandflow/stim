@@ -141,7 +141,8 @@ workspace at once, in the order above, each with its live frame. The frames
 share one height, the tallest at which every tile fits the canvas in one row
 or a few, wrapping when the window is narrow and scrolling past a floor of 260
 points. Clicking a tile focuses it without hiding the others. Each tile's
-header has its **Stop** and adds its CPU, memory and disk (from the machine
+header has its **Stop** (a simulator, emulator, browser or remote session;
+a physical device has none) and adds its CPU, memory and disk (from the machine
 owner matched by slot and kind, and the device's `disk`). A running simulator
 or emulator ends with the agent row: the driving tool and its last action
 ("agent-device · Tapped "Allow camera" · 12s ago"), or "No agent" with how

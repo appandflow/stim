@@ -112,7 +112,7 @@ struct StageLine: View {
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(chip: chip, worktree: env.worktree!).fixedSize()
+        GitChipButton(chip: chip, worktree: env.worktree!).layoutPriority(1)
       }
     }
   }

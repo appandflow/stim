@@ -72,15 +72,17 @@ struct WorkspaceDetail: View {
         .padding(.horizontal, Space.xxl)
         .padding(.vertical, Space.md)
       Rectangle().fill(Palette.border).frame(height: 1)
-      canvas(devices: devices, focused: focused)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-      if showsLogs {
-        Rectangle().fill(Palette.border).frame(height: 1).overlay { logsResizeHandle }
-        LogsView(cli: cli, env: env, query: $logQuery)
-          .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
+      VStack(spacing: 0) {
+        canvas(devices: devices, focused: focused)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        if showsLogs {
+          Rectangle().fill(Palette.border).frame(height: 1).overlay { logsResizeHandle }
+          LogsView(cli: cli, env: env, query: $logQuery)
+            .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
+        }
       }
+      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
     }
-    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
   }
 
   static let minimumLogsHeight: CGFloat = 160

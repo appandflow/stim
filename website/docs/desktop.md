@@ -68,7 +68,8 @@ the pull request and a link to GitHub.
 
 The devices take the rest of the page: every device of the workspace shows at
 once, side by side at one height, wrapping when the window is narrow. Each
-device shows its CPU, memory and disk, its **Stop** button, and which agent
+device shows its CPU, memory and disk, a **Stop** button (except on a physical
+device), and which agent
 drives it with its last action, or how long it has been idle. While its build
 runs, a device shows the phase and progress over its screen. Click a device to
 focus it, and use the hand button to take it over.
