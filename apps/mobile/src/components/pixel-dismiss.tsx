@@ -10,7 +10,7 @@ const SPREAD_MS = 300;
 const VANISHED = { scale: 0, rotate: 45 };
 const COVERING = { scale: 1, rotate: 0 };
 
-/** Time from `dismissed` until the last pixel is gone, not counting `delay`. */
+/** Longest time from `dismissed` until the last pixel is gone, not counting `delay`. */
 export const PIXEL_DISMISS_MS = SPREAD_MS + PIXEL_MS;
 
 /**
