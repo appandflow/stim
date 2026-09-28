@@ -350,15 +350,15 @@ export function useAction(workspace: string): WorkspaceActions {
           ? { action, workspace, ...(options.platform ? { platform: options.platform } : {}) }
           : { action, workspace };
       setPending(action);
+      let error: string | null = null;
       try {
         await connection.request('action', params);
-        return null;
       } catch (cause) {
         if (cause instanceof RequestError && cause.error.code === 'forbidden') connection.reconnect();
-        return (cause as Error).message;
-      } finally {
-        setPending(null);
+        error = (cause as Error).message;
       }
+      setPending(null);
+      return error;
     },
     [connection, workspace],
   );
