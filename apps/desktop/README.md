@@ -196,12 +196,15 @@ when nothing is on disk, an ellipsis while it is measured, **Unknown** when it
 could not be sized, or a dash before the first measurement, with the reason in
 its help tag.
 
-Each list on the page, the processes under **Now** included, has a header
-with a disclosure chevron and its count. A collapsed section shows only the
-header. An expanded one shows its first 10 rows in its usual order, then
-**Show all** or **Show fewer**. **Safe to free now** always lists every row,
-because **Free** acts on checked rows. The app remembers each section's
-choices in its own preferences.
+The processes under **Now**, **Safe to free now**, **Projects**,
+**Simulators and emulators** and **Runtimes and system images** each have a
+header with a disclosure chevron and a count. A collapsed section shows only
+its header. An expanded one shows its first 10 rows in their usual order, then
+**Show all** or **Show fewer**. For **Projects** the 10 are repositories; an
+expanded repository lists all of its worktrees. An expanded **Safe to free
+now** always lists every row, so none of the rows **Free** acts on are hidden.
+Free still previews or confirms its commands first, collapsed or not. The app
+remembers each section's choices in its own preferences.
 
 - **Headline**: free space on the fullest volume against the Stim disk budget
   (`budget.minFreeDiskGb`), and one bar split into Stim devices (owned by a
