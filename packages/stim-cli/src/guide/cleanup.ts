@@ -174,9 +174,9 @@ SWEEPING FINISHED WORKTREES
   opened from the user's own fork counts like any other. A merged or closed
   one makes the worktree finished under the same clean state. Merged, its
   commits are kept on GitHub, so local commits whose remote branch was
-  deleted do not block removal. Closed, they
-  do: a closed pull request whose remote branch is gone keeps the worktree as
-  unpushed. An open pull request never makes a worktree finished. When gh is
+  deleted do not block removal. Closed, they do: a closed pull request whose
+  remote branch is gone keeps the worktree as unpushed. An open pull request
+  never makes a worktree finished. When gh is
   not installed, not signed in, or fails, the JSON pullRequestUnknown field
   and the report say why, and gc judges from git alone. A detached HEAD is
   not looked up. \`stim worktree remove\` makes the same check when

@@ -804,7 +804,7 @@ describe('choosing the pull request of a worktree', () => {
     expect(selectPullRequest([ownFork], 'head', isAncestor)).toBe(null);
   });
 
-  test('a cross-repository pull request with no head repository is ignored even with a matching owner elsewhere', () => {
+  test('a cross-repository pull request with no head repository data (a deleted fork) is ignored', () => {
     const deletedFork = { ...gh(8, 'OPEN', 'head'), isCrossRepository: true };
     expect(selectPullRequest([deletedFork], 'head', isAncestor, new Set(['me/r']))).toBe(null);
   });

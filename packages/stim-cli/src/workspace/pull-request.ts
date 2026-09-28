@@ -112,7 +112,6 @@ function epoch(text: string | null): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-/** "owner/name", lowercased, from a pull request's head repository fields; null when either is missing. */
 function headRepoOf(pull: GhPullRequest): string | null {
   const owner = pull.headRepositoryOwner?.login;
   const name = pull.headRepository?.name;
@@ -189,16 +188,18 @@ function ancestry(cwd: string): (ancestor: string, descendant: string) => boolea
 }
 
 const REMOTE_URL_RE =
-  /^(?:https?:\/\/(?:[^/@]+@)?[^/]+\/|git@[^:/]+:|ssh:\/\/(?:[^/@]+@)?[^/]+\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
+  /^(?:https?:\/\/(?:[^/@]+@)?[^/]+\/|ssh:\/\/(?:[^/@]+@)?[^/]+\/|(?:[^/@:]+@)?[^/:]+:)([^/]+)\/([^/]+?)(?:\.git)?\/?$/i;
 
-/** "owner/name", lowercased, parsed out of a git remote URL (https, ssh, or scp-like), or null when it doesn't match. */
+/**
+ * "owner/name", lowercased, parsed out of a git remote URL, or null when it doesn't match: https, `ssh://`, or
+ * scp-like (`[user@]host:owner/name`, which also covers an `~/.ssh/config` host alias in place of `user@host`).
+ */
 export function parseRemoteRepo(url: string): string | null {
   const match = REMOTE_URL_RE.exec(url.trim());
   const [, owner, name] = match ?? [];
   return owner && name ? `${owner.toLowerCase()}/${name.toLowerCase()}` : null;
 }
 
-/** "owner/name" of every git remote configured for `cwd`'s repository, lowercased. */
 function localRemoteRepos(cwd: string): ReadonlySet<string> {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'config', '--get-regexp', String.raw`^remote\..*\.url$`]);
   const repos = new Set<string>();
