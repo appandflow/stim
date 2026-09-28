@@ -20,6 +20,7 @@ import {
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
+import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
   MAX_INPUT_TEXT,
@@ -315,6 +316,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const planQueues = new Map<string, Promise<void>>();
   const sessions = new Map<WebSocket, PairedDevice>();
   const sampler = new UsageSampler();
+  const usage = new UsageRecorder();
+  let recorders = 0;
+  let stopRecording: (() => void) | null = null;
+  const recordUsage = (): (() => void) => {
+    recorders += 1;
+    stopRecording ??= feeds.subscribe(STATUS_FEED, {
+      item: (payload) => usage.record(payload as unknown as StatusPayload),
+      failed: () => {
+        stopRecording = null;
+      },
+    });
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      recorders -= 1;
+      if (recorders > 0) return;
+      stopRecording?.();
+      stopRecording = null;
+    };
+  };
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const control = new ControlHub({
@@ -552,14 +574,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const subscription = openSubscription(id);
       if (!subscription) return;
       const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
+      const stopUsage = recordUsage();
       const unsubscribe = feeds.subscribe(STATUS_FEED, {
-        item: (_payload, text) => send(socket, `${envelope}${text}}`),
+        item: (_payload, text) => {
+          const history = usage.history();
+          send(socket, `${envelope}${text}${history ? `,"usage":${JSON.stringify(history)}` : ''}}`);
+        },
         failed: (message) => {
+          stopUsage();
           subscriptions.delete(subscription);
           send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
         },
       });
-      subscriptions.set(subscription, unsubscribe);
+      subscriptions.set(subscription, () => {
+        stopUsage();
+        unsubscribe();
+      });
     }
 
     function subscribeLogs(id: RequestId, params: unknown): void {

@@ -210,7 +210,8 @@ function isDeviceRecord(record: Record<string, unknown>): boolean {
   return !(typeof record.event === 'string' && record.event.startsWith('collector_'));
 }
 
-function tailLines(path: string): string[] | null {
+/** The last lines of the file at `path`, at most its final 256 KiB, or null when it cannot be read. */
+export function tailLines(path: string): string[] | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, 'r');

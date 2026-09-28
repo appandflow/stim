@@ -62,6 +62,27 @@ change, and for at most 60 s, so a file edit, creation or deletion that is
 not staged can take up to a minute to show. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
 each environment, and the same after each worktree with no environment.
 
+A worktree entry also carries pullRequest, the GitHub pull request of its
+branch and HEAD, once \`status --watch\` has looked it up:
+
+  pullRequest     { number, url, title, state, checks, reviewDecision,
+                  checkedAt }, null when GitHub has none for the branch and
+                  HEAD, absent when never looked up: gh missing or signed
+                  out, no GitHub remote, or status could not read the
+                  worktree's git. A later gh failure keeps the last answer.
+  state           "open", "draft", "merged" or "closed"
+  checks          { passing, failing, pending } counts of the head commit's
+                  check runs and commit statuses, or null when it has none
+  reviewDecision  "approved", "changes-requested", "review-required" or null
+  checkedAt       when Stim last asked GitHub
+
+\`status --watch\` asks GitHub off its refresh path, through the same gh api
+graphql lookup gc uses, one call per repository, for a worktree whose lookup
+is over 5 minutes old or whose branch or HEAD moved. It runs git in the
+repository, never in the worktree. It caches each answer
+under $STIM_HOME/pull-requests, which one-shot status only reads, and never
+warns when gh is unavailable.
+
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
 live. status reads only local records; it does not ask EAS whether the session
@@ -910,11 +931,27 @@ RULES
   When another process answers Metro on the port, metro carries
   heldBy { pid, cwd }, cwd null when its directory could not be read.
 
+  metro also carries bundle, from the bundle requests Stim's middleware
+  records in the workspace's metro log: an app's, and Stim's own prefetch
+  before a launch. It is absent when the log's tail holds none.
+
+  bundle     { bundling, platform?, startedAt?, percent?, last? }
+  bundling   true while a request is in flight: Metro runs, and the request
+             started under the current dev server less than 10 minutes ago
+  platform   with bundling, the in-flight request's "ios" or "android";
+  startedAt  when it started
+  percent    0-100, only when Metro reported progress for that request,
+             which it does for clients that accept multipart responses
+  last       { platform, status, durationMs, finishedAt }: the newest
+             finished request, status "ok" or "failed", durationMs from the
+             request to the end of the response
+
   Each entry of environments also carries build: null, or the ios or android
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
-            outcome, expectedMs, expectedPhaseMs, basis }
+            outcome, expectedMs, expectedPhaseMs, basis, missReason?,
+            detail? }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -935,6 +972,21 @@ RULES
                    no history
   expectedPhaseMs  the median duration of this phase in those runs, or null
   basis            how many runs the medians come from (at most 10)
+  missReason       once the run knows its cache lookup missed, why, in the
+                   shape of lastBuilds missReason below
+  detail           on a running build whose tool printed a line Stim reads:
+                   { step, unit, done, total, line, updatedAt }
+    step           the tool's step: configure, compile, link, resources,
+                   script, dex, package or sign; null before one is known
+    unit           "targets" for xcodebuild, "tasks" for Gradle
+    done           xcodebuild: targets that started work; Gradle: tasks it
+                   reported so far
+    total          xcodebuild: targets in its dependency graph; Gradle: null,
+                   since its plain output gives no total
+    line           the latest compile, link or task line, paths shortened
+                   to file names, at most 160 characters
+    updatedAt      when the build last wrote it; the run writes it at most
+                   every 2 seconds
 
   Plain \`stim status\` prints the same as one line per workspace:
 
@@ -994,8 +1046,31 @@ RULES
   Only runs that record a last build are listed: a run that stops before
   looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.
 
-  There is no completion fraction: a compile's log volume depends on what
-  is already built, so it does not measure progress.
+  done and total are counts, not a completion fraction: a target or task
+  can take a second or ten minutes, and cached work finishes instantly.
+
+  Each environment also carries disk, and each owned simulator and owned
+  emulator in ios, android and slots carries disk, once \`status --watch\` has
+  measured them:
+
+  disk (environment)  { worktreeBytes, nodeModulesBytes, buildBytes,
+                      measuredAt }
+    worktreeBytes     the linked worktree, or else the checkout holding the
+                      workspace, node_modules included
+    nodeModulesBytes  node_modules at that root and at the workspace path;
+                      part of worktreeBytes
+    buildBytes        Stim's folder for the workspace: Xcode derived data,
+                      Gradle outputs and logs
+    measuredAt        the oldest of the three measurements; a figure not
+                      measured yet is null
+  disk (device)       { bytes, measuredAt }: the simulator's data folder
+                      under CoreSimulator/Devices, or the AVD's .avd folder
+
+  \`status --watch\` runs one du at a time off its refresh path, and measures
+  a folder at most every 5 minutes while its environment is live and every
+  hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
+  one-shot status only reads, so the fields appear once a watcher, such as
+  stim-server or Stim Desktop, has measured.
 
   memorySource says how a memory figure was obtained:
 

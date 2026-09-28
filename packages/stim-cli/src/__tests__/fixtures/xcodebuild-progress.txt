@@ -1,0 +1,23 @@
+# Captured from a cold `xcodebuild build` of an Expo app (237 targets), home paths shortened: the
+# lines up to the dependency graph note, then one line of each kind the progress parser reads, in order.
+Prepare packages
+CreateBuildRequest
+SendProjectDescription
+CreateBuildOperation
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (237 targets)
+WriteAuxiliaryFile /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/Pods-8699adb1dd336b26511df848a716bd42-VFS-iphonesimulator/all-product-headers.yaml
+PhaseScriptExecution [CP-User]\ [Hermes]\ Replace\ Hermes\ for\ the\ right\ configuration,\ if\ needed /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/hermes-engine.build/Script-46EB2E00057810.sh (in target 'hermes-engine' from project 'Pods')
+MkDir /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Products/Debug-iphonesimulator/sqlite3/sqlite3.framework/Headers (in target 'sqlite3' from project 'Pods')
+ScanDependencies /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/sqlite3.build/Objects-normal/x86_64/sqlite3_vers.o /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/sqlite3.build/DerivedSources/sqlite3_vers.c normal x86_64 c com.apple.compilers.llvm.clang.1_0.compiler (in target 'sqlite3' from project 'Pods')
+CompileC /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/sqlite3.build/Objects-normal/x86_64/sqlite3_vers.o /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/sqlite3.build/DerivedSources/sqlite3_vers.c normal x86_64 c com.apple.compilers.llvm.clang.1_0.compiler (in target 'sqlite3' from project 'Pods')
+/Users/dev/Developer/tlon-apps/.worktrees/stim-eas-demo/apps/tlon-mobile/ios/Pods/sqlite3/sqlite-src-3500400/sqlite3.c:32215:25: warning: ambiguous expansion of macro 'MAX' [-Wambiguous-macro]
+Libtool /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/sqlite3.build/Objects-normal/arm64/Binary/sqlite3 normal arm64 (in target 'sqlite3' from project 'Pods')
+CompileAssetCatalogVariant thinned /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Products/Debug-iphonesimulator/expo-dev-menu/EXDevMenu.bundle /Users/dev/Developer/tlon-apps/.worktrees/stim-eas-demo/node_modules/expo-dev-menu/ios/Assets.xcassets (in target 'expo-dev-menu-EXDevMenu' from project 'Pods')
+SwiftEmitModule normal x86_64 Emitting\ module\ for\ SwiftSVG (in target 'SwiftSVG' from project 'SwiftSVG')
+SwiftCompile normal x86_64 (in target 'SwiftSVG' from project 'SwiftSVG')
+Ld /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/SwiftSVG.build/Debug-iphonesimulator/SwiftSVG-t.build/Objects-normal/x86_64/Binary/SwiftSVG.o normal x86_64 (in target 'SwiftSVG' from project 'SwiftSVG')
+Ld /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Intermediates.noindex/Landscape.build/Debug-iphonesimulator/Notifications.build/Objects-normal/x86_64/Binary/__preview.dylib normal x86_64 (in target 'Notifications' from project 'Landscape')
+ProcessInfoPlistFile /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Products/Debug-iphonesimulator/Notifications.appex/Info.plist /Users/dev/Developer/tlon-apps/.worktrees/stim-eas-demo/apps/tlon-mobile/ios/Notifications/Info.plist (in target 'Notifications' from project 'Landscape')
+CodeSign /Users/dev/.stim/workspaces/tlon-mobile--1487c4d6052c2766/derived-data/Build/Products/Debug-iphonesimulator/Notifications.appex/Notifications.debug.dylib (in target 'Notifications' from project 'Landscape')

@@ -48,7 +48,7 @@ test.each(['ios', 'android'] as const)(
       sourcePaths: 'url-server',
       app: 'com.example.app',
     });
-    expect(records).toEqual([]);
+    expect(records.map((record) => record.event)).toEqual(['bundle_prefetch_started', 'bundle_prefetch_finished']);
   },
 );
 
@@ -95,7 +95,7 @@ test.each([
     );
     await warmMetro({ port, platform, isExpo, bundleUrl: `${origin}${path}`, appId: 'not-added-to-override' });
     expect(requests).toEqual([path]);
-    expect(records).toEqual([]);
+    expect(records.map((record) => record.event)).toEqual(['bundle_prefetch_started', 'bundle_prefetch_finished']);
   },
 );
 

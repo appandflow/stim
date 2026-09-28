@@ -14,7 +14,7 @@ import {
   startBuildProgress,
   type ActiveBuildRecord,
 } from '../engine/build-progress.ts';
-import { BUILD_HISTORY_LIMIT, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import { BUILD_HISTORY_LIMIT, readBuildDetail, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import {
   emptyStats,
   HISTORY_LIMIT,
@@ -54,6 +54,55 @@ function activeRecord(): ActiveBuildRecord | null {
 }
 
 describe('active build record', () => {
+  test('writes the tool detail for its own claim at most every 2 seconds, and the miss reason once known', () => {
+    vi.useFakeTimers({ now: T0 });
+    try {
+      const claim = takeClaim();
+      const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: Date.now });
+      const line = (msg: string) => progress.output({ src: 'build', level: 'debug', msg });
+      line('note: Target dependency graph (3 targets)');
+      expect(readBuildDetail(root, claim.claimId)).toMatchObject({ unit: 'targets', done: 0, total: 3 });
+
+      line(
+        "CompileC /d/x.o /src/x.c normal arm64 c com.apple.compilers.llvm.clang.1_0.compiler (in target 'A' from project 'P')",
+      );
+      expect(readBuildDetail(root, claim.claimId)).toMatchObject({ done: 0 });
+      vi.advanceTimersByTime(2000);
+      expect(readBuildDetail(root, claim.claimId)).toEqual({
+        step: 'compile',
+        unit: 'targets',
+        done: 1,
+        total: 3,
+        line: 'CompileC x.c (A)',
+        updatedAt: '2026-09-24T10:00:02.000Z',
+      });
+      expect(readBuildDetail(root, 'another-run')).toBeNull();
+
+      progress.miss({
+        kind: 'changed',
+        summary: 'native dependency added: expo-clipboard',
+        changes: [{ source: 'expo-clipboard', change: 'added', category: 'native-dependency' }],
+        changeCount: 1,
+        baseline: { fingerprint: 'abc', cacheKey: 'ios-abc', from: 'workspace' },
+        rekeyedBy: [],
+      });
+      expect(buildReport(activeRecord()!, { state: 'running', history: undefined }).missReason).toEqual({
+        kind: 'changed',
+        summary: 'native dependency added: expo-clipboard',
+        changes: [{ source: 'expo-clipboard', change: 'added', category: 'native-dependency' }],
+        changeCount: 1,
+        baseline: { fingerprint: 'abc', from: 'workspace' },
+        rekeyedBy: [],
+      });
+
+      progress.clear();
+      expect(readBuildDetail(root, claim.claimId)).toBeNull();
+      releaseClaim(claim);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('records phase transitions under the run claim, reports running, and clears on exit', () => {
     const claim = takeClaim();
     let now = T0;
