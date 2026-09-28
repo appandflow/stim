@@ -723,6 +723,7 @@ export async function acquireAndroidArtifact(
 
         if (!apkPath) {
           if (!offloadDecision?.offload || editedConfig.length) explainMiss(rekeyedBy);
+          if (offloadDecision?.offload && !buildSlot && editedConfig.length && !(await takeSlot())) return false;
           step('compile');
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(

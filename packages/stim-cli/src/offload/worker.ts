@@ -108,7 +108,7 @@ function probe(): WorkerProbe {
     availableMemBytes: availableMemBytes(),
     diskFreeBytes,
     xcodebuildRunning: running ? running.trim().split('\n').filter(Boolean).length : 0,
-    gradleRunning: (quiet('pgrep', ['-f', 'GradleDaemon|GradleWrapperMain']) ?? '').split('\n').filter(Boolean).length,
+    gradleRunning: (quiet('pgrep', ['-f', 'GradleWrapperMain']) ?? '').split('\n').filter(Boolean).length,
     javaMajor: javaMajor(),
     androidSdk: sdk,
     ndk: listDir(sdk, 'ndk'),
@@ -361,8 +361,9 @@ async function main(): Promise<void> {
     return emit({ ok: true, pid: child.pid, log });
   }
   if (mode === 'warm-run' && arg) {
-    const req = JSON.parse(Buffer.from(arg, 'base64').toString('utf8')) as WorkerWarmRequest;
+    let req: WorkerWarmRequest | null = null;
     try {
+      req = JSON.parse(Buffer.from(arg, 'base64').toString('utf8')) as WorkerWarmRequest;
       for (const build of req.builds) {
         const started = Date.now();
         const result = await buildOnWorker(build);
@@ -372,7 +373,7 @@ async function main(): Promise<void> {
       }
     } finally {
       try {
-        rmdirSync(req.unlockDir);
+        if (req) rmdirSync(req.unlockDir);
       } catch {}
     }
     return;

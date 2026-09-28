@@ -42,9 +42,9 @@ export npm_config_cache="$root/npm-cache"
 export GRADLE_USER_HOME="$root/gradle"
 export CCACHE_DIR="$root/ccache"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-${java_home:+export JAVA_HOME="$java_home"}
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 ENV
+[ -z "$java_home" ] || printf 'export JAVA_HOME="%s"\n' "$java_home" >> ~/.stim-offload.env.tmp
 mv ~/.stim-offload.env.tmp ~/.stim-offload.env
 source ~/.stim-offload.env
 cd "$root/stim"
