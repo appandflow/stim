@@ -292,8 +292,12 @@ struct ReplayTrack: View {
     .accessibilityAdjustableAction { direction in
       let from = isLive ? timeline.end : shownAt ?? timeline.end
       switch direction {
-      case .increment: seek(min(timeline.end, from + Self.accessibilityStepMs), 0)
-      case .decrement: seek(max(timeline.start, from - Self.accessibilityStepMs), 0)
+      case .increment:
+        if !isLive { seek(min(timeline.end, from + Self.accessibilityStepMs), 0) }
+      case .decrement:
+        let back = max(timeline.start, from - Self.accessibilityStepMs)
+        let gap = timeline.pieces.first { $0.isGap && back > $0.start && back < $0.end }
+        seek(gap?.start ?? back, 0)
       @unknown default: break
       }
     }
