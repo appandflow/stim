@@ -119,6 +119,21 @@ that no device uses, with their sizes and the command to remove each. Do not
 run those commands.
 ```
 
+## Open a workspace from a link
+
+When Stim Desktop is installed, `stim worktree warm`, `start`, `ios`, `android`
+and `web` print a link to the workspace, and coding agents share it with you
+when they begin work:
+
+```text
+Open in Stim Desktop: stim-desktop://workspace?path=/Users/me/app-feature
+```
+
+Opening the link starts Stim Desktop or brings it to the front and shows a card
+for that workspace with an **Open** button; the app switches to the workspace
+only when you click it. A link from `ios`, `android` or `web` also selects that
+device. A link to a path Stim does not list shows **Workspace not found**.
+
 ## Show devices in the app
 
 While Stim Desktop is installed, Stim shows owned simulators and emulators in

@@ -34,6 +34,8 @@ struct RootView: View {
   @State private var detailWidth: CGFloat = 0
   @State private var columnVisibility = NavigationSplitViewVisibility.all
   @ObservedObject private var openRequests = OpenRequests.shared
+  @ObservedObject private var toasts = ToastCenter.shared
+  @State private var pendingLink: PendingWorkspaceLink?
 
   private let cli: Task<StimCLI, Never>
 
@@ -66,6 +68,7 @@ struct RootView: View {
         .background(Palette.background)
         .toolbarBackdrop(showsWorkspace ? .clear : Palette.background)
         .overlay(alignment: .bottom) { onboardingPopup }
+        .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
@@ -98,8 +101,13 @@ struct RootView: View {
       metrics.start()
     }
     .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
+    .onReceive(openRequests.$workspaceLink) { link in
+      guard link != nil else { return }
+      Task { takeWorkspaceLink() }
+    }
     .onReceive(store.$payload) { payload in
       showDevice(openRequests.device, in: payload)
+      showWorkspaceLink(in: payload)
       if case .worktree(let path) = selection, payload?.environments.contains(where: { $0.path == path }) == true {
         selection = .environment(path)
       }
@@ -188,6 +196,46 @@ struct RootView: View {
     detailTab = .device
   }
 
+  /// `@Published` emits before the property changes, so the link is read once the assignment has landed.
+  private func takeWorkspaceLink() {
+    guard let link = openRequests.workspaceLink else { return }
+    openRequests.workspaceLink = nil
+    guard case .workspace(let request) = link else {
+      showWorkspaceNotFound("The link does not name a workspace.")
+      return
+    }
+    let pending = PendingWorkspaceLink(request: request)
+    pendingLink = pending
+    showWorkspaceLink(in: store.payload)
+    Task {
+      try? await Task.sleep(for: .seconds(10))
+      guard pendingLink?.id == pending.id else { return }
+      pendingLink = nil
+      showWorkspaceNotFound("Stim does not list \(abbreviatingHome(request.path)) as a workspace.")
+    }
+  }
+
+  private func showWorkspaceLink(in payload: StatusPayload?) {
+    guard let request = pendingLink?.request, let target = payload?.target(of: request) else { return }
+    pendingLink = nil
+    let path = target.workspace.path
+    let deviceID = target.device?.id
+    toasts.show(
+      Toast(
+        icon: "macwindow", tone: .accent, title: "\(target.workspace.names.title) \u{00B7} workspace started",
+        body: abbreviatingHome(path),
+        action: Toast.Action(title: "Open") {
+          selection = .environment(path)
+          if let deviceID { focusedDeviceID = deviceID }
+          detailTab = .device
+        },
+        sticky: true))
+  }
+
+  private func showWorkspaceNotFound(_ body: String) {
+    toasts.show(Toast(icon: "questionmark.folder", tone: .warning, title: "Workspace not found", body: body))
+  }
+
   private func openErrors(_ path: String) {
     selection = .environment(path)
     detailTab = .logs
@@ -224,6 +272,11 @@ struct RootView: View {
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }
   }
+}
+
+private struct PendingWorkspaceLink {
+  let id = UUID()
+  let request: WorkspaceOpenRequest
 }
 
 struct MachineSummary: View {

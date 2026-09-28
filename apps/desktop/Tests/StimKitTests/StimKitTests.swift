@@ -884,6 +884,39 @@ import Testing
     #expect(payload.owner(of: .simulator(udid: "emulator-5554")) == nil)
     #expect(payload.owner(of: .emulator(serial: "emulator-5556")) == nil)
   }
+
+  @Test func readsAWorkspaceLink() {
+    func link(_ string: String) -> WorkspaceLink? { workspaceLink(fromOpenURL: URL(string: string)!) }
+    #expect(
+      link("stim-desktop://workspace?path=/Users/me/My%20Apps/a%26b%20%231%2Bx")
+        == .workspace(WorkspaceOpenRequest(path: "/Users/me/My Apps/a&b #1+x")))
+    #expect(link("stim-desktop://workspace?path=%2Fw%2Fapp") == .workspace(WorkspaceOpenRequest(path: "/w/app")))
+    #expect(
+      link("stim-desktop://workspace?path=/w&platform=android&slot=tablet%20b")
+        == .workspace(WorkspaceOpenRequest(path: "/w", platform: "android", slot: "tablet b")))
+    #expect(link("stim-desktop://workspace?path=/w&slot=") == .workspace(WorkspaceOpenRequest(path: "/w")))
+    #expect(link("stim-desktop://workspace") == .malformed)
+    #expect(link("stim-desktop://workspace?path=") == .malformed)
+    #expect(link("stim-desktop://workspace?path=w/app") == .malformed)
+    #expect(link("stim-desktop://workspace?path=/w&platform=tvos") == .malformed)
+    #expect(link("stim-desktop://open?udid=U1") == nil)
+    #expect(link("siniulator://workspace?path=/w") == nil)
+  }
+
+  @Test func findsTheWorkspaceAndDeviceALinkNames() throws {
+    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let path = "/Users/dev/app/.worktrees/wide-insets/apps/mobile"
+    let bare = try #require(payload.target(of: WorkspaceOpenRequest(path: path)))
+    #expect(bare.workspace.path == path)
+    #expect(bare.device == nil)
+    let ipad = try #require(payload.target(of: WorkspaceOpenRequest(path: path, platform: "ios", slot: "ipad")))
+    #expect(ipad.device?.id == "ios:D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0")
+    let android = try #require(payload.target(of: WorkspaceOpenRequest(path: path, platform: "android")))
+    #expect(android.device?.id == "android:default:stim-wide-insets-mobile")
+    #expect(payload.target(of: WorkspaceOpenRequest(path: path, platform: "ios", slot: "phone"))?.device == nil)
+    #expect(payload.target(of: WorkspaceOpenRequest(path: "/Users/dev/app/.worktrees")) == nil)
+  }
 }
 
 @Suite struct LoginShellTests {
