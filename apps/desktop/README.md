@@ -150,6 +150,11 @@ named slot). Run appears only on a Stim-owned simulator or emulator, which that
 command targets; a physical device gets no Run. The inspector's device list
 says **App stopped**. Reload app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
 
+A workspace lists its devices like the phone app: running ones first, then
+iOS, Android, Web, physical and remote devices, then by slot name. The order
+never depends on activity or drivers, so a device keeps its place while an
+agent attaches or detaches.
+
 Each device tile shows the `activity` that `stim status` reports: "Driven by
 <tool> · 12m" while agent-device, a Stim device lock, or a test runner drives
 it (on the wall, where the workspace header names every driver once as "Driven

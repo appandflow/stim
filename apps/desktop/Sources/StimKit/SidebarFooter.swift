@@ -34,7 +34,7 @@ public struct DrivenDevice: Equatable, Sendable {
   }
 
   /// Every device across `environments` whose activity state is `driven` (agent-device, a lock, or
-  /// another driver holds it), matching the criterion `Workspace.orderedDevices` ranks by.
+  /// another driver holds it).
   public static func all(in environments: [Workspace]) -> [DrivenDevice] {
     environments.flatMap { env in
       env.devices.filter { $0.activity?.state == "driven" }

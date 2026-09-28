@@ -201,7 +201,7 @@ import Testing
     #expect(pathInCheckout("/u/tlonx/app", worktree: "/u/tlon") == nil)
   }
 
-  @Test func ordersDrivenThenRunningThenStoppedDevices() throws {
+  @Test func ordersRunningDevicesByPlatformWhateverDrivesThem() throws {
     let json = """
       {"path":"/w","live":true,"warnings":[],
        "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Shutdown"},
@@ -211,6 +211,9 @@ import Testing
       """
     let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
     #expect(env.orderedDevices.map { "\($0.slot)/\($0.platform)" } == ["duo/ios", "default/android", "default/ios"])
+    var undriven = env
+    undriven.slots = env.slots.map { $0.map { var slot = $0; slot.ios?.activity = nil; return slot } }
+    #expect(undriven.orderedDevices.map(\.id) == env.orderedDevices.map(\.id))
   }
 
   @Test func projectFromGitCommonDir() {
