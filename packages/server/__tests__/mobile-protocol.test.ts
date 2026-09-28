@@ -32,6 +32,7 @@ describe('the mobile app protocol copy', () => {
     expectTypeOf<Server.ReplayEndedEvent>().toExtend<Mobile.ReplayEndedEvent>();
     expectTypeOf<Server.ControlEndedEvent>().toExtend<Mobile.ControlEndedEvent>();
     expectTypeOf<Server.NotificationEvent>().toExtend<Mobile.NotificationEvent>();
+    expectTypeOf<Server.ServerEvent['event']>().toEqualTypeOf<Mobile.ServerEvent['event']>();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
     expectTypeOf<Mobile.LogRecord>().toExtend<Server.LogRecord>();
   });

@@ -762,6 +762,7 @@ export interface NotificationEvent {
 }
 
 export type ServerEvent =
+  | NotificationEvent
   | StatusEvent
   | LogsEvent
   | FrameEvent

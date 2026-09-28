@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
 
+import { markNotificationRead } from '@/hooks/inbox';
 import { toAttentionMachine, useMacs } from '@/hooks/mac-connection';
 import { RequestError, type StimConnection } from '@/lib/connection';
 import { NOTIFY_STATE_KEY } from '@/lib/derived-data';
@@ -328,10 +329,12 @@ function NotificationTaps() {
     const id = `${response.notification.request.identifier}@${response.notification.date}`;
     if (storage.getString(HANDLED_KEY) === id) return;
     storage.set(HANDLED_KEY, id);
+    const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
     const route = notificationRoute(
-      response.notification.request.content.data,
+      data,
       macs.map((mac) => mac.id),
     );
+    if (typeof data.ref === 'string') markNotificationRead(data.ref, data);
     if ('url' in route) void Linking.openURL(route.url);
     else if (route.pathname === '/') router.navigate('/');
     else router.push(route);

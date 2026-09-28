@@ -29,6 +29,7 @@ function previousVersionStores(marker: string | null) {
   stores.notifications.set('prefs', JSON.stringify({ enabled: true, events: ['build-failed'], agentOnly: false }));
   stores.notifications.set('pushToken', 'ExponentPushToken[x]');
   stores.notifications.set('pushed:mac', 'true');
+  stores.notifications.set('inbox:mac', JSON.stringify({ log: 'L', readUpTo: 4, read: [] }));
   stores.notifications.set(
     'state',
     JSON.stringify({
@@ -79,12 +80,12 @@ const notifyFrom = (stores: DerivedDataStores) =>
   );
 
 describe('clearDerivedDataOnChange', () => {
-  it("clears a previous version's status cache and notify state, keeps settings, and notifying no longer throws", () => {
+  it("clears a previous version's status cache and notify state, keeps settings and inbox read state, and notifying no longer throws", () => {
     for (const marker of [null, OTA]) {
       const stores = previousVersionStores(marker);
       clearDerivedDataOnChange(EMBEDDED, stores);
       expect(stores.status.getAllKeys()).toEqual([]);
-      expect(stores.notifications.getAllKeys().sort()).toEqual(['prefs', 'pushToken', 'pushed:mac']);
+      expect(stores.notifications.getAllKeys().sort()).toEqual(['inbox:mac', 'prefs', 'pushToken', 'pushed:mac']);
       expect(stores.app.getString(MARKER_KEY)).toBe(EMBEDDED);
       expect(() => notifyFrom(stores)).not.toThrow();
     }

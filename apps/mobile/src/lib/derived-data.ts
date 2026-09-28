@@ -19,8 +19,8 @@ export function runningMarker(appVersion: string | null, runtimeVersion: string 
 
 /**
  * Clears the data a previous JS derived when `marker` differs from the one it stored: the whole status cache and
- * the notification state. Notification settings, the push token and push registrations stay, and so does
- * everything in SecureStore.
+ * the notification state. Notification settings, the push token, push registrations and the inbox's read state stay,
+ * and so does everything in SecureStore.
  */
 export function clearDerivedDataOnChange(marker: string, stores: DerivedDataStores): void {
   if (stores.app.getString(MARKER_KEY) === marker) return;

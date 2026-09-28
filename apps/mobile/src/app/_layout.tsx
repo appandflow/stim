@@ -12,6 +12,7 @@ import { MenuDrawer } from '@/components/menu-drawer';
 import { SplashOverlay } from '@/components/splash-overlay';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
+import { InboxSync } from '@/hooks/inbox';
 import { MacsProvider } from '@/hooks/mac-connection';
 import { NotificationsProvider } from '@/hooks/notifications';
 import { RecentsProvider } from '@/hooks/recents';
@@ -77,6 +78,7 @@ function RootLayoutContent() {
       <SplashOverlay>
         <MacsProvider>
           <DevPairing />
+          <InboxSync />
           <NotificationsProvider>
             <HomeFiltersProvider>
               <RecentsProvider>
@@ -103,6 +105,7 @@ function RootLayoutContent() {
                           : null),
                       }}
                     />
+                    <Stack.Screen name="inbox" options={{ title: 'Notifications' }} />
                     <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
                     <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
                     <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />

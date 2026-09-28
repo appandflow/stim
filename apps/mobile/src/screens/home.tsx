@@ -19,6 +19,7 @@ import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
+import { useInbox } from '@/hooks/inbox';
 import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
@@ -45,6 +46,7 @@ export function Home() {
   const { theme } = useUnistyles();
   const router = useRouter();
   const menu = useMenuDrawer();
+  const { unread } = useInbox();
   const macs = usePairedMacs();
   const items = useWorkspaceItems();
   const { filters, update, view } = useHomeFilters();
@@ -117,9 +119,15 @@ export function Home() {
         <Stack.Toolbar.Button
           icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
           tintColor={theme.colors.text}
-          accessibilityLabel="Menu"
+          accessibilityLabel={unread > 0 ? `Menu, ${unread} unread notifications` : 'Menu'}
           onPress={menu.open}
-        />
+        >
+          {unread > 0 ? (
+            <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary, color: theme.colors.onPrimary }}>
+              {unread > 99 ? '99+' : String(unread)}
+            </Stack.Toolbar.Badge>
+          ) : null}
+        </Stack.Toolbar.Button>
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
         {view === 'machines' ? (
