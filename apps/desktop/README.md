@@ -508,7 +508,16 @@ inspector opens, notifications, a menu bar extra with the live workspace count
 and quick open, launch at login, the autopilot (see Autopilot), and a `stim` executable override that applies
 at the next launch. Notifications and launch at login need the bundled app.
 
-## Requirements
+## Workspace links
+
+`stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>]`,
+which `stim worktree warm`, `start`, `ios`, `android` and `web` print, shows a
+card for that workspace with **Open**; the app navigates only when Open is
+clicked. A malformed link, or a path `stim status` still does not list after
+10 seconds, shows **Workspace not found**. With only the menu bar extra
+running and the main window closed, the card appears when the window next
+opens, because the link cannot open a window from the app delegate.
+
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
 - `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup
