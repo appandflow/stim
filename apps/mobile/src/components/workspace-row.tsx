@@ -10,6 +10,7 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
+import { agentsSummary } from '@/lib/agents';
 import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { deviceKey, devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
@@ -43,6 +44,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     running.map((d) => d.activity),
     activityAt,
   );
+  const agents = agentsSummary(env.agents, activityAt);
   const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = offline
     ? theme.colors.tertiary
@@ -65,6 +67,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
         lastSeen,
         settingUp ? (env.phase === 'ready' ? 'Ready' : ['Warming', env.warmStep].filter(Boolean).join(', ')) : null,
         gitBadges(env.worktree?.git)?.label,
+        agents,
         ...drivenLabels,
       ]
         .filter(Boolean)
@@ -98,6 +101,11 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             {item.macName}
           </Text>
         </View>
+        {agents ? (
+          <Text variant="callout" tone="secondary" numberOfLines={1}>
+            {agents}
+          </Text>
+        ) : null}
         {lastSeen || active || errors > 0 || env.warnings.length > 0 ? (
           <View style={styles.chips}>
             {lastSeen ? <Pill>{lastSeen}</Pill> : null}

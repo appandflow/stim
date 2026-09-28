@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, Platform as OS, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
+import { AgentSessions } from '@/components/agent-sessions';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile, WarmingPlaceholder } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
@@ -253,6 +254,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
       >
         {header}
         <StageLine stage={stage} git={gitChip(env.worktree)} onGitPress={() => open('/mac/[id]/git')} />
+        <AgentSessions agents={env.agents} now={now} />
         <CardRow>
           <ResourcesCard usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
           {build ? null : (

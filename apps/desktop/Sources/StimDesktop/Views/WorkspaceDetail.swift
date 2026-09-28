@@ -198,6 +198,10 @@ struct Inspector: View {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         statusCard
 
+        if let agents = env.agents, !agents.isEmpty {
+          AgentSessionsSection(agents: agents)
+        }
+
         if let usage {
           VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Resources \u{00B7} " + countLabel(usage.latest.processCount, "process", plural: "processes"))

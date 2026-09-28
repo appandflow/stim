@@ -1210,7 +1210,27 @@
           "expectedPhaseMs": null,
           "basis": 0
         },
-        "issues": []
+        "issues": [],
+        "agents": [
+          {
+            "tool": "codex",
+            "sessionId": "01a0e643-e569-7940-a3c8-9698035ae8b9",
+            "cwd": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app",
+            "title": "Mobile app pairing",
+            "startedAt": "2026-09-25T02:00:00.000Z",
+            "lastActiveAt": "2026-09-25T04:11:00.000Z",
+            "openUrl": "codex://threads/01a0e643-e569-7940-a3c8-9698035ae8b9"
+          },
+          {
+            "tool": "claude-code",
+            "sessionId": "72747827-889e-5557-bcaf-56bae7200588",
+            "cwd": "/Users/dev/Developer/stim",
+            "title": "Review the pairing flow",
+            "startedAt": "2026-09-25T01:00:00.000Z",
+            "lastActiveAt": "2026-09-25T03:40:00.000Z",
+            "pid": 81942
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer/apps/tlon-mobile",
@@ -1535,7 +1555,19 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
-        }
+        },
+        "agents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "0dc300cd-42a3-4758-8d35-79edf2904001",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/a4-running",
+            "title": "Show agent sessions in status",
+            "startedAt": "2026-09-25T03:10:00.000Z",
+            "lastActiveAt": "2026-09-25T04:20:00.000Z",
+            "pid": 20606,
+            "openUrl": "claude://code/continue?session=local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7"
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
@@ -3156,6 +3188,7 @@
     "environments[].phase and phaseSince: added by hand, live for live workspaces and idle otherwise; the capture predates lifecycle phases. environments[path*=new-composer] (warming, copy step) and environments[path*=fix-search] (ready) were added by hand in the shape stim status --json reports for a worktree being warmed and one warmed and not yet run",
     "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome",
     "environments[path*=chat-perf-demo].physicalDevices and deviceLeases: added by hand in the PhysicalDeviceState shape, a connected iPhone leased in the default slot and a disconnected Android phone in the pixel slot; the capture machine leased no physical device",
-    "environments[path*=a4-ready]: added by hand in the shape stim status --json reports for a worktree stim worktree warm prepared that never built or ran, with an open pull request whose checks all pass"
+    "environments[path*=a4-ready]: added by hand in the shape stim status --json reports for a worktree stim worktree warm prepared that never built or ran, with an open pull request whose checks all pass",
+    "environments[path*=a4-running].agents and environments[path*=1123-mobile-app].agents: added by hand in the AgentSession shape; the capture predates the field"
   ]
 }

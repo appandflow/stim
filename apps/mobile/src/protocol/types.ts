@@ -275,6 +275,23 @@ export interface EnvironmentState {
   builds?: { ios?: BuildHistoryEntry[]; android?: BuildHistoryEntry[] };
   /** Disk use as a status watcher last measured it; absent until one has. */
   disk?: WorkspaceDisk;
+  /** The coding-agent sessions working here, most recently active first; absent when none or from an older `stim`. */
+  agents?: AgentSession[];
+}
+
+/**
+ * A Claude Code or Codex session working in a workspace. `title` is the short name the tool keeps for the session.
+ * `openUrl` opens it in the Mac's desktop app, so the phone does not use it.
+ */
+export interface AgentSession {
+  tool: 'claude-code' | 'codex';
+  sessionId: string;
+  title?: string;
+  cwd: string;
+  startedAt?: string;
+  lastActiveAt?: string;
+  pid?: number;
+  openUrl?: string;
 }
 
 /**
