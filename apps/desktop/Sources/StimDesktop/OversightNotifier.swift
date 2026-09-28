@@ -56,10 +56,9 @@ final class OversightNotifier: ObservableObject {
       previous: state, input: input, prefs: NotificationSettings.prefs(.standard),
       now: now.timeIntervalSince1970 * 1000, awakeSince: awakeSince)
     state = result.state
+    let quiet = NotificationSettings.isQuiet(.standard, minuteOfDay: minuteOfDay)
     for notification in result.notifications {
-      deliver(
-        notification,
-        NotificationSettings.presentation(notification.category, .standard, minuteOfDay: minuteOfDay))
+      deliver(notification, NotificationSettings.level(notification.category, .standard), quiet: quiet)
     }
     wakeTimer?.invalidate()
     wakeTimer = result.wakeAt.map { at in
@@ -79,12 +78,15 @@ final class OversightNotifier: ObservableObject {
     }
   }
 
-  private func deliver(_ notification: OversightNotification, _ level: NotificationLevel) {
-    guard level == .alert else { return }
+  private func deliver(_ notification: OversightNotification, _ level: NotificationLevel, quiet: Bool) {
+    let delivery = Inbox.delivery(level, quiet: quiet)
+    let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
+    NotificationInbox.shared.add(entry)
+    guard delivery.interrupts else { return }
     if Self.mainWindowInFront {
-      ToastCenter.shared.show(Self.toast(notification))
+      ToastCenter.shared.show(Self.toast(notification, entry: entry.id))
     } else {
-      Notifier.postOversight(notification)
+      Notifier.postOversight(notification, entry: entry.id)
     }
   }
 
@@ -95,12 +97,15 @@ final class OversightNotifier: ObservableObject {
       }
   }
 
-  static func toast(_ notification: OversightNotification) -> Toast {
+  static func toast(_ notification: OversightNotification, entry: String) -> Toast {
     let target = notification.target
     return Toast(
       icon: notification.category.symbol, tone: tone(notification.category), title: notification.title,
       body: notification.body,
-      action: Toast.Action(title: target.actionTitle) { NoticeRouter.open(target) },
+      action: Toast.Action(title: target.actionTitle) {
+        NotificationInbox.shared.markRead(entry)
+        NoticeRouter.open(target)
+      },
       sticky: notification.category.needsAttention, key: notification.id)
   }
 

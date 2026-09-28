@@ -557,6 +557,16 @@ until dismissed. Otherwise an Alert is a macOS notification with sound, and
 clicking it brings Stim Desktop up on the target. macOS asks for permission the
 first time one is posted. Silent and Off never interrupt.
 
+Every notification also lands in **Notifications**, pinned in the sidebar with
+the unread count: newest first, grouped by day, each row with its category icon,
+title, body, time and the same call to action. Clicking a row, a card's action
+or a macOS notification opens the target and marks the row read. An Off category
+is listed as **Muted**, and an Alert held by quiet hours as **Quiet hours**, as
+in the phone app's inbox. The page filters by category and by workspace (or the
+machine), and **Mark all read** and **Clear** act on what the filters show. The
+history keeps the last 200 notifications from the last 7 days in
+`notifications.json` in Stim Desktop's Application Support folder.
+
 **Settings > App > Notify when** sets each category's level, the stuck threshold
 (5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.
 During quiet hours an Alert is delivered as Silent. The rules always run every

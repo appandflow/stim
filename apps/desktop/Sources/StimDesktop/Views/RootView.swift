@@ -6,6 +6,7 @@ enum SidebarItem: Hashable {
   case project(Project)
   case environment(String)
   case worktree(String)
+  case notifications
   case attention
   case machine
 }
@@ -302,6 +303,8 @@ struct RootView: View {
       } else {
         EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
       }
+    case .notifications:
+      InboxView(inbox: NotificationInbox.shared)
     case .attention:
       AttentionView(store: store, autopilot: autopilot, openLogs: openErrors)
     case .machine:

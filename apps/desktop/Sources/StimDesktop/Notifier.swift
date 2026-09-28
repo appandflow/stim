@@ -60,17 +60,18 @@ final class Notifier: ObservableObject {
 
   nonisolated static let oversightPrefix = "oversight:"
   nonisolated static let targetKey = "target"
+  nonisolated static let entryKey = "entry"
 
   /// Posts an oversight notification as a banner with sound, asking for permission the first time one is needed. The
   /// request id is the notification's, so a later episode replaces the earlier one in Notification Center.
-  static func postOversight(_ notification: OversightNotification) {
+  static func postOversight(_ notification: OversightNotification, entry: String) {
     guard isAvailable, let target = try? JSONEncoder().encode(notification.target) else { return }
     let content = UNMutableNotificationContent()
     content.title = notification.title
     content.body = notification.body
     content.sound = .default
     if let thread = notification.thread { content.threadIdentifier = thread }
-    content.userInfo = [targetKey: String(decoding: target, as: UTF8.self)]
+    content.userInfo = [targetKey: String(decoding: target, as: UTF8.self), entryKey: entry]
     let request = UNNotificationRequest(
       identifier: oversightPrefix + notification.id, content: content, trigger: nil)
     let center = UNUserNotificationCenter.current()
@@ -141,11 +142,14 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
           self.runPlan?()
         } else if id.hasPrefix("pressure") {
           OpenRequests.shared.showsMachine = true
-        } else if id.hasPrefix(Notifier.oversightPrefix),
-          let json = response.notification.request.content.userInfo[Notifier.targetKey] as? String,
-          let target = try? JSONDecoder().decode(OversightTarget.self, from: Data(json.utf8))
-        {
-          NoticeRouter.open(target)
+        } else if id.hasPrefix(Notifier.oversightPrefix) {
+          let info = response.notification.request.content.userInfo
+          if let entry = info[Notifier.entryKey] as? String { NotificationInbox.shared.markRead(entry) }
+          if let json = info[Notifier.targetKey] as? String,
+            let target = try? JSONDecoder().decode(OversightTarget.self, from: Data(json.utf8))
+          {
+            NoticeRouter.open(target)
+          }
         }
       }
       completionHandler()
