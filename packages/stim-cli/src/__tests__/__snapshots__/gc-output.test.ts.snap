@@ -86,6 +86,7 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
   "caches": [],
   "workspaceOutputs": null,
   "workspaceLogs": [],
+  "recordings": [],
   "worktreeSweep": null,
   "cacheScope": "gc-output-test-no-matching-cache",
   "olderThan": null,

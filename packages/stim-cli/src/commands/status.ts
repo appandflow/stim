@@ -41,6 +41,7 @@ import {
 } from '../engine/build-progress.ts';
 import { volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
+import { workspaceRecordingEnabled } from '../workspace/recordings.ts';
 import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles } from '../engine/device-lease.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
@@ -269,7 +270,11 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
       ),
     );
     const state = states[states.length - 1];
-    if (state) Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }));
+    if (state) {
+      Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
+        recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
+      });
+    }
     labelOnlyRoots.push(
       Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android && !state?.web),
     );

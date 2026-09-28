@@ -201,7 +201,9 @@ outside it moves to its own issue and pull request.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, and logs. The CLI owns every write to that state and imports
-  the readers instead of parsing those files itself.
+  the readers instead of parsing those files itself. The one exception is
+  stim-server's device recordings under `workspaces/<id>/recordings/`, which
+  stim-server writes and prunes; it never creates a workspace directory.
 
 ## Comment policy
 

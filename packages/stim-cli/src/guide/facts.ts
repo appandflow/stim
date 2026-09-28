@@ -568,7 +568,7 @@ RULES
     },
     gc: {
       summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
-      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces>]
+      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings>]
           [--worktrees] [--idle <duration>] --json
 
   The report the text prints, as one payload. Show the user its sections
@@ -595,8 +595,9 @@ RULES
                   run. status is "done", "kept" (left alone, detail says
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, idleDevice, deviceRecord,
-                  workspaceOutputs, workspaceDirectory, project, buildLock,
-                  buildSlot, deviceLease, easSession, worktree, cache.
+                  workspaceOutputs, recording, workspaceDirectory, project,
+                  buildLock, buildSlot, deviceLease, easSession, worktree,
+                  cache.
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null
   inventory       null except on a dry run without --cache or --idle. Report
@@ -696,6 +697,12 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
+    recordings              { dir, projectRoot, bytes, deleteBytes,
+                              willDelete, withWorkspace, reason, detail }
+                              recordings/ of each workspace; deleteBytes is
+                              what --delete would remove; withWorkspace
+                              marks those of a gone workspace, removed with
+                              its workspace directory
     workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
                               reason, detail }  derived-data, gradle-build,
                               android-cas and cache-provider of each
@@ -715,6 +722,7 @@ RULES
     workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
                             recently-used
     workspaceLogs           unresolved | in-use | collector
+    recordings              unresolved | retained | recently-recorded
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
                             locked | in-use | status-unreadable | dirty |
@@ -749,6 +757,8 @@ RULES
               for "live" and "idle"
   warmStep    "refresh" or "copy", the step a warming workspace is in;
               absent in other phases
+  recording   { enabled }: whether stim-server may record the workspace's
+              device screens for replay, from recording.enabled
 
   A warm records warming under its own ownership claim, so a warm that was
   killed or failed reads as idle, never as warming. Plain \`stim status\`

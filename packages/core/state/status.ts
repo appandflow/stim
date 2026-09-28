@@ -385,6 +385,8 @@ export interface EnvironmentState {
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
   phaseSince?: string | null;
+  /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
+  recording?: { enabled: boolean };
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**

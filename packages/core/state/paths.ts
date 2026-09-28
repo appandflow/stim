@@ -18,6 +18,11 @@ export function workspaceLogsDir(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'logs');
 }
 
+/** Device screen footage stim-server records for the workspace, one directory per platform and slot. */
+export function workspaceRecordingsDir(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'recordings');
+}
+
 export function workspaceLogErrorIndex(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'log-error-index.json');
 }

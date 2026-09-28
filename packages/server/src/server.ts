@@ -7,6 +7,7 @@ import { configDir } from '@stim-cli/core';
 import { isJsonObject, loadConfig, type StatusPayload } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
+import { Recorder, type RecordLimits } from './recorder.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
@@ -81,6 +82,12 @@ export interface ServerOptions {
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
   frameLimits?: Partial<FrameLimits>;
+  /**
+   * False runs no recorder, and so no status child while no client asks for status; true by default. The limits
+   * say how much footage it keeps.
+   */
+  record?: boolean;
+  recordLimits?: Partial<RecordLimits>;
   /**
    * The `stim-frames` helper to stream frames with, or null for screenshots only. Without it, the server builds
    * one at startup, and devices subscribed before the build finishes get screenshots.
@@ -299,6 +306,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   if (options.frameHelper === undefined) buildHelper();
   const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
+  const recorder =
+    options.record === false
+      ? null
+      : new Recorder({
+          frames,
+          subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+          limits: options.recordLimits,
+        });
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -720,6 +735,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const cleanup = () => {
         ended = true;
+        stopViewing?.();
         keyframes.delete(subscription);
         if (retry) clearTimeout(retry);
         if (draining) clearTimeout(draining);
@@ -759,6 +775,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (streamed) frames.keyframe(streamed);
         });
       }
+      const stopViewing = recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
         item: (payload) => {
@@ -1144,6 +1161,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
     await control.close();
+    recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));

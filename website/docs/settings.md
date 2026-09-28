@@ -328,6 +328,30 @@ cross-volume copy costs and invalid values.
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
 
+## Device recordings
+
+`stim-server` records the screens of owned simulators, emulators and the
+Stim-owned Chrome page, so the phone app can scrub back through what an agent
+did while you were not watching. It records a device only while an agent or
+automation tool drives it, or while the phone app watches it. It keeps the
+last 15 minutes of footage per device. Recordings stay on your Mac, under
+`$STIM_HOME/workspaces/<id>/recordings/`, and `stim-server` serves them only to
+paired devices.
+
+Turn recording off for the whole Mac, a repository, or one workspace:
+
+```bash
+stim settings set recording.enabled false --scope machine
+```
+
+`recording.enabled` is true by default. The workspace layer wins over the repo
+layer, which wins over the machine layer. `STIM_RECORDING=0` overrides every
+layer; `stim-server` reads it when it starts. Turning recording off deletes the
+existing recordings of every workspace it turns off, and `stim-server` stops
+recording them within seconds. See
+[Inspect and clean caches](./build-caches.md#device-recordings) for how
+recordings are otherwise cleaned up.
+
 ## Environment variables
 
 | Variable                              | Purpose                                                                                                     |
@@ -348,6 +372,7 @@ control build optimizations on this machine without changing project files.
 | `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
 | `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
 | `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
+| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                  |
 
 `STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
 A relative value would resolve against each process's working directory, so

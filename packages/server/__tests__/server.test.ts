@@ -26,6 +26,7 @@ import {
   revokeDevice,
 } from '../src/registry.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
+import { workspaceStateDir } from '@stim-cli/core';
 
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -180,6 +181,8 @@ async function start(
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
     foldHelper?: string;
+    record?: boolean;
+    recordLimits?: ServerOptions['recordLimits'];
     controlLimits?: ServerOptions['controlLimits'];
     pushEndpoint?: string;
   } = {},
@@ -217,6 +220,8 @@ async function start(
     frameLimits: { lingerMs: 50, ...overrides.frameLimits },
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
+    record: overrides.record ?? false,
+    recordLimits: overrides.recordLimits,
     controlLimits: overrides.controlLimits,
     pushEndpoint: overrides.pushEndpoint ?? 'http://127.0.0.1:9/push',
     pullRequests: async () => new Map(),
@@ -1321,6 +1326,15 @@ setInterval(() => {
     message(3, Buffer.concat([header, Buffer.from([0, 0, 0, 1, keyframe ? 0x65 : 0x41, sent % 256])]));
     keyframe = false;
   }
+  if (config.record && !(env.FAKE_HELPER_STATIC && sent > 0 && !keyframe)) {
+    const header = Buffer.alloc(13);
+    header[0] = env.FAKE_HELPER_STATIC || sent % 5 === 0 ? 1 : 0;
+    header.writeDoubleBE(Date.now() + 0.25, 1);
+    header.writeUInt16BE(332, 9);
+    header.writeUInt16BE(720, 11);
+    message(4, Buffer.concat([header, Buffer.from([0, 0, 0, 1, sent % 5 === 0 ? 0x65 : 0x41, sent % 256])]));
+    keyframe = false;
+  }
   if (config.jpeg === false) return sent++;
   const size = Buffer.alloc(4);
   size.writeUInt16BE(390, 0);
@@ -1370,6 +1384,7 @@ describe('frames.subscribe', () => {
     env: Record<string, string>,
     frameLimits?: ServerOptions['frameLimits'],
     frameHelper?: string,
+    recording?: Pick<ServerOptions, 'record' | 'recordLimits'>,
   ): Promise<number> {
     const bin = join(root, 'bin');
     mkdirSync(bin);
@@ -1387,6 +1402,7 @@ describe('frames.subscribe', () => {
       },
       frameLimits,
       frameHelper,
+      ...recording,
     });
   }
 
@@ -2520,5 +2536,176 @@ describe('frames.subscribe', () => {
         }
       },
     );
+  });
+
+  describe('recording', () => {
+    const DRIVEN = { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: null }, basis: [] };
+    const RECORDING = { record: true, recordLimits: { segmentMs: 100 } };
+
+    function deviceDir(): string {
+      return join(workspaceStateDir(workspace), 'recordings', 'ios-default');
+    }
+
+    function registerWorkspaceDir(): void {
+      mkdirSync(workspaceStateDir(workspace), { recursive: true });
+      writeFileSync(join(workspaceStateDir(workspace), 'workspace.json'), JSON.stringify({ projectRoot: workspace }));
+    }
+
+    function segments(): { name: string; units: { keyframe: boolean; at: number }[] }[] {
+      if (!existsSync(deviceDir())) return [];
+      return readdirSync(deviceDir())
+        .toSorted()
+        .map((name) => {
+          const bytes = readFileSync(join(deviceDir(), name));
+          const units = [];
+          for (let at = 0; at + 4 <= bytes.length; at += 4 + bytes.readUInt32BE(at)) {
+            units.push({ keyframe: (bytes[at + 4]! & 1) !== 0, at: bytes.readDoubleBE(at + 5) });
+          }
+          return { name, units };
+        });
+    }
+
+    const closed = () => segments().filter(({ name }) => name.endsWith('.seg'));
+
+    test.skipIf(!fakeTailscale)(
+      'records a driven simulator nobody watches into segments that start at a keyframe',
+      async () => {
+        registerWorkspaceDir();
+        await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
+            FAKE_HELPER_INTERVAL_MS: '10',
+          },
+          undefined,
+          fakeHelper(),
+          RECORDING,
+        );
+        await until(() => closed().length >= 2);
+        for (const { name, units } of closed()) {
+          const [first, last] = name.replace('.seg', '').split('-').map(Number);
+          expect(units[0]!.keyframe).toBe(true);
+          expect(Math.floor(units[0]!.at)).toBe(first);
+          expect(units.at(-1)!.at).toBeLessThanOrEqual(last!);
+        }
+        await server!.close();
+        server = null;
+        expect(segments().every(({ name }) => name.endsWith('.seg'))).toBe(true);
+        const [run] = helperRuns();
+        expect(run!.args).toEqual(['ios', 'SIM-1']);
+        expect(run!.configs[0]).toEqual({
+          fps: 10,
+          maxEdge: 720,
+          jpeg: false,
+          video: false,
+          bitrate: 3_000_000,
+          record: { maxEdge: 720, bitrate: 1_000_000 },
+        });
+      },
+      10_000,
+    );
+
+    test.skipIf(!fakeTailscale)('records an idle device only while a client watches it', async () => {
+      registerWorkspaceDir();
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM, recording: { enabled: true } }),
+          FAKE_HELPER_INTERVAL_MS: '10',
+        },
+        undefined,
+        fakeHelper(),
+        RECORDING,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(existsSync(deviceDir())).toBe(false);
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'ios', video: ['h264'], fps: 30 });
+      await until(() => closed().length >= 1);
+      client.socket.close();
+      await until(() => segments().length > 0 && segments().every(({ name }) => name.endsWith('.seg')));
+      const count = segments().length;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(segments()).toHaveLength(count);
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.configs).toContainEqual(
+        expect.objectContaining({ fps: 30, video: true, record: { maxEdge: 720, bitrate: 1_000_000 } }),
+      );
+    });
+
+    test.skipIf(!fakeTailscale)(
+      'stops capturing and deletes the recordings once status shows recording off',
+      async () => {
+        registerWorkspaceDir();
+        const on = statusPayload({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } });
+        const off = statusPayload({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: false } });
+        await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: JSON.stringify([...Array.from({ length: 60 }, () => on), off]),
+            FAKE_HELPER_INTERVAL_MS: '10',
+          },
+          undefined,
+          fakeHelper(),
+          RECORDING,
+        );
+        await until(() => closed().length >= 1);
+        await until(() => !existsSync(join(workspaceStateDir(workspace), 'recordings')));
+        await until(() => helperRuns().length === 1);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(existsSync(join(workspaceStateDir(workspace), 'recordings'))).toBe(false);
+      },
+      10_000,
+    );
+
+    test.skipIf(!fakeTailscale)('keeps only the last footage of each device', async () => {
+      registerWorkspaceDir();
+      const started = Date.now();
+      await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
+          FAKE_HELPER_INTERVAL_MS: '10',
+        },
+        undefined,
+        fakeHelper(),
+        { record: true, recordLimits: { segmentMs: 50, footageMs: 300, pruneMs: 100 } },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const kept = closed().map(({ name }) => name.replace('.seg', '').split('-').map(Number) as [number, number]);
+      expect(kept.length).toBeGreaterThan(0);
+      expect(kept.reduce((sum, [first, last]) => sum + last - first, 0)).toBeLessThanOrEqual(500);
+      expect(kept[0]![0]).toBeGreaterThan(started + 500);
+    });
+
+    test.skipIf(!fakeTailscale)(
+      'asks for a keyframe once a segment is due, so a screen that does not change still gets segments',
+      async () => {
+        registerWorkspaceDir();
+        await startWithTools(
+          {
+            FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
+            FAKE_HELPER_INTERVAL_MS: '10',
+            FAKE_HELPER_STATIC: '1',
+          },
+          undefined,
+          fakeHelper(),
+          RECORDING,
+        );
+        await until(() => closed().length >= 1);
+      },
+      10_000,
+    );
+
+    test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {
+      await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, activity: DRIVEN }, recording: { enabled: true } }),
+          FAKE_HELPER_INTERVAL_MS: '10',
+        },
+        undefined,
+        fakeHelper(),
+        RECORDING,
+      );
+      await until(() => existsSync(`${toolCalls}.started`));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(existsSync(workspaceStateDir(workspace))).toBe(false);
+    });
   });
 });

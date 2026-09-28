@@ -27,6 +27,7 @@ import {
   type SettingsPayload,
 } from '@stim-cli/core/state';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { deleteDisabledRecordings } from '../workspace/recordings.ts';
 import { settingDefault, stimDesktopInstalled } from '../devices/stim-desktop.ts';
 
 const MASK = '********';
@@ -478,7 +479,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
         const context = readContext(env, io.note);
         const file = requireLayer(context, scope, setting);
         const changed = writeSetting(context, setting, scope, value);
-        report(io, wantsJson(opts, command), { key, scope, file, changed }, setting, readContext(env), 'set');
+        report(io, wantsJson(opts, command), { key, scope, file, changed }, setting, readContext(env), 'set', env);
       }),
     );
 
@@ -494,7 +495,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
         const context = readContext(env, io.note);
         const file = requireLayer(context, scope, setting);
         const changed = writeSetting(context, setting, scope, undefined);
-        report(io, wantsJson(opts, command), { key, scope, file, changed }, setting, readContext(env), 'unset');
+        report(io, wantsJson(opts, command), { key, scope, file, changed }, setting, readContext(env), 'unset', env);
       }),
     );
 }
@@ -506,12 +507,15 @@ function report(
   setting: SettingDefinition,
   context: SettingsContext,
   verb: 'set' | 'unset',
+  env: NodeJS.ProcessEnv,
 ): void {
   const entry = settingEntry(context, setting);
+  const recordingsDeleted = setting.key === 'recording.enabled' ? deleteDisabledRecordings(env) : null;
   if (json) {
-    io.out(JSON.stringify({ ...write, setting: entry }));
+    io.out(JSON.stringify({ ...write, setting: entry, ...(recordingsDeleted ? { recordingsDeleted } : {}) }));
     return;
   }
+  for (const workspace of recordingsDeleted ?? []) io.note(`Deleted the device recordings of ${workspace}.`);
   const effective = entry.origin === null ? 'unset' : `${formatValue(entry.value)} (${formatOrigin(entry)})`;
   if (!write.changed) {
     io.out(`${write.key} was not set in ${write.file}; effective value: ${effective}`);

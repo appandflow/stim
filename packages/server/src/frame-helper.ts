@@ -17,6 +17,10 @@ export interface FrameHint {
 
 export const DEFAULT_FRAME_HINT: FrameHint = { fps: FRAME_FPS.default, maxEdge: FRAME_EDGE.default };
 
+/** What the recording encoder asks of the helper: at most 10 frames a second, 720 pixels and 1 Mbps. */
+export const RECORD_HINT: FrameHint = { fps: 10, maxEdge: 720 };
+const RECORD_BITRATE = 1_000_000;
+
 const SOURCES_DIR = fileURLToPath(new URL('./stim-frames/', import.meta.url));
 const BUILD_TIMEOUT_MS = 180_000;
 const VERSION_TIMEOUT_MS = 30_000;
@@ -24,6 +28,7 @@ const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const FRAME_MESSAGE = 1;
 const NOTICE_MESSAGE = 2;
 const VIDEO_MESSAGE = 3;
+const RECORD_MESSAGE = 4;
 const VIDEO_HEADER_BYTES = 14;
 const KEYFRAME_INTERVAL_MS = 250;
 
@@ -209,7 +214,7 @@ export class HelperSource {
     this.listeners.set(listener, hint);
     this.configure();
     if (listener.video) this.keyframe();
-    else if (this.last) listener.frame(this.last);
+    else if (this.last && !listener.record) listener.frame(this.last);
     return () => {
       if (!this.listeners.delete(listener)) return;
       if (this.listeners.size > 0) this.configure();
@@ -256,14 +261,17 @@ export class HelperSource {
     if (this.listeners.size === 0) return;
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
-    const jpegFps = watching.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
+    const viewers = watching.filter(({ listener }) => !listener.record);
+    const jpegFps = viewers.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
+    const recording = viewers.length < watching.length;
     const config = JSON.stringify({
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
       maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
       jpeg: jpegFps.length > 0,
       ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
-      video: jpegFps.length < hints.length,
+      video: jpegFps.length < viewers.length,
       bitrate: this.bitrate.current,
+      ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, bitrate: RECORD_BITRATE } } : {}),
     });
     if (!jpegFps.length) this.last = null;
     if (config === this.config || this.stopped) return;
@@ -293,6 +301,7 @@ export class HelperSource {
         buffer = buffer.subarray(4 + length);
         if (body[0] === FRAME_MESSAGE && body.length > 5) this.frame(body);
         else if (body[0] === VIDEO_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.video(body);
+        else if (body[0] === RECORD_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.record(body);
         else if (body[0] === NOTICE_MESSAGE) this.readNotice(body.subarray(1).toString('utf8'));
       }
     });
@@ -310,9 +319,8 @@ export class HelperSource {
     for (const listener of this.listeners.keys()) if (!listener.video) listener.frame(this.last);
   }
 
-  private video(body: Buffer): void {
-    if (this.stopped) return;
-    const unit: AccessUnit = {
+  private unit(body: Buffer): AccessUnit {
+    return {
       keyframe: (body[1]! & 1) !== 0,
       capturedAt: body.readDoubleBE(2),
       width: body.readUInt16BE(10),
@@ -320,8 +328,19 @@ export class HelperSource {
       data: body.subarray(VIDEO_HEADER_BYTES),
       ...(this.posture ? { posture: this.posture } : {}),
     };
+  }
+
+  private video(body: Buffer): void {
+    if (this.stopped) return;
+    const unit = this.unit(body);
     if (this.bitrate.tick(Date.now()) !== null) this.configure();
     for (const listener of this.listeners.keys()) listener.video?.(unit);
+  }
+
+  private record(body: Buffer): void {
+    if (this.stopped) return;
+    const unit = this.unit(body);
+    for (const listener of this.listeners.keys()) listener.record?.(unit);
   }
 
   private readNotice(text: string): void {
