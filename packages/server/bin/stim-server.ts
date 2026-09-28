@@ -74,6 +74,8 @@ async function serve(port: number): Promise<void> {
   const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
   const env: NodeJS.ProcessEnv = { ...(login ?? process.env) };
+  delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.CODEX_THREAD_ID;
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
 

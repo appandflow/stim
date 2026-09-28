@@ -10,7 +10,6 @@ const TITLE_MAX_LENGTH = 120;
 const SESSION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const CODEX_ACTIVE_MS = 30 * 60_000;
 const CODEX_QUERY_TIMEOUT_MS = 5000;
-/** How long a session that ran a Stim command stays attributed when status cannot see it running. */
 const COMMAND_ATTRIBUTION_MS = 30 * 60_000;
 
 /**
@@ -116,7 +115,6 @@ export function parseCodexThreads(rows: unknown, apps: AgentApps): AgentSession[
   });
 }
 
-/** The newest `state_<N>.sqlite` in a Codex home listing, or null. */
 function codexStateDatabase(names: string[]): string | null {
   let best: { name: string; version: number } | null = null;
   for (const name of names) {
@@ -144,7 +142,6 @@ function bundleInstalled(home: string, { names, bundleId }: { names: string[]; b
   return false;
 }
 
-/** Whether Claude desktop and the Codex app are installed in /Applications or ~/Applications; macOS only. */
 function installedAgentApps(home: string = homedir()): AgentApps {
   if (process.platform !== 'darwin') return { claude: false, codex: false };
   return { claude: bundleInstalled(home, APP_BUNDLES.claude), codex: bundleInstalled(home, APP_BUNDLES.codex) };
@@ -158,10 +155,7 @@ async function canonical(session: AgentSession): Promise<AgentSession | null> {
   }
 }
 
-/**
- * Whether the process `pid` can be the session's: it runs, and it did not start after the session did, which a
- * recycled pid would. A start time that cannot be read counts as running.
- */
+// unique-pid reads a process start time only on macOS, so elsewhere a recycled pid still counts as running.
 function sessionProcessRuns(session: AgentSession): boolean {
   const start = inspectProcessStart(session.pid!);
   if (start.status === 'gone') return false;
@@ -192,7 +186,7 @@ async function claudeSessions(home: string, apps: AgentApps): Promise<AgentSessi
 
 const CODEX_QUERY = `const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync(process.argv[1], { readOnly: true });
-const rows = db.prepare('SELECT id, cwd, name, source, created_at_ms, updated_at_ms FROM threads WHERE archived = 0 AND updated_at_ms >= ? ORDER BY updated_at_ms DESC LIMIT 50').all(Number(process.argv[2]));
+const rows = db.prepare('SELECT id, cwd, name, source, created_at_ms, updated_at_ms FROM threads WHERE archived = 0 AND updated_at_ms >= ? AND source NOT LIKE ? ORDER BY updated_at_ms DESC LIMIT 50').all(Number(process.argv[2]), '%"subagent"%');
 db.close();
 process.stdout.write(JSON.stringify(rows));`;
 

@@ -78,7 +78,7 @@ export function clearWorkspaceStateKey(root: string, key: string, shouldClear: (
   });
 }
 
-/** Records a command's use of the workspace, and the agent session whose shell ran it, or clears that session. */
+/** Records a command's use of the workspace, and the agent session whose shell ran it when there is one. */
 export function recordWorkspaceUse(root: string, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): void {
   const agent = agentFromEnv(env);
   let cwd = process.cwd();
@@ -88,7 +88,7 @@ export function recordWorkspaceUse(root: string, now: Date = new Date(), env: No
   try {
     writeWorkspaceState(root, {
       lastUsedAt: now.toISOString(),
-      [WORKSPACE_AGENT_KEY]: agent ? { ...agent, cwd, lastActiveAt: now.toISOString() } : undefined,
+      ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
     });
   } catch {}
 }

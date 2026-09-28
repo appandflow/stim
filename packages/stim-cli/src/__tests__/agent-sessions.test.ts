@@ -80,7 +80,7 @@ test('Codex threads use the short name, never the first prompt, and leave out su
   expect(parseCodexThreads({ rows }, APPS)).toEqual([]);
 });
 
-test('discovery keeps Claude sessions whose process runs and recent Codex threads, and nothing without their files', async () => {
+test('discovery keeps Claude sessions whose process runs (a recycled pid is caught on macOS) and recent Codex threads', async () => {
   expect(await discoverAgentSessions({ home, apps: NO_APPS })).toEqual([]);
 
   const project = join(home, 'project');
@@ -92,7 +92,9 @@ test('discovery keeps Claude sessions whose process runs and recent Codex thread
     writeFileSync(join(sessions, name), JSON.stringify({ ...CLAUDE, cwd: project, ...patch }));
   write('live.json', { pid: process.pid, sessionId: 'live', startedAt: now });
   write('exited.json', { pid: 4_194_000, sessionId: 'exited', startedAt: now });
-  write('recycled.json', { pid: process.pid, sessionId: 'recycled', startedAt: now - 30 * 86_400_000 });
+  if (process.platform === 'darwin') {
+    write('recycled.json', { pid: process.pid, sessionId: 'recycled', startedAt: now - 30 * 86_400_000 });
+  }
   writeFileSync(join(sessions, 'torn.json'), '{"pid": 1');
 
   const codexHome = join(home, '.codex');
@@ -201,6 +203,5 @@ test('a Stim command records the agent session of its shell, and status reads it
   recordWorkspaceUse(project, new Date(), {});
   const stale = environment();
   applyStatusMeasures([stale], []);
-  expect(stale).not.toHaveProperty('agents');
-  expect(readWorkspaceState(project)).not.toHaveProperty('agentSession');
+  expect(stale.agents?.map((agent) => agent.sessionId)).toEqual(['from-shell']);
 });
