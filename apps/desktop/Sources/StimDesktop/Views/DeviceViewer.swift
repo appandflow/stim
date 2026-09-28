@@ -142,12 +142,26 @@ struct DeviceViewer: View {
   }
 }
 
-/// Re-renders its content as the replay starts, stops or moves.
+/// Re-renders its content as the replay starts or stops, or its footage appears or goes, and not as the replay
+/// moves, so playing and scrubbing redraw only the replay bar and screen.
 private struct ReplayingTile<Content: View>: View {
-  @ObservedObject var replay: ReplayController
-  @ViewBuilder var content: (Bool) -> Content
+  private struct Shown: Equatable {
+    var replaying: Bool
+    var hasFootage: Bool
+  }
 
-  var body: some View { content(replay.replay != nil) }
+  var replay: ReplayController
+  @ViewBuilder var content: (Bool) -> Content
+  @State private var shown = Shown(replaying: false, hasFootage: false)
+
+  var body: some View {
+    content(shown.replaying)
+      .onReceive(
+        replay.$replay.combineLatest(replay.$range)
+          .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true)) }
+          .removeDuplicates()
+      ) { shown = $0 }
+  }
 }
 
 /// Hands out the window a view is in.
