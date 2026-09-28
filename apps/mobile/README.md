@@ -126,16 +126,27 @@ reload and stop a workspace:
   failed command shows its error code, diagnostic id and duration. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status. With control, it
   also runs **Reload** and **Stop** (see [Actions](#actions)).
-- **Logs**: the same filters as the Desktop log viewer: the Metro, App, Native,
-  Build and Agent sources, a slot, a minimum level, errors only, and a regular
-  expression search. The list follows new records until you scroll up, keeps
-  the newest 5,000, and a tap on a record shows its whole message and stack.
+- **Logs**: opens from the workspace screen's Logs card, and on errors from the
+  home screen and notifications. A header shows Metro's port and a dot for
+  whether it runs, and how long the last bundle took when the loaded Metro
+  records hold its start and finish. **All**, **Errors** and **Warnings** pick
+  the severity: Errors is `stim logs --errors` and counts the errors since the
+  last launch, from the status; Warnings counts the loaded warnings. Source
+  chips (Metro, App, iOS, Android, Web, Build, Agent) show only the sources the
+  workspace runs or that sent records; none selected shows every source. iOS,
+  Android and Web split the device logs by their platform. A slot row and a
+  regular expression search complete the filters. The list follows new records
+  until you scroll up, keeps the newest 5,000, and a tap on a record shows its
+  whole message and stack. Each entry shows a severity dot, its source and time,
+  then the message; a record with a stack shows its top frames, the
+  workspace's own frames in bold, one framework frame dimmed as its package, and
+  a count of the rest.
   The records of one failed Expo bundle (`Bundling failed`, the error line with
   its code frame and stack lines, and a failed bundle response) are one entry.
   An entry leads with the error type and message, then the file and line
   relative to the workspace, such as `App.js:12:31`. Tapping it shows the code
-  frame. Under Errors only, Stim attaches the code frame to the error record.
-  When a level or search filter leaves the code frame lines out, or an older
+  frame. Under Errors, Stim attaches the code frame to the error record.
+  When the severity or a search leaves the code frame lines out, or an older
   Stim does not attach them, the app fetches them from the Metro log. **Copy** copies the message and location,
   and **Share** shares the whole entry.
 
