@@ -130,13 +130,32 @@ target device, the phase or the build tool's step with its counts ("Compiling
 per phase sized by the reference run, why the cache missed, the other
 platform's last build and the latest output line. Clicking it opens the phase
 checklist and the last lines of build output (`stim logs --source build`).
-When the page is wider than 820 points, the Resources card lists its first
+When the page is 820 points wide or more, the Resources card lists its first
 four processes, devices first, and the build card shows the phase checklist
 inline.
 
 The inspector keeps the coding-agent sessions, the device list with each
 device's **Stop**, the **Builds** section and the project's build cache
 figures.
+
+Below the cards, the page shows every device of the workspace at once, in the
+order above, each with its live frame. The frames share one height, the
+tallest at which every tile fits the canvas in one row or a few, wrapping when
+the window is narrow and scrolling past a floor of 260 points. Clicking a
+tile focuses it without hiding the others. Each tile's header adds its CPU,
+memory and disk (from the machine owner matched by slot and kind, and the
+device's `disk`). A running simulator or emulator ends with the agent row: the
+driving tool and its last action ("agent-device · Tapped "Allow camera" · 12s
+ago"), or "No agent" with how long it has been idle; clicking it lists the
+latest agent actions. A device whose build is running shows "Waiting for the
+iOS build" with the phase over its frame, one whose platform never built here
+and last failed shows **No app installed**, and one whose app process is gone
+is dimmed with **App closed**. A workspace that is warming with no device yet
+shows a warming placeholder.
+
+On a page 820 points wide or more, the logs sit in a pane beside the devices,
+resized by dragging its edge and hidden with **Hide logs**; the app remembers
+both. A narrower page switches between **Devices** and **Logs**.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears in the sidebar under its project and
@@ -391,9 +410,9 @@ notification is on by default and needs the bundled app.
 
 ## Logs
 
-A workspace's detail view has a **Logs** tab next to its device, and the error
-count on the device wall and the page's Logs card open it with **Errors only**
-on when there are errors.
+A workspace's page shows its logs beside the devices, or on a **Logs** tab when
+the page is narrow. The Logs card and the error count on the device wall open
+them, with **Errors only** on when there are errors.
 The tab runs `stim logs --json --follow --tail 5000` in the workspace and adds
 the filters you pick: the Metro, App (`client`), Native (`device`), Build and
 Agent (`agent`, what agent-device did on the workspace's devices) sources, a
@@ -402,7 +421,7 @@ With every source selected no `--source` is passed, so **Errors only** keeps
 the CLI's default scope, which leaves general device logs and agent actions
 out. The Agent source needs a `stim` that has it; an older one refuses
 `--source agent` once any chip is off.
-Changing a filter or the workspace restarts the command; leaving the tab or
+Changing a filter or the workspace restarts the command; hiding the logs or
 quitting the app terminates it.
 
 The list keeps the newest 50,000 records and drops the oldest past that. It
@@ -412,15 +431,13 @@ stack. Command-C or **Copy** copies the selected records, or every loaded
 record when none is selected. **Reveal log folder** opens the workspace's log
 directory from `stim status`.
 
-Under the device on the **Device** tab, **Agent actions** lists the latest
-agent-device actions on that simulator or emulator, newest first: taps, typing,
-app opens, screenshots, and failed commands in red. On the Web device it lists
-the clicks, typing and scrolls an attached tool such as Playwright sent to the
-page. It runs `stim logs --json --follow --tail 200 --source agent --slot
-<slot>` in the workspace and keeps the records whose `deviceId` is the device's
-UDID or serial, or the page's DevTools target. It shows nothing
-until the focused device has an action, and switching devices or tabs
-terminates the command.
+A device's agent row and its popover list the latest agent-device actions on
+that simulator or emulator, newest first: taps, typing, app opens, screenshots,
+and failed commands in red. On the Web device they list the clicks, typing and
+scrolls an attached tool such as Playwright sent to the page. Each runs `stim
+logs --json --follow --tail 200 --source agent --slot <slot>` in the workspace
+and keeps the records whose `deviceId` is the device's UDID or serial, or the
+page's DevTools target; leaving the page terminates the command.
 
 ## Build progress
 
@@ -433,8 +450,9 @@ which needs a Stim version that reports it.
 
 ## Take over a device
 
-Device frames are view-only until you turn on **Take over** above a booted iOS
-simulator or a running owned Android emulator in a workspace's detail view.
+Device frames are view-only until you turn on **Take over** (the hand button)
+on a booted iOS simulator or a running owned Android emulator on a workspace's
+page. One device is taken over at a time.
 While it is on, the app sends that device your clicks and drags as touches,
 trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
@@ -478,7 +496,8 @@ endpoint, such as Playwright MCP, shows as the driver.
 ## Replay
 
 While a stim-server runs on port 7787 (**Serve to phones**, see [Phones](#phones)),
-the focused device of a workspace page offers a replay bar under its screen,
+each simulator, emulator and web page on a workspace page offers a replay bar
+once the server has recorded it,
 like the phone app's device viewer. Stim Desktop connects to that server at
 `ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json --control` for a
 token, spends it as a device named "Stim Desktop", and keeps the
@@ -528,7 +547,7 @@ A physical iPhone, iPad or Android phone the workspace leases with
 `stim ios --device`, `stim android --device` or `stim device lock` shows as its
 own tile, from the environment's `physicalDevices` in `stim status --json`, next
 to any simulator or emulator in the same slot. The tile names the device and
-its model, carries a **Physical** pill and the time the lease ends, and counts
+its model, carries a **Physical** pill and "Leased · 42m left", and counts
 as running while the Mac reaches the device. It has no Stop and no rotate
 buttons. A lease alone puts the workspace under Live.
 

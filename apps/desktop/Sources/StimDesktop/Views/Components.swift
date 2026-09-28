@@ -92,6 +92,7 @@ struct DriversPill: View {
 struct FlowLayout: Layout {
   var spacing: CGFloat = 6
   var lineSpacing: CGFloat = 6
+  var topAligned = false
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
     let width = proposal.width ?? .infinity
@@ -108,7 +109,8 @@ struct FlowLayout: Layout {
       var x = bounds.minX
       for item in row.items {
         item.subview.place(
-          at: CGPoint(x: x, y: y + (row.height - item.size.height) / 2), proposal: ProposedViewSize(item.size))
+          at: CGPoint(x: x, y: topAligned ? y : y + (row.height - item.size.height) / 2),
+          proposal: ProposedViewSize(item.size))
         x += item.size.width + spacing
       }
       y += row.height + lineSpacing
