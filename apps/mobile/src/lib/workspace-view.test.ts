@@ -9,6 +9,7 @@ import {
   deviceTitle,
   deviceUsage,
   gitChip,
+  namesPhases,
   phaseSteps,
   processRows,
   workspaceSeries,
@@ -336,6 +337,14 @@ describe('phaseSteps', () => {
       ['compile', 'pending'],
       ['install', 'pending'],
     ]);
+  });
+
+  it('names phases only when there is more than one, so a first build in a fresh workspace does not repeat its stage', () => {
+    const fresh = phaseSteps(build({ phase: 'prepare', phaseStartedAt: iso(0) }), [], NOW);
+    expect(fresh.map((s) => s.phase)).toEqual(['prepare']);
+    expect(namesPhases(fresh)).toBe(false);
+    expect(namesPhases(barSteps(fresh))).toBe(false);
+    expect(namesPhases(phaseSteps(build(), history, NOW))).toBe(true);
   });
 
   it('takes the current phase progress from the build tool counts when it reports a total', () => {

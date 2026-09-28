@@ -520,6 +520,9 @@ extension Build {
   }
 }
 
+/// Whether a phase bar or checklist names its phases: only with more than one, since the stage line names a lone phase.
+public func namesPhases(_ steps: [PhaseStep]) -> Bool { steps.count > 1 }
+
 /// The short prepare phases folded into one segment and launch into install, for the progress bar.
 public func barSteps(_ steps: [PhaseStep]) -> [PhaseStep] {
   let group = ["cache-lookup": "prepare", "wait": "prepare", "launch": "install"]

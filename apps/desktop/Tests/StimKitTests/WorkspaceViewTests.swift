@@ -231,6 +231,17 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(prepare.fraction == 2000.0 / 3000.0)
   }
 
+  @Test func namesPhasesOnlyWhenThereIsMoreThanOne() throws {
+    var fresh = try build()
+    fresh.phase = "prepare"
+    fresh.phaseStartedAt = iso(0)
+    let steps = fresh.phaseSteps(history: [], now: now)
+    #expect(steps.map(\.phase) == ["prepare"])
+    #expect(!namesPhases(steps))
+    #expect(!namesPhases(barSteps(steps)))
+    #expect(namesPhases(try build().phaseSteps(history: history, now: now)))
+  }
+
   @Test func takesProgressFromTheBuildToolCounts() throws {
     let counted = try build(#","detail":{"step":"compile","unit":"targets","done":45,"total":180}"#)
     #expect(counted.phaseSteps(history: history, now: now)[3].fraction == 0.25)
