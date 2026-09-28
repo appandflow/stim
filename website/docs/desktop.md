@@ -80,6 +80,10 @@ memory and disk, and which agent drives it with its last action, or how long
 it has been idle. Click a device to focus it, and use the hand button to take
 it over. On a wide window the logs sit in a resizable pane beside the devices.
 
+When nothing runs, on **All devices**, a project, or a workspace with no
+device that is not warming, the page offers three example prompts to copy for your coding agent,
+the same ones the phone app shows.
+
 ## Run the app
 
 Each workspace's context menu and "..." menu offer **Run on iOS** and **Run on

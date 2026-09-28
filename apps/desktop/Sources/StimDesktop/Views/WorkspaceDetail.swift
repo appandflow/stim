@@ -237,7 +237,10 @@ struct WorkspaceDetail: View {
         title: "No devices",
         message: stage.label == .stopped
           ? "Nothing is running. Ask your agent to run the app."
-          : "No device in this workspace yet. Run stim ios or stim android.")
+          : "No device in this workspace yet. Run stim ios or stim android.",
+        showsPrompts: true
+      )
+      .id(env.path)
     }
   }
 

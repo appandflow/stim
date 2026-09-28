@@ -79,6 +79,11 @@ the options hide every row, the list says so and offers **Show all** or
 keys move through the menu, Return picks, and Right and Left open and close a
 submenu.
 
+When **All devices** or a project has nothing running, or a workspace that is
+not warming has no device, the page shows three example prompts for a coding agent, picked at
+random from the phone app's list each time the page appears, with a **Copy**
+button that reads **Copied** once the prompt is on the clipboard.
+
 Each workspace row shows its worktree's git state from `stim status --json`: a
 dot with the number of uncommitted files, arrows for commits ahead of and
 behind the upstream, and **merged** when `gc` would call the branch merged. A
@@ -749,9 +754,11 @@ swift test
 `Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
 the text styles with their macOS sizes from `macosText`, and the light and dark
-colors. After changing that file, regenerate it with
+colors. `Sources/StimDesktop/AgentPrompts.swift` is generated from the phone
+app's empty-state prompts in `apps/mobile/src/lib/agent-prompts.ts`. After
+changing either file, regenerate both with
 `node apps/desktop/scripts/generate-tokens.mjs`. Desktop CI runs the same
-script with `--check` and fails when the committed file is stale. The color
+script with `--check` and fails when a committed file is stale. The color
 names match the phone's; `Palette` colors follow the system appearance and the
 app's Appearance setting.
 

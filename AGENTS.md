@@ -60,8 +60,9 @@ device replay and a leased physical device's screen, and runs Stim commands
 through the CLI, never by reading or writing `$STIM_HOME`. It connects to
 stim-server only over loopback, with the device token it gets by spending a
 `stim-server pair --control` token. Build and test it with `swift build` and
-`swift test` from that directory. Its design tokens are generated from `apps/mobile/src/design/tokens.ts`;
-run `node apps/desktop/scripts/generate-tokens.mjs` after changing that file.
+`swift test` from that directory. Its design tokens and empty-state agent prompts are generated from
+`apps/mobile/src/design/tokens.ts` and `apps/mobile/src/lib/agent-prompts.ts`; run
+`node apps/desktop/scripts/generate-tokens.mjs` after changing either file.
 
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
 workspace named `stim-mobile`; see its README. Of the root checks above, only

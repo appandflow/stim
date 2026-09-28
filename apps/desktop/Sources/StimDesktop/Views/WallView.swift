@@ -21,7 +21,9 @@ struct WallView: View {
       EmptyState(
         title: project.map { "Nothing running in \($0.name)" } ?? "Nothing running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
-        showsHero: true)
+        showsHero: true, showsPrompts: true
+      )
+      .id(project?.id)
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.huge) {

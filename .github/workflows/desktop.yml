@@ -7,6 +7,7 @@ on:
     paths:
       - 'apps/desktop/**'
       - 'apps/mobile/src/design/tokens.ts'
+      - 'apps/mobile/src/lib/agent-prompts.ts'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'apps/desktop/**'
       - 'apps/mobile/src/design/tokens.ts'
+      - 'apps/mobile/src/lib/agent-prompts.ts'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -37,7 +39,7 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
-      - name: Check the generated design tokens
+      - name: Check the generated design tokens and agent prompts
         run: node scripts/generate-tokens.mjs --check
       - run: swift build
       - run: swift test
