@@ -126,7 +126,7 @@ export function appendRecords(existing: LogRecord[], incoming: LogRecord[], max 
   return next.length > max ? next.slice(next.length - max) : next;
 }
 
-export function firstLine(message: string): string {
+function firstLine(message: string): string {
   const i = message.indexOf('\n');
   return i < 0 ? message : message.slice(0, i);
 }

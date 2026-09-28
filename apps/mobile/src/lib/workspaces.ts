@@ -18,7 +18,7 @@ export interface WorkspaceNames {
 }
 
 /** Same naming as apps/desktop PathNames: a worktree is named after its folder under `.worktrees`/`worktrees`. */
-export function workspaceNames(path: string): WorkspaceNames {
+function workspaceNames(path: string): WorkspaceNames {
   const parts = path.split('/').filter(Boolean);
   for (const marker of ['.worktrees', 'worktrees']) {
     const i = parts.lastIndexOf(marker);

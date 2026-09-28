@@ -4,9 +4,21 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile.yml'
+      - 'knip.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
   pull_request:
-    paths: ['apps/mobile/**', '.github/workflows/mobile.yml', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile.yml'
+      - 'knip.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -32,3 +44,12 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm test --ci
+
+  knip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          build: 'false'
+      - run: pnpm run knip

@@ -931,8 +931,24 @@ The Sentry organization is `stim-rn` and the project `stim-mobile`.
 pnpm run format:check
 pnpm run lint
 pnpm run typecheck
+pnpm run knip
 pnpm test
 ```
+
+`pnpm run knip` runs the repository's knip from the root `knip.json`, where
+the app is the `apps/mobile` workspace, so it reports unused files, exports
+and dependencies across the app and the rest of the repository. knip's Expo,
+Jest, Metro and Babel plugins find the `src/app` routes and the config files;
+the workspace entry adds the config plugins, the mock server, the scripts and
+`fingerprint.config.js`. It ignores `expo-screen-orientation`, which the app
+never imports: its iOS app delegate is what applies the per-screen
+`orientation` of `src/app/_layout.tsx`.
+
+The app uses TypeScript 7, the same version as the root. TypeScript 7 has no
+JavaScript compiler API, so Expo loads `app.config.ts` by stripping its types
+with Node, which does not add default-import interop. Import only types in
+`app.config.ts`, and name config plugins by string in `plugins` instead of
+importing them (expo/expo#49564).
 
 `pnpm run lint` runs oxlint with `.oxlintrc.json`, which includes oxlint's React
 Compiler rules. A component or hook the compiler would skip fails lint, so fix
@@ -942,7 +958,7 @@ a few 1.0.0 bailouts pass lint. One is a conditional, `??`, `||` or optional
 chain inside a `try` block.
 
 `.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
-the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
+the root `knip.json`, `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 
 `src/app-boot.test.tsx` is the boot test. It renders the whole app, from
 `src/app/_layout.tsx` down to home, in Jest. The phone starts from what the

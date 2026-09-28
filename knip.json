@@ -2,7 +2,6 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignore": [
     "website/**",
-    "apps/mobile/**",
     "packages/stim-cli/shim/**",
     "scripts/agent-benchmark/compat/ps-bridge.mjs",
     "scripts/agent-benchmark/stamp.mjs",
@@ -11,6 +10,18 @@
   "workspaces": {
     ".": {
       "entry": ["apps/desktop/scripts/*.mjs"]
+    },
+    "apps/mobile": {
+      "entry": ["plugins/*.js", "scripts/*.mjs", "mock-server/*.mjs", "fingerprint.config.js"],
+      "ignoreBinaries": ["stim-server"],
+      "ignoreDependencies": ["expo-screen-orientation"],
+      "ignoreExportsUsedInFile": {
+        "interface": true,
+        "type": true
+      },
+      "ignoreIssues": {
+        "src/protocol/types.ts": ["types"]
+      }
     }
   }
 }

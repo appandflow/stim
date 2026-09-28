@@ -1,12 +1,12 @@
 /** Rows a capped section shows before "Show all", as on Stim Desktop's Machine page. */
-export const SECTION_LIMIT = 10;
+const SECTION_LIMIT = 10;
 
 export interface SectionState {
   collapsed: boolean;
   showAll: boolean;
 }
 
-export const DEFAULT_SECTION: SectionState = { collapsed: false, showAll: false };
+const DEFAULT_SECTION: SectionState = { collapsed: false, showAll: false };
 
 /** A saved section state; anything unreadable is the default, expanded and capped. */
 export function parseSectionState(raw: string | undefined): SectionState {

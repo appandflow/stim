@@ -208,14 +208,14 @@ export interface MachineReport {
 }
 
 /** "com.apple.CoreSimulator.SimRuntime.iOS-27-0" reads "iOS 27.0". */
-export function iosRuntimeTitle(identifier: string): string {
+function iosRuntimeTitle(identifier: string): string {
   const last = identifier.split('.').pop() ?? identifier;
   const [platform, ...version] = last.split('-');
   return version.length ? `${platform} ${version.join('.')}` : last;
 }
 
 /** "system-images;android-36;google_apis;arm64-v8a" reads "Android 36 \u00B7 google_apis". */
-export function systemImageTitle(pkg: string): string {
+function systemImageTitle(pkg: string): string {
   const parts = pkg.split(';');
   if (parts.length < 3 || !parts[1]!.startsWith('android-')) return pkg;
   return `Android ${parts[1]!.slice('android-'.length)} \u00B7 ${parts[2]}`;
@@ -654,7 +654,7 @@ export function buildStats(stats: Record<string, unknown> | null | undefined): B
 }
 
 /** Decimal units like the Finder, down to kilobytes for logs and small caches. */
-export function formatSize(bytes: number): string {
+function formatSize(bytes: number): string {
   if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
   if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;

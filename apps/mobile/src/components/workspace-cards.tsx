@@ -37,7 +37,7 @@ import {
 import { platformName } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
-export function stageColor(tone: StageTone, colors: Theme['colors']): string {
+function stageColor(tone: StageTone, colors: Theme['colors']): string {
   return tone === 'brand' ? colors.primary : colors[tone];
 }
 
@@ -325,7 +325,7 @@ function segmentWeights(steps: PhaseStep[]): number[] {
   return steps.map((step) => Math.max(step.expectedMs ?? 0, total * 0.18));
 }
 
-export function PhaseBar({ steps }: { steps: PhaseStep[] }) {
+function PhaseBar({ steps }: { steps: PhaseStep[] }) {
   const weights = segmentWeights(steps);
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.phases}>

@@ -10,7 +10,7 @@ process.removeAllListeners('warning');
 process.on('warning', (warning) => {
   if (warning.code !== 'MODULE_TYPELESS_PACKAGE_JSON') console.warn(warning);
 });
-const tokens = await import(source);
+const tokens = await import('../../mobile/src/design/tokens.ts');
 
 const weights = { regular: '.regular', medium: '.medium', semibold: '.semibold', bold: '.bold' };
 
