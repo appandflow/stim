@@ -7,6 +7,7 @@ struct OversightTests {
   struct Vectors: Decodable {
     struct Step: Decodable {
       var at: Double
+      var awakeSince: Double?
       var input: OversightInput
       var prefs: OversightPrefs
       var notifications: [OversightNotification]
@@ -24,8 +25,14 @@ struct OversightTests {
       var quiet: Bool
     }
 
+    struct Titles: Decodable {
+      var status: OversightStatus
+      var titles: [String]
+    }
+
     var oversee: [Run]
     var quietHours: [QuietCase]
+    var titles: Titles
   }
 
   static let vectors: Vectors = {
@@ -38,12 +45,18 @@ struct OversightTests {
     for run in Self.vectors.oversee {
       var state: OversightState?
       for (index, step) in run.steps.enumerated() {
-        let result = Oversight.oversee(previous: state, input: step.input, prefs: step.prefs, now: step.at)
+        let result = Oversight.oversee(
+          previous: state, input: step.input, prefs: step.prefs, now: step.at, awakeSince: step.awakeSince ?? 0)
         state = result.state
         #expect(result.notifications == step.notifications, "\(run.name), step \(index + 1)")
         #expect(result.wakeAt == step.wakeAt, "\(run.name), step \(index + 1)")
       }
     }
+  }
+
+  @Test func namesEachWorkspaceOfACapturedStatusLikeTheTypeScriptRules() {
+    let status = Self.vectors.titles.status
+    #expect(status.environments.map { Oversight.title($0, status: status) } == Self.vectors.titles.titles)
   }
 
   @Test func readsQuietHoursLikeTheTypeScriptRules() {

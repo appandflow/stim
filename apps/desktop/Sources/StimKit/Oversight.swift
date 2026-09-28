@@ -384,7 +384,7 @@ public enum Oversight {
     func add(_ root: String) { if !roots.contains(root) { roots.append(root) } }
     for other in status.environments { add(worktreeRoot(other.path) ?? other.worktree?.repository ?? other.path) }
     for worktree in status.unprovisionedWorktrees ?? [] {
-      if let root = worktreeRoot(worktree.path) ?? worktree.repository { add(root) }
+      if let root = worktreeRoot(worktree.path) ?? worktree.repository, !root.isEmpty { add(root) }
     }
     let own = worktreeRoot(env.path) ?? env.worktree?.repository
     let containing = roots.filter { env.path == $0 || env.path.hasPrefix("\($0)/") }
@@ -482,7 +482,6 @@ public enum Oversight {
     var body: (Int) -> String
   }
 
-  /// The streak of failures at the head of a platform's history that share the newest one's cause.
   static func failureStreak(_ platform: String, _ history: [OversightBuild]?) -> Streak? {
     guard let history, let head = history.first, failed(head) else { return nil }
     let headCause = cause(head)
@@ -510,7 +509,6 @@ public enum Oversight {
     let input: OversightInput
     let prefs: OversightPrefs
     let now: Double
-    /// The first look, which records what is true without notifying.
     let baseline: Bool
     var notifications: [OversightNotification] = []
     var wakeAt: Double?
@@ -526,14 +524,12 @@ public enum Oversight {
       if at > now { wakeAt = wakeAt.map { min($0, at) } ?? at }
     }
 
-    /// Notifies an event now; one missed for quiet hours or a switched-off category is dropped.
     func event(_ notification: OversightNotification) {
       if !baseline && !prefs.quiet && prefs.categories.contains(notification.category) {
         notifications.append(notification)
       }
     }
 
-    /// Whether a lasting problem is settled: notified now, or dropped when its category is off.
     func lasting(_ notification: OversightNotification) -> Bool {
       if baseline || !prefs.categories.contains(notification.category) { return true }
       if prefs.quiet { return false }
@@ -631,7 +627,6 @@ public enum Oversight {
     run.event(look.notify(.started, body, deviceTarget(env, first), nil))
   }
 
-  /// Work finishes when the agent stops after a green build; it looks stuck when nothing happens for too long.
   static func overseeProgress(_ run: Run, _ look: Look, _ entry: inout OversightState.Workspace) {
     let env = look.env
     let now = run.now
@@ -693,7 +688,6 @@ public enum Oversight {
     }
   }
 
-  /// A pull request that became ready for review or merged, or, without GitHub, a branch git finds merged.
   static func overseeMerge(
     _ run: Run, _ look: Look, _ entry: inout OversightState.Workspace, _ prev: OversightState.Workspace?
   ) {
@@ -798,9 +792,10 @@ public enum Oversight {
   }
 
   static func formatBytes(_ bytes: Double) -> String {
-    if bytes >= 1e12 { return String(format: "%.1f TB", bytes / 1e12) }
+    let tenths = { (value: Double) in String(format: "%.1f", (value * 10).rounded() / 10) }
+    if bytes >= 1e12 { return "\(tenths(bytes / 1e12)) TB" }
     let gb = bytes / 1e9
-    return gb >= 100 ? "\(Int(gb.rounded())) GB" : String(format: "%.1f GB", gb)
+    return gb >= 100 ? "\(Int(gb.rounded())) GB" : "\(tenths(gb)) GB"
   }
 
   /// Whether `minuteOfDay` falls in quiet hours from `start` to `end`, minutes after midnight; they may span midnight.

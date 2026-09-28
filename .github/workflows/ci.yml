@@ -24,6 +24,7 @@ on:
       - 'apps/mobile/mock-server/fixtures/status.json'
       - 'apps/desktop/Sources/SimulatorFrames/**'
       - 'apps/desktop/Sources/EmulatorFrames/**'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json'
   pull_request:
     paths:
       - '**'
@@ -36,6 +37,7 @@ on:
       - 'apps/mobile/mock-server/fixtures/status.json'
       - 'apps/desktop/Sources/SimulatorFrames/**'
       - 'apps/desktop/Sources/EmulatorFrames/**'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json'
 
 concurrency:
   group: ci-v2-${{ github.workflow }}-${{ github.ref }}

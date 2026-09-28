@@ -1,12 +1,15 @@
+import fixture from '../../../apps/mobile/mock-server/fixtures/status.json' with { type: 'json' };
 import {
   inQuietHours,
   OVERSIGHT_CATEGORIES,
   oversee,
+  oversightTitle,
   type OversightEnvironment,
   type OversightInput,
   type OversightNotification,
   type OversightPrefs,
   type OversightState,
+  type OversightStatus,
 } from '../src/oversight.ts';
 
 const T0 = Date.parse('2026-09-26T12:00:00Z');
@@ -83,6 +86,7 @@ const ALL: OversightPrefs = { categories: OVERSIGHT_CATEGORIES, stuckMinutes: 15
 
 interface VectorStep {
   at: number;
+  awakeSince?: number;
   input: OversightInput;
   prefs: OversightPrefs;
   notifications: OversightNotification[];
@@ -98,18 +102,25 @@ beforeEach(({ task }) => {
 });
 
 /** Feeds each step to the rules in turn, from a quiet first look, and collects what they notify. */
-function run(steps: { at: number; input: OversightInput; prefs?: OversightPrefs }[]) {
+function run(steps: { at: number; input: OversightInput; prefs?: OversightPrefs; awakeSince?: number }[]) {
   let state: OversightState | null = null;
   const sent: (OversightNotification & { at: number })[] = [];
   let wakeAt: number | null = null;
   const recorded: VectorStep[] = [];
   for (const step of steps) {
     const prefs = step.prefs ?? ALL;
-    const result = oversee(state, step.input, prefs, step.at);
+    const result = oversee(state, step.input, prefs, step.at, step.awakeSince);
     state = result.state;
     wakeAt = result.wakeAt;
     for (const notification of result.notifications) sent.push(Object.assign({ at: step.at }, notification));
-    recorded.push({ at: step.at, input: step.input, prefs, notifications: result.notifications, wakeAt });
+    recorded.push({
+      at: step.at,
+      ...(step.awakeSince === undefined ? {} : { awakeSince: step.awakeSince }),
+      input: step.input,
+      prefs,
+      notifications: result.notifications,
+      wakeAt,
+    });
   }
   const count = (runsPerTest.get(currentTest) ?? 0) + 1;
   runsPerTest.set(currentTest, count);
@@ -542,6 +553,27 @@ describe('oversee', () => {
     });
   });
 
+  it('notifies a refused or unpaired link at once, restarts the offline wait on waking, and keeps disk through a gap', () => {
+    const low = [{ freeBytes: 3e9 }];
+    const { sent, wakeAt } = run([
+      { at: T0, input: input([], { link: 'open' }) },
+      { at: T0 + MIN, input: input([], { link: 'refused', status: null, volumes: low }) },
+      { at: T0 + 2 * MIN, input: input([], { link: 'unpaired', status: null, volumes: null }) },
+      { at: T0 + 3 * MIN, input: input([], { link: 'offline', status: null, volumes: low }) },
+      {
+        at: T0 + 10 * MIN,
+        input: input([], { link: 'offline', status: null, volumes: low }),
+        awakeSince: T0 + 9.5 * MIN,
+      },
+    ]);
+    expect(wakeAt).toBe(T0 + 10.5 * MIN);
+    expect(sent.map((n) => [n.at, n.id, n.body])).toEqual([
+      [T0 + MIN, 'machine:link', 'Refused the connection: pair again or update'],
+      [T0 + MIN, 'machine:disk', "3.0 GB free, below Stim's floor"],
+      [T0 + 2 * MIN, 'machine:link', 'Not paired: pair again'],
+    ]);
+  });
+
   it('keeps one low-disk episode while free space hovers at the floor, and stays quiet about a first reading', () => {
     const free = (gb: number, memoryPressure: OversightInput['memoryPressure'] = 'normal') =>
       input([], { volumes: [{ freeBytes: gb * 1e9 }], memoryPressure });
@@ -619,7 +651,9 @@ describe('inQuietHours', () => {
 describe('the Swift port in Stim Desktop', () => {
   it('replays the same runs, recorded in its test fixtures', async () => {
     expect(vectors.length).toBeGreaterThan(20);
-    await expect(`${JSON.stringify({ oversee: vectors, quietHours }, null, 2)}\n`).toMatchFileSnapshot(
+    const status = fixture.payload as unknown as OversightStatus;
+    const titles = { status, titles: status.environments.map((e) => oversightTitle(e, status)) };
+    await expect(`${JSON.stringify({ oversee: vectors, quietHours, titles }, null, 2)}\n`).toMatchFileSnapshot(
       '../../../apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json',
     );
   });
