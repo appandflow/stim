@@ -251,6 +251,56 @@ Events are `{ "event", "subscription", ... }`.
   the encoder. Chrome draws a frame only when the page changes, so a
   keyframe request re-encodes the last one.
 
+- **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
+  (`default` when absent), like `frames.subscribe`, and returns what can be
+  replayed of that device slot's [recording](#recording):
+  - `enabled`: the workspace's `recording.enabled`, as the last status showed
+    it.
+  - `recording`: true while the server records the device now.
+  - `spans`: the recorded time ranges `{ start, end }`, in epoch milliseconds on
+    the Mac's clock, oldest first. Segments less than 1.5 seconds apart form
+    one span; the gaps between spans are time nothing was recorded, such as
+    after `stim stop`.
+  - `markers`: `{ at, kind, command?, label }` from the start of the first span
+    on, oldest first, at most 500. They come from `stim logs --json` in the
+    workspace. `action` markers are the agent's actions on that device, failed
+    ones included, from agent-device's session log and the owned Chrome page's
+    agent input, with their `command`, such as `press`, `fill`, `open` or
+    `click`. An agent-device action is placed when the command started, since
+    it logs it when it finished, after any `--settle` wait. `error` and
+    `crash` markers are error and fatal records of the workspace. Metro,
+    client and build errors name no device, so they appear on every device of
+    the workspace. `label` is the record's first line.
+
+  It needs only `read`. A device with no recording gets empty `spans` and
+  `markers`, and runs no `stim` command.
+
+  A video subscription can replay the recording instead of the live screen.
+  `frames.seek` takes the `subscription`, `at` (epoch milliseconds) and `rate`
+  (0, 1 or 2). The server sends the access units from the keyframe at or
+  before `at` through the frame at `at` as binary video messages right away,
+  then plays on at `rate` times real time; 0 stays paused. The result's `at`
+  is the capture time of the frame shown. Playback skips time nothing was
+  recorded, and at the newest recorded frame it sends a `replay-ended` event
+  with `subscription` and `at` and stays paused there. `frames.live` returns
+  the subscription to the live screen, starting at a keyframe, or fails with
+  `frames-failed` when the device is not running. While a subscription
+  replays, the server sends no live frames on it, and `frames.keyframe`
+  resends the frame shown from its keyframe. A seek past the newest recorded
+  frame fails with `no-recording`, and a JPEG subscription cannot seek.
+
+  `frames.subscribe` with `at`, and optionally `rate`, starts the subscription
+  replaying, and needs `video: ["h264"]`. It needs no running device, so the
+  footage of a stopped workspace can be replayed; it fails with
+  `no-recording` when nothing was recorded at or after `at`. Clients that
+  never send these messages see no change.
+
+- `recording.set` takes `enabled` and runs
+  `stim settings set recording.enabled <enabled> --scope machine --json` in
+  the home directory. It needs `control`, is logged like an
+  [action](#actions) with `action` `recording.set`, and returns `enabled` and
+  `recordingsDeleted`, the workspaces whose recordings turning recording off
+  deleted.
 - `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
   `stim <platform> --plan --json` run in the workspace: the fingerprint, the

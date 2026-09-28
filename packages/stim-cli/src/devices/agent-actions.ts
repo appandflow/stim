@@ -21,10 +21,13 @@ interface AgentEvent {
   summary: string;
   failed: boolean;
   details: Record<string, unknown> | null;
+  requestId: string | null;
 }
 
 interface ParsedAgentEvents {
   events: AgentEvent[];
+  /** When each request whose start is in these lines started. */
+  started: [string, number][];
   session: string | null;
   unknownVersion: { version: unknown; ts: number | null } | null;
 }
@@ -37,6 +40,7 @@ function object(value: unknown): Record<string, unknown> | null {
 
 function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
   const events: AgentEvent[] = [];
+  const started: [string, number][] = [];
   let session: string | null = null;
   let unknownVersion: ParsedAgentEvents['unknownVersion'] = null;
   for (const line of lines) {
@@ -54,14 +58,25 @@ function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
     }
     if (typeof entry.session === 'string') session ??= entry.session;
     const { kind, command, summary } = entry;
+    const requestId = typeof entry.requestId === 'string' ? entry.requestId : null;
+    if (kind === 'request.started' && requestId && Number.isFinite(ts)) started.push([requestId, ts]);
     if (kind !== 'action.recorded' && kind !== 'request.finished') continue;
     const failed = kind === 'request.finished' && entry.status === 'error';
     if (kind === 'request.finished' && !failed) continue;
     if (!Number.isFinite(ts) || typeof entry.session !== 'string' || typeof command !== 'string') continue;
     if (typeof summary !== 'string') continue;
-    events.push({ ts, session: entry.session, kind, command, summary, failed, details: object(entry.details) });
+    events.push({
+      ts,
+      session: entry.session,
+      kind,
+      command,
+      summary,
+      failed,
+      details: object(entry.details),
+      requestId,
+    });
   }
-  return { events, session, unknownVersion };
+  return { events, started, session, unknownVersion };
 }
 
 interface RunnerSpan {
@@ -114,9 +129,10 @@ function spanDevice(spans: readonly RunnerSpan[], ts: number): string | null {
   return device;
 }
 
-function agentRecord(event: AgentEvent, deviceId: string, target: AgentTarget): NdjsonRecord {
+function agentRecord(event: AgentEvent, deviceId: string, target: AgentTarget, startedAt?: number): NdjsonRecord {
   return {
     ts: event.ts,
+    ...(startedAt !== undefined && startedAt <= event.ts ? { startedAt } : {}),
     src: 'agent',
     level: event.failed ? 'error' : 'info',
     msg: event.summary,
@@ -193,6 +209,8 @@ interface SessionCursor {
   runner: { size: number; spans: RunnerSpan[] } | null;
   session: string | null;
   unknownReported: boolean;
+  /** Start times of requests whose action is not read yet. */
+  started: Map<string, number>;
 }
 
 export interface AgentActionReaderOptions {
@@ -252,7 +270,7 @@ export function createAgentActionReader({
         } catch {
           continue;
         }
-        cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false };
+        cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false, started: new Map() };
         cursors.set(name, cursor);
         try {
           lines.push(...readFileSync(`${eventsPath}.1`, 'utf8').split('\n'));
@@ -266,6 +284,7 @@ export function createAgentActionReader({
       cursor.offset = chunk.next;
       lines.push(...chunk.text.split('\n'));
       const parsed = parseAgentEvents(lines);
+      for (const [requestId, at] of parsed.started) cursor.started.set(requestId, at);
       cursor.session ??= parsed.session;
       const session = cursor.session;
       if (!parsed.events.length && !parsed.unknownVersion) continue;
@@ -300,7 +319,9 @@ export function createAgentActionReader({
         if (event.ts < sinceTs) continue;
         const deviceId = deviceAt(event.ts);
         const target = deviceId ? byId.get(deviceId) : undefined;
-        if (target && deviceId) out.push(agentRecord(event, deviceId, target));
+        const startedAt = event.requestId ? cursor.started.get(event.requestId) : undefined;
+        if (event.requestId) cursor.started.delete(event.requestId);
+        if (target && deviceId) out.push(agentRecord(event, deviceId, target, startedAt));
       }
     }
     return out.toSorted((a, b) => (a.ts as number) - (b.ts as number));

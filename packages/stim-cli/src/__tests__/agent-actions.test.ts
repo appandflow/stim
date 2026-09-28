@@ -50,6 +50,8 @@ test('an iOS session is split between simulators at the close before the runner 
     command: 'press',
     deviceId: SECOND_SIM,
     details: { x: 201, y: 542 },
+    ts: Date.parse('2026-09-25T12:16:03.448Z'),
+    startedAt: Date.parse('2026-09-25T12:15:57.453Z'),
   });
   expect(second[2]).toMatchObject({ event: 'agent_failed', command: 'press' });
 
@@ -102,6 +104,14 @@ test('later calls return only complete lines appended since the previous call', 
   expect(reader()).toEqual([]);
   appendFileSync(events, `${line.slice(40)}\n`);
   expect(reader().map((record) => record.msg)).toEqual(['Filled @e3']);
+  const started = { ...JSON.parse(line), ts: '2026-09-25T12:17:01.000Z', kind: 'request.started', requestId: 'def' };
+  appendFileSync(events, `${JSON.stringify(started)}\n`);
+  expect(reader()).toEqual([]);
+  appendFileSync(
+    events,
+    `${JSON.stringify({ ...JSON.parse(line), ts: '2026-09-25T12:17:04.000Z', requestId: 'def' })}\n`,
+  );
+  expect(reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
   expect(reader()).toEqual([]);
 });
 
