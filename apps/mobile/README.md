@@ -717,6 +717,13 @@ pnpm run typecheck
 pnpm test
 ```
 
+`pnpm run lint` runs oxlint with `.oxlintrc.json`, which includes oxlint's React
+Compiler rules. A component or hook the compiler would skip fails lint, so fix
+the code rather than suppress the rule. oxlint ports the compiler from React's
+main branch, while the app builds with `babel-plugin-react-compiler` 1.0.0, so
+a few 1.0.0 bailouts pass lint. One is a conditional, `??`, `||` or optional
+chain inside a `try` block.
+
 `.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
 the root `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 
