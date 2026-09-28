@@ -62,7 +62,8 @@ function packet(subscription, sequence, unit, capturedAt) {
 
 /**
  * One video subscription: live loops the recording with capture times of now; `seek` sends the frame at a time
- * from its keyframe and plays on at `rate`, ending with `replay-ended`.
+ * from its keyframe and plays on at `rate` through both copies, skipping the gap between them, ending with
+ * `replay-ended`.
  */
 export class VideoFeed {
   constructor(recording, subscription, socket, send) {
@@ -122,22 +123,22 @@ export class VideoFeed {
     }
     const shown = start + units[next - 1].at;
     if (rate > 0) {
-      const wallStart = Date.now();
-      const from = units[next - 1].at;
-      const play = (index) => {
+      const play = (copy, index, wallStart, from) => {
         if (index >= units.length) {
-          this.send({ event: 'replay-ended', subscription: this.subscription, at: start + units.at(-1).at });
+          if (copy === older) return play(current, 0, Date.now(), units[0].at);
+          const at = copy + units.at(-1).at;
+          queueMicrotask(() => this.send({ event: 'replay-ended', subscription: this.subscription, at }));
           return;
         }
         this.timer = setTimeout(
           () => {
-            this.emit(units[index], start + units[index].at);
-            play(index + 1);
+            this.emit(units[index], copy + units[index].at);
+            play(copy, index + 1, wallStart, from);
           },
           Math.max(0, wallStart + (units[index].at - from) / rate - Date.now()),
         );
       };
-      play(next);
+      play(start, next, Date.now(), units[next - 1].at);
     }
     return shown;
   }

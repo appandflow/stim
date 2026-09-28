@@ -30,8 +30,8 @@ describe('the replay timeline', () => {
     expect(timeAt(timeline, 2)).toBe(2 * HOUR + 6 * MINUTE);
   });
 
-  it('extends the last span to now while the device is recorded', () => {
-    expect(buildTimeline(spans, 3 * HOUR)!.end).toBe(3 * HOUR);
+  it('ends at the last recorded span, and is null without footage', () => {
+    expect(buildTimeline(spans)!.end).toBe(spans.at(-1)!.end);
     expect(buildTimeline([])).toBeNull();
   });
 

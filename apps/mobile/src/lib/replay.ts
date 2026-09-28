@@ -18,20 +18,17 @@ export interface Timeline {
   pieces: TimelinePiece[];
 }
 
-/** `end` extends the last span, while the device is still recorded, to now. */
-export function buildTimeline(spans: readonly ReplaySpan[], end?: number): Timeline | null {
+/** Every time on the timeline is a Mac capture time; a device still recorded ends at its newest footage. */
+export function buildTimeline(spans: readonly ReplaySpan[]): Timeline | null {
   if (!spans.length) return null;
-  const merged = spans.map((span, index) =>
-    index === spans.length - 1 && end !== undefined ? { start: span.start, end: Math.max(span.end, end) } : span,
-  );
-  const recorded = merged.reduce((sum, span) => sum + Math.max(span.end - span.start, 1), 0);
+  const recorded = spans.reduce((sum, span) => sum + Math.max(span.end - span.start, 1), 0);
   const gapWeight = Math.max(recorded * GAP_SHARE, MIN_GAP_WEIGHT_MS);
-  const total = recorded + gapWeight * (merged.length - 1);
+  const total = recorded + gapWeight * (spans.length - 1);
   const pieces: TimelinePiece[] = [];
   let at = 0;
-  merged.forEach((span, index) => {
+  spans.forEach((span, index) => {
     if (index > 0) {
-      const previous = merged[index - 1]!;
+      const previous = spans[index - 1]!;
       pieces.push({ kind: 'gap', start: previous.end, end: span.start, from: at, to: at + gapWeight / total });
       at += gapWeight / total;
     }
@@ -39,7 +36,7 @@ export function buildTimeline(spans: readonly ReplaySpan[], end?: number): Timel
     pieces.push({ kind: 'span', start: span.start, end: span.end, from: at, to: at + width });
     at += width;
   });
-  return { start: merged[0]!.start, end: merged.at(-1)!.end, pieces };
+  return { start: spans[0]!.start, end: spans.at(-1)!.end, pieces };
 }
 
 /** How much footage the timeline holds, gaps left out. */

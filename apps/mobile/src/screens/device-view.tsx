@@ -96,13 +96,10 @@ export function DeviceView({
   const running = Boolean(device?.running && device.owned && !device.physical);
   const range = useReplayRange({ workspace, platform, slot });
   const replayOff = env?.recording?.enabled === false;
-  const timeline = useMemo(
-    () => (range && !replayOff ? buildTimeline(range.spans, range.recording ? range.answeredAt : undefined) : null),
-    [range, replayOff],
-  );
-  const canReplay = timeline !== null && preset.video.length > 0;
+  const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
+  const hasFootage = timeline !== null && preset.video.length > 0;
   const [startAt, setStartAt] = useState<number | null>(null);
-  const replayStart = canReplay ? startAt : null;
+  const replayStart = hasFootage ? startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
   const streamOptions = useMemo(
@@ -110,6 +107,7 @@ export function DeviceView({
     [streams, preset.fps, maxEdge, preset.video, replayStart],
   );
   const stream = useDeviceStream({ workspace, platform, slot }, streamOptions);
+  const canReplay = hasFootage && stream.replayable !== false;
   const replaying = stream.replay !== null;
   const [lastReplay, setLastReplay] = useState<{ running: boolean; at: number | null } | null>(null);
   if (stream.replay && (lastReplay?.at !== stream.replay.at || lastReplay.running !== running)) {
@@ -419,9 +417,9 @@ export function DeviceView({
                     toolbars
                   )}
                 </View>
-                {timeline && canReplay ? (
+                {(timeline && canReplay) || replaying ? (
                   <ReplayBar
-                    timeline={timeline}
+                    timeline={canReplay ? timeline : null}
                     markers={range?.markers ?? []}
                     replay={stream.replay}
                     canGoLive={running}

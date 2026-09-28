@@ -339,7 +339,7 @@ server.on('connection', (socket) => {
     if (!outcome.deferred) send({ id, result: outcome.result });
   });
   socket.on('close', () => {
-    for (const subscription of timers.keys()) stop(subscription);
+    for (const subscription of new Set([...timers.keys(), ...feeds.keys()])) stop(subscription);
   });
 });
 
