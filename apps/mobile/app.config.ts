@@ -22,6 +22,9 @@ const config: ExpoConfig = {
     config: {
       usesNonExemptEncryption: false,
     },
+    infoPlist: {
+      RCTUseAssetCatalog: true,
+    },
     appleTeamId: 'R7E8P23K3N',
   },
   android: {
