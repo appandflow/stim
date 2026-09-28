@@ -522,6 +522,7 @@ describe('PushNotifier', () => {
       ['started', undefined],
       ['stuck', undefined],
     ]);
+    await settle(2);
   });
 
   it('logs what no phone is pushed, marking what a muted category or quiet hours held back', async () => {
