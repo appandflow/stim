@@ -143,9 +143,10 @@ A Mac gets `build` one of two ways:
   Mac, `stim-server devices grant <id> --build` approves it and
   `stim-server devices revoke <id>` denies it. Until then, `hello` with its
   token fails with `approval-pending`, which does not count as a failed
-  attempt. A request lapses after 15 minutes. Each node has at most one
-  pending request, the newest, and the server holds at most 8; more fail with
-  `limit-exceeded`.
+  attempt, while the request itself does, so a peer cannot send more
+  requests than failed attempts. A request lapses after 15 minutes. Each
+  node has at most one pending request, the newest, and the server holds at
+  most 8; more fail with `limit-exceeded`.
 - **Code.** `stim-server pair --build` prints a payload like the QR payload,
   plus the Mac's tailnet `node` ID. The Mac that spends it gets `build` at
   once: running the command is the approval. It refuses unless Tailscale runs

@@ -214,6 +214,7 @@ Run `stim guide settings` for the complete key and value list.
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
+  "offload": { "machines": ["janics-mac-mini"] },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
     "metroCache": "/Volumes/Cache/stim/metro-cache"
@@ -268,7 +269,7 @@ to Android emulators. See [owned devices](/docs/owned-devices) for adoption clea
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443). Set it with
 `stim settings set offload.machines '["janics-mac-mini"]'`, then run
-`stim doctor --fix`: it asks each named Mac for build access and pins that
+`stim doctor --fix` in any app directory: it asks each named Mac for build access and pins that
 Mac's tailnet node. Approve the request on the build machine with
 `stim-server devices grant <id> --build`; doctor prints the exact command.
 Stim connects to a named Mac only while it is still the pinned node, and never

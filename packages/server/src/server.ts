@@ -561,6 +561,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return void socket.close(CLOSE_UNAUTHORIZED, code);
       }
       if (outcome.device.pendingUntil !== undefined) {
+        limiter.record(limitKey);
         const result: HelloResult = {
           protocol: PROTOCOL_VERSION,
           server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },

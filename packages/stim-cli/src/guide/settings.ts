@@ -500,7 +500,7 @@ route (default 7443):
     "offload": { "machines": ["janics-mac-mini"] }
   }
 
-\`doctor --fix\` asks each named Mac for build access and pins its tailnet
+\`doctor --fix\`, run in any app directory, asks each named Mac for build access and pins its tailnet
 node in ~/.stim/build-machines.json. A person approves the request on that
 Mac with \`stim-server devices grant <id> --build\`; doctor prints the id.
 Stim connects to a named Mac only while its name still belongs to the pinned
