@@ -138,7 +138,14 @@ Events are `{ "event", "subscription", ... }`.
   `~/...`.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it, including each
-  environment's `physicalDevices`, the phones it leases. All subscribers share
+  environment's `physicalDevices`, the phones it leases, and its `agents`, the
+  Claude Code and Codex sessions working in it. Those carry the session id,
+  working directory, the short session name the tool keeps, and times, never
+  prompts or conversation. `openUrl` there is a `claude://` or `codex://` link
+  that only the Mac can open; the server has no action that opens it. The server
+  drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
+  the `stim` commands it runs, so a phone's reload is not recorded as the work
+  of the agent session that started the server. All subscribers share
   one `stim status --watch --json` child, which stops with the last
   subscriber. While any status subscription is open, the server keeps a CPU
   and memory history from each payload's `machine.owners`, and every `status`

@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
+import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
+import { agentFromEnv } from '../agent-sessions.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
@@ -77,8 +78,17 @@ export function clearWorkspaceStateKey(root: string, key: string, shouldClear: (
   });
 }
 
-export function recordWorkspaceUse(root: string, now: Date = new Date()): void {
+/** Records a command's use of the workspace, and the agent session whose shell ran it when there is one. */
+export function recordWorkspaceUse(root: string, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): void {
+  const agent = agentFromEnv(env);
+  let cwd = process.cwd();
   try {
-    writeWorkspaceState(root, { lastUsedAt: now.toISOString() });
+    cwd = realpathSync(cwd);
+  } catch {}
+  try {
+    writeWorkspaceState(root, {
+      lastUsedAt: now.toISOString(),
+      ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
+    });
   } catch {}
 }

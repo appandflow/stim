@@ -1,10 +1,12 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
+import { agentSessionOf } from './status-measures.ts';
 import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
 import {
   BUILD_PHASES,
   BUILD_RESULTS,
+  type AgentSession,
   type BuildDiagnostic,
   type BuildHistoryEntry,
   type BuildMissChange,
@@ -395,4 +397,15 @@ export function readWarmRecord(state: WorkspaceState | null | undefined): WarmRe
     startedAt: record.startedAt,
     claim: { root: claim.root, claimId: claim.claimId },
   };
+}
+
+export const WORKSPACE_AGENT_KEY = 'agentSession';
+
+/**
+ * The coding-agent session whose shell ran the Stim command that last recorded `lastUsedAt`, with that command's
+ * working directory as `cwd` and its time as `lastActiveAt`.
+ */
+export function readWorkspaceAgent(state: WorkspaceState | null | undefined): AgentSession | null {
+  const session = agentSessionOf(state?.[WORKSPACE_AGENT_KEY]);
+  return session?.lastActiveAt ? session : null;
 }

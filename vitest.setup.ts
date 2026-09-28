@@ -20,3 +20,9 @@ for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_EN
   delete process.env[key];
 }
 process.env.GH_CONFIG_DIR = join(tmpdir(), 'stim-test-gh-config-absent');
+
+// Stim records the agent session a command runs in and reads Codex's state from
+// CODEX_HOME; a suite run from an agent's shell must not pick up either.
+delete process.env.CLAUDE_CODE_SESSION_ID;
+delete process.env.CODEX_THREAD_ID;
+delete process.env.CODEX_HOME;
