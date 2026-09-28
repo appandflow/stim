@@ -177,16 +177,15 @@ export function durationBars(
 /** What the next build would do and why, worded to follow "Next: ". */
 export function nextBuild(plan: BuildPlan, withReason = true): string {
   if (plan.refusal) return `would refuse (${plan.refusal.code})`;
-  const took = plan.expectedMs === null ? '' : `, ~${clockDuration(plan.expectedMs)}`;
-  if (plan.cacheHit === 'local') return `cache hit (local)${took}`;
-  if (plan.cacheHit === 'remote') return `cache hit (remote)${took}`;
+  if (plan.cacheHit === 'local') return 'cache hit (local)';
+  if (plan.cacheHit === 'remote') return 'cache hit (remote)';
   const off = plan.cacheSkipped ? ' (cache reads off)' : '';
   const native =
     (plan.prebuild === 'generate' || plan.prebuild === 'regenerate') && plan.missReason?.kind !== 'prebuild-pending'
       ? `, ${plan.prebuild}s the native dir`
       : '';
   const why = withReason && plan.missReason ? `, ${plan.missReason.summary}` : '';
-  return `cold build${off}${native}${why}${took}`;
+  return `cold build${off}${native}${why}`;
 }
 
 /** The remote provider and the runs behind the estimate. */

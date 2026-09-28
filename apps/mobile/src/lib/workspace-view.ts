@@ -260,28 +260,32 @@ export interface BuildLine {
   main: string;
   sub: string | null;
   tone: 'default' | 'error' | 'secondary';
+  spoken: string;
 }
 
 export function buildLine(platform: Platform, last: LastBuild | undefined, plan: PlanState | undefined): BuildLine {
+  const line = (main: string, sub: string | null, tone: BuildLine['tone'], spoken: string): BuildLine => ({
+    platform,
+    main,
+    sub,
+    tone,
+    spoken: `${platformName(platform)} ${spoken}`,
+  });
   if (last) {
-    if (last.status === 'failed') return { platform, main: 'Failed', sub: null, tone: 'error' };
-    return {
-      platform,
-      main: last.durationMs === null ? '\u2014' : clockDuration(last.durationMs),
-      sub: last.cacheHit ? 'hit' : 'cold',
-      tone: 'default',
-    };
+    if (last.status === 'failed') return line('Failed', null, 'error', 'last build failed');
+    const cache = last.cacheHit ? 'hit' : 'cold';
+    if (last.durationMs === null) return line('\u2014', cache, 'default', `last build ${cache}`);
+    const took = clockDuration(last.durationMs);
+    return line(took, cache, 'default', `last build ${took}, ${cache}`);
   }
   if (plan?.kind === 'done' && !plan.plan.refusal) {
-    return {
-      platform,
-      main: plan.plan.expectedMs === null ? '\u2014' : `~${clockDuration(plan.plan.expectedMs)}`,
-      sub: plan.plan.cacheHit ? 'hit' : 'cold',
-      tone: 'secondary',
-    };
+    const cache = plan.plan.cacheHit ? 'hit' : 'cold';
+    if (plan.plan.expectedMs === null) return line('\u2014', `est. ${cache}`, 'secondary', `next build ${cache}`);
+    const took = clockDuration(plan.plan.expectedMs);
+    return line(`~${took}`, 'est.', 'secondary', `next build about ${took}, ${cache}`);
   }
-  if (plan?.kind === 'checking') return { platform, main: 'Checking\u2026', sub: null, tone: 'secondary' };
-  return { platform, main: 'No build', sub: null, tone: 'secondary' };
+  if (plan?.kind === 'checking') return line('Checking\u2026', null, 'secondary', 'checking the next build');
+  return line('No build', null, 'secondary', 'no build');
 }
 
 export function usedPlatforms(env: EnvironmentState): Platform[] {
@@ -536,10 +540,11 @@ export function sinceLabel(ms: number): string {
 
 export type ChipTone = 'default' | 'secondary' | 'tertiary' | 'success' | 'warning' | 'error' | 'brand';
 
+export type CiState = 'passing' | 'failing' | 'pending';
+
 export interface GitChip {
   parts: { text: string; tone: ChipTone }[];
-  clean: boolean;
-  pr: { text: string; tone: ChipTone; checks: ChipTone | null } | null;
+  pr: { text: string; tone: ChipTone; ci: CiState | null } | null;
   label: string;
 }
 
@@ -557,27 +562,34 @@ export function checksTone(checks: PullRequestFacts['checks']): ChipTone | null 
   return checks.passing > 0 ? 'success' : null;
 }
 
+function ciState(checks: PullRequestFacts['checks']): CiState | null {
+  if (!checks) return null;
+  if (checks.failing > 0) return 'failing';
+  if (checks.pending > 0) return 'pending';
+  return checks.passing > 0 ? 'passing' : null;
+}
+
 export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | null {
   const git = worktree?.git;
   if (!git) return null;
   const badges = gitBadges(git);
+  const pull = worktree.pullRequest;
   const parts: GitChip['parts'] = [];
   if (badges?.arrows) parts.push({ text: badges.arrows, tone: 'default' });
   if (badges?.uncommitted) parts.push({ text: `${badges.uncommitted} changed`, tone: 'secondary' });
-  if (badges?.merged) parts.push({ text: `merged into ${git.mergedInto}`, tone: 'brand' });
-  else if (git.upstream === null) parts.push({ text: 'no upstream', tone: 'tertiary' });
-  const clean = parts.length === 0;
-  const pull = worktree.pullRequest;
-  const pr = pull ? { text: `PR #${pull.number}`, tone: PR_TONE[pull.state], checks: checksTone(pull.checks) } : null;
+  if (badges?.merged && pull?.state !== 'merged') parts.push({ text: `merged into ${git.mergedInto}`, tone: 'brand' });
+  if (!badges?.merged && git.upstream === null) parts.push({ text: 'no upstream', tone: 'tertiary' });
+  const ci = pull ? ciState(pull.checks) : null;
   const label = [
+    pull ? `Pull request ${pull.number}, ${pull.state}` : 'Branch',
+    ci ? `checks ${ci}` : null,
     badges?.label,
     !badges?.merged && git.upstream === null ? 'no upstream' : null,
-    clean ? 'clean' : null,
-    pull ? `pull request ${pull.number}, ${pull.state}` : null,
+    !pull && parts.length === 0 ? 'up to date' : null,
   ]
     .filter(Boolean)
     .join(', ');
-  return { parts, clean, pr, label };
+  return { parts, pr: pull ? { text: `PR #${pull.number}`, tone: PR_TONE[pull.state], ci } : null, label };
 }
 
 export function checksSummary(checks: PullRequestFacts['checks']): string | null {

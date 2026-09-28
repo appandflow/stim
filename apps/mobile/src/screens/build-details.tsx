@@ -139,8 +139,21 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
               variant="body"
               weight="semibold"
               tone={plan.plan.refusal || plan.plan.cacheHit === false ? 'warning' : 'success'}
+              accessibilityLabel={`Next build: ${nextBuild(plan.plan, false)}${
+                plan.plan.expectedMs !== null && !plan.plan.refusal
+                  ? `, about ${clockDuration(plan.plan.expectedMs)}`
+                  : ''
+              }`}
             >
               {`Next: ${nextBuild(plan.plan, false)}`}
+              {plan.plan.expectedMs !== null && !plan.plan.refusal ? (
+                <Text variant="body" weight="semibold" tone="secondary" style={styles.tabular}>
+                  {`  ~${clockDuration(plan.plan.expectedMs)}`}
+                  <Text variant="footnote" weight="regular" tone="tertiary">
+                    {' est.'}
+                  </Text>
+                </Text>
+              ) : null}
             </Text>
             {planDetail(plan.plan) ? <Note>{planDetail(plan.plan)}</Note> : null}
             {plan.plan.refusal ? (
