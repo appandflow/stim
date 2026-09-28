@@ -39,3 +39,48 @@ extension StatusPayload {
     return nil
   }
 }
+
+/// A `stim-desktop://workspace?path=<path>` link, which `stim worktree warm`, `start`, `ios`, `android` and `web`
+/// print. `platform` and `slot` name the device the run targeted; `slot` is nil for the default slot.
+public struct WorkspaceOpenRequest: Equatable, Sendable {
+  public var path: String
+  public var platform: String?
+  public var slot: String?
+
+  public init(path: String, platform: String? = nil, slot: String? = nil) {
+    self.path = path
+    self.platform = platform
+    self.slot = slot
+  }
+}
+
+public enum WorkspaceLink: Equatable, Sendable {
+  case workspace(WorkspaceOpenRequest)
+  case malformed
+}
+
+/// Nil when `url` is not a workspace link; `.malformed` when it is one without an absolute `path` or with an
+/// unknown `platform`.
+public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
+  guard url.scheme == "stim-desktop", url.host == "workspace" else { return nil }
+  let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+  func value(_ name: String) -> String? {
+    items.first(where: { $0.name == name })?.value.flatMap { $0.isEmpty ? nil : $0 }
+  }
+  guard let path = value("path"), path.hasPrefix("/") else { return .malformed }
+  let platform = value("platform")
+  if let platform, !["ios", "android", "web"].contains(platform) { return .malformed }
+  return .workspace(WorkspaceOpenRequest(path: path, platform: platform, slot: value("slot")))
+}
+
+extension StatusPayload {
+  /// The workspace a link names, and the device of its platform and slot when it has one, a running one first.
+  public func target(of request: WorkspaceOpenRequest) -> (workspace: Workspace, device: DeviceRef?)? {
+    guard let env = environments.first(where: { $0.path == request.path }) else { return nil }
+    let slot = request.slot ?? DeviceRef.defaultSlot
+    let device = request.platform.flatMap { platform in
+      env.orderedDevices.first { $0.platform == platform && $0.slot == slot }
+    }
+    return (env, device)
+  }
+}

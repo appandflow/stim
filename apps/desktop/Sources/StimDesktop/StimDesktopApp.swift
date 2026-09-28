@@ -7,6 +7,7 @@ import SwiftUI
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
+  @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
   @Published var selectedWorkspace: String?
@@ -18,6 +19,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationSource: DispatchSourceSignal?
 
   func application(_ application: NSApplication, open urls: [URL]) {
+    if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
+      MainActor.assumeIsolated {
+        OpenRequests.shared.workspaceLink = link
+        NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true }?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+      }
+    }
     guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
     MainActor.assumeIsolated { OpenRequests.shared.device = request }
   }
