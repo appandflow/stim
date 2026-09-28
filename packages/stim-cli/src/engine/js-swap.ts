@@ -127,6 +127,28 @@ export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | nul
   };
 }
 
+// plutil -convert json refuses a whole plist that holds <data> or <date>, so read single keys.
+function readPlistKey(e: Executor, plist: string, key: string, format: 'raw' | 'json'): string | null {
+  try {
+    return e.runFile('plutil', ['-extract', key, format, '-o', '-', plist]);
+  } catch (err) {
+    if (/No value at that key path/.test(describe(err))) return null;
+    throw err;
+  }
+}
+
+function readAssetCatalogTarget(e: Executor, plist: string): AssetCatalogTarget | null {
+  const flag = readPlistKey(e, plist, 'RCTUseAssetCatalog', 'raw');
+  if (flag === null) return null;
+  const families = readPlistKey(e, plist, 'UIDeviceFamily', 'json');
+  return assetCatalogTarget({
+    RCTUseAssetCatalog: flag,
+    DTPlatformName: readPlistKey(e, plist, 'DTPlatformName', 'raw'),
+    MinimumOSVersion: readPlistKey(e, plist, 'MinimumOSVersion', 'raw'),
+    UIDeviceFamily: families === null ? undefined : JSON.parse(families),
+  });
+}
+
 function actoolArgs({ catalog, out, target }: { catalog: string; out: string; target: AssetCatalogTarget }): string[] {
   return [
     'actool',
@@ -242,11 +264,11 @@ export async function swapJsBundle({
   }
 
   let catalogTarget: AssetCatalogTarget | null;
+  const infoPlistPath = join(appCopy, 'Info.plist');
   try {
-    const infoPlist = e.runFile('plutil', ['-convert', 'json', '-o', '-', join(appCopy, 'Info.plist')]);
-    catalogTarget = assetCatalogTarget(JSON.parse(infoPlist));
+    catalogTarget = readAssetCatalogTarget(e, infoPlistPath);
   } catch (err) {
-    return fail('catalog', `could not read ${join(appCopy, 'Info.plist')}: ${describe(err)}`);
+    return fail('catalog', `could not read ${infoPlistPath}: ${describe(err)}`);
   }
 
   const bundleOutput = join(tmp, JS_BUNDLE_NAME);
@@ -257,9 +279,15 @@ export async function swapJsBundle({
   const command = bundleCommand({ isExpo, entryFile, bundleOutput, assetsDest, assetCatalogDest: catalogStaging });
   try {
     mkdirSync(assetsDest, { recursive: true });
-    if (catalogDir) mkdirSync(catalogDir, { recursive: true });
   } catch (err) {
     return fail('bundle', `could not create ${assetsDest}: ${describe(err)}`);
+  }
+  if (catalogDir) {
+    try {
+      mkdirSync(catalogDir, { recursive: true });
+    } catch (err) {
+      return fail('bundle', `could not create ${catalogDir}: ${describe(err)}`);
+    }
   }
 
   logWriter?.write?.({
@@ -367,7 +395,12 @@ export async function swapJsBundle({
         writeFileSync(join(catalogBundle, 'Info.plist'), ASSET_CATALOG_BUNDLE_INFO_PLIST);
       }
     } catch (err) {
-      return fail('actool', `could not compile the image asset catalog into ${catalogBundle}: ${describe(err)}`);
+      const stdout = String((err as { stdout?: unknown })?.stdout ?? '');
+      return fail(
+        'actool',
+        `could not compile the image asset catalog into ${catalogBundle}: ${describe(err)}`,
+        tailLines(stdout.split('\n'), LAST_LINES),
+      );
     }
   }
 

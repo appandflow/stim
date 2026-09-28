@@ -183,7 +183,12 @@ function harness({
     runFile: (file, args = []) => {
       calls.push({ op: 'runFile', file, args });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
-      if (file === 'plutil') return JSON.stringify(infoPlist);
+      if (file === 'plutil') {
+        const [, key, format] = args;
+        const value = infoPlist[key!];
+        if (value === undefined) throw new Error(`Command failed: plutil\nNo value at that key path: ${key}`);
+        return format === 'json' ? JSON.stringify(value) : String(value);
+      }
       if (file === 'xcrun' && args[0] === 'actool') onActool(args[args.indexOf('--compile') + 1]!);
       return '';
     },
@@ -286,7 +291,7 @@ describe('swapJsBundle', () => {
       writeFileSync(join(resources, 'asset.txt'), 'cached asset');
       writeFileSync(
         join(app, 'Info.plist'),
-        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict></dict></plist>',
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Stamp</key><data>AAAA</data></dict></plist>',
       );
       chmodSync(resources, 0o555);
       try {
@@ -341,7 +346,8 @@ describe('swapJsBundle', () => {
           throw new Error('cp: clonefile failed');
         }
         if (file === 'cp' && fallbackTargetExisted === undefined) fallbackTargetExisted = existsSync(args.at(-1)!);
-        return file === 'plutil' ? '{}' : '';
+        if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
+        return '';
       },
     });
     const { run } = harness();
