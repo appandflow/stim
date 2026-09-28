@@ -241,6 +241,50 @@ and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
 
+### Replay
+
+When the Mac has recorded the device, the viewer shows a replay bar under the
+screen. The Mac records while an agent or automation tool drives the device, or
+while a phone watches it, and keeps the last 15 minutes of footage (see
+`packages/server/README.md`, Recording).
+
+- **The bar.** It has **Live**, play or pause, 1x or 2x, and the time of the
+  frame shown. Its scrubber lays the recorded spans end to end, and a dashed
+  "stopped 2h" gap stands for the time nothing was recorded.
+- **Markers.** Agent actions sit on the scrubber in the accent color, errors
+  in orange and crashes in red.
+- **Moving through it.**
+  - Dragging shows the frame under the finger, seeking at most every 120 ms,
+    and holds off the viewer's swipe to close.
+  - Tapping within 14 points of a marker lands 1.5 seconds before it, paused;
+    tapping elsewhere shows the frame there. Past the newest frame, the newest
+    frame shows.
+  - A device that stops while you scrub stays on its recording, and one that
+    starts stays on the recording until **Live**.
+  - Play plays on at the chosen speed and pauses at the newest frame.
+  - **Live** returns to the live screen.
+- **While not live.** Control and **Take over** are disabled, and turning
+  Control on is refused until Live.
+- **Stopped devices.** A device that is not running can still be replayed:
+  the first scrub opens the stream on its recording, with no live screen to go
+  back to.
+- **Indicators.** A red **Recording** chip next to the model shows while the
+  Mac records the device. A **Replay off** pill replaces the bar when
+  `recording.enabled` is off for the workspace.
+- **Where it runs.** The app polls `replay.range` every 10 seconds while the
+  viewer is open; seeking goes through `frames.seek` and `frames.live` on the
+  same video subscription. Replay needs video: with Data saver, which asks for
+  JPEG frames, the bar is hidden. A server without replay answers
+  `unknown-method`, and the bar stays hidden. The timeline math is in
+  `src/lib/replay.ts`.
+
+Settings has a **Replay** section with one switch per Mac this phone can
+control, **Record on <Mac>**. It reads `recording.enabled` with `settings.get`
+and changes it at machine scope with `recording.set`, which deletes the Mac's
+recordings when it turns them off. When `STIM_RECORDING` decides on the Mac,
+the switch is disabled and says so. The switch sets the machine layer; a repo
+or workspace `recording.enabled` on the Mac still wins for its workspaces.
+
 A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web**
 tile, in the devices grid and on the workspace screen, labelled with the page's
 URL (the in-app route when one moved it after the load, `web.page.route`), with a "Page failed to load" pill when its latest load failed. It opens in
@@ -505,6 +549,21 @@ for a platform, and the mock server refuses a reload without one, like
 `stim reload`. Start it with
 `pnpm run mock-server --read` to see a read-only pairing, which gets no
 actions.
+
+A phone that asks iOS devices for H.264 gets video from
+`mock-server/fixtures/recording-ios.seg`. That is 60 seconds of an iOS
+simulator that stim-server recorded while agent-device drove it, stored in
+stim-server's segment format, with its agent-action markers in
+`recording-ios.json`.
+
+- **Live.** The live stream loops that footage.
+- **`replay.range`.** It serves the footage twice, once ending two hours
+  before the mock started and once ending when it started, so the timeline
+  shows a stopped gap.
+- **Seeking.** `frames.seek` and `frames.live` behave like stim-server's.
+  Seeking past the footage shows its last frame.
+- **The switch.** `recording.set` flips a flag that `replay.range`,
+  `settings.get` and every status environment's `recording.enabled` follow.
 
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the workspaces whose path matches, and

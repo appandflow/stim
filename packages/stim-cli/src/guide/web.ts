@@ -210,7 +210,9 @@ The phone app shows the page as a Web tile in the devices grid and the
 workspace screen, and opens it in the device viewer as H.264 video through
 stim-server. With Control on, taps click, drags scroll and the keyboard types;
 Back goes back in the page's history. Reload in the workspace menu runs stim
-reload web.
+reload web. While stim-server recorded the page (\`guide settings\`, device
+recordings), the viewer can scrub back through it, with the agent's actions
+as markers.
 
 LIMITS
 

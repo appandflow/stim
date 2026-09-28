@@ -345,6 +345,43 @@ ends the session and the tunnel.
 An install or launch failure leaves the session running and billed. The remedy
 names the session: rerun the command to reuse it, or run `stim stop` to end it.
 
+## Replay device screens
+
+`stim-server` records owned simulators, emulators and the Stim-owned Chrome
+page while an agent or automation tool drives them, or while the phone app
+watches them. It keeps the last 15 minutes of footage per device, so you can
+see what an agent did while you were away.
+
+In the phone app, the device viewer shows a replay bar under the screen:
+
+- **Scrub.** Drag to show the frame at that time.
+- **Markers.** Tap one to land just before an agent action or an app error.
+- **Play.** Play at 1x or 2x, then tap **Live** to return.
+
+Control is off while you look at the past. Time when nothing was recorded, such
+as after `stim stop`, shows as a gap, and a stopped device's last footage stays
+replayable.
+
+Recordings stay on your Mac and are served only to paired phones. Turn them off
+for the whole Mac in the phone's Settings, or on the Mac, where a repository or
+workspace can also be set on its own:
+
+```bash
+stim settings set recording.enabled false --scope machine
+```
+
+See [Device recordings](./settings.md#device-recordings) for scopes and
+`STIM_RECORDING`, and
+[Inspect and clean caches](./build-caches.md#device-recordings) for cleanup.
+
+Try it with an agent:
+
+```text
+Run this app with stim ios, then drive it with agent-device for a minute:
+open a few screens and fill a form. Tell me when you are done so I can scrub
+back through it in the Stim phone app.
+```
+
 ## Cleanup behavior
 
 - `stim stop` releases the live environment and device leases. It ends an owned

@@ -37,6 +37,9 @@ export const VIDEO_QUALITY_FOOTER =
 export const READ_ONLY_FOOTER =
   "A read-only machine shows its status but can't run actions or control devices from this phone. Tap it to see how to allow control.";
 
+export const REPLAY_FOOTER =
+  'A Mac keeps the last 15 minutes of device screens an agent drove or you watched, so you can scrub back through them. Recordings stay on the Mac. Turning this off deletes them; a repo or workspace setting on the Mac can still turn a workspace back on.';
+
 export const NOTIFY_CATEGORY_LABELS: Record<OversightCategory, string> = {
   started: 'Work started',
   stuck: 'Agent looks stuck',
