@@ -389,7 +389,7 @@ function machineNotification(run: Run, id: string, body: string): OversightNotif
     category: 'machine',
     title: run.input.machine,
     body,
-    quiet: false,
+    quiet: true,
     thread: null,
     target: { kind: 'machine' },
   };
@@ -592,7 +592,7 @@ function overseeWorkspace(
     category,
     title,
     body,
-    quiet: category === 'started',
+    quiet: true,
     thread: category === 'started' ? `started:${run.input.machine}` : null,
     target,
   });

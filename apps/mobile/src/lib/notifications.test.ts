@@ -285,13 +285,13 @@ describe('localNotifications', () => {
     expect(quietness(ON)).toEqual([
       [],
       [
-        ['a:machine:disk', false],
+        ['a:machine:disk', true],
         ['a:started:/u/app/.worktrees/login', true],
       ],
       [['a:looping-ios:/u/app/.worktrees/login', true]],
     ]);
     expect(quietness(alerting)[1]).toEqual([
-      ['a:machine:disk', false],
+      ['a:machine:disk', true],
       ['a:started:/u/app/.worktrees/login', false],
     ]);
   });
@@ -340,8 +340,8 @@ describe('parsePrefs', () => {
       stuck: 'off',
       looping: 'off',
       finished: 'off',
-      machine: 'alert',
-      control: 'alert',
+      machine: 'silent',
+      control: 'silent',
     });
     expect(parsePrefs(JSON.stringify(migrated))).toEqual(migrated);
   });

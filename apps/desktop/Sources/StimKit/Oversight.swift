@@ -539,7 +539,7 @@ public enum Oversight {
 
     func machineNotification(_ id: String, _ body: String) -> OversightNotification {
       OversightNotification(
-        id: "machine:\(id)", category: .machine, title: input.machine, body: body, quiet: false, thread: nil,
+        id: "machine:\(id)", category: .machine, title: input.machine, body: body, quiet: true, thread: nil,
         target: .machine)
     }
   }
@@ -755,7 +755,7 @@ public enum Oversight {
       category, body, target, id in
       OversightNotification(
         id: "\(id ?? category.rawValue):\(env.path)", category: category, title: title, body: body,
-        quiet: category == .started, thread: category == .started ? "started:\(machine)" : nil, target: target)
+        quiet: true, thread: category == .started ? "started:\(machine)" : nil, target: target)
     }
     let devices = devices(env)
     let driven = devices.filter { agentDriven($0, ownLeases: run.input.ownLeases) }

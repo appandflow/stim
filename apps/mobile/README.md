@@ -446,9 +446,8 @@ on started or finished. Each category has its own level:
   "Silent" channel, `updates`).
 - **Off**: never notifies.
 
-Machine in trouble and Someone takes over your device default to Alert, every
-other category to Silent. Settings saved before levels keep what was off off,
-and give each category that was on its default level.
+Every category defaults to Silent. Settings saved before levels keep what was
+off off, and give each category that was on its default level.
 
 - **Work started**: a workspace began warming, or an agent first drove one of
   its devices. It is grouped per Mac, and opens the workspace or the device

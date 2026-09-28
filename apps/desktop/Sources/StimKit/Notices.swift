@@ -59,12 +59,7 @@ public enum NotificationLevel: String, CaseIterable, Sendable {
 }
 
 extension OversightCategory {
-  public var defaultLevel: NotificationLevel {
-    switch self {
-    case .machine, .control: return .alert
-    case .started, .stuck, .looping, .finished: return .silent
-    }
-  }
+  public var defaultLevel: NotificationLevel { .silent }
 }
 
 /// Stim Desktop's notification settings, in its own `UserDefaults`.
