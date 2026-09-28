@@ -114,6 +114,14 @@ export async function planIos(
     );
   }
 
+  const remoteBackend = remoteIosSetting(settings);
+  if (remoteBackend) {
+    return refuse({
+      code: 'STIM_BAD_ARG',
+      message: `ios.remote routes this workspace's runs to a ${remoteBackend} device, whose architecture --plan cannot read without a session.`,
+      remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
+    });
+  }
   const refusal = schemeRefusal(root, opts.scheme, isExpo);
   if (refusal) return refuse({ code: refusal.code, message: refusal.message ?? '', remedy: refusal.remedy ?? '' });
   const configuration = resolveConfiguration(opts.configuration, settings);

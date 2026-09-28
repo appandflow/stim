@@ -3258,6 +3258,21 @@ describe('--remote', () => {
     },
   );
 
+  test('a remote Release build is single-arch too, and keys that arch', async () => {
+    const remote = remoteStub();
+    reserve();
+    const resolveRemoteContext = (args: { backend?: unknown }) => {
+      const resolved = remote.deps.resolveRemoteContext(args);
+      return { ctx: { ...resolved.ctx, existingDaemon: { baseUrl: 'https://proxy.example', token: 't' } } };
+    };
+    const { calls } = await run(
+      { remote: 'proxy', configuration: 'Release' },
+      { ...remote.deps, resolveRemoteContext, readRemoteSimulatorArch: async () => 'arm64' },
+    );
+    expect(calls.args.buildIos).toMatchObject({ destination: 'generic/platform=iOS Simulator', arch: 'arm64' });
+    expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-release-sim-arm64`);
+  });
+
   test('a local simulator build leaves ARCHS to Xcode and keys the host arch', async () => {
     reserve();
     const { calls } = await run({}, { hostSimulatorArch: () => 'x86_64' });
@@ -6779,6 +6794,17 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 
 describe('--plan', () => {
   const debugKey = buildCacheKey('ios', FINGERPRINT, { isSimulator: true, arch: 'arm64' });
+
+  test('the ios.remote setting is refused: the run keys the remote arch, which a plan cannot read', async () => {
+    const { logs, exitCode, calls } = await run(
+      { plan: true, json: true, configuration: 'Release' },
+      { resolveSettings: () => ({ ios: { remote: 'proxy' } }) },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(parseFirst(logs).message).toContain('ios.remote');
+    expect(calls.order).not.toContain('fingerprintProject');
+  });
 
   function storeEntry(key: string): string {
     const entry = entryDir('ios', key);

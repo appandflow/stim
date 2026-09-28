@@ -754,8 +754,8 @@ PREDICTING THE NEXT BUILD (--plan)
   An Android plan reads the ABI from the emulator the slot records, or from
   the system image a new one would use. A plan refuses --device, --remote,
   --wait, --no-wait, --no-metro-check and --simulator-app with STIM_BAD_ARG.
-  Without --eas-profile it also refuses the android.remote setting and the
-  experimental compiler CAS with STIM_BAD_ARG, and refuses with
+  Without --eas-profile it also refuses the ios.remote and android.remote
+  settings and the experimental compiler CAS with STIM_BAD_ARG, and refuses with
   STIM_NO_DEVICE when no system image is installed.
 
 IOS SCHEME SELECTION
