@@ -535,7 +535,13 @@ The app polls `replay.range` every 10 seconds while the viewer shows. The bar ha
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
 with each unrecorded gap at a fixed width. Agent actions, errors and crashes
 are markers; hovering one shows its time, command and log line, and clicking
-near one lands 1.5 seconds before it. Dragging shows the frame under the
+near one lands 1.5 seconds before it. Hovering the track also shows a still
+frame above the time: the keyframe that starts the recorded segment of about
+5 seconds there, from `replay.keyframe`, so the preview can be up to about 5
+seconds early. The app decodes it on its own queue, apart from playback, keeps
+the last 200 segments' frames, and also fetches the two segments on each side
+of the one hovered; hovering never seeks. A server without `replay.keyframe`
+shows the time alone. Dragging shows the frame under the
 pointer. The first seek opens a `frames.subscribe` with `video: ["h264"]` and
 `at`, which also works for a device that is not running; later seeks send
 `frames.seek`. The app decodes the H.264 itself. A server that answers without

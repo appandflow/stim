@@ -28,6 +28,8 @@ import Foundation
   @Published public private(set) var error: String?
   /// The access units of the replay, in order; a keyframe carries its SPS and PPS.
   public var onVideo: (@MainActor (VideoPacket) -> Void)?
+  /// Still frames for hovering the track, from the same server.
+  public let previews: ReplayPreviews
 
   private weak var server: ReplayServer?
   private let schedule: ServerScheduler
@@ -53,6 +55,7 @@ import Foundation
     self.target = target
     self.schedule = scheduler
     self.clock = clock
+    previews = ReplayPreviews(target: target)
   }
 
   public var timeline: ReplayTimeline? { range.flatMap { ReplayTimeline(spans: $0.spans) } }
@@ -66,6 +69,7 @@ import Foundation
     cancelPoll?()
     cancelPoll = nil
     self.server = server
+    previews.connect(server)
     cancelDropWatch?()
     cancelDropWatch = nil
     guard let server else { return }

@@ -3,6 +3,7 @@ import CoreVideo
 import EmulatorFrames
 import StimKit
 import SwiftUI
+import VideoToolbox
 
 /// Shows the H.264 footage a `ReplayController` receives.
 struct ReplayScreen: NSViewRepresentable {
@@ -68,6 +69,48 @@ final class ReplayScreenView: NSView {
   }
 }
 
+/// Decodes the keyframes of replay previews with its own `H264Decoder` on its own queue, apart from playback, into
+/// images at most `maxPixels` on their longer side.
+final class ReplayPreviewDecoder {
+  static let shared = ReplayPreviewDecoder()
+  static let maxPixels = 320
+
+  private let queue = DispatchQueue(label: "dev.stim.desktop.replay-previews", qos: .utility)
+  private var decoder: H264Decoder?
+  private var frame: CVPixelBuffer?
+
+  /// VideoToolbox calls the output handler before `VTDecompressionSessionDecodeFrame` returns when the decode is
+  /// not asynchronous, so the frame is ready once `decode` returns.
+  func decode(_ keyframe: ReplayKeyframe, done: @escaping @MainActor (CGImage?) -> Void) {
+    queue.async { [self] in
+      let decoder = self.decoder ?? H264Decoder { [unowned self] in self.frame = $0 }
+      self.decoder = decoder
+      frame = nil
+      if decoder.configure(keyframe.accessUnit) { decoder.decode(keyframe.accessUnit) }
+      let image = frame.flatMap(Self.thumbnail)
+      frame = nil
+      Task { @MainActor in done(image) }
+    }
+  }
+
+  private static func thumbnail(_ buffer: CVPixelBuffer) -> CGImage? {
+    var full: CGImage?
+    guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &full) == noErr, let full else { return nil }
+    let scale = min(1, Double(maxPixels) / Double(max(full.width, full.height, 1)))
+    let width = max(1, Int((Double(full.width) * scale).rounded()))
+    let height = max(1, Int((Double(full.height) * scale).rounded()))
+    guard
+      let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+    else { return nil }
+    context.interpolationQuality = .high
+    context.draw(full, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()
+  }
+}
+
 /// Owns one device slot's `ReplayController` while its tile shows, polling through Stim Desktop's stim-server
 /// connection.
 struct ReplayHost<Content: View>: View {
@@ -79,7 +122,13 @@ struct ReplayHost<Content: View>: View {
   init(target: ReplayTarget, @ViewBuilder content: @escaping (ReplayController) -> Content) {
     self.target = target
     self.content = content
-    _controller = StateObject(wrappedValue: ReplayController(target: target))
+    _controller = StateObject(wrappedValue: Self.controller(target))
+  }
+
+  private static func controller(_ target: ReplayTarget) -> ReplayController {
+    let controller = ReplayController(target: target)
+    controller.previews.decode = ReplayPreviewDecoder.shared.decode
+    return controller
   }
 
   var body: some View {
@@ -144,7 +193,7 @@ struct ReplayBar: View {
       if let timeline {
         ReplayTrack(
           timeline: timeline, markers: controller.range?.markers ?? [], shownAt: controller.replay?.at,
-          isLive: controller.replay == nil, seek: seek)
+          isLive: controller.replay == nil, previews: controller.previews, seek: seek)
       }
       if let error = controller.error {
         Text(error).font(.stim(.caption)).foregroundStyle(Palette.warning).lineLimit(2)
@@ -210,14 +259,16 @@ struct ReplayBar: View {
 }
 
 /// The scrubber: recorded spans, gaps, markers and the playhead. Hovering shows the time or the marker under the
-/// pointer in a tooltip, at most 30 times a second and without touching the layout; dragging shows the frame under
-/// the pointer, and a click near a marker lands just before it.
+/// pointer in a tooltip, at most 30 times a second and without touching the layout, above a still frame of the
+/// recorded segment of about 5 seconds there; dragging shows the frame under the pointer on the screen, and a click
+/// near a marker lands just before it.
 struct ReplayTrack: View {
   var timeline: ReplayTimeline
   var markers: [ReplayMarker]
   /// The time of the frame shown; nil before the first frame.
   var shownAt: Double?
   var isLive: Bool
+  var previews: ReplayPreviews
   var seek: (_ at: Double, _ rate: Int) -> Void
 
   private static let markerReach: CGFloat = 6
@@ -256,8 +307,10 @@ struct ReplayTrack: View {
     .contentShape(Rectangle())
     .overlay(alignment: .topLeading) {
       ReplayTooltipLayer(
-        hover: hover, dragging: dragging, maxWidth: min(Self.tooltipWidth, width),
-        text: { x, marker in tooltipText(x: x, marker: marker) })
+        hover: hover, dragging: dragging, maxWidth: min(Self.tooltipWidth, width), previews: previews,
+        range: timeline.start...max(timeline.start, timeline.end),
+        text: { x, marker in tooltipText(x: x, marker: marker) },
+        previewTime: { x, marker in previewTime(x: x, marker: marker) })
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     .onContinuousHover { phase in
@@ -327,6 +380,12 @@ struct ReplayTrack: View {
     }
   }
 
+  private func previewTime(x: CGFloat, marker: ReplayMarker?) -> Double? {
+    if let marker { return marker.at }
+    let at = fraction(x)
+    return timeline.pieces.contains { $0.isGap && at >= $0.from && at <= $0.to } ? nil : timeline.time(at: at)
+  }
+
   private func tooltipText(x: CGFloat, marker: ReplayMarker?) -> String {
     let at = marker?.at ?? timeline.time(at: fraction(x))
     let time = Date(timeIntervalSince1970: at / 1000).formatted(date: .omitted, time: .standard)
@@ -382,14 +441,19 @@ private struct ReplayTooltipLayer: NSViewRepresentable {
   var hover: ReplayHover
   var dragging: CGFloat?
   var maxWidth: CGFloat
+  var previews: ReplayPreviews
+  var range: ClosedRange<Double>
   var text: (_ x: CGFloat, _ marker: ReplayMarker?) -> String
+  var previewTime: (_ x: CGFloat, _ marker: ReplayMarker?) -> Double?
 
-  func makeNSView(context: Context) -> ReplayTooltipView { ReplayTooltipView(hover: hover) }
+  func makeNSView(context: Context) -> ReplayTooltipView { ReplayTooltipView(hover: hover, previews: previews) }
 
   func updateNSView(_ view: ReplayTooltipView, context: Context) {
     view.dragging = dragging
     view.maxWidth = maxWidth
+    view.range = range
     view.text = text
+    view.previewTime = previewTime
     view.refresh()
   }
 }
@@ -398,18 +462,26 @@ private struct ReplayTooltipLayer: NSViewRepresentable {
 /// and that pass re-lays out the SwiftUI page.
 final class ReplayTooltipView: NSView {
   private static let maxLines = 3
+  /// The longer side of a preview, in points; `ReplayPreviewDecoder.maxPixels` covers it at 2x.
+  private static let previewSide: CGFloat = 160
+  private static let portrait = 9.0 / 19.5
 
   var dragging: CGFloat?
   var maxWidth: CGFloat = 0
+  var range: ClosedRange<Double> = 0...0
   var text: ((_ x: CGFloat, _ marker: ReplayMarker?) -> String)?
+  var previewTime: ((_ x: CGFloat, _ marker: ReplayMarker?) -> Double?)?
   private let hover: ReplayHover
+  private let previews: ReplayPreviews
   private let bubble = CALayer()
   private let label = CATextLayer()
+  private let preview = CALayer()
   private let font = TextVariant.caption.nsFont()
   private var lastText: (text: String, width: CGFloat, color: NSColor, string: NSAttributedString)?
 
-  init(hover: ReplayHover) {
+  init(hover: ReplayHover, previews: ReplayPreviews) {
     self.hover = hover
+    self.previews = previews
     super.init(frame: .zero)
     wantsLayer = true
     layer?.masksToBounds = false
@@ -424,11 +496,18 @@ final class ReplayTooltipView: NSView {
     let still: [String: CAAction] = [
       "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "hidden": NSNull(),
     ]
+    preview.cornerRadius = Radius.small
+    preview.masksToBounds = true
+    preview.contentsGravity = .resizeAspect
+    preview.minificationFilter = .trilinear
     bubble.actions = still
     label.actions = still
+    preview.actions = still
+    bubble.addSublayer(preview)
     bubble.addSublayer(label)
     layer?.addSublayer(bubble)
     hover.onChange = { [weak self] in self?.refresh() }
+    previews.onImage = { [weak self] in self?.refresh() }
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -449,14 +528,18 @@ final class ReplayTooltipView: NSView {
 
   func refresh() {
     guard let x = dragging ?? hover.x, let text else {
+      previews.want(nil, within: range)
       bubble.isHidden = true
       return
     }
+    let previewAt = dragging == nil && previews.isAvailable ? previewTime?(x, hover.marker) : nil
+    previews.want(previewAt, within: range)
     var color = NSColor.clear
     effectiveAppearance.performAsCurrentDrawingAppearance {
       bubble.backgroundColor = NSColor(Palette.surface).cgColor
       bubble.borderColor = NSColor(Palette.border).cgColor
       bubble.shadowColor = NSColor(Palette.shadow).cgColor
+      preview.backgroundColor = NSColor(Palette.raised).cgColor
       color = NSColor(cgColor: NSColor(Palette.text).cgColor) ?? .labelColor
     }
     let inner = max(0, maxWidth - 2 * Space.md)
@@ -470,14 +553,30 @@ final class ReplayTooltipView: NSView {
     }
     let fitted = measure(string, width: inner)
     let size = CGSize(width: ceil(min(fitted.width, inner)), height: ceil(fitted.height))
-    let width = size.width + 2 * Space.md
-    let height = size.height + 2 * Space.xs
+    let box = previewAt.map { _ in previewSize(maxWidth: inner) } ?? .zero
+    let top = box.height > 0 ? box.height + Space.xs : 0
+    let width = max(size.width, box.width) + 2 * Space.md
+    let height = top + size.height + 2 * Space.xs
     let left = min(max(0, x - width / 2), max(0, bounds.width - width))
     label.string = string
     label.contentsScale = window?.backingScaleFactor ?? 2
     bubble.frame = CGRect(x: left, y: -height - Space.sm, width: width, height: height)
-    label.frame = CGRect(x: Space.md, y: Space.xs, width: size.width, height: size.height)
+    preview.isHidden = previewAt == nil
+    preview.contents = previewAt.flatMap(previews.image(at:))
+    preview.frame = CGRect(x: (width - box.width) / 2, y: Space.xs, width: box.width, height: box.height)
+    label.frame = CGRect(x: Space.md, y: Space.xs + top, width: size.width, height: size.height)
     bubble.isHidden = false
+  }
+
+  /// The same box whether the frame is loaded or not, so the tooltip never changes size when it arrives.
+  private func previewSize(maxWidth: CGFloat) -> CGSize {
+    let aspect = CGFloat(previews.aspect ?? Self.portrait)
+    let size =
+      aspect < 1
+      ? CGSize(width: Self.previewSide * aspect, height: Self.previewSide)
+      : CGSize(width: Self.previewSide, height: Self.previewSide / aspect)
+    let fit = min(1, maxWidth / max(size.width, 1))
+    return CGSize(width: (size.width * fit).rounded(), height: (size.height * fit).rounded())
   }
 
   private func measure(_ string: NSAttributedString, width: CGFloat) -> CGRect {
