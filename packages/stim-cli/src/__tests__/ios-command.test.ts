@@ -256,6 +256,7 @@ function harness(overrides: LooseDeps = {}) {
     gitCommonDir: () => null,
     repoRoot: () => null,
     detectIsExpo: () => false,
+    hostSimulatorArch: () => 'arm64',
     detectBundleId: () => 'com.example.app',
     devClientScheme: () => undefined,
 
@@ -731,7 +732,7 @@ describe('parked simulator adoption', () => {
           owned: true,
           adopted: true,
           adoptionPending: true,
-          parkedCacheKey: `${FINGERPRINT}-debug-sim`,
+          parkedCacheKey: `${FINGERPRINT}-debug-sim-arm64`,
         }),
         clearOtherUserApps: () => {
           events.push('sweep');
@@ -2306,7 +2307,7 @@ describe('success output', () => {
     expect(facts.udid).toBe(UDID);
     expect(facts.deviceName).toBe('stim-fixture');
     expect(facts.fingerprint).toBe(FINGERPRINT);
-    expect(facts.cacheKey).toMatch(new RegExp(`^${FINGERPRINT}-debug-sim$`));
+    expect(facts.cacheKey).toMatch(new RegExp(`^${FINGERPRINT}-debug-sim-arm64$`));
     expect(facts.cacheHit).toBe(false);
     expect(facts.compilationCache).toEqual({
       status: 'unavailable',
@@ -2636,7 +2637,7 @@ describe('Contract 4: the state file', () => {
     expect(state.collectors).toEqual({ android: { pid: 111 } });
     expect(state.lastBuild.status).toBe('ok');
     expect(state.lastIosBuild).toEqual(state.lastBuild);
-    expect(state.lastBuild.cacheKey).toBe(`${FINGERPRINT}-debug-sim`);
+    expect(state.lastBuild.cacheKey).toBe(`${FINGERPRINT}-debug-sim-arm64`);
     expect(state.lastBuild.bundleId).toBe('com.example.app');
     expect(!('errorCode' in state.lastBuild)).toBeTruthy();
   });
@@ -3229,6 +3230,56 @@ describe('--remote', () => {
     },
   );
 
+  test.each([
+    ['proxy', 'https://proxy.example', 'x86_64', 'x86-64'],
+    ['eas', null, 'arm64', 'arm64'],
+  ] as const)(
+    'a %s build compiles and keys the remote host arch read once from /health',
+    async (backend, baseUrl, arch, keyArch) => {
+      const remote = remoteStub();
+      const asked: unknown[] = [];
+      reserve();
+      const resolveRemoteContext = (args: { backend?: unknown }) => {
+        const resolved = remote.deps.resolveRemoteContext(args);
+        return { ctx: { ...resolved.ctx, existingDaemon: baseUrl ? { baseUrl, token: 't' } : null } };
+      };
+      const readRemoteSimulatorArch = async (daemon: { baseUrl: string } | null | undefined) => {
+        asked.push(daemon?.baseUrl ?? null);
+        return daemon ? arch : 'arm64';
+      };
+      const { calls, exitCode } = await run(
+        { remote: backend },
+        { ...remote.deps, resolveRemoteContext, readRemoteSimulatorArch, hostSimulatorArch: () => 'x86_64' },
+      );
+      expect(exitCode).toBeFalsy();
+      expect(asked).toEqual([baseUrl]);
+      expect(calls.args.buildIos).toMatchObject({ destination: 'generic/platform=iOS Simulator', arch });
+      expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-debug-sim-${keyArch}`);
+    },
+  );
+
+  test('a remote Release build is single-arch too, and keys that arch', async () => {
+    const remote = remoteStub();
+    reserve();
+    const resolveRemoteContext = (args: { backend?: unknown }) => {
+      const resolved = remote.deps.resolveRemoteContext(args);
+      return { ctx: { ...resolved.ctx, existingDaemon: { baseUrl: 'https://proxy.example', token: 't' } } };
+    };
+    const { calls } = await run(
+      { remote: 'proxy', configuration: 'Release' },
+      { ...remote.deps, resolveRemoteContext, readRemoteSimulatorArch: async () => 'arm64' },
+    );
+    expect(calls.args.buildIos).toMatchObject({ destination: 'generic/platform=iOS Simulator', arch: 'arm64' });
+    expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-release-sim-arm64`);
+  });
+
+  test('a local simulator build leaves ARCHS to Xcode and keys the host arch', async () => {
+    reserve();
+    const { calls } = await run({}, { hostSimulatorArch: () => 'x86_64' });
+    expect(calls.args.buildIos).toMatchObject({ destination: null, arch: null });
+    expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-debug-sim-x86-64`);
+  });
+
   test('a remote start refused on the EAS project lock stops before install, with its notice and remedy', async () => {
     const remote = remoteStub();
     reserve();
@@ -3795,10 +3846,10 @@ describe('release skips Metro entirely', () => {
 });
 
 describe('the release cache key and the JS swap', () => {
-  test('the key differs from debug: -release-sim vs -debug-sim', async () => {
+  test('the key differs from debug: -release-sim vs -debug-sim-arm64', async () => {
     reserve();
     const debugRun = await run({});
-    expect(debugRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim`);
+    expect(debugRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim-arm64`);
     const releaseRun = await run({ configuration: 'Release' });
     expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim`);
     expect(releaseRun.calls.args.storeBuild.platform).toBe('ios');
@@ -4116,7 +4167,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
   test('a launch failure after a post-shift hit records the post-shift key, so the next miss has a baseline', async () => {
     reserve();
-    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim-arm64`, 'Fixture.app');
     const { exitCode } = await run(
       {},
       {
@@ -4136,7 +4187,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
   test.each([false, true])('a post-shift hit preserves a prior shared-build wait: %s', async (waited) => {
     reserve();
     let acquires = 0;
-    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim-arm64`, 'Fixture.app');
     const { logs, errs, calls } = await run(
       { json: true },
       {
@@ -4168,7 +4219,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.fingerprint).toBe(WARM);
-    expect(facts.cacheKey).toBe(`${WARM}-debug-sim`);
+    expect(facts.cacheKey).toBe(`${WARM}-debug-sim-arm64`);
     expect(facts.waitedForBuild).toEqual(waited ? { pid: 41233, ms: 4000 } : null);
     expect(errs.join('\n')).not.toMatch(/FAILED without an artifact|RETRY:/);
     expect(/waited 4s for \/w\/builder's build -> installed from cache/.test(errs.join('\n'))).toBe(waited);
@@ -4224,9 +4275,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       },
     );
     expect(lookedUp.length).toBe(2);
-    expect(lookedUp[1]).toBe(`${WARM}-debug-sim`);
+    expect(lookedUp[1]).toBe(`${WARM}-debug-sim-arm64`);
     expect(calls.order.includes('buildIos')).toBe(true);
-    expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
+    expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim-arm64`);
   });
 
   test('a hash that does not move costs no line and stores under the key it looked up', async () => {
@@ -4348,7 +4399,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       );
 
       expect(exitCode).toBeNull();
-      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
+      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim-arm64`);
       expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
     });
 
@@ -4356,7 +4407,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       reserve();
       const config = join(root, 'app.config.ts');
       writeFileSync(config, 'portrait');
-      const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim`, 'Fixture.app');
+      const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim-arm64`, 'Fixture.app');
       const { calls, exitCode } = await run(
         {},
         {
@@ -4405,7 +4456,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         },
       );
 
-      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim`);
+      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim-arm64`);
       expect(errs.join('\n')).toMatch(/aaaaaa\.\. -> bbbbbb\.\. \(after xcodebuild\)/);
     });
   });
@@ -4636,7 +4687,7 @@ describe('the project cache provider', () => {
     expect(errs.join('\n')).toMatch(/^ {2}cache {7}provider hit \(\.\/cache\.cjs\) -> stored locally$/m);
     expect(parseFirst(logs).cacheHit).toBe('remote');
     expect(seen[0]).toEqual({ name: 'loadCacheProvider', value: { projectRoot: root, config: providerConfig() } });
-    expect(seen[1]?.value).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim` });
+    expect(seen[1]?.value).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim-arm64` });
   });
 
   test('the summary names the provider a hit came from', async () => {
@@ -4687,7 +4738,7 @@ describe('the project cache provider', () => {
     expect(exitCode).toBe(null);
     expect(calls.order.includes('uploadRemote')).toBe(true);
     expect(uploads.length).toBe(1);
-    expect(uploads[0]).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim`, overwrite: false });
+    expect(uploads[0]).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim-arm64`, overwrite: false });
     expect(errs.join('\n')).toMatch(/^ {2}cache {7}uploaded \(\.\/cache\.cjs\)$/m);
   });
 
@@ -6742,7 +6793,18 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 });
 
 describe('--plan', () => {
-  const debugKey = buildCacheKey('ios', FINGERPRINT, { isSimulator: true });
+  const debugKey = buildCacheKey('ios', FINGERPRINT, { isSimulator: true, arch: 'arm64' });
+
+  test('the ios.remote setting is refused: the run keys the remote arch, which a plan cannot read', async () => {
+    const { logs, exitCode, calls } = await run(
+      { plan: true, json: true, configuration: 'Release' },
+      { resolveSettings: () => ({ ios: { remote: 'proxy' } }) },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(parseFirst(logs).message).toContain('ios.remote');
+    expect(calls.order).not.toContain('fingerprintProject');
+  });
 
   function storeEntry(key: string): string {
     const entry = entryDir('ios', key);
@@ -6847,7 +6909,9 @@ describe('--plan', () => {
       },
     );
     expect(parseFirst(logs)).toMatchObject({ cacheHit: 'remote', provider: 'probe', outcome: 'hit', prebuild: null });
-    expect(asked).toEqual([expect.objectContaining({ fingerprintHash: FINGERPRINT, runOptions: null })]);
+    expect(asked).toEqual([
+      expect.objectContaining({ fingerprintHash: FINGERPRINT, runOptions: { configuration: 'Debug', arch: 'arm64' } }),
+    ]);
     expect(existsSync(entryDir('ios', debugKey))).toBe(false);
   });
 

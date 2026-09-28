@@ -255,6 +255,15 @@ test('android cache keys separate target ABIs while preserving the universal key
   expect(buildCacheKey('ios', hash, { abi: 'arm64-v8a' })).toBe(`${hash}-debug-sim`);
 });
 
+test('ios simulator keys separate single-arch builds while a universal build keeps its key', () => {
+  const hash = 'abc123';
+  expect(buildCacheKey('ios', hash, { isSimulator: true, arch: 'arm64' })).toBe(`${hash}-debug-sim-arm64`);
+  expect(buildCacheKey('ios', hash, { isSimulator: true, arch: 'x86_64' })).toBe(`${hash}-debug-sim-x86-64`);
+  expect(buildCacheKey('ios', hash, { configuration: 'Release', isSimulator: true })).toBe(`${hash}-release-sim`);
+  expect(buildCacheKey('ios', hash, { isSimulator: false, arch: 'arm64' })).toBe(`${hash}-debug-device`);
+  expect(buildCacheKey('android', hash, { arch: 'arm64' })).toBe(`${hash}-debug-sim`);
+});
+
 test('the CLI and the Expo provider compute the same key', () => {
   for (const [platform, options] of [
     ['ios', {}],
@@ -264,6 +273,7 @@ test('the CLI and the Expo provider compute the same key', () => {
     ['ios', { device: 'generic' }],
     ['ios', { device: 'Janic iPhone' }],
     ['ios', { device: true }],
+    ['ios', { arch: 'x86_64', scheme: 'App' }],
     ['android', { variant: 'release', device: 'emulator-5554', abi: 'arm64-v8a' }],
     ['android', { variant: 'release', compiler: 'apple-cas-012345' }],
   ] as [string, Record<string, unknown>][]) {

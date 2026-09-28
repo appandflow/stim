@@ -409,7 +409,7 @@ builds from scratch. An Android plan uses the ABI of the emulator the slot
 records, or of the system image a new emulator would use. A plan refuses
 `--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
 `--simulator-app` with `STIM_BAD_ARG`. Without `--eas-profile`, it also refuses
-the `android.remote` setting and the experimental compiler CAS.
+the `ios.remote` and `android.remote` settings and the experimental compiler CAS.
 
 Try it with an agent:
 

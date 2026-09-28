@@ -68,7 +68,9 @@ import {
   deviceModelRefusal,
   isReleaseConfiguration,
   ownedSimFailure,
+  simulatorBuildArch,
 } from './ios/support.ts';
+import type { SimulatorArch } from '../engine/agent-device.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
 import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
@@ -523,6 +525,7 @@ async function runIos(
   reclaimed = budget.reclaimed;
   if (budget.refusal) return fail(budget.refusal);
   let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
+  let remoteArch: SimulatorArch | null = null;
   if (remoteBackend) {
     const resolved = await d.resolveRemoteContext({
       root,
@@ -534,6 +537,7 @@ async function runIos(
       return fail({ code: resolved.code ?? REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
     }
     remoteDevice = d.remoteIosDeps(resolved.ctx);
+    remoteArch = await d.readRemoteSimulatorArch(resolved.ctx.existingDaemon);
     d = {
       ...d,
       checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
@@ -804,6 +808,7 @@ async function runIos(
           buildProfile,
           isExpo,
           remoteDestination: Boolean(remoteDevice),
+          simulatorArch: simulatorBuildArch({ physical, remoteArch, hostArch: d.hostSimulatorArch(), configuration }),
           device: physical
             ? {
                 lanAddress,

@@ -5,6 +5,7 @@ import {
   artifactIn,
   buildCacheRoot,
   buildCacheKey,
+  hostSimulatorArch,
   registerCache,
   resolveArtifact,
   storeArtifact,
@@ -74,10 +75,19 @@ function connectedDeviceAbi(): string | null {
   }
 }
 
-// Expo `run:android` builds a `debug` or `debugOptimized` build type without `--all-arch`
-// only for the ABI of the device it selected, and boots that device before asking the
-// provider for a build.
 function keyOptions(platform: string, runOptions: RunOptions = {}): RunOptions | null {
+  // Expo `run:ios` targets the booted simulator, so Xcode compiles a Debug build for this Mac's
+  // architecture only; other configurations and the generic destination keep the project's ARCHS.
+  // `--device <name>` keys as on-<name> with no arch: Expo's name cannot tell a simulator from a phone.
+  if (platform === 'ios') {
+    const configuration = runOptions.configuration ?? runOptions.buildConfiguration;
+    if (runOptions.arch || runOptions.device === 'generic') return runOptions;
+    if (configuration && configuration.trim().toLowerCase() !== 'debug') return runOptions;
+    return { ...runOptions, arch: hostSimulatorArch() };
+  }
+  // Expo `run:android` builds a `debug` or `debugOptimized` build type without `--all-arch`
+  // only for the ABI of the device it selected, and boots that device before asking the
+  // provider for a build.
   if (platform !== 'android' || runOptions.abi || runOptions.allArch) return runOptions;
   const parts = (runOptions.variant || 'debug').split(/(?=[A-Z])/);
   let buildType = parts.pop()!;

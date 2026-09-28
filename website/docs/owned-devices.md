@@ -349,6 +349,11 @@ independently of the build source. Stim prepares the app before it creates or
 reconnects the session, so a failed build starts no session and the install
 follows the connection directly.
 
+An iOS remote build compiles a single simulator architecture. With `proxy`, Stim
+reads the host architecture from the daemon's `/health` response (`hostArch`).
+It uses `arm64` when the daemon does not report one or does not answer within
+3 seconds, and always with `eas`, whose hosts are Apple silicon.
+
 Workspaces can hold EAS sessions at the same time, but only one session starts
 at a time on a machine. A `--remote eas` run that finishes its build while
 another workspace is starting a session waits for that start. It prints a

@@ -8,6 +8,8 @@ import {
   isLoopbackDaemon,
   metroHintFrom,
   openArgs,
+  parseHealthHostArch,
+  readRemoteSimulatorArch,
   remoteProfile,
   remoteProfilePath,
   sessionNameFor,
@@ -183,5 +185,66 @@ describe('closeArgs', () => {
     const args = closeArgs('/w/.stim/agent-device.remote.json');
     expect(args[0]).toBe('close');
     expect(args[args.indexOf('--remote-config') + 1]).toBe('/w/.stim/agent-device.remote.json');
+  });
+});
+
+describe('the remote simulator arch', () => {
+  test.each([
+    ['a daemon reporting its host', { ok: true, hostArch: 'x86_64' }, 'x86_64'],
+    [
+      'a proxy, whose upstream names the daemon machine',
+      { hostArch: 'arm64', upstream: { hostArch: 'x86_64' } },
+      'x86_64',
+    ],
+    ['a proxy whose upstream predates hostArch', { hostArch: 'x86_64', upstream: { ok: true } }, 'x86_64'],
+    ['a daemon without hostArch', { ok: true, service: 'agent-device-daemon' }, null],
+    ['an arch Stim cannot build', { hostArch: 'riscv64' }, null],
+    ['a non-object body', 'arm64', null],
+  ])('%s', (_name, body, expected) => {
+    expect(parseHealthHostArch(body)).toBe(expected);
+  });
+
+  function respond(body: unknown, ok = true): typeof fetch {
+    return (async () => ({ ok, json: async () => body })) as unknown as typeof fetch;
+  }
+
+  test('reads /health under the daemon base URL', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return { ok: true, json: async () => ({ hostArch: 'x86_64' }) };
+    }) as unknown as typeof fetch;
+    expect(
+      await readRemoteSimulatorArch({ baseUrl: 'https://proxy.example/agent-device/' }, { fetch: fetchImpl }),
+    ).toBe('x86_64');
+    expect(urls).toEqual(['https://proxy.example/agent-device/health']);
+  });
+
+  test.each([
+    ['no daemon', null, respond({ hostArch: 'x86_64' })],
+    ['an absent field', { baseUrl: 'https://d' }, respond({ ok: true })],
+    ['an error status', { baseUrl: 'https://d' }, respond({ hostArch: 'x86_64' }, false)],
+    [
+      'a refused connection',
+      { baseUrl: 'https://d' },
+      (async () => Promise.reject(new TypeError('fetch failed'))) as typeof fetch,
+    ],
+    [
+      'a body that is not JSON',
+      'https://d',
+      (async () => ({ ok: true, json: async () => Promise.reject(new SyntaxError('x')) })) as unknown as typeof fetch,
+    ],
+  ] as [string, { baseUrl: string } | null, typeof fetch][])('%s means arm64', async (_name, baseUrl, fetchImpl) => {
+    expect(await readRemoteSimulatorArch(baseUrl, { fetch: fetchImpl })).toBe('arm64');
+  });
+
+  test('a daemon that does not answer in time means arm64', async () => {
+    const hanging = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+    const started = Date.now();
+    expect(await readRemoteSimulatorArch({ baseUrl: 'https://d' }, { fetch: hanging, timeoutMs: 20 })).toBe('arm64');
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

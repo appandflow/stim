@@ -121,3 +121,35 @@ export function isLoopbackDaemon(baseUrl: string): boolean {
   }
   return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
 }
+
+export type SimulatorArch = 'arm64' | 'x86_64';
+
+const HEALTH_TIMEOUT_MS = 3_000;
+
+function archField(value: unknown): SimulatorArch | null {
+  if (!value || typeof value !== 'object') return null;
+  const arch = (value as { hostArch?: unknown }).hostArch;
+  return arch === 'arm64' || arch === 'x86_64' ? arch : null;
+}
+
+/** agent-device proxies report the daemon machine under `upstream`; a daemon reports itself at the top level. */
+export function parseHealthHostArch(body: unknown): SimulatorArch | null {
+  if (!body || typeof body !== 'object') return null;
+  return archField((body as { upstream?: unknown }).upstream) ?? archField(body);
+}
+
+export async function readRemoteSimulatorArch(
+  daemon: Pick<RemoteDaemon, 'baseUrl'> | null | undefined,
+  { fetch: fetchImpl = fetch, timeoutMs = HEALTH_TIMEOUT_MS }: { fetch?: typeof fetch; timeoutMs?: number } = {},
+): Promise<SimulatorArch> {
+  if (!daemon) return 'arm64';
+  try {
+    const response = await fetchImpl(`${daemon.baseUrl.replace(/\/+$/, '')}/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return 'arm64';
+    return parseHealthHostArch(await response.json()) ?? 'arm64';
+  } catch {
+    return 'arm64';
+  }
+}

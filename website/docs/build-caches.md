@@ -29,7 +29,11 @@ tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
 
 Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
 React Native projects. The cache key also includes the platform, target, and
-build configuration or variant.
+build configuration or variant. A build for one CPU architecture adds it: an
+Android Debug build for a known ABI ends in that ABI (`-arm64-v8a`), and an iOS
+Debug simulator build or a `--remote` build ends in its architecture (`-arm64`
+or `-x86-64`). A local iOS Release simulator build compiles every architecture
+the project lists and has no suffix.
 
 `stim ios` and `stim android` first check the machine-wide artifact cache. A hit
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the

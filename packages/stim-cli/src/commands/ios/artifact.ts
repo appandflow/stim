@@ -44,8 +44,16 @@ import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
+import type { SimulatorArch } from '../../engine/agent-device.ts';
 import { finishIosUpload } from './result.ts';
-import { PLATFORM, isReleaseConfiguration, podAction, printDiagnostics, xcodeFailureReport } from './support.ts';
+import {
+  PLATFORM,
+  iosProviderRunOptions,
+  isReleaseConfiguration,
+  podAction,
+  printDiagnostics,
+  xcodeFailureReport,
+} from './support.ts';
 import type { BuildFailureFields, FailArgs, RemoteUploadLike, WaitedForBuild } from './types.ts';
 
 // xcodebuild cannot target a remote simulator UDID, so remote builds use the generic destination.
@@ -59,6 +67,7 @@ interface IosArtifactRequest {
   logFile: string;
   udid: string;
   remoteDestination: boolean;
+  simulatorArch: SimulatorArch | null;
   device: {
     lanAddress: string | null;
     metroPort: number | null;
@@ -160,6 +169,7 @@ export async function acquireIosArtifact(
     logFile,
     udid,
     remoteDestination,
+    simulatorArch,
     device,
     configuration,
     buildScheme,
@@ -180,8 +190,10 @@ export async function acquireIosArtifact(
     scheme: buildScheme,
     ...(configuration ? { configuration } : {}),
     isSimulator: !physical,
+    ...(simulatorArch ? { arch: simulatorArch } : {}),
     ...(buildProfile ? { buildProfile } : {}),
   };
+  const providerRunOptions = iosProviderRunOptions(configuration, simulatorArch);
   const lanAddress = device?.lanAddress ?? null;
   const metroPort = device?.metroPort ?? null;
   const release = isReleaseConfiguration(configuration);
@@ -355,7 +367,7 @@ export async function acquireIosArtifact(
         platform: PLATFORM,
         projectRoot: root,
         fingerprintHash: fingerprint,
-        runOptions: configuration ? { configuration } : null,
+        runOptions: providerRunOptions,
       });
       if (hit?.appPath) {
         let stored = null;
@@ -767,6 +779,7 @@ export async function acquireIosArtifact(
           scheme: buildScheme,
           udid,
           destination: remoteDestination ? GENERIC_SIM_DESTINATION : null,
+          arch: remoteDestination ? simulatorArch : null,
           ...(physical ? { sdk: IPHONEOS_SDK } : {}),
           logWriter: logWriter(),
           ...(configuration ? { configuration } : {}),
@@ -829,7 +842,7 @@ export async function acquireIosArtifact(
             projectRoot: root,
             fingerprintHash: storeHash,
             buildPath: appPath!,
-            runOptions: configuration ? { configuration } : null,
+            runOptions: providerRunOptions,
           });
         }
       }
