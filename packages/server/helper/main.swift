@@ -14,8 +14,10 @@ import IOSurface
 // frames and are decoded for video. Input on a page takes touch, text and the "back"
 // button, as DevTools input events.
 // stdin takes one JSON object per line: {"fps": n, "maxEdge": px, "quality": 0-1,
-// "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second}, where fps 0
-// pauses frames; {"keyframe": true} to make the next video frame a keyframe; or an input:
+// "jpeg": bool, "jpegFps": n, "video": bool, "bitrate": bits per second, "record":
+// {"maxEdge": px, "fps": n, "bitrate": bits per second}}, where fps 0 pauses frames and
+// "record", present only while stim-server records the device, runs a second encoder for it
+// at no more than its own fps; {"recordKeyframe": true} makes that encoder's next frame a keyframe; {"keyframe": true} to make the next video frame a keyframe; or an input:
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
 // and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
 // is Return, "\t" is Tab and "\u{8}" is Delete; and {"input": "button", "button":
@@ -29,7 +31,8 @@ import IOSurface
 // with several displays {"display": n} when display n is the one lit and streamed, or
 // on an emulator {"keyboard": "yes|no"} once it reports its hardware), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
-// milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes).
+// milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes), and 4 is an
+// access unit of the recording encoder, laid out like 3.
 // The helper exits when stdin closes.
 
 struct Config: Equatable {
@@ -40,6 +43,13 @@ struct Config: Equatable {
   var jpegFps: Double?
   var video = false
   var bitrate = 3_000_000
+  var record: Recording?
+}
+
+struct Recording: Equatable {
+  var maxEdge: Int
+  var fps: Double
+  var bitrate: Int
 }
 
 enum Output {
@@ -91,6 +101,15 @@ enum Output {
       lock.unlock()
       if ask { requestKeyframe() }
     }
+  }
+
+  /// Recording units are never dropped: a gap would leave the rest of the segment undecodable.
+  static func record(_ unit: AccessUnit) {
+    var body = Data([4, unit.keyframe ? 1 : 0])
+    withUnsafeBytes(of: unit.capturedAt.bitPattern.bigEndian) { body.append(contentsOf: $0) }
+    body += Data([UInt8(unit.width >> 8), UInt8(unit.width & 0xff), UInt8(unit.height >> 8), UInt8(unit.height & 0xff)])
+    body += unit.data
+    writer.async { write(body) }
   }
 
   static func notice(_ object: [String: Any]) {
@@ -165,6 +184,30 @@ func videoEncoder() -> VideoEncoder {
   VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.video)
 }
 
+func recordEncoder() -> VideoEncoder {
+  VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.record)
+}
+
+extension VideoEncoder {
+  func configure(record config: Config) {
+    configure(
+      enabled: config.record != nil, maxEdge: config.record?.maxEdge ?? config.maxEdge,
+      fps: Int(config.record?.fps ?? config.fps), bitrate: config.record?.bitrate ?? config.bitrate)
+  }
+}
+
+/// Keeps the recording encoder at its own fps while live video renders faster, the way JpegGate paces JPEG.
+final class RecordGate {
+  private let gate = JpegGate()
+
+  func admit(_ config: Config, pacer: Pacer) -> Bool {
+    guard let record = config.record else { return false }
+    var paced = config
+    paced.jpegFps = record.fps
+    return gate.admit(paced, pacer: pacer)
+  }
+}
+
 /// Keeps JPEG at `jpegFps` while video renders faster. A frame it skips is rendered again once the
 /// interval passes, so the last frame of a burst still reaches JPEG subscribers. Used on the pacer queue.
 final class JpegGate {
@@ -201,6 +244,8 @@ final class SimulatorSource {
   private var reportedDisplay: Int?
   private let callbackID = NSUUID()
   private let video = videoEncoder()
+  private let recorder = recordEncoder()
+  private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
 
   init(udid: String) {
@@ -272,6 +317,7 @@ final class SimulatorSource {
 
   func configure(_ config: Config) {
     video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    recorder.configure(record: config)
     queue.async {
       self.pacer.config = config
       self.pacer.changed()
@@ -280,6 +326,11 @@ final class SimulatorSource {
 
   func keyframe() {
     video.requestKeyframe()
+    pacer.changed()
+  }
+
+  func recordKeyframe() {
+    recorder.requestKeyframe()
     pacer.changed()
   }
 
@@ -296,11 +347,14 @@ final class SimulatorSource {
     default: (orientation, quarterTurns) = (.up, 0)
     }
     let ioSurface = unsafeBitCast(surface, to: IOSurfaceRef.self)
-    if config.video {
+    let record = recordGate.admit(config, pacer: pacer)
+    if config.video || record {
       var buffer: Unmanaged<CVPixelBuffer>?
       CVPixelBufferCreateWithIOSurface(nil, ioSurface, nil, &buffer)
       if let pixels = buffer?.takeRetainedValue() {
-        video.encode(pixels, quarterTurns: quarterTurns, capturedAt: now())
+        let capturedAt = now()
+        if config.video { video.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
+        if record { recorder.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
       }
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer) else { return }
@@ -322,6 +376,8 @@ final class EmulatorSource {
   var latest: EmulatorFrame?
   private var pacer: Pacer!
   private let video = videoEncoder()
+  private let recorder = recordEncoder()
+  private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
 
   init(serial: String) {
@@ -343,6 +399,7 @@ final class EmulatorSource {
 
   func configure(_ config: Config) {
     video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    recorder.configure(record: config)
     queue.async {
       let resized = config.maxEdge != self.config.maxEdge
       self.config = config
@@ -360,6 +417,11 @@ final class EmulatorSource {
 
   func keyframe() {
     video.requestKeyframe()
+    pacer.changed()
+  }
+
+  func recordKeyframe() {
+    recorder.requestKeyframe()
     pacer.changed()
   }
 
@@ -387,7 +449,11 @@ final class EmulatorSource {
   }
 
   private func render(_ frame: EmulatorFrame, config: Config) {
-    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: now()) }
+    let capturedAt = now()
+    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt) }
+    if recordGate.admit(config, pacer: pacer) {
+      recorder.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt)
+    }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer), let provider = CGDataProvider(data: frame.rgba as CFData),
       let image = CGImage(
         width: frame.width, height: frame.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: frame.width * 4,
@@ -410,6 +476,8 @@ final class WebSource {
   private var config = Config()
   private var pacer: Pacer!
   private let video = videoEncoder()
+  private let recorder = recordEncoder()
+  private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
   private var pixels: CVPixelBufferPool?
   private var pixelSize = (width: 0, height: 0)
@@ -450,6 +518,7 @@ final class WebSource {
 
   func configure(_ config: Config) {
     video.configure(enabled: config.video, maxEdge: config.maxEdge, fps: Int(config.fps), bitrate: config.bitrate)
+    recorder.configure(record: config)
     queue.async {
       self.config = config
       self.updateScreencast()
@@ -463,6 +532,11 @@ final class WebSource {
   /// A page that does not change sends no frame, so a keyframe re-encodes the last one.
   func keyframe() {
     video.requestKeyframe()
+    pacer.changed()
+  }
+
+  func recordKeyframe() {
+    recorder.requestKeyframe()
     pacer.changed()
   }
 
@@ -481,10 +555,15 @@ final class WebSource {
 
   private func render(_ frame: ScreencastFrame, config: Config) {
     guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil) else { return }
-    if config.video, let image = CGImageSourceCreateImageAtIndex(source, 0, nil), let buffer = pixelBuffer(image) {
+    let record = recordGate.admit(config, pacer: pacer)
+    if config.video || record, let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+      let buffer = pixelBuffer(image)
+    {
       let repeated = frame.capturedAt == encodedAt
       encodedAt = frame.capturedAt
-      video.encode(buffer, quarterTurns: 0, capturedAt: repeated ? now() : frame.capturedAt)
+      let capturedAt = repeated ? now() : frame.capturedAt
+      if config.video { video.encode(buffer, quarterTurns: 0, capturedAt: capturedAt) }
+      if record { recorder.encode(buffer, quarterTurns: 0, capturedAt: capturedAt) }
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer),
       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -547,7 +626,7 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
-    case .config, .keyframe:
+    case .config, .keyframe, .recordKeyframe:
       break
     }
   }
@@ -556,6 +635,7 @@ extension WebSource: Source {
 enum Command {
   case config(Config)
   case keyframe
+  case recordKeyframe
   case touch(TouchPhase, CGPoint, display: Int)
   case text(String)
   case button(String)
@@ -566,6 +646,7 @@ enum Command {
 func parseCommand(_ line: String, base: Config) -> Command? {
   guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
   if object["keyframe"] as? Bool == true { return .keyframe }
+  if object["recordKeyframe"] as? Bool == true { return .recordKeyframe }
   switch object["input"] as? String {
   case "touch":
     let phases: [String: TouchPhase] = ["down": .down, "move": .move, "up": .up]
@@ -592,6 +673,12 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     if let jpegFps = object["jpegFps"] as? Double, jpegFps > 0 { config.jpegFps = min(jpegFps, 60) }
     if let video = object["video"] as? Bool { config.video = video }
     if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
+    config.record = (object["record"] as? [String: Any]).flatMap { record in
+      guard let edge = record["maxEdge"] as? Int, edge > 0, let bitrate = record["bitrate"] as? Int, bitrate > 0,
+        let fps = record["fps"] as? Double, fps > 0
+      else { return nil }
+      return Recording(maxEdge: min(edge, 4096), fps: min(fps, 60), bitrate: bitrate)
+    }
     return .config(config)
   default:
     return nil
@@ -601,6 +688,7 @@ func parseCommand(_ line: String, base: Config) -> Command? {
 protocol Source: AnyObject {
   func configure(_ config: Config)
   func keyframe()
+  func recordKeyframe()
   func input(_ command: Command)
 }
 
@@ -621,6 +709,8 @@ func readCommands(_ source: Source) {
           source.configure(config)
         case .keyframe?:
           source.keyframe()
+        case .recordKeyframe?:
+          source.recordKeyframe()
         case let command?:
           source.input(command)
         case nil:
@@ -693,7 +783,7 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .rotate, .posture:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture:
       break
     }
   }
@@ -739,7 +829,7 @@ extension EmulatorSource: Source {
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe:
+    case .config, .keyframe, .recordKeyframe:
       break
     }
   }

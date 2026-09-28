@@ -5,6 +5,7 @@ export * from './ledgers.ts';
 export * from './logs-query.ts';
 export * from './ndjson.ts';
 export * from './paths.ts';
+export * from './recordings.ts';
 export * from './settings-registry.ts';
 export * from './settings-schema.ts';
 export * from './status.ts';

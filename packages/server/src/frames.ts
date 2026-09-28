@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { StatusPayload } from '@stim-cli/core/state';
 import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
-import { DEFAULT_FRAME_HINT, HelperSource, type FrameHint } from './frame-helper.ts';
+import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
 import { Pending, terminate } from './stim-command.ts';
 import type { AccessUnit } from './video.ts';
 import type { DeviceViewers } from './viewers.ts';
@@ -45,6 +45,11 @@ export interface FrameListener {
    * screenshots still sends `frame`.
    */
   video?: (unit: AccessUnit) => void;
+  /**
+   * Makes the listener a recorder: the helper runs a second encoder at {@link RECORD_HINT} and sends its access
+   * units here, and the listener gets no JPEG frames.
+   */
+  record?: (unit: AccessUnit) => void;
   /** A capture is taking longer than usual, or a timed-out capture is being retried; the last frame stays valid. */
   delayed: (delayed: boolean) => void;
   failed: (message: string) => void;
@@ -771,6 +776,15 @@ export class FramePool {
     };
   }
 
+  /**
+   * Records `device` through its `stim-frames` helper, sharing it with live subscribers, or returns null without a
+   * helper: screenshots are not recorded.
+   */
+  record(device: Device, listener: FrameListener): (() => void) | null {
+    const helper = this.helper();
+    return helper === null ? null : this.stream(helper, device).add(listener, RECORD_HINT);
+  }
+
   /** The posture of an iPhone Duo as its last frame showed it; null before a frame and for other devices. */
   litPosture(device: Device): Posture | null {
     const lit = device.platform === 'ios' && device.foldable ? this.litPanels.get(device.udid) : undefined;
@@ -791,6 +805,11 @@ export class FramePool {
   /** Makes the next video frame of `device` a keyframe, for a subscriber whose decoder lost its state. */
   keyframe(device: Device): void {
     this.helperSource(device)?.keyframe();
+  }
+
+  /** Makes the next frame `device`'s recording encoder writes a keyframe. */
+  recordKeyframe(device: Device): void {
+    this.helperSource(device)?.recordKeyframe();
   }
 
   /** A subscriber of `device` is behind; called until its socket drains, it lowers the shared bitrate. */

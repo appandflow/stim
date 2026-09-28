@@ -368,6 +368,7 @@ test('the facts topic documents every gc verdict reason code and inventory owner
     ['../commands/gc/worktrees.ts', 'WorktreeSkipCode'],
     ['../commands/gc/workspaces.ts', 'WorkspaceKeptCode'],
     ['../commands/gc/logs.ts', 'WorkspaceLogsKeptCode'],
+    ['../commands/gc/recordings.ts', 'RecordingKeptCode'],
     ['../commands/gc/inventory.ts', 'InventoryOwner'],
   ] as const) {
     const src = readFileSync(new URL(file, import.meta.url), 'utf-8');

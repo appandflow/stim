@@ -3,8 +3,9 @@
 `stim-server` serves Stim state to paired clients, such as the Stim phone app,
 and lets the clients the Mac grants control run `stim reload` and `stim stop`
 in a workspace. It runs on the Mac, next to Stim. It changes Stim state only
-through those two commands, and writes only its own pairing state and action
-log under `$STIM_HOME/server/`.
+through those two commands. It writes only its own pairing state and action
+log under `$STIM_HOME/server/`, and the device recordings described under
+[Recording](#recording).
 
 The design is in
 [`docs/specs/2026-09-25-stim-server-design.md`](../../docs/specs/2026-09-25-stim-server-design.md).
@@ -307,6 +308,52 @@ it is the exit status and the end of stderr. A `stim` child that
 ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.
+
+## Recording
+
+The server records owned simulators, emulators and the Stim-owned Chrome page
+so clients can replay what happened while nobody watched. It records a device
+while `stim status` shows an automation tool driving it (`activity.state` is
+`driven`), or while a client has a `frames.subscribe` subscription to it. It
+records nothing else, holds no device awake and changes no device setting. To
+see drivers, the server keeps one `stim status --watch --json` child running
+for as long as it runs, shared with status subscribers.
+
+Recording goes through the device's `stim-frames` helper, shared with live
+subscribers. The helper runs a second H.264 encoder for it, at 720 pixels on
+the long edge, 1 Mbps and at most 10 frames a second, so live video keeps its
+own bitrate. Live frames are captured at no less than 720 pixels and 10 frames
+a second while the device is recorded. A device on screenshots, without the
+helper, is not recorded, and a helper that fails is started again after 5
+seconds, doubling up to 5 minutes. One stim-server records and prunes a Stim
+home at a time, under an exclusive ownership claim at
+`$STIM_HOME/server/recorder`; a second one serves replays and records once the
+claim frees.
+
+Footage is stored under `$STIM_HOME/workspaces/<id>/recordings/<platform>-<slot>/`
+as segments of about 5 seconds, each starting at a keyframe; the server asks
+the helper for a keyframe once a segment is 5 seconds old, so a screen that
+does not change still gets new segments, and a keyframe request also restarts
+the recording stream at a keyframe. The segment being
+written is `<start>.part`, and a closed segment is `<start>-<end>.seg`, in epoch
+milliseconds. A segment is a sequence of records: a u32 big-endian length of
+the rest, u8 flags (bit 0 keyframe, bit 1 folded, bit 2 unfolded, as in a video
+packet), f64 capture time in milliseconds since the epoch, u16 width, u16
+height, then one Annex-B access unit. The server creates a segment only while
+the workspace directory has its `workspace.json`, so it never fills a directory
+that `stim worktree remove` or `stim gc` emptied.
+
+Every 30 seconds it keeps the last 15 minutes of footage of each device,
+counting only recorded time, and at most 1 GiB of footage across every
+workspace, deleting the oldest segments first. It closes, at their last write,
+the `.part` segments of a server that stopped. When a status payload shows
+`recording.enabled` false for a workspace (the `recording.enabled` setting, or
+`STIM_RECORDING` in the server's environment), it stops recording that
+workspace within seconds and deletes its recordings. `stim stop` ends recording
+and keeps the footage; `stim worktree remove` and `stim gc` delete it. A gc that
+deletes the segment being written loses the rest of that segment; the next one
+is written as usual. Recordings stay on the Mac and are served only to paired
+clients.
 
 ## Push notifications
 

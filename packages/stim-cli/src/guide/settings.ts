@@ -507,6 +507,25 @@ which overrides the file. Absent means 120. \`0\` removes a finished worktree at
 once. A value that is not a whole number 0 or more is warned about by \`gc\`,
 which then uses 120. See \`guide cleanup\` for what else keeps a worktree.
 
+DEVICE RECORDINGS CAN BE TURNED OFF
+stim-server records the screens of owned simulators, emulators and the
+Stim-owned Chrome page while an automation tool drives them or a paired client
+watches them, so the phone app can scrub back through them. It keeps the last
+15 minutes of footage per device under $STIM_HOME/workspaces/<id>/recordings/,
+on this Mac only, and serves it only to paired clients. \`recording.enabled\`
+turns it off:
+
+  stim settings set recording.enabled false --scope machine
+
+It is a boolean, true by default, set at machine, repo or workspace scope; the
+workspace layer wins, then repo, then machine. STIM_RECORDING (true, false, 1
+or 0) overrides every layer; stim-server reads it from its own environment when
+it starts. Turning it off takes effect at once: \`stim settings set\` deletes
+the recordings of every workspace it turns off, and stim-server stops recording
+them within seconds, as soon as \`stim status\` shows recording.enabled false
+for them. Turning it back on records from then on. See \`guide cleanup\` for
+how recordings are removed otherwise.
+
 STIM NEEDS NO PROJECT CHANGES TO RUN
 Nothing above is required to use Stim. The performance caches that used to
 be setup steps are supplied by Stim on the command lines it composes itself:
