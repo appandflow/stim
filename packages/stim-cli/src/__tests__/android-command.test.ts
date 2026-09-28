@@ -55,6 +55,7 @@ import {
   runAndroid,
   shortHash,
 } from '../commands/android.ts';
+import * as androidDevices from '../devices/android.ts';
 import { newestBuildTools } from '../devices/android.ts';
 import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
@@ -3268,19 +3269,28 @@ describe('the device preparation step', () => {
 
 describe('launch verification', () => {
   test.each([
-    { created: true, event: 'bundle_response_finished', state: true, waitedMs: 26000 },
-    { created: false, event: 'bundle_response_finished', state: 'unverified', waitedMs: 20000 },
-    { created: true, event: null, state: 'unverified', waitedMs: 60000 },
-    { created: true, event: 'bundle_response_started', state: 'bundling', waitedMs: 60000 },
-    { created: true, event: 'bundle_response_failed', state: 'fatal', waitedMs: 23000 },
+    { created: true, adopting: false, event: 'bundle_response_finished', state: true, waitedMs: 26000 },
+    { created: false, adopting: true, event: 'bundle_response_finished', state: true, waitedMs: 26000 },
+    { created: false, adopting: false, event: 'bundle_response_finished', state: 'unverified', waitedMs: 20000 },
+    { created: true, adopting: false, event: null, state: 'unverified', waitedMs: 60000 },
+    { created: false, adopting: true, event: null, state: 'unverified', waitedMs: 60000 },
+    { created: true, adopting: false, event: 'bundle_response_started', state: 'bundling', waitedMs: 60000 },
+    { created: true, adopting: false, event: 'bundle_response_failed', state: 'fatal', waitedMs: 23000 },
   ])(
-    'created=$created, bundle=$event verifies as $state after $waitedMs ms',
-    async ({ created, event, state, waitedMs }) => {
+    'created=$created, adopting=$adopting, bundle=$event verifies as $state after $waitedMs ms',
+    async ({ created, adopting, event, state, waitedMs }) => {
       const crashes = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockReturnValue([]);
+      const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
       let elapsed = 0;
       try {
         const h = harness({
-          ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created }),
+          ensureDevice: async () => ({
+            avdName: 'stim-app-412',
+            consolePort: 5584,
+            owned: true,
+            created,
+            ...(adopting ? { adoptionPending: true } : {}),
+          }),
           verifyLaunched: async (args: Parameters<typeof verifyLaunch>[0]) => {
             const started = Number(args?.since);
             return verifyLaunch({
@@ -3323,9 +3333,12 @@ describe('launch verification', () => {
         expect(result.error?.code).toBe(state === 'fatal' ? 'STIM_LAUNCH_FAILED' : undefined);
         expect(result.facts?.launched).toBe(state === 'fatal' ? undefined : state);
         expect(h.stderr.join('\n').includes('60s for bundle load (new emulator)')).toBe(created);
+        expect(h.stderr.join('\n').includes('60s for bundle load (adopted emulator)')).toBe(adopting);
+        expect(reset).toHaveBeenCalledTimes(adopting ? 1 : 0);
         expect(h.stderr.join('\n').includes(`within ${waitedMs / 1000}s`)).toBe(state === 'unverified');
       } finally {
         crashes.mockRestore();
+        reset.mockRestore();
       }
     },
   );
