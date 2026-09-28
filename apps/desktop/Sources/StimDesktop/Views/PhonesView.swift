@@ -489,6 +489,7 @@ private struct RecordingSection: View {
         "recording.enabled on this Mac. While stim-server runs it keeps the last 15 minutes of each simulator, emulator and Chrome page, which Stim Desktop and the phone app replay. A workspace or repository setting still wins. Turning it off deletes the recordings."
       )
       .foregroundStyle(Palette.tertiary)
+      .multilineTextAlignment(.leading)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .task { await load() }
