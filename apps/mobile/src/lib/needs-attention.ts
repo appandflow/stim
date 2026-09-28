@@ -26,7 +26,6 @@ export interface NeedsAttentionInput {
   easSessionMinutes: number;
 }
 
-/** Status issues whose remedy needs a person: another app holds the port, or Stim cannot verify a process. */
 const PERSON_ISSUES = new Set(['port-not-ours', 'supervisor-unverified', 'browser-unverified', 'avd-unchecked']);
 
 const SIGNING_CODES = new Set([
@@ -36,13 +35,9 @@ const SIGNING_CODES = new Set([
   'STIM_PROFILE_MISMATCH',
 ]);
 
-/** Oversight's `DISK_CRITICAL_BYTES`: free space below Stim's hard floor. */
 const DISK_FLOOR_BYTES = 5e9;
-/** Oversight's `LOOP_COUNT`. */
 const LOOP_COUNT = 3;
-/** How long an idle workspace's repeated failure stays listed. */
-const STALE_LOOP_MS = 24 * 60 * 60 * 1000;
-/** Oversight's `WORK_EVIDENCE`. */
+const STALE_MS = 24 * 60 * 60 * 1000;
 const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
 const LANGUAGES: Record<string, string> = {
@@ -73,9 +68,15 @@ function formatBytes(bytes: number): string {
   return gb >= 100 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
 }
 
-function signingItem(env: EnvironmentState, platform: 'ios' | 'android', build: LastBuild): NeedsAttentionItem | null {
+function signingItem(
+  env: EnvironmentState,
+  platform: 'ios' | 'android',
+  build: LastBuild,
+  now: number,
+): NeedsAttentionItem | null {
   const code = build.errorCode ?? '';
   if (!SIGNING_CODES.has(code)) return null;
+  if (!env.live && !(now - time(build.finishedAt ?? build.startedAt) < STALE_MS)) return null;
   return {
     id: `run-${platform}:${env.path}`,
     category: 'attention',
@@ -86,13 +87,12 @@ function signingItem(env: EnvironmentState, platform: 'ios' | 'android', build: 
   };
 }
 
-/** Oversight's `failureStreak` body for three or more newest runs that failed with the same cause. */
 function loopItem(env: EnvironmentState, platform: 'ios' | 'android', now: number): NeedsAttentionItem | null {
   const history = env.builds?.[platform];
   const failed = (build: { result?: string; status: string }) => (build.result ?? build.status) === 'failed';
   const head = history?.[0];
   if (!history || !head || !failed(head)) return null;
-  if (!env.live && !(now - time(head.finishedAt ?? head.startedAt) < STALE_LOOP_MS)) return null;
+  if (!env.live && !(now - time(head.finishedAt ?? head.startedAt) < STALE_MS)) return null;
   const causeOf = (build: LastBuild) => {
     const at = build.diagnostics?.find((d) => d.file && d.line !== null && d.line !== undefined);
     return at ? { key: `${at.file}:${at.line}`, at } : { key: build.errorCode ?? 'failed', at: null };
@@ -129,7 +129,6 @@ interface Device {
   web: boolean;
 }
 
-/** Oversight's `devicesOf`: each slot's simulator and emulator, then the owned Chrome. */
 function devicesOf(env: EnvironmentState): Device[] {
   const out: Device[] = [];
   const add = (ios?: EnvironmentState['ios'], android?: EnvironmentState['android']) => {
@@ -148,7 +147,6 @@ function devicesOf(env: EnvironmentState): Device[] {
   return out;
 }
 
-/** Oversight's `lastActivityAt` without the times only its history knows. */
 function quietSince(env: EnvironmentState, devices: Device[]): number | null {
   const times: number[] = [];
   for (const device of devices) {
@@ -205,7 +203,7 @@ function workspaceItems(env: EnvironmentState, input: NeedsAttentionInput): Need
   for (const platform of ['ios', 'android'] as const) {
     const last = env.lastBuilds?.[platform];
     const building = env.build?.state === 'running' && env.build.platform === platform;
-    const signing = last && last.status === 'failed' && !building ? signingItem(env, platform, last) : null;
+    const signing = last && last.status === 'failed' && !building ? signingItem(env, platform, last, input.now) : null;
     const item = signing ?? loopItem(env, platform, input.now);
     if (item) items.push(item);
   }

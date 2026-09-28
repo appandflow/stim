@@ -172,7 +172,7 @@
       ]
     },
     {
-      "name": "keeps signing and provisioning failures, not refusals an agent retries",
+      "name": "keeps signing and provisioning failures for a day or while live, not refusals an agent retries",
       "input": {
         "now": "2026-09-28T12:00:00.000Z",
         "stuckMinutes": 15,
@@ -242,10 +242,48 @@
                 "errorCode": "STIM_NO_DEVICE"
               }
             }
+          },
+          {
+            "path": "/w/abandoned",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-26T10:00:00.000Z",
+                "finishedAt": "2026-09-26T10:10:00.000Z",
+                "errorCode": "STIM_NO_PROFILE"
+              }
+            }
+          },
+          {
+            "path": "/w/abandoned-live",
+            "live": true,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-26T10:00:00.000Z",
+                "finishedAt": "2026-09-26T10:10:00.000Z",
+                "errorCode": "STIM_NO_PROFILE"
+              }
+            }
           }
         ]
       },
       "items": [
+        {
+          "id": "run-ios:/w/abandoned-live",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/abandoned-live",
+          "body": "iOS signing or provisioning failed (STIM_NO_PROFILE)",
+          "remedy": null
+        },
         {
           "id": "run-ios:/w/sign",
           "category": "attention",

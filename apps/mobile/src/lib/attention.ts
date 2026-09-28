@@ -31,7 +31,6 @@ export interface HomeAttentionItem {
   target: AttentionTarget;
 }
 
-/** Stim Desktop's default for how long an EAS session may run with no agent before it needs a person. */
 const EAS_SESSION_MINUTES = 30;
 
 function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | null {

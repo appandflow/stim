@@ -39,7 +39,7 @@ private let signingCodes: Set<String> = [
 ]
 private let diskFloorBytes: Double = 5e9
 private let loopCount = 3
-private let staleLoopMs: Double = 24 * 60 * 60 * 1000
+private let staleMs: Double = 24 * 60 * 60 * 1000
 private let workEvidence = ["agent-action", "metro-bundle", "workspace-use"]
 private let languages = [
   "swift": "Swift", "m": "Objective-C", "mm": "Objective-C++", "kt": "Kotlin", "java": "Java", "c": "C", "cc": "C++",
@@ -57,8 +57,11 @@ private func formatFreeBytes(_ bytes: Double) -> String {
   return gb >= 100 ? "\(Int(gb.rounded())) GB" : String(format: "%.1f GB", gb)
 }
 
-private func signingItem(_ env: Workspace, _ platform: String, _ build: LastBuild) -> NeedsAttentionItem? {
+private func signingItem(_ env: Workspace, _ platform: String, _ build: LastBuild, now: Double) -> NeedsAttentionItem? {
   guard let code = build.errorCode, signingCodes.contains(code) else { return nil }
+  if !env.live {
+    guard let ended = epochMs(build.finishedAt ?? build.startedAt), now - ended < staleMs else { return nil }
+  }
   return NeedsAttentionItem(
     id: "run-\(platform):\(env.path)", category: .attention, severity: "error", workspace: env.path,
     body: "\(platformName(platform)) signing or provisioning failed (\(code))", remedy: nil)
@@ -75,7 +78,7 @@ private func loopItem(_ env: Workspace, _ platform: String, now: Double) -> Need
   }
   guard let head = history.first, failed(head) else { return nil }
   if !env.live {
-    guard let ended = epochMs(head.build.finishedAt ?? head.build.startedAt), now - ended < staleLoopMs else { return nil }
+    guard let ended = epochMs(head.build.finishedAt ?? head.build.startedAt), now - ended < staleMs else { return nil }
   }
   let headCause = cause(head.build)
   let count = history.prefix { failed($0) && cause($0.build).key == headCause.key }.count
@@ -107,7 +110,6 @@ private struct OverseenDevice {
 
 private let simulatorModel = try! NSRegularExpression(pattern: #"\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$"#)
 
-/// The oversight rules' device list: each slot's simulator and emulator, then the owned Chrome.
 private func overseenDevices(_ env: Workspace) -> [OverseenDevice] {
   var out: [OverseenDevice] = []
   func add(_ ios: IosDevice?, _ android: AndroidDevice?) {
@@ -178,7 +180,7 @@ private func workspaceItems(_ env: Workspace, now: Double, stuckMinutes: Int, ea
   for platform in ["ios", "android"] {
     let building = env.build?.isRunning == true && env.build?.platform == platform
     let last = env.lastBuilds?.build(for: platform)
-    let signing = last.flatMap { $0.status == "failed" && !building ? signingItem(env, platform, $0) : nil }
+    let signing = last.flatMap { $0.status == "failed" && !building ? signingItem(env, platform, $0, now: now) : nil }
     if let item = signing ?? loopItem(env, platform, now: now) { items.append(item) }
   }
   for device in env.physicalDevices ?? [] {
