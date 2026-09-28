@@ -216,15 +216,23 @@ export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () 
     >
       {lines.map((line) => (
         <View key={line.platform} style={styles.stat}>
-          <PlatformGlyph platform={line.platform} size={13} />
-          <Text variant="footnote" weight="semibold" tone={LINE_TONE[line.tone]} style={styles.tabular}>
+          <View style={styles.glyphBox}>
+            <PlatformGlyph platform={line.platform} size={line.platform === 'ios' ? 14 : 12} />
+          </View>
+          <Text
+            variant="footnote"
+            weight="semibold"
+            tone={LINE_TONE[line.tone]}
+            numberOfLines={1}
+            style={[styles.tabular, styles.shrink]}
+          >
             {line.main}
+            {line.sub ? (
+              <Text variant="caption2" weight="regular" tone="tertiary">
+                {` ${line.sub}`}
+              </Text>
+            ) : null}
           </Text>
-          {line.sub ? (
-            <Text variant="caption2" tone="tertiary" numberOfLines={1} style={styles.shrink}>
-              {line.sub}
-            </Text>
-          ) : null}
         </View>
       ))}
     </SmallCard>
@@ -469,6 +477,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   smallHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.xs },
   stat: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs + 1 },
+  glyphBox: { width: 16, height: 16, alignItems: 'center', justifyContent: 'center' },
   building: {
     padding: theme.space.lg,
     gap: theme.space.md,
