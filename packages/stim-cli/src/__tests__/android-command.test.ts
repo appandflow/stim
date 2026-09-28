@@ -76,6 +76,11 @@ const IMAGES = [
 ];
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
+vi.mock('../devices/stim-desktop.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../devices/stim-desktop.ts')>()),
+  workspaceLinks: () => undefined,
+}));
+
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
 const STORED_ASSETS: AssetManifest = {

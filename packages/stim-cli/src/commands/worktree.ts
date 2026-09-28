@@ -18,6 +18,7 @@ import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
+import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { acquireWarmClaim, warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
@@ -161,11 +162,12 @@ export function registerWarm(worktree: Command): void {
     )
     .action(async (opts: { refresh?: boolean }) => {
       let progress: WarmProgress | null = null;
+      let workspace: string | null = null;
       try {
         const { root, target, common } = warmWorktreePaths(process.cwd());
         const app = findProjectRoot(process.cwd());
         if (app) recordWorkspaceUse(app);
-        const workspace = warmedWorkspace(root, target, process.cwd());
+        workspace = warmedWorkspace(root, target, process.cwd());
         if (!workspace) {
           console.error(
             chalk.dim(
@@ -297,6 +299,8 @@ export function registerWarm(worktree: Command): void {
         process.exitCode = 1;
       } finally {
         progress?.finish(!process.exitCode);
+        const links = workspace && !process.exitCode ? workspaceLinks(workspace) : undefined;
+        if (links) console.error(chalk.dim(workspaceLinkLine(links)));
       }
     });
 }

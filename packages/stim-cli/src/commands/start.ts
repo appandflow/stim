@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
+import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
@@ -402,7 +403,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         d,
       );
       if (!result.ok) return fail({ ...result.error, lines: result.lines, reclaimed: result.reclaimed });
-      report({ json, out, facts: result.facts, waited: result.waited, reclaimed: result.reclaimed });
+      report({
+        json,
+        out,
+        facts: result.facts,
+        waited: result.waited,
+        reclaimed: result.reclaimed,
+        links: workspaceLinks(root),
+      });
     });
 }
 
@@ -1195,15 +1203,17 @@ function report({
   facts,
   waited,
   reclaimed,
+  links,
 }: {
   json: boolean;
   out: (line: string) => void;
   facts: StartFacts;
   waited: string;
   reclaimed: ReclaimedStep[];
+  links: WorkspaceLinks | undefined;
 }): void {
   if (json) {
-    console.log(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
+    console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
     return;
   }
   const who = facts.supervisorPid
@@ -1215,4 +1225,5 @@ function report({
     ),
   );
   out(chalk.dim(phaseLine('logs', facts.logsDir)));
+  if (links) console.error(chalk.dim(workspaceLinkLine(links)));
 }

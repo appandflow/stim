@@ -9,6 +9,7 @@ import type { Command } from 'commander';
 import { CACHE_PROVIDER_ENV, CACHE_PROVIDER_ENV_NONE, cacheProviderConfigFromEnv } from '@stim-cli/cache';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { workspaceLinks } from '../devices/stim-desktop.ts';
 import {
   startTunnel,
   startTunnelSequence,
@@ -34,6 +35,11 @@ import {
   wantsExpoOwnTunnel,
 } from '../commands/start.ts';
 import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts';
+
+vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
+  return { ...actual, workspaceLinks: vi.fn<typeof actual.workspaceLinks>(actual.workspaceLinks) };
+});
 
 let tmpHome: string;
 let root: string;
@@ -117,7 +123,7 @@ interface MetroExecutorMock {
   run(): string;
   runFile(): string;
   runQuiet(cmd: string): string;
-  runFileQuiet(): string;
+  runFileQuiet(file: string): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
@@ -616,6 +622,52 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(exec.calls.spawn).toEqual([]);
     expect(result.errs.join('\n')).toMatch(/started outside Stim/);
     expect(readWorkspaceState(root)?.devServerStop).toBeUndefined();
+  });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'start links the canonical workspace when LaunchServices finds a stim-desktop handler',
+    async () => {
+      const { server, port } = await metroListener();
+      const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+      exec.runFileQuiet = (file: string) => (file === 'osascript' ? '/Applications/Stim.app' : '');
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port });
+
+      let result;
+      try {
+        result = await runAction({ json: true });
+      } finally {
+        server.close();
+      }
+
+      expect(JSON.parse(result.logs[0] ?? '').links).toEqual({
+        desktop: `stim-desktop://workspace?path=${realpathSync(root)}`,
+      });
+    },
+  );
+
+  test('the JSON payload carries links and plain output puts the link on stderr only', async () => {
+    const { server, port } = await metroListener();
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
+    upsertProject(root, { metroPort: port });
+    const link = 'stim-desktop://workspace?path=/w';
+    vi.mocked(workspaceLinks).mockReturnValue({ desktop: link });
+
+    let json;
+    let plain;
+    try {
+      json = await runAction({ json: true });
+      plain = await runAction({});
+    } finally {
+      server.close();
+      vi.mocked(workspaceLinks).mockReset();
+    }
+
+    expect(json.logs.length).toBe(1);
+    expect(JSON.parse(json.logs[0] ?? '').links).toEqual({ desktop: link });
+    expect(json.errs.join('\n')).not.toContain(link);
+    expect(plain.logs.join('\n')).not.toContain(link);
+    expect(plain.errs.join('\n')).toContain(`Open in Stim Desktop: ${link}`);
   });
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {

@@ -14,6 +14,7 @@ import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { ReclaimedStep } from '../../budget.ts';
+import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
 
@@ -208,6 +209,7 @@ export interface ReportAndroidResultArgs {
   recordRun: RunRecorder['record'];
   reclaimed?: ReclaimedStep[];
   devServer?: DevServerStart | null;
+  links?: WorkspaceLinks;
 }
 
 export function reportAndroidResult({
@@ -238,6 +240,7 @@ export function reportAndroidResult({
   recordRun,
   reclaimed = [],
   devServer = null,
+  links,
 }: ReportAndroidResultArgs): AndroidFacts {
   recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs });
   const facts = androidFacts({
@@ -270,7 +273,7 @@ export function reportAndroidResult({
   writer.close();
 
   if (json) {
-    emit(JSON.stringify(reclaimed.length ? { ...facts, reclaimed } : facts));
+    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${serial}, ` +
@@ -303,6 +306,7 @@ export function reportAndroidResult({
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
       ].join('\n'),
     );
+    if (links) console.error(chalk.dim(workspaceLinkLine(links)));
   }
   return facts;
 }

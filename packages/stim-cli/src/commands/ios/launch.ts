@@ -31,6 +31,7 @@ import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../.
 import type { IosFacts } from '../../engine/build-facts.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { type ReportIosResultArgs, reportIosResult } from './result.ts';
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
 import {
@@ -953,6 +954,7 @@ export async function finishIosRun({
     recordRun,
     reclaimed,
     devServer,
+    links: workspaceLinks(root, { platform: 'ios', slot }),
   });
   return { facts, uploadsAbandoned };
 }

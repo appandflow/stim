@@ -20,7 +20,7 @@ import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
-import { STIM_DESKTOP_INSTALLED } from '../devices/stim-desktop.ts';
+import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
 import {
@@ -534,6 +534,12 @@ test('the agent guide routes situations to valid sections before listing every t
   ]) {
     expect(agent).toContain(route);
   }
+});
+
+test('the agent guide shares the Stim Desktop link the commands print, once', () => {
+  const agent = renderTopic('agent');
+  const printed = workspaceLinkLine({ desktop: '<link>' });
+  expect(agent).toContain(`"${printed}"`);
 });
 
 test('the agent guide protects other workspaces device lease files', () => {

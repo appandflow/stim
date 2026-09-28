@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import type { WebBrowserState } from '@stim-cli/core/state';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
+import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
@@ -339,8 +340,9 @@ export default function webCommand(program: Command): void {
       }
       const { facts, remedy } = result;
       if (remedy) printNote(chalk.yellow(phaseLine('launch', remedy)));
+      const links = workspaceLinks(root, { platform: 'web' });
       if (json) {
-        console.log(JSON.stringify(facts));
+        console.log(JSON.stringify(links ? { ...facts, links } : facts));
         return;
       }
       const launched =
@@ -352,5 +354,6 @@ export default function webCommand(program: Command): void {
           ? `${facts.url} ${launched} in ${facts.version ?? 'Chrome'} (pid ${facts.pid}, ${facts.headless ? 'headless' : 'headed'}, ${facts.viewport}). DevTools: ${facts.cdpEndpoint}. Logs: stim logs --errors.`
           : `${facts.url} ${launched}, and the owned Chrome is no longer running. Run stim logs --errors, then stim web again.`,
       );
+      if (links) console.error(chalk.dim(workspaceLinkLine(links)));
     });
 }
