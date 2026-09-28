@@ -42,7 +42,6 @@ function saveRead(macId: string, next: ReadState): void {
 
 type TapData = { notification?: unknown; key?: unknown };
 
-/** Taps that arrived before their Mac's history, as when a push launches the app. */
 const pendingTaps = new Map<string, TapData[]>();
 
 function markTapsRead(macId: string, history: MacHistory, taps: TapData[]): void {
@@ -129,7 +128,6 @@ function identity(value: object | null): number {
   return known;
 }
 
-/** The paired Macs and their links, a new array only when one of those changes, not on every status. */
 function useMacLinks(): MacLinkInfo[] {
   const { connections } = useMacs();
   const key = connections
@@ -149,7 +147,7 @@ function useMacLinks(): MacLinkInfo[] {
   );
   const [stable, setStable] = useState(latest);
   if (stable.key !== latest.key) setStable(latest);
-  return stable.key === latest.key ? stable.links : latest.links;
+  return stable.links;
 }
 
 /** Lists each open Mac's notification history, on every connection, and adds the ones it logs while connected. */
