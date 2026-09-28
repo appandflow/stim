@@ -229,8 +229,8 @@ On the other Mac, with **Serve to phones** on and its `tailscale serve` route
 set up, Stim Desktop notifies "<Mac> wants to build on this Mac". **Review**
 shows the Mac's name and tailnet node; **Allow** lets it build there, and
 **Deny** refuses. The Macs that build there are listed under **Macs that build
-here** in **Stim > Settings > Phones**, each with **Revoke**. Builds do not
-offload yet; see [`offload.machines`](./settings.md#machine-settings).
+here** in **Stim > Settings > Phones**, each with **Revoke**. See
+[`offload.mode`](./settings.md#machine-settings) for which builds offload.
 
 ## Notifications
 

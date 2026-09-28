@@ -218,9 +218,9 @@ leased until <time>" for each one.`,
                   the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
-  offloadedTo     only on an iOS app a build machine compiled: its
+  offloadedTo     only on an app a build machine compiled: its
                   offload.machines entry (see \`guide settings\`). cacheHit is
-                  false for it
+                  false for it. The Android payload carries it too
   compilationCache
                   Xcode compilation-cache activity for a compiled iOS app:
                     { status: "reported", hits, cacheableTasks, hitRatePercent }
@@ -361,7 +361,8 @@ leased until <time>" for each one.`,
                   through ccache -- ccache absent from PATH, a project that
                   sets its own CMake compiler launcher, or a Gradle run whose
                   native work was all up to date. None of the three is an
-                  error, and this field is separate from cacheHit
+                  error, and this field is separate from cacheHit. On an
+                  offloaded APK it is the build machine's ccache
   logs            the workspace log directory
   durationMs      wall time for the whole run
   reclaimed       present only when the run was over its disk or memory

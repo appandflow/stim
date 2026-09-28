@@ -210,11 +210,14 @@ outside it moves to its own issue and pull request.
   never gets it. Build clients live in `server/build-clients.json`, apart from
   `devices.json`. The client names its build machines in `offload.machines`,
   pins each one's tailnet node in `build-machines.json`, and sends its token
-  only to that node. `offload.mode` places iOS simulator Debug builds;
+  only to that node. `offload.mode` places iOS simulator Debug builds and Android emulator
+  debug builds;
   every offload failure falls back to a local build, and no failure path
   writes the cache. The worker builds each client and repository in its own
   area and Stim home under `offload.workerRoot`, guarded by an ownership
-  claim whose child is the build's process group.
+  claim whose child is the build's process group. A Gradle daemon leaves
+  that group, so the worker stops the daemons of the client's Gradle home
+  when an Android build ends or is cancelled.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, and logs. The CLI owns every write to that state and imports

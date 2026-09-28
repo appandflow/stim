@@ -301,7 +301,9 @@ stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device-
 ```
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
-the app, opens it, and checks launch logs.
+the app, opens it, and checks launch logs. An emulator debug build can compile
+on a paired build machine instead: see `offload.mode` in
+[machine settings](./settings.md#machine-settings).
 
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager

@@ -507,7 +507,8 @@ Stim connects to a named Mac only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
 machine's pairing state.
 
-\`offload.mode\` decides where an iOS simulator Debug build compiles:
+\`offload.mode\` decides where an iOS simulator Debug build or an Android
+emulator debug build compiles:
 
   auto   (default) here while a \`concurrency.maxBuilds\` slot is free; on a
          build machine only while every slot holds a live build. With no
@@ -516,17 +517,26 @@ machine's pairing state.
   off    always here
 
 STIM_OFFLOAD_MODE overrides it for one command. Device, Release and
-\`--remote\` builds, and runs with the build cache off, always build here.
-An offloaded build first runs prebuild and \`pod install\` here, then asks
-every paired machine what it can build. It takes one whose Stim build, CPU,
-Xcode, simulator SDK and CocoaPods match this Mac exactly, that has an iPhone
-simulator on the target runtime, a free build slot and enough disk, preferring
-the one that already holds this repository. It sends the files \`git ls-files
+\`--remote\` builds, Android builds with the Apple Clang CAS compiler cache,
+and runs with the build cache off, always build here.
+An offloaded build first runs prebuild (and \`pod install\` for iOS) here,
+then asks every paired machine what it can build. It takes one whose Stim
+build and CPU match this Mac exactly, with a free build slot and enough disk,
+preferring the one that already holds this repository. For iOS the machine's
+Xcode, simulator SDK and CocoaPods must match, and it needs an iPhone simulator
+on the target runtime. For Android its JDK major version must match, and its
+Android SDK must hold the NDK, build-tools and compile platform that the
+project's React Native version names in gradle/libs.versions.toml; Gradle and
+AGP come from the synced project. It sends the files \`git ls-files
 -co --exclude-standard\` lists (the machine keeps only files it lacks, so an
 unignored secret such as \`.env\` is sent too), builds with Stim's own code
 there, refuses unless the fingerprint there equals this one, and brings the
-\`.app\` back. Stim checks the archive's sha256 and fingerprints this checkout
-again before it stores the app under the post-mutation key and installs it.
+\`.app\` or APK back. An Android build there uses this Mac's variant, target
+ABI, Gradle build cache, PCH and compiler cache choices, so the APK matches
+the ABI-narrowed cache key. Stim checks the archive's sha256 and fingerprints this checkout
+again before it stores the app under the post-mutation key and installs it
+the usual way, so an APK is still compared with the installed one before an
+install is skipped.
 Any failure prints \`offload failed: <reason> -> building here\` and
 compiles here. Offloading holds no local build slot; that fallback takes one.
 An offloaded app lands only in this Mac's build cache, not in a remote cache
@@ -534,10 +544,14 @@ provider. A project whose xcodebuild changes its own fingerprinted inputs
 cannot offload: the fingerprint check fails and it builds here.
 
 On the build machine, stim-server keeps each client's checkouts, dependencies,
-DerivedData and compilation cache under \`offload.workerRoot\` (absolute;
-default $STIM_HOME/build-worker), one area and Stim home per client and
-repository. It runs one offloaded build at a time and refuses one while that
-volume has less than 10 GB free. It boots and installs nothing.
+DerivedData, compilation cache, ccache and Gradle home under
+\`offload.workerRoot\` (absolute; default $STIM_HOME/build-worker), one area
+and Stim home per client and repository, and one Gradle home per client. It
+runs one offloaded build at a time and refuses one while that volume has less
+than 10 GB free. It boots and installs nothing. Android builds there run on
+the JDK in stim-server's JAVA_HOME (else the macOS default JDK) with the SDK in
+its ANDROID_HOME (else ~/Library/Android/sdk), and stop the Gradle daemons they
+start when they end.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
