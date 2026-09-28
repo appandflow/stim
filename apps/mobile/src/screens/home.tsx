@@ -21,6 +21,7 @@ import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
 import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
+import { useNotificationPrefs } from '@/hooks/notifications';
 import { useNow } from '@/hooks/use-now';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
 import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
@@ -171,11 +172,7 @@ export function Home() {
 
   const openAttention = ({ target }: HomeAttentionItem) => {
     if (target.kind === 'machine') router.push({ pathname: '/mac/[id]', params: { id: target.macId } });
-    else
-      router.push({
-        pathname: target.kind === 'logs' ? '/mac/[id]/logs' : '/mac/[id]/workspace',
-        params: { id: target.macId, path: target.path, ...(target.kind === 'logs' ? { errors: '1' } : {}) },
-      });
+    else router.push({ pathname: '/mac/[id]/workspace', params: { id: target.macId, path: target.path } });
   };
 
   const listHeader = (
@@ -282,7 +279,11 @@ export function Home() {
 
 function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttentionItem) => void }) {
   const { connections } = useMacs();
-  const items = useMemo(() => homeAttention(connections.map(toAttentionMachine), now), [connections, now]);
+  const { prefs } = useNotificationPrefs();
+  const items = useMemo(
+    () => homeAttention(connections.map(toAttentionMachine), now, prefs.stuckMinutes),
+    [connections, now, prefs.stuckMinutes],
+  );
   return <AttentionStrip items={items} onOpen={onOpen} />;
 }
 

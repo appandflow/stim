@@ -12,13 +12,35 @@ struct AttentionView: View {
   private static let collapsedGroups = 3
 
   var body: some View {
-    let groups = attentionGroups(store.payload?.environments ?? [])
-    let shown = expanded ? groups : Array(groups.prefix(Self.collapsedGroups))
+    let items = store.attention(lowestVolume: autopilot.lowestVolume)
+    let machine = items.filter { $0.workspace == nil }
+    let groups = Dictionary(grouping: items.compactMap { item in item.workspace.map { ($0, item) } }, by: \.0)
+    let paths = items.compactMap(\.workspace).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+    let shown = expanded ? paths : Array(paths.prefix(Self.collapsedGroups))
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         VStack(alignment: .leading, spacing: Space.xs) {
           Text("Needs attention").font(.stim(.title))
-          Text("Run a fix here, or copy the command and hand it to an agent.").foregroundStyle(Palette.secondary)
+          Text("What agents cannot handle for you. Run a fix here, or copy the command and hand it to an agent.")
+            .foregroundStyle(Palette.secondary)
+        }
+        if items.isEmpty && autopilot.finishedPullRequests.isEmpty {
+          VStack(spacing: Space.md) {
+            Image(systemName: "checkmark.circle").font(.system(size: 28)).foregroundStyle(Palette.success)
+            Text("Nothing needs you right now").font(.stim(.headline))
+            Text("Agents handle log errors and failed runs themselves. Signing failures, expired leases and stuck agents show up here.")
+              .foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+          }
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, Space.xxxl)
+        }
+        if !machine.isEmpty {
+          group("Machine", count: machine.count) {
+            ForEach(Array(machine.enumerated()), id: \.element.id) { index, item in
+              if index > 0 { divider }
+              row(item, workspace: nil)
+            }
+          }
         }
         if !autopilot.finishedPullRequests.isEmpty {
           group("Finished pull requests", count: autopilot.finishedPullRequests.count) {
@@ -28,25 +50,27 @@ struct AttentionView: View {
             }
           }
         }
-        group("Problems", count: groups.reduce(0) { $0 + $1.items.count }) {
-          ForEach(Array(shown.enumerated()), id: \.element.workspace.path) { index, group in
-            if index > 0 { divider }
-            workspaceHeader(group.workspace)
-            ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
-              row(item, workspace: group.workspace)
+        if !paths.isEmpty {
+          group("Workspaces", count: items.count - machine.count) {
+            ForEach(Array(shown.enumerated()), id: \.element) { index, path in
+              if index > 0 { divider }
+              workspaceHeader(path)
+              ForEach(groups[path]?.map(\.1) ?? [], id: \.id) { item in
+                row(item, workspace: path)
+              }
             }
-          }
-          if groups.count > Self.collapsedGroups {
-            divider
-            Button(
-              expanded
-                ? "Show fewer"
-                : "Show \(countLabel(groups.count - shown.count, "more workspace", plural: "more workspaces"))"
-            ) { expanded.toggle() }
-            .buttonStyle(.link)
-            .padding(.horizontal, Space.xl)
-            .padding(.vertical, Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if paths.count > Self.collapsedGroups {
+              divider
+              Button(
+                expanded
+                  ? "Show fewer"
+                  : "Show \(countLabel(paths.count - shown.count, "more workspace", plural: "more workspaces"))"
+              ) { expanded.toggle() }
+              .buttonStyle(.link)
+              .padding(.horizontal, Space.xl)
+              .padding(.vertical, Space.md)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
           }
         }
       }
@@ -76,36 +100,36 @@ struct AttentionView: View {
     }
   }
 
-  private func workspaceHeader(_ env: Workspace) -> some View {
-    HStack(spacing: Space.md) {
-      Text(env.names.title).font(.stim(.body, weight: .semibold))
-      Text(store.project(of: env).name).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+  private func workspaceHeader(_ path: String) -> some View {
+    let env = store.payload?.environments.first { $0.path == path }
+    return HStack(spacing: Space.md) {
+      Text(store.names(ofPath: path).title).font(.stim(.body, weight: .semibold))
+      if let env { Text(store.project(of: env).name).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       Spacer()
-      Text(env.live ? "live" : env.isSettingUp ? (env.phase ?? "idle") : "idle").font(.stim(.footnote))
-        .foregroundStyle(env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary)
+      if let env {
+        Text(env.live ? "live" : env.isSettingUp ? (env.phase ?? "idle") : "idle").font(.stim(.footnote))
+          .foregroundStyle(env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary)
+      }
     }
     .padding(.horizontal, Space.xl)
     .padding(.top, Space.lg)
     .padding(.bottom, Space.xxs)
   }
 
-  private func row(_ item: AttentionItem, workspace: Workspace) -> some View {
+  private func row(_ item: NeedsAttentionItem, workspace: String?) -> some View {
     HStack(spacing: Space.lg) {
-      Image(systemName: item.isError ? "xmark.octagon" : "exclamationmark.triangle")
+      Image(systemName: icon(item))
         .foregroundStyle(item.isError ? Palette.error : Palette.warning)
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(abbreviatingHome(item.text)).lineLimit(2)
-        if let detail = item.detail {
-          Text(detail).font(.stim(.footnote, mono: true)).foregroundStyle(Palette.error).lineLimit(3).textSelection(.enabled)
-        }
+        Text(abbreviatingHome(item.body)).lineLimit(2)
         if let command = item.command {
           Text("stim \(command.arguments.joined(separator: " "))").font(.stim(.footnote, mono: true)).foregroundStyle(
             Palette.secondary)
         }
       }
       Spacer()
-      if item.opensLogs {
-        Button("Open logs") { openLogs(workspace.path) }
+      if let workspace, item.category == .looping || item.id.hasPrefix("run-") {
+        Button("Open logs") { openLogs(workspace) }
           .help("Show this workspace's errors")
       }
       if let command = item.command {
@@ -115,12 +139,21 @@ struct AttentionView: View {
         }
         .help(command.displayLine())
         if item.runnable {
-          runButton("Run", command, runTitle: "Fix \(workspace.names.title)")
+          runButton("Run", command, runTitle: "Fix \(store.names(ofPath: command.cwd).title)")
         }
       }
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
+  }
+
+  private func icon(_ item: NeedsAttentionItem) -> String {
+    switch item.category {
+    case .stuck: return "hourglass"
+    case .looping: return "arrow.triangle.2.circlepath"
+    case .machine: return "internaldrive"
+    case .attention: return item.isError ? "xmark.octagon" : "exclamationmark.triangle"
+    }
   }
 
   private func finishedRow(_ flag: PullRequestCleanup.Flag) -> some View {
@@ -150,11 +183,7 @@ struct AttentionView: View {
         Text(title).font(.stim(.headline))
         Text("\(count)").foregroundStyle(Palette.tertiary)
       }
-      if count == 0 {
-        Text("Nothing here.").foregroundStyle(Palette.tertiary)
-      } else {
-        Card { VStack(spacing: 0) { content() } }
-      }
+      Card { VStack(spacing: 0) { content() } }
     }
   }
 }

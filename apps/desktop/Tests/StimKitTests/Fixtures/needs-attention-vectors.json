@@ -1,0 +1,1112 @@
+{
+  "cases": [
+    {
+      "name": "drops log errors and a single failed run",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": true,
+            "warnings": [],
+            "logs": {
+              "dir": "/l",
+              "errorsSinceMarker": 4
+            },
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_LAUNCH_FAILED"
+              }
+            },
+            "builds": {
+              "ios": [
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_LAUNCH_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "items": []
+    },
+    {
+      "name": "drops issues an agent repairs and info notes",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": true,
+            "warnings": [],
+            "issues": [
+              {
+                "code": "sim-without-metro",
+                "severity": "warning",
+                "message": "simulator is booted with no Metro serving it",
+                "remedy": "stim start",
+                "workspace": "/w/a"
+              },
+              {
+                "code": "avd-not-detected",
+                "severity": "warning",
+                "message": "owned AVD stim-a is not detected by adb",
+                "remedy": "stim android",
+                "workspace": "/w/a"
+              },
+              {
+                "code": "browser-orphaned",
+                "severity": "warning",
+                "message": "the owned Chrome runs without its supervisor",
+                "remedy": "stim stop",
+                "workspace": "/w/a"
+              },
+              {
+                "code": "port-not-ours",
+                "severity": "info",
+                "message": "port 8081 is in use by another app; stim start will choose a free port",
+                "remedy": "stim start",
+                "workspace": "/w/a"
+              }
+            ]
+          }
+        ]
+      },
+      "items": []
+    },
+    {
+      "name": "keeps a port held by another app and processes Stim cannot verify",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": true,
+            "warnings": [],
+            "issues": [
+              {
+                "code": "port-not-ours",
+                "severity": "warning",
+                "message": "port 8081 is in use by another app, so this workspace's Metro cannot serve on it",
+                "remedy": "stim stop",
+                "workspace": "/w/a"
+              },
+              {
+                "code": "supervisor-unverified",
+                "severity": "error",
+                "message": "supervisor pid 42 could not be verified",
+                "remedy": "stim guide errors teardown",
+                "workspace": "/w/a"
+              },
+              {
+                "code": "avd-unchecked",
+                "severity": "warning",
+                "message": "could not check owned AVD stim-b: adb timed out",
+                "remedy": "stim doctor",
+                "workspace": "/w/a",
+                "slot": "b"
+              }
+            ]
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "issue-supervisor-unverified-default:/w/a",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/a",
+          "body": "supervisor pid 42 could not be verified",
+          "remedy": "stim guide errors teardown"
+        },
+        {
+          "id": "issue-port-not-ours-default:/w/a",
+          "category": "attention",
+          "severity": "warning",
+          "workspace": "/w/a",
+          "body": "port 8081 is in use by another app, so this workspace's Metro cannot serve on it",
+          "remedy": "stim stop"
+        },
+        {
+          "id": "issue-avd-unchecked-b:/w/a",
+          "category": "attention",
+          "severity": "warning",
+          "workspace": "/w/a",
+          "body": "b: could not check owned AVD stim-b: adb timed out",
+          "remedy": "stim doctor"
+        }
+      ]
+    },
+    {
+      "name": "keeps signing and provisioning failures for a day or while live, not refusals an agent retries",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/sign",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_CODESIGN_FAILED"
+              }
+            }
+          },
+          {
+            "path": "/w/profile",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_PROFILE_MISMATCH"
+              }
+            }
+          },
+          {
+            "path": "/w/disk",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "android": {
+                "platform": "android",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_LOW_DISK"
+              }
+            }
+          },
+          {
+            "path": "/w/device",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "android": {
+                "platform": "android",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_NO_DEVICE"
+              }
+            }
+          },
+          {
+            "path": "/w/abandoned",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-26T10:00:00.000Z",
+                "finishedAt": "2026-09-26T10:10:00.000Z",
+                "errorCode": "STIM_NO_PROFILE"
+              }
+            }
+          },
+          {
+            "path": "/w/abandoned-live",
+            "live": true,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-26T10:00:00.000Z",
+                "finishedAt": "2026-09-26T10:10:00.000Z",
+                "errorCode": "STIM_NO_PROFILE"
+              }
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "run-ios:/w/abandoned-live",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/abandoned-live",
+          "body": "iOS signing or provisioning failed (STIM_NO_PROFILE)",
+          "remedy": null
+        },
+        {
+          "id": "run-ios:/w/sign",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/sign",
+          "body": "iOS signing or provisioning failed (STIM_CODESIGN_FAILED)",
+          "remedy": null
+        },
+        {
+          "id": "run-ios:/w/profile",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/profile",
+          "body": "iOS signing or provisioning failed (STIM_PROFILE_MISMATCH)",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "name": "drops a refusal the running build replaces",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": true,
+            "warnings": [],
+            "build": {
+              "platform": "ios",
+              "slot": "default",
+              "state": "running",
+              "phase": "compile",
+              "startedAt": "2026-09-28T11:59:00.000Z",
+              "phaseStartedAt": "2026-09-28T11:59:00.000Z",
+              "basis": 0
+            },
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_NO_SIGNING_IDENTITY"
+              }
+            }
+          }
+        ]
+      },
+      "items": []
+    },
+    {
+      "name": "keeps the same failure three times in a row",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/swift",
+            "live": false,
+            "warnings": [],
+            "builds": {
+              "ios": [
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "diagnostics": [
+                    {
+                      "file": "/w/swift/ios/App/AppDelegate.swift",
+                      "line": 71,
+                      "message": "boom"
+                    }
+                  ],
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "diagnostics": [
+                    {
+                      "file": "/w/swift/ios/App/AppDelegate.swift",
+                      "line": 71,
+                      "message": "boom"
+                    }
+                  ],
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "diagnostics": [
+                    {
+                      "file": "/w/swift/ios/App/AppDelegate.swift",
+                      "line": 71,
+                      "message": "boom"
+                    }
+                  ],
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          },
+          {
+            "path": "/w/launch",
+            "live": false,
+            "warnings": [],
+            "builds": {
+              "android": [
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_LAUNCH_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_LAUNCH_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_LAUNCH_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_LAUNCH_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          },
+          {
+            "path": "/w/mixed",
+            "live": false,
+            "warnings": [],
+            "builds": {
+              "android": [
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "android",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_LAUNCH_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "looping-ios:/w/swift",
+          "category": "looping",
+          "severity": "error",
+          "workspace": "/w/swift",
+          "body": "Same Swift error 3x at AppDelegate.swift:71",
+          "remedy": null
+        },
+        {
+          "id": "looping-android:/w/launch",
+          "category": "looping",
+          "severity": "error",
+          "workspace": "/w/launch",
+          "body": "App failed to launch on Android 4x in a row",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "name": "forgets an idle repeated failure after a day, not a live one",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/old",
+            "live": false,
+            "warnings": [],
+            "builds": {
+              "ios": [
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-26T10:00:00.000Z",
+                  "finishedAt": "2026-09-26T10:10:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-26T10:00:00.000Z",
+                  "finishedAt": "2026-09-26T10:10:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-26T10:00:00.000Z",
+                  "finishedAt": "2026-09-26T10:10:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          },
+          {
+            "path": "/w/old-live",
+            "live": true,
+            "warnings": [],
+            "builds": {
+              "ios": [
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-26T10:00:00.000Z",
+                  "finishedAt": "2026-09-26T10:10:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-26T10:00:00.000Z",
+                  "finishedAt": "2026-09-26T10:10:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-26T10:00:00.000Z",
+                  "finishedAt": "2026-09-26T10:10:00.000Z",
+                  "errorCode": "STIM_BUILD_FAILED",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "looping-ios:/w/old-live",
+          "category": "looping",
+          "severity": "error",
+          "workspace": "/w/old-live",
+          "body": "iOS build failed 3x in a row (STIM_BUILD_FAILED)",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "name": "a signing failure replaces its repeated failure",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_NO_PROFILE"
+              }
+            },
+            "builds": {
+              "ios": [
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_NO_PROFILE",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_NO_PROFILE",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                },
+                {
+                  "platform": "ios",
+                  "status": "failed",
+                  "cacheHit": "none",
+                  "startedAt": "2026-09-28T11:30:00.000Z",
+                  "finishedAt": "2026-09-28T11:31:00.000Z",
+                  "errorCode": "STIM_NO_PROFILE",
+                  "result": "failed",
+                  "slot": "default",
+                  "phases": {}
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "run-ios:/w/a",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/a",
+          "body": "iOS signing or provisioning failed (STIM_NO_PROFILE)",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "name": "keeps an agent that went quiet past the stuck threshold",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/stuck",
+            "live": true,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "ok",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:25:00.000Z",
+                "finishedAt": "2026-09-28T11:30:00.000Z"
+              }
+            },
+            "ios": {
+              "name": "stim-a (iPhone 17 Pro 26.0)",
+              "udid": "SIM-1",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "agent-device",
+                  "pid": 1,
+                  "since": "2026-09-28T11:20:00.000Z"
+                },
+                "lastActivityAt": "2026-09-28T11:59:00.000Z",
+                "basis": ["agent-action", "app-log"],
+                "recent": {
+                  "agent-action": "2026-09-28T11:40:00.000Z",
+                  "app-log": "2026-09-28T11:59:00.000Z"
+                }
+              }
+            }
+          },
+          {
+            "path": "/w/busy",
+            "live": true,
+            "warnings": [],
+            "ios": {
+              "name": "stim-a (iPhone 17 Pro 26.0)",
+              "udid": "SIM-2",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "agent-device",
+                  "pid": 2,
+                  "since": "2026-09-28T11:20:00.000Z"
+                },
+                "lastActivityAt": "2026-09-28T11:57:00.000Z",
+                "basis": ["agent-action"],
+                "recent": {
+                  "agent-action": "2026-09-28T11:57:00.000Z"
+                }
+              }
+            }
+          },
+          {
+            "path": "/w/idle",
+            "live": true,
+            "warnings": [],
+            "ios": {
+              "name": "stim-a (iPhone 17 Pro 26.0)",
+              "udid": "SIM-3",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "idle",
+                "lastActivityAt": "2026-09-28T10:30:00.000Z",
+                "basis": ["agent-action"]
+              }
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "stuck:/w/stuck",
+          "category": "stuck",
+          "severity": "warning",
+          "workspace": "/w/stuck",
+          "body": "No agent activity for 20 min after a green iOS build; iPhone 17 Pro 26.0 still up",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "name": "keeps an expired lease",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": false,
+            "warnings": [],
+            "physicalDevices": [
+              {
+                "platform": "android",
+                "slot": "default",
+                "id": "R5CT",
+                "name": "Pixel 9",
+                "model": "Pixel 9",
+                "connection": "connected",
+                "lease": {
+                  "holder": "h",
+                  "kind": "declared",
+                  "grantedAt": "2026-09-28T10:00:00.000Z",
+                  "expiresAt": "2026-09-28T11:55:00.000Z"
+                }
+              },
+              {
+                "platform": "ios",
+                "slot": "qa",
+                "id": "0000-1",
+                "name": null,
+                "model": "iPhone 16",
+                "connection": "connected",
+                "lease": {
+                  "holder": "h",
+                  "kind": "declared",
+                  "grantedAt": "2026-09-28T11:50:00.000Z",
+                  "expiresAt": "2026-09-28T12:50:00.000Z"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "lease-android-default:/w/a",
+          "category": "attention",
+          "severity": "warning",
+          "workspace": "/w/a",
+          "body": "Lease on Pixel 9 expired",
+          "remedy": "stim device unlock android"
+        }
+      ]
+    },
+    {
+      "name": "keeps a billable EAS session nobody drives",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/left",
+            "live": false,
+            "warnings": [],
+            "remoteDevices": [
+              {
+                "platform": "ios",
+                "backend": "eas",
+                "sessionId": "s-1",
+                "state": "claimed",
+                "startedAt": "2026-09-28T11:15:00.000Z",
+                "webPreviewUrl": null
+              }
+            ]
+          },
+          {
+            "path": "/w/new",
+            "live": false,
+            "warnings": [],
+            "remoteDevices": [
+              {
+                "platform": "ios",
+                "backend": "eas",
+                "sessionId": "s-2",
+                "state": "claimed",
+                "startedAt": "2026-09-28T11:50:00.000Z",
+                "webPreviewUrl": null
+              }
+            ]
+          },
+          {
+            "path": "/w/driven",
+            "live": true,
+            "warnings": [],
+            "ios": {
+              "name": "stim-a (iPhone 17 Pro 26.0)",
+              "udid": "SIM-1",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "agent-device",
+                  "pid": 1,
+                  "since": "2026-09-28T11:10:00.000Z"
+                },
+                "basis": ["agent-action"],
+                "recent": {
+                  "agent-action": "2026-09-28T11:58:00.000Z"
+                }
+              }
+            },
+            "remoteDevices": [
+              {
+                "platform": "android",
+                "backend": "eas",
+                "sessionId": "s-3",
+                "state": "claimed",
+                "startedAt": "2026-09-28T11:10:00.000Z",
+                "webPreviewUrl": null
+              }
+            ]
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "eas-s-1:/w/left",
+          "category": "attention",
+          "severity": "warning",
+          "workspace": "/w/left",
+          "body": "EAS session running for 45 min with no agent; billed while it runs",
+          "remedy": "stim stop"
+        }
+      ]
+    },
+    {
+      "name": "keeps disk below the floor first",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 120000000000
+          },
+          {
+            "freeBytes": 3200000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/a",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_NO_SIGNING_IDENTITY"
+              }
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "machine:disk",
+          "category": "machine",
+          "severity": "error",
+          "workspace": null,
+          "body": "3.2 GB free, below Stim's floor",
+          "remedy": null
+        },
+        {
+          "id": "run-ios:/w/a",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/a",
+          "body": "iOS signing or provisioning failed (STIM_NO_SIGNING_IDENTITY)",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "name": "orders errors, then live workspaces",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/idle-warning",
+            "live": false,
+            "warnings": [],
+            "physicalDevices": [
+              {
+                "platform": "android",
+                "slot": "default",
+                "id": "X",
+                "name": "Pixel",
+                "model": null,
+                "connection": "unknown",
+                "lease": {
+                  "holder": "h",
+                  "kind": "run",
+                  "grantedAt": null,
+                  "expiresAt": "2026-09-28T11:59:00.000Z"
+                }
+              }
+            ]
+          },
+          {
+            "path": "/w/live-warning",
+            "live": true,
+            "warnings": [],
+            "issues": [
+              {
+                "code": "port-not-ours",
+                "severity": "warning",
+                "message": "port 8082 is in use by pid 9",
+                "remedy": "stim guide errors teardown",
+                "workspace": "/w/live-warning"
+              }
+            ]
+          },
+          {
+            "path": "/w/idle-error",
+            "live": false,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "failed",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:30:00.000Z",
+                "finishedAt": "2026-09-28T11:31:00.000Z",
+                "errorCode": "STIM_NO_PROFILE"
+              }
+            }
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "run-ios:/w/idle-error",
+          "category": "attention",
+          "severity": "error",
+          "workspace": "/w/idle-error",
+          "body": "iOS signing or provisioning failed (STIM_NO_PROFILE)",
+          "remedy": null
+        },
+        {
+          "id": "issue-port-not-ours-default:/w/live-warning",
+          "category": "attention",
+          "severity": "warning",
+          "workspace": "/w/live-warning",
+          "body": "port 8082 is in use by pid 9",
+          "remedy": "stim guide errors teardown"
+        },
+        {
+          "id": "lease-android-default:/w/idle-warning",
+          "category": "attention",
+          "severity": "warning",
+          "workspace": "/w/idle-warning",
+          "body": "Lease on Pixel expired",
+          "remedy": "stim device unlock android"
+        }
+      ]
+    }
+  ]
+}

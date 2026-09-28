@@ -192,7 +192,11 @@ final class StatusStore: ObservableObject {
       project: project(ofPath:), options: options)
   }
 
-  var attentionCount: Int {
-    attentionGroups(payload?.environments ?? []).reduce(0) { $0 + $1.items.count }
+  /// What only a person can act on; `lowestVolume` is the fullest volume Stim uses, when measured.
+  func attention(lowestVolume: DiskVolume?) -> [NeedsAttentionItem] {
+    let minutes = UserDefaults.standard.integer(forKey: AppPreferences.Key.remoteSessionMinutes)
+    return needsAttention(
+      payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
+      stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30)
   }
 }
