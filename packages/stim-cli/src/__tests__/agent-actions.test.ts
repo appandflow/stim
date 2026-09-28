@@ -83,7 +83,7 @@ test('an Android session is attributed only while agent-device holds a live clai
   expect(read([{ ...emulator, name: 'stim-other' }])).toEqual([]);
 });
 
-test('later calls return only complete lines appended since the previous call', () => {
+test('later calls return only complete lines appended since the previous call, and a request keeps its start until it finishes', () => {
   const reader = createAgentActionReader({
     targets: [{ platform: 'ios', id: SECOND_SIM, slot: 'default' }],
     home,
@@ -113,6 +113,11 @@ test('later calls return only complete lines appended since the previous call', 
   );
   expect(reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
   expect(reader()).toEqual([]);
+  appendFileSync(
+    events,
+    `${JSON.stringify({ ...JSON.parse(line), ts: '2026-09-25T12:17:05.000Z', requestId: 'def' })}\n`,
+  );
+  expect(reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
 });
 
 test('an action keeps its start time however many requests the session made before it', () => {

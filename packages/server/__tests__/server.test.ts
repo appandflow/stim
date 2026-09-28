@@ -93,6 +93,12 @@ if (command === 'status') {
   };
   if (!env.FAKE_STIM_PLAN_GATE) answer();
   else setInterval(() => existsSync(env.FAKE_STIM_PLAN_GATE) && answer(), 10);
+} else if (command === 'settings' && env.FAKE_STIM_SETTINGS_MS) {
+  setTimeout(() => {
+    appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ ended: args.join(' ') }) + '\\n');
+    print({ command });
+    exit(0);
+  }, Number(env.FAKE_STIM_SETTINGS_MS));
 } else if (env.FAKE_STIM_GRANDCHILD) {
   const { spawn } = await import('node:child_process');
   const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
@@ -2792,6 +2798,19 @@ describe('frames.subscribe', () => {
           ]);
           expect(played.at(-1)).toEqual({ event: 'replay-ended', subscription: 's1', at: BASE + 30_400 });
 
+          client.socket.send(
+            JSON.stringify({
+              id: 51,
+              method: 'frames.seek',
+              params: { subscription: 's1', at: BASE + 30_400, rate: 2 },
+            }),
+          );
+          const atEnd = await untilMessage(client, (message) => 'event' in message && message.event === 'replay-ended');
+          expect(atEnd.filter((message) => !('binary' in message))).toEqual([
+            { id: 51, result: { at: BASE + 30_400 } },
+            { event: 'replay-ended', subscription: 's1', at: BASE + 30_400 },
+          ]);
+
           expect(await client.request('frames.live', { subscription: 's1' })).toMatchObject({
             error: { code: 'frames-failed', message: expect.stringContaining('not booted') },
           });
@@ -2951,6 +2970,54 @@ describe('frames.subscribe', () => {
         ['recording.set', false],
         ['recording.set', true],
       ]);
+    });
+
+    test.skipIf(!fakeTailscale)('runs recording.set requests one at a time, so the last one wins', async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '200' },
+        undefined,
+        fakeHelper(),
+        { record: true },
+      );
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      const settingsLines = () =>
+        existsSync(calls)
+          ? readFileSync(calls, 'utf8')
+              .split('\n')
+              .filter((line) => line.includes('settings set'))
+              .map((line) => JSON.parse(line) as { args?: string; ended?: string })
+          : [];
+      const off = first.request('recording.set', { enabled: false });
+      await until(() => settingsLines().length === 1);
+      const on = second.request('recording.set', { enabled: true });
+      expect(await off).toMatchObject({ result: { enabled: false } });
+      expect(await on).toMatchObject({ result: { enabled: true } });
+      const set = (value: boolean) => `settings set recording.enabled ${value} --scope machine --json`;
+      expect(settingsLines().map((line) => line.args ?? `ended ${line.ended}`)).toEqual([
+        set(false),
+        `ended ${set(false)}`,
+        set(true),
+        `ended ${set(true)}`,
+      ]);
+    });
+
+    test.skipIf(!fakeTailscale)('closes while a recording.set runs and starts none queued behind it', async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '30000' },
+        undefined,
+        fakeHelper(),
+        { record: true },
+      );
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
+      await until(() => stimCalls().some((call) => call.args?.startsWith('settings set')));
+      second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await server!.close();
+      server = null;
+      expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toHaveLength(1);
     });
 
     test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {

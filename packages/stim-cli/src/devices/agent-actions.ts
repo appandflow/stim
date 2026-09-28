@@ -216,7 +216,7 @@ interface SessionCursor {
   runner: { size: number; spans: RunnerSpan[] } | null;
   session: string | null;
   unknownReported: boolean;
-  /** Start times of requests whose action is not read yet. */
+  /** Start times of requests that have not finished yet. */
   started: Map<string, number>;
 }
 
@@ -301,7 +301,8 @@ export function createAgentActionReader({
             : [],
         ),
       );
-      for (const requestId of [...parsed.finished, ...matched.keys()]) cursor.started.delete(requestId);
+      const failed = parsed.events.flatMap((event) => (event.failed && event.requestId ? [event.requestId] : []));
+      for (const requestId of [...parsed.finished, ...failed]) cursor.started.delete(requestId);
       for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
       if (!parsed.events.length && !parsed.unknownVersion) continue;
 

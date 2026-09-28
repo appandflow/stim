@@ -184,8 +184,8 @@ class DeviceRecording {
     try {
       closeSync(fd);
       renameSync(this.part, join(this.dir, closedSegmentName(this.start, Math.max(end, this.last, this.start))));
-    } catch {
-      this.brokenAt ??= Date.now();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.brokenAt ??= Date.now();
     }
   }
 
@@ -378,8 +378,7 @@ export class Recorder {
       session.stop();
       this.sessions.delete(key);
     }
-    const dir = workspaceRecordingsDir(workspace);
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    removeRecording(workspaceRecordingsDir(workspace));
   }
 
   private heartbeat(): void {
@@ -421,6 +420,20 @@ export class Recorder {
     const kept = devices.map((device) =>
       Object.assign({}, device, { segments: device.segments.filter((segment) => !aged.has(segment)) }),
     );
-    for (const segment of [...aged, ...capDrops(kept, this.limits.capBytes)]) rmSync(segment.file, { force: true });
+    for (const segment of [...aged, ...capDrops(kept, this.limits.capBytes)]) removeRecording(segment.file);
+  }
+}
+
+const undeletable = new Set<string>();
+
+/** Deletes footage; one that cannot be deleted stays, and the next prune tries again. */
+function removeRecording(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true });
+    undeletable.delete(path);
+  } catch (error) {
+    if (undeletable.has(path)) return;
+    undeletable.add(path);
+    console.error(`stim-server: could not delete the recording ${path}: ${(error as Error).message}`);
   }
 }

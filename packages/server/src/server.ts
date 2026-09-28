@@ -361,6 +361,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
+  let recordingTurn: Promise<void> = Promise.resolve();
+  let closing = false;
   const sessions = new Map<WebSocket, PairedDevice>();
   const sampler = new UsageSampler();
   const usage = new UsageRecorder();
@@ -833,9 +835,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               if (!ended && socket.readyState === socket.OPEN) socket.send(videoPacket(subscription, sequence++, unit));
             },
             bufferedBytes: () => socket.bufferedAmount,
-            ended: (position) => {
-              if (!ended) send(socket, { event: 'replay-ended', subscription, at: position });
-            },
+            ended: (position) =>
+              queueMicrotask(() => {
+                if (!ended) send(socket, { event: 'replay-ended', subscription, at: position });
+              }),
           },
           DEFAULT_VIDEO_LIMITS.congestedBytes,
         );
@@ -1124,24 +1127,38 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
-      const run = runStim(
-        options.stimCli,
-        options.env,
-        ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
-        homedir(),
-        actionLimits,
+      recordingTurn = cancelling.track(
+        recordingTurn
+          .catch(() => {})
+          .then(async () => {
+            if (closing) return;
+            const run = runStim(
+              options.stimCli,
+              options.env,
+              ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
+              homedir(),
+              actionLimits,
+            );
+            let stop!: () => void;
+            const stopped = new Promise<null>((resolve) => {
+              stop = () => resolve(null);
+            });
+            const cancel = () => {
+              stop();
+              return run.cancel();
+            };
+            running.add(cancel);
+            const outcome = await Promise.race([run.outcome, stopped]);
+            running.delete(cancel);
+            if (!outcome) return;
+            const printed = actionOutcome(outcome);
+            if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
+            audit({ ok: true });
+            const deleted = printed.output.recordingsDeleted;
+            const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
+            return send(socket, { id, result: { enabled, recordingsDeleted } });
+          }),
       );
-      const cancel = () => run.cancel();
-      running.add(cancel);
-      void run.outcome.then((outcome) => {
-        running.delete(cancel);
-        const printed = actionOutcome(outcome);
-        if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
-        audit({ ok: true });
-        const deleted = printed.output.recordingsDeleted;
-        const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
-        return send(socket, { id, result: { enabled, recordingsDeleted } });
-      });
     }
 
     function planBuild(id: RequestId, params: unknown): void {
@@ -1376,6 +1393,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const addresses: RunningServer['addresses'] = [];
   push.refresh();
   const close = async () => {
+    closing = true;
     push.close();
     watcher.close();
     helperAbort.abort();
