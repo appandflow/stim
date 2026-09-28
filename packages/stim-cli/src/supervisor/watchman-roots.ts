@@ -4,13 +4,14 @@ import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { describeError } from './errors.ts';
 
-export type WatchmanCommand = (args: string[]) => Promise<unknown>;
+export type WatchmanCommand = (args: string[], timeoutMs: number) => Promise<unknown>;
 
 const WATCHMAN_TIMEOUT_MS = 2000;
-const PROBE_DELAYS_MS = [5_000, 30_000, 120_000];
+const SHUTDOWN_BUDGET_MS = 3000;
+const PROBE_DELAYS_MS = [3_000, 6_000, 10_000, 15_000, 20_000, 30_000, 45_000, 60_000, 120_000, 300_000];
 
-export const runWatchman: WatchmanCommand = async (args) =>
-  JSON.parse(await getExecutor().runFileAsync('watchman', ['--no-spawn', ...args], { timeoutMs: WATCHMAN_TIMEOUT_MS }));
+export const runWatchman: WatchmanCommand = async (args, timeoutMs) =>
+  JSON.parse(await getExecutor().runFileAsync('watchman', ['--no-spawn', ...args], { timeoutMs }));
 
 function parseWatchRoots(payload: unknown): string[] | null {
   const roots = (payload as { roots?: unknown } | null)?.roots;
@@ -54,7 +55,9 @@ function metroSubscriptionPrefix(pid: number): string {
   return `metro-file-map-${pid}-`;
 }
 
-async function watchRoots(watchman: WatchmanCommand): Promise<string[] | null> {
+type BoundWatchman = (args: string[]) => Promise<unknown>;
+
+async function watchRoots(watchman: BoundWatchman): Promise<string[] | null> {
   try {
     return parseWatchRoots(await watchman(['watch-list']));
   } catch {
@@ -62,9 +65,18 @@ async function watchRoots(watchman: WatchmanCommand): Promise<string[] | null> {
   }
 }
 
-async function subscriberNames(watchman: WatchmanCommand, root: string): Promise<string[] | null> {
+async function subscriberNames(watchman: BoundWatchman, root: string): Promise<string[] | null> {
   try {
     return parseSubscriberNames(await watchman(['debug-get-subscriptions', root]));
+  } catch {
+    return null;
+  }
+}
+
+async function triggerCount(watchman: BoundWatchman, root: string): Promise<number | null> {
+  try {
+    const triggers = ((await watchman(['trigger-list', root])) as { triggers?: unknown } | null)?.triggers;
+    return Array.isArray(triggers) ? triggers.length : null;
   } catch {
     return null;
   }
@@ -87,7 +99,13 @@ export function trackMetroWatchRoots({
   watchman?: WatchmanCommand;
   probeDelaysMs?: number[];
 }): MetroWatchRoots {
-  const before = watchRoots(watchman);
+  let deadline = Infinity;
+  const call: BoundWatchman = async (args) => {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new Error('the watchman cleanup ran out of time');
+    return watchman(args, Math.min(WATCHMAN_TIMEOUT_MS, left));
+  };
+  const before = watchRoots(call);
   const owned = new Set<string>();
   const timers: ReturnType<typeof setTimeout>[] = [];
   let prefix: string | null = null;
@@ -95,11 +113,11 @@ export function trackMetroWatchRoots({
   const probe = async () => {
     const earlier = await before;
     if (prefix === null || earlier === null) return;
-    const current = await watchRoots(watchman);
+    const current = await watchRoots(call);
     if (current === null) return;
     for (const root of newRootsContaining(earlier, current, workspaceRoot)) {
       if (owned.has(root)) continue;
-      const names = await subscriberNames(watchman, root);
+      const names = await subscriberNames(call, root);
       if (names?.some((name) => name.startsWith(prefix as string))) owned.add(root);
     }
   };
@@ -115,25 +133,34 @@ export function trackMetroWatchRoots({
     },
     async beforeClose() {
       for (const timer of timers) clearTimeout(timer);
+      deadline = Date.now() + SHUTDOWN_BUDGET_MS;
       await probe();
     },
     async afterClose() {
       for (const root of owned) {
-        const names = await subscriberNames(watchman, root);
+        const names = await subscriberNames(call, root);
         const others = names?.filter((name) => !name.startsWith(prefix as string));
-        if (!others || others.length > 0) {
+        const triggers = others?.length === 0 ? await triggerCount(call, root) : null;
+        const reason = !others
+          ? 'could not list its subscriptions'
+          : others.length > 0
+            ? `${others.length} other subscription(s) still use it`
+            : triggers === null
+              ? 'could not list its triggers'
+              : triggers > 0
+                ? `it has ${triggers} trigger(s)`
+                : null;
+        if (reason) {
           writer.write({
             src: 'metro',
             level: 'debug',
             event: 'watchman_root_kept',
-            msg: others
-              ? `kept the watchman root ${root}: ${others.length} other subscription(s) still use it`
-              : `kept the watchman root ${root}: could not list its subscriptions`,
+            msg: `kept the watchman root ${root}: ${reason}`,
           });
           continue;
         }
         try {
-          await watchman(['watch-del', root]);
+          await call(['watch-del', root]);
           writer.write({
             src: 'metro',
             level: 'info',

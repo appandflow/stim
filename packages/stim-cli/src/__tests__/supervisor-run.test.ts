@@ -624,12 +624,18 @@ describe('runSupervisor', () => {
         if (args[0] === 'debug-get-subscriptions') {
           return { subscribers: [{ info: { name: `metro-file-map-${process.pid}-ws-0cb4f16e` } }] };
         }
+        if (args[0] === 'trigger-list') return { triggers: [] };
         return { 'watch-del': true };
       },
     });
     assert(running);
     await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
-    expect(order.slice(order.indexOf('close'))).toEqual(['close', 'debug-get-subscriptions', 'watch-del']);
+    expect(order.slice(order.indexOf('close'))).toEqual([
+      'close',
+      'debug-get-subscriptions',
+      'trigger-list',
+      'watch-del',
+    ]);
     expect(readMetroLog().map((r) => r.event)).toContain('watchman_root_removed');
   });
 

@@ -31,6 +31,7 @@ function fakeWatchman({
   after = [] as string[],
   running = {} as Record<string, unknown[]>,
   stopped = {} as Record<string, unknown[]>,
+  triggers = {} as Record<string, unknown[]>,
 }) {
   const calls: string[][] = [];
   let listed = 0;
@@ -42,6 +43,7 @@ function fakeWatchman({
       const root = args[1] as string;
       return { version: '2026.03.02.00', subscribers: (closed ? stopped : running)[root] ?? [] };
     }
+    if (args[0] === 'trigger-list') return { version: '2026.03.02.00', triggers: triggers[args[1] as string] ?? [] };
     if (args[0] === 'watch-del') return { 'watch-del': true, root: args[1] };
     throw new Error(`unexpected ${args.join(' ')}`);
   };
@@ -127,13 +129,54 @@ describe('trackMetroWatchRoots', () => {
     expect(records.map((r) => r.event)).toEqual(['watchman_root_kept']);
   });
 
+  test('keeps the root when another client registered a trigger on it, which watch-del would delete', async () => {
+    const fake = fakeWatchman({
+      after: [worktree],
+      running: { [worktree]: [subscription(METRO_PID)] },
+      triggers: { [worktree]: [{ name: 'build', command: ['make'] }] },
+    });
+    const { deleted, records } = await runLifecycle(fake);
+    expect(deleted).toEqual([]);
+    expect(records.map((r) => r.msg)).toEqual([`kept the watchman root ${worktree}: it has 1 trigger(s)`]);
+  });
+
+  test('stops calling watchman once shutdown has spent its time budget, and keeps the root', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[][] = [];
+      const fake = fakeWatchman({ after: [worktree], running: { [worktree]: [subscription(METRO_PID)] } });
+      const { records, writer } = recordingWriter();
+      const tracker = trackMetroWatchRoots({
+        workspaceRoot: workspace,
+        writer,
+        watchman: async (args, timeoutMs) => {
+          calls.push([...args, String(timeoutMs)]);
+          vi.advanceTimersByTime(1000);
+          return fake.command(args, timeoutMs);
+        },
+        probeDelaysMs: [],
+      });
+      tracker.started(METRO_PID);
+      await tracker.beforeClose();
+      await tracker.afterClose();
+      expect(calls.slice(1)).toEqual([
+        ['watch-list', '2000'],
+        ['debug-get-subscriptions', worktree, '2000'],
+        ['debug-get-subscriptions', worktree, '1000'],
+      ]);
+      expect(records.map((r) => r.msg)).toEqual([`kept the watchman root ${worktree}: could not list its triggers`]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('keeps the root when its subscriptions cannot be listed after the server closes', async () => {
     let failing = false;
     const fake = fakeWatchman({ after: [worktree], running: { [worktree]: [subscription(METRO_PID)] } });
     const inner = fake.command;
-    fake.command = async (args) => {
+    fake.command = async (args, timeoutMs) => {
       if (failing && args[0] === 'debug-get-subscriptions') throw new Error('Command timed out after 2000ms');
-      return inner(args);
+      return inner(args, timeoutMs);
     };
     const { records, writer } = recordingWriter();
     const tracker = trackMetroWatchRoots({

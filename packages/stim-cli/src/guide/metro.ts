@@ -164,8 +164,10 @@ WHAT THE SUPERVISOR IS
   metro.config.js sets resolver.useWatchman to true. When the supervisor stops
   its dev server, it removes with \`watchman watch-del\` a root that appeared
   after it started, contains the workspace and carried this Metro's
-  subscription, once no other client subscribes to it. It never starts the
-  daemon and leaves every other root alone, including those jest registers.
+  subscription, once no other client subscribes to it or has a trigger on it.
+  It logs watchman_root_removed, or watchman_root_kept with the reason, in
+  metro.ndjson. It never starts the daemon and leaves every other root alone,
+  including those jest registers.
   A supervisor that dies without stopping leaves its root: remove it with
   \`watchman watch-del <root>\`. Removing a root stops its recrawls; the
   daemon's memory footprint shrinks only when the daemon restarts, which drops

@@ -88,10 +88,13 @@ Native Metro uses watchman whenever it is installed. Expo SDK 56 and later use
 it only when `metro.config.js` sets `resolver.useWatchman` to `true`.
 
 When the supervisor stops its dev server, it runs `watchman watch-del` on the
-root its Metro registered, once no other client subscribes to it. It only
+root its Metro registered, once no other client subscribes to it or has a
+trigger on it. It only
 removes a root that appeared after the supervisor started, contains the
 workspace and carried this Metro's subscription. It never starts the watchman
-daemon and leaves other roots alone, including those jest registers. A
+daemon and leaves other roots alone, including those jest registers. The
+timeline records `watchman_root_removed`, or `watchman_root_kept` with the
+reason. A
 supervisor that dies without stopping leaves its root; remove it with
 `watchman watch-del <root>`.
 
