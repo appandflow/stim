@@ -10,6 +10,8 @@ final class StatusStore: ObservableObject {
   @Published private(set) var updatedAt: Date?
   @Published private(set) var projects: [String: Project] = [:]
   @Published private(set) var watching = false
+  /// The latest `stim doctor` report of each source checkout, by checkout path.
+  @Published private(set) var doctorReports: [String: DoctorReport] = [:]
 
   private let cli: Task<StimCLI, Never>
   private var started = false
@@ -21,6 +23,10 @@ final class StatusStore: ObservableObject {
   private var inFlight = false
   private var issued = 0
   private var shown = 0
+  private var doctorRuns: [String: DoctorRun] = [:]
+  private var doctorCheckedAt: Date?
+  private var doctorRunning = false
+  private static let doctorCheckInterval: TimeInterval = 60
 
   init(cli: Task<StimCLI, Never>) {
     self.cli = cli
@@ -150,6 +156,7 @@ final class StatusStore: ObservableObject {
         self.payload = payload
         self.error = nil
         self.updatedAt = Date()
+        self.checkDoctor()
       }
     }
   }
@@ -192,11 +199,44 @@ final class StatusStore: ObservableObject {
       project: project(ofPath:), options: options)
   }
 
+  /// Runs `stim doctor --json`, one checkout at a time, in each source checkout where doctor is due.
+  private func checkDoctor() {
+    let now = Date()
+    guard !doctorRunning, doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
+      let payload
+    else { return }
+    doctorRunning = true
+    doctorCheckedAt = now
+    let checkouts = doctorCheckouts(payload.environments, project: project(ofPath:))
+    let runs = doctorRuns
+    let cli = cli
+    Task.detached(priority: .utility) { [self] in
+      let cli = await cli.value
+      let version = cli.versionOutput()
+      for checkout in checkouts where FileManager.default.fileExists(atPath: checkout.path) {
+        let inputs = newestModification(doctorInputs(checkout: checkout.path, repository: checkout.repository))
+        guard DoctorRun.due(runs[checkout.path], version: version, inputsChangedAt: inputs, now: Date()) else { continue }
+        let report = try? cli.doctor(cwd: checkout.path)
+        let run = DoctorRun(at: Date(), version: version, inputsChangedAt: inputs)
+        await recordDoctor(checkout.path, run: run, report: report)
+      }
+      await finishDoctor()
+    }
+  }
+
+  private func recordDoctor(_ path: String, run: DoctorRun, report: DoctorReport?) {
+    doctorRuns[path] = run
+    doctorReports[path] = report
+  }
+
+  private func finishDoctor() { doctorRunning = false }
+
   /// What only a person can act on; `lowestVolume` is the fullest volume Stim uses, when measured.
   func attention(lowestVolume: DiskVolume?) -> [NeedsAttentionItem] {
     let minutes = UserDefaults.standard.integer(forKey: AppPreferences.Key.remoteSessionMinutes)
+    let setup = setupItems(doctorReports.keys.sorted().compactMap { doctorReports[$0] })
     return needsAttention(
       payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
-      stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30)
+      stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30) + setup
   }
 }
