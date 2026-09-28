@@ -152,7 +152,7 @@ function parseCapabilities(value: unknown): Capability[] {
   return Array.isArray(value) ? CAPABILITIES.filter((capability) => value.includes(capability)) : [];
 }
 
-export function capabilitiesFor(control: boolean): Capability[] {
+export function capabilitiesFor(control: boolean): Exclude<Capability, 'build'>[] {
   return control ? ['read', 'control'] : ['read'];
 }
 
@@ -279,7 +279,7 @@ function unexpired(record: PairingRecord, now: number): boolean {
 /** The device that spends the token gets `capabilities`. */
 export function createPairingToken(
   now: number = Date.now(),
-  capabilities: Capability[] = capabilitiesFor(false),
+  capabilities: Exclude<Capability, 'build'>[] = capabilitiesFor(false),
 ): { token: string; expiresAt: string } {
   const token = newToken();
   const expiresAt = new Date(now + PAIRING_TTL_MS).toISOString();
