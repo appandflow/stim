@@ -215,7 +215,9 @@ describe('physical devices', () => {
   });
 
   it('streams a connected leased iPhone, view only through stim-server, but not a leased Android phone', () => {
-    const [iphone, android] = devicesOf(leased).filter((d) => d.physical);
+    const phones = devicesOf(leased).filter((d) => d.physical);
+    const iphone = phones.find((d) => d.platform === 'ios');
+    const android = phones.find((d) => d.platform === 'android');
     expect(streamsFrames(iphone!)).toBe(true);
     expect(streamsFrames({ ...iphone!, running: false })).toBe(false);
     expect(streamsFrames(android!)).toBe(false);

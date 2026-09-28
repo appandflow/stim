@@ -1303,6 +1303,9 @@ const message = (kind, body) => {
 };
 if (env.FAKE_HELPER_KEYBOARD) message(2, Buffer.from(JSON.stringify({ keyboard: env.FAKE_HELPER_KEYBOARD })));
 if (env.FAKE_HELPER_STALLED) message(2, Buffer.from(JSON.stringify({ stalled: env.FAKE_HELPER_STALLED })));
+if (env.FAKE_HELPER_STALL_CLEAR_MS) {
+  setTimeout(() => message(2, Buffer.from(JSON.stringify({ stalled: null }))), Number(env.FAKE_HELPER_STALL_CLEAR_MS));
+}
 appendFileSync(env.FAKE_TOOL_CALLS + '.started', process.pid + '\\n');
 if (env.FAKE_HELPER_FAIL && !env.FAKE_HELPER_FAIL_AFTER) {
   message(2, Buffer.from(JSON.stringify({ error: env.FAKE_HELPER_FAIL })));
@@ -1742,7 +1745,7 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
-  function leasedPhonePayload(): string {
+  function leasedPhonePayload(deviceName: string | null = 'Old iPhone'): string {
     const lease = { platform: 'ios', deviceName: null, grantedAt: null, expiresAt: null, mine: false, parsed: true };
     return JSON.stringify([
       {
@@ -1751,11 +1754,12 @@ describe('frames.subscribe', () => {
           { ...lease, path: '/locks/other', id: 'PHONE-OTHER', holder: '/elsewhere', expired: false },
           { ...lease, path: '/locks/old', id: 'PHONE-OLD', holder: workspace, expired: true },
           { ...lease, path: '/locks/sim', id: 'SIM-1', holder: workspace, expired: false },
+          { ...lease, path: '/locks/slot', id: 'PHONE-SLOT', slot: 'tablet', holder: workspace, expired: false },
           {
             ...lease,
             path: '/locks/phone',
             id: 'PHONE-1',
-            deviceName: 'Old iPhone',
+            deviceName,
             holder: workspace,
             expired: false,
           },
@@ -1765,23 +1769,31 @@ describe('frames.subscribe', () => {
   }
 
   test.skipIf(!fakeTailscale)(
-    "streams the physical iPhone the workspace leases, not its simulator's lock, with the helper's stall reason",
+    "streams the physical iPhone the workspace leases in the slot, with the helper's stall reason until it clears",
     async () => {
       const locked = 'The iPhone is locked. Unlock it to see its screen.';
       const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_STALLED: locked },
+        {
+          FAKE_STIM_PAYLOADS: leasedPhonePayload(),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_STALLED: locked,
+          FAKE_HELPER_STALL_CLEAR_MS: '600',
+          FAKE_HELPER_INTERVAL_MS: '100000',
+        },
         undefined,
         fakeHelper(),
       );
       const client = await authed(port);
       await client.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
-      expect(await client.next()).toEqual({
-        event: 'frame-delayed',
-        subscription: 's1',
-        delayed: true,
-        reason: locked,
-      });
+      const stalled = { event: 'frame-delayed', subscription: 's1', delayed: true, reason: locked };
+      expect(await client.next()).toEqual(stalled);
+      const late = await authed(port);
+      await late.request('frames.subscribe', { workspace, platform: 'ios', physical: true });
+      expect(await late.next()).toEqual(stalled);
+      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
+      expect(await late.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
       client.socket.close();
+      late.socket.close();
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1', 'Old iPhone']);
     },
@@ -1792,7 +1804,7 @@ describe('frames.subscribe', () => {
     'ends a physical iPhone subscription when the helper fails, without falling back to simctl',
     async () => {
       const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: leasedPhonePayload(), FAKE_FRAMES: '[]', FAKE_HELPER_FAIL: 'not cabled on purpose' },
+        { FAKE_STIM_PAYLOADS: leasedPhonePayload(null), FAKE_FRAMES: '[]', FAKE_HELPER_FAIL: 'not cabled on purpose' },
         undefined,
         fakeHelper(),
       );
@@ -1803,6 +1815,7 @@ describe('frames.subscribe', () => {
         error: { code: 'frames-failed', message: expect.stringContaining('not cabled on purpose') },
       });
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
+      expect(helperRuns()[0]!.args).toEqual(['iphone', 'PHONE-1']);
     },
     10_000,
   );

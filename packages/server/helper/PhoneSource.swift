@@ -11,8 +11,9 @@ import IOKit
 ///
 /// The capture device's unique ID is a random UUID (macOS 27), and none of its CoreMediaIO properties names the
 /// UDID. The USB device does: its serial number is the UDID without dashes. So the UDID must be cabled, and the
-/// capture device is the only iOS one while one iPhone is cabled, or else the one named `name`; any other case
-/// refuses rather than guess.
+/// capture device is the iOS one named `name`, or the only one when there is no name and one iPhone is cabled.
+/// Screens appear one by one, so with several iPhones cabled it waits for all of them; any other case refuses
+/// rather than guess.
 final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
   static let searchSeconds = 15.0
   static let retrySeconds = 2.0
@@ -20,6 +21,7 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
 
   let udid: String
   let name: String?
+  private var serial: String { udid.replacingOccurrences(of: "-", with: "").uppercased() }
   let queue = DispatchQueue(label: "stim.frames.phone")
   private let captureQueue = DispatchQueue(label: "stim.frames.phone-capture")
   private var pacer: Pacer!
@@ -85,6 +87,17 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
         self?.queue.async { self?.find(until: nil) }
       })
     observers.append(
+      center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: nil, queue: nil) {
+        [weak self] note in
+        let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
+        self?.queue.async {
+          guard let self, let session = self.session, session === note.object as? AVCaptureSession else { return }
+          self.failure = "Capture of the iPhone \(self.udid) stopped (\(error?.localizedDescription ?? "unknown error"))."
+          self.close()
+          self.retry()
+        }
+      })
+    observers.append(
       center.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil) {
         [weak self] note in
         guard let gone = note.object as? AVCaptureDevice else { return }
@@ -99,31 +112,36 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   private func find(until deadline: Date?) {
     guard device == nil else { return }
     let cabled = Self.cabledSerials()
-    guard cabled.contains(udid.replacingOccurrences(of: "-", with: "").uppercased()) else {
+    guard cabled.contains(serial) else {
       fail(
         "The iPhone \(udid) is not cabled to this Mac. Stim shows a physical iPhone's screen only over a USB cable.")
     }
     let screens = AVCaptureDevice.DiscoverySession(deviceTypes: [.external], mediaType: .muxed, position: .unspecified)
       .devices.filter { $0.modelID == "iOS Device" }
-    let found: AVCaptureDevice?
-    if cabled.count == 1 && screens.count <= 1 {
-      found = screens.first
-    } else {
-      guard let name else {
-        fail("Several iPhones are cabled to this Mac, and Stim has no name to tell \(udid) apart from them.")
-      }
-      let named = screens.filter { $0.localizedName == name }
-      if named.count > 1 {
-        fail(
-          "Several cabled iPhones are named \(name), so Stim cannot tell which one is \(udid). Rename one in "
-            + "Settings > General > About > Name.")
-      }
-      found = named.first
+    if cabled.count > 1 && name == nil {
+      fail("Several iPhones are cabled to this Mac, and Stim has no name to tell \(udid) apart from them.")
     }
-    guard let found else {
+    let named = name.map { name in screens.filter { $0.localizedName == name } } ?? screens
+    let listed = screens.count >= cabled.count
+    if listed && named.count > 1 {
+      fail(
+        "Several cabled iPhones are named \(name ?? "alike"), so Stim cannot tell which one is \(udid). Rename one in "
+          + "Settings > General > About > Name.")
+    }
+    guard listed, named.count == 1, let found = named.first else {
       guard let deadline else { return }
       if Date() > deadline {
-        fail("macOS shows no screen for the iPhone \(udid). Unlock it, and tap Trust if it asks to trust this Mac.")
+        if screens.isEmpty {
+          fail("macOS shows no screen for the iPhone \(udid). Unlock it, and tap Trust if it asks to trust this Mac.")
+        }
+        if !listed {
+          fail(
+            "Not every cabled iPhone shows its screen yet, so Stim cannot tell \(udid) apart from them. Unlock each "
+              + "one, and tap Trust if it asks to trust this Mac.")
+        }
+        fail(
+          "No cabled iPhone's screen is named \(name ?? "") as the lease of \(udid) records. If it was renamed, run "
+            + "stim device lock ios \(udid) again.")
       }
       queue.asyncAfter(deadline: .now() + 1) { self.find(until: deadline) }
       return
@@ -185,13 +203,18 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   private func apply() {
     let wanted = config.fps > 0 && (config.jpeg || config.video)
     if wanted, session == nil, authorized, let device { open(device) }
-    if !wanted, let session {
-      self.session = nil
-      watchdog?.cancel()
-      watchdog = nil
+    if !wanted, session != nil {
+      close()
       latest = nil
-      captureQueue.async { session.stopRunning() }
     }
+  }
+
+  private func close() {
+    guard let session else { return }
+    self.session = nil
+    watchdog?.cancel()
+    watchdog = nil
+    captureQueue.async { session.stopRunning() }
   }
 
   private func open(_ device: AVCaptureDevice) {
@@ -214,33 +237,24 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
       return retry()
     }
     session.addOutput(output)
-    observers.append(
-      NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) {
-        [weak self] note in
-        let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
-        self?.queue.async {
-          guard let self, self.session === session else { return }
-          self.failure = "Capture of the iPhone \(self.udid) stopped (\(error?.localizedDescription ?? "unknown error"))."
-          self.session = nil
-          self.watchdog?.cancel()
-          self.watchdog = nil
-          self.captureQueue.async { session.stopRunning() }
-          self.retry()
-        }
-      })
     self.session = session
     failure = nil
     frameAt = Date()
     reportStall()
     let watchdog = DispatchSource.makeTimerSource(queue: queue)
     watchdog.schedule(deadline: .now() + 1, repeating: 1)
-    watchdog.setEventHandler { [weak self] in self?.reportStall() }
+    watchdog.setEventHandler { [weak self] in
+      guard let self else { return }
+      if !Self.cabledSerials().contains(self.serial) { fail("The iPhone \(self.udid) was disconnected from this Mac.") }
+      self.reportStall()
+    }
     watchdog.resume()
     self.watchdog = watchdog
     captureQueue.async { session.startRunning() }
   }
 
   private func retry() {
+    if !Self.cabledSerials().contains(serial) { fail("The iPhone \(udid) was disconnected from this Mac.") }
     reportStall()
     guard !retrying else { return }
     retrying = true
@@ -250,9 +264,9 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
     }
   }
 
-  /// A failed open, or frames that stopped while the iPhone is locked or another app captures it, are stalls: the
-  /// last frame stays on screen with the reason, and frames resume when the reason clears. Another app capturing
-  /// the iPhone alone is no stall, because macOS lets several processes capture it at once.
+  /// A failed open, or frames that stopped, are stalls: the last frame stays on screen with the reason, and frames
+  /// resume when the reason clears. A cabled iPhone sends frames continuously, so a gap names its cause when macOS
+  /// reports one. Another app capturing the iPhone alone is no stall, because several processes can capture it.
   private func reportStall() {
     let starved = session != nil && Date().timeIntervalSince(frameAt) > Self.starvedSeconds
     let stall: String?
@@ -260,6 +274,8 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
       stall = "The iPhone is locked. Unlock it to see its screen."
     } else if starved, let device, device.isInUseByAnotherApplication {
       stall = "Another app, such as QuickTime Player, is capturing this iPhone."
+    } else if starved {
+      stall = "The iPhone stopped sending its screen."
     } else {
       stall = failure
     }

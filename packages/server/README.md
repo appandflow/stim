@@ -267,16 +267,18 @@ Events are `{ "event", "subscription", ... }`.
   Player's New Movie Recording shows. Such a device's unique ID is a
   random UUID that names neither the UDID nor the USB device, so the
   helper first checks that an iOS device on USB has the UDID, without
-  dashes, as its serial number. With one iPhone cabled it opens the one
-  iOS capture device; with several it opens the one whose name is the
-  lease's device name, and refuses when none or several match. It
+  dashes, as its serial number. It then opens the iOS capture device
+  named like the lease's device name, or the only one when the lease
+  records no name and one iPhone is cabled. With several iPhones cabled,
+  it waits until each shows a screen and refuses when none or several
+  carry the name. It
   captures only while a subscriber asks for frames. macOS lets several
   processes capture the iPhone at once. Frames and video go through the
   same JPEG and H.264 paths as a simulator. A physical iPhone has no
   screenshot fallback: a subscription without the helper, or whose helper
   fails, ends with `frames-failed`, such as when the iPhone is not cabled
-  or is unplugged. While the iPhone is locked, another app captures it,
-  or macOS is asking for Camera access, the subscription gets
+  or is unplugged. While macOS is asking for Camera access, or frames
+  stop, such as while the iPhone is locked, the subscription gets
   `frame-delayed` with `delayed: true` and a `reason`, keeps its last
   frame, and gets `delayed: false` once frames can arrive again.
 
@@ -285,11 +287,9 @@ Events are `{ "event", "subscription", ... }`.
   own Camera usage description and entitlement, so the first capture
   shows the Camera prompt for Stim. An app without them, such as `node`
   started from a shell, is denied without a prompt, and the subscription
-  ends with a `frames-failed` naming System Settings > Privacy & Security
-
-  > Camera.
-  > A physical iPhone is view only: `control.begin` with `physical: true`
-  > refuses with `action-failed`.
+  ends with a `frames-failed` that names the Camera pane of System
+  Settings. A physical iPhone is view only: `control.begin` with
+  `physical: true` refuses with `action-failed`.
 
 
 - **Replay.** `replay.range` takes `workspace`, `platform` and `slot`

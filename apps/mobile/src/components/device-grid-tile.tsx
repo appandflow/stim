@@ -92,9 +92,11 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           <Text variant="caption" tone="tertiary" style={styles.placeholder}>
             {streams
               ? (error ?? 'Waiting for a frame')
-              : device.physical
+              : device.physical && device.platform !== 'ios'
                 ? 'Stim does not stream physical Android devices.'
-                : 'Frames are only served for devices Stim owns.'}
+                : device.physical
+                  ? device.state
+                  : 'Frames are only served for devices Stim owns.'}
           </Text>
         )}
       </View>

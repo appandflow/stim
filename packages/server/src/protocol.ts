@@ -353,9 +353,9 @@ export interface ActionResult {
 /**
  * Starts a control session on the device `stim status` lists as owned by `workspace` in `slot`. Needs
  * `control`. Refused with `device-busy` while an agent, a device lock or another client drives the device,
- * unless `takeOver` is true.
+ * unless `takeOver` is true. `physical` picks the physical device the workspace leases instead; a physical iPhone
+ * is view only, so it is refused.
  */
-/** `physical` picks the physical device the workspace leases; a physical iPhone is view only, so it is refused. */
 export interface ControlBeginParams {
   workspace: string;
   platform: Platform;
