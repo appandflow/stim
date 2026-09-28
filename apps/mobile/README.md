@@ -121,9 +121,10 @@ reload and stop a workspace:
     Metro and build, and the disk split with the Mac's free space.
   - **Build**: one row per platform with the Apple or Android glyph, the last
     run's time and whether it hit the cache, **Failed** in red, or the next
-    build's prediction from `build.plan` before any run. A workspace that has
-    used neither platform shows both, and the screen asks for both predictions
-    when it opens. A row reads **Checking…** while its prediction is pending,
+    build's prediction from `build.plan` before any run, in grey with a tilde
+    and **est.** (`~0:40 est.`) so it never reads as a finished run. A
+    workspace that has used neither platform shows both, and the screen asks
+    for both predictions when it opens. A row reads **Checking…** while its prediction is pending,
     and **No build** only when there is no run and no prediction. It opens the
     **Build** sheet on that platform.
   - **Logs**: the error count since the marker, with a red dot above zero,

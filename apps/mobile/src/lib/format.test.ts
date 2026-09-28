@@ -141,7 +141,7 @@ describe('build cache outcome', () => {
       expectedMs: 2656,
       basis: 1,
     };
-    expect([nextBuild(hit), planDetail(hit)]).toEqual(['cache hit (remote), ~0:02', 'From eas. Median of 1 hit run']);
+    expect([nextBuild(hit), planDetail(hit)]).toEqual(['cache hit (remote)', 'From eas. Median of 1 hit run']);
     const miss: BuildPlan = {
       ...hit,
       cacheHit: false,
@@ -157,7 +157,7 @@ describe('build cache outcome', () => {
     ]);
     expect(
       nextBuild({ ...miss, prebuild: null, expectedMs: 340_000, missReason: reason('Podfile.lock changed') }),
-    ).toBe('cold build, Podfile.lock changed, ~5:40');
+    ).toBe('cold build, Podfile.lock changed');
     expect(
       nextBuild({ ...miss, missReason: reason('no earlier build of this project in the cache to compare with') }),
     ).toBe('cold build, regenerates the native dir, no earlier build of this project in the cache to compare with');

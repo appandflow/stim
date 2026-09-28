@@ -260,28 +260,32 @@ export interface BuildLine {
   main: string;
   sub: string | null;
   tone: 'default' | 'error' | 'secondary';
+  spoken: string;
 }
 
 export function buildLine(platform: Platform, last: LastBuild | undefined, plan: PlanState | undefined): BuildLine {
+  const line = (main: string, sub: string | null, tone: BuildLine['tone'], spoken: string): BuildLine => ({
+    platform,
+    main,
+    sub,
+    tone,
+    spoken: `${platformName(platform)} ${spoken}`,
+  });
   if (last) {
-    if (last.status === 'failed') return { platform, main: 'Failed', sub: null, tone: 'error' };
-    return {
-      platform,
-      main: last.durationMs === null ? '\u2014' : clockDuration(last.durationMs),
-      sub: last.cacheHit ? 'hit' : 'cold',
-      tone: 'default',
-    };
+    if (last.status === 'failed') return line('Failed', null, 'error', 'last build failed');
+    const cache = last.cacheHit ? 'hit' : 'cold';
+    if (last.durationMs === null) return line('\u2014', cache, 'default', `last build ${cache}`);
+    const took = clockDuration(last.durationMs);
+    return line(took, cache, 'default', `last build ${took}, ${cache}`);
   }
   if (plan?.kind === 'done' && !plan.plan.refusal) {
-    return {
-      platform,
-      main: plan.plan.expectedMs === null ? '\u2014' : `~${clockDuration(plan.plan.expectedMs)}`,
-      sub: plan.plan.cacheHit ? 'hit' : 'cold',
-      tone: 'secondary',
-    };
+    const cache = plan.plan.cacheHit ? 'hit' : 'cold';
+    if (plan.plan.expectedMs === null) return line('\u2014', `est. ${cache}`, 'secondary', `next build ${cache}`);
+    const took = clockDuration(plan.plan.expectedMs);
+    return line(`~${took}`, 'est.', 'secondary', `next build about ${took}, ${cache}`);
   }
-  if (plan?.kind === 'checking') return { platform, main: 'Checking\u2026', sub: null, tone: 'secondary' };
-  return { platform, main: 'No build', sub: null, tone: 'secondary' };
+  if (plan?.kind === 'checking') return line('Checking\u2026', null, 'secondary', 'checking the next build');
+  return line('No build', null, 'secondary', 'no build');
 }
 
 export function usedPlatforms(env: EnvironmentState): Platform[] {

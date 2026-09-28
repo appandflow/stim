@@ -264,7 +264,12 @@ describe('deviceTitle', () => {
 
 describe('buildLine', () => {
   it('shows a run as its time and hit status, a failure as Failed, and else the next build prediction', () => {
-    expect(buildLine('ios', last(), undefined)).toMatchObject({ main: '0:33', sub: 'hit', tone: 'default' });
+    expect(buildLine('ios', last(), undefined)).toMatchObject({
+      main: '0:33',
+      sub: 'hit',
+      tone: 'default',
+      spoken: 'iOS last build 0:33, hit',
+    });
     expect(buildLine('ios', last({ cacheHit: false, durationMs: 158_000 }), undefined)).toMatchObject({
       main: '2:38',
       sub: 'cold',
@@ -285,7 +290,12 @@ describe('buildLine', () => {
         basis: 2,
       },
     };
-    expect(buildLine('ios', undefined, plan)).toMatchObject({ main: '~0:39', sub: 'hit', tone: 'secondary' });
+    expect(buildLine('ios', undefined, plan)).toMatchObject({
+      main: '~0:39',
+      sub: 'est.',
+      tone: 'secondary',
+      spoken: 'iOS next build about 0:39, hit',
+    });
     expect(buildLine('ios', undefined, { kind: 'checking' })).toMatchObject({ main: 'Checking\u2026' });
     expect(buildLine('ios', undefined, { kind: 'failed', message: 'x' })).toMatchObject({ main: 'No build' });
   });

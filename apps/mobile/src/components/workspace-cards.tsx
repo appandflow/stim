@@ -209,9 +209,7 @@ export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () 
       title="Build"
       alert={lines.some((line) => line.tone === 'error')}
       onPress={onPress}
-      accessibilityLabel={`Build: ${lines
-        .map((line) => `${platformName(line.platform)} ${[line.main, line.sub].filter(Boolean).join(' ')}`)
-        .join(', ')}`}
+      accessibilityLabel={`Build: ${lines.map((line) => line.spoken).join(', ')}`}
       accessibilityHint="Shows the builds"
     >
       {lines.map((line) => (
