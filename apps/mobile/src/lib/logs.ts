@@ -102,20 +102,22 @@ const BUNDLE_PAIRS: Record<string, { start: string; id: string }> = {
   bundle_build_done: { start: 'bundle_build_started', id: 'buildID' },
   bundle_response_finished: { start: 'bundle_response_started', id: 'requestId' },
 };
+const BUNDLE_STARTS = new Map(Object.values(BUNDLE_PAIRS).map((pair) => [pair.start, pair.id]));
 
 /** How long the newest finished Metro bundle took, from its start and finish records; null without both. */
 export function lastBundleMs(records: readonly LogRecord[]): number | null {
-  for (let i = records.length - 1; i >= 0; i -= 1) {
-    const done = records[i]!;
-    const pair = done.src === 'metro' && typeof done.event === 'string' ? BUNDLE_PAIRS[done.event] : undefined;
-    if (!pair || typeof done[pair.id] !== 'string') continue;
-    for (let j = i - 1; j >= 0; j -= 1) {
-      const start = records[j]!;
-      if (start.src === 'metro' && start.event === pair.start && start[pair.id] === done[pair.id])
-        return done.ts - start.ts;
-    }
+  const started = new Map<string, number>();
+  let last: number | null = null;
+  for (const record of records) {
+    if (record.src !== 'metro' || typeof record.event !== 'string') continue;
+    const startId = BUNDLE_STARTS.get(record.event);
+    if (startId && typeof record[startId] === 'string') started.set(`${record.event}\n${record[startId]}`, record.ts);
+    const pair = BUNDLE_PAIRS[record.event];
+    const at =
+      pair && typeof record[pair.id] === 'string' ? started.get(`${pair.start}\n${record[pair.id]}`) : undefined;
+    if (at !== undefined) last = record.ts - at;
   }
-  return null;
+  return last;
 }
 
 export function appendRecords(existing: LogRecord[], incoming: LogRecord[], max = MAX_RECORDS): LogRecord[] {

@@ -126,15 +126,18 @@ reload and stop a workspace:
   failed command shows its error code, diagnostic id and duration. The **...** menu opens the logs, copies the
   full path, shows errors, or opens the machine's status. With control, it
   also runs **Reload** and **Stop** (see [Actions](#actions)).
-- **Logs**: opens from the workspace screen's Logs card, and on errors from the
-  home screen and notifications. A header shows Metro's port and a dot for
+- **Logs**: opens from the workspace screen's Logs card, on errors from the
+  home screen and notifications, and from the agent feed on the Agent source
+  with the tapped action expanded. A header shows Metro's port and a dot for
   whether it runs, and how long the last bundle took when the loaded Metro
   records hold its start and finish. **All**, **Errors** and **Warnings** pick
   the severity: Errors is `stim logs --errors` and counts the errors since the
   last launch, from the status; Warnings counts the loaded warnings. Source
   chips (Metro, App, iOS, Android, Web, Build, Agent) show only the sources the
   workspace runs or that sent records; none selected shows every source. iOS,
-  Android and Web split the device logs by their platform. A slot row and a
+  Android and Web split the device logs by their platform. The server does not
+  filter by platform or warnings alone, so the phone filters those within the
+  newest 5,000 records it loaded. A slot row and a
   regular expression search complete the filters. The list follows new records
   until you scroll up, keeps the newest 5,000, and a tap on a record shows its
   whole message and stack. Each entry shows a severity dot, its source and time,

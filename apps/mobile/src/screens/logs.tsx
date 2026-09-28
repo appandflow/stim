@@ -82,6 +82,7 @@ export function Logs({
       }
       if (change.kind === 'error') return setProblem(change.message);
       setRecords([]);
+      setFollowing(true);
       setExpanded(new Set(opened ? [opened] : []));
       setFetched(new Map());
       generation.current += 1;
