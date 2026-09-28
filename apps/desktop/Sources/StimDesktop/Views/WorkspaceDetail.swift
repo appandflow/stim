@@ -14,7 +14,8 @@ struct WorkspaceDetail: View {
   @Binding var logQuery: LogQuery
   @State private var stats: ProjectStats?
   @State private var contentHeight: CGFloat = 0
-  @State private var takenOver: String?
+  @State private var viewing: ViewedDevice?
+  @EnvironmentObject private var actions: ActionCenter
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -54,6 +55,10 @@ struct WorkspaceDetail: View {
       }
     }
     .navigationTitle(env.names.title)
+    .sheet(item: $viewing) { viewed in
+      DeviceViewer(cli: cli, env: env, deviceID: viewed.id, machine: machine) { viewing = nil }
+        .environmentObject(actions)
+    }
     .task(id: env.path) {
       let path = env.path
       let cli = await cli.value
@@ -150,7 +155,7 @@ struct WorkspaceDetail: View {
           let screenHeight = canvasScreenHeight(
             aspects: devices.map(\.canvasAspect),
             canvas: CGSize(width: geo.size.width - Space.xxl * 2, height: geo.size.height - Space.xxl * 2),
-            spacing: Space.xl, chrome: 190, padding: 24, minimumWidth: DeviceTile.minimumWidth, minimum: 260,
+            spacing: Space.xl, chrome: 100, padding: 24, minimumWidth: DeviceTile.minimumWidth, minimum: 260,
             maximum: 640)
           FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
             ForEach(devices) { device in
@@ -193,60 +198,27 @@ struct WorkspaceDetail: View {
     }
   }
 
-  @ViewBuilder private func tile(_ device: DeviceRef, focused: Bool, screenHeight: CGFloat) -> some View {
-    Group {
-      if let target = replayTarget(device) {
-        ReplayHost(target: target) { replay in
-          ReplayingTile(replay: replay) { replaying in
-            deviceTile(device, focused: focused, screenHeight: screenHeight, replay: replay, replaying: replaying)
-          }
-        }
-      } else {
-        deviceTile(device, focused: focused, screenHeight: screenHeight, replay: nil, replaying: false)
-      }
-    }
-    .simultaneousGesture(TapGesture().onEnded { focusedID = device.id })
-  }
-
-  /// Physical and remote devices have no replay, as on the phone.
-  private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
-    switch device {
-    case .remote: return nil
-    case _ where device.isPhysical: return nil
-    default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
-    }
-  }
-
-  private func deviceTile(
-    _ device: DeviceRef, focused: Bool, screenHeight: CGFloat, replay: ReplayController?, replaying: Bool
-  ) -> some View {
+  private func tile(_ device: DeviceRef, focused: Bool, screenHeight: CGFloat) -> some View {
     DeviceTile(
-      device: device, screenHeight: screenHeight,
-      interactive: device.isRunning && takenOver == device.id && !replaying, workspace: env.path,
-      workspaceTitle: env.names.title,
+      device: device, screenHeight: screenHeight, workspace: env.path, workspaceTitle: env.names.title,
       build: env.runningBuild(for: device),
-      takenOver: takenOver == device.id && !replaying,
-      onToggleTakeOver: device.isInteractive
-        ? {
-          takenOver = takenOver == device.id ? nil : device.id
-          focusedID = device.id
-        } : nil,
-      replay: replay, replaying: replaying, replayOff: env.replayOff,
-      onReplaySeek: { if takenOver == device.id { takenOver = nil } },
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
       presence: env.appPresence(device),
-      cli: cli,
       showsCovers: true,
-      focused: focused)
+      focused: focused
+    )
+    .contentShape(Rectangle())
+    .onTapGesture {
+      focusedID = device.id
+      viewing = ViewedDevice(id: device.id)
+    }
+    .help("Open \(device.label) to take it over or replay what it recorded")
+    .accessibilityAddTraits(.isButton)
   }
 }
 
-/// Re-renders its content as the replay starts, stops or moves.
-private struct ReplayingTile<Content: View>: View {
-  @ObservedObject var replay: ReplayController
-  @ViewBuilder var content: (Bool) -> Content
-
-  var body: some View { content(replay.replay != nil) }
+struct ViewedDevice: Identifiable {
+  var id: String
 }
 
 extension DeviceRef {

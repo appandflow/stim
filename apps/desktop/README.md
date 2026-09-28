@@ -35,8 +35,8 @@ in the workspace directory:
   **Reload app** runs `stim reload` and is disabled unless the dev server and a
   local device are running.
 - Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a
-  confirmation that names the worktree and its branch. Each running device
-  tile has its own **Stop** button, running `stim stop --slot <name>` (`default` for the workspace's
+  confirmation that names the worktree and its branch. Each running device's
+  viewer has its own **Stop** button, running `stim stop --slot <name>` (`default` for the workspace's
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
@@ -140,19 +140,25 @@ Below the line, the devices take the rest of the page: every device of the
 workspace at once, in the order above, each with its live frame. The frames
 share one height, the tallest at which every tile fits the canvas in one row
 or a few, wrapping when the window is narrow and scrolling past a floor of 260
-points. Clicking a tile focuses it without hiding the others. Each tile's
-header has its **Stop** (a simulator, emulator, browser or remote session;
-a physical device has none) and adds its CPU, memory and disk (from the machine
-owner matched by slot and kind, and the device's `disk`). A running simulator
-or emulator ends with the agent row: the driving tool and its last action
-("agent-device · Tapped "Allow camera" · 12s ago"), or "No agent" with how
-long it has been idle; clicking it lists the latest agent actions. A device
-whose build is running shows "Waiting for the iOS build" over its frame with
-the phase, a thin bar and the elapsed time over the estimate. One whose app
-process is gone shows **App not running** with **Run**, and one whose platform
-never built here and last failed shows **No app installed** over its frame
-instead. A workspace that is warming with no device yet shows a warming
-placeholder.
+points. A tile is a preview: the device's name and state, its activity, its
+CPU, memory and disk (from the machine owner matched by slot and kind, and the
+device's `disk`) and its screen, which takes no input. A device whose build is
+running shows "Waiting for the iOS build" over its frame with the phase, a
+thin bar and the elapsed time over the estimate. One whose app process is gone
+shows **App not running**, and one whose platform never built here and last
+failed shows **No app installed** over its frame instead. A workspace that is
+warming with no device yet shows a warming placeholder.
+
+Clicking a tile opens the **device viewer**, a sheet with the device's screen
+as large as the sheet allows. Its header has **Take over** (see [Take over a
+device](#take-over-a-device)) and **Stop** (a simulator, emulator, browser or
+remote session; a physical device has none), and **Run** when the app is not
+running. Below the screen come the device's buttons while it is taken over,
+the agent row (the driving tool and its last action, "agent-device · Tapped
+"Allow camera" · 12s ago", or "No agent" with how long it has been idle;
+clicking it lists the latest agent actions) and the replay bar (see
+[Replay](#replay)). Escape releases a device that is taken over, and
+otherwise closes the viewer; closing it releases the device too.
 
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens
@@ -218,8 +224,8 @@ shows the running build instead. **Check** runs the plan again, and the row
 shows when it was last checked.
 
 When `stim status` reports a device's `app` as `stopped` (the device is up but
-the workspace's app process is gone), its tile shows **App not running** with
-**Run**, which runs `stim ios` or `stim android` (with `--slot <name>` for a
+the workspace's app process is gone), its tile shows **App not running**, and
+its viewer adds **Run**, which runs `stim ios` or `stim android` (with `--slot <name>` for a
 named slot). Run appears only on a Stim-owned simulator or emulator, which that
 command targets; a physical device gets no Run. Reload app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
 
@@ -455,12 +461,20 @@ which needs a Stim version that reports it.
 ## Take over a device
 
 Device frames are view-only until you turn on **Take over** (the hand button)
-on a booted iOS simulator or a running owned Android emulator on a workspace's
-page. One device is taken over at a time.
+in the device viewer of a booted iOS simulator or a running owned Android
+emulator. Only the device open in the viewer can be taken over, and closing the
+viewer releases it.
 While it is on, the app sends that device your clicks and drags as touches,
 trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
+
+While a device is taken over, a row under its screen has its hardware buttons
+and rotation: **Home** and **Lock** on a simulator, sent through the
+simulator's HID service; **Home**, **Back**, **Apps** and **Lock** on an
+emulator, sent with gRPC `sendKey` (Lock, and every button on an emulator
+without a hardware keyboard, with `adb shell input keyevent`); then **Rotate
+left** and **Rotate right**.
 
 A simulator with more than one display, such as the iPhone Duo, shows every
 display side by side, and touches go to the display you click. Only the
@@ -473,9 +487,9 @@ button appears only in the bundled app, and an iOS release can break it.
 An Android emulator with a hinge, such as one Stim created with
 `--device-profile pixel_fold`, shows its posture as a chip: **Folded**,
 **Half open** or **Unfolded**, read from the emulator's gRPC POSTURE physical
-model. While Take over is on, the **Posture** menu moves the hinge with the
+model. While Take over is on, the **Posture** menu in the button row moves the hinge with the
 gRPC `setPosture` call. Folded, the emulator streams only the outer display,
-so the tile takes that display's shape and touches address its pixels.
+so the viewer takes that display's shape and touches address its pixels.
 
 Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
 Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
@@ -490,7 +504,7 @@ the in-app route (`web.page.route`) when one moved it after the load.
 Desktop reads the page's frames itself, over the loopback DevTools endpoint
 `stim status --json` reports, and connects only when Chrome reports the pid
 status names. **Take over** sends clicks, drags, hover, trackpad scrolls and
-keys to the page; Command shortcuts stay with the Mac. The tile's buttons open
+keys to the page; Command shortcuts stay with the Mac. The viewer's buttons open
 the URL in your default browser (never the Stim profile), run `stim reload web`,
 and **Close** runs `stim stop --slot web`, which keeps Metro, the devices and the
 profile. A failed page load shows a "Page failed to load" pill and a Needs
@@ -500,7 +514,7 @@ endpoint, such as Playwright MCP, shows as the driver.
 ## Replay
 
 While a stim-server runs on port 7787 (**Serve to phones**, see [Phones](#phones)),
-each simulator, emulator and web page on a workspace page offers a replay bar
+each simulator, emulator and web page's device viewer offers a replay bar
 once the server has recorded it,
 like the phone app's device viewer. Stim Desktop connects to that server at
 `ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json --control` for a
@@ -514,7 +528,7 @@ server no longer knows the token, the app pairs once more, so revoking it with
 control through `stim-server devices grant <id> --control` once, then the app
 reconnects. The Phones list leaves this device out.
 
-The app polls `replay.range` every 10 seconds while the tile shows. The bar has
+The app polls `replay.range` every 10 seconds while the viewer shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
 with each unrecorded gap at a fixed width. Agent actions, errors and crashes
 are markers; hovering one shows its time, command and log line, and clicking
@@ -539,7 +553,7 @@ because it deletes the recordings.
 A workspace with a recorded EAS Simulator session from `stim ios --remote eas`
 or `stim android --remote eas` shows a tile with a blue ring. The tile loads the
 session's `webPreviewUrl` from `stim status --json` in a web view and marks the
-session as billable. Its **Stop** button, in the tile, runs `stim stop` in the workspace after a confirmation, which ends the
+session as billable. Its **Stop** button, in the viewer, runs `stim stop` in the workspace after a confirmation, which ends the
 session -- a remote session has no per-slot teardown, so its Stop always
 targets the whole workspace, unlike a local device's `stim stop --slot <name>`.
 A session with no recorded preview URL shows a message instead of the page.
@@ -558,10 +572,10 @@ The tile streams the device's screen from the local stim-server (see
 [Replay](#replay) for the connection) with `frames.subscribe`, `physical:
 true` and `video: ["h264"]`, as the phone app does, and decodes the H.264
 itself. An iPhone streams only over a USB cable and is view only. An Android
-phone streams over adb, and **Take over** sends clicks and drags as touches,
+phone streams over adb, and **Take over** in the viewer sends clicks and drags as touches,
 trackpad scrolls as one-finger drags, and typed ASCII, Return, Tab and Delete
 as text, through a `control.begin` session with `physical: true`. While taken
-over, the tile shows Home, Back, Apps and Lock buttons. The server accepts
+over, the viewer shows Home, Back, Apps and Lock buttons. The server accepts
 control only from the workspace that holds the lease, and never takes or
 renews a lease itself.
 

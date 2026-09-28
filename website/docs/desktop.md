@@ -67,12 +67,15 @@ request coloured by its state with a single CI mark; click it for the branch,
 the pull request and a link to GitHub.
 
 The devices take the rest of the page: every device of the workspace shows at
-once, side by side at one height, wrapping when the window is narrow. Each
-device shows its CPU, memory and disk, a **Stop** button (except on a physical
-device), and which agent
-drives it with its last action, or how long it has been idle. While its build
-runs, a device shows the phase and progress over its screen. Click a device to
-focus it, and use the hand button to take it over.
+once, side by side at one height, wrapping when the window is narrow. Each tile
+is a preview with the device's CPU, memory and disk, and which agent drives it
+or how long it has been idle. While its build runs, a device shows the phase
+and progress over its screen.
+
+Click a device to open its viewer: the screen as large as the sheet allows,
+**Take over** (the hand button) and **Stop**, the device's Home, Back, Apps
+and Lock buttons while you have it, the agent's last actions and the replay
+bar. Escape gives the device back, and a second Escape closes the viewer.
 
 The inspector, toggled from the toolbar, holds the details: **Build** (the
 running build's phases and output, or each platform's last build, the next
@@ -191,7 +194,7 @@ it instead of their own windows, unless `iosSimulatorApp` or
 With **Serve to phones** on in **Stim > Settings > Phones**, the tile of a
 phone the workspace leases with `stim android --device`, `stim ios --device`
 or `stim device lock` shows its screen live. On an Android phone, **Take over**
-sends your clicks, trackpad scrolls and typing to it, and adds Home, Back, Apps
+in its viewer sends your clicks, trackpad scrolls and typing to it, and adds Home, Back, Apps
 and Lock buttons. An iPhone over a USB cable is view only. The tile says so
 when the phone is disconnected, when the lease has ended, and when
 `stim-server` is too old to stream phones. See
@@ -203,8 +206,8 @@ Lease my connected Android phone to this workspace with stim device lock for 30 
 
 ## Replay device screens
 
-With **Serve to phones** on in **Stim > Settings > Phones**, a workspace page
-shows a replay bar under its device, as in the phone app: drag to scrub, hover
+With **Serve to phones** on in **Stim > Settings > Phones**, a device's viewer
+shows a replay bar under its screen, as in the phone app: drag to scrub, hover
 a marker to see the agent action or error, click it to land just before it,
 and play at 1x or 2x. **Live** returns to the live screen; Take over is off
 while you look at the past. **Record device screens for replay** in the same
