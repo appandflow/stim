@@ -300,7 +300,7 @@ used but not owned. Hardware cannot be created or booted, so those paths
 install, launch, and read what logs they can, and nothing more. The only
 state a physical device leaves is its lease: the file under
 `$STIM_HOME/device-locks/` and the holder's token in that workspace's
-`state.json`. stim-server's live view and control of a leased Android phone push the
+`state.json`. For live view and control of a leased Android phone, stim-server pushes the
 scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and
