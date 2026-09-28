@@ -41,12 +41,12 @@ const config: ExpoConfig = {
     [
       'expo-splash-screen',
       {
-        backgroundColor: '#FFFFFF',
-        image: './assets/images/icon.png',
+        backgroundColor: '#5521FF',
+        image: './assets/images/splash-logo.png',
         imageWidth: 120,
         dark: {
-          backgroundColor: '#15121D',
-          image: './assets/images/icon.png',
+          backgroundColor: '#5521FF',
+          image: './assets/images/splash-logo.png',
         },
       },
     ],
