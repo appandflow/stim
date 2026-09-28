@@ -733,7 +733,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!workspaceDir(id, workspace, true)) return;
       const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
       if (replayAt && (physical || !hasFootage(replayDir))) {
-        return error(id, 'no-recording', `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${workspace}.`);
+        return error(
+          id,
+          'no-recording',
+          `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${workspace}.`,
+        );
       }
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;

@@ -133,8 +133,7 @@ export function useDeviceStream(
           update({ frame: event, video: null, error: null, delayed: false, delayedReason: null });
         } else if (event.event === 'frame-delayed') {
           update({ delayed: event.delayed, delayedReason: event.delayed ? (event.reason ?? null) : null });
-        }
-        else if (event.event === 'replay-ended') {
+        } else if (event.event === 'replay-ended') {
           if (replaying.current) Object.assign(replaying.current, { at: event.at, rate: 0, ended: true });
           update({ replay: { at: event.at, rate: 0, ended: true } });
         } else if (event.event === 'error') {

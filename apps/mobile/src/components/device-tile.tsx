@@ -139,7 +139,9 @@ export function DeviceTile({
     <Placeholder
       title="No live screen"
       subtitle={
-        device.physical ? 'Stim does not stream physical Android devices.' : 'Frames are only served for devices Stim owns.'
+        device.physical
+          ? 'Stim does not stream physical Android devices.'
+          : 'Frames are only served for devices Stim owns.'
       }
     />
   ) : null;

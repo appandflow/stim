@@ -291,7 +291,6 @@ Events are `{ "event", "subscription", ... }`.
   Settings. A physical iPhone is view only: `control.begin` with
   `physical: true` refuses with `action-failed`.
 
-
 - **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
   (`default` when absent), like `frames.subscribe`, and returns what can be
   replayed of that device slot's [recording](#recording):
