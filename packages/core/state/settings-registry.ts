@@ -68,6 +68,10 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as con
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
+export const OFFLOAD_MODES = ['auto', 'force', 'off'] as const;
+
+export type OffloadMode = (typeof OFFLOAD_MODES)[number];
+
 export const WEB_VIEWPORTS = ['desktop', 'phone'] as const;
 
 export type WebViewport = (typeof WEB_VIEWPORTS)[number];
@@ -389,6 +393,22 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     description:
       'Tailscale names of the Macs that may build for this one, each optionally with :<port> of its tailscale serve route (default 7443)',
+  },
+  {
+    key: 'offload.mode',
+    type: { kind: 'choice', choices: OFFLOAD_MODES },
+    scopes: MACHINE,
+    default: 'auto',
+    env: 'STIM_OFFLOAD_MODE',
+    description:
+      'Where iOS simulator builds run: auto offloads to offload.machines only while every concurrency.maxBuilds slot is busy, force offloads whenever a machine can take the build, off always builds here',
+  },
+  {
+    key: 'offload.workerRoot',
+    type: ABSOLUTE_PATH,
+    scopes: MACHINE,
+    description:
+      'Directory where stim-server keeps the checkouts, dependencies and build state of Macs that build here; default $STIM_HOME/build-worker',
   },
   {
     key: 'caches.buildCache',

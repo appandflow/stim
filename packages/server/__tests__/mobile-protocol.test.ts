@@ -1,7 +1,11 @@
 import type * as Mobile from '../../../apps/mobile/src/protocol/types.ts';
 import type * as Server from '../src/protocol.ts';
 
-type SharedMethod = keyof Server.Methods & keyof Mobile.Methods;
+type BuildMethod = (typeof Server.BUILD_METHODS)[number];
+
+type PhoneMethod = Exclude<keyof Server.Methods, BuildMethod>;
+
+type SharedMethod = PhoneMethod & keyof Mobile.Methods;
 
 type ParamsTheServerRefuses = {
   [M in SharedMethod]: Mobile.Methods[M]['params'] extends Server.Methods[M]['params'] ? never : M;
@@ -17,8 +21,8 @@ type ResultsTheAppMisreads = {
 
 describe('the mobile app protocol copy', () => {
   it('knows every server method and sends params the server accepts', () => {
-    expectTypeOf<Exclude<keyof Server.Methods, keyof Mobile.Methods>>().toBeNever();
-    expectTypeOf<Exclude<keyof Mobile.Methods, keyof Server.Methods>>().toBeNever();
+    expectTypeOf<Exclude<PhoneMethod, keyof Mobile.Methods>>().toBeNever();
+    expectTypeOf<Exclude<keyof Mobile.Methods, PhoneMethod>>().toBeNever();
     expectTypeOf<ParamsTheServerRefuses>().toBeNever();
     expectTypeOf<typeof Mobile.PROTOCOL_VERSION>().toEqualTypeOf<typeof Server.PROTOCOL_VERSION>();
   });
@@ -32,7 +36,9 @@ describe('the mobile app protocol copy', () => {
     expectTypeOf<Server.ReplayEndedEvent>().toExtend<Mobile.ReplayEndedEvent>();
     expectTypeOf<Server.ControlEndedEvent>().toExtend<Mobile.ControlEndedEvent>();
     expectTypeOf<Server.NotificationEvent>().toExtend<Mobile.NotificationEvent>();
-    expectTypeOf<Server.ServerEvent['event']>().toEqualTypeOf<Mobile.ServerEvent['event']>();
+    expectTypeOf<Exclude<Server.ServerEvent['event'], Server.BuildProgressEvent['event']>>().toEqualTypeOf<
+      Mobile.ServerEvent['event']
+    >();
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
     expectTypeOf<Mobile.LogRecord>().toExtend<Server.LogRecord>();
   });

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
@@ -13,6 +14,7 @@ import {
   type StatusPayload,
 } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
+import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { Player, recordedSpans, recordingDir, timelineMarkers } from './replay.ts';
@@ -33,6 +35,7 @@ import { loadMachineDetails, MachineDetailsCache } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
+  BUILD_METHODS,
   FEATURES,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
@@ -121,6 +124,8 @@ export interface ServerOptions {
   /** The Expo push API base URL; tests point it at a local server. */
   pushEndpoint?: string;
   pushLimits?: Partial<PushLimits>;
+  /** How many offloaded builds run, and for how long; tests shorten them. */
+  buildLimits?: Partial<BuildLimits>;
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];
 }
@@ -294,6 +299,14 @@ function send(socket: WebSocket, message: ServerMessage | string): void {
   if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
+function buildAllowed(session: PairedDevice): boolean {
+  return Boolean(
+    readBuildClients()
+      .find((entry) => entry.id === session.id)
+      ?.capabilities.includes('build'),
+  );
+}
+
 function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
@@ -435,6 +448,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
+  const builds = new BuildHost({
+    worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
+    env: options.env,
+    limits: options.buildLimits,
+    finished: ({ client, repo, ok, error, durationMs }) =>
+      auditSafely({
+        at: new Date().toISOString(),
+        device: { id: client, name: readBuildClients().find((each) => each.id === client)?.name ?? client },
+        action: 'build',
+        workspace: repo,
+        ok,
+        ...(error ? { error } : {}),
+        durationMs,
+      }),
+  });
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -504,6 +532,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
+    let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
 
     const refuse = (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => {
@@ -1344,6 +1373,33 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, result: {} });
     }
 
+    async function buildMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
+      if (!buildAllowed(session)) {
+        return error(id, 'forbidden', `${method} needs build access, which this Mac has not granted this device.`);
+      }
+      buildSession ??= builds.session(session.id, socket, (event) => send(socket, event));
+      const answer =
+        method === 'build.offer'
+          ? await builds.offer(session.id, params)
+          : method === 'build.sync'
+            ? buildSession.sync(params)
+            : method === 'build.start'
+              ? await buildSession.start(params)
+              : method === 'build.cancel'
+                ? buildSession.cancel(params)
+                : await buildSession.artifact(params);
+      send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+    }
+
+    function handleBinary(frame: Buffer): void {
+      if (socket.readyState !== socket.OPEN) return;
+      if (!device || !buildSession || !buildAllowed(device)) {
+        return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
+      }
+      const refused = buildSession.blob(frame);
+      if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -1360,6 +1416,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_UNAUTHORIZED);
+      if ((BUILD_METHODS as readonly string[]).includes(message.method)) {
+        return buildMethod(id, message.method, message.params, device);
+      }
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which build access does not include.`);
       }
@@ -1470,12 +1529,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, error: { code: 'unknown-method', message: `Unknown method ${message.method}.` } });
     }
 
-    socket.on('message', (data) => {
+    socket.on('message', (data, isBinary) => {
+      if (isBinary) {
+        const frame = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
+        queue = queue.then(() => handleBinary(frame)).catch(() => socket.close(1011, 'internal error'));
+        return;
+      }
       const raw = data.toString();
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
     socket.on('close', () => {
       clearTimeout(timer);
+      buildSession?.close();
       sessions.delete(socket);
       listeners.delete(socket);
       if (sessions.size === 0) sampler.stop();
@@ -1530,6 +1595,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationCheck) clearTimeout(revocationCheck);
     for (const client of wss.clients) client.terminate();
     await control.close();
+    await builds.close();
     recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();

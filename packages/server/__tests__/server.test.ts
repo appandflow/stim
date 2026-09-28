@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
+import { createHash } from 'node:crypto';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -28,7 +29,7 @@ import {
 } from '../src/registry.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceStateDir } from '@stim-cli/core';
-import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -148,6 +149,31 @@ const RECORDS = [
   { ts: 3, src: 'build', level: 'error', msg: 'Compile failed' },
 ];
 
+const FAKE_WORKER = `
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+if (process.argv[2] === 'offer') {
+  print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
+} else {
+  const job = JSON.parse(readFileSync(0, 'utf8'));
+  writeFileSync(join(process.env.FAKE_STIM_PIDS, '..', 'job.json'), JSON.stringify({ job, home: process.env.STIM_HOME, pid: process.pid }));
+  print({ type: 'phase', phase: 'build', msg: 'compiling' });
+  print({ type: 'log', record: { src: 'build', level: 'info', msg: 'CompileC' } });
+  if (process.env.FAKE_WORKER_HANG) {
+    process.on('SIGTERM', () => {});
+    setInterval(() => {}, 1000);
+  } else {
+    mkdirSync(join(job.area, 'out'), { recursive: true });
+    const archive = Buffer.from('app archive bytes');
+    writeFileSync(join(job.area, 'out', 'app.tgz'), archive);
+    const sha256 = createHash('sha256').update(archive).digest('hex');
+    print({ type: 'result', ok: true, artifact: { name: 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
+  }
+}
+`;
+
 const PAYLOADS = [
   { environments: [], capacity: { live: 0 }, deviceLeases: [], unprovisionedWorktrees: [], simctlAvailable: true },
   { environments: [{ path: '/work/app', live: true }], capacity: { live: 1 }, deviceLeases: [], simctlAvailable: true },
@@ -196,10 +222,12 @@ async function start(
     controlLimits?: ServerOptions['controlLimits'];
     history?: boolean;
     pushEndpoint?: string;
+    buildLimits?: ServerOptions['buildLimits'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
   writeFileSync(stimCli, FAKE_STIM);
+  writeFileSync(join(root, 'offload-worker.mjs'), FAKE_WORKER);
   const tailscale = join(root, 'tailscale');
   writeFileSync(tailscale, FAKE_TAILSCALE);
   chmodSync(tailscale, 0o755);
@@ -237,6 +265,7 @@ async function start(
     history: overrides.history ?? false,
     pushEndpoint: overrides.pushEndpoint ?? 'http://127.0.0.1:9/push',
     pullRequests: async () => new Map(),
+    buildLimits: overrides.buildLimits,
   });
   return server.addresses[0]!.port;
 }
@@ -509,6 +538,163 @@ describe('build access', () => {
     expect(await requestBuild(local)).toMatchObject({ error: { code: 'forbidden' } });
     expect(readBuildClients()).toEqual([]);
   });
+});
+
+describe('offloaded builds', () => {
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const file = (path: string, text: string) => ({ path, kind: 'file', size: text.length, sha256: sha(text) });
+  const blob = (text: string) => Buffer.concat([Buffer.from(sha(text), 'hex'), Buffer.from(text)]);
+  const START = {
+    repo: 'app-1',
+    project: 'apps/mobile',
+    platform: 'ios',
+    configuration: null,
+    scheme: null,
+    runtime: 'iOS-27-0',
+    fingerprint: 'f00d',
+    packageName: 'mobile',
+    isExpo: true,
+    optimizations: null,
+    stimBuild: 'b1',
+  };
+
+  async function buildClient(port: number, peer = '100.64.0.2'): Promise<{ client: Client; id: string }> {
+    const asking = await connect(port, peer);
+    const reply = await asking.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { request: 'build', deviceName: 'Laptop' },
+    });
+    const { device, deviceToken } = (reply as { result: HelloResult }).result;
+    grantDevice(device.id, ['build']);
+    const client = await connect(port, peer);
+    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+    return { client, id: device.id };
+  }
+
+  async function eventually(check: () => boolean): Promise<void> {
+    for (let i = 0; i < 1000 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(check()).toBe(true);
+  }
+
+  async function progress(client: Client): Promise<Record<string, unknown>[]> {
+    const events: Record<string, unknown>[] = [];
+    for (;;) {
+      const message = (await client.next()) as unknown as Record<string, unknown>;
+      events.push(message);
+      if (message.outcome) return events;
+    }
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'mirrors a content-addressed manifest, builds it and returns the artifact with its digest',
+    async () => {
+      const port = await start();
+      const { client, id } = await buildClient(port);
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: {
+          toolchain: { stimBuild: 'b1', runtimes: ['iOS-27-0'] },
+          capacity: { running: 0, max: 1 },
+          warm: { checkout: false, dependencies: false, build: false },
+        },
+      });
+
+      const first = await client.request('build.sync', {
+        repo: 'app-1',
+        files: [file('package.json', '{}'), file('apps/mobile/app.json', '{"a":1}')],
+        done: false,
+      });
+      expect(first).toMatchObject({ result: { missing: [sha('{}'), sha('{"a":1}')] } });
+      const second = await client.request('build.sync', {
+        repo: 'app-1',
+        files: [file('apps/mobile/copy.json', '{}')],
+        done: true,
+      });
+      expect(second).toMatchObject({ result: { missing: [] } });
+      expect(await client.request('build.start', START)).toMatchObject({ error: { code: 'bad-request' } });
+
+      client.socket.send(blob('{}'));
+      client.socket.send(blob('{"a":1}'));
+      const started = await client.request('build.start', START);
+      expect(started).toMatchObject({ result: { job: expect.any(String) } });
+      const job = (started as { result: { job: string } }).result.job;
+      const events = await progress(client);
+      expect(events).toEqual([
+        { event: 'build.progress', job, phase: 'build', msg: 'compiling' },
+        { event: 'build.progress', job, record: { src: 'build', level: 'info', msg: 'CompileC' } },
+        {
+          event: 'build.progress',
+          job,
+          outcome: expect.objectContaining({
+            ok: true,
+            artifact: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
+          }),
+        },
+      ]);
+
+      const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
+      const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
+      expect(ran.home).toBe(join(area, 'home'));
+      expect(ran.job).toMatchObject({ area, project: 'apps/mobile', expectedFingerprint: 'f00d', runtime: 'iOS-27-0' });
+      expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([
+        'apps/mobile/app.json',
+        'apps/mobile/copy.json',
+        'package.json',
+      ]);
+      expect(readClaimSet(`${area}.claims`).live).toEqual([]);
+
+      client.socket.send(JSON.stringify({ id: 99, method: 'build.artifact', params: { job } }));
+      const frame = (await client.next()) as unknown as { binary: Buffer };
+      expect(frame.binary.subarray(0, 32).toString('hex')).toBe(sha('app archive bytes'));
+      expect(frame.binary.subarray(32).toString()).toBe('app archive bytes');
+      expect(await client.next()).toEqual({
+        id: 99,
+        result: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
+      });
+      expect(existsSync(join(area, 'out'))).toBe(false);
+      expect(readAudit()).toMatchObject([{ action: 'build', workspace: 'app-1', ok: true }]);
+
+      const viewer = await authed(port);
+      expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('closes the connection on a blob it did not ask for or whose bytes differ', async () => {
+    const port = await start();
+    const { client } = await buildClient(port);
+    client.socket.send(blob('unasked'));
+    expect(await client.closed).toBe(4400);
+
+    const { client: again } = await buildClient(port);
+    await again.request('build.sync', { repo: 'app-1', files: [file('a', 'right')], done: true });
+    again.socket.send(Buffer.concat([Buffer.from(sha('right'), 'hex'), Buffer.from('wrong')]));
+    expect(await again.closed).toBe(4400);
+  });
+
+  test.skipIf(!fakeTailscale)(
+    'stops the build when the client is revoked and frees the claim once the process is gone',
+    async () => {
+      const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+      const { client, id } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+      await eventually(() => existsSync(join(root, 'job.json')));
+      const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
+      const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
+      expect(readClaimSet(`${area}.claims`).live).toHaveLength(1);
+
+      const other = await buildClient(port, '100.64.0.3');
+      expect(await other.client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { running: 1, max: 1 } },
+      });
+
+      expect(revokeDevice(id)).toBe(true);
+      expect(await client.closed).toBe(4401);
+      await eventually(() => !alive(pid));
+      await eventually(() => readClaimSet(`${area}.claims`).live.length === 0);
+    },
+  );
 });
 
 describe('health', () => {

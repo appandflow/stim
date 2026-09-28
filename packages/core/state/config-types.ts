@@ -88,7 +88,7 @@ export interface StimConfig {
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };
-  offload?: { machines?: unknown };
+  offload?: { machines?: unknown; mode?: unknown; workerRoot?: unknown };
   [key: string]: unknown;
 }
 export type Config = StimConfig;

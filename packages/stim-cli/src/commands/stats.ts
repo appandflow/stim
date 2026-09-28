@@ -61,6 +61,11 @@ function bucketLine(platform: string, bucket: StatsBucket): string {
     `${bucket.hits} hits (${finished > 0 ? `${Math.round((bucket.hits / finished) * 100)}%` : '-'})`,
     `cold run ${average(bucket.coldRunMs, bucket.coldRuns)} avg`,
     `hit run ${average(bucket.hitRunMs, bucket.hitRuns)} avg`,
+    ...(bucket.offloadedRuns
+      ? [
+          `offloaded run ${average(bucket.offloadedRunMs ?? 0, bucket.offloadedRuns)} avg (${bucket.offloadedRuns}, last on ${bucket.lastOffloadHost ?? '?'})`,
+        ]
+      : []),
     `saved ~${formatLongDuration(bucket.timeSavedMs)} (estimated)`,
     `since ${bucket.firstRunAt.slice(0, 10)}`,
   ];

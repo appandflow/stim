@@ -599,6 +599,7 @@ export async function finishIosRun({
   const {
     hit: cacheHit,
     providerName,
+    offloadedTo,
     readEnabled: useBuildCache,
     missReason,
     waitedForBuild,
@@ -948,6 +949,7 @@ export async function finishIosRun({
     launchState,
     launchWarning,
     providerName,
+    offloadedTo,
     closeWriter,
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
     lease: physical ? leaseFacts : undefined,

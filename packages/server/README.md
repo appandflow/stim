@@ -159,6 +159,73 @@ never grants it.
 `stim-server` release without `build` never reads them and refuses their
 tokens.
 
+## Offloaded builds
+
+A client with `build` runs its iOS simulator builds here with these methods.
+They need `build`, not `read`; a device without `build` gets `forbidden`.
+The server re-reads the build clients on every call, and revoking a client
+closes its connections, which cancels its builds.
+
+- `build.offer` takes `repo` (the client's name for its repository: letters,
+  digits, `.`, `_` and `-`, at most 80) and an optional `lockfile` sha256. It
+  returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
+  `arch`; `xcode`; `simulatorSdk`; `cocoapods`; and `runtimes`, the simulator
+  runtimes with an iPhone simulator to build for), `capacity` (`running` and
+  `max` offloaded builds, `diskFreeBytes` of the worker root's volume and
+  `minDiskFreeBytes`) and `warm` (`checkout`, `dependencies` when the last
+  install used that lockfile, and `build` when DerivedData exists) for that
+  repository. The toolchain is read at most once a minute.
+- `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
+  manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
+  a link's blob being its target. Pages accumulate until `done`; the next
+  `build.sync` starts a new manifest. A path is relative, with no `.`, `..`,
+  empty or `.git` component. The result's `missing` lists the digests of the
+  page this Mac lacks. The client then sends each as binary frames: 32 bytes of
+  the sha256, then the next bytes of that blob, one blob after another. A frame
+  for a blob that was not asked for, one that overruns its size, or bytes that
+  do not match the digest close the connection with 4400. Blobs are kept per
+  client and shared by all its repositories.
+- `build.start` takes `repo`, `project` (the app directory in the repository),
+  `platform` (`ios`), `configuration`, `scheme`, `runtime` (a simulator
+  runtime identifier), `fingerprint`, `packageName`, `isExpo`,
+  `optimizations` and `stimBuild`, after the whole manifest of `repo` was
+  synced on this connection. It returns `{ "job" }`. It fails with
+  `build-busy` while this Mac runs its limit of offloaded builds (one) or
+  another build of the same client and repository, and with `build-refused`
+  when the worker root's volume has less than 10 GiB free or `stimBuild`
+  differs. The build runs `offload-worker.mjs` of the bundled Stim with
+  `STIM_HOME` set to the repository's area. It makes the area's checkout
+  hold exactly the manifest (a file git lists as untracked and not ignored,
+  and not in the manifest, is deleted; ignored dependencies and generated
+  projects stay), installs JavaScript dependencies when the lockfile changed,
+  runs prebuild and `pod install` when needed, refuses unless the fingerprint
+  equals `fingerprint`, and runs `xcodebuild` for one of this Mac's iPhone
+  simulators on `runtime`, which it never boots.
+- `build.progress` events `{ "event": "build.progress", "job", ... }` carry a
+  `phase` and `msg`, a build-log `record`, and last the `outcome`: `ok`, and
+  on success `artifact` (`name`, `size`, `sha256` of a tar of the `.app`),
+  `fingerprint`, `compilationCache` and `timings`, otherwise `code` and
+  `message`.
+- `build.cancel` takes `job` and stops it. Closing the connection cancels its
+  jobs too. The build's process group gets SIGTERM, then SIGKILL 5 seconds
+  later.
+- `build.artifact` takes the `job` of a successful build and sends the archive
+  as binary frames, each 32 bytes of its sha256 and then the next bytes, then
+  answers `{ "name", "size", "sha256" }`, and deletes it here.
+
+The worker root is `offload.workerRoot` in this Mac's Stim settings, or
+`$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
+blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR` and the pnpm store) and one area
+per repository under `repos/<repo>/`: the checkout, its own Stim home with
+DerivedData and the compilation cache, and the output. A build never reads or
+writes this Mac's own Stim home. An ownership claim at
+`repos/<repo>.claims`, whose child is the build's process group, guards each
+area; it is released only once that group is gone, and a claim whose server
+and build are both gone is recovered by the next build. Each finished build
+appends a `build` record to the [action log](#actions) with the repository as
+`workspace`. The worker root keeps growing with each repository; delete a
+client's directory to reclaim it.
+
 ## Protocol
 
 JSON messages over a WebSocket. Requests are `{ "id", "method", "params" }`,
