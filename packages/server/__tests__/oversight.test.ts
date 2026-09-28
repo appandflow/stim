@@ -1,12 +1,15 @@
+import captured from './fixtures/captured-status.json' with { type: 'json' };
 import {
   inQuietHours,
   OVERSIGHT_CATEGORIES,
   oversee,
+  oversightTitle,
   type OversightEnvironment,
   type OversightInput,
   type OversightNotification,
   type OversightPrefs,
   type OversightState,
+  type OversightStatus,
 } from '../src/oversight.ts';
 
 const T0 = Date.parse('2026-09-26T12:00:00Z');
@@ -81,17 +84,47 @@ const input = (environments: Env[], extra: Partial<OversightInput> = {}): Oversi
 
 const ALL: OversightPrefs = { categories: OVERSIGHT_CATEGORIES, stuckMinutes: 15, quiet: false };
 
+interface VectorStep {
+  at: number;
+  awakeSince?: number;
+  input: OversightInput;
+  prefs: OversightPrefs;
+  notifications: OversightNotification[];
+  wakeAt: number | null;
+}
+
+/** Every run below, step by step, for the Swift port in apps/desktop to replay. */
+const vectors: { name: string; steps: VectorStep[] }[] = [];
+const runsPerTest = new Map<string, number>();
+let currentTest = '';
+beforeEach(({ task }) => {
+  currentTest = task.fullName.split(' > ').slice(1).join(' > ');
+});
+
 /** Feeds each step to the rules in turn, from a quiet first look, and collects what they notify. */
-function run(steps: { at: number; input: OversightInput; prefs?: OversightPrefs }[]) {
+function run(steps: { at: number; input: OversightInput; prefs?: OversightPrefs; awakeSince?: number }[]) {
   let state: OversightState | null = null;
   const sent: (OversightNotification & { at: number })[] = [];
   let wakeAt: number | null = null;
+  const recorded: VectorStep[] = [];
   for (const step of steps) {
-    const result = oversee(state, step.input, step.prefs ?? ALL, step.at);
+    const prefs = step.prefs ?? ALL;
+    const result = oversee(state, step.input, prefs, step.at, step.awakeSince);
     state = result.state;
     wakeAt = result.wakeAt;
     for (const notification of result.notifications) sent.push(Object.assign({ at: step.at }, notification));
+    recorded.push({
+      at: step.at,
+      ...(step.awakeSince === undefined ? {} : { awakeSince: step.awakeSince }),
+      input: step.input,
+      prefs,
+      notifications: result.notifications,
+      wakeAt,
+    });
   }
+  const count = (runsPerTest.get(currentTest) ?? 0) + 1;
+  runsPerTest.set(currentTest, count);
+  vectors.push({ name: count > 1 ? `${currentTest} (${count})` : currentTest, steps: recorded });
   return { sent, wakeAt, texts: sent.map((n) => `${n.title}: ${n.body}`) };
 }
 
@@ -520,6 +553,27 @@ describe('oversee', () => {
     });
   });
 
+  it('notifies a refused or unpaired link at once, restarts the offline wait on waking, and keeps disk through a gap', () => {
+    const low = [{ freeBytes: 3e9 }];
+    const { sent, wakeAt } = run([
+      { at: T0, input: input([], { link: 'open' }) },
+      { at: T0 + MIN, input: input([], { link: 'refused', status: null, volumes: low }) },
+      { at: T0 + 2 * MIN, input: input([], { link: 'unpaired', status: null, volumes: null }) },
+      { at: T0 + 3 * MIN, input: input([], { link: 'offline', status: null, volumes: low }) },
+      {
+        at: T0 + 10 * MIN,
+        input: input([], { link: 'offline', status: null, volumes: low }),
+        awakeSince: T0 + 9.5 * MIN,
+      },
+    ]);
+    expect(wakeAt).toBe(T0 + 10.5 * MIN);
+    expect(sent.map((n) => [n.at, n.id, n.body])).toEqual([
+      [T0 + MIN, 'machine:link', 'Refused the connection: pair again or update'],
+      [T0 + MIN, 'machine:disk', "3.0 GB free, below Stim's floor"],
+      [T0 + 2 * MIN, 'machine:link', 'Not paired: pair again'],
+    ]);
+  });
+
   it('keeps one low-disk episode while free space hovers at the floor, and stays quiet about a first reading', () => {
     const free = (gb: number, memoryPressure: OversightInput['memoryPressure'] = 'normal') =>
       input([], { volumes: [{ freeBytes: gb * 1e9 }], memoryPressure });
@@ -574,13 +628,33 @@ describe('oversee', () => {
   });
 });
 
+const quietHours: { quietHours: { start: number; end: number } | null; minuteOfDay: number; quiet: boolean }[] = [];
+
 describe('inQuietHours', () => {
   it('reads a range within a day and one that spans midnight', () => {
-    expect(inQuietHours({ start: 60, end: 120 }, 90)).toBe(true);
-    expect(inQuietHours({ start: 60, end: 120 }, 120)).toBe(false);
-    expect(inQuietHours({ start: 22 * 60, end: 7 * 60 }, 23 * 60)).toBe(true);
-    expect(inQuietHours({ start: 22 * 60, end: 7 * 60 }, 6 * 60)).toBe(true);
-    expect(inQuietHours({ start: 22 * 60, end: 7 * 60 }, 12 * 60)).toBe(false);
-    expect(inQuietHours(null, 0)).toBe(false);
+    const cases = [
+      [{ start: 60, end: 120 }, 90, true],
+      [{ start: 60, end: 120 }, 120, false],
+      [{ start: 22 * 60, end: 7 * 60 }, 23 * 60, true],
+      [{ start: 22 * 60, end: 7 * 60 }, 6 * 60, true],
+      [{ start: 22 * 60, end: 7 * 60 }, 12 * 60, false],
+      [{ start: 60, end: 60 }, 60, false],
+      [null, 0, false],
+    ] as const;
+    for (const [range, minuteOfDay, quiet] of cases) {
+      expect(inQuietHours(range, minuteOfDay)).toBe(quiet);
+      quietHours.push({ quietHours: range, minuteOfDay, quiet });
+    }
+  });
+});
+
+describe('the Swift port in Stim Desktop', () => {
+  it('replays the same runs, recorded in its test fixtures', async () => {
+    expect(vectors.length).toBeGreaterThan(20);
+    const status = captured as unknown as OversightStatus;
+    const titles = { status, titles: status.environments.map((e) => oversightTitle(e, status)) };
+    await expect(`${JSON.stringify({ oversee: vectors, quietHours, titles }, null, 2)}\n`).toMatchFileSnapshot(
+      '../../../apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json',
+    );
   });
 });

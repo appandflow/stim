@@ -1,6 +1,8 @@
 /**
  * The notification rules for a human who oversees agents. packages/server/src/oversight.ts holds the same code;
- * packages/server/__tests__/oversight-agreement.test.ts fails when the two differ.
+ * packages/server/__tests__/oversight-agreement.test.ts fails when the two differ. Stim Desktop's Swift port,
+ * apps/desktop/Sources/StimKit/Oversight.swift, replays the runs packages/server/__tests__/oversight.test.ts records;
+ * after changing a rule, regenerate them with `pnpm test packages/server/__tests__/oversight.test.ts -u`.
  */
 
 /** What a notification is about; each can be switched off on its own. */
