@@ -570,10 +570,8 @@ leaves out of `events` is off and never pushes.
 `levels` in `push.register` sets each event's level. An event it leaves out,
 and every event of a phone that sends no `levels`, gets the level phones had
 before levels: `started` silent, everything else alert. A summary push is
-silent only when every notification it sums up is. A server without the
-`notification-levels` feature refuses `levels`, so the phone sends them only
-to a server that lists it, and an older server alerts for every event but
-`started`.
+silent only when every notification it sums up is. An older server ignores
+`levels` and alerts for every event but `started`.
 
 The rules live in `src/oversight.ts`, a pure module the phone app keeps an
 identical copy of (`apps/mobile/src/lib/oversight.ts`) for its local

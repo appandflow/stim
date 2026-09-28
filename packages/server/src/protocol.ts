@@ -551,7 +551,8 @@ export interface QuietHours {
  * token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as
  * `data.ref` in every push, so the phone can tell which Mac sent it. `stuckMinutes` is how long a driven workspace
  * must show no activity to look stuck, 15 by default. `levels` sets each event's delivery; an event it leaves out
- * alerts, except `started`, which is silent. `agentOnly` is accepted from older phones and ignored.
+ * alerts, except `started`, which is silent. An older server ignores `levels`. `agentOnly` is accepted from older
+ * phones and ignored.
  */
 export interface PushRegisterParams {
   token: string;

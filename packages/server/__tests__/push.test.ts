@@ -596,6 +596,23 @@ describe('PushNotifier', () => {
     expect(expo.sent.flat().map((m) => m.interruptionLevel)).toEqual(['passive', 'active']);
   });
 
+  it('keeps silent control conflicts out of the hourly budget too', async () => {
+    const t = (current = setup({
+      limits: { perHour: 1 },
+      devices: [device(registration({ levels: { control: 'silent' } }))],
+    }));
+    t.emit(status());
+    for (const slot of ['a', 'b', 'c']) {
+      t.notifier.control('d1', { workspace: '/w', title: 'feat/login', body: slot, platform: 'ios', slot });
+    }
+    await settle(3);
+    expect(expo.sent.flat().map((m) => [m.body, m.interruptionLevel])).toEqual([
+      ['a', 'passive'],
+      ['b', 'passive'],
+      ['c', 'passive'],
+    ]);
+  });
+
   it('stops pushing to a device past its hourly budget', async () => {
     const t = (current = setup());
     t.emit(status());

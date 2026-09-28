@@ -32,7 +32,7 @@ export interface PushLimits {
   pullRequestMs: number;
   /** Expo keeps receipts for a day and may need minutes to produce them. */
   receiptDelayMs: number;
-  /** Pushes that alert a device may receive per hour; later ones are dropped. Quiet ones do not count. */
+  /** Pushes that alert a device may receive per hour; later ones are dropped. Silent ones do not count. */
   perHour: number;
   /** More notifications than this at once become one summary. */
   summarizeAbove: number;
@@ -242,8 +242,9 @@ export class PushNotifier {
     };
     const suppressed = device ? this.suppression('control', [device], now) : null;
     this.record([{ ...entryOf(notification, suppressed), device: deviceId }]);
-    if (!device || suppressed !== null || !this.take(device, now)) return;
-    void this.send([this.message(device, notification)]);
+    if (!device || suppressed !== null) return;
+    const message = this.message(device, notification);
+    if (message.interruptionLevel === 'passive' || this.take(device, now)) void this.send([message]);
   }
 
   close(): void {
