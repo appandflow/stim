@@ -10,7 +10,6 @@ final class StatusStore: ObservableObject {
   @Published private(set) var updatedAt: Date?
   @Published private(set) var projects: [String: Project] = [:]
   @Published private(set) var watching = false
-  /// The latest `stim doctor` report of each source checkout, by checkout path.
   @Published private(set) var doctorReports: [String: DoctorReport] = [:]
 
   private let cli: Task<StimCLI, Never>
@@ -25,7 +24,8 @@ final class StatusStore: ObservableObject {
   private var shown = 0
   private var doctorRuns: [String: DoctorRun] = [:]
   private var doctorCheckedAt: Date?
-  private var doctorRunning = false
+  private var doctorStartedAt: Date?
+  private static let doctorTimeout: TimeInterval = 10 * 60
   private static let doctorCheckInterval: TimeInterval = 60
 
   init(cli: Task<StimCLI, Never>) {
@@ -199,15 +199,16 @@ final class StatusStore: ObservableObject {
       project: project(ofPath:), options: options)
   }
 
-  /// Runs `stim doctor --json`, one checkout at a time, in each source checkout where doctor is due.
   private func checkDoctor() {
     let now = Date()
-    guard !doctorRunning, doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
+    guard doctorStartedAt.map({ now.timeIntervalSince($0) > Self.doctorTimeout }) ?? true, doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
       let payload
     else { return }
-    doctorRunning = true
+    doctorStartedAt = now
     doctorCheckedAt = now
     let checkouts = doctorCheckouts(payload.environments, project: project(ofPath:))
+    let paths = Set(checkouts.map(\.path))
+    doctorReports = doctorReports.filter { paths.contains($0.key) }
     let runs = doctorRuns
     let cli = cli
     Task.detached(priority: .utility) { [self] in
@@ -229,7 +230,14 @@ final class StatusStore: ObservableObject {
     doctorReports[path] = report
   }
 
-  private func finishDoctor() { doctorRunning = false }
+  private func finishDoctor() { doctorStartedAt = nil }
+
+  /// Makes doctor due again in `path`, after a command there may have changed its findings.
+  func doctorChanged(in path: String) {
+    doctorRuns[path] = nil
+    doctorCheckedAt = nil
+    checkDoctor()
+  }
 
   /// What only a person can act on; `lowestVolume` is the fullest volume Stim uses, when measured.
   func attention(lowestVolume: DiskVolume?) -> [NeedsAttentionItem] {

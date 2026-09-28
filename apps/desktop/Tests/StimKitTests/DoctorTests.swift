@@ -22,7 +22,7 @@ struct DoctorTests {
     #expect(doctorRemedy(nil) == nil)
   }
 
-  @Test func mapsAWorktreeWorkspaceToTheSameFolderInTheSourceCheckout() throws {
+  @Test func runsInTheListedSourceCheckoutElseTheFirstWorktreeOfTheApp() throws {
     let envs = try JSONDecoder().decode(
       [Workspace].self,
       from: Data(
@@ -30,11 +30,12 @@ struct DoctorTests {
         [{"path":"/r/.worktrees/a/apps/m","live":false,"warnings":[],"worktree":{"path":"/r/.worktrees/a"}},
          {"path":"/r/.worktrees/b/apps/m","live":false,"warnings":[],"worktree":{"path":"/r/.worktrees/b"}},
          {"path":"/r/apps/m","live":false,"warnings":[],"worktree":{"path":"/r"}},
+         {"path":"/r/.worktrees/a/apps/w","live":false,"warnings":[],"worktree":{"path":"/r/.worktrees/a"}},
          {"path":"/solo","live":false,"warnings":[]}]
         """#.utf8))
     let checkouts = doctorCheckouts(envs) { $0 == "/solo" ? Project(root: "/solo") : Project(root: "/r") }
-    #expect(checkouts.map(\.path) == ["/r/apps/m", "/solo"])
-    #expect(checkouts.map(\.repository) == ["/r", "/solo"])
+    #expect(checkouts.map(\.path) == ["/r/apps/m", "/r/.worktrees/a/apps/w", "/solo"])
+    #expect(checkouts.map(\.repository) == ["/r", "/r", "/solo"])
   }
 
   @Test func isDueWhenNeverRunNewStimOldRunOrChangedSetup() {

@@ -33,26 +33,31 @@ public func setupItems(_ reports: [DoctorReport]) -> [NeedsAttentionItem] {
   }
 }
 
-/// A source checkout to run `stim doctor` in, and the repository it belongs to.
+/// A workspace to run `stim doctor` in, and the repository it belongs to.
 public struct DoctorCheckout: Hashable, Sendable {
   public var path: String
   public var repository: String
 }
 
-/// The source checkout of each workspace's app, for `stim doctor`: the workspace's path inside its worktree,
-/// moved into the project's own checkout. A workspace that is not in a linked worktree is its own checkout.
+/// One workspace per app to run `stim doctor` in: the app's folder in the project's own checkout when status lists
+/// it, else the first worktree workspace of that folder. Only listed workspaces qualify, because doctor records its
+/// run in the Stim project registry and would add an unlisted checkout to `stim status`.
 public func doctorCheckouts(_ environments: [Workspace], project: (String) -> Project) -> [DoctorCheckout] {
-  var out: [DoctorCheckout] = []
+  let listed = Set(environments.map(\.path))
+  var order: [String] = []
+  var chosen: [String: DoctorCheckout] = [:]
   for env in environments {
     let root = project(env.path).root
-    var path = env.path
+    var source = env.path
     if let worktree = env.worktree?.path, worktree != root, env.path == worktree || env.path.hasPrefix(worktree + "/") {
-      path = root + env.path.dropFirst(worktree.count)
+      source = root + env.path.dropFirst(worktree.count)
     }
-    let checkout = DoctorCheckout(path: path, repository: root)
-    if !out.contains(checkout) { out.append(checkout) }
+    if chosen[source] == nil { order.append(source) }
+    if chosen[source] == nil || (env.path == source && listed.contains(source)) {
+      chosen[source] = DoctorCheckout(path: env.path, repository: root)
+    }
   }
-  return out
+  return order.compactMap { chosen[$0] }
 }
 
 /// When Stim Desktop last ran `stim doctor` in a checkout.
