@@ -88,7 +88,8 @@ reload and stop a workspace:
   **Machines** (the same switch as home's toggle), **Pair a machine**, and
   **Recent workspaces**, the workspaces most recently live or opened on this
   phone. The button at the bottom shows the number of
-  paired machines and opens **About**, with the app and server versions. A tap
+  paired machines and opens **About**, with the app and server versions, as a
+  sheet over the menu, which stays open when the sheet closes. A tap
   on home, a swipe left, or Android's back button closes it. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
   in; the token field is masked, with a button that shows it. The device token
