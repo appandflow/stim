@@ -530,8 +530,10 @@ an emulator. Watching needs `read`, as for an emulator. Control needs
 `control` and that lease: the session never takes, renews or releases a
 phone's lease, and `takeOver` cannot move one between workspaces. When the
 lease is released or expires, the control session ends with `device-gone` and
-frame subscriptions end with `frames-failed`; a subscription notices an expiry
-only on the next status update.
+frame subscriptions end with `frames-failed`. Both follow `stim status
+--watch`: a release reaches the server when status next reports it, usually
+within seconds and at most about 30 seconds plus one refresh. Input after an
+expiry is refused at once.
 Physical iPhones are refused for now.
 
 The `stim-frames` helper reaches the phone over adb only, with the scrcpy
