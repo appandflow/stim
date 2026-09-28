@@ -540,10 +540,11 @@ export function sinceLabel(ms: number): string {
 
 export type ChipTone = 'default' | 'secondary' | 'tertiary' | 'success' | 'warning' | 'error' | 'brand';
 
+export type CiState = 'passing' | 'failing' | 'pending';
+
 export interface GitChip {
   parts: { text: string; tone: ChipTone }[];
-  clean: boolean;
-  pr: { text: string; tone: ChipTone; checks: ChipTone | null } | null;
+  pr: { text: string; tone: ChipTone; ci: CiState | null } | null;
   label: string;
 }
 
@@ -561,27 +562,34 @@ export function checksTone(checks: PullRequestFacts['checks']): ChipTone | null 
   return checks.passing > 0 ? 'success' : null;
 }
 
+function ciState(checks: PullRequestFacts['checks']): CiState | null {
+  if (!checks) return null;
+  if (checks.failing > 0) return 'failing';
+  if (checks.pending > 0) return 'pending';
+  return checks.passing > 0 ? 'passing' : null;
+}
+
 export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | null {
   const git = worktree?.git;
   if (!git) return null;
   const badges = gitBadges(git);
+  const pull = worktree.pullRequest;
   const parts: GitChip['parts'] = [];
   if (badges?.arrows) parts.push({ text: badges.arrows, tone: 'default' });
   if (badges?.uncommitted) parts.push({ text: `${badges.uncommitted} changed`, tone: 'secondary' });
-  if (badges?.merged) parts.push({ text: `merged into ${git.mergedInto}`, tone: 'brand' });
-  else if (git.upstream === null) parts.push({ text: 'no upstream', tone: 'tertiary' });
-  const clean = parts.length === 0;
-  const pull = worktree.pullRequest;
-  const pr = pull ? { text: `PR #${pull.number}`, tone: PR_TONE[pull.state], checks: checksTone(pull.checks) } : null;
+  if (badges?.merged && pull?.state !== 'merged') parts.push({ text: `merged into ${git.mergedInto}`, tone: 'brand' });
+  if (!badges?.merged && git.upstream === null) parts.push({ text: 'no upstream', tone: 'tertiary' });
+  const ci = pull ? ciState(pull.checks) : null;
   const label = [
+    pull ? `Pull request ${pull.number}, ${pull.state}` : 'Branch',
+    ci ? `checks ${ci}` : null,
     badges?.label,
     !badges?.merged && git.upstream === null ? 'no upstream' : null,
-    clean ? 'clean' : null,
-    pull ? `pull request ${pull.number}, ${pull.state}` : null,
+    !pull && parts.length === 0 ? 'up to date' : null,
   ]
     .filter(Boolean)
     .join(', ');
-  return { parts, clean, pr, label };
+  return { parts, pr: pull ? { text: `PR #${pull.number}`, tone: PR_TONE[pull.state], ci } : null, label };
 }
 
 export function checksSummary(checks: PullRequestFacts['checks']): string | null {

@@ -104,11 +104,14 @@ reload and stop a workspace:
   platform and when it started), **Build failed** (when the newest build of
   either platform failed), **Warming** (installing dependencies or copying
   ignored files), **Ready**, or **Stopped** (nothing runs, with when Metro stopped when known). After a thin
-  divider comes the git chip: commits ahead and behind, the count of changed
-  files, **merged into** a branch, **no upstream**, or a check for a clean
-  branch, and the pull request number colored by its state (open, draft,
-  merged, closed) with a dot for its worst check, when `stim status` reports
-  the pull request. It wraps onto its own line when both do not fit, and opens
+  divider comes the git chip. With a pull request `stim status` reports, it
+  starts with the number colored by its state (open, draft, merged, closed)
+  and one mark for its worst check: a check when all pass, a cross when one
+  fails, a dot while one is pending. Without one, it starts with a branch
+  icon. Then only what is not zero or unusual: commits ahead and behind, the
+  count of changed files, **merged into** a branch (unless the pull request
+  already reads merged), and **no upstream**. Its accessibility label spells
+  out each part. It wraps onto its own line when both do not fit, and opens
   the **Git** sheet: upstream, ahead, behind, changed and untracked files,
   merged into, and the pull request's title, state, checks and review with
   **Open in GitHub**. Below, three small cards open more:

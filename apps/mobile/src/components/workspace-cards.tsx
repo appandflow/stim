@@ -26,6 +26,7 @@ import {
   type BuildLine,
   type BundleLine,
   type ChipTone,
+  type CiState,
   type GitChip,
   type MetroHealth,
   type PhaseStep,
@@ -92,31 +93,41 @@ export function StageLine({
           <Touch
             feedback="card"
             onPress={onGitPress}
-            accessibilityLabel={`Git: ${git.label}`}
+            accessibilityLabel={git.label}
             accessibilityHint="Shows the branch"
             hitSlop={6}
             style={styles.gitChip}
           >
-            <Icon name="arrow.triangle.branch" size={12} color={theme.colors.secondary} />
-            {git.clean ? <Icon name="checkmark" size={11} color={theme.colors.success} /> : null}
-            {git.parts.map((part) => (
-              <Text key={part.text} variant="caption" tone={CHIP_TONE[part.tone]} style={styles.tabular}>
-                {part.text}
-              </Text>
-            ))}
             {git.pr ? (
               <>
                 <Text variant="caption" weight="semibold" tone={CHIP_TONE[git.pr.tone]}>
                   {git.pr.text}
                 </Text>
-                {git.pr.checks ? <StatusDot color={chipColor(git.pr.checks, theme.colors)} /> : null}
+                {git.pr.ci ? <CiMark state={git.pr.ci} /> : null}
               </>
-            ) : null}
+            ) : (
+              <Icon name="arrow.triangle.branch" size={12} color={theme.colors.secondary} />
+            )}
+            {git.parts.map((part) => (
+              <Text key={part.text} variant="caption" tone={CHIP_TONE[part.tone]} style={styles.tabular}>
+                {part.text}
+              </Text>
+            ))}
             <Icon name="chevron.right" size={10} color={theme.colors.tertiary} />
           </Touch>
         </View>
       ) : null}
     </View>
+  );
+}
+
+function CiMark({ state }: { state: CiState }) {
+  const { theme } = useUnistyles();
+  if (state === 'pending') return <StatusDot color={theme.colors.warning} />;
+  return state === 'passing' ? (
+    <Icon name="checkmark" size={11} color={theme.colors.success} />
+  ) : (
+    <Icon name="xmark" size={10} color={theme.colors.error} />
   );
 }
 

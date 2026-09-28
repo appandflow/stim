@@ -21,6 +21,7 @@ import type {
   EnvironmentState,
   LastBuild,
   MachineUsageState,
+  PullRequestFacts,
   WorktreeFacts,
 } from '@/protocol/types';
 
@@ -401,7 +402,7 @@ describe('gitChip', () => {
     ...patch,
   });
 
-  it('shows commits ahead, uncommitted files, a merge, a missing upstream, or clean', () => {
+  it('shows only the non-zero git details, a merge, or a missing upstream', () => {
     expect(gitChip(worktree({ ahead: 2, changed: 2, untracked: 1 }))?.parts.map((p) => p.text)).toEqual([
       '\u21912',
       '3 changed',
@@ -410,25 +411,39 @@ describe('gitChip', () => {
     expect(gitChip(worktree({ upstream: null, ahead: null, behind: null }))?.parts.map((p) => p.text)).toEqual([
       'no upstream',
     ]);
-    expect(gitChip(worktree({}))).toMatchObject({ clean: true, parts: [], label: 'clean' });
+    expect(gitChip(worktree({}))).toEqual({ parts: [], pr: null, label: 'Branch, up to date' });
     expect(gitChip({ path: '/w' })).toBeNull();
   });
 
-  it('colors the pull request by state and its CI dot by the worst check', () => {
-    const pullRequest = {
+  it('colors the pull request by state with one CI mark for the worst check, and spells it out', () => {
+    const pullRequest: PullRequestFacts = {
       number: 1695,
       url: 'https://github.com/o/r/pull/1695',
       title: 't',
-      state: 'open' as const,
+      state: 'open',
       checks: { passing: 12, failing: 1, pending: 2 },
       reviewDecision: null,
       checkedAt: iso(0),
     };
-    expect(gitChip(worktree({}, { pullRequest }))?.pr).toEqual({ text: 'PR #1695', tone: 'success', checks: 'error' });
-    expect(gitChip(worktree({}, { pullRequest: { ...pullRequest, state: 'merged', checks: null } }))?.pr).toEqual({
-      text: 'PR #1695',
-      tone: 'brand',
-      checks: null,
+    const chip = (patch: Partial<PullRequestFacts>, git = {}) =>
+      gitChip(worktree(git, { pullRequest: { ...pullRequest, ...patch } }));
+    expect(chip({})?.pr).toEqual({ text: 'PR #1695', tone: 'success', ci: 'failing' });
+    expect(chip({ checks: { passing: 12, failing: 0, pending: 2 } })?.pr?.ci).toBe('pending');
+    expect(chip({ checks: { passing: 12, failing: 0, pending: 0 } })).toEqual({
+      parts: [],
+      pr: { text: 'PR #1695', tone: 'success', ci: 'passing' },
+      label: 'Pull request 1695, open, checks passing',
+    });
+    expect(chip({ state: 'draft', checks: null })?.pr).toEqual({ text: 'PR #1695', tone: 'tertiary', ci: null });
+    const merged = chip({ state: 'merged', checks: null }, { mergedInto: 'main' });
+    expect(merged).toMatchObject({ parts: [], pr: { tone: 'brand' } });
+    expect(chip({ state: 'closed' }, { ahead: 2, changed: 1 })).toEqual({
+      parts: [
+        { text: '\u21912', tone: 'default' },
+        { text: '1 changed', tone: 'secondary' },
+      ],
+      pr: { text: 'PR #1695', tone: 'error', ci: 'failing' },
+      label: 'Pull request 1695, closed, checks failing, 1 uncommitted change, 2 commits not pushed',
     });
   });
 });
