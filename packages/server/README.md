@@ -262,7 +262,7 @@ Events are `{ "event", "subscription", ... }`.
     one span; the gaps between spans are time nothing was recorded, such as
     after `stim stop`.
   - `markers`: `{ at, kind, command?, label }` from the start of the first span
-    on, oldest first, at most 500. They come from `stim logs --json` in the
+    on, oldest first: the newest 400 actions and 100 errors. They come from `stim logs --json` in the
     workspace. `action` markers are the agent's actions on that device, failed
     ones included, from agent-device's session log and the owned Chrome page's
     agent input, with their `command`, such as `press`, `fill`, `open` or
@@ -292,7 +292,8 @@ Events are `{ "event", "subscription", ... }`.
   `frames.subscribe` with `at`, and optionally `rate`, starts the subscription
   replaying, and needs `video: ["h264"]`. It needs no running device, so the
   footage of a stopped workspace can be replayed; it fails with
-  `no-recording` when nothing was recorded at or after `at`. Clients that
+  `no-recording` when nothing was recorded at or after `at`, and sends
+  `replay-ended` at once when that footage holds no frame to show. Clients that
   never send these messages see no change.
 
 - `recording.set` takes `enabled` and runs

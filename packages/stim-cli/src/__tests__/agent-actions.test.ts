@@ -115,6 +115,30 @@ test('later calls return only complete lines appended since the previous call', 
   expect(reader()).toEqual([]);
 });
 
+test('an action keeps its start time however many requests the session made before it', () => {
+  const events = join(root, IOS_SESSION, 'events.ndjson');
+  const entry = (at: number, kind: string, requestId: string, extra: object = {}) =>
+    JSON.stringify({
+      version: 1,
+      ts: new Date(Date.parse('2026-09-25T12:17:00.000Z') + at).toISOString(),
+      session: 'cwd:b764dacffe51e890:default',
+      kind,
+      requestId,
+      command: 'press',
+      summary: 'Tapped',
+      ...extra,
+    });
+  const lines = Array.from({ length: 100 }, (_, i) => [
+    entry(i * 1000, 'request.started', `r${i}`),
+    entry(i * 1000 + 800, 'action.recorded', `r${i}`),
+    entry(i * 1000 + 800, 'request.finished', `r${i}`, { status: 'ok' }),
+  ]).flat();
+  appendFileSync(events, `${lines.join('\n')}\n`);
+  const tapped = read([{ platform: 'ios', id: SECOND_SIM, slot: 'default' }]).filter((r) => r.msg === 'Tapped');
+  expect(tapped).toHaveLength(100);
+  expect(tapped.every((record) => (record.ts as number) - (record.startedAt as number) === 800)).toBe(true);
+});
+
 test('an unrecognized event format yields one warning instead of misread actions', () => {
   const events = join(root, IOS_SESSION, 'events.ndjson');
   writeFileSync(events, `${JSON.stringify({ version: 2, ts: '2026-09-25T12:17:00.000Z', type: 'tap', at: [1, 2] })}\n`);

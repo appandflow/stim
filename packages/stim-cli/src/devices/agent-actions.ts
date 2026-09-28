@@ -28,6 +28,8 @@ interface ParsedAgentEvents {
   events: AgentEvent[];
   /** When each request whose start is in these lines started. */
   started: [string, number][];
+  /** Requests that finished without a failure; their action, if any, is in these lines too. */
+  finished: string[];
   session: string | null;
   unknownVersion: { version: unknown; ts: number | null } | null;
 }
@@ -42,6 +44,7 @@ function object(value: unknown): Record<string, unknown> | null {
 function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
   const events: AgentEvent[] = [];
   const started: [string, number][] = [];
+  const finished: string[] = [];
   let session: string | null = null;
   let unknownVersion: ParsedAgentEvents['unknownVersion'] = null;
   for (const line of lines) {
@@ -63,7 +66,10 @@ function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
     if (kind === 'request.started' && requestId && Number.isFinite(ts)) started.push([requestId, ts]);
     if (kind !== 'action.recorded' && kind !== 'request.finished') continue;
     const failed = kind === 'request.finished' && entry.status === 'error';
-    if (kind === 'request.finished' && !failed) continue;
+    if (kind === 'request.finished' && !failed) {
+      if (requestId) finished.push(requestId);
+      continue;
+    }
     if (!Number.isFinite(ts) || typeof entry.session !== 'string' || typeof command !== 'string') continue;
     if (typeof summary !== 'string') continue;
     events.push({
@@ -77,7 +83,7 @@ function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
       requestId,
     });
   }
-  return { events, started, session, unknownVersion };
+  return { events, started, finished, session, unknownVersion };
 }
 
 interface RunnerSpan {
@@ -286,7 +292,6 @@ export function createAgentActionReader({
       lines.push(...chunk.text.split('\n'));
       const parsed = parseAgentEvents(lines);
       for (const [requestId, at] of parsed.started) cursor.started.set(requestId, at);
-      for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
       cursor.session ??= parsed.session;
       const session = cursor.session;
       if (!parsed.events.length && !parsed.unknownVersion) continue;
@@ -322,9 +327,11 @@ export function createAgentActionReader({
         const deviceId = deviceAt(event.ts);
         const target = deviceId ? byId.get(deviceId) : undefined;
         const startedAt = event.requestId ? cursor.started.get(event.requestId) : undefined;
-        if (event.requestId) cursor.started.delete(event.requestId);
         if (target && deviceId) out.push(agentRecord(event, deviceId, target, startedAt));
       }
+      for (const requestId of parsed.finished) cursor.started.delete(requestId);
+      for (const event of parsed.events) if (event.requestId) cursor.started.delete(event.requestId);
+      for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
     }
     return out.toSorted((a, b) => (a.ts as number) - (b.ts as number));
   };

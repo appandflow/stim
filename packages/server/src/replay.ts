@@ -142,11 +142,6 @@ export class Player {
     this.congestedBytes = congestedBytes;
   }
 
-  /** The capture time of the last unit sent. */
-  get at(): number {
-    return this.position;
-  }
-
   /** Returns the capture time of the frame shown, or null when nothing was recorded at or after `at`. */
   seek(at: number, rate: number): number | null {
     this.cancel();
