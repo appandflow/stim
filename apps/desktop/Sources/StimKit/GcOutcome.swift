@@ -109,6 +109,7 @@ public struct GcOutcome: Hashable, Sendable {
       (["workspaceOutputs", "workspaceBuildOutputs"], { "Cleared build outputs of \(count($0, "workspace"))" }),
       (["workspaceDirectory", "orphanedWorkspaces"], { "Removed \(count($0, "workspace directory", "workspace directories"))" }),
       (["cache", "caches"], { "Cleaned \(count($0, "cache"))" }),
+      (["recording", "recordings"], { "Deleted the device recordings of \(count($0, "workspace"))" }),
       (["easSession", "orphanedEasSessions"], { "Stopped \(count($0, "EAS session"))" }),
       (["project", "deadProjects", "invalidProjects"], { "Pruned \(count($0, "project entry", "project entries"))" }),
     ]
