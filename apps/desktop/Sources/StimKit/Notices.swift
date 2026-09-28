@@ -48,6 +48,11 @@ extension OversightTarget {
     case .url: return "Open pull request"
     }
   }
+
+  /// Every string `actionTitle` can render, for UI that reserves a column sized to the widest one.
+  public static let actionTitles: [String] = [
+    "Show machine", "Open workspace", "Show device", "Show page", "Show build", "Open pull request",
+  ]
 }
 
 /// How a category is delivered, with the phone's names: `alert` shows a toast or a banner with sound, `silent` goes

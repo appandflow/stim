@@ -114,24 +114,21 @@ private struct InboxRow: View {
   @State private var hovering = false
 
   var body: some View {
-    HStack(alignment: .top, spacing: Space.lg) {
-      Circle().fill(entry.read ? Color.clear : Palette.primary).frame(width: 8, height: 8).padding(.top, 6)
+    HStack(alignment: .center, spacing: Space.lg) {
+      Circle().fill(entry.read ? Color.clear : Palette.primary).frame(width: 8, height: 8)
         .accessibilityHidden(true)
       Image(systemName: entry.category.symbol)
         .font(.system(size: 15, weight: .semibold))
         .foregroundStyle(OversightNotifier.tone(entry.category).color)
         .frame(width: 20)
-        .padding(.top, 1)
         .help(entry.category.label)
       VStack(alignment: .leading, spacing: Space.xxs) {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Text(entry.title).textStyle(.callout, weight: entry.read ? nil : .semibold).lineLimit(1)
-          Spacer(minLength: Space.md)
-          Text(detail).textStyle(.caption).foregroundStyle(Palette.tertiary).lineLimit(1)
-        }
+        Text(entry.title).textStyle(.callout, weight: entry.read ? nil : .semibold).lineLimit(1)
         Text(entry.body).textStyle(.footnote).foregroundStyle(Palette.secondary).lineLimit(2)
       }
-      Button(entry.target.actionTitle, action: open).buttonStyle(.stim())
+      Spacer(minLength: Space.md)
+      Text(detail).textStyle(.caption).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+      actionColumn
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.lg)
@@ -149,5 +146,17 @@ private struct InboxRow: View {
   private var detail: String {
     let time = entry.date.formatted(date: .omitted, time: .shortened)
     return entry.suppressed.map { "\(time) \u{00B7} \($0.title)" } ?? time
+  }
+
+  /// Reserves a column as wide as the widest possible action label, with this row's button flush to its
+  /// trailing edge, so buttons -- and the timestamps immediately before them -- line up across rows.
+  private var actionColumn: some View {
+    ZStack(alignment: .trailing) {
+      ForEach(OversightTarget.actionTitles, id: \.self) { title in
+        Text(title).textStyle(.footnote, weight: .semibold).padding(.horizontal, Space.md + Space.xxs)
+          .frame(height: 24).hidden().accessibilityHidden(true)
+      }
+      Button(entry.target.actionTitle, action: open).buttonStyle(.stim())
+    }
   }
 }
