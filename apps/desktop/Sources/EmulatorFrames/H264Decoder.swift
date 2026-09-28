@@ -4,8 +4,9 @@ import Foundation
 import VideoToolbox
 
 /// Decodes an Annex-B H.264 stream into BGRA pixel buffers, one per access unit. A config packet (SPS and
-/// PPS) with new parameter sets replaces the session, and one that repeats them keeps it; packets before the first
-/// config are dropped.
+/// PPS) with new parameter sets replaces the session, and one that repeats them keeps it. A frame the session fails
+/// to decode drops the session, so the next config packet makes a new one. Packets before the first config are
+/// dropped.
 public final class H264Decoder {
   private var format: CMVideoFormatDescription?
   private var session: VTDecompressionSession?
@@ -93,9 +94,10 @@ public final class H264Decoder {
       let buffer
     else { return }
     let output = self.output
-    VTDecompressionSessionDecodeFrame(session, sampleBuffer: buffer, flags: [], infoFlagsOut: nil) {
+    let status = VTDecompressionSessionDecodeFrame(session, sampleBuffer: buffer, flags: [], infoFlagsOut: nil) {
       status, _, image, _, _ in
       if status == noErr, let image { output(image) }
     }
+    if status != noErr { invalidate() }
   }
 }
