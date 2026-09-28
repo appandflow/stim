@@ -658,8 +658,8 @@ export async function acquireIosArtifact(
     }
   }
 
-  /** Picks a build machine when this build should leave this Mac; null builds here. */
-  async function chooseOffload(): Promise<{ choice: OffloadChoice; runtime: string } | null> {
+  /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
+  function placeBuild(): { reason: string; runtime: string; machines: ReturnType<typeof pairedMachines> } | null {
     const mode = offloadMode();
     const machines = mode === 'off' ? [] : pairedMachines();
     if (mode === 'off' || machines.length === 0) return null;
@@ -686,18 +686,28 @@ export async function acquireIosArtifact(
       phase('build', `placement: here (${placement.reason})`);
       return null;
     }
+    return { reason: placement.reason, runtime: runtime!, machines };
+  }
+
+  /** Asks the paired machines once the post-mutation key is known; null builds here. */
+  async function chooseMachine(placement: {
+    reason: string;
+    runtime: string;
+    machines: ReturnType<typeof pairedMachines>;
+  }): Promise<OffloadChoice | null> {
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      runtime: runtime!,
+      runtime: placement.runtime,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
-      machines,
+      machines: placement.machines,
     });
     if (typeof choice === 'string') {
-      phase('build', `placement: here (${placement.reason}, but no machine can build it: ${choice})`);
+      phase('build', `offload failed: no machine can build it (${choice}) -> building here`);
       return null;
     }
+    openOffload.choice = choice;
     phase('build', `placement: ${choice.machine} (${placement.reason})`);
-    return { choice, runtime: runtime! };
+    return choice;
   }
 
   /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
@@ -774,8 +784,7 @@ export async function acquireIosArtifact(
   async function buildArtifact(): Promise<void> {
     buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
     if (!appPath) {
-      const offload = await chooseOffload();
-      openOffload.choice = offload?.choice ?? null;
+      const offload = placeBuild();
       if (!offload) await takeBuildSlot();
 
       const mutatingSteps: string[] = [];
@@ -901,11 +910,12 @@ export async function acquireIosArtifact(
         }
       }
 
-      if (offload && appPath) offload.choice.connection.close();
       if (offload && !appPath) {
         explainMiss(rekeyedBy);
         step('compile');
-        if (!(await compileElsewhere(offload))) await takeBuildSlot();
+        if (!storeKey) phase('build', 'offload failed: no cache key to store the app under -> building here');
+        const choice = storeKey ? await chooseMachine(offload) : null;
+        if (!choice || !(await compileElsewhere({ choice, runtime: offload.runtime }))) await takeBuildSlot();
       }
 
       if (!appPath) {

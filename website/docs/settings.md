@@ -299,7 +299,10 @@ fingerprint equals the one here, and sends back the `.app`. Stim checks the
 archive's sha256 and fingerprints the checkout again before it stores and
 installs the app. The build output shows `placement: <machine>` or
 `placement: here (<reason>)`, and any failure prints
-`offload failed: <reason> -> building here` and compiles here instead. The
+`offload failed: <reason> -> building here` and compiles here instead. An
+offloaded app lands only in this Mac's build cache, not in a remote cache
+provider, and a project whose `xcodebuild` changes its own fingerprinted
+inputs always builds here. The
 `--json` payload and `lastBuilds` carry `offloadedTo`, and `stim stats`
 counts offloaded runs apart from cold runs.
 

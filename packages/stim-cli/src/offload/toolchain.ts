@@ -28,9 +28,11 @@ function quiet(file: string, args: string[]): string | null {
 function stimBuildId(dir: string = distDir): string | null {
   try {
     const hash = createHash('sha256');
-    for (const name of readdirSync(dir)
+    const names = readdirSync(dir)
       .filter((entry) => entry.endsWith('.mjs'))
-      .toSorted()) {
+      .toSorted();
+    if (names.length === 0) return null;
+    for (const name of names) {
       hash.update(name);
       hash.update(readFileSync(join(dir, name)));
     }

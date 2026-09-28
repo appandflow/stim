@@ -76,7 +76,7 @@ const refusal = (code: ErrorCode, message: string): Refusal => ({ error: { code,
 /** A manifest path the mirror can hold: relative, normalized, and never inside `.git`. */
 function validBuildPath(path: unknown): path is string {
   if (typeof path !== 'string' || !path || path.length > MAX_PATH_CHARS || path.includes('\0')) return false;
-  return path.split('/').every((part) => part !== '' && part !== '.' && part !== '..' && part !== '.git');
+  return path.split('/').every((part) => part !== '' && part !== '.' && part !== '..' && part.toLowerCase() !== '.git');
 }
 
 function validFile(file: unknown): file is BuildFile {
@@ -141,6 +141,7 @@ export interface BuildHostOptions {
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
+  private closed = false;
   private toolchainAt = 0;
   private toolchainValue: Promise<BuildToolchain | null> | null = null;
   private readonly options: BuildHostOptions;
@@ -235,6 +236,7 @@ export class BuildHost {
     job: Record<string, unknown>;
     send: (event: BuildProgressEvent) => void;
   }): Job | Refusal {
+    if (this.closed) return refusal('build-refused', 'This Mac is shutting down stim-server.');
     if (this.jobs.size >= this.limits.maxJobs) {
       return refusal('build-busy', `This Mac already runs ${this.jobs.size} offloaded build(s), its limit.`);
     }
@@ -266,7 +268,12 @@ export class BuildHost {
     }
     const id = randomUUID();
     const started = Date.now();
-    markClaimChildPending(claim);
+    try {
+      markClaimChildPending(claim);
+    } catch (error) {
+      releaseClaim(claim);
+      return refusal('build-refused', (error as Error).message);
+    }
     const child = spawn(process.execPath, [this.options.worker, 'build'], {
       cwd: area,
       detached: true,
@@ -286,23 +293,28 @@ export class BuildHost {
       } catch {}
     };
     let killTimer: NodeJS.Timeout | null = null;
+    let finished = false;
     const cancel = () => {
-      if (killTimer) return;
+      if (killTimer || finished) return;
       signalGroup('SIGTERM');
       killTimer = setTimeout(() => signalGroup('SIGKILL'), this.limits.killGraceMs);
       killTimer.unref();
     };
-    const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-    if (captured?.ok) setClaimChild(claim, { pid: child.pid, processToken: captured.token });
-    else cancel();
+    try {
+      const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+      if (captured?.ok) setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+      else cancel();
+    } catch {
+      cancel();
+    }
     child.stdin?.on('error', () => {});
-    child.stdin?.end(JSON.stringify({ ...job, area, blobs: join(clientDir, 'blobs') }));
+    child.stdin?.end(JSON.stringify({ ...job, job: id, area, blobs: join(clientDir, 'blobs') }));
     const timeout = setTimeout(cancel, this.limits.timeoutMs);
     const entry: Job = {
       id,
       client,
       child,
-      archive: join(area, 'out', 'app.tgz'),
+      archive: join(area, 'out', id, 'app.tgz'),
       outcome: null,
       settled: false,
       cancel,
@@ -337,12 +349,14 @@ export class BuildHost {
             ? { ok: false, code: 'cancelled', message: 'The build was cancelled.' }
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         entry.outcome = outcome;
+        if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
         const settle = () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
             setTimeout(settle, GROUP_POLL_MS).unref();
             return;
           }
           if (killTimer) clearTimeout(killTimer);
+          finished = true;
           releaseClaim(claim);
           entry.settled = true;
           this.jobs.delete(entry);
@@ -365,6 +379,7 @@ export class BuildHost {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     for (const job of this.jobs) job.cancel();
     await Promise.all([...this.jobs].map((job) => job.done));
   }
@@ -400,6 +415,7 @@ export class BuildSession {
   private readonly expected = new Map<string, number>();
   private incoming: { sha256: string; size: number; received: number; hash: Hash; tmp: string } | null = null;
   private readonly jobs = new Map<string, Job>();
+  private closed = false;
   private readonly host: BuildHost;
   private readonly client: string;
   private readonly socket: WebSocket;
@@ -501,6 +517,7 @@ export class BuildSession {
       }
     }
     const toolchain = await this.host.toolchain();
+    if (this.closed) return refusal('build-refused', 'The connection closed.');
     if (!toolchain || toolchain.stimBuild !== params.stimBuild) {
       return refusal('build-refused', `This Mac runs Stim build ${toolchain?.stimBuild ?? 'unknown'}.`);
     }
@@ -570,7 +587,11 @@ export class BuildSession {
   }
 
   close(): void {
-    for (const job of this.jobs.values()) job.cancel();
+    this.closed = true;
+    for (const job of this.jobs.values()) {
+      job.cancel();
+      void job.done.then(() => rmSync(dirname(job.archive), { recursive: true, force: true }));
+    }
     this.jobs.clear();
     if (this.incoming) rmSync(this.incoming.tmp, { force: true });
     this.incoming = null;

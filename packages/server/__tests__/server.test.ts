@@ -165,9 +165,9 @@ if (process.argv[2] === 'offer') {
     process.on('SIGTERM', () => {});
     setInterval(() => {}, 1000);
   } else {
-    mkdirSync(join(job.area, 'out'), { recursive: true });
+    mkdirSync(join(job.area, 'out', job.job), { recursive: true });
     const archive = Buffer.from('app archive bytes');
-    writeFileSync(join(job.area, 'out', 'app.tgz'), archive);
+    writeFileSync(join(job.area, 'out', job.job, 'app.tgz'), archive);
     const sha256 = createHash('sha256').update(archive).digest('hex');
     print({ type: 'result', ok: true, artifact: { name: 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
@@ -651,7 +651,7 @@ describe('offloaded builds', () => {
         id: 99,
         result: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
       });
-      expect(existsSync(join(area, 'out'))).toBe(false);
+      expect(existsSync(join(area, 'out', job))).toBe(false);
       expect(readAudit()).toMatchObject([{ action: 'build', workspace: 'app-1', ok: true }]);
 
       const viewer = await authed(port);
@@ -659,17 +659,27 @@ describe('offloaded builds', () => {
     },
   );
 
-  test.skipIf(!fakeTailscale)('closes the connection on a blob it did not ask for or whose bytes differ', async () => {
-    const port = await start();
-    const { client } = await buildClient(port);
-    client.socket.send(blob('unasked'));
-    expect(await client.closed).toBe(4400);
+  test.skipIf(!fakeTailscale)(
+    'refuses paths outside the mirror, and closes the connection on a blob it did not ask for or whose bytes differ',
+    async () => {
+      const port = await start();
+      const { client } = await buildClient(port);
+      for (const path of ['../escape', '/abs', 'a/./b', '.GIT/config', 'a//b']) {
+        expect(
+          await client.request('build.sync', { repo: 'app-1', files: [file(path, 'x')], done: true }),
+        ).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      }
+      client.socket.send(blob('unasked'));
+      expect(await client.closed).toBe(4400);
 
-    const { client: again } = await buildClient(port);
-    await again.request('build.sync', { repo: 'app-1', files: [file('a', 'right')], done: true });
-    again.socket.send(Buffer.concat([Buffer.from(sha('right'), 'hex'), Buffer.from('wrong')]));
-    expect(await again.closed).toBe(4400);
-  });
+      const { client: again } = await buildClient(port);
+      await again.request('build.sync', { repo: 'app-1', files: [file('a', 'right')], done: true });
+      again.socket.send(Buffer.concat([Buffer.from(sha('right'), 'hex'), Buffer.from('wrong')]));
+      expect(await again.closed).toBe(4400);
+    },
+  );
 
   test.skipIf(!fakeTailscale)(
     'stops the build when the client is revoked and frees the claim once the process is gone',

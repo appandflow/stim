@@ -529,6 +529,9 @@ there, refuses unless the fingerprint there equals this one, and brings the
 again before it stores the app under the post-mutation key and installs it.
 Any failure prints \`offload failed: <reason> -> building here\` and
 compiles here. Offloading holds no local build slot; that fallback takes one.
+An offloaded app lands only in this Mac's build cache, not in a remote cache
+provider. A project whose xcodebuild changes its own fingerprinted inputs
+cannot offload: the fingerprint check fails and it builds here.
 
 On the build machine, stim-server keeps each client's checkouts, dependencies,
 DerivedData and compilation cache under \`offload.workerRoot\` (absolute;

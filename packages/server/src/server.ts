@@ -1393,7 +1393,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function handleBinary(frame: Buffer): void {
       if (socket.readyState !== socket.OPEN) return;
-      if (!device || !buildSession || !buildAllowed(device)) {
+      if (!device || !buildSession) {
         return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
       }
       const refused = buildSession.blob(frame);

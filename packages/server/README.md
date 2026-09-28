@@ -173,13 +173,13 @@ closes its connections, which cancels its builds.
   runtimes with an iPhone simulator to build for), `capacity` (`running` and
   `max` offloaded builds, `diskFreeBytes` of the worker root's volume and
   `minDiskFreeBytes`) and `warm` (`checkout`, `dependencies` when the last
-  install used that lockfile, and `build` when DerivedData exists) for that
+  install used that lockfile, and `build` once a build ran there) for that
   repository. The toolchain is read at most once a minute.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next
   `build.sync` starts a new manifest. A path is relative, with no `.`, `..`,
-  empty or `.git` component. The result's `missing` lists the digests of the
+  empty or `.git` component (in any case). The result's `missing` lists the digests of the
   page this Mac lacks. The client then sends each as binary frames: 32 bytes of
   the sha256, then the next bytes of that blob, one blob after another. A frame
   for a blob that was not asked for, one that overruns its size, or bytes that

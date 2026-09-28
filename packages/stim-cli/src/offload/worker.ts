@@ -8,6 +8,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -36,6 +37,7 @@ export interface ManifestEntry {
 
 /** What stim-server hands this process on stdin; it has already checked every path and blob. */
 export interface WorkerJob {
+  job: string;
   area: string;
   blobs: string;
   manifest: ManifestEntry[];
@@ -97,6 +99,20 @@ function relayWriter(file: string): NdjsonWriter {
 
 function blobPath(blobs: string, sha256: string): string {
   return join(blobs, sha256.slice(0, 2), sha256);
+}
+
+/** Whether every directory above `path` inside `root` is a real directory, so removing it cannot leave `root`. */
+function realParents(root: string, path: string): boolean {
+  let current = root;
+  for (const part of path.split('/').slice(0, -1)) {
+    current = join(current, part);
+    try {
+      if (!lstatSync(current).isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Makes every directory above `path` inside `root` a real directory, replacing a file or symlink in the way. */
@@ -182,7 +198,7 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     .filter(Boolean);
   let removed = 0;
   for (const path of new Set([...untracked, ...Object.keys(previous)])) {
-    if (wanted.has(path)) continue;
+    if (wanted.has(path) || !realParents(src, path)) continue;
     try {
       rmSync(join(src, path), { force: true });
       removed += 1;
@@ -289,9 +305,14 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   const failed = (code: string, message: string): WorkerResult => ({ ok: false, code, message, timings });
   const src = join(job.area, 'src');
   const root = join(src, job.project);
+
   const log = relayWriter(join(job.area, 'build.ndjson'));
 
   const mirrored = await time('syncMs', () => materialize(job, src));
+  const realSrc = realpathSync(src);
+  const realRoot = realpathSync(root);
+  if (realRoot !== realSrc && !realRoot.startsWith(`${realSrc}/`))
+    return failed('bad-project', `${job.project} leaves the checkout.`);
   note('sync', `${job.manifest.length} files, ${mirrored.written} written, ${mirrored.removed} removed`);
   try {
     await time('depsMs', () => ensureDependencies(job, src));
@@ -359,7 +380,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   );
   if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
 
-  const out = join(job.area, 'out');
+  const out = join(job.area, 'out', job.job);
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   const archive = join(out, 'app.tgz');

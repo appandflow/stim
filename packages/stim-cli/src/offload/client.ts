@@ -235,7 +235,7 @@ class BuildConnection {
 
   close(): void {
     this.socket.removeAllListeners('close');
-    this.socket.close();
+    this.socket.terminate();
   }
 }
 
@@ -333,6 +333,7 @@ export type OffloadOutcome =
 
 export interface OffloadChoice {
   machine: string;
+  local: IosToolchain;
   connection: BuildConnection;
   offerMs: number;
   identity: RepoIdentity;
@@ -395,7 +396,13 @@ export async function chooseBuildMachine({
   if (chosen === null) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
   for (const reason of reasons) note(reason);
   const pick = asked[chosen] as { credential: BuildMachineCredential; connection: BuildConnection };
-  return { machine: pick.credential.machine, connection: pick.connection, offerMs: Date.now() - started, identity };
+  return {
+    machine: pick.credential.machine,
+    local,
+    connection: pick.connection,
+    offerMs: Date.now() - started,
+    identity,
+  };
 }
 
 /**
@@ -441,7 +448,7 @@ export async function offloadIosBuild({
       let bytes = 0;
       while (index < manifest.length && (page.length === 0 || bytes < PAGE_BYTES)) {
         const file = manifest[index++]!;
-        bytes += JSON.stringify(file).length + 1;
+        bytes += Buffer.byteLength(JSON.stringify(file)) + 1;
         page.push(file);
       }
       const done = index >= manifest.length;
@@ -496,7 +503,7 @@ export async function offloadIosBuild({
       packageName: packageName(join(identity.repoRoot, identity.project)),
       isExpo,
       optimizations: isJsonObject(optimizations) ? optimizations : null,
-      stimBuild: iosToolchain().stimBuild,
+      stimBuild: choice.local.stimBuild,
     });
     const refused = replyError(reply);
     if (refused || !('result' in reply)) return fail(`start: ${refused ?? 'no reply'}`);
@@ -531,8 +538,13 @@ export async function offloadIosBuild({
         return;
       }
       const data = frame.subarray(DIGEST_BYTES);
+      try {
+        writeSync(fd, data);
+      } catch {
+        badFrame = true;
+        return;
+      }
       hash.update(data);
-      writeSync(fd, data);
       received += data.length;
     });
     const fetched = await connection.request('build.artifact', { job }, 15 * 60_000);
@@ -542,7 +554,8 @@ export async function offloadIosBuild({
     if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
     const digest = hash.digest('hex');
     const declared = fetched.result as { size?: unknown; sha256?: unknown };
-    if (badFrame || digest !== artifact.sha256 || declared.sha256 !== digest || declared.size !== received) {
+    if (badFrame) return fail('fetch: an artifact frame had another digest or could not be written here');
+    if (digest !== artifact.sha256 || declared.sha256 !== digest || declared.size !== received) {
       return fail(
         `fetch: the artifact's sha256 ${digest.slice(0, 12)} does not match ${String(artifact.sha256).slice(0, 12)}`,
       );
