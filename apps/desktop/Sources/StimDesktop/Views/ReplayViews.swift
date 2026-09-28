@@ -54,7 +54,7 @@ final class ReplayScreenView: NSView {
     queue.async { [decoding] in
       guard let decoder = decoding.decoder else { return }
       if packet.keyframe { decoding.configured = decoder.configure(packet.accessUnit) }
-      if decoding.configured { decoder.decode(packet.accessUnit) }
+      if decoding.configured { decoding.configured = decoder.decode(packet.accessUnit) }
     }
     let size = CGSize(width: packet.width, height: packet.height)
     if size != self.size {
@@ -223,6 +223,7 @@ struct ReplayTrack: View {
   private static let markerReach: CGFloat = 6
   private static let dragThreshold: CGFloat = 3
   private static let tooltipWidth: CGFloat = 280
+  private static let accessibilityStepMs = 5000.0
   @State private var dragging: CGFloat?
   @State private var hover = ReplayHover()
   @State private var width: CGFloat = 0
@@ -285,6 +286,24 @@ struct ReplayTrack: View {
             seek(timeline.time(at: fraction(x)), 0)
           }
         })
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Replay timeline")
+    .accessibilityValue(accessibilityValue)
+    .accessibilityAdjustableAction { direction in
+      let from = isLive ? timeline.end : shownAt ?? timeline.end
+      switch direction {
+      case .increment: seek(min(timeline.end, from + Self.accessibilityStepMs), 0)
+      case .decrement: seek(max(timeline.start, from - Self.accessibilityStepMs), 0)
+      @unknown default: break
+      }
+    }
+  }
+
+  private var accessibilityValue: String {
+    guard !isLive, let shownAt else { return "Live" }
+    let time = Date(timeIntervalSince1970: shownAt / 1000).formatted(date: .omitted, time: .standard)
+    let recent = markers.last { $0.at <= shownAt && shownAt - $0.at <= Self.accessibilityStepMs }
+    return recent.map { "\(time), \($0.title): \($0.label)" } ?? time
   }
 
   private func fraction(_ x: CGFloat) -> Double { x / max(width, 1) }
@@ -383,6 +402,7 @@ final class ReplayTooltipView: NSView {
   private let bubble = CALayer()
   private let label = CATextLayer()
   private let font = TextVariant.caption.nsFont()
+  private var lastText: (text: String, width: CGFloat, color: NSColor, string: NSAttributedString)?
 
   init(hover: ReplayHover) {
     self.hover = hover
@@ -436,7 +456,14 @@ final class ReplayTooltipView: NSView {
       color = NSColor(cgColor: NSColor(Palette.text).cgColor) ?? .labelColor
     }
     let inner = max(0, maxWidth - 2 * Space.md)
-    let string = truncated(text(x, dragging == nil ? hover.marker : nil), width: inner, color: color)
+    let raw = text(x, dragging == nil ? hover.marker : nil)
+    let string: NSAttributedString
+    if let lastText, lastText.text == raw, lastText.width == inner, lastText.color == color {
+      string = lastText.string
+    } else {
+      string = truncated(raw, width: inner, color: color)
+      lastText = (raw, inner, color, string)
+    }
     let fitted = measure(string, width: inner)
     let size = CGSize(width: ceil(min(fitted.width, inner)), height: ceil(fitted.height))
     let width = size.width + 2 * Space.md
