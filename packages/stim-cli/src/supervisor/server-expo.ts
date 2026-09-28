@@ -156,7 +156,7 @@ export function recordFromLine(line: unknown, { stream = 'stdout' }: { stream?: 
       const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
       if (
         record.src === 'metro' &&
-        ['bundle_response_started', 'bundle_response_finished', 'bundle_response_failed'].includes(record.event) &&
+        /^bundle_(response|prefetch)_(started|progress|finished|failed)$/.test(record.event) &&
         ['ios', 'android'].includes(record.platform) &&
         typeof record.requestId === 'string' &&
         Number.isFinite(record.ts)

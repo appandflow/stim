@@ -9,6 +9,7 @@ import {
   WORKSPACE_PHASES,
   MACHINE_OWNER_KINDS,
   MEMORY_SOURCES,
+  NATIVE_BUILD_STEPS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -691,6 +692,12 @@ test('the facts topic documents every build result and the history length status
   assert(body);
   for (const result of BUILD_RESULTS) expect(body).toContain(`"${result}"`);
   expect(body).toContain(`last ${BUILD_HISTORY_LIMIT} runs`);
+});
+
+test('the facts topic documents every native build step a running build can report', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const step of NATIVE_BUILD_STEPS) expect(body).toMatch(new RegExp(`[\\s,]${step}[\\s,;]`));
 });
 
 test('the facts topic documents every build phase and state status can report', () => {

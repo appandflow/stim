@@ -85,6 +85,7 @@ interface IosArtifactRequest {
     estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs'>;
     step: (phase: BuildPhase) => void;
+    miss: (reason: BuildMissReason) => void;
   };
 }
 
@@ -173,7 +174,7 @@ export async function acquireIosArtifact(
   }: IosArtifactRequest,
   d: IosArtifactDeps,
 ): Promise<IosArtifactResult> {
-  const { phase, note, logWriter, estimates, stats, step } = progress;
+  const { phase, note, logWriter, estimates, stats, step, miss } = progress;
   const physical = device !== null;
   const keyOptions = {
     scheme: buildScheme,
@@ -562,6 +563,7 @@ export async function acquireIosArtifact(
       }
     }
     buildFailure = { ...buildFailure, missReason };
+    miss(missReason);
     phase('cache', `miss: ${missReason.summary}`);
     if (missReason.kind === 'no-baseline') {
       const untracked = untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root }));

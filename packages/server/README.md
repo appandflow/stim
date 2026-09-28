@@ -134,7 +134,19 @@ Events are `{ "event", "subscription", ... }`.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it. All subscribers share
   one `stim status --watch --json` child, which stops with the last
-  subscriber.
+  subscriber. While any status subscription is open, the server keeps a CPU
+  and memory history from each payload's `machine.owners`, and every `status`
+  event carries it beside the payload as `usage`, once it holds a reading:
+  `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
+  minutes in 15-second slots, the cadence at which `status --watch` rereads
+  machine usage, oldest first, at most 40 points: point `i` of `n`
+  is at `endAt - (n - 1 - i) * intervalMs`, and a slot no payload fell in is
+  `null`. Each `environments` entry is `{ "workspace", "cpuPercent",
+"memoryMb" }` and sums every machine owner of that environment path; each
+  `devices` entry is `{ "kind", "id", "workspace", "slot"?, "cpuPercent",
+"memoryMb" }` for a simulator (`id` its UDID) or emulator (`id` its AVD name).
+  `cpuPercent` is ps %CPU, where 100 is one core. The history lives in the
+  server's memory only.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
   Both take the Stim Desktop log viewer's filters: `workspace` (required),

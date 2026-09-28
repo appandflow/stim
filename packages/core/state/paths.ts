@@ -30,6 +30,10 @@ export function workspaceGradleBuild(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'gradle-build');
 }
 
+export function workspaceBuildDetailFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'build-detail.json');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }
@@ -72,6 +76,14 @@ export function createdDevicesFile(): string {
 
 export function gitMergeCacheDir(): string {
   return join(configDir(), 'git-merge');
+}
+
+export function pullRequestCacheDir(): string {
+  return join(configDir(), 'pull-requests');
+}
+
+export function diskUsageCacheDir(): string {
+  return join(configDir(), 'disk-usage');
 }
 
 export function createdDevicesLock(): string {

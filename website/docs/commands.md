@@ -737,6 +737,20 @@ prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
 known cause prints after `not running`, and `metro.lastStop` carries it; see
 [why the dev server stopped](./dev-server-and-logs.md#why-the-dev-server-stopped).
 
+In `--json`, `metro.bundle` reports the dev server's bundle requests, from the
+metro log: `{ bundling, platform?, startedAt?, percent?, last? }`. `bundling`
+is `true` while an app's request, or Stim's own prefetch before a launch, is in
+flight; `percent` is present when Metro reports progress for it. `last` is the
+newest finished request: `{ platform, status, durationMs, finishedAt }`.
+
+Once `stim status --watch` has measured them, each environment carries
+`disk: { worktreeBytes, nodeModulesBytes, buildBytes, measuredAt }`, and each
+owned simulator and emulator carries `disk: { bytes, measuredAt }` for its data
+folder. `buildBytes` is Stim's own folder for the workspace, with Xcode derived
+data, Gradle outputs and logs. The watcher runs `du` off its refresh path, at
+most every 5 minutes per folder while the environment is live and every hour
+otherwise, and one-shot `stim status` reads its cached sizes.
+
 In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and
 `stim web` Chrome, stim-server, and a shared bucket for machine-wide processes
@@ -787,8 +801,20 @@ replaces the record), and `unknown` when the claim cannot be read. `outcome` is
 reaches install without them; before that it follows the project's most recent
 run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
 successful runs with that outcome, and `basis` counts them. Both are `null`
-until the project has such a run. Stim does not report a completion
-percentage.
+until the project has such a run.
+
+Once the run knows why its cache lookup missed, `build` carries `missReason`,
+in the shape of `lastBuilds.<platform>.missReason` below. Once the native
+build tool prints a line Stim reads, `build` also carries `detail` until the run
+ends:
+`{ step, unit, done, total, line, updatedAt }`. `step` is the tool's step:
+`configure`, `compile`, `link`, `resources`, `script`, `dex`, `package` or
+`sign`. For xcodebuild, `unit` is `targets`, `done` counts the targets that
+started work and `total` the targets in its dependency graph. For Gradle,
+`unit` is `tasks`, `done` counts the tasks it reported and `total` is `null`.
+`line` is the latest compile, link or task line with paths shortened to file
+names. These are counts, not a completion percentage: one target can take ten
+minutes and a cached one no time at all.
 
 Each workspace also shows its last build per platform:
 
