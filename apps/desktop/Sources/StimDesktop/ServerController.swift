@@ -26,7 +26,17 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
 
-  var port: Int { StimServerCLI.defaultPort }
+  static let devicesInterval: Duration = .seconds(10)
+
+  var port: Int {
+    let port = UserDefaults.standard.integer(forKey: AppPreferences.Key.stimServerPort)
+    return (1...65535).contains(port) ? port : StimServerCLI.defaultPort
+  }
+
+  /// Build clients, and Macs waiting for approval to build here, newest first.
+  var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
+
+  var phones: [PairedDevice] { devices.filter { !$0.isBuildClient } }
 
   var isRunning: Bool {
     if case .running = state { return true }
@@ -41,6 +51,12 @@ final class ServerController: ObservableObject {
   func configure(environment: Task<[String: String], Never>) {
     self.environment = environment
     if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
+    Task {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: Self.devicesInterval)
+        if isRunning { reloadDevices() }
+      }
+    }
   }
 
   func cli() async -> StimServerCLI {
@@ -174,12 +190,26 @@ final class ServerController: ObservableObject {
     control ? ["read", "control"] : ["read"]
   }
 
+  /// Approves a Mac's pending request to build here.
+  func allowBuild(_ device: PairedDevice) {
+    Task {
+      let cli = await cli()
+      switch await Task.detached(operation: { Result { try cli.grantBuild(device.id) } }).value {
+      case .success: changeError = nil
+      case .failure(let error): changeError = error.localizedDescription
+      }
+      devicesEpoch += 1
+      reloadDevices()
+    }
+  }
+
   func revoke(_ device: PairedDevice) {
     Task {
       let cli = await cli()
       switch await Task.detached(operation: { Result { try cli.revoke(device.id) } }).value {
       case .success:
         changeError = nil
+        devicesEpoch += 1
         reloadDevices()
       case .failure(let error): changeError = error.localizedDescription
       }

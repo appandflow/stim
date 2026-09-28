@@ -77,6 +77,14 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(DoctorReport.self, from: run(["doctor", "--json"], cwd: cwd))
   }
 
+  /// The `offload.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
+  /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
+  /// platform keeps `--fix` from cleaning Android build state in that checkout.
+  public func buildMachines(cwd: String, ask: Bool) throws -> [BuildMachineStatus]? {
+    let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
+    return try JSONDecoder().decode(DoctorReport.self, from: run(args, cwd: cwd)).buildMachines
+  }
+
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
   public func settings(cwd: String) throws -> SettingsPayload {
     try JSONDecoder().decode(SettingsPayload.self, from: run(["settings", "--json"], cwd: cwd))
