@@ -305,7 +305,10 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   private enum CaptureError: Error { case refused }
 }
 
+/// stim-server records only the simulators and emulators Stim owns, so a physical iPhone runs no recording encoder.
 extension PhoneSource: Source {
+  func recordKeyframe() {}
+
   func input(_ command: Command) {
     Output.notice(["inputError": "Stim shows a physical iPhone's screen but does not send it input."])
   }
