@@ -254,7 +254,6 @@ public struct BuildLine: Equatable, Sendable {
     self.spoken = "\(platformName(platform)) \(spoken)"
   }
 
-  /// "iOS 0:33 hit", "Android next ~0:40 hit" for accessibility and help.
   /// "iOS last build 0:33, hit" or "Android next build about 0:40, hit", for accessibility and help.
   public var spoken: String
 
@@ -448,7 +447,7 @@ public struct GitChip: Equatable, Sendable {
       checks.pending > 0 ? "\(checks.pending) pending" : nil,
       checks.passing > 0 ? "\(checks.passing) passing" : nil,
     ].compactMap { $0 }
-    return parts.isEmpty ? "none" : parts.joined(separator: ", ")
+    return parts.isEmpty ? "No checks" : parts.joined(separator: ", ")
   }
 }
 
