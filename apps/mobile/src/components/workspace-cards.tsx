@@ -55,7 +55,6 @@ export function chipColor(tone: ChipTone, colors: Theme['colors']): string {
   return tone === 'brand' ? colors.primary : colors[tone];
 }
 
-/** The stage, then the git chip after a divider; the chip wraps onto its own centered line when both do not fit. */
 export function StageLine({
   stage,
   git,
@@ -303,7 +302,6 @@ export function CardRow({ children }: { children: ReactNode }) {
   return <View style={styles.row}>{children}</View>;
 }
 
-/** Segment widths follow the reference run's phase times, with a floor so a short phase keeps a readable label. */
 function segmentWeights(steps: PhaseStep[]): number[] {
   const total = steps.reduce((sum, step) => sum + (step.expectedMs ?? 0), 0);
   if (total <= 0) return steps.map(() => 1);
@@ -370,7 +368,7 @@ export function BuildInProgressCard({
   const steps = phaseSteps(build, env.builds?.[build.platform] ?? [], now);
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase, counts } = currentPhaseLabel(build);
-  const output = useBuildOutput(env.path, build.slot, !build.detail?.line, 1);
+  const output = useBuildOutput(env.path, build.slot, build.detail?.line ? null : build.startedAt, 1);
   const line = build.detail?.line ?? output.at(-1)?.msg ?? null;
   const other = otherPlatformLine(env, build.platform, now);
   const miss = build.missReason?.summary;

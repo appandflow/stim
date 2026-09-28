@@ -164,8 +164,10 @@ export function createMachineStore({
     setUsage(id: string, usage: MachineUsage) {
       store.setState((state) => ({ usage: { ...state.usage, [id]: usage } }));
     },
-    setHistory(id: string, history: StatusUsage) {
-      store.setState((state) => ({ history: { ...state.history, [id]: history } }));
+    setHistory(id: string, history: StatusUsage | undefined) {
+      store.setState((state) => ({
+        history: history ? { ...state.history, [id]: history } : without(state.history, id),
+      }));
     },
     /** Writes every live status now, as the app leaves the foreground. */
     flushAll() {

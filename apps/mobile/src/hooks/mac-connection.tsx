@@ -125,7 +125,7 @@ function MacLink({ mac }: { mac: PairedMac }) {
     return connection.subscribe('status.subscribe', {}, (event) => {
       if (event.event !== 'status') return;
       machines.receiveStatus(mac.id, event.payload);
-      if (event.usage) machines.setHistory(mac.id, event.usage);
+      machines.setHistory(mac.id, event.usage);
     });
   }, [connection, mac.id]);
 

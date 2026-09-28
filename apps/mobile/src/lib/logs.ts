@@ -430,7 +430,6 @@ export interface AgentAction {
   record: LogRecord;
 }
 
-/** The device's own agent actions, newest first, at most `max`. */
 export function agentActions(
   existing: AgentAction[],
   incoming: LogRecord[],
@@ -454,7 +453,6 @@ export interface AgentFilterOption {
 
 const commandOf = (record: LogRecord) => (typeof record.command === 'string' ? record.command : null);
 
-/** The Agent sheet's filters: all, failed when any failed, then the two most used commands. */
 export function agentFilterOptions(actions: AgentAction[]): AgentFilterOption[] {
   const failed = actions.filter((a) => a.record.level === 'error').length;
   const counts = new Map<string, number>();

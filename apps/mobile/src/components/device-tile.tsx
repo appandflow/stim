@@ -13,6 +13,7 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { usageLabel } from '@/components/workspace-cards';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { formatBytes } from '@/lib/home';
 import { tildeHome } from '@/lib/paths';
@@ -168,7 +169,7 @@ function UsageStats({ usage }: { usage: Usage }) {
     usage.diskBytes === null ? null : { kind: 'disk' as const, value: formatBytes(usage.diskBytes) },
   ].filter((part) => part !== null);
   return (
-    <View style={styles.usage}>
+    <View style={styles.usage} accessible accessibilityLabel={usageLabel(usage)}>
       {parts.map((part) => (
         <View key={part.kind} style={styles.usageItem}>
           <Icon name={STAT_ICON[part.kind]} size={11} color={theme.colors.secondary} />

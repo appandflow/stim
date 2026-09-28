@@ -21,7 +21,6 @@ import type { DevicePlatform } from '@/protocol/types';
 
 const MAX_ACTIONS = 200;
 
-/** One device's agent: who drives it and the actions its agent took, newest first. */
 export function AgentActions({
   path,
   platform,
@@ -77,7 +76,7 @@ export function AgentActions({
             const selected = JSON.stringify(option.filter) === JSON.stringify(filter);
             return (
               <Touch
-                key={option.label}
+                key={JSON.stringify(option.filter)}
                 onPress={() => setFilter(option.filter)}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}

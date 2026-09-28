@@ -17,7 +17,6 @@ function androidSvg(color: string, background: string): string {
 
 const svgUri = (svg: string) => `data:image/svg+xml;base64,${btoa(svg)}`;
 
-/** The Apple logo for iOS, an SF Symbol on iOS, and the Android robot's head for Android. */
 export function PlatformGlyph({
   platform,
   size,

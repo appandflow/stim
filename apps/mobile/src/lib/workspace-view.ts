@@ -38,15 +38,10 @@ function latestBuild(env: EnvironmentState): LastBuild | null {
   );
 }
 
-/** Booted devices whose app Stim saw exit. */
 export function closedApps(devices: DeviceRef[]): DeviceRef[] {
   return devices.filter((d) => d.running && d.app?.state === 'stopped');
 }
 
-/**
- * The stage line under the workspace's title. A running build wins, then a warm, then a failed latest build, then
- * whether anything runs. A running workspace with log errors or a closed app is red.
- */
 export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now: number): WorkspaceStage {
   const build = runningBuild(env);
   if (build) {
@@ -97,7 +92,6 @@ export function formatCpu(percent: number): string {
   return `${Math.round(percent)}%`;
 }
 
-/** Binary units labeled GB, like Activity Monitor, and MB below a gigabyte. */
 export function formatMemoryMb(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }
@@ -111,7 +105,6 @@ export interface Usage {
 const ownersOf = (machine: MachineUsageState | null | undefined, path: string) =>
   machine?.owners.filter((owner) => owner.workspace === path) ?? [];
 
-/** The workspace's CPU and memory from the status `machine` owners, and its disk when status measures it. */
 export function workspaceUsage(env: EnvironmentState, machine: MachineUsageState | null | undefined): Usage {
   const owners = ownersOf(machine, env.path);
   return {
@@ -125,14 +118,12 @@ export function workspaceUsage(env: EnvironmentState, machine: MachineUsageState
   };
 }
 
-/** The worktree, node_modules included, plus Stim's own build folder for the workspace. */
 export function workspaceDiskBytes(env: EnvironmentState): number | null {
   const disk = env.disk;
   if (!disk || (disk.worktreeBytes === null && disk.buildBytes === null)) return null;
   return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0);
 }
 
-/** The Resources sheet's disk sentence, or null before a status watcher measured the workspace. */
 export function diskBreakdown(env: EnvironmentState): string | null {
   const disk = env.disk;
   if (!disk) return null;
@@ -206,7 +197,6 @@ function ownerLabel(owner: MachineOwner, devices: DeviceRef[]): string {
   }
 }
 
-/** The Resources sheet's process table: devices, Chrome, Metro, then a running build. */
 export function processRows(
   env: EnvironmentState,
   devices: DeviceRef[],
@@ -256,7 +246,6 @@ export interface BuildLine {
   tone: 'default' | 'error' | 'secondary';
 }
 
-/** The Build card's row: the last run's time and cache outcome, or "Failed"; else the next build's prediction. */
 export function buildLine(platform: Platform, last: LastBuild | undefined, plan: PlanState | undefined): BuildLine {
   if (last) {
     if (last.status === 'failed') return { platform, main: 'Failed', sub: null, tone: 'error' };
@@ -278,7 +267,6 @@ export function buildLine(platform: Platform, last: LastBuild | undefined, plan:
   return { platform, main: 'No build', sub: null, tone: 'secondary' };
 }
 
-/** The platforms a workspace builds for: one it has built, runs a device of, or is building. */
 export function usedPlatforms(env: EnvironmentState): Platform[] {
   const build = runningBuild(env);
   return (['ios', 'android'] as const).filter(
@@ -318,18 +306,11 @@ export const phaseName = (phase: BuildPhase) => PHASE_NAMES[phase];
 export interface PhaseStep {
   phase: BuildPhase;
   state: 'done' | 'current' | 'pending';
-  /** How long a finished phase took, or the current phase has run. */
   elapsedMs: number | null;
-  /** What the reference run spent in the phase. */
   expectedMs: number | null;
-  /** How far through the current phase, 0 to 1; null without an estimate. */
   fraction: number | null;
 }
 
-/**
- * The newest succeeded run on the build's platform with the same cache outcome, whose phase times stand in for
- * the running build's shape.
- */
 export function referenceRun(build: BuildReport, history: readonly BuildHistoryEntry[]): BuildHistoryEntry | null {
   const hit = build.outcome === 'hit';
   return (
@@ -342,11 +323,6 @@ export function referenceRun(build: BuildReport, history: readonly BuildHistoryE
   );
 }
 
-/**
- * A running build's phases in order: those the reference run went through plus the one this build is in, split
- * into done, current and pending. The current phase's progress is the build tool's count when it reports a total,
- * else its time against the estimate.
- */
 export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEntry[], now: number): PhaseStep[] {
   const reference = referenceRun(build, history)?.phases ?? {};
   const currentIndex = PHASE_ORDER.indexOf(build.phase);
@@ -392,10 +368,6 @@ const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
   launch: 'install',
 };
 
-/**
- * The phase bar's segments: preparing, the cache lookup and waiting for a slot are one Prepare segment, and
- * launching joins Install, so a phone-width bar keeps a readable label on each.
- */
 export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   const groups: PhaseStep[] = [];
   for (const step of steps) {
@@ -433,7 +405,6 @@ export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   return groups;
 }
 
-/** The running phase, or the build tool's step inside it, with the tool's counts when it reports them. */
 export function currentPhaseLabel(build: BuildReport): { phase: string; counts: string | null } {
   const detail = build.detail;
   const phase = detail?.step ? STEP_NAMES[detail.step] : phaseName(build.phase);
@@ -447,7 +418,6 @@ export function currentPhaseLabel(build: BuildReport): { phase: string; counts: 
   };
 }
 
-/** The line about the platform that is not building, such as "Android \u00B7 last build 1:02, 2h ago". */
 export function otherPlatformLine(env: EnvironmentState, building: Platform, now: number): string | null {
   const other: Platform = building === 'ios' ? 'android' : 'ios';
   if (!usedPlatforms(env).includes(other)) return null;
@@ -467,10 +437,6 @@ export interface BundleLine {
   tone: 'default' | 'error' | 'tertiary';
 }
 
-/**
- * The Logs card's bundling line. `reportsBundles` says the server sends `metro.bundle` at all: then a running Metro
- * without it has not bundled yet, and otherwise the line is left out.
- */
 export function bundleLine(env: EnvironmentState, now: number, reportsBundles: boolean): BundleLine | null {
   const metro = env.metro;
   if (!metro) return null;
@@ -502,10 +468,6 @@ export interface AgentRow {
   text: string;
 }
 
-/**
- * A device's agent row: the driving tool with its latest action and how long ago, or "No agent" with how long the
- * device has been idle.
- */
 export function agentRow(
   activity: DeviceActivity | undefined,
   last: { ts: number; msg: string } | null,
@@ -522,7 +484,6 @@ export function agentRow(
   };
 }
 
-/** Sparkline heights, oldest first, each a fraction of the series' largest value; null where a slot has no reading. */
 export function sparkline(values: readonly (number | null)[]): (number | null)[] {
   const top = Math.max(0, ...values.map((v) => v ?? 0));
   return values.map((v) => (v === null ? null : top > 0 ? Math.max(0, v) / top : 0));
@@ -533,11 +494,9 @@ export interface WorkspaceSeries {
   memoryMb: (number | null)[];
   minutes: number;
   peakCpuPercent: number | null;
-  /** The newest memory reading less the oldest. */
   memoryChangeMb: number | null;
 }
 
-/** The workspace's CPU and memory history from the server's status usage, or null when it has none. */
 export function workspaceSeries(usage: StatusUsage | null | undefined, path: string): WorkspaceSeries | null {
   const series = usage?.environments.find((entry) => entry.workspace === path);
   if (!usage || !series) return null;
@@ -553,7 +512,6 @@ export function workspaceSeries(usage: StatusUsage | null | undefined, path: str
   };
 }
 
-/** How long ago, in seconds under a minute and in `shortDuration` form after. */
 export function sinceLabel(ms: number): string {
   const clamped = Math.max(0, ms);
   return clamped < 60_000 ? `${Math.floor(clamped / 1000)}s` : shortDuration(clamped);
@@ -563,7 +521,6 @@ export type ChipTone = 'default' | 'secondary' | 'tertiary' | 'success' | 'warni
 
 export interface GitChip {
   parts: { text: string; tone: ChipTone }[];
-  /** Nothing to commit, push or pull. */
   clean: boolean;
   pr: { text: string; tone: ChipTone; checks: ChipTone | null } | null;
   label: string;
@@ -576,7 +533,6 @@ const PR_TONE: Record<PullRequestFacts['state'], ChipTone> = {
   closed: 'error',
 };
 
-/** The worst of a pull request's checks: failing, then pending, then passing; null without checks. */
 export function checksTone(checks: PullRequestFacts['checks']): ChipTone | null {
   if (!checks) return null;
   if (checks.failing > 0) return 'error';
@@ -584,7 +540,6 @@ export function checksTone(checks: PullRequestFacts['checks']): ChipTone | null 
   return checks.passing > 0 ? 'success' : null;
 }
 
-/** The stage line's git chip, or null for a workspace status reports no git state for. */
 export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | null {
   const git = worktree?.git;
   if (!git) return null;
@@ -608,7 +563,6 @@ export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | n
   return { parts, clean, pr, label };
 }
 
-/** A pull request's checks as a sentence, such as "12 passing, 1 failing". */
 export function checksSummary(checks: PullRequestFacts['checks']): string | null {
   if (!checks) return null;
   const parts = [

@@ -18,7 +18,6 @@ import {
 import { devicesOf, orderDevices } from '@/lib/workspaces';
 import type { MachineUsage } from '@/protocol/types';
 
-/** The lowest free space of the volumes that hold Stim's workspaces, or of every volume when none says so. */
 function workspaceVolumeFree(usage: MachineUsage | null): number | null {
   const volumes = usage?.volumes ?? [];
   const holding = volumes.filter((volume) => volume.holds.includes('Workspaces'));
@@ -45,7 +44,10 @@ export function WorkspaceResources({ path }: { path: string }) {
   const rows = processRows(env, orderDevices(devicesOf(env)), status?.machine);
   const series = workspaceSeries(history, path);
   const free = workspaceVolumeFree(machineUsage);
-  const diskNote = [diskBreakdown(env), free === null ? null : `The Mac has ${formatBytes(free)} free.`]
+  const diskNote = [
+    diskBreakdown(env),
+    free === null ? null : `The Mac volume that holds workspaces has ${formatBytes(free)} free.`,
+  ]
     .filter(Boolean)
     .join(' ');
   return (

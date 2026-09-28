@@ -103,7 +103,7 @@ reload and stop a workspace:
   ("up 42m", red with the error count or a closed app), **Building** (the
   platform and when it started), **Build failed** (when the newest build of
   either platform failed), **Warming** (installing dependencies or copying
-  ignored files), **Ready**, or **Stopped** (when Metro stopped). After a thin
+  ignored files), **Ready**, or **Stopped** (nothing runs, with when Metro stopped when known). After a thin
   divider comes the git chip: commits ahead and behind, the count of changed
   files, **merged into** a branch, **no upstream**, or a check for a clean
   branch, and the pull request number colored by its state (open, draft,
@@ -151,7 +151,8 @@ reload and stop a workspace:
   logs** opens them on the Agent source and that slot. The **Build** sheet
   switches between iOS and Android. For the running build it shows the elapsed
   time against the estimate with the miss reason, a checklist of phases with
-  their times and estimates, and the live output tail from the build log.
+  the current phase's time and the estimates of those left (from the last
+  comparable run), and the live output tail of this build from the build log.
   Otherwise it shows the last build with when it ran, a failed build's compiler
   errors, why it missed the cache with the changed fingerprint sources, and its
   phase times. **Recent builds** lists the platform's last 10 runs from status

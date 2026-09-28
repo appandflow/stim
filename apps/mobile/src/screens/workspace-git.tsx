@@ -31,7 +31,6 @@ const REVIEW_NAME: Record<NonNullable<PullRequestFacts['reviewDecision']>, strin
   'review-required': 'Review required',
 };
 
-/** The workspace's branch: its upstream, commits ahead and behind, uncommitted files, and its pull request. */
 export function WorkspaceGit({ path }: { path: string }) {
   const { theme } = useUnistyles();
   const status = useStatus();
@@ -55,8 +54,8 @@ export function WorkspaceGit({ path }: { path: string }) {
       {git ? (
         <ListSection>
           <ListRow title="Upstream" value={git.upstream ?? 'None'} valueTone={git.upstream ? 'default' : 'tertiary'} />
-          <ListRow title="Ahead" value={git.ahead === null ? '—' : commits(git.ahead)} />
-          <ListRow title="Behind" value={git.behind === null ? '—' : commits(git.behind)} />
+          <ListRow title="Ahead" value={git.ahead === null ? '\u2014' : commits(git.ahead)} />
+          <ListRow title="Behind" value={git.behind === null ? '\u2014' : commits(git.behind)} />
           <ListRow title="Changed" value={files(git.changed)} valueTone={git.changed ? 'warning' : 'default'} />
           <ListRow title="Untracked" value={files(git.untracked)} valueTone={git.untracked ? 'warning' : 'default'} />
           {git.mergedInto ? <ListRow title="Merged into" value={git.mergedInto} valueTone="brand" /> : null}

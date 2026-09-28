@@ -4,7 +4,6 @@ import { useLogs, type LogsChange } from '@/hooks/mac-connection';
 import { agentActions, agentFeedFilter, appendRecords, type AgentAction } from '@/lib/logs';
 import type { LogFilter, LogRecord } from '@/protocol/types';
 
-/** A device's latest agent actions from `logs.subscribe`, newest first, at most `max`. */
 export function useAgentActions(workspace: string, slot: string, deviceId: string | null, max: number): AgentAction[] {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const filter = useMemo(() => (deviceId ? agentFeedFilter(workspace, slot) : null), [workspace, slot, deviceId]);
@@ -21,8 +20,9 @@ export function useAgentActions(workspace: string, slot: string, deviceId: strin
   return actions;
 }
 
-/** The last `max` build output lines of a slot while `enabled`, oldest first. */
-export function useBuildOutput(workspace: string, slot: string, enabled: boolean, max: number): LogRecord[] {
+export function useBuildOutput(workspace: string, slot: string, since: string | null, max: number): LogRecord[] {
+  const enabled = since !== null;
+  const from = since === null ? NaN : Date.parse(since);
   const [records, setRecords] = useState<LogRecord[]>([]);
   const filter = useMemo<LogFilter | null>(
     () => (enabled ? { workspace, sources: ['build'], slot, tail: max } : null),
@@ -36,5 +36,5 @@ export function useBuildOutput(workspace: string, slot: string, enabled: boolean
     [max],
   );
   useLogs(filter, onChange);
-  return enabled ? records : [];
+  return enabled ? records.filter((record) => !(record.ts < from)) : [];
 }

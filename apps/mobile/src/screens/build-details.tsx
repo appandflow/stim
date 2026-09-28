@@ -69,6 +69,10 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
   const canCheck = recheck !== null && !checking;
   const target = running && env ? devicesOf(env).find((d) => d.platform === platform && d.slot === running.slot) : null;
   const started = running ? Date.parse(running.startedAt) : NaN;
+  const lastRun = history.find(
+    (entry) =>
+      entry.startedAt === last?.startedAt && entry.result === 'succeeded' && Object.keys(entry.phases).length > 0,
+  );
   return (
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
       <View style={styles.titles}>
@@ -91,9 +95,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
       {running ? null : (
         <Section title="Last build">
           {last ? <LastBuildDetails last={last} now={now} root={path} /> : <Note>{`No ${name} build recorded.`}</Note>}
-          {last && history[0] && Object.keys(history[0].phases).length ? (
-            <PhaseList steps={finishedSteps(history[0])} />
-          ) : null}
+          {lastRun ? <PhaseList steps={finishedSteps(lastRun)} /> : null}
         </Section>
       )}
 
@@ -204,7 +206,7 @@ function PlatformSwitch({
 function RunningBuild({ build, path, history }: { build: BuildReport; path: string; history: BuildHistoryEntry[] }) {
   const now = useNow(1000);
   const { elapsed, estimate } = buildTiming(build, now);
-  const output = useBuildOutput(path, build.slot, true, OUTPUT_LINES).map((record) => record.msg);
+  const output = useBuildOutput(path, build.slot, build.startedAt, OUTPUT_LINES).map((record) => record.msg);
   const reported = build.detail?.line;
   const lines = reported && output.at(-1) !== reported ? [...output, reported].slice(-OUTPUT_LINES) : output;
   const miss = build.missReason?.summary;
