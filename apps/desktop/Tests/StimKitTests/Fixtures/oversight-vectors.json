@@ -9362,6 +9362,55 @@
           "warmStep": "refresh"
         },
         {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-ready/apps/mobile",
+          "live": false,
+          "phase": "ready",
+          "phaseSince": "2026-09-25T03:53:09.012Z",
+          "memoryMb": 0,
+          "memorySource": "footprint",
+          "warnings": [],
+          "issues": [],
+          "ios": null,
+          "android": null,
+          "metro": null,
+          "supervisor": null,
+          "logs": null,
+          "worktree": {
+            "path": "/Users/dev/Developer/stim/.worktrees/a4-ready",
+            "branch": "fix/1721-js-swap-asset-catalog",
+            "repository": "/Users/dev/Developer/stim",
+            "git": {
+              "changed": 0,
+              "untracked": 0,
+              "upstream": "origin/fix/1721-js-swap-asset-catalog",
+              "ahead": 0,
+              "behind": 0,
+              "mergedInto": null
+            },
+            "pullRequest": {
+              "number": 1733,
+              "url": "https://github.com/appandflow/stim/pull/1733",
+              "title": "fix(ios): recompile the React Native asset catalog in the Release JS swap",
+              "state": "open",
+              "checks": {
+                "passing": 16,
+                "failing": 0,
+                "pending": 0
+              },
+              "reviewDecision": "review-required",
+              "checkedAt": "2026-09-25T04:21:09.012Z"
+            }
+          },
+          "remoteDevices": [],
+          "build": null,
+          "disk": {
+            "worktreeBytes": 120000000,
+            "nodeModulesBytes": null,
+            "buildBytes": null,
+            "measuredAt": "2026-09-25T03:53:30.012Z"
+          }
+        },
+        {
           "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
           "live": false,
           "phase": "idle",
@@ -10164,6 +10213,7 @@
       "fix/1688-pair-crash",
       "chore/1699-signing",
       "feat/1702-logs-restyle",
+      "fix/1721-js-swap-asset-catalog",
       "feat/1650-web-tile",
       "feat/1686-web-agent-actions"
     ]

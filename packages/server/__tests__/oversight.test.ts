@@ -1,4 +1,4 @@
-import fixture from '../../../apps/mobile/mock-server/fixtures/status.json' with { type: 'json' };
+import captured from './fixtures/captured-status.json' with { type: 'json' };
 import {
   inQuietHours,
   OVERSIGHT_CATEGORIES,
@@ -651,7 +651,7 @@ describe('inQuietHours', () => {
 describe('the Swift port in Stim Desktop', () => {
   it('replays the same runs, recorded in its test fixtures', async () => {
     expect(vectors.length).toBeGreaterThan(20);
-    const status = fixture.payload as unknown as OversightStatus;
+    const status = captured as unknown as OversightStatus;
     const titles = { status, titles: status.environments.map((e) => oversightTitle(e, status)) };
     await expect(`${JSON.stringify({ oversee: vectors, quietHours, titles }, null, 2)}\n`).toMatchFileSnapshot(
       '../../../apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json',
