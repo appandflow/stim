@@ -8,7 +8,9 @@ import Testing
   let open = ServerLink.open(features: ["physical-ios", "physical-android"], capabilities: ["read", "control"])
 
   func phone(_ platform: String, connection: String = "connected", expiresIn: TimeInterval = 600) throws -> DeviceRef {
-    let expires = ISO8601DateFormatter().string(from: now.addingTimeInterval(expiresIn))
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let expires = formatter.string(from: now.addingTimeInterval(expiresIn))
     let json = """
       {"platform":"\(platform)","slot":"default","id":"R5","name":"Galaxy","model":null,"owned":false,"physical":true,
        "connection":"\(connection)","lease":{"holder":"/w","kind":"run","grantedAt":null,"expiresAt":"\(expires)"}}
