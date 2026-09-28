@@ -51,8 +51,8 @@ export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 
   return device.app?.state === 'stopped' ? 'closed' : null;
 }
 
-export function closedApps(devices: DeviceRef[]): DeviceRef[] {
-  return devices.filter((d) => d.running && d.app?.state === 'stopped');
+export function closedApps(env: EnvironmentState, devices: DeviceRef[]): DeviceRef[] {
+  return devices.filter((d) => appPresence(env, d) === 'closed');
 }
 
 export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now: number): WorkspaceStage {
@@ -87,7 +87,7 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
     const errors = env.logs?.errorsSinceMarker ?? 0;
     const problems = [
       errors > 0 ? (errors === 1 ? '1 error' : `${errors} errors`) : null,
-      ...closedApps(devices).map((d) => `${platformName(d.platform)} app closed`),
+      ...closedApps(env, devices).map((d) => `${platformName(d.platform)} app closed`),
     ].filter((p): p is string => p !== null);
     const up = ago(now, env.supervisor?.startedAt);
     return {
