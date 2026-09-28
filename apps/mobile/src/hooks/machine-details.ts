@@ -12,14 +12,14 @@ export type MachineDetailsState =
 const REFRESH_MS = 60_000;
 
 /**
- * The Mac's `machine.details`, asked when the connection opens and each minute while it stays open; the server
+ * The Mac's `machine.details`, asked when `active` turns on and each minute while it stays on; the server
  * shares one result per minute, so asking more often gets nothing newer. A server that predates it answers
  * `unknown-method`, and the screen hides what needs it. A failed refresh keeps the last result.
  */
-export function useMachineDetails(connection: StimConnection | null, open: boolean): MachineDetailsState {
+export function useMachineDetails(connection: StimConnection | null, active: boolean): MachineDetailsState {
   const [state, setState] = useState<MachineDetailsState>({ kind: 'loading' });
   useEffect(() => {
-    if (!connection || !open) return;
+    if (!connection || !active) return;
     let cancelled = false;
     const ask = () =>
       connection.request('machine.details', {}).then(
@@ -39,6 +39,6 @@ export function useMachineDetails(connection: StimConnection | null, open: boole
       cancelled = true;
       clearInterval(timer);
     };
-  }, [connection, open]);
+  }, [connection, active]);
   return state;
 }

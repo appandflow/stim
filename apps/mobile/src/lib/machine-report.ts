@@ -405,8 +405,10 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     (row) => row.total?.bytes ?? null,
     (row) => row.path,
   );
-  const rootModules = (root: string) =>
-    Math.min(...rows.filter((row) => row.root === root).map((row) => row.nodeModules ?? 0));
+  const rootModules = (root: string): number | null => {
+    const measured = rows.flatMap((row) => (row.root === root && row.nodeModules !== null ? [row.nodeModules] : []));
+    return measured.length ? Math.min(...measured) : null;
+  };
   const grouped = new Map<string, typeof rows>();
   for (const row of rows) grouped.set(row.repository, [...(grouped.get(row.repository) ?? []), row]);
   const repositories: RepositoryRow[] = [...grouped].map(([path, members]) => {
@@ -415,7 +417,12 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       if (!row.total) return [];
       const shared = seen.has(row.root);
       seen.add(row.root);
-      return [{ bytes: row.total.bytes - (shared ? rootModules(row.root) : 0), complete: row.total.complete }];
+      return [
+        {
+          bytes: row.total.bytes - (shared && row.nodeModules !== null ? (rootModules(row.root) ?? 0) : 0),
+          complete: row.total.complete,
+        },
+      ];
     });
     return {
       path,
@@ -571,13 +578,15 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       ),
     );
 
-  const modules = [...new Set(rows.map((row) => row.root))].map((root) => rootModules(root) || null);
+  const modules = [...new Set(rows.map((row) => row.root))].map((root) => rootModules(root));
   const stimOutputs = gc
     ? [
         ...allCaches.map((cache) => cache.bytes),
         ...(s.workspaceBuildOutputs ?? []).map((o) => o.bytes),
         ...(s.workspaceLogs ?? []).map((l) => l.bytes),
-        ...(s.recordings ?? []).filter((r) => !r.withWorkspace).map((r) => r.bytes),
+        ...(s.recordings ?? [])
+          .filter((r) => !(s.orphanedWorkspaces ?? []).some((o) => o.dir && r.dir.startsWith(`${o.dir}/`)))
+          .map((r) => r.bytes),
         ...(s.orphanedWorkspaces ?? []).map((o) => o.bytes),
       ]
     : environments.map((env) => env.disk?.buildBytes ?? null);

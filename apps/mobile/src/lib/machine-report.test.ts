@@ -205,6 +205,14 @@ describe('machineReport', () => {
               withWorkspace: true,
             },
             {
+              dir: '/s/dead/recordings',
+              projectRoot: '/Users/dev/deleted',
+              bytes: 0.25 * GB,
+              deleteBytes: 0.25 * GB,
+              willDelete: true,
+              withWorkspace: true,
+            },
+            {
               dir: '/s/a/recordings',
               projectRoot: MAIN,
               bytes: 0.5 * GB,
@@ -217,7 +225,7 @@ describe('machineReport', () => {
       },
       NOW,
     );
-    expect(removed.categories.find((category) => category.key === 'stimOutputs')?.total.bytes).toBe(3.5 * GB);
+    expect(removed.categories.find((category) => category.key === 'stimOutputs')?.total.bytes).toBe(3.75 * GB);
     expect(removed.free.map((row) => row.title)).toEqual(['Data of a removed workspace']);
   });
 

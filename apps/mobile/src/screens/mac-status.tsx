@@ -1,5 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -57,7 +58,14 @@ export function MacStatus({ id }: { id: string }) {
   const open = state.kind === 'open';
   const samples = useUsageHistory(connection, open, usage);
   const charts = useMemo(() => usageCharts(samples ?? [], usage), [samples, usage]);
-  const details = useMachineDetails(connection, open);
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+  const details = useMachineDetails(connection, open && focused);
   const now = useNow(60_000);
   const gc = useMemo(() => (details.kind === 'ready' ? parseGcReport(details.details.gc) : null), [details]);
   const report = useMemo(() => machineReport(status, gc, now), [status, gc, now]);
