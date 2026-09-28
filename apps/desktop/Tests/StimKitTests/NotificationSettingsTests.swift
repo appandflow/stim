@@ -10,10 +10,10 @@ struct NotificationSettingsTests {
     return defaults
   }
 
-  @Test func alertsOnlyMachineProblemsByDefaultAndRunsEveryCategory() throws {
+  @Test func defaultsEveryCategoryToSilentAndRunsEveryCategory() throws {
     let defaults = try defaults("NotificationSettingsTests.fresh")
     let levels = OversightCategory.desktop.map { NotificationSettings.level($0, defaults) }
-    #expect(levels == [.silent, .silent, .silent, .silent, .alert])
+    #expect(levels == [.silent, .silent, .silent, .silent, .silent])
     let prefs = NotificationSettings.prefs(defaults)
     #expect(prefs.categories == [.started, .stuck, .looping, .finished, .machine])
     #expect(prefs.stuckMinutes == 15)
@@ -37,6 +37,6 @@ struct NotificationSettingsTests {
     defaults.set("loud", forKey: NotificationSettings.key(.machine))
     #expect(NotificationSettings.prefs(defaults).stuckMinutes == 15)
     #expect(!NotificationSettings.isQuiet(defaults, minuteOfDay: 23 * 60))
-    #expect(NotificationSettings.level(.machine, defaults) == .alert)
+    #expect(NotificationSettings.level(.machine, defaults) == .silent)
   }
 }

@@ -656,7 +656,7 @@ through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases.
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
-**Off**. Machine in trouble is Alert by default and the others Silent. An Alert
+**Off**. Every category is Silent by default. An Alert
 appears as a card in the main window's top right corner while that window is in
 front, newest on top, with its call to action (**Open workspace**, **Show
 device**, **Show page**, **Show build**, **Show machine**) and a dismiss button; clicking the

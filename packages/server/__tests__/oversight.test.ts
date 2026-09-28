@@ -282,7 +282,7 @@ describe('oversee', () => {
       ]);
       expect(sent[1]).toMatchObject({
         id: `stuck:${PATH}`,
-        quiet: false,
+        quiet: true,
         target: { kind: 'device', path: PATH, platform: 'ios', slot: 'default' },
       });
     });
@@ -406,7 +406,7 @@ describe('oversee', () => {
           category: 'looping',
           title: 'wide-insets',
           body: 'Same Swift error 3x at AppDelegate.swift:71',
-          quiet: false,
+          quiet: true,
           thread: null,
           target: { kind: 'build', path: PATH, platform: 'ios' },
         },
@@ -455,7 +455,7 @@ describe('oversee', () => {
           category: 'finished',
           title: 'wide-insets',
           body: 'Agent stopped after a green iOS build',
-          quiet: false,
+          quiet: true,
           thread: null,
           target: { kind: 'workspace', path: PATH },
         },

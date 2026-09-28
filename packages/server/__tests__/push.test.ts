@@ -225,9 +225,9 @@ describe('PushNotifier', () => {
           title: 'feat/login',
           subtitle: 'MacBook Pro',
           body: 'Same Swift error 3x at AppDelegate.swift:71',
-          sound: 'default',
-          interruptionLevel: 'active',
-          channelId: 'attention',
+          sound: null,
+          interruptionLevel: 'passive',
+          channelId: 'updates',
           collapseId: expect.stringMatching(/^[0-9a-f]{32}$/),
           data: { ref: 'mac-1', notification: 1, target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
         },
@@ -312,9 +312,9 @@ describe('PushNotifier', () => {
           to: TOKEN,
           title: 'MacBook Pro',
           body: "3.0 GB free, below Stim's floor",
-          sound: 'default',
-          interruptionLevel: 'active',
-          channelId: 'attention',
+          sound: null,
+          interruptionLevel: 'passive',
+          channelId: 'updates',
           collapseId: expect.any(String),
           data: { ref: 'mac-1', notification: expect.any(Number), target: 'machine' },
         },
@@ -420,9 +420,9 @@ describe('PushNotifier', () => {
           to: TOKEN,
           title: 'MacBook Pro',
           body: '4 things need a look',
-          sound: 'default',
-          interruptionLevel: 'active',
-          channelId: 'attention',
+          sound: null,
+          interruptionLevel: 'passive',
+          channelId: 'updates',
           data: { ref: 'mac-1', target: 'home' },
         },
       ],
@@ -449,7 +449,7 @@ describe('PushNotifier', () => {
     expect(expo.sent.flat().map((m) => [m.body, m.sound, m.interruptionLevel, m.channelId])).toEqual([
       ['agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro', 'default', 'active', 'attention'],
       ['Same Swift error 3x at AppDelegate.swift:71', null, 'passive', 'updates'],
-      ['iPad took over', 'default', 'active', 'attention'],
+      ['iPad took over', null, 'passive', 'updates'],
     ]);
 
     expo.sent = [];
@@ -586,7 +586,10 @@ describe('PushNotifier', () => {
   });
 
   it('keeps quiet pushes out of the hourly budget, so work started cannot crowd out a stuck agent', async () => {
-    const t = (current = setup({ limits: { perHour: 1 }, devices: [device(registration({ stuckMinutes: 5 }))] }));
+    const t = (current = setup({
+      limits: { perHour: 1 },
+      devices: [device(registration({ stuckMinutes: 5, levels: { stuck: 'alert' } }))],
+    }));
     t.emit(status());
     t.at(1000);
     t.emit(status(env(driven(T0 + 1000))));
@@ -614,7 +617,7 @@ describe('PushNotifier', () => {
   });
 
   it('stops pushing to a device past its hourly budget', async () => {
-    const t = (current = setup());
+    const t = (current = setup({ devices: [device(registration({ levels: { looping: 'alert' } }))] }));
     t.emit(status());
     const broken: JsonObject[] = [];
     for (let i = 1; i <= 25; i++) {

@@ -28,8 +28,8 @@ export const DEFAULT_LEVELS: Record<OversightCategory, NotifyLevel> = {
   stuck: 'silent',
   looping: 'silent',
   finished: 'silent',
-  machine: 'alert',
-  control: 'alert',
+  machine: 'silent',
+  control: 'silent',
 };
 
 export interface NotificationPrefs {

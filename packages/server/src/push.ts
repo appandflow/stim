@@ -236,7 +236,7 @@ export class PushNotifier {
       category: 'control',
       title: conflict.title,
       body: conflict.body,
-      quiet: false,
+      quiet: true,
       thread: null,
       target: { kind: 'device', path: workspace, platform, slot },
     };

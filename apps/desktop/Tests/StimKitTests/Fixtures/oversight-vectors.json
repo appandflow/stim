@@ -806,7 +806,7 @@
               "category": "stuck",
               "title": "wide-insets",
               "body": "No agent activity for 15 min; iPhone 18 Pro 27.0 still up",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "device",
@@ -1690,7 +1690,7 @@
               "category": "stuck",
               "title": "wide-insets",
               "body": "No agent activity for 15 min; iPhone 18 Pro 27.0 still up",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "device",
@@ -1879,7 +1879,7 @@
               "category": "stuck",
               "title": "wide-insets",
               "body": "No agent activity for 15 min; iPhone 18 Pro 27.0 still up",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "device",
@@ -2270,7 +2270,7 @@
               "category": "stuck",
               "title": "wide-insets",
               "body": "No agent activity for 30 min; iPhone 18 Pro 27.0 still up",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "device",
@@ -2511,7 +2511,7 @@
               "category": "stuck",
               "title": "wide-insets",
               "body": "No agent activity for 15 min after a green iOS build; iPhone 18 Pro 27.0 still up",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "device",
@@ -2720,7 +2720,7 @@
               "category": "stuck",
               "title": "wide-insets",
               "body": "No agent activity for 15 min; iPhone 18 Pro 27.0 still up",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "device",
@@ -3374,7 +3374,7 @@
               "category": "looping",
               "title": "wide-insets",
               "body": "Same Swift error 3x at AppDelegate.swift:71",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "build",
@@ -3847,7 +3847,7 @@
               "category": "looping",
               "title": "wide-insets",
               "body": "App failed to launch on iOS 3x in a row",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "build",
@@ -4339,7 +4339,7 @@
               "category": "finished",
               "title": "wide-insets",
               "body": "Agent stopped after a green iOS build",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "workspace",
@@ -4624,7 +4624,7 @@
               "category": "finished",
               "title": "wide-insets",
               "body": "Agent stopped after a green iOS build",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "workspace",
@@ -5114,7 +5114,7 @@
               "category": "finished",
               "title": "wide-insets",
               "body": "PR #42 is ready for review",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "url",
@@ -5234,7 +5234,7 @@
               "category": "finished",
               "title": "wide-insets",
               "body": "PR #42 merged",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "url",
@@ -5685,7 +5685,7 @@
               "category": "finished",
               "title": "wide-insets",
               "body": "Merged into origin/main",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "workspace",
@@ -5812,7 +5812,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "3.0 GB free, below Stim's floor",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -5920,7 +5920,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "Memory pressure is critical",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6022,7 +6022,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "Offline",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6101,7 +6101,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "Refused the connection: pair again or update",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6112,7 +6112,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "3.0 GB free, below Stim's floor",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6150,7 +6150,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "Not paired: pair again",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6292,7 +6292,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "4.9 GB free, below Stim's floor",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6432,7 +6432,7 @@
               "category": "machine",
               "title": "MacBook Pro",
               "body": "4.9 GB free, below Stim's floor",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "machine"
@@ -6733,7 +6733,7 @@
               "category": "looping",
               "title": "wide-insets",
               "body": "iOS build failed 3x in a row (E)",
-              "quiet": false,
+              "quiet": true,
               "thread": null,
               "target": {
                 "kind": "build",
