@@ -13,7 +13,8 @@ import type { AccessUnit } from './video.ts';
 
 /** Segments less than this far apart are one span; a longer gap is time nothing was recorded. */
 const SPAN_GAP_MS = 1500;
-const MAX_MARKERS = 500;
+const MAX_ACTION_MARKERS = 400;
+const MAX_ERROR_MARKERS = 100;
 const MARKER_LABEL_CHARS = 120;
 
 export function recordingDir(workspace: string, platform: RecordingPlatform, slot: string): string {
@@ -58,8 +59,13 @@ export function recordedSpans(segments: readonly RecordedSegment[]): ReplaySpan[
   return spans;
 }
 
-function recordSlot(record: NdjsonRecord): string {
-  return typeof record.slot === 'string' ? record.slot : 'default';
+/**
+ * Agent and device records name their slot only outside the default one; other records name none and belong to
+ * every slot.
+ */
+function slotMatches(record: NdjsonRecord, slot: string): boolean {
+  if (typeof record.slot === 'string') return record.slot === slot;
+  return slot === 'default' || (record.src !== 'agent' && record.src !== 'device');
 }
 
 function label(text: unknown): string {
@@ -70,7 +76,7 @@ function label(text: unknown): string {
 /**
  * Timeline markers for one device slot from workspace log records: agent actions on it (agent-device's, and the
  * owned Chrome page's agent input), and errors. An error that names no platform or slot, like most Metro and
- * client errors, belongs to every device of the workspace. Keeps the newest {@link MAX_MARKERS} at or after `since`.
+ * client errors, belongs to every device of the workspace. Keeps the newest 400 actions and 100 errors at or after `since`.
  */
 export function timelineMarkers(
   records: readonly NdjsonRecord[],
@@ -84,7 +90,7 @@ export function timelineMarkers(
       typeof record.startedAt === 'number' ? record.startedAt : typeof record.ts === 'number' ? record.ts : NaN;
     if (!(at >= since)) continue;
     const platformMatches = record.platform === undefined || record.platform === platform;
-    if (!platformMatches || recordSlot(record) !== slot) continue;
+    if (!platformMatches || !slotMatches(record, slot)) continue;
     if (record.src === 'agent') {
       if (record.platform !== platform || (record.event !== 'agent_action' && record.event !== 'agent_failed'))
         continue;
@@ -98,7 +104,11 @@ export function timelineMarkers(
       markers.push({ at, kind: record.level === 'fatal' ? 'crash' : 'error', label: label(record.msg) });
     }
   }
-  return markers.toSorted((a, b) => a.at - b.at).slice(-MAX_MARKERS);
+  const sorted = markers.toSorted((a, b) => a.at - b.at);
+  return [
+    ...sorted.filter((marker) => marker.kind === 'action').slice(-MAX_ACTION_MARKERS),
+    ...sorted.filter((marker) => marker.kind !== 'action').slice(-MAX_ERROR_MARKERS),
+  ].toSorted((a, b) => a.at - b.at);
 }
 
 export interface PlayerOutput {
@@ -152,13 +162,21 @@ export class Player {
     if (first === -1) first = units.findIndex((unit) => unit.keyframe);
     if (first === -1) return null;
     let next = first;
-    while (next < units.length && (next === first || units[next]!.capturedAt <= target)) {
-      this.output.unit(units[next]!);
-      this.position = units[next]!.capturedAt;
-      next++;
-    }
-    if (rate > 0) this.play(generation, segments, index, units, next, Date.now(), this.position);
-    return this.position;
+    while (next < units.length && (next === first || units[next]!.capturedAt <= target)) next++;
+    const shown = units[next - 1]!.capturedAt;
+    const burst = () => {
+      if (generation !== this.generation || this.stopped) return;
+      if (this.output.bufferedBytes() > this.congestedBytes) {
+        this.timer = setTimeout(burst, CONGESTED_RETRY_MS);
+        return;
+      }
+      for (const unit of units.slice(first, next)) this.output.unit(unit);
+      this.position = shown;
+      if (rate > 0) this.play(generation, segments, index, units, next, Date.now(), shown);
+    };
+    this.position = shown;
+    burst();
+    return shown;
   }
 
   /** Sends the frame at the current position again, from its keyframe, for a client whose decoder lost its state. */
@@ -218,13 +236,16 @@ export class Player {
     const send = () => {
       if (generation !== this.generation || this.stopped) return;
       if (this.output.bufferedBytes() > this.congestedBytes) {
+        stalled = true;
         this.timer = setTimeout(send, CONGESTED_RETRY_MS);
         return;
       }
       this.output.unit(unit);
       this.position = unit.capturedAt;
-      this.play(generation, segments, segmentIndex, list, at + 1, wallStart, mediaStart);
+      if (stalled) this.play(generation, segments, segmentIndex, list, at + 1, Date.now(), unit.capturedAt);
+      else this.play(generation, segments, segmentIndex, list, at + 1, wallStart, mediaStart);
     };
+    let stalled = false;
     this.timer = setTimeout(send, Math.max(0, wallStart + (unit.capturedAt - mediaStart) / this.rate - Date.now()));
   }
 }

@@ -2800,6 +2800,15 @@ describe('frames.subscribe', () => {
               error: { code: 'no-recording' },
             },
           );
+          expect(
+            await client.request('frames.subscribe', {
+              workspace,
+              platform: 'ios',
+              slot: '../../other',
+              video: ['h264'],
+              at: BASE,
+            }),
+          ).toMatchObject({ error: { code: 'bad-request' } });
           expect(helperRuns()).toEqual([]);
         },
         10_000,

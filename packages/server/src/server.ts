@@ -694,8 +694,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'frames.subscribe needs params.workspace and params.platform (ios, android or web).',
         );
       }
-      if (slot !== undefined && (typeof slot !== 'string' || slot === '')) {
-        return error(id, 'bad-request', 'slot must be a slot name.');
+      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+        return error(id, 'bad-request', 'slot must be 1-64 letters, digits, underscores or hyphens.');
       }
       if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
         return error(id, 'bad-request', 'video must be a list of codec names.');
@@ -859,7 +859,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           },
         });
       }
-      if (replayAt) replay().seek(replayAt.at, replayAt.rate);
+      if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
+        send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
+      }
       const stopViewing = recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       unsubscribeStatus = feeds.subscribe(STATUS_FEED, {

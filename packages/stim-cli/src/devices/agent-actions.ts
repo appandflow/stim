@@ -33,6 +33,7 @@ interface ParsedAgentEvents {
 }
 
 const EVENTS_VERSION = 1;
+const MAX_OPEN_REQUESTS = 64;
 
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -285,6 +286,7 @@ export function createAgentActionReader({
       lines.push(...chunk.text.split('\n'));
       const parsed = parseAgentEvents(lines);
       for (const [requestId, at] of parsed.started) cursor.started.set(requestId, at);
+      for (const requestId of [...cursor.started.keys()].slice(0, -MAX_OPEN_REQUESTS)) cursor.started.delete(requestId);
       cursor.session ??= parsed.session;
       const session = cursor.session;
       if (!parsed.events.length && !parsed.unknownVersion) continue;

@@ -91,6 +91,19 @@ test('markers are the agent actions on this device and errors of the workspace, 
   ]);
 });
 
+test("a non-default slot gets the workspace's errors, and only its own device and agent records", () => {
+  const records = [
+    { ts: 1100, src: 'metro', level: 'error', msg: 'bundle failed' },
+    { ts: 1200, src: 'device', level: 'error', platform: 'ios', msg: 'default slot device' },
+    { ts: 1300, src: 'device', level: 'error', platform: 'ios', slot: 'tablet', msg: 'tablet device' },
+    { ts: 1400, src: 'agent', event: 'agent_action', platform: 'ios', msg: 'default slot action' },
+  ];
+  expect(timelineMarkers(records, 'ios', 'tablet', 0).map((marker) => marker.label)).toEqual([
+    'bundle failed',
+    'tablet device',
+  ]);
+});
+
 function player(): { player: Player; sent: AccessUnit[]; ended: number[] } {
   const sent: AccessUnit[] = [];
   const ended: number[] = [];
@@ -111,6 +124,24 @@ test('a paused seek sends the units from the keyframe before the time through th
   expect(sent[0]!.keyframe).toBe(true);
   expect(paused.seek(500, 0)).toBe(1000);
   expect(paused.seek(10_000, 0)).toBeNull();
+});
+
+test('a seek waits for the client to drain before it sends the frame, and a newer seek replaces it', async () => {
+  segment(1000, 20);
+  let buffered = 10_000;
+  const sent: number[] = [];
+  const congested = new Player(
+    dir,
+    { unit: (unit) => sent.push(unit.capturedAt), bufferedBytes: () => buffered, ended: () => {} },
+    1024,
+  );
+
+  expect(congested.seek(1300, 0)).toBe(1300);
+  expect(congested.seek(1700, 0)).toBe(1700);
+  expect(sent).toEqual([]);
+  buffered = 0;
+  await vi.waitUntil(() => sent.length > 0, { timeout: 1000 });
+  expect(sent).toEqual([1500, 1600, 1700]);
 });
 
 test('plays on at the rate asked, skips unrecorded time, and reports the end', async () => {
