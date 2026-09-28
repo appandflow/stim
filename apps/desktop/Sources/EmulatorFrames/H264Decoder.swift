@@ -4,10 +4,12 @@ import Foundation
 import VideoToolbox
 
 /// Decodes an Annex-B H.264 stream into BGRA pixel buffers, one per access unit. A config packet (SPS and
-/// PPS) replaces the session; packets before the first config are dropped.
+/// PPS) with new parameter sets replaces the session, and one that repeats them keeps it; packets before the first
+/// config are dropped.
 public final class H264Decoder {
   private var format: CMVideoFormatDescription?
   private var session: VTDecompressionSession?
+  private var parameterSets: [Data] = []
   private let output: (CVPixelBuffer) -> Void
 
   public init(output: @escaping (CVPixelBuffer) -> Void) {
@@ -25,16 +27,21 @@ public final class H264Decoder {
     }
     session = nil
     format = nil
+    parameterSets = []
   }
 
   /// Returns false when the parameter sets could not make a decoder.
   @discardableResult
   public func configure(_ annexB: Data) -> Bool {
-    invalidate()
     let units = AnnexB.units(annexB)
     guard let sps = units.first(where: { ($0.first ?? 0) & 0x1f == 7 }),
       let pps = units.first(where: { ($0.first ?? 0) & 0x1f == 8 })
-    else { return false }
+    else {
+      invalidate()
+      return false
+    }
+    if session != nil, parameterSets == [sps, pps] { return true }
+    invalidate()
     var description: CMVideoFormatDescription?
     let status = sps.withUnsafeBytes { spsBytes in
       pps.withUnsafeBytes { ppsBytes in
@@ -60,6 +67,7 @@ public final class H264Decoder {
     else { return false }
     format = description
     session = created
+    parameterSets = [sps, pps]
     return true
   }
 
