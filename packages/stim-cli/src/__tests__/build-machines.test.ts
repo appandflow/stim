@@ -25,7 +25,7 @@ afterEach(() => {
 function status(nodeId: string, dnsName = 'mini.tail1.ts.net.') {
   return {
     BackendState: 'Running',
-    Self: { ID: 'nLaptop', HostName: 'laptop', DNSName: 'laptop.tail1.ts.net.' },
+    Self: { ID: 'nLaptop', HostName: 'lap\u200dtop', DNSName: 'laptop.tail1.ts.net.' },
     Peer: {
       key1: { ID: nodeId, DNSName: dnsName, TailscaleIPs: ['fd7a::1', '100.64.0.7'] },
       key2: { ID: 'nFunnel', DNSName: '' },

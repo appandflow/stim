@@ -140,8 +140,8 @@ other people use this Mac, and approve a request only when you expect it.
 A Mac gets `build` one of two ways:
 
 - **Request and approve.** The client sends `hello` with `auth` set to
-  `{ "request": "build", "deviceName" }`, a name of at most 64 characters
-  with no control characters. The server records a pending build
+  `{ "request": "build", "deviceName" }`, a name of at most 64 UTF-16 code
+  units with no control or format characters. The server records a pending build
   client bound to the peer's node, answers with a `deviceToken`, no
   capabilities and `approval: { "state": "pending", "expiresAt" }`, and closes
   the connection. `stim-server devices` lists it as `pending build`. On this

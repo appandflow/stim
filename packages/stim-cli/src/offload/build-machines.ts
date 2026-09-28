@@ -221,7 +221,12 @@ export async function inspectBuildMachines(
     ];
   }
   const self = isJsonObject(status.Self) ? status.Self : {};
-  const deviceName = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
+  const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
+  const deviceName =
+    raw
+      .replace(/[\p{Cc}\p{Cf}]/gu, '')
+      .trim()
+      .slice(0, 64) || 'Mac';
   const findings: Finding[] = [];
   for (const entry of entries) {
     const parsed = parseMachine(entry);
