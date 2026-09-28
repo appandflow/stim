@@ -18,19 +18,30 @@ index de6e2c368e45bedd01e563cf254c006190aca233..f8299281fc674157d83863d38abde2c6
      // doesn't make much sense for shared refs as they're kept in memory as long as their JS objects.
      var context = createSDWebImageContext(forSource: source, cachePolicy: .disk)
 diff --git a/ios/ImageView.swift b/ios/ImageView.swift
-index bf865ebaa990861eb534b3e1695d9594b0e55de6..99eaac839174ce2ad7608cd1f51fdd3800aedd3d 100644
+index bf865ebaa990861eb534b3e1695d9594b0e55de6..7165e851d2d670cfea8cfc08b985e7b51024ca30 100644
 --- a/ios/ImageView.swift
 +++ b/ios/ImageView.swift
-@@ -457,6 +457,9 @@ public final class ImageView: ExpoView {
+@@ -446,6 +446,11 @@ public final class ImageView: ExpoView {
    }
  
-   private func localAssetImage(from source: ImageSource) -> UIImage? {
+   private func maybeRenderLocalAsset(from source: ImageSource) -> Bool {
 +    if let image = assetCatalogImage(for: source.uri) {
-+      return image
++      onLoadStart([:])
++      didLoad(image, cacheType: .memory, imageUrl: source.uri)
++      return true
 +    }
-     guard let path = localAssetName(from: source.uri) else {
-       return nil
-     }
+     if let local = localAssetImage(from: source) {
+       // `UIImage(named:)` serves bundled assets from the system's in-memory cache, so report a
+       // memory hit — this lets `transition.skipOnCacheHit` treat them as instantly available.
+@@ -515,7 +520,7 @@ public final class ImageView: ExpoView {
+ 
+     // Asset catalog (xcassets) images aren't resolvable by SDWebImage, so try the
+     // local lookup first — mirroring the proper source path in `maybeRenderLocalAsset`.
+-    if let localImage = localAssetImage(from: placeholder) {
++    if let localImage = assetCatalogImage(for: placeholder.uri) ?? localAssetImage(from: placeholder) {
+       placeholderImage = localImage
+       displayPlaceholderIfNecessary()
+       return
 diff --git aios/Utils/AssetCatalog.swift b/ios/Utils/AssetCatalog.swift
 new file mode 100644
 index 0000000000000000000000000000000000000000..7ebcbe1796309c2105aadb43e294bf2fecf70bdc

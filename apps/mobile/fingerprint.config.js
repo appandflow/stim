@@ -4,5 +4,6 @@ module.exports = {
   extraSources: [
     { type: 'dir', filePath: 'modules/stim-video/ios', reasons: ['inlineModules'] },
     { type: 'dir', filePath: 'modules/stim-video/android', reasons: ['inlineModules'] },
+    { type: 'dir', filePath: '../../patches', reasons: ['patches'] },
   ],
 };
