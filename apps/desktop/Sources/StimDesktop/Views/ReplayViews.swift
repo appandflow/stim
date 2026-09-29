@@ -225,8 +225,10 @@ struct ReplayBar: View {
   /// the device runs.
   private func stepButton(_ timeline: ReplayTimeline, forward: Bool) -> some View {
     let replay = controller.replay
+    let isLive = replay == nil && running
     let playing = replay.map { $0.rate > 0 && !$0.ended } ?? false
-    let from = ReplayTimeline.stepFrom(replay?.at ?? timeline.end, stepped: stepped, playing: playing)
+    let from = ReplayTimeline.stepFrom(
+      replay?.at ?? timeline.end, stepped: replay == nil ? nil : stepped, playing: playing)
     let target = ReplayTimeline.adjacentAction(controller.range?.markers ?? [], from: from, forward: forward)
     let goesLive = forward && target == nil && running
     return Button {
@@ -240,9 +242,10 @@ struct ReplayBar: View {
     }
     .buttonStyle(.stim())
     .fixedSize()
-    .disabled(replay == nil || (target == nil && !goesLive))
+    .disabled(isLive || (target == nil && !goesLive))
     .help(forward ? (goesLive ? "No later agent action; go live" : "Next agent action") : "Previous agent action")
-    .accessibilityLabel(forward ? "Next agent action" : "Previous agent action")
+    .accessibilityLabel(
+      forward ? (goesLive ? "Next agent action, none; go live" : "Next agent action") : "Previous agent action")
   }
 
   private func playButton(_ timeline: ReplayTimeline) -> some View {
@@ -267,7 +270,9 @@ struct ReplayBar: View {
 
   private func toggleSpeed() {
     speed = speed == 1 ? 2 : 1
-    if let replay = controller.replay, replay.rate > 0, !replay.ended, let at = replay.at { seek(at, rate: speed) }
+    if let replay = controller.replay, replay.rate > 0, !replay.ended, let at = replay.at {
+      seek(at, rate: speed, action: stepped)
+    }
   }
 
   private func caption(_ timeline: ReplayTimeline, now: Date) -> String {
