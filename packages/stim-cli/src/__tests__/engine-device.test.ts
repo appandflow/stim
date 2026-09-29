@@ -1126,8 +1126,9 @@ describe('ensureOwnedDevice: ios', () => {
     async ({ collision, stale }) => {
       const root = projectDir();
       process.env.STIM_POOL_IOS_PARKED_MAX = '3';
+      const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
       try {
-        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, schemeApprovals });
         parkSim({
           platform: 'ios',
           projectPath: root,
@@ -1176,6 +1177,7 @@ describe('ensureOwnedDevice: ios', () => {
           adopted: true,
           adoptionPending: true,
           parkedCacheKey: 'fingerprint-debug-sim',
+          schemeApprovals,
         });
         expect(readParked('ios')).toEqual([]);
         expect(run).toContain('xcrun simctl boot U1');
@@ -1184,6 +1186,7 @@ describe('ensureOwnedDevice: ios', () => {
         await device.booting?.done;
         expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
         expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+        expect(getProject(root)?.platforms?.ios).toMatchObject({ schemeApprovals });
       } finally {
         delete process.env.STIM_POOL_IOS_PARKED_MAX;
         rmSync(root, { recursive: true, force: true });

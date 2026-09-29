@@ -279,6 +279,58 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
   }
 });
 
+test("teardownOwnedIosSim carries the workspace record's scheme approvals into the parked record", () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true, schemeApprovals } },
+    });
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                  dataPath: join(home, 'device-data'),
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        return '';
+      },
+      runQuiet: () => '',
+      spawn: () => null,
+    });
+    const result = teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1, simslimManaged: true, appId: 'com.example.app', cacheKey: 'abc-debug-sim' },
+    });
+    expect(result.status).toBe('torn-down');
+    expect(readParked('ios')).toEqual([expect.objectContaining({ udid: 'U1', schemeApprovals })]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('a failed overflow eviction retains its parked ownership record', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
@@ -623,6 +675,7 @@ function seedParkedSim(): void {
         simslimManaged: false,
         bundleId: 'com.example.app',
         cacheKey: 'abc-debug-sim',
+        schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
       },
     ],
   };
@@ -643,6 +696,7 @@ test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked 
   expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
   expect(record).not.toHaveProperty('bundleId');
   expect(record).not.toHaveProperty('cacheKey');
+  expect(record).not.toHaveProperty('schemeApprovals');
 });
 
 test('eraseParkedIosSim leaves a booted parked simulator and its record alone', () => {
@@ -656,7 +710,12 @@ test('eraseParkedIosSim leaves a booted parked simulator and its record alone', 
 
   expect(result).toMatchObject({ status: 'failed', reason: expect.stringMatching(/Booted, not Shutdown/) });
   expect(exec.calls).not.toContain('xcrun simctl erase U1');
-  expect(readParked('ios')).toEqual([expect.objectContaining({ bundleId: 'com.example.app' })]);
+  expect(readParked('ios')).toEqual([
+    expect.objectContaining({
+      bundleId: 'com.example.app',
+      schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
+    }),
+  ]);
 });
 
 interface AndroidExecutorOptions {
