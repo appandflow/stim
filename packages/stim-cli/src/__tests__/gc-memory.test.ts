@@ -114,25 +114,28 @@ test('a daemon Gradle home comes from the daemon log it holds open, and lsof lis
   expect(gradleHomeFromFiles(90756, '8.14', parsed.get(90756)!.files)).toBeNull();
 });
 
-test('a stale watch root is a gone directory on a mounted volume or a pruned linked worktree', () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gc-roots-')));
-  try {
-    mkdirSync(join(root, 'main', '.git', 'worktrees', 'live'), { recursive: true });
-    mkdirSync(join(root, 'live', 'apps', 'mobile'), { recursive: true });
-    writeFileSync(join(root, 'live', '.git'), `gitdir: ${join(root, 'main', '.git', 'worktrees', 'live')}\n`);
-    mkdirSync(join(root, 'pruned', 'apps', 'mobile'), { recursive: true });
-    writeFileSync(join(root, 'pruned', '.git'), `gitdir: ${join(root, 'main', '.git', 'worktrees', 'pruned')}\n`);
+test.skipIf(process.platform === 'win32')(
+  'a stale watch root is a gone directory on a mounted volume or a pruned linked worktree',
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gc-roots-')));
+    try {
+      mkdirSync(join(root, 'main', '.git', 'worktrees', 'live'), { recursive: true });
+      mkdirSync(join(root, 'live', 'apps', 'mobile'), { recursive: true });
+      writeFileSync(join(root, 'live', '.git'), `gitdir: ${join(root, 'main', '.git', 'worktrees', 'live')}\n`);
+      mkdirSync(join(root, 'pruned', 'apps', 'mobile'), { recursive: true });
+      writeFileSync(join(root, 'pruned', '.git'), `gitdir: ${join(root, 'main', '.git', 'worktrees', 'pruned')}\n`);
 
-    expect(watchmanRootStaleness(join(root, 'main'))).toBeNull();
-    expect(watchmanRootStaleness(join(root, 'live', 'apps', 'mobile'))).toBeNull();
-    expect(watchmanRootStaleness(join(root, 'pruned', 'apps', 'mobile'))).toBe('pruned-worktree');
-    expect(watchmanRootStaleness(join(root, 'gone'))).toBe('missing');
-    const unmounted = { exists: () => false, isFile: () => false, read: () => null, mounted: () => false };
-    expect(watchmanRootStaleness('/Volumes/Ext/repo', unmounted)).toBeNull();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      expect(watchmanRootStaleness(join(root, 'main'))).toBeNull();
+      expect(watchmanRootStaleness(join(root, 'live', 'apps', 'mobile'))).toBeNull();
+      expect(watchmanRootStaleness(join(root, 'pruned', 'apps', 'mobile'))).toBe('pruned-worktree');
+      expect(watchmanRootStaleness(join(root, 'gone'))).toBe('missing');
+      const unmounted = { exists: () => false, isFile: () => false, read: () => null, mounted: () => false };
+      expect(watchmanRootStaleness('/Volumes/Ext/repo', unmounted)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 function watchmanFacts(overrides: Partial<WatchmanFacts> = {}): WatchmanFacts {
   return {
@@ -341,32 +344,38 @@ function fakeWatchman(state: { clients: { pid: number; name: string }[]; subscri
   return calls;
 }
 
-test('gc --delete --cache watchman removes only an unused stale root and keeps a daemon a client uses', async () => {
-  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
-  const gone = join(tmpHome, 'gone-worktree');
-  const calls = fakeWatchman({
-    clients: [{ pid: 4242, name: 'node' }],
-    subscribers: { [tmpHome]: ['metro-file-map-4242-x'], [gone]: [] },
-  });
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ cache: 'watchman', delete: true });
-  const destructive = calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1]!));
-  expect(destructive).toEqual([['--no-spawn', 'watch-del', gone]]);
-  expect(calls.every((args) => args[0] === '--no-spawn')).toBe(true);
-  expect(log.mock.calls.flat().join('\n')).toContain('node (pid 4242)');
-  expect(process.exitCode).toBeUndefined();
-});
+test.skipIf(process.platform === 'win32')(
+  'gc --delete --cache watchman removes only an unused stale root and keeps a daemon a client uses',
+  async () => {
+    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+    const gone = join(tmpHome, 'gone-worktree');
+    const calls = fakeWatchman({
+      clients: [{ pid: 4242, name: 'node' }],
+      subscribers: { [tmpHome]: ['metro-file-map-4242-x'], [gone]: [] },
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runGc({ cache: 'watchman', delete: true });
+    const destructive = calls.filter((args) => ['watch-del', 'shutdown-server'].includes(args[1]!));
+    expect(destructive).toEqual([['--no-spawn', 'watch-del', gone]]);
+    expect(calls.every((args) => args[0] === '--no-spawn')).toBe(true);
+    expect(log.mock.calls.flat().join('\n')).toContain('node (pid 4242)');
+    expect(process.exitCode).toBeUndefined();
+  },
+);
 
-test('gc --delete --cache watchman shuts watchman down once only its own call is connected', async () => {
-  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
-  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  await runGc({ cache: 'watchman', delete: true });
-  expect(calls.filter((args) => args[1] === 'shutdown-server')).toHaveLength(1);
-  expect(calls.some((args) => args[1] === 'watch-del')).toBe(false);
-});
+test.skipIf(process.platform === 'win32')(
+  'gc --delete --cache watchman shuts watchman down once only its own call is connected',
+  async () => {
+    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+    const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runGc({ cache: 'watchman', delete: true });
+    expect(calls.filter((args) => args[1] === 'shutdown-server')).toHaveLength(1);
+    expect(calls.some((args) => args[1] === 'watch-del')).toBe(false);
+  },
+);
 
-test('neither --cache all nor an unscoped --delete touches watchman', async () => {
+test.skipIf(process.platform === 'win32')('neither --cache all nor an unscoped --delete touches watchman', async () => {
   vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
   const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
   vi.spyOn(console, 'log').mockImplementation(() => {});
