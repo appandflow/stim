@@ -1,6 +1,7 @@
 import {
   activityBadge,
   buildProgress,
+  clockTime,
   drivenLabel,
   driversSummary,
   gitBadges,
@@ -23,6 +24,19 @@ const reason = (summary: string): BuildMissReason => ({
   changeCount: 0,
   baseline: null,
   rekeyedBy: [],
+});
+
+describe('clockTime', () => {
+  const at = Date.parse('2026-09-25T22:31:05Z');
+
+  it('follows the requested locale’s 12- or 24-hour convention', () => {
+    expect(clockTime(at, 'en-US')).toMatch(/^\d{1,2}:\d{2}:\d{2} (AM|PM)$/);
+    expect(clockTime(at, 'en-GB')).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('does not depend on the current time, only on `at`', () => {
+    expect(clockTime(at, 'en-GB')).toBe(clockTime(at, 'en-GB'));
+  });
 });
 
 describe('activityBadge', () => {

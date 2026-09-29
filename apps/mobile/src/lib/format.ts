@@ -25,6 +25,11 @@ export function clockDuration(ms: number): string {
   return `${m}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+/** A moment's time of day, `HH:mm:ss`, following the device's 12- or 24-hour setting. Stable: it does not age. */
+export function clockTime(at: number, locale?: string): string {
+  return new Date(at).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
 export type ActivityBadge = { kind: 'driven' | 'idle' | 'unknown'; text: string };
 
 /** Matches apps/desktop ActivityBadge: nothing for a device used in the last 10 minutes. */

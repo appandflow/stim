@@ -3,10 +3,9 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { useNow } from '@/hooks/use-now';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { actionsAt } from '@/lib/logs';
-import { sinceLabel } from '@/lib/workspace-view';
+import { clockTime } from '@/lib/format';
 
 const ROWS = 3;
 const KEPT = 200;
@@ -30,7 +29,6 @@ export function AgentFeed({
   at: number | null | undefined;
   onOpen: () => void;
 }) {
-  const now = useNow(1000);
   const actions = useAgentActions(workspace, slot, deviceId, KEPT);
   const shown = at === undefined ? [] : actionsAt(actions, at).slice(0, ROWS);
   return (
@@ -41,7 +39,7 @@ export function AgentFeed({
         at === undefined
           ? 'Agent actions, loading'
           : shown.length
-            ? `Agent actions: ${shown.map(({ record }) => `${record.msg}, ${sinceLabel(now - record.ts)} ago`).join('; ')}`
+            ? `Agent actions: ${shown.map(({ record }) => `${record.msg}, ${clockTime(record.ts)}`).join('; ')}`
             : 'No agent action yet'
       }
       accessibilityHint="Shows every agent action on this device"
@@ -53,7 +51,7 @@ export function AgentFeed({
           return (
             <View key={key} style={styles.row}>
               <Text variant="caption" maxFontSizeMultiplier={1.2} style={styles.age}>
-                {sinceLabel(now - record.ts)}
+                {clockTime(record.ts)}
               </Text>
               {typeof record.command === 'string' ? (
                 <Text
@@ -92,7 +90,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.sm,
   },
   row: { height: ROW_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
-  age: { width: 32, color: theme.media.textTertiary, fontVariant: ['tabular-nums'] },
+  age: { width: 76, color: theme.media.textTertiary, fontVariant: ['tabular-nums'] },
   command: { color: theme.colors.accent },
   message: { flex: 1, color: theme.media.textSecondary },
   failed: { color: theme.colors.error },

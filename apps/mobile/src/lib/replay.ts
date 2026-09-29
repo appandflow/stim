@@ -1,3 +1,4 @@
+import { clockTime } from '@/lib/format';
 import type { ReplayMarker, ReplaySpan } from '@/protocol/types';
 
 /** A stop longer than this takes only this much of the track, so hours stopped do not squeeze the footage flat. */
@@ -142,8 +143,7 @@ export function shortDuration(ms: number): string {
 
 /** The label of a paused or playing frame: its time of day, and how long ago it was. */
 export function replayLabel(at: number, now: number, locale?: string): string {
-  const time = new Date(at).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-  return `${time} · ${shortDuration(now - at)} ago`;
+  return `${clockTime(at, locale)} · ${shortDuration(now - at)} ago`;
 }
 
 const LABEL_CHAR_WIDTH = 6.5;
