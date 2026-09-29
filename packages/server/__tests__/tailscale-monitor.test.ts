@@ -62,6 +62,20 @@ describe('watchTailscale', () => {
     monitor.stop();
   });
 
+  it('keeps a running state through a single timeout and drops it after three in a row', async () => {
+    const { monitor, changes } = watch([running, timedOut, running, timedOut, timedOut, timedOut]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(changes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(8000 + 2000);
+    expect(monitor.current().state).toEqual(running);
+    expect(changes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(8000 + 2000);
+    expect(monitor.current().state).toEqual(running);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(changes.map((change) => change.state.state)).toEqual(['running', 'unavailable']);
+    monitor.stop();
+  });
+
   it('does not report a repeated timeout with a new reason, and stops on stop()', async () => {
     const { monitor, read, changes } = watch([
       { state: 'unavailable', reason: 'a' },

@@ -218,6 +218,7 @@ const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
 
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
+const LISTEN_RETRY_MS = 5000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 const PLAN_TIMEOUT_MS = 150_000;
 const DETAILS_TIMEOUT_MS = 150_000;
@@ -374,6 +375,12 @@ function doctorTarget(): DoctorTarget {
     return { error: (cause as Error).message };
   }
 }
+
+const closeListener = ({ server, sockets }: { server: Server; sockets: Set<Socket> }) =>
+  new Promise((resolve) => {
+    server.close(resolve);
+    for (const socket of sockets) socket.destroy();
+  });
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
@@ -1654,7 +1661,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route };
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
-  const servers = new Map<string, Server>();
+  const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
   push.refresh();
   const close = async () => {
@@ -1670,7 +1677,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();
-    await Promise.all([...servers.values()].map((server) => new Promise((resolve) => server.close(resolve))));
+    await Promise.all([...servers.values()].map(closeListener));
   };
   async function listenOn(host: string): Promise<void> {
     const server = createServer((request, response) => {
@@ -1692,6 +1699,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
     });
     server.on('upgrade', upgrade);
+    const sockets = new Set<Socket>();
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+    });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(addresses[0]?.port ?? options.port, host, () => {
@@ -1699,7 +1711,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         resolve();
       });
     });
-    servers.set(host, server);
+    servers.set(host, { server, sockets });
     addresses.push({ host, port: (server.address() as AddressInfo).port });
   }
   try {
@@ -1712,35 +1724,47 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const reconcile = async (snapshot: TailscaleSnapshot) => {
     const tailnet = snapshot.state.state === 'running' ? snapshot.state.ips : [];
     const wanted = new Set([...options.hosts, ...tailnet]);
-    for (const [host, server] of servers) {
+    for (const [host, listener] of servers) {
       if (wanted.has(host)) continue;
       servers.delete(host);
       addresses.splice(
         addresses.findIndex((address) => address.host === host),
         1,
       );
-      await new Promise((resolve) => server.close(resolve));
+      await closeListener(listener);
     }
+    let failed = false;
     for (const host of wanted) {
       if (servers.has(host) || closing) continue;
       try {
         await listenOn(host);
       } catch (error) {
+        failed = true;
         console.error(`stim-server: could not listen on ${host}: ${(error as Error).message}`);
       }
     }
+    if (failed && !closing) {
+      retry = setTimeout(() => queueReconcile(), LISTEN_RETRY_MS);
+      retry.unref();
+    }
   };
-  let reconciling = monitor ? reconcile(monitor.current()) : Promise.resolve();
+  let retry: NodeJS.Timeout | null = null;
+  let reconciling = Promise.resolve();
+  const queueReconcile = () => {
+    if (retry) clearTimeout(retry);
+    retry = null;
+    if (monitor) reconciling = reconciling.then(() => reconcile(monitor.current()));
+  };
+  queueReconcile();
   await reconciling;
-  const stopWatching = monitor?.onChange((snapshot) => {
-    reconciling = reconciling.then(() => reconcile(snapshot));
-  });
+  const stopWatching = monitor?.onChange(queueReconcile);
   return {
     addresses,
     close: async () => {
       stopWatching?.();
-      await reconciling;
-      await close();
+      const closed = close();
+      if (retry) clearTimeout(retry);
+      await Promise.all([reconciling, closed]);
     },
   };
 }

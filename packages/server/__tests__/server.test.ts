@@ -1069,8 +1069,13 @@ describe('health', () => {
     await eventually(() => server!.addresses.length === 2);
     expect(server!.addresses[1]).toEqual({ host: '::1', port });
     expect(await health()).toEqual({ state: 'running', dnsName: 'mac.tail1.ts.net' });
+    const tailnetClient = new WebSocket(`ws://[::1]:${port}`);
+    clients.push(tailnetClient);
+    await new Promise((resolve) => tailnetClient.once('open', resolve));
+    const dropped = new Promise((resolve) => tailnetClient.once('close', resolve));
     next = { state: 'not-running', backendState: 'Stopped' };
     await eventually(() => server!.addresses.length === 1);
+    await dropped;
     expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
     monitor.stop();
   });

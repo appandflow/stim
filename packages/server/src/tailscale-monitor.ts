@@ -7,7 +7,6 @@ export interface TailscaleSnapshot {
 
 export interface TailscaleMonitor {
   current(): TailscaleSnapshot;
-  /** Calls `listener` after a check finds a different state; returns the unsubscribe function. */
   onChange(listener: (snapshot: TailscaleSnapshot, previous: TailscaleSnapshot) => void): () => void;
   stop(): void;
 }
@@ -17,13 +16,12 @@ export interface TailscaleMonitorOptions {
   initial: TailscaleSnapshot;
   find?: (env: NodeJS.ProcessEnv) => string | null;
   read?: (binary: string | null, env: NodeJS.ProcessEnv) => Promise<TailscaleState>;
-  /** The first wait while Tailscale is not running; it doubles up to `maxMs`. */
   backoffMs?: number;
-  /** The longest wait between checks, and the wait between checks while Tailscale runs. */
   maxMs?: number;
 }
 
 const STATUS_TIMEOUT_MS = 10_000;
+const MISSES_BEFORE_DOWN = 3;
 
 function sameState(a: TailscaleState, b: TailscaleState): boolean {
   if (a.state !== b.state) return false;
@@ -39,12 +37,6 @@ function sameState(a: TailscaleState, b: TailscaleState): boolean {
   return true;
 }
 
-/**
- * Re-reads `tailscale status --json` off the request path: with a doubling wait while Tailscale is
- * not running or does not answer, and at the longest wait once it runs, so a Tailscale that goes away
- * or comes back is noticed without a restart. The tailscale binary is looked up again on each check
- * while none was found.
- */
 export function watchTailscale(options: TailscaleMonitorOptions): TailscaleMonitor {
   const find = options.find ?? findTailscale;
   const read = options.read ?? ((binary, env) => readTailscaleStatus(binary, env, STATUS_TIMEOUT_MS));
@@ -55,25 +47,36 @@ export function watchTailscale(options: TailscaleMonitorOptions): TailscaleMonit
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;
   let misses = 0;
+  let silent = 0;
 
   const schedule = () => {
     if (stopped) return;
-    const wait = snapshot.state.state === 'running' ? maxMs : Math.min(backoffMs * 2 ** misses, maxMs);
+    const wait =
+      snapshot.state.state === 'running' && silent === 0
+        ? maxMs
+        : Math.min(backoffMs * 2 ** Math.max(misses, silent), maxMs);
     timer = setTimeout(() => void check(), wait);
     timer.unref();
   };
 
   async function check(): Promise<void> {
-    const binary = snapshot.binary ?? find(options.env);
-    const state = await read(binary, options.env);
-    if (stopped) return;
-    misses = state.state === 'running' ? 0 : misses + 1;
-    if (binary !== snapshot.binary || !sameState(state, snapshot.state)) {
-      const previous = snapshot;
-      snapshot = { binary, state };
-      for (const listener of listeners) listener(snapshot, previous);
+    try {
+      const binary = snapshot.binary ?? find(options.env);
+      const state = await read(binary, options.env);
+      if (stopped) return;
+      if (state.state === 'unavailable' && snapshot.state.state === 'running' && ++silent < MISSES_BEFORE_DOWN) return;
+      silent = 0;
+      misses = state.state === 'running' ? 0 : misses + 1;
+      if (binary !== snapshot.binary || !sameState(state, snapshot.state)) {
+        const previous = snapshot;
+        snapshot = { binary, state };
+        for (const listener of listeners) listener(snapshot, previous);
+      }
+    } catch (error) {
+      console.error(`stim-server: checking Tailscale failed: ${(error as Error).message}`);
+    } finally {
+      schedule();
     }
-    schedule();
   }
 
   schedule();
