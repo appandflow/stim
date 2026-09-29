@@ -21,8 +21,8 @@ describe('framePoint', () => {
 
 describe('asciiText', () => {
   it('keeps printable ASCII and newlines, converts smart punctuation, and drops the rest', () => {
-    expect(asciiText('It’s “ok”…\n')).toBe('It\'s "ok"...\n');
-    expect(asciiText('café \u{1F600}')).toBe('caf ');
+    expect(asciiText('It\u2019s \u201Cok\u201D\u2026\n')).toBe('It\'s "ok"...\n');
+    expect(asciiText('caf\u00E9 \u{1F600}')).toBe('caf ');
   });
 });
 

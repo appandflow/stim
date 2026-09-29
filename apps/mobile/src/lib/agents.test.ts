@@ -12,7 +12,7 @@ const claude: AgentSession = {
 const codex: AgentSession = { tool: 'codex', sessionId: 'b', cwd: '/w' };
 
 test('an agent label names the tool, the title when there is one and the activity age', () => {
-  expect(agentLabel(claude, NOW)).toBe('Claude Code · Fix the login bug · 5m ago');
+  expect(agentLabel(claude, NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 5m ago');
   expect(agentLabel(codex, NOW)).toBe('Codex');
 });
 
@@ -23,8 +23,8 @@ test('a short label keeps the title and age, and falls back to the tool without 
 
 test('the summary shows the most recent session and counts the others', () => {
   expect(agentsSummary(undefined, NOW)).toBeNull();
-  expect(agentsSummary([claude], NOW)).toBe('Claude Code · Fix the login bug · 5m ago');
-  expect(agentsSummary([claude, codex], NOW)).toBe('Claude Code · Fix the login bug · 5m ago +1');
+  expect(agentsSummary([claude], NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 5m ago');
+  expect(agentsSummary([claude, codex], NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 5m ago +1');
 });
 
 test('only an https web link opens a session from the phone', () => {

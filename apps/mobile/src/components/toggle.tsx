@@ -38,7 +38,7 @@ export function Toggle({
         {label}
         {count === undefined ? null : (
           <Text variant="footnote" weight="semibold" tone={countTone} style={styles.count}>
-            {` · ${count}`}
+            {` \u00B7 ${count}`}
           </Text>
         )}
       </Text>

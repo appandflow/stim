@@ -29,7 +29,7 @@ describe('drawerStatus', () => {
     const reconnecting = machine({ name: 'Mac mini', state: { kind: 'waiting', retryInMs: 4000, reason: 'closed' } });
     const critical = machine({ name: 'MacBook Pro', diskTone: 'critical' });
     expect(drawerStatus([critical, reconnecting], true, 'Stim 0.1.0 (4)')).toEqual({
-      text: 'Reconnecting to Mac mini…',
+      text: 'Reconnecting to Mac mini\u2026',
       tone: 'warn',
       macId: null,
     });
