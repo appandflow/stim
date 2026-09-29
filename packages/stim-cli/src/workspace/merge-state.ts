@@ -5,9 +5,8 @@ const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_FRESH_MS = 10 * 60_000;
 const GIT_TIMEOUT_MS = 60_000;
 const REMOTE_PREFIX = 'refs/remotes/origin/';
-// Beyond this many commits since the merge base, the patch-id comparison below is both too slow
-// to be worth it and, on the far side, liable to pass more commit SHAs as argv than the OS allows
-// (stim#1815 saw spawnSync git E2BIG at ~8,400 commits).
+// Beyond this many commits of its own ahead of the merge base, the patch-id comparison below is
+// too slow to be worth attempting (stim#1815 saw one at ~20,800).
 const MAX_MERGE_STATE_COMMITS = 2000;
 
 export interface DefaultBranch {
@@ -128,8 +127,8 @@ export function mergeState(
 ): MergeState {
   const git = (args: string[], input?: string): string =>
     getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
-  const patch = (args: string[]): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, untrimmed: true });
+  const patch = (args: string[], input?: string): string =>
+    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input, untrimmed: true });
   const patchIdCommits = (text: string): Map<string, string> =>
     new Map(
       text
@@ -142,7 +141,6 @@ export function mergeState(
         : [],
     );
   const patchIds = (text: string): string[] => [...patchIdCommits(text).keys()];
-  // Commits go through stdin, not argv: a branch can carry thousands of them (stim#1815).
   const committedAt = (commits: string[]): number => {
     const times = commits.length
       ? git(['log', '--no-walk', '--stdin', '--format=%ct'], commits.join('\n')).split('\n').map(Number)
@@ -170,22 +168,23 @@ export function mergeState(
       if (!landed) throw new Error(`no commit on ${name} merges ${head}`);
       return { merged: true, into: name, head, coversUnpushed: false, mergedAt: committedAt([landed]) };
     }
-    // A branch this far past the merge base makes the patch-id comparison below too slow, and its
-    // commit or pathspec lists too big for argv (stim#1815); keep it, unknown, without attempting.
     const aheadCount = Number(git(['rev-list', '--count', `${base}..${head}`]));
-    const behindCount = Number(git(['rev-list', '--count', `${base}..${ref}`]));
-    const commitsSinceBase = Math.max(aheadCount, behindCount);
-    if (commitsSinceBase > maxCommits) {
+    if (aheadCount > maxCommits) {
       return {
         merged: false,
         unknown: true,
-        detail: `merge state unknown: ${commitsSinceBase} commits since the merge base with ${name} exceeds the ${maxCommits}-commit limit`,
+        detail: `merge state unknown: ${aheadCount} commits of its own ahead of the merge base with ${name} exceeds the ${maxCommits}-commit limit`,
       };
     }
     const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);
+    // Both the commit range and the pathspec go through stdin: `ref` can be thousands of commits
+    // past `base`, and `files` can be arbitrarily long, either of which argv can't hold (stim#1815).
     const log = (range: string, pathspec: string[] = []) =>
-      patch(['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', range, '--', ...pathspec]);
+      patch(
+        ['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', '--stdin'],
+        pathspec.length ? `${range}\n--\n${pathspec.join('\n')}\n` : `${range}\n`,
+      );
     const upstream = patchIdCommits(log(`${base}..${ref}`, files));
     const patchEquivalent = (ids: string[]): MergeState => ({
       merged: true,
