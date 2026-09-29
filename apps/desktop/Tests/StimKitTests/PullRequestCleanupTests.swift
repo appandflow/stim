@@ -65,9 +65,24 @@ import Testing
     let environments = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
     let finished = try #require(
       PullRequestCleanup.branches(
-        Data(#"[{"headRefName":"done","isCrossRepository":false},{"headRefName":"fork","isCrossRepository":true}]"#.utf8)))
+        Data(#"[{"headRefName":"done","isCrossRepository":false},{"headRefName":"fork","isCrossRepository":true}]"#.utf8),
+        ownRepos: []))
     #expect(finished == ["done"])
     #expect(PullRequestCleanup.candidates(environments, finished: ["/r": finished]) == ["/r/wt"])
+  }
+
+  /// Catches the checkout's own fork PR being dropped like a stranger's fork PR with the same branch name.
+  @Test func branchesAcceptsTheCheckoutsOwnForkAndIgnoresAStrangersFork() throws {
+    let json = """
+      [{"headRefName":"own-fork","isCrossRepository":true,
+        "headRepository":{"name":"r"},"headRepositoryOwner":{"login":"Me"}},
+       {"headRefName":"stranger-fork","isCrossRepository":true,
+        "headRepository":{"name":"r"},"headRepositoryOwner":{"login":"stranger"}},
+       {"headRefName":"deleted-fork","isCrossRepository":true}]
+      """
+    let finished = try #require(PullRequestCleanup.branches(Data(json.utf8), ownRepos: ["me/r"]))
+    #expect(finished == ["own-fork"])
+    #expect(PullRequestCleanup.branches(Data(json.utf8), ownRepos: []) == [])
   }
 
   /// Catches a removal of a worktree that became live, or switched to another branch, after gc judged it.

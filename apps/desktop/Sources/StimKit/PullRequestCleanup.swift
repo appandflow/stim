@@ -12,18 +12,31 @@ public enum PullRequestCleanup {
 
   /// `gh pr list` arguments for the repository's 100 newest merged and closed pull requests.
   public static let listArguments = [
-    "pr", "list", "--state", "closed", "--limit", "100", "--json", "headRefName,isCrossRepository",
+    "pr", "list", "--state", "closed", "--limit", "100", "--json",
+    "headRefName,isCrossRepository,headRepository,headRepositoryOwner",
   ]
 
   /// Head branch names of the repository's own pull requests in `gh pr list --json` output, or nil when it is
-  /// not that. A fork's pull request only shares the branch name, and `stim gc` ignores it too.
-  public static func branches(_ json: Data) -> Set<String>? {
+  /// not that. A cross-repository pull request counts only when its head repository is one of `ownRepos`
+  /// (lowercased "owner/name"); otherwise it only shares the branch name with a stranger's fork.
+  public static func branches(_ json: Data, ownRepos: Set<String>) -> Set<String>? {
+    struct Repo: Decodable { var name: String? }
+    struct Owner: Decodable { var login: String? }
     struct Entry: Decodable {
       var headRefName: String
       var isCrossRepository: Bool?
+      var headRepository: Repo?
+      var headRepositoryOwner: Owner?
     }
-    return (try? JSONDecoder().decode([Entry].self, from: json)).map {
-      Set($0.filter { $0.isCrossRepository != true }.map(\.headRefName))
+    return (try? JSONDecoder().decode([Entry].self, from: json)).map { entries in
+      Set(
+        entries.filter { entry in
+          guard entry.isCrossRepository == true else { return true }
+          guard let owner = entry.headRepositoryOwner?.login, let name = entry.headRepository?.name else {
+            return false
+          }
+          return ownRepos.contains("\(owner.lowercased())/\(name.lowercased())")
+        }.map(\.headRefName))
     }
   }
 
