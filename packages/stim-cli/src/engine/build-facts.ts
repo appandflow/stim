@@ -83,6 +83,8 @@ export interface AndroidFacts {
   cacheSkipped: boolean;
   /** The build machine that compiled the APK when the build was offloaded; absent otherwise. */
   offloadedTo?: string;
+  /** Why the APK was built here after the run considered offloading it; absent otherwise. */
+  offloadFallback?: string;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath: string | null;
   bundleId: string | null;

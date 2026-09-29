@@ -468,8 +468,10 @@ export async function inspectBuildMachines(
       .trim()
       .slice(0, 64) || 'Mac';
   const inspection: BuildMachinesInspection = { findings: [], machines: [] };
-  for (const entry of entries) {
-    const { report, finding, extra = [] } = await inspectMachine(entry, status, deviceName, fix, io, check);
+  const inspected = await Promise.all(
+    entries.map((entry) => inspectMachine(entry, status, deviceName, fix, io, check)),
+  );
+  for (const { report, finding, extra = [] } of inspected) {
     inspection.machines.push(report);
     if (finding) inspection.findings.push(finding);
     inspection.findings.push(...extra);

@@ -647,6 +647,7 @@ export async function acquireAndroidArtifact(
       },
       onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice.machine }),
     });
+    place(null);
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
@@ -672,7 +673,6 @@ export async function acquireAndroidArtifact(
     try {
       rmSync(stagingDir, { recursive: true, force: true });
     } catch {}
-    place(null);
     step('compile');
     if (!outcome.ok || !stored) {
       const why = reason ?? 'the APK was not stored';

@@ -738,6 +738,7 @@ export async function acquireIosArtifact(
       },
       onRecord: (record) => logWriter().write({ ...record, offloadedTo: choice.machine }),
     });
+    place(null);
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
@@ -763,7 +764,6 @@ export async function acquireIosArtifact(
     try {
       rmSync(stagingDir, { recursive: true, force: true });
     } catch {}
-    place(null);
     step('compile');
     const prepared = stored ? await installableCachedApp(stored) : null;
     if (!outcome.ok || !prepared) {

@@ -244,6 +244,15 @@ describe('build history', () => {
     expect(history.ios!.map((entry) => entry.result).slice(0, 2)).toEqual(['cancelled', 'succeeded']);
     expect(history.ios!.at(-1)!.startedAt).toBe(new Date(T0 + 3 * 60_000).toISOString());
     expect(history.android!.map((entry) => entry.result)).toEqual(['failed']);
+
+    recordFinishedBuild(root, finished('2026-09-24T12:00:00.000Z', { offloadedTo: 'mini' }));
+    recordFinishedBuild(
+      root,
+      finished('2026-09-24T12:05:00.000Z', { offloadFallback: 'mini: busy (all 1 build slots busy)' }),
+    );
+    const [fellBack, offloaded] = readBuildHistory(readWorkspaceState(root)).ios!;
+    expect(fellBack).toMatchObject({ offloadFallback: 'mini: busy (all 1 build slots busy)' });
+    expect(offloaded).toMatchObject({ offloadedTo: 'mini' });
   });
 
   test("a run that finds an earlier run's active-build record records that run as interrupted", () => {

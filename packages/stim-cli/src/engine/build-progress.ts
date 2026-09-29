@@ -237,6 +237,8 @@ const HISTORY_FIELDS = [
   'startedAt',
   'errorCode',
   'missReason',
+  'offloadedTo',
+  'offloadFallback',
   'diagnostics',
 ] as const;
 
