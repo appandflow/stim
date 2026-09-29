@@ -23,6 +23,8 @@ const DRAG_SEEK_MS = 120;
 const DRAG_SLOP = 6;
 const MARKER_REACH = 14;
 const TRACK_HEIGHT = 44;
+/** stim-server's `frames.seek` shows the newest frame for a time past every recording. */
+const NEWEST_FRAME = Number.MAX_SAFE_INTEGER;
 
 /**
  * Live pill, play and pause, speed, and a scrubber over the device's recorded footage with its agent actions
@@ -68,6 +70,7 @@ export function ReplayBar({
   const [trackLength, setTrackLength] = useState<number | undefined>(undefined);
   const at = replay?.at ?? null;
   if (at !== null && at !== lastAt) setLastAt(at);
+  if (replay === null && lastAt !== null) setLastAt(null);
   const isLive = replay === null && canGoLive;
   const livePill = (
     <Touch
@@ -153,7 +156,7 @@ export function ReplayBar({
     onResponderTerminate: end,
   };
   const togglePlay = () => {
-    if (isLive) return onSeek(track.end, 0);
+    if (isLive) return onSeek(NEWEST_FRAME, 0);
     if (!replay) return onSeek(timeline.start, speed);
     if (playing) return onSeek(at ?? timeline.start, 0);
     const from = replay.ended || at === null ? timeline.start : at;
