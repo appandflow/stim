@@ -174,7 +174,7 @@ function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; cli
 function listProcesses(): Promise<string> {
   return new Promise((resolve) => {
     execFile(
-      'ps',
+      '/bin/ps',
       ['-A', '-ww', '-o', 'pid=,command='],
       { timeout: 10_000, maxBuffer: 64 * 1024 ** 2 },
       (error, stdout) => resolve(error ? '' : stdout),
@@ -227,6 +227,8 @@ export class BuildHost {
   private toolchainValue: Promise<BuildToolchain | null> | null = null;
   private readonly options: BuildHostOptions;
   private sweeping: Promise<void> = Promise.resolve();
+  private queued: Promise<void> | null = null;
+  private readonly forced = new Set<string>();
   private readonly sweeper: NodeJS.Timeout;
 
   constructor(options: BuildHostOptions) {
@@ -239,19 +241,26 @@ export class BuildHost {
   /**
    * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
    * every one while available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
-   * is `client`. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
+   * is `client`. Calls made while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
    * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
    */
   sweepDaemons(client: string | null = null): Promise<void> {
-    this.sweeping = this.sweeping
-      .then(() => this.sweep(client))
+    if (client !== null) this.forced.add(client);
+    this.queued ??= this.sweeping
+      .then(() => {
+        this.queued = null;
+        const forced = new Set(this.forced);
+        this.forced.clear();
+        return this.sweep(forced);
+      })
       .catch((error: unknown) =>
         console.error(`stim-server: could not check the Gradle daemons of offloaded builds: ${String(error)}`),
       );
-    return this.sweeping;
+    this.sweeping = this.queued;
+    return this.queued;
   }
 
-  private async sweep(client: string | null): Promise<void> {
+  private async sweep(forced: ReadonlySet<string>): Promise<void> {
     if (this.closed) return;
     const available = await readAvailableMemory();
     const low = available !== null && available < this.limits.minFreeMemoryBytes;
@@ -259,7 +268,7 @@ export class BuildHost {
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
-      if (!low && daemon.client !== client && (this.options.allowed?.(daemon.client) ?? true)) continue;
+      if (!low && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true)) continue;
       try {
         process.kill(daemon.pid, 'SIGTERM');
       } catch {}

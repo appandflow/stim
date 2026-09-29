@@ -385,7 +385,7 @@ stays warm for `offload.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about
 15 seconds. A new value applies from the next daemon. The daemon never holds
 a build slot. While none of the client's builds runs, stim-server stops it
-sooner when the client cancels a build, when the client is revoked, and when
+sooner when a build of the client is cancelled, when the client is revoked, and when
 the build machine has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 

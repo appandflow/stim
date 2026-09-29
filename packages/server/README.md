@@ -313,7 +313,7 @@ closes its connections and cancels its builds.
   Gradle home when a build of the client was cancelled, when the client
   loses `build`, and, for every client, while this Mac has less than 2 GB of
   available memory (total memory minus Activity Monitor's Memory Used). It
-  checks every minute and on each change to the build clients. A daemon
+  checks every minute and on each change under its server directory. A daemon
   whose Gradle home is deleted stops itself within seconds, because Gradle
   expires a daemon whose registry file is gone.
 - `build.progress` events `{ "event": "build.progress", "job", ... }` carry a
