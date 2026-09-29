@@ -277,8 +277,14 @@ while a phone watches it, and keeps the last 15 minutes of footage (see
 `packages/server/README.md`, Recording).
 
 - **The bar.** It has **Live**, play or pause, 1x or 2x, and the time of the
-  frame shown. Its scrubber lays the recorded spans end to end, and a dashed
-  "stopped 2h" gap stands for the time nothing was recorded.
+  frame shown. The scrubber is linear in time: a second of footage or of a
+  short stop takes the same width anywhere on it. A stop longer than a minute
+  takes a minute's width and is dashed. Each stop is labeled "stopped 24s"
+  under it; a label that would overlap a longer stop's is left out. The
+  track's length is rounded up to a whole minute, with the spare room before
+  the oldest footage, so it rescales at most once a minute. While the device
+  runs, its right edge is the Mac's time now and the footage slides left as
+  time passes; a finger on the track holds it still.
 - **Markers.** Agent actions sit on the scrubber in the accent color, errors
   in orange and crashes in red.
 - **Moving through it.**
@@ -289,7 +295,9 @@ while a phone watches it, and keeps the last 15 minutes of footage (see
     frame shows.
   - A device that stops while you scrub stays on its recording, and one that
     starts stays on the recording until **Live**.
-  - Play plays on at the chosen speed and pauses at the newest frame.
+  - While live, the button shows pause: pressing it freezes on the newest
+    frame, in replay. In replay, play plays on at the chosen speed and pauses
+    at the newest frame.
   - **Live** returns to the live screen.
 - **While not live.** Control and **Take over** are disabled, and turning
   Control on is refused until Live.
