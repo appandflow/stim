@@ -18,22 +18,27 @@ export function SectionHeader({ title, action }: { title: string; action?: React
   );
 }
 
-/** A titled group of rows on one rounded surface, with an optional header action and footer. */
+/**
+ * A titled group of rows on one rounded surface, with an optional header action and footer. `bare` leaves the surface
+ * to the child, for a section that holds a single card of its own.
+ */
 export function ListSection({
   title,
   action,
   footer,
+  bare = false,
   children,
 }: {
   title?: string;
   action?: ReactNode;
   footer?: string;
+  bare?: boolean;
   children: ReactNode;
 }) {
   return (
     <View style={styles.section}>
       {title ? <SectionHeader title={title} action={action} /> : null}
-      <View style={styles.card}>{children}</View>
+      {bare ? children : <View style={styles.card}>{children}</View>}
       {footer ? (
         <Text variant="footnote" tone="secondary" style={styles.footer}>
           {footer}

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/components/agent-icon';
+import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
 import { Text, type TextTone } from '@/components/text';
 import { Touch } from '@/components/touch';
@@ -47,8 +48,11 @@ export function AgentSessionLine({
   );
 }
 
-/** One session in a list; a session with a web link opens it in the Claude app or on claude.ai. */
-export function AgentSessionRow({ agent, now }: { agent: AgentSession; now: number }) {
+/**
+ * One session in a list; a session with a web link opens it in the Claude app or on claude.ai. With `card`, a session
+ * with a link is a card of its own, for a section that holds only this session.
+ */
+export function AgentSessionRow({ agent, now, card = false }: { agent: AgentSession; now: number; card?: boolean }) {
   const { theme } = useUnistyles();
   const label = agentLabel(agent, now);
   const short = agentShortLabel(agent, now);
@@ -76,13 +80,28 @@ export function AgentSessionRow({ agent, now }: { agent: AgentSession; now: numb
       </View>
     );
   }
+  const open = () => void Linking.openURL(url);
+  const hint = 'Opens the session in the Claude app or on claude.ai';
+  if (card) {
+    return (
+      <Card
+        onPress={open}
+        accessibilityRole="link"
+        accessibilityLabel={label}
+        accessibilityHint={hint}
+        style={styles.cardRow}
+      >
+        {content}
+      </Card>
+    );
+  }
   return (
     <Touch
       feedback="row"
-      onPress={() => void Linking.openURL(url)}
+      onPress={open}
       accessibilityRole="link"
       accessibilityLabel={label}
-      accessibilityHint="Opens the session in the Claude app or on claude.ai"
+      accessibilityHint={hint}
       style={styles.listRow}
     >
       {content}
@@ -100,6 +119,13 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.lg,
     paddingHorizontal: theme.space.lg,
     paddingVertical: theme.space.sm,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.sm * 2,
   },
   titles: { flex: 1, gap: theme.space.xxs },
 }));
