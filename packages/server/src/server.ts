@@ -17,7 +17,7 @@ import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord }
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
-import { Player, recordedSpans, recordingDir, timelineMarkers } from './replay.ts';
+import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
@@ -180,6 +180,7 @@ const CLOSE_AUTH_TIMEOUT = 4408;
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
+const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const FRAME_BUFFER_FRAMES = 2;
 const FRAME_RETRY_MS = 50;
@@ -529,6 +530,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
+    let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
@@ -1233,6 +1235,45 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function replayKeyframe(id: RequestId, params: unknown): void {
+      const target = isJsonObject(params) ? params : {};
+      const { workspace, platform, slot, at } = target;
+      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+        return error(
+          id,
+          'bad-request',
+          'replay.keyframe needs params.workspace and params.platform (ios, android or web).',
+        );
+      }
+      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+        return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
+      }
+      if (typeof at !== 'number' || !Number.isFinite(at))
+        return error(id, 'bad-request', 'at must be epoch milliseconds.');
+      if (!workspaceDir(id, workspace, true)) return;
+      if (keyframeReads >= MAX_KEYFRAME_READS) {
+        return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
+      }
+      keyframeReads++;
+      void segmentKeyframe(recordingDir(workspace, platform as Platform, slot ?? 'default'), at).then((found) => {
+        keyframeReads--;
+        if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
+        const { segment, unit } = found;
+        return send(socket, {
+          id,
+          result: {
+            start: segment.start,
+            end: segment.end,
+            at: unit.capturedAt,
+            width: unit.width,
+            height: unit.height,
+            ...(unit.posture ? { posture: unit.posture } : {}),
+            data: unit.data.toString('base64'),
+          },
+        });
+      });
+    }
+
     function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {
       const enabled = isJsonObject(params) ? params.enabled : undefined;
       const record: AuditRecord = {
@@ -1457,6 +1498,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: { at: shown } });
       }
       if (message.method === 'replay.range') return replayRange(id, message.params);
+      if (message.method === 'replay.keyframe') return replayKeyframe(id, message.params);
       if (message.method === 'recording.set') return setRecording(id, message.params, device);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });

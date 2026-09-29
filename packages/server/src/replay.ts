@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   listSegments,
@@ -29,6 +30,10 @@ export function readUnits(file: string): AccessUnit[] {
   } catch {
     return [];
   }
+  return readUnitsFrom(bytes);
+}
+
+function readUnitsFrom(bytes: Buffer): AccessUnit[] {
   const units: AccessUnit[] = [];
   for (let at = 0; at + 4 <= bytes.length;) {
     const length = bytes.readUInt32BE(at);
@@ -46,6 +51,41 @@ export function readUnits(file: string): AccessUnit[] {
     at += 4 + length;
   }
   return units;
+}
+
+/**
+ * The keyframe that starts the segment `frames.seek` would show `at` from: the first segment that ends at or
+ * after `at`, or the newest one. Reads only that segment's first record, since the recorder starts every segment
+ * at a keyframe. Null when nothing was recorded or that record is not a whole keyframe yet.
+ */
+export async function segmentKeyframe(
+  dir: string,
+  at: number,
+): Promise<{ segment: RecordedSegment; unit: AccessUnit } | null> {
+  const segments = listSegments(dir);
+  const segment = segments.find((candidate) => candidate.end >= at) ?? segments.at(-1);
+  if (!segment) return null;
+  let file;
+  try {
+    file = await open(segment.file, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const { size } = await file.stat();
+    const prefix = Buffer.alloc(4);
+    if ((await file.read(prefix, 0, 4, 0)).bytesRead < 4) return null;
+    const length = prefix.readUInt32BE(0);
+    if (length < 13 || 4 + length > size) return null;
+    const record = Buffer.alloc(4 + length);
+    if ((await file.read(record, 0, record.length, 0)).bytesRead < record.length) return null;
+    const unit = readUnitsFrom(record)[0];
+    return unit?.keyframe ? { segment, unit } : null;
+  } catch {
+    return null;
+  } finally {
+    await file.close().catch(() => {});
+  }
 }
 
 /** The recorded time ranges of one device slot, oldest first, with the gaps where nothing was recorded. */

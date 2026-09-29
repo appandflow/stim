@@ -492,6 +492,17 @@ export interface ReplayMarker {
   label: string;
 }
 
+/** The keyframe starting the recorded segment covering a time; `data` is a base64 Annex-B access unit. */
+export interface ReplayKeyframe {
+  start: number;
+  end: number;
+  at: number;
+  width: number;
+  height: number;
+  posture?: 'folded' | 'unfolded';
+  data: string;
+}
+
 export interface ReplayRange {
   enabled: boolean;
   recording: boolean;
@@ -673,6 +684,10 @@ export interface Methods {
   'frames.seek': { params: { subscription: string; at: number; rate: ReplayRate }; result: { at: number } };
   'frames.live': { params: { subscription: string }; result: Record<string, never> };
   'replay.range': { params: { workspace: string; platform: DevicePlatform; slot?: string }; result: ReplayRange };
+  'replay.keyframe': {
+    params: { workspace: string; platform: DevicePlatform; slot?: string; at: number };
+    result: ReplayKeyframe;
+  };
   'recording.set': { params: { enabled: boolean }; result: { enabled: boolean; recordingsDeleted: string[] } };
   'build.plan': { params: BuildPlanParams; result: BuildPlan };
   'machine.get': { params: Record<string, never>; result: MachineUsage };

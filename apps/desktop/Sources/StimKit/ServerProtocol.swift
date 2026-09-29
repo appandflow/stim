@@ -128,6 +128,35 @@ public struct ReplayRange: Decodable, Equatable, Sendable {
   }
 }
 
+/// The keyframe that starts a recorded segment of about 5 seconds, from `replay.keyframe`: the segment's `start`
+/// and `end`, the keyframe's capture time `at`, and its Annex-B access unit, which carries its SPS and PPS.
+public struct ReplayKeyframe: Equatable, Sendable {
+  public var start: Double
+  public var end: Double
+  public var at: Double
+  public var width: Int
+  public var height: Int
+  public var accessUnit: Data
+
+  public init(start: Double, end: Double, at: Double, width: Int, height: Int, accessUnit: Data) {
+    self.start = start
+    self.end = end
+    self.at = at
+    self.width = width
+    self.height = height
+    self.accessUnit = accessUnit
+  }
+
+  /// Nil for a result missing a field or with `data` that is not base64.
+  public init?(_ result: JSONValue) {
+    guard case .object(let fields) = result, let start = fields["start"]?.number, let end = fields["end"]?.number,
+      let at = fields["at"]?.number, let width = fields["width"]?.number, let height = fields["height"]?.number,
+      let data = fields["data"]?.string, let accessUnit = Data(base64Encoded: data)
+    else { return nil }
+    self.init(start: start, end: end, at: at, width: Int(width), height: Int(height), accessUnit: accessUnit)
+  }
+}
+
 /// One binary video message: a header, then one Annex-B H.264 access unit. A keyframe carries its SPS and PPS.
 public struct VideoPacket: Equatable, Sendable {
   public var subscription: String
