@@ -335,6 +335,7 @@ export const PHASE_ORDER: readonly BuildPhase[] = [
   'prebuild',
   'pods',
   'compile',
+  'device',
   'install',
   'launch',
 ];
@@ -346,6 +347,7 @@ const PHASE_NAMES: Record<BuildPhase, string> = {
   prebuild: 'Prebuild',
   pods: 'Pods',
   compile: 'Compile',
+  device: 'Device',
   install: 'Install',
   launch: 'Launch',
 };
@@ -413,6 +415,7 @@ const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
   prebuild: 'prebuild',
   pods: 'pods',
   compile: 'compile',
+  device: 'device',
   install: 'install',
   launch: 'install',
 };

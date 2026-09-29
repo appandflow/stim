@@ -3291,7 +3291,7 @@ describe('--remote', () => {
     ['proxy', true],
     ['proxy', false],
   ] as const)(
-    'a %s device boots in the install phase, only after its build succeeds (build ok=%s)',
+    'a %s device boots in the device phase, only after its build succeeds (build ok=%s)',
     async (backend, buildOk) => {
       const remote = remoteStub();
       const stubbed = remote.deps.remoteIosDeps();
@@ -3321,7 +3321,7 @@ describe('--remote', () => {
       expect(afterPrepare).toEqual(
         buildOk ? ['buildIos', 'ensureBooted', 'installIosApp', 'launchIosApp'] : ['buildIos'],
       );
-      expect(bootPhase).toBe(buildOk ? 'install' : null);
+      expect(bootPhase).toBe(buildOk ? 'device' : null);
     },
   );
 
@@ -6535,6 +6535,7 @@ describe('run statistics', () => {
     expect(runs[0]?.run.podsMs).toBe(18000);
     expect(Object.keys(runs[0]?.run.phases ?? {})).toEqual([
       'prepare',
+      'device',
       'cache-lookup',
       'pods',
       'compile',

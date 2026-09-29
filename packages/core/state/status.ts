@@ -11,6 +11,7 @@ export const BUILD_PHASES = [
   'prebuild',
   'pods',
   'compile',
+  'device',
   'install',
   'launch',
 ] as const;

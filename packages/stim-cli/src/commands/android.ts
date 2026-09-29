@@ -988,6 +988,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     });
     if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
+    progress.step('device');
     const prepare = stepClock(now);
     try {
       device = await ensureDevice({
@@ -1128,7 +1129,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (runCancellation()) return fail('STIM_CANCELLED', 'before install');
 
     if (startRemoteBoot) {
-      progress.step('install');
+      progress.step('device');
       bootPromise = startRemoteBoot();
       const booted = await bootPromise;
       if (booted.failed) {

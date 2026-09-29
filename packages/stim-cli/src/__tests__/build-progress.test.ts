@@ -386,4 +386,29 @@ describe('estimates', () => {
       'build: ios compile, 5m00s elapsed (usually ~4m10s, median of 4 cold runs)',
     );
   });
+  test('a live record waiting on its device after the cache lookup is a hit, with no device estimate from older runs', () => {
+    const at = (ms: number) => new Date(T0 + ms).toISOString();
+    const record: ActiveBuildRecord = {
+      platform: 'ios',
+      slot: 'default',
+      startedAt: at(0),
+      phase: 'device',
+      phaseStartedAt: at(8_000),
+      phases: [
+        { phase: 'prepare', startedAt: at(0) },
+        { phase: 'device', startedAt: at(1_000) },
+        { phase: 'cache-lookup', startedAt: at(2_000) },
+        { phase: 'device', startedAt: at(8_000) },
+      ],
+      claim: { root: '/x', path: '/x/c', claimId: 'c', pid: 1 },
+    };
+    const coldLatest: RunHistory = { ios: { ...history.ios, cold: [histSample(100_000, {}, T0 + 2)] } };
+    expect(buildReport(record, { state: 'running', history: coldLatest })).toMatchObject({
+      outcome: 'hit',
+      expectedMs: 20_000,
+      expectedPhaseMs: null,
+    });
+    const beforeLookup = { ...record, phases: record.phases.slice(0, 2) };
+    expect(buildReport(beforeLookup, { state: 'running', history: coldLatest })).toMatchObject({ outcome: 'cold' });
+  });
 });

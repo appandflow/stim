@@ -629,6 +629,7 @@ async function runIos(
       ReturnType<typeof ensureOwnedDevice>
     >;
   } else {
+    progress.step('device');
     const prepare = stepClock(d.now);
     try {
       device = await d.ensureOwnedDevice({
@@ -850,7 +851,7 @@ async function runIos(
     artifact = acquiredArtifact.artifact;
     compilationCache = artifact.cache.compilation;
     if (!localBoot) {
-      progress.step('install');
+      progress.step('device');
       udid = await startBoot();
     }
 

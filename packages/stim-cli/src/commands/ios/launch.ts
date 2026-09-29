@@ -646,7 +646,7 @@ export async function finishIosRun({
 
   if (bundleId) d.upsertProject(root, { bundleId });
 
-  enterPhase('install');
+  enterPhase('device');
   const booted = await bootPromise;
   if (!booted?.ok) {
     return fail({
@@ -672,6 +672,7 @@ export async function finishIosRun({
     const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
+    enterPhase('install');
     await d.stopPreviousCollector({ root, note });
     const installTimer = stepTimer(d.now);
     const installed = d.installIosDeviceApp(
@@ -772,6 +773,7 @@ export async function finishIosRun({
         });
       }
     }
+    enterPhase('install');
     const installTimer = stepTimer(d.now);
     const installed = d.installIosApp(
       {

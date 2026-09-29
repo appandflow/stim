@@ -892,11 +892,13 @@ and an estimate of the time left:
 In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, expectedMs, expectedPhaseMs, basis }`.
 `phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
-`compile`, `install` and `launch`. `state` is `running` while the run's
+`compile`, `device`, `install` and `launch`. `device` covers creating or
+adopting the owned simulator or emulator, and waiting for it to boot once the
+app is ready; a boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
 `cold` once the run reaches prebuild, pods or compile, and `hit` once it
-reaches install without them; before that it follows the project's most recent
+reaches `device` after the cache lookup, or install, without them; before that it follows the project's most recent
 run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
 successful runs with that outcome, and `basis` counts them. Both are `null`
 until the project has such a run.

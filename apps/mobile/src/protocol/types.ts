@@ -63,7 +63,16 @@ export interface DeviceActivity {
   basis: string[];
 }
 
-export type BuildPhase = 'prepare' | 'cache-lookup' | 'wait' | 'prebuild' | 'pods' | 'compile' | 'install' | 'launch';
+export type BuildPhase =
+  | 'prepare'
+  | 'cache-lookup'
+  | 'wait'
+  | 'prebuild'
+  | 'pods'
+  | 'compile'
+  | 'device'
+  | 'install'
+  | 'launch';
 
 export interface BuildReport {
   platform: Platform;
