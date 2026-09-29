@@ -29,7 +29,6 @@ import {
   type BuildLine,
   type BundleLine,
   type ChipTone,
-  type CiState,
   type GitChip,
   type MetroHealth,
   type PhaseStep,
@@ -73,16 +72,6 @@ export function StageLine({ stage }: { stage: WorkspaceStage }) {
         </Text>
       ) : null}
     </View>
-  );
-}
-
-function CiMark({ state }: { state: CiState }) {
-  const { theme } = useUnistyles();
-  if (state === 'pending') return <StatusDot color={theme.colors.warning} />;
-  return state === 'passing' ? (
-    <Icon name="checkmark" size={11} color={theme.colors.success} />
-  ) : (
-    <Icon name="xmark" size={10} color={theme.colors.error} />
   );
 }
 
@@ -362,7 +351,11 @@ export function WorkCard({
               <Text variant={VALUE} weight={VALUE_WEIGHT} tone={CHIP_TONE[git.pr.tone]} numberOfLines={1}>
                 {git.pr.text}
               </Text>
-              {git.pr.ci ? <CiMark state={git.pr.ci} /> : null}
+              {git.pr.ci === 'failing' ? (
+                <Text variant={VALUE} weight={VALUE_WEIGHT} tone="error" numberOfLines={1}>
+                  CI failing
+                </Text>
+              ) : null}
             </>
           ) : (
             <Icon name="arrow.triangle.branch" size={12} color={theme.colors.secondary} />

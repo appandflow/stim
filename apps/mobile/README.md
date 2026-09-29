@@ -124,8 +124,8 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   ignored files), **Ready**, or **Stopped** (nothing runs, with when Metro stopped when known). After a thin
   divider comes the git chip. With a pull request `stim status` reports, it
   starts with the number colored by its state (open, draft, merged, closed)
-  and one mark for its worst check: a check when all pass, a cross when one
-  fails, a dot while one is pending. Without one, it starts with a branch
+  and **CI failing** in red when a check fails; the sheet shows every check
+  state. Without one, it starts with a branch
   icon. Then only what is not zero or unusual: commits ahead and behind, the
   count of changed files, **merged into** a branch (unless the pull request
   already reads merged), and **no upstream**. Its accessibility label spells
