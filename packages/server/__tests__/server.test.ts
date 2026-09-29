@@ -1314,7 +1314,6 @@ describe('machine.details', () => {
     expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
     expect(stimCalls().find((call) => call.args.startsWith('doctor'))).toMatchObject({ cwd: other });
 
-    // A poll once settled stays settled and starts no second doctor run.
     expect(await client.request('machine.details')).toMatchObject({
       result: { buildMachines: [{ machine: 'mini', state: 'approved' }] },
     });

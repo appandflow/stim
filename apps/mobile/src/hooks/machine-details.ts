@@ -40,6 +40,7 @@ export function useMachineDetails(connection: StimConnection | null, active: boo
             return;
           }
           if (pendingSince === null) pendingSince = Date.now();
+          if (pendingTimer) clearTimeout(pendingTimer);
           if (Date.now() - pendingSince < PENDING_POLL_MAX_MS) {
             pendingTimer = setTimeout(() => void ask(), PENDING_POLL_MS);
           }

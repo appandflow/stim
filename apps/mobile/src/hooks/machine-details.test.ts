@@ -43,7 +43,6 @@ test('re-asks shortly while build machines are pending, and stops once they sett
   expect(connection.request).toHaveBeenCalledTimes(3);
   expect(result.current).toEqual({ kind: 'ready', details: SETTLED });
 
-  // Settled: no more short re-polls, only the normal 60s refresh.
   await act(async () => jest.advanceTimersByTime(2_000));
   expect(connection.request).toHaveBeenCalledTimes(3);
 });
@@ -60,7 +59,6 @@ test('gives up short re-polling after the cap and falls back to the normal refre
   expect(callsWhilePending).toBeGreaterThan(1);
   expect(callsWhilePending).toBeLessThan(20);
 
-  // No calls until the next 60s tick once the short-poll cap is spent.
   await act(async () => jest.advanceTimersByTime(29_000));
   expect(connection.request).toHaveBeenCalledTimes(callsWhilePending);
   await act(async () => jest.advanceTimersByTime(1_000));

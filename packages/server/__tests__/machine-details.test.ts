@@ -11,7 +11,6 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-/** Lets a background `.then()` chain settle before the next assertion reads the cache. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const RESULT: GcStats = { gc: {}, stats: {}, measuredAt: '2026-09-28T10:00:00.000Z' };
