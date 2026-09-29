@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { globSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { globSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const files = globSync('{src,bin,test}/**/*.{ts,tsx,js,mjs}', { cwd: root });
 
 let failed = false;
@@ -12,8 +12,7 @@ for (const file of files) {
   const text = readFileSync(path, 'utf8');
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    // eslint-disable-next-line no-control-regex -- non-ASCII detection needs the full byte range
-    const match = /[^\x00-\x7F]/.exec(lines[i]);
+    const match = /[\u0080-￿]/.exec(lines[i]);
     if (match) {
       console.error(`${file}:${i + 1}: non-ASCII character ${JSON.stringify(match[0])}`);
       failed = true;
