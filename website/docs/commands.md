@@ -901,8 +901,13 @@ replaces the record), and `unknown` when the claim cannot be read. `outcome` is
 `cold` once the run reaches prebuild, pods or compile, and `hit` once it
 reaches `device` after the cache lookup, or install, without them; before that it follows the project's most recent
 run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
-successful runs with that outcome, and `basis` counts them. Both are `null`
-until the project has such a run.
+successful runs with that outcome, and `basis` counts the runs behind
+`expectedMs`. Both are `null` until the project has such a run. Once the run
+knows whether it creates, adopts or cold-boots its device, `expectedMs` and the
+`device` estimate use only runs that did the same, so a new worktree is not
+estimated from reruns that reused a booted device. Runs recorded before Stim
+tagged them count only for a run that reuses its device and for phases other
+than `device`.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
 in the shape of `lastBuilds.<platform>.missReason` below. Once the native
@@ -1057,7 +1062,8 @@ recorded, how many hit the build cache, the mean cold run and hit run, and an
 estimate of the time the cache saved. The aggregates are kept in
 `$STIM_HOME/stats.json`, and every worktree of a repository counts into the
 same project bucket. The same file keeps the last 10 successful runs per
-project, platform and cache outcome, with their phase durations, for the
+project, platform and cache outcome (and the last 10 that created, adopted or
+cold-booted their device), with their phase durations, for the
 estimates `stim status` shows; `stats` does not print them. Outside a project only the
 machine section prints. There is no reset flag: delete that file to start over.
 

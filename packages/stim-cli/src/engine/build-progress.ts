@@ -44,12 +44,18 @@ export interface ActiveBuildRecord {
   claim: ActiveBuildClaim;
   missReason?: BuildMissReason;
   placement?: Exclude<BuildPlacement, 'local'>;
+  /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */
+  deviceSetup?: boolean;
 }
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
   /** Records why the run's cache lookup missed. */
   miss(reason: BuildMissReason): void;
+  /** Records whether the run set up its device (created, adopted or cold-booted) rather than reusing a booted one. */
+  deviceSetup(setup: boolean | undefined): void;
+  /** What `deviceSetup` recorded, or undefined before the run knows. */
+  deviceSetupKnown(): boolean | undefined;
   /** Records the build machine the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
   /** Reads one record the run writes to its build log, for the native tool's progress. */
@@ -61,6 +67,8 @@ export interface BuildProgress {
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
   miss: () => {},
+  deviceSetup: () => {},
+  deviceSetupKnown: () => undefined,
   place: () => {},
   output: () => {},
   durations: () => ({}),
@@ -169,6 +177,14 @@ export function startBuildProgress({
     miss(reason) {
       record.missReason = reason;
       write();
+    },
+    deviceSetup(setup) {
+      if (setup === undefined) return;
+      record.deviceSetup = setup;
+      write();
+    },
+    deviceSetupKnown() {
+      return record.deviceSetup;
     },
     place(remote) {
       const current = record.placement;
@@ -323,6 +339,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     phases,
     ...(missReason ? { missReason } : {}),
     ...(placement ? { placement } : {}),
+    ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -377,17 +394,28 @@ export function estimateBuild(
   platform: StatsPlatform,
   known: RunOutcomeKind | null,
   phase: BuildPhase,
+  deviceSetup?: boolean,
 ): Pick<BuildReport, 'outcome' | 'expectedMs' | 'expectedPhaseMs' | 'basis'> {
   const lists = history?.[platform];
   const outcome = known ?? latestOutcome(lists);
   const samples: RunSample[] = (outcome && lists?.[outcome]) || [];
-  const phaseSamples = samples.flatMap((sample) => (phase in sample.phases ? [sample.phases[phase]!] : []));
+  const matched = matchDeviceSetup(samples, deviceSetup);
+  const phaseSamples = (phase === 'device' ? matched : samples).flatMap((sample) =>
+    phase in sample.phases ? [sample.phases[phase]!] : [],
+  );
   return {
     outcome,
-    expectedMs: median(samples.map((sample) => sample.durationMs)),
+    expectedMs: median(matched.map((sample) => sample.durationMs)),
     expectedPhaseMs: median(phaseSamples),
-    basis: samples.length,
+    basis: matched.length,
   };
+}
+
+function matchDeviceSetup(samples: RunSample[], deviceSetup: boolean | undefined): RunSample[] {
+  if (deviceSetup === undefined) return samples;
+  const tagged = samples.filter((sample) => sample.deviceSetup === deviceSetup);
+  if (tagged.length || deviceSetup) return tagged;
+  return samples.filter((sample) => sample.deviceSetup === undefined);
 }
 
 function latestOutcome(lists: Partial<Record<RunOutcomeKind, RunSample[]>> | undefined): RunOutcomeKind | null {
@@ -411,7 +439,7 @@ export function buildReport(
     phase: record.phase,
     startedAt: record.startedAt,
     phaseStartedAt: record.phaseStartedAt,
-    ...estimateBuild(history, record.platform, liveOutcome(record), record.phase),
+    ...estimateBuild(history, record.platform, liveOutcome(record), record.phase, record.deviceSetup),
     ...(record.missReason ? { missReason: record.missReason } : {}),
     placement: record.placement ?? 'local',
   };

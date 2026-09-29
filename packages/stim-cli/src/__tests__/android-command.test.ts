@@ -1198,6 +1198,8 @@ describe('explicit remote backend behavior', () => {
         step: (phase: string) => log.push(phase),
         miss: () => {},
         output: () => {},
+        deviceSetup: () => {},
+        deviceSetupKnown: () => undefined,
         durations: () => ({}),
         clear: () => {},
       },
@@ -5898,6 +5900,8 @@ describe('run statistics', () => {
       step: (phase: string) => steps.push(phase),
       miss: () => {},
       output: () => {},
+      deviceSetup: () => {},
+      deviceSetupKnown: () => undefined,
       durations: () => ({}),
       clear: () => {},
     };
@@ -5909,6 +5913,28 @@ describe('run statistics', () => {
       true,
     );
     expect(steps).toEqual(['device', 'cache-lookup', 'device', 'install', 'launch']);
+  });
+
+  test('the run tells its progress whether it set up its device or found it running', async () => {
+    const seen: unknown[] = [];
+    const progress = {
+      step: () => {},
+      miss: () => {},
+      output: () => {},
+      deviceSetup: (setup: unknown) => seen.push(setup),
+      deviceSetupKnown: () => undefined,
+      durations: () => ({}),
+      clear: () => {},
+    };
+    const ensureDevice = (setup: boolean) => async () => ({
+      avdName: 'stim-app-412',
+      consolePort: 5584,
+      owned: true,
+      ...(setup ? { setup: true } : {}),
+    });
+    expect((await harness({ progress, ensureDevice: ensureDevice(true) }).run()).ok).toBe(true);
+    expect((await harness({ progress, ensureDevice: ensureDevice(false) }).run()).ok).toBe(true);
+    expect(seen).toEqual([true, false]);
   });
 
   test('a cache hit compiles nothing, so it carries no build duration', async () => {

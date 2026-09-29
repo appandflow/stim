@@ -873,7 +873,7 @@ $STIM_HOME/workspaces/<project>--<digest>/ (default ~/.stim/workspaces/).
 The aggregate run counters \`stats\` prints live beside it in
 $STIM_HOME/stats.json, one bucket per project and platform plus a machine-wide
 one, and the last 10 successful runs per project, platform and cache outcome
-that size \`status\`'s build estimate. The running build itself is the
+(plus the last 10 that set up their device) that size \`status\`'s build estimate. The running build itself is the
 activeBuild key of the workspace's state.json, cleared when the run exits.
 No .gitignore entry is created or required.
 Native preparation can change project files: expo prebuild generates native

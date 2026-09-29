@@ -6521,9 +6521,29 @@ describe('run statistics', () => {
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
       phases: expect.any(Object),
+      deviceSetup: false,
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a run that starts booting its device is recorded as a device setup', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await run(
+      {},
+      {
+        recordStats,
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture',
+          owned: true,
+          booting: { udid: UDID, done: Promise.resolve({ ok: true, udid: UDID }) },
+        }),
+      },
+    );
+
+    expect(runs[0]?.run.deviceSetup).toBe(true);
   });
 
   test('the build phase and the pod install reach the record', async () => {

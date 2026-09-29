@@ -1106,9 +1106,16 @@ RULES
                    this project's most recent run.
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
-                   no history
-  expectedPhaseMs  the median duration of this phase in those runs, or null
-  basis            how many runs the medians come from (at most 10)
+                   no history. Once the run knows whether it creates,
+                   adopts or cold-boots its device (right after the device
+                   is prepared), only runs that did the same count; a run
+                   that reuses a booted device also counts runs recorded
+                   before Stim tagged them. Until then all runs count.
+  expectedPhaseMs  the median duration of this phase in those runs, or null.
+                   For device it counts only the runs that match the run's
+                   device situation; other phases use every run
+  basis            how many runs the expectedMs median comes from (at most
+                   10 per kind: device-setup runs keep their own 10)
   missReason       once the run knows its cache lookup missed, why, in the
                    shape of lastBuilds missReason below
   detail           on a running build whose tool printed a line Stim reads:
@@ -1337,7 +1344,9 @@ RULES
   outcome       "hit" or "cold"; null when the run would refuse
   expectedMs    the median wall time of this project's last successful runs
                 with that outcome on that platform, or null with none
-  basis         how many runs expectedMs comes from (at most 10)
+  basis         how many runs expectedMs comes from (at most 20: runs that
+                set up their device and runs that did not are not told apart
+                before the run)
   missReason    on a predicted cold build with cache reads on, why the
                 cache has no app, in the shape of lastBuilds.<platform>
                 .missReason (\`guide facts status\`), compared with the same
@@ -1394,7 +1403,8 @@ HOW A RUN IS COUNTED (\`stats\`)
   is therefore an ESTIMATE and is printed as one. The file is
   $STIM_HOME/stats.json (see \`guide lifecycle builds\`). Beside the
   aggregates it keeps the last 10 successful runs per project, platform and
-  outcome (hit or cold) that did not wait for another workspace's build: each
+  outcome (hit or cold), plus the last 10 that created, adopted or cold-booted
+  their device, that did not wait for another workspace's build: each
   one's duration and per-phase durations. \`stim status\` estimates a running
   build from them (see \`guide facts status\`); \`stats --json\` does not
   print them.
