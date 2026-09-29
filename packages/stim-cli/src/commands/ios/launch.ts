@@ -496,6 +496,10 @@ function cleanAdoptedIosApps({
   return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
 }
 
+function parkedBuildMayMatch(parkedCacheKey: string | undefined, storeKey: string | null): boolean {
+  return !parkedCacheKey || parkedCacheKey === storeKey;
+}
+
 function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
   if (!appPath || bundleId) return bundleId;
   return d.readBundleId(appPath) || d.detectBundleId(root);
@@ -782,7 +786,7 @@ export async function finishIosRun({
         devClientScheme: scheme,
         schemeApprovals: device.schemeApprovals,
         dataCleared: adopting,
-        proveInstalled: !adopting || !device?.parkedCacheKey || device.parkedCacheKey === storeKey,
+        proveInstalled: !adopting || parkedBuildMayMatch(device?.parkedCacheKey, storeKey),
       },
       { now: d.now },
     );
