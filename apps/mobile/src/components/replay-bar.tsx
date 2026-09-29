@@ -66,6 +66,7 @@ export function ReplayBar({
   const [dragging, setDragging] = useState<number | null>(null);
   const [speed, setSpeed] = useState<1 | 2>(1);
   const touch = useRef<Scrub | null>(null);
+  const fingerX = useRef(0);
   const [asked, setAsked] = useState<number | null>(null);
   const [lastAt, setLastAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -165,6 +166,7 @@ export function ReplayBar({
     },
     onResponderMove: (event: GestureResponderEvent) => {
       if (!touch.current) return;
+      fingerX.current = event.nativeEvent.locationX;
       touch.current = scrubMove(touch.current, event.nativeEvent.locationX, playing);
       if (touch.current.drag) drag(event.nativeEvent.locationX, null);
     },
@@ -173,8 +175,7 @@ export function ReplayBar({
       end();
     },
     onResponderTerminate: () => {
-      const current = touch.current;
-      if (current?.drag && dragging !== null) seekTo(timeAt(track, dragging), scrubEndRate(current, playing, speed));
+      if (touch.current?.drag) release(fingerX.current);
       end();
     },
   };
