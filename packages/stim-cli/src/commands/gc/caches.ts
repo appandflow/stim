@@ -37,6 +37,12 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
 const EVERY_CACHE = 'all';
 const WORKSPACE_OUTPUTS = 'workspaces';
 const RECORDINGS = 'recordings';
+const PARKED_DEVICES = 'parked';
+
+export function includesParkedDevices(name: string | null | undefined): boolean {
+  const wanted = name?.trim().toLowerCase();
+  return wanted === EVERY_CACHE || wanted === PARKED_DEVICES;
+}
 
 export function includesRecordings(name: string | null | undefined): boolean {
   const wanted = name?.trim().toLowerCase();
@@ -52,7 +58,7 @@ export function selectCaches(caches: CacheDescriptor[], name: string | null | un
   if (!name) return caches;
   const wanted = name.trim().toLowerCase();
   if (wanted === EVERY_CACHE) return caches;
-  if (wanted === WORKSPACE_OUTPUTS || wanted === RECORDINGS) return [];
+  if (wanted === WORKSPACE_OUTPUTS || wanted === RECORDINGS || wanted === PARKED_DEVICES) return [];
   return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
 }
 

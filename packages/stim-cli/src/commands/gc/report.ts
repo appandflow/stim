@@ -12,7 +12,7 @@ import {
   type WorkspaceKeptCode,
   type WorkspaceOutputsReport,
 } from './workspaces.ts';
-import type { GcCache } from './caches.ts';
+import { includesParkedDevices, type GcCache } from './caches.ts';
 import type { WorkspaceLogs, WorkspaceLogsKeptCode } from './logs.ts';
 import {
   worktreePullRequestNote,
@@ -75,7 +75,14 @@ function parkedAge(parkedAt: string, now: number): string {
   return `parked ${formatLongDuration(Math.max(0, now - at))} ago`;
 }
 
-function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: number): string[] {
+const PARKED_DELETE_NOTE = '              --delete attempts verified deletions and keeps failures.';
+const PARKED_ERASE_NOTE = '              --delete erases each verified device (apps and data) and keeps it parked.';
+
+function parkedApp(app: string | null): string {
+  return app ? ` ${app}` : '';
+}
+
+function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: number, erase: boolean): string[] {
   if (parkedSims.length === 0) return [];
   const known = parkedSims.filter((sim) => sim.bytes !== null);
   const total = known.reduce((sum, sim) => sum + (sim.bytes ?? 0), 0);
@@ -87,13 +94,15 @@ function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: numb
     const bytes = sim.bytes === null ? '' : ` ${formatBytes(sim.bytes)}`;
     const gone =
       sim.listed === false ? ' - not on this machine' : sim.listed === null ? ' - listing unavailable; kept' : '';
-    lines.push(`  ios ${sim.name} (${shortUdid(sim.udid)})${model ? ` ${model}` : ''} ${age}${bytes}${gone}`);
+    lines.push(
+      `  ios ${sim.name} (${shortUdid(sim.udid)})${model ? ` ${model}` : ''} ${age}${parkedApp(sim.app)}${bytes}${gone}`,
+    );
   }
-  lines.push('              --delete attempts verified deletions and keeps failures.');
+  lines.push(erase ? PARKED_ERASE_NOTE : PARKED_DELETE_NOTE);
   return lines;
 }
 
-function formatParkedAvdReport(parkedAvds: readonly ParkedAvdReport[], now: number): string[] {
+function formatParkedAvdReport(parkedAvds: readonly ParkedAvdReport[], now: number, erase: boolean): string[] {
   if (!parkedAvds.length) return [];
   const lines: string[] = [];
   lines.push(`Parked emulators (${parkedAvds.length}):`);
@@ -101,10 +110,10 @@ function formatParkedAvdReport(parkedAvds: readonly ParkedAvdReport[], now: numb
     const listed =
       avd.listed === false ? ' - not on this machine' : avd.listed === null ? ' - listing unavailable; kept' : '';
     lines.push(
-      `  android ${avd.name} ${avd.systemImage}${avd.deviceProfile ? ` ${avd.deviceProfile}` : ''} ${parkedAge(avd.parkedAt, now)}${avd.bytes === null ? '' : ` ${formatBytes(avd.bytes)}`}${listed}`,
+      `  android ${avd.name} ${avd.systemImage}${avd.deviceProfile ? ` ${avd.deviceProfile}` : ''} ${parkedAge(avd.parkedAt, now)}${parkedApp(avd.app)}${avd.bytes === null ? '' : ` ${formatBytes(avd.bytes)}`}${listed}`,
     );
   }
-  lines.push('              --delete attempts verified deletions and keeps failures.');
+  lines.push(erase ? PARKED_ERASE_NOTE : PARKED_DELETE_NOTE);
   return lines;
 }
 
@@ -162,7 +171,11 @@ export function formatGcReport(
   const expiredLeases = deviceLeases?.expired ?? [];
 
   if (cacheScope) {
-    lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
+    lines.push(
+      includesParkedDevices(cacheScope)
+        ? `Cache scope: "${cacheScope}". Unparked devices, project entries and locks were not inspected.`
+        : `Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`,
+    );
   } else if (
     [
       deadProjects,
@@ -212,8 +225,8 @@ export function formatGcReport(
   lines.push(...orphanedWorkspaceLines(orphanedWorkspaces));
   lines.push(...worktreeSweepLines(worktreeSweep));
 
-  lines.push(...formatParkedSimReport(parkedSims, now));
-  lines.push(...formatParkedAvdReport(parkedAvds, now));
+  lines.push(...formatParkedSimReport(parkedSims, now, cacheScope !== null));
+  lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
@@ -627,20 +640,22 @@ export function gcReportSections({
       detail: w.skipped ?? worktreeRemovalReason(w),
       eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
     })),
-    parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, bytes, listed }) => ({
+    parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, app, bytes, listed }) => ({
       udid,
       name,
       model,
       runtime,
       parkedAt,
+      app,
       bytes,
       listed,
     })),
-    parkedEmulators: parkedAvds.map(({ name, systemImage, deviceProfile, parkedAt, bytes, listed }) => ({
+    parkedEmulators: parkedAvds.map(({ name, systemImage, deviceProfile, parkedAt, app, bytes, listed }) => ({
       name,
       systemImage,
       deviceProfile,
       parkedAt,
+      app,
       bytes,
       listed,
     })),

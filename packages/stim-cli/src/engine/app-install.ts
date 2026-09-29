@@ -86,6 +86,7 @@ export function installIosApp(
     devClientScheme = null,
     schemeApprovals = [],
     proveInstalled = true,
+    dataCleared = false,
   }: {
     udid: string;
     appPath: string;
@@ -93,6 +94,7 @@ export function installIosApp(
     devClientScheme?: string | null;
     schemeApprovals?: string[];
     proveInstalled?: boolean;
+    dataCleared?: boolean;
   },
   { exec = null, now = null }: ExecOpt = {},
 ): IosInstallResult {
@@ -115,7 +117,7 @@ export function installIosApp(
     artifactStartedAt !== undefined && artifactFinishedAt !== undefined
       ? artifactFinishedAt - artifactStartedAt
       : undefined;
-  const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
+  const devMenuKeys = bundleId && devClientScheme && (!skipped || dataCleared) ? IOS_DEV_MENU_OFF_KEYS : [];
   const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
   const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
   const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
@@ -160,14 +162,14 @@ export function clearOtherUserApps(
     list = listUserApps,
     uninstall = uninstallIosApp,
   }: { list?: typeof listUserApps; uninstall?: typeof uninstallIosApp } = {},
-): { listed: boolean; removed: string[]; failed: string[] } {
+): { listed: boolean; kept: boolean; removed: string[]; failed: string[] } {
   const removed: string[] = [];
   const failed: string[] = [];
   let installed: string[];
   try {
     installed = list(udid);
   } catch {
-    return { listed: false, removed, failed };
+    return { listed: false, kept: false, removed, failed };
   }
   for (const bundleId of installed) {
     if (bundleId === keep) continue;
@@ -178,7 +180,7 @@ export function clearOtherUserApps(
       failed.push(bundleId);
     }
   }
-  return { listed: true, removed, failed };
+  return { listed: true, kept: keep ? installed.includes(keep) : false, removed, failed };
 }
 
 export function jsLocationValue(metroPort: number | string): string {

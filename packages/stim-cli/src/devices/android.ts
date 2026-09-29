@@ -973,6 +973,31 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
   }
 }
 
+export function parseDfAvailableBytes(text: unknown): number | null {
+  const lines = String(text ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length !== 2 || !/^Filesystem\s/.test(lines[0]!)) return null;
+  const available = lines[1]!.split(/\s+/)[3];
+  return available && /^\d+$/.test(available) ? Number(available) * 1024 : null;
+}
+
+export function androidDataFreeBytes(serial: string): number | null {
+  const output = getExecutor().runFile('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
+    timeoutMs: 30000,
+    killSignal: 'SIGKILL',
+  });
+  return parseDfAvailableBytes(output);
+}
+
+export function trimAndroidCaches(serial: string, desiredFreeBytes: number): void {
+  getExecutor().runFile('adb', ['-s', serial, 'shell', 'pm', 'trim-caches', String(desiredFreeBytes)], {
+    timeoutMs: 120000,
+    killSignal: 'SIGKILL',
+  });
+}
+
 export function parseEmulatorVersion(text: unknown): number | null {
   const match = /Android emulator version (\d+)\./.exec(String(text ?? ''));
   return match ? Number(match[1]) : null;

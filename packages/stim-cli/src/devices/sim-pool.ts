@@ -32,6 +32,8 @@ export interface ParkedSim extends ParkedRecord {
 export interface ParkedAvd extends ParkedRecord {
   systemImage: string;
   configuration: string;
+  packageName?: string;
+  cacheKey?: string;
 }
 
 type PoolRecords = { ios: ParkedSim; android: ParkedAvd };
@@ -97,7 +99,9 @@ function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRe
       ? record.udid === record.name &&
         /^stim-[A-Za-z0-9._-]+$/.test(record.name) &&
         typeof record.systemImage === 'string' &&
-        typeof record.configuration === 'string'
+        typeof record.configuration === 'string' &&
+        (record.packageName === undefined || typeof record.packageName === 'string') &&
+        (record.cacheKey === undefined || typeof record.cacheKey === 'string')
       : typeof record.deviceTypeIdentifier === 'string' &&
         typeof record.runtimeIdentifier === 'string' &&
         typeof record.simslimManaged === 'boolean' &&
@@ -247,6 +251,29 @@ export function removeParkedAfter<P extends PoolPlatform>(
   udid: string,
   beforeRemove: (record: PoolRecords[P]) => void,
 ): PoolRecords[P] | null {
+  return settleParkedAfter(platform, udid, beforeRemove, null);
+}
+
+export function eraseParkedAfter<P extends PoolPlatform>(
+  platform: P,
+  udid: string,
+  erase: (record: PoolRecords[P]) => void,
+): PoolRecords[P] | null {
+  return settleParkedAfter(platform, udid, erase, (record) => {
+    const erased = { ...record };
+    delete (erased as { bundleId?: string }).bundleId;
+    delete (erased as { packageName?: string }).packageName;
+    delete erased.cacheKey;
+    return erased;
+  });
+}
+
+function settleParkedAfter<P extends PoolPlatform>(
+  platform: P,
+  udid: string,
+  action: (record: PoolRecords[P]) => void,
+  keep: ((record: PoolRecords[P]) => PoolRecords[P]) | null,
+): PoolRecords[P] | null {
   const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
   try {
@@ -277,11 +304,11 @@ export function removeParkedAfter<P extends PoolPlatform>(
     });
     if (!claimed) return null;
     let completed = false;
-    let removed: PoolRecords[P] | null = null;
+    let settled: PoolRecords[P] | null = null;
     try {
       markClaimChildPending(claim);
       try {
-        beforeRemove(claimed.record);
+        action(claimed.record);
       } finally {
         clearClaimChild(claim);
       }
@@ -293,18 +320,19 @@ export function removeParkedAfter<P extends PoolPlatform>(
         const records = readParked(platform, { config: cfg });
         const current = records.find((candidate) => candidate.udid === udid);
         if (!isDeepStrictEqual(current, claimed.marked)) return;
+        const after = completed && keep ? keep(claimed.record) : claimed.record;
         writeParked(
           cfg,
           platform,
-          completed
+          completed && !keep
             ? records.filter((candidate) => candidate.udid !== udid)
-            : records.map((candidate) => (candidate.udid === udid ? claimed.record : candidate)),
+            : records.map((candidate) => (candidate.udid === udid ? after : candidate)),
         );
         saveConfig(cfg);
-        if (completed) removed = claimed.record;
+        if (completed) settled = claimed.record;
       });
     }
-    return removed;
+    return settled;
   } finally {
     releaseClaim(claim);
   }

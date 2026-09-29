@@ -478,6 +478,14 @@ function cleanAdoptedIosApps({
     phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
   }
   if (swept.listed && swept.failed.length === 0) {
+    if (swept.kept && bundleId) {
+      try {
+        d.clearIosAppData(udid, bundleId);
+      } catch (error) {
+        return `Could not clear the data ${bundleId} kept from the previous workspace: ${String((error as Error)?.message || error)}`;
+      }
+      phase('install', `cleared ${bundleId} data left by the previous workspace`);
+    }
     d.clearIosAdoptionPending(root, slot);
     return null;
   }
@@ -773,7 +781,8 @@ export async function finishIosRun({
         bundleId,
         devClientScheme: scheme,
         schemeApprovals: device.schemeApprovals,
-        proveInstalled: !adopting || device?.parkedCacheKey === storeKey,
+        dataCleared: adopting,
+        proveInstalled: !adopting || !device?.parkedCacheKey || device.parkedCacheKey === storeKey,
       },
       { now: d.now },
     );

@@ -1240,6 +1240,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         reclaimed,
         devServer,
         enterPhase: progress.step,
+        rebootDevice: () =>
+          Promise.resolve(
+            ensureDeviceBooted({
+              platform: PLATFORM,
+              device: { ...device, serial: undefined },
+              projectPath: root,
+              out,
+              logFile: emuLog,
+            }),
+          ).catch((e) => ({ failed: true as const, reason: String((e as Error)?.message || e) })),
       });
     } finally {
       releaseLease();

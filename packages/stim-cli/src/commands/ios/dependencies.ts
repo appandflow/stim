@@ -11,7 +11,7 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { listIosRuntimes } from '../../devices/ios.ts';
+import { clearIosAppData, listIosRuntimes } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -144,6 +144,7 @@ export interface IosDeps {
   swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
   clearOtherUserApps: typeof clearOtherUserApps;
+  clearIosAppData: typeof clearIosAppData;
   clearIosAdoptionPending: typeof clearIosAdoptionPending;
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
@@ -234,6 +235,7 @@ export const DEFAULT_DEPS: IosDeps = {
   swapJsBundle,
   installIosApp,
   clearOtherUserApps,
+  clearIosAppData,
   clearIosAdoptionPending,
   launchIosApp,
   verifyLaunch,

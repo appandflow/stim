@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
+import { parseAppContainerPath } from '../engine/installed-artifact.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from './ios-simulator-viewer.ts';
@@ -510,6 +511,34 @@ export function resetIosPrivacy(udid: string): void {
 
 export function resetIosKeychain(udid: string): void {
   getExecutor().runFile('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
+}
+
+const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
+
+export function clearIosAppData(udid: string, bundleId: string): void {
+  const exec = getExecutor();
+  try {
+    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
+  } catch (error) {
+    if (!/Domain .* does not exist/.test(String((error as Error)?.message))) throw error;
+  }
+  const output = exec.runFile('xcrun', ['simctl', 'get_app_container', udid, bundleId, 'data'], SIMCTL_OPTIONS);
+  const container = parseAppContainerPath(output);
+  if (!container) {
+    throw new Error(`simctl get_app_container returned no data container for ${bundleId}: ${JSON.stringify(output)}`);
+  }
+  for (const name of CLEARED_CONTAINER_DIRS) {
+    const dir = join(container, name);
+    let children: string[];
+    try {
+      if (!statSync(dir).isDirectory()) throw new Error(`Expected app data path ${dir} to be a directory.`);
+      children = readdirSync(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+      throw error;
+    }
+    for (const child of children) rmSync(join(dir, child), { recursive: true, force: true });
+  }
 }
 
 export function uninstallIosApp(udid: string, bundleId: string): void {
