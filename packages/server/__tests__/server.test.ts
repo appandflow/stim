@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash } from 'node:crypto';
+import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -28,6 +29,8 @@ import {
   readDevices,
   revokeDevice,
 } from '../src/registry.ts';
+import { watchTailscale } from '../src/tailscale-monitor.ts';
+import type { TailscaleState } from '../src/tailscale.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceStateDir } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
@@ -222,6 +225,8 @@ async function start(
     commandLimits?: ServerOptions['commandLimits'];
     actionLimits?: ServerOptions['actionLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
+    tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
+    listenRetryMs?: number;
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
     foldHelper?: string;
@@ -259,6 +264,8 @@ async function start(
       ...(overrides.whoisDelayMs ? { FAKE_TAILSCALE_DELAY_MS: String(overrides.whoisDelayMs) } : {}),
       ...overrides.env,
     },
+    tailscaleMonitor: overrides.tailscaleMonitor,
+    listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
     logLimits: overrides.logLimits,
@@ -1039,6 +1046,72 @@ describe('health', () => {
       }).on('error', reject);
     });
     expect(rebound).toBe(426);
+  });
+
+  it('follows Tailscale coming up and going away after start', async () => {
+    let next: TailscaleState = { state: 'unavailable', reason: 'it timed out' };
+    const initial = { binary: null, state: next };
+    const monitor = watchTailscale({
+      env: {},
+      initial,
+      find: () => 'tailscale',
+      read: async () => next,
+      backoffMs: 10,
+      maxMs: 20,
+    });
+    const port = await start({ tailscaleState: initial.state, tailscaleMonitor: monitor });
+    const health = async () =>
+      ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { tailscale: unknown }).tailscale;
+    const eventually = async (done: () => boolean | Promise<boolean>) => {
+      for (let attempt = 0; attempt < 200 && !(await done()); attempt++) await new Promise((r) => setTimeout(r, 10));
+      expect(await done()).toBe(true);
+    };
+    expect(await health()).toEqual({ state: 'unavailable', reason: 'it timed out' });
+    expect(server!.addresses).toHaveLength(1);
+    next = { state: 'running', ips: ['::1'], dnsName: 'mac.tail1.ts.net', hostName: 'mac' };
+    await eventually(() => server!.addresses.length === 2);
+    expect(server!.addresses[1]).toEqual({ host: '::1', port });
+    expect(await health()).toEqual({ state: 'running', dnsName: 'mac.tail1.ts.net' });
+    const tailnetClient = new WebSocket(`ws://[::1]:${port}`);
+    clients.push(tailnetClient);
+    await new Promise((resolve) => tailnetClient.once('open', resolve));
+    const dropped = new Promise((resolve) => tailnetClient.once('close', resolve));
+    next = { state: 'not-running', backendState: 'Stopped' };
+    await eventually(() => server!.addresses.length === 1);
+    await dropped;
+    expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
+    monitor.stop();
+  });
+
+  it('listens again on a Tailscale address that failed to bind', async () => {
+    let next: TailscaleState = { state: 'unavailable', reason: 'it timed out' };
+    const monitor = watchTailscale({
+      env: {},
+      initial: { binary: null, state: next },
+      find: () => 'tailscale',
+      read: async () => next,
+      backoffMs: 10,
+      maxMs: 20,
+    });
+    const port = await start({ tailscaleState: next, tailscaleMonitor: monitor, listenRetryMs: 20 });
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(port, '::1', resolve));
+    try {
+      next = { state: 'running', ips: ['::1'], dnsName: null, hostName: null };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(server!.addresses).toHaveLength(1);
+      await new Promise((resolve) => blocker.close(resolve));
+      for (let attempt = 0; attempt < 200 && server!.addresses.length < 2; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(server!.addresses).toEqual([
+        { host: '127.0.0.1', port },
+        { host: '::1', port },
+      ]);
+    } finally {
+      monitor.stop();
+      blocker.close();
+    }
   });
 
   test.skipIf(!fakeTailscale)('reports the current tailscale serve route to the server', async () => {

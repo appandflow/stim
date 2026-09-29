@@ -42,6 +42,32 @@ function parseTailscaleStatus(value: unknown): TailscaleState {
   return { state: 'running', ips, dnsName, hostName };
 }
 
+export function readTailscaleStatus(
+  binary: string | null,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<TailscaleState> {
+  if (!binary) return Promise.resolve({ state: 'unavailable', reason: 'the tailscale command was not found' });
+  return new Promise((resolve) => {
+    execFile(
+      binary,
+      ['status', '--json'],
+      { env, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) {
+          const reason = error.killed ? 'it timed out' : error.message.split('\n')[0]!;
+          return resolve({ state: 'unavailable', reason: `\`tailscale status --json\` failed: ${reason}` });
+        }
+        try {
+          resolve(parseTailscaleStatus(JSON.parse(stdout)));
+        } catch {
+          resolve({ state: 'unavailable', reason: '`tailscale status --json` printed output that is not JSON' });
+        }
+      },
+    );
+  });
+}
+
 export function tailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): TailscaleState {
   if (!binary) return { state: 'unavailable', reason: 'the tailscale command was not found' };
   try {

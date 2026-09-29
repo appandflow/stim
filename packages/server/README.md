@@ -38,8 +38,8 @@ carries `pendingUntil`.
 [Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this Mac with the
-server's name, versions, protocol, `stimHome`, and the Tailscale state it
-started with. While Tailscale runs, it also carries `route`, read from
+server's name, versions, protocol, `stimHome`, and the current
+Tailscale state. While Tailscale runs, it also carries `route`, read from
 `tailscale serve status --json` on each request: `routed` with the HTTPS
 `port` that proxies to the server, `funneled` with the Funnel `ports` that do,
 `missing`, or `unknown` with a `reason`; the last three carry the `port` the
@@ -64,7 +64,10 @@ cryptography of its own. You need Tailscale on the Mac and on the phone, in the
 same tailnet or with the Mac shared to the phone's user.
 
 `stim-server` listens only on `127.0.0.1` and on the Mac's Tailscale
-addresses, never on every interface. Run this once so clients can use
+addresses, never on every interface. It re-reads the Tailscale state in the
+background, so a server that started before Tailscale was up, or while it did
+not answer, starts listening on the Tailscale addresses once it runs, and stops
+when it goes away. Run this once so clients can use
 `wss://<mac>.<tailnet>.ts.net:7443` with a valid certificate:
 
 ```bash

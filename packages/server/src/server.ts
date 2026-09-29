@@ -88,6 +88,7 @@ import {
 } from './registry.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 
@@ -101,6 +102,13 @@ export interface ServerOptions {
   env: NodeJS.ProcessEnv;
   tailscale: string | null;
   tailscaleState: TailscaleState;
+  /**
+   * Keeps the Tailscale state current after start. Without it, `tailscale` and `tailscaleState` stay as
+   * given. While Tailscale runs the server listens on its addresses, and it closes them when Tailscale stops.
+   */
+  tailscaleMonitor?: TailscaleMonitor;
+  /** How long to wait before listening again on a Tailscale address that failed; tests shorten it. */
+  listenRetryMs?: number;
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
@@ -212,6 +220,7 @@ const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
 
 const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
+const LISTEN_RETRY_MS = 5000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 const PLAN_TIMEOUT_MS = 150_000;
 const DETAILS_TIMEOUT_MS = 150_000;
@@ -368,6 +377,12 @@ function doctorTarget(): DoctorTarget {
     return { error: (cause as Error).message };
   }
 }
+
+const closeListener = ({ server, sockets }: { server: Server; sockets: Set<Socket> }) =>
+  new Promise((resolve) => {
+    server.close(resolve);
+    for (const socket of sockets) socket.destroy();
+  });
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
@@ -567,7 +582,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function identify(): Promise<PeerIdentity | null> {
       if (peer === null) return { kind: 'local' };
-      return isIP(peer) ? whois(options.tailscale, options.env, peer) : null;
+      return isIP(peer) ? whois(tailscaleNow().binary, options.env, peer) : null;
     }
 
     async function hello(id: RequestId, params: unknown): Promise<void> {
@@ -1629,24 +1644,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer));
   }
 
-  const health: ServerHealth = {
+  const tailscaleNow = (): TailscaleSnapshot =>
+    options.tailscaleMonitor?.current() ?? { binary: options.tailscale, state: options.tailscaleState };
+  const health = {
     server: 'stim-server',
     name: options.name,
     version: options.serverVersion,
     stim: options.stimVersion,
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
-    tailscale: healthTailscale(options.tailscaleState),
-  };
+  } as const;
   const answerHealth = async (response: ServerResponse) => {
-    const tailscale = options.tailscaleState;
+    const { binary, state: tailscale } = tailscaleNow();
     const route =
       tailscale.state === 'running' && tailscale.dnsName
-        ? await serveRoute(options.tailscale, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
+        ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
-    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ...health, route }));
+    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route };
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
-  const servers: Server[] = [];
+  const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
   push.refresh();
   const close = async () => {
@@ -1662,42 +1679,99 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();
-    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+    await Promise.all([...servers.values()].map(closeListener));
   };
+  async function listenOn(host: string): Promise<void> {
+    const server = createServer((request, response) => {
+      if (localHealthRequest(request)) {
+        void answerHealth(response);
+        return;
+      }
+      if (
+        request.method === 'GET' &&
+        request.url === '/health' &&
+        peerAddress(request) !== null &&
+        request.headers.origin === undefined &&
+        request.headers['sec-fetch-site'] === undefined
+      ) {
+        const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(peerHealth));
+        return;
+      }
+      response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
+    });
+    server.on('upgrade', upgrade);
+    const sockets = new Set<Socket>();
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(addresses[0]?.port ?? options.port, host, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+    servers.set(host, { server, sockets });
+    addresses.push({ host, port: (server.address() as AddressInfo).port });
+  }
   try {
-    for (const host of options.hosts) {
-      const server = createServer((request, response) => {
-        if (localHealthRequest(request)) {
-          void answerHealth(response);
-          return;
-        }
-        if (
-          request.method === 'GET' &&
-          request.url === '/health' &&
-          peerAddress(request) !== null &&
-          request.headers.origin === undefined &&
-          request.headers['sec-fetch-site'] === undefined
-        ) {
-          const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
-          response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(peerHealth));
-          return;
-        }
-        response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
-      });
-      server.on('upgrade', upgrade);
-      servers.push(server);
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(options.port, host, () => {
-          server.off('error', reject);
-          resolve();
-        });
-      });
-      addresses.push({ host, port: (server.address() as AddressInfo).port });
-    }
+    for (const host of options.hosts) await listenOn(host);
   } catch (error) {
     await close();
     throw error;
   }
-  return { addresses, close };
+  const monitor = options.tailscaleMonitor;
+  const listenFailures = new Set<string>();
+  const reconcile = async (snapshot: TailscaleSnapshot) => {
+    const tailnet = snapshot.state.state === 'running' ? snapshot.state.ips : [];
+    const wanted = new Set([...options.hosts, ...tailnet]);
+    for (const [host, listener] of servers) {
+      if (wanted.has(host)) continue;
+      servers.delete(host);
+      addresses.splice(
+        addresses.findIndex((address) => address.host === host),
+        1,
+      );
+      await closeListener(listener);
+    }
+    let failed = false;
+    for (const host of wanted) {
+      if (servers.has(host) || closing) continue;
+      try {
+        await listenOn(host);
+      } catch (error) {
+        failed = true;
+        if (!listenFailures.has(host)) {
+          listenFailures.add(host);
+          console.error(`stim-server: could not listen on ${host}: ${(error as Error).message}`);
+        }
+      }
+    }
+    if (failed && !closing) {
+      retry = setTimeout(() => queueReconcile(), options.listenRetryMs ?? LISTEN_RETRY_MS);
+      retry.unref();
+    }
+  };
+  let retry: NodeJS.Timeout | null = null;
+  let reconciling = Promise.resolve();
+  const queueReconcile = () => {
+    if (retry) clearTimeout(retry);
+    retry = null;
+    if (monitor) reconciling = reconciling.then(() => reconcile(monitor.current()));
+  };
+  queueReconcile();
+  await reconciling;
+  const stopWatching = monitor?.onChange(queueReconcile);
+  return {
+    addresses,
+    close: async () => {
+      stopWatching?.();
+      const closed = close();
+      if (retry) clearTimeout(retry);
+      await Promise.all([reconciling, closed]);
+      await Promise.all([...servers.values()].map(closeListener));
+    },
+  };
 }
