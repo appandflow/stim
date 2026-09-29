@@ -577,8 +577,8 @@ RULES
   agent relaunch, or a crash restart. An install skipped
   because adoption reused a parked simulator (and cleared the
   app's data first) does NOT rewrite them, so a non-Stim
-  relaunch after that adoption can show the menu and button
-  once, until the next real install.
+  relaunch after that adoption can show the menu and button,
+  until the next real install.
   When the project's installed expo-dev-launcher (found
   through expo-dev-client, no network) is 58.0.0 or later
   (expo/expo#49651), Stim's own deep link also carries

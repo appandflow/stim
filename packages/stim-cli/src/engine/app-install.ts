@@ -116,12 +116,9 @@ export function installIosApp(
     artifactStartedAt !== undefined && artifactFinishedAt !== undefined
       ? artifactFinishedAt - artifactStartedAt
       : undefined;
-  // simctl launch --initialUrl carries the same keys as launch arguments
-  // (see launchIosApp), which cover Stim's own launches, so a real install is
-  // the only case that still needs the persistent defaults written: it covers
-  // launches Stim did not make (agent-device relaunches, crash restarts,
-  // home-screen taps), where expo-dev-launcher reads only the persisted
-  // domain.
+  // expo-dev-launcher reads these only from the persisted domain on a launch
+  // Stim did not make (agent-device relaunches, crash restarts, home-screen
+  // taps); launchIosApp's own simctl launch carries them as argv instead.
   const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
   const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
   const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
