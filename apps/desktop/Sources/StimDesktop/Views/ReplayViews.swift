@@ -151,8 +151,11 @@ struct ReplayHost<Content: View>: View {
 /// Live, play and pause, speed, and a scrubber over the device's recorded footage with its agent actions and errors
 /// as markers, as the phone's `ReplayBar` offers them. Without a timeline, while replay shows footage that is gone,
 /// only Live. Dragging shows the frame under the pointer; clicking near a marker lands just before it; hovering a
-/// marker shows what happened.
+/// marker shows what happened. While live, play and pause shows pause, and pausing freezes on the newest frame.
 struct ReplayBar: View {
+  /// stim-server's `frames.seek` shows the newest frame for a time past every recording; the phone sends the same.
+  private static let newestFrame = 9_007_199_254_740_991.0
+
   @ObservedObject var controller: ReplayController
   var running: Bool
   var replayOff: Bool
@@ -175,6 +178,9 @@ struct ReplayBar: View {
             .buttonStyle(.stim())
             .fixedSize()
             .help("Playback speed")
+            .opacity(isLive ? 0 : 1)
+            .disabled(isLive)
+            .accessibilityHidden(isLive)
           TimelineView(.periodic(from: .now, by: 1)) { context in
             Text(caption(timeline, now: context.date))
               .font(.stim(.caption, mono: true))
@@ -195,15 +201,20 @@ struct ReplayBar: View {
         }
       }
       if let timeline {
-        ReplayTrack(
-          timeline: timeline, markers: controller.range?.markers ?? [], shownAt: controller.replay?.at,
-          isLive: controller.replay == nil, previews: controller.previews, seek: { seek($0, rate: $1) })
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+          ReplayTrack(
+            timeline: timeline, liveEnd: controller.liveEnd(running: running),
+            markers: controller.range?.markers ?? [], shownAt: controller.replay?.at,
+            isLive: controller.replay == nil, previews: controller.previews, seek: { seek($0, rate: $1) })
+        }
       }
       if let error = controller.error {
         Text(error).font(.stim(.caption)).foregroundStyle(Palette.warning).lineLimit(2)
       }
     }
   }
+
+  private var isLive: Bool { controller.replay == nil && running }
 
   private var liveButton: some View {
     let isLive = controller.replay == nil
@@ -251,8 +262,11 @@ struct ReplayBar: View {
   private func playButton(_ timeline: ReplayTimeline) -> some View {
     let replay = controller.replay
     let playing = replay.map { $0.rate > 0 && !$0.ended } ?? false
+    let showsPause = playing || isLive
     return Button {
-      if let replay, playing {
+      if isLive {
+        seek(Self.newestFrame, rate: 0)
+      } else if let replay, playing {
         seek(replay.at ?? timeline.start, rate: 0)
       } else if let replay, !replay.ended, let at = replay.at {
         seek(at, rate: speed)
@@ -260,12 +274,12 @@ struct ReplayBar: View {
         seek(timeline.start, rate: speed)
       }
     } label: {
-      Image(systemName: playing ? "pause.fill" : "play.fill")
+      Image(systemName: showsPause ? "pause.fill" : "play.fill")
     }
     .buttonStyle(.stim())
     .fixedSize()
-    .help(playing ? "Pause" : "Play the recording")
-    .accessibilityLabel(playing ? "Pause" : "Play")
+    .help(isLive ? "Pause on the current frame" : playing ? "Pause" : "Play the recording")
+    .accessibilityLabel(showsPause ? "Pause" : "Play")
   }
 
   private func toggleSpeed() {
@@ -292,12 +306,14 @@ struct ReplayBar: View {
   }
 }
 
-/// The scrubber: recorded spans, gaps, markers and the playhead. Hovering shows the time or the marker under the
-/// pointer in a tooltip, at most 30 times a second and without touching the layout, above a still frame of the
-/// recorded segment of about 5 seconds there; dragging shows the frame under the pointer on the screen, and a click
-/// near a marker lands just before it.
+/// The scrubber: recorded spans, gaps with "stopped" labels, markers and the playhead, on one linear scale. Hovering
+/// shows the time or the marker under the pointer in a tooltip, at most 30 times a second and without touching the
+/// layout, above a still frame of the recorded segment of about 5 seconds there; dragging shows the frame under the
+/// pointer on the screen, and a click near a marker lands just before it. While the device runs and is recorded, the
+/// track ends at `liveEnd`; hovering or dragging holds the track still until the pointer leaves or the drag ends.
 struct ReplayTrack: View {
   var timeline: ReplayTimeline
+  var liveEnd: Double?
   var markers: [ReplayMarker]
   /// The time of the frame shown; nil before the first frame.
   var shownAt: Double?
@@ -309,68 +325,107 @@ struct ReplayTrack: View {
   private static let dragThreshold: CGFloat = 3
   private static let tooltipWidth: CGFloat = 280
   private static let accessibilityStepMs = 5000.0
+  private static let barHeight: CGFloat = 28
+  private static let labelHeight: CGFloat = 16
   @State private var dragging: CGFloat?
   @State private var hover = ReplayHover()
   @State private var width: CGFloat = 0
+  /// The track shown when the pointer entered or the drag began, so the pointer keeps mapping to the same time.
+  @State private var held: ReplayTimeline?
+  @State private var trackLength: Double?
+
+  private var track: ReplayTimeline {
+    held ?? ReplayTimeline(spans: timeline.spans, liveEnd: liveEnd, previousLength: trackLength) ?? timeline
+  }
 
   var body: some View {
-    let position = dragging.map { fraction($0) } ?? (isLive ? 1 : shownAt.map(timeline.position(of:)) ?? 1)
+    let track = self.track
+    let position = dragging.map { fraction($0) } ?? (isLive ? 1 : shownAt.map(track.position(of:)) ?? 1)
+    let hasGaps = track.pieces.contains(where: \.isGap)
     ZStack(alignment: .topLeading) {
-      ForEach(Array(timeline.pieces.enumerated()), id: \.offset) { _, piece in
+      ForEach(Array(track.pieces.enumerated()), id: \.offset) { _, piece in
         let x = piece.from * width
         let w = max(1, (piece.to - piece.from) * width)
-        if piece.isGap {
+        if piece.collapsed {
+          Path { path in
+            path.move(to: CGPoint(x: 0, y: 1))
+            path.addLine(to: CGPoint(x: w, y: 1))
+          }
+          .stroke(Palette.tertiary, style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
+          .frame(width: w, height: 2)
+          .offset(x: x, y: 13)
+        } else if piece.isGap {
           Rectangle().fill(Palette.border).frame(width: w, height: 2).offset(x: x, y: 13)
         } else {
-          RoundedRectangle(cornerRadius: Radius.small).fill(Palette.raised).frame(width: w, height: 16).offset(x: x, y: 6)
+          RoundedRectangle(cornerRadius: Radius.small).fill(Palette.raised).frame(width: w, height: 16)
+            .offset(x: x, y: 6)
         }
+      }
+      ForEach(track.gapLabels(width: width, measure: Self.labelWidth), id: \.start) { label in
+        Text(label.text)
+          .font(.stim(.caption2))
+          .foregroundStyle(Palette.tertiary)
+          .lineLimit(1)
+          .fixedSize()
+          .frame(width: label.width)
+          .offset(x: label.left, y: Self.barHeight)
       }
       ForEach(markers, id: \.self) { marker in
         RoundedRectangle(cornerRadius: 1)
           .fill(color(marker))
           .frame(width: 3, height: 16)
-          .offset(x: timeline.position(of: marker.at) * width - 1.5, y: 6)
+          .offset(x: track.position(of: marker.at) * width - 1.5, y: 6)
       }
       Rectangle()
         .fill(isLive ? Palette.tertiary : Palette.text)
         .frame(width: 2, height: 24)
         .offset(x: position * width - 1, y: 2)
     }
-    .frame(height: 28)
+    .frame(height: Self.barHeight + (hasGaps ? Self.labelHeight : 0), alignment: .top)
     .frame(maxWidth: .infinity, alignment: .leading)
     .contentShape(Rectangle())
     .overlay(alignment: .topLeading) {
       ReplayTooltipLayer(
         hover: hover, dragging: dragging, maxWidth: min(Self.tooltipWidth, width), previews: previews,
-        range: timeline.start...max(timeline.start, timeline.end),
+        range: track.start...max(track.start, track.spans.last?.end ?? track.end),
         text: { x, marker in tooltipText(x: x, marker: marker) },
         previewTime: { x, marker in previewTime(x: x, marker: marker) })
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    .onChange(of: track.length) { _, length in trackLength = length }
     .onContinuousHover { phase in
       switch phase {
-      case .active(let point): hover.move(to: point.x.rounded(), marker: nearestMarker(x: point.x.rounded()))
-      case .ended: hover.move(to: nil, marker: nil)
+      case .active(let point):
+        hover.inside = true
+        if held == nil { held = track }
+        hover.move(to: point.x.rounded(), marker: nearestMarker(x: point.x.rounded()))
+      case .ended:
+        hover.inside = false
+        if dragging == nil { held = nil }
+        hover.move(to: nil, marker: nil)
       }
     }
     .gesture(
       DragGesture(minimumDistance: 0)
         .onChanged { drag in
           guard dragging != nil || abs(drag.translation.width) >= Self.dragThreshold else { return }
+          if held == nil { held = track }
           let x = min(max(0, drag.location.x), width)
           guard x != dragging else { return }
           dragging = x
-          seek(timeline.time(at: fraction(x)), 0)
+          seek(self.track.time(at: fraction(x)), 0)
         }
         .onEnded { drag in
           let x = min(max(0, drag.location.x), width)
           let dragged = dragging != nil
+          let track = self.track
           dragging = nil
+          if !hover.inside { held = nil }
           if dragged { hover.move(to: nil, marker: nil) }
           if !dragged, let marker = nearestMarker(x: x) {
-            seek(timeline.seekTime(for: marker), 0)
+            seek(track.seekTime(for: marker), 0)
           } else {
-            seek(timeline.time(at: fraction(x)), 0)
+            seek(track.time(at: fraction(x)), 0)
           }
         })
     .accessibilityElement(children: .ignore)
@@ -399,9 +454,14 @@ struct ReplayTrack: View {
 
   private func fraction(_ x: CGFloat) -> Double { x / max(width, 1) }
 
+  private static func labelWidth(_ text: String) -> Double {
+    NSAttributedString(string: text, attributes: [.font: TextVariant.caption2.nsFont()]).size().width
+  }
+
   private func nearestMarker(x: CGFloat) -> ReplayMarker? {
-    markers
-      .map { ($0, abs(timeline.position(of: $0.at) * width - x)) }
+    let track = self.track
+    return markers
+      .map { ($0, abs(track.position(of: $0.at) * width - x)) }
       .filter { $0.1 <= Self.markerReach }
       .min { $0.1 < $1.1 }?.0
   }
@@ -417,16 +477,18 @@ struct ReplayTrack: View {
   private func previewTime(x: CGFloat, marker: ReplayMarker?) -> Double? {
     if let marker { return marker.at }
     let at = fraction(x)
-    return timeline.pieces.contains { $0.isGap && at >= $0.from && at <= $0.to } ? nil : timeline.time(at: at)
+    let track = self.track
+    return track.pieces.contains { $0.isGap && at >= $0.from && at <= $0.to } ? nil : track.time(at: at)
   }
 
   private func tooltipText(x: CGFloat, marker: ReplayMarker?) -> String {
-    let at = marker?.at ?? timeline.time(at: fraction(x))
+    let track = self.track
+    let at = marker?.at ?? track.time(at: fraction(x))
     let time = Date(timeIntervalSince1970: at / 1000).formatted(date: .omitted, time: .standard)
     if let marker {
       return "\(marker.title)\(marker.command.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(time)\n\(marker.label)"
     }
-    let gap = timeline.pieces.first { $0.isGap && fraction(x) >= $0.from && fraction(x) <= $0.to }
+    let gap = track.pieces.first { $0.isGap && fraction(x) >= $0.from && fraction(x) <= $0.to }
     return gap.map { "Not recorded for \(ReplayTimeline.shortDuration(ms: $0.end - $0.start))" } ?? time
   }
 
@@ -439,6 +501,8 @@ struct ReplayTrack: View {
 
   private(set) var x: CGFloat?
   private(set) var marker: ReplayMarker?
+  /// The pointer is over the track, whether or not a drag hid the tooltip.
+  var inside = false
   var onChange: () -> Void = {}
   private var shownAt: TimeInterval = 0
   private var pending: (x: CGFloat?, marker: ReplayMarker?)?

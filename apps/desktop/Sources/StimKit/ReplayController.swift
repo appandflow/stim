@@ -47,6 +47,7 @@ import Foundation
   private var position: Double?
   private var cancelPosition: (() -> Void)?
   private var startAt: Double = 0
+  private var rangeReceivedAt: TimeInterval = 0
 
   public init(
     target: ReplayTarget, scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter,
@@ -59,6 +60,13 @@ import Foundation
   }
 
   public var timeline: ReplayTimeline? { range.flatMap { ReplayTimeline(spans: $0.spans) } }
+
+  /// The Mac's time now, estimated as the newest span's end plus the time since `range` came, while stim-server
+  /// records the device and it runs; nil otherwise. The elapsed time avoids depending on the two clocks agreeing.
+  public func liveEnd(running: Bool) -> Double? {
+    guard running, let range, range.recording, let last = range.spans.last else { return nil }
+    return last.end + max(0, clock() - rangeReceivedAt) * 1000
+  }
 
   /// Starts polling `server`, or with nil stops; a replay in progress stays until `live`, since its subscription
   /// is sent again when the connection comes back.
@@ -122,6 +130,7 @@ import Foundation
         let result = try await server.request("replay.range", target.params)
         guard server === self.server, sequence >= polls.shown else { return }
         polls.shown = sequence
+        rangeReceivedAt = clock()
         range = try JSONDecoder().decode(ReplayRange.self, from: JSONEncoder().encode(result))
       } catch let failure as ServerError where failure.code == "unknown-method" {
         if server === self.server {

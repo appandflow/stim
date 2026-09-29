@@ -1,3 +1,5 @@
+import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/replay-timeline-vectors.json';
+
 import {
   adjacentAction,
   buildTimeline,
@@ -14,6 +16,27 @@ import {
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
+
+const vectors = fixture as unknown as {
+  timelines: {
+    name: string;
+    input: { spans: { start: number; end: number }[]; liveEnd?: number; previousLength?: number };
+    timeline: Pick<Timeline, 'start' | 'end' | 'length' | 'pieces'>;
+    positions: [number, number][];
+    times: [number, number][];
+    labels: { width: number; labels: ReturnType<typeof layoutGapLabels> }[];
+  }[];
+};
+
+describe('the replay timeline vectors Stim Desktop replays too', () => {
+  it.each(vectors.timelines.map((c) => [c.name, c] as const))('%s', (_, vector) => {
+    const timeline = buildTimeline(vector.input.spans, vector.input.liveEnd, vector.input.previousLength)!;
+    expect(timeline).toEqual({ ...vector.timeline, spans: vector.input.spans });
+    expect(vector.positions.map(([at]) => [at, positionOf(timeline, at)])).toEqual(vector.positions);
+    expect(vector.times.map(([position]) => [position, timeAt(timeline, position)])).toEqual(vector.times);
+    for (const { width, labels } of vector.labels) expect(layoutGapLabels(timeline.pieces, width)).toEqual(labels);
+  });
+});
 
 describe('the replay timeline', () => {
   const spans = [

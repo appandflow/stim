@@ -1,8 +1,10 @@
 import Foundation
 
-/// The scrubber's track: recorded spans laid end to end in proportion to their length, with each unrecorded gap
-/// between them drawn at a fixed share. `from` and `to` are a piece's place on the track, 0 to 1. Every time is a
-/// Mac capture time from `replay.range`; a device still recorded ends at its newest footage.
+/// The scrubber's track, one scale for every recorded span and unrecorded gap, as the phone's `buildTimeline` lays it
+/// out: a millisecond takes the same width anywhere, except in a gap longer than `longGapMs`, which takes `longGapMs`
+/// and is `collapsed`. The track's `length` is rounded up to a whole `windowStepMs`, with the spare room before the
+/// oldest footage, so its right edge is the newest footage. `from` and `to` are a piece's place on the track, 0 to 1.
+/// Every time is a Mac capture time from `replay.range`.
 public struct ReplayTimeline: Equatable, Sendable {
   public struct Piece: Equatable, Sendable {
     public var isGap: Bool
@@ -10,61 +12,125 @@ public struct ReplayTimeline: Equatable, Sendable {
     public var end: Double
     public var from: Double
     public var to: Double
+    /// A gap longer than `longGapMs`, drawn at `longGapMs`.
+    public var collapsed = false
   }
 
-  static let gapShare = 0.08
-  static let minimumGapWeightMs = 2000.0
+  /// A "stopped" label under a gap, `left` and `width` in points along the track.
+  public struct GapLabel: Equatable, Sendable {
+    public var start: Double
+    public var text: String
+    public var left: Double
+    public var width: Double
+  }
+
+  /// A stop longer than this takes only this much of the track, so hours stopped do not squeeze the footage flat.
+  public static let longGapMs = 60_000.0
+  /// The track's length is a whole number of these, so it rescales at most once per step as footage grows. It shrinks
+  /// only by two steps or more, so footage that hovers around a step as stim-server prunes it does not flip the scale.
+  public static let windowStepMs = 60_000.0
+  static let labelCharWidth = 6.5
+  static let labelGap = 6.0
 
   public var start: Double
   public var end: Double
+  public var spans: [ReplaySpan]
+  /// The track's length in milliseconds of track time.
+  public var length: Double
   public var pieces: [Piece]
 
-  public init?(spans: [ReplaySpan]) {
-    guard let first = spans.first, let last = spans.last else { return nil }
-    let recorded = spans.reduce(0) { $0 + max($1.end - $1.start, 1) }
-    let gapWeight = max(recorded * Self.gapShare, Self.minimumGapWeightMs)
-    let total = recorded + gapWeight * Double(spans.count - 1)
-    var pieces: [Piece] = []
-    var at = 0.0
-    for (index, span) in spans.enumerated() {
-      if index > 0 {
-        let previous = spans[index - 1]
-        pieces.append(Piece(isGap: true, start: previous.end, end: span.start, from: at, to: at + gapWeight / total))
-        at += gapWeight / total
-      }
-      let width = max(span.end - span.start, 1) / total
-      pieces.append(Piece(isGap: false, start: span.start, end: span.end, from: at, to: at + width))
-      at += width
+  /// A device still recorded ends at its newest footage, or at `liveEnd` when that is later, the Mac's estimated time
+  /// now. `previousLength` is the length of the track shown before, which the new one keeps unless footage grew past
+  /// it or shrank by two steps.
+  public init?(spans: [ReplaySpan], liveEnd: Double? = nil, previousLength: Double? = nil) {
+    guard let last = spans.last else { return nil }
+    var shown = spans
+    if let liveEnd, liveEnd > last.end { shown[shown.count - 1] = ReplaySpan(start: last.start, end: liveEnd) }
+    var weights: [Double] = []
+    for (index, span) in shown.enumerated() {
+      let gap = index > 0 ? min(span.start - shown[index - 1].end, Self.longGapMs) : 0
+      weights.append(max(gap, 0))
+      weights.append(max(span.end - span.start, 1))
     }
-    start = first.start
-    end = last.end
+    let total = weights.reduce(0, +)
+    let fitted = max(1, (total / Self.windowStepMs).rounded(.up)) * Self.windowStepMs
+    let length =
+      if let previousLength, fitted < previousLength, previousLength - fitted < 2 * Self.windowStepMs {
+        previousLength
+      } else {
+        fitted
+      }
+    var pieces: [Piece] = []
+    var at = length - total
+    for (index, span) in shown.enumerated() {
+      if index > 0 {
+        let previous = shown[index - 1]
+        let weight = weights[index * 2]
+        pieces.append(
+          Piece(
+            isGap: true, start: previous.end, end: span.start, from: at / length, to: (at + weight) / length,
+            collapsed: span.start - previous.end > Self.longGapMs))
+        at += weight
+      }
+      let weight = weights[index * 2 + 1]
+      pieces.append(
+        Piece(isGap: false, start: span.start, end: span.end, from: at / length, to: (at + weight) / length))
+      at += weight
+    }
+    start = shown[0].start
+    end = shown[shown.count - 1].end
+    self.spans = spans
+    self.length = length
     self.pieces = pieces
   }
 
   /// How much footage the timeline holds, gaps left out.
   public var recordedLength: Double {
-    pieces.reduce(0) { $0 + ($1.isGap ? 0 : $1.end - $1.start) }
+    spans.reduce(0) { $0 + ($1.end - $1.start) }
   }
 
-  /// Where `at` sits on the track, 0 to 1; a time in a gap sits at the gap's end.
+  /// Where `at` sits on the track, 0 to 1; a time before the oldest footage sits where the footage starts.
   public func position(of at: Double) -> Double {
     for piece in pieces where at <= piece.end {
-      if piece.isGap { return piece.to }
       if at <= piece.start { return piece.from }
       return piece.from + (at - piece.start) / nonZero(piece.end - piece.start) * (piece.to - piece.from)
     }
     return 1
   }
 
-  /// The time at `position` on the track; a gap resolves to the start of the recording after it.
+  /// The time at `position` on the track. A gap resolves to the start of the recording after it, and the room before
+  /// the oldest footage to its start.
   public func time(at position: Double) -> Double {
     let clamped = min(1, max(0, position))
     for piece in pieces where clamped <= piece.to {
       if piece.isGap { return piece.end }
+      if clamped <= piece.from { return piece.start }
       return piece.start + (clamped - piece.from) / nonZero(piece.to - piece.from) * (piece.end - piece.start)
     }
     return end
   }
+
+  /// The "stopped" labels to draw under the track's gaps, at most one per place: each is centred under its gap and
+  /// kept inside the track, and a label that would overlap a longer stop's is left out. `width` is the track's in
+  /// points; `measure` gives a label's width, by default estimated from its length as the phone does.
+  public func gapLabels(width: Double, measure: (String) -> Double = Self.estimatedWidth) -> [GapLabel] {
+    var placed: [GapLabel] = []
+    let gaps = pieces.filter(\.isGap).sorted { $0.end - $0.start > $1.end - $1.start }
+    for gap in gaps {
+      let text = "stopped \(Self.shortDuration(ms: gap.end - gap.start))"
+      let labelWidth = measure(text).rounded(.up)
+      if labelWidth > width { continue }
+      let center = (gap.from + gap.to) / 2 * width
+      let left = min(max(0, center - labelWidth / 2), width - labelWidth)
+      let overlaps = placed.contains {
+        left < $0.left + $0.width + Self.labelGap && $0.left < left + labelWidth + Self.labelGap
+      }
+      if !overlaps { placed.append(GapLabel(start: gap.start, text: text, left: left, width: labelWidth)) }
+    }
+    return placed.sorted { $0.left < $1.left }
+  }
+
+  public static func estimatedWidth(_ text: String) -> Double { Double(text.count) * labelCharWidth }
 
   /// Where to land for a marker: a little before it, so the action plays out on screen.
   public func seekTime(for marker: ReplayMarker, leadMs: Double = 1500) -> Double {
