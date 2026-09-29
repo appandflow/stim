@@ -1,6 +1,7 @@
 import { getExecutor, type Executor } from '../exec.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
+import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
@@ -15,6 +16,14 @@ const DEV_CLIENT_DISABLE_FAB_QUERY = 'disableFab=1';
 const DEV_CLIENT_DEV_MENU_OFF_QUERY = 'disableFab=1&disableAutoLaunch=1';
 const DEV_CLIENT_RESERVED_DEV_MENU_OFF_QUERY = '__expo_disable_fab=1&__expo_disable_auto_launch=1';
 export const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
+
+function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): void {
+  for (const key of IOS_DEV_MENU_OFF_KEYS) {
+    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
+      timeoutMs: 60000,
+    });
+  }
+}
 
 function describeIosSimulatorFailure(error: unknown, exec: Executor): string {
   const detail = describe(error);
@@ -86,7 +95,6 @@ export function installIosApp(
     devClientScheme = null,
     schemeApprovals = [],
     proveInstalled = true,
-    dataCleared = false,
   }: {
     udid: string;
     appPath: string;
@@ -94,7 +102,6 @@ export function installIosApp(
     devClientScheme?: string | null;
     schemeApprovals?: string[];
     proveInstalled?: boolean;
-    dataCleared?: boolean;
   },
   { exec = null, now = null }: ExecOpt = {},
 ): IosInstallResult {
@@ -117,18 +124,19 @@ export function installIosApp(
     artifactStartedAt !== undefined && artifactFinishedAt !== undefined
       ? artifactFinishedAt - artifactStartedAt
       : undefined;
-  const devMenuKeys = bundleId && devClientScheme && (!skipped || dataCleared) ? IOS_DEV_MENU_OFF_KEYS : [];
+  // expo-dev-launcher reads these only from the persisted domain on a launch
+  // Stim did not make (agent-device relaunches, crash restarts, home-screen
+  // taps); launchIosApp's own simctl launch carries them as argv instead, and
+  // writes them itself when it has to fall back to simctl openurl, which
+  // can't carry launch arguments at all.
+  const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
   const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
   const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
   const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
   const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
   if (bundleId && preparing) {
     try {
-      for (const key of devMenuKeys) {
-        e.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
-          timeoutMs: 60000,
-        });
-      }
+      if (devMenuKeys.length > 0) writeIosDevMenuOffDefaults(udid, bundleId, e);
       for (const key of missingApprovals) {
         e.runFile(
           'xcrun',
@@ -322,15 +330,31 @@ export function launchIosApp(
 
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });
+      const viaInitialUrl = Boolean(consolePaths) && runningPid === null;
+      if (!viaInitialUrl) {
+        // simctl openurl carries no launch arguments, so it needs the
+        // dev-menu keys in the persisted defaults instead of DEV_MENU_LAUNCH_ARGS.
+        try {
+          writeIosDevMenuOffDefaults(udid, bundleId, e);
+        } catch (err) {
+          return {
+            failed: true,
+            code: LAUNCH_ERROR,
+            reason: `Could not turn off ${bundleId}'s dev menu before opening it (defaults write): ${describeIosSimulatorFailure(err, e)}`,
+          };
+        }
+      }
       let launchedWithInitialUrl = false;
       try {
-        if (consolePaths && runningPid === null) {
+        if (viaInitialUrl) {
           // Expo's EXDevLauncherController.initialUrlFromProcessInfo loads this
           // project directly; launch-then-openurl can create two React hosts.
           const initialUrl = new URL(url).searchParams.get('url')!;
           launchedWithInitialUrl = true;
           const pid = parseLaunchedPid(
-            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 60000 }),
+            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
+              timeoutMs: 60000,
+            }),
           );
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         }

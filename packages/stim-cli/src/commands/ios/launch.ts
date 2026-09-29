@@ -780,7 +780,6 @@ export async function finishIosRun({
         bundleId,
         devClientScheme: scheme,
         schemeApprovals: device.schemeApprovals,
-        dataCleared: adopting,
         proveInstalled: installMayBeProven(adopting, device?.parkedCacheKey, storeKey),
       },
       { now: d.now },

@@ -1680,8 +1680,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   this workspace's Metro, and then wires the app to it: an expo-dev-client app
   through the deep link, passed to devicectl as \`--payload-url\` and followed
   by \`-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0\`,
-  which is how a phone gets what a simulator gets from a defaults write, and a
-  bare app by writing \`<addr>:<port>\` into the app bundle's ip.txt --
+  the same launch arguments Stim's own \`simctl launch --initialUrl\` carries on
+  a simulator, and a bare app by writing \`<addr>:<port>\` into the app bundle's
+  ip.txt --
   RCTBundleURLProvider's own mechanism, which honours a colon-bearing value
   verbatim and never consults the compiled RCT_METRO_PORT. Stim never sets
   that define: it would put the reserved port into a compiled input and fork
