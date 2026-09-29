@@ -107,6 +107,8 @@ export interface ServerOptions {
    * given. While Tailscale runs the server listens on its addresses, and it closes them when Tailscale stops.
    */
   tailscaleMonitor?: TailscaleMonitor;
+  /** How long to wait before listening again on a Tailscale address that failed; tests shorten it. */
+  listenRetryMs?: number;
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
@@ -1721,6 +1723,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     throw error;
   }
   const monitor = options.tailscaleMonitor;
+  const listenFailures = new Set<string>();
   const reconcile = async (snapshot: TailscaleSnapshot) => {
     const tailnet = snapshot.state.state === 'running' ? snapshot.state.ips : [];
     const wanted = new Set([...options.hosts, ...tailnet]);
@@ -1740,11 +1743,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await listenOn(host);
       } catch (error) {
         failed = true;
-        console.error(`stim-server: could not listen on ${host}: ${(error as Error).message}`);
+        if (!listenFailures.has(host)) {
+          listenFailures.add(host);
+          console.error(`stim-server: could not listen on ${host}: ${(error as Error).message}`);
+        }
       }
     }
     if (failed && !closing) {
-      retry = setTimeout(() => queueReconcile(), LISTEN_RETRY_MS);
+      retry = setTimeout(() => queueReconcile(), options.listenRetryMs ?? LISTEN_RETRY_MS);
       retry.unref();
     }
   };
@@ -1765,6 +1771,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const closed = close();
       if (retry) clearTimeout(retry);
       await Promise.all([reconciling, closed]);
+      await Promise.all([...servers.values()].map(closeListener));
     },
   };
 }

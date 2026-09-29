@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash } from 'node:crypto';
+import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -225,6 +226,7 @@ async function start(
     actionLimits?: ServerOptions['actionLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
+    listenRetryMs?: number;
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
     foldHelper?: string;
@@ -263,6 +265,7 @@ async function start(
       ...overrides.env,
     },
     tailscaleMonitor: overrides.tailscaleMonitor,
+    listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
     logLimits: overrides.logLimits,
@@ -1078,6 +1081,37 @@ describe('health', () => {
     await dropped;
     expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
     monitor.stop();
+  });
+
+  it('listens again on a Tailscale address that failed to bind', async () => {
+    let next: TailscaleState = { state: 'unavailable', reason: 'it timed out' };
+    const monitor = watchTailscale({
+      env: {},
+      initial: { binary: null, state: next },
+      find: () => 'tailscale',
+      read: async () => next,
+      backoffMs: 10,
+      maxMs: 20,
+    });
+    const port = await start({ tailscaleState: next, tailscaleMonitor: monitor, listenRetryMs: 20 });
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(port, '::1', resolve));
+    try {
+      next = { state: 'running', ips: ['::1'], dnsName: null, hostName: null };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(server!.addresses).toHaveLength(1);
+      await new Promise((resolve) => blocker.close(resolve));
+      for (let attempt = 0; attempt < 200 && server!.addresses.length < 2; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(server!.addresses).toEqual([
+        { host: '127.0.0.1', port },
+        { host: '::1', port },
+      ]);
+    } finally {
+      monitor.stop();
+      blocker.close();
+    }
   });
 
   test.skipIf(!fakeTailscale)('reports the current tailscale serve route to the server', async () => {
