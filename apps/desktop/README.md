@@ -63,7 +63,8 @@ checkout. The second line is where it sits inside its checkout, such as
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
-- **Sort by**: Last activity, Name or Memory. Last activity is the newest time
+- **Sort by**: Name (the default), Last activity or Memory. Name orders rows by project, then
+  workspace title, so rows stay in place while agents work. Last activity is the newest time
   `stim status --json` records for the workspace: device activity, a driver
   attaching, Metro's supervisor or a remote session starting, or a build
   starting, changing phase or ending. Projects sort by their newest workspace

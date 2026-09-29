@@ -11,8 +11,9 @@ Device replay comes from the `stim-server` it runs for the phone app.
 
 A workspace appears from the moment `stim worktree warm` starts in it: the
 sidebar and the wall show it as **Warming…** with an activity indicator, then
-**Ready** until its first run, even under the Live filter. Under the default
-Last activity sort, new workspaces sort first.
+**Ready** until its first run, even under the Live filter. The default Name sort keeps
+rows in place by project, then workspace title, so a workspace does not move while
+agents work; choose Last activity in View Options to put the busiest first.
 
 ## Download
 
