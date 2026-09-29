@@ -3586,6 +3586,9 @@ describe('gc --json', () => {
       'recordings',
       'workspaceBuildOutputs',
       'caches',
+      'memory',
+      'watchmanRoots',
+      'memoryNotices',
     ]);
     expect(stderr).toContain('Dead project entries (1)');
     expect(loadConfig()).toEqual(before);

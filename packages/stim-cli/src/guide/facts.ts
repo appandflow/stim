@@ -816,6 +816,21 @@ RULES
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped }  alive, not garbage; willEmpty
                               marks the ones --delete would empty
+    memory                  { kind: "watchman" | "gradleDaemon" |
+                              "kotlinDaemon", cacheKind: "watchman" |
+                              "gradle-daemons", pid, startedAt, bytes,
+                              measure: "footprint" | "rss", version,
+                              gradleHome, offloadClient, state: "idle" |
+                              "busy" | "unknown", reclaimable, reason,
+                              detail }  without --cache, or with --cache
+                              watchman or gradle-daemons; reclaimable marks
+                              the ones gc --delete --cache <cacheKind>
+                              would stop (\`guide cleanup memory\`)
+    watchmanRoots           { path, stale: "missing" | "pruned-worktree" |
+                              null, subscriptions, triggers, removable,
+                              detail }  removable marks the stale roots
+                              --cache watchman would watch-del
+    memoryNotices           { message }  why the memory sweep was skipped
   bytes is null when the size is unknown: not measured, or the measurement
   failed. idleDays is null when the last use is unknown. listed is false for
   a parked device that is no longer on this machine, and null when its
@@ -828,6 +843,8 @@ RULES
                             recently-used
     workspaceLogs           unresolved | in-use | collector
     recordings              unresolved | retained | recently-recorded
+    memory                  in-use | busy | unknown | build-running |
+                            stim-server
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
                             locked | in-use | status-unreadable | dirty |
@@ -842,7 +859,8 @@ RULES
 
   - a --cache name that no shared cache carries; the remedy names the
     caches on this machine
-  - --cache together with --worktrees or --idle`,
+  - --cache together with --worktrees or --idle
+  - --cache watchman or gradle-daemons together with --older-than`,
     },
     status: {
       summary:

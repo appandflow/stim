@@ -42,6 +42,9 @@ WHAT RECLAIMS AN OWNED DEVICE
                             shuts DOWN (never deletes) owned devices with no
                             driver, claim or activity for that long
 
+\`gc --delete --cache watchman\` and \`gc --delete --cache gradle-daemons\`
+stop shared helper processes, not devices (\`guide cleanup memory\`).
+
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
 \`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
 --delete\` also clears workspace build outputs, trims oversized workspace logs
@@ -416,6 +419,63 @@ THE ONE CASE GC WILL NOT REAP
   is gone, and the unrelated process is never signalled. A missing, malformed,
   or unreadable identity leaves the record unverified and kept for a retry.
   Wall-clock timestamps and command names are not ownership proof.`,
+    },
+    memory: {
+      summary:
+        'watchman and Gradle and Kotlin daemon memory in gc, and when gc --delete --cache watchman or gradle-daemons stops them',
+      body: () => `MEMORY
+  Every \`gc\` without --cache, and \`gc --cache watchman\` or
+  \`gc --cache gradle-daemons\`, reports the long-lived helpers that grow while
+  they run: the shared watchman daemon, Gradle daemons and Kotlin compile
+  daemons. Each line gives the pid, physical footprint (the measure status
+  uses; resident size when the footprint cannot be read), uptime and whether
+  it is idle, and a kept one says why. The reclaimable line totals what
+  the two commands below would free now.
+
+  Only these two commands stop anything, and each acts only on its own kind.
+  Neither a plain \`gc --delete\` nor \`--cache all\` touches them:
+    stim gc --delete --cache watchman
+                                  runs \`watchman watch-del\` on each stale root
+                                  with no subscription or trigger, then
+                                  \`watchman shutdown-server\` only when
+                                  \`debug-status\` lists no client but gc's own
+                                  call and no root has a trigger; otherwise
+                                  the daemon is kept and the report names
+                                  each client, as the Stim workspace whose
+                                  dev server it belongs to where it can
+    stim gc --delete --cache gradle-daemons
+                                  stops each Gradle daemon its own
+                                  \`gradle --status\` reports IDLE, then each
+                                  Kotlin compile daemon with no open client
+                                  connection once every Gradle daemon is idle
+
+  A stale watch root is one whose directory is gone from a mounted volume, or
+  that sits in a linked worktree git pruned while its directory stayed.
+  Watchman drops a root itself when its directory is deleted, so stale roots
+  are rare. Removing one stops its recrawls but does not shrink the daemon;
+  only a restart returns its memory. After a shutdown the next client that
+  needs watchman starts it again and re-watches the roots in its state file.
+  Every watchman call uses --no-spawn, so gc never starts the daemon.
+  Shutting it down under a Metro that uses watchman would break that Metro's
+  file watching, which is why any connected client keeps it.
+
+  gc finds a Gradle daemon's Gradle user home from the daemon log it holds
+  open (lsof), and asks the daemon's own distribution for its status with
+  that home and the daemon's Java. When every daemon that status lists for a
+  home and version is idle, gc runs that distribution's \`gradle --stop\`;
+  otherwise it sends SIGTERM to each idle daemon, after checking the pid still
+  has the same start time. A build that picks a daemon between gc's last
+  check and the stop fails and must be run again, so gc re-checks the build
+  locks and the daemon's status right before each stop. Nothing is stopped while an Android build lock, or a build slot no
+  iOS build holds, is live or unresolved. stim-server stops the daemons of
+  offloaded builds (offload.gradleDaemonIdleMinutes, \`guide settings\`), so
+  while it runs gc keeps those. A daemon whose home, distribution or status cannot be read is
+  kept. Gradle stops an idle daemon itself after 3 hours and Kotlin after 2
+  hours by default.
+
+  --older-than does not apply to these kinds and is refused with
+  STIM_BAD_ARG. With STIM_HOME set, gc skips them: they are machine-global.
+  \`stim doctor\` notes a watchman footprint over 2 GiB.`,
     },
     disk: {
       summary:

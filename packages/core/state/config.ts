@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { sep } from 'node:path';
+import { join, sep } from 'node:path';
 import { configDir, withDirLock } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
@@ -26,6 +26,12 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
   );
   (corrupt as Error & { code?: string }).code = 'STIM_CONFIG_CORRUPT';
   return corrupt;
+}
+
+/** The build worker root: `offload.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */
+export function buildWorkerRoot(config: Config | null = loadConfig()): string {
+  const configured = config?.offload?.workerRoot;
+  return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
 }
 
 export function loadConfig(): Config | null {

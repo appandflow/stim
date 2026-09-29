@@ -7,6 +7,7 @@ import { formatBytes } from '../../fs-util.ts';
 import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
 import { canonicalPath } from './paths.ts';
 import { recordGcResult } from './results.ts';
+import { memoryCacheKind } from './memory.ts';
 
 export interface GcCache extends CacheDescriptor {
   machineGlobal?: string | null;
@@ -53,11 +54,18 @@ export function includesWorkspaceOutputs(name: string | null | undefined): boole
   return !wanted || wanted === EVERY_CACHE || wanted === WORKSPACE_OUTPUTS;
 }
 
+/** Whether a --cache name selects something besides shared caches: recordings, parked devices or a memory kind. */
+export function selectsBeyondCaches(name: string | null | undefined): boolean {
+  return includesRecordings(name) || includesParkedDevices(name) || memoryCacheKind(name) !== null;
+}
+
 export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
   if (!name) return caches;
   const wanted = name.trim().toLowerCase();
   if (wanted === EVERY_CACHE) return caches;
-  if (wanted === WORKSPACE_OUTPUTS || wanted === RECORDINGS || wanted === PARKED_DEVICES) return [];
+  if (wanted === WORKSPACE_OUTPUTS || wanted === RECORDINGS || wanted === PARKED_DEVICES || memoryCacheKind(wanted)) {
+    return [];
+  }
   return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
 }
 

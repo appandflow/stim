@@ -17,7 +17,6 @@ import {
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WebSocket } from 'ws';
-import { configDir } from '@stim-cli/core';
 import {
   markClaimChildPending,
   processGroupAlive,
@@ -28,6 +27,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import {
+  buildWorkerRoot,
   isJsonObject,
   loadConfig,
   machineCapacity,
@@ -182,12 +182,6 @@ function listProcesses(): Promise<string> {
   });
 }
 
-/** The worker root from `offload.workerRoot`, or `$STIM_HOME/build-worker`. */
-function workerRoot(): string {
-  const configured = loadConfig()?.offload?.workerRoot;
-  return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
-}
-
 interface Job {
   id: string;
   client: string;
@@ -276,7 +270,7 @@ export class BuildHost {
   }
 
   root(): string {
-    return workerRoot();
+    return buildWorkerRoot();
   }
 
   clientDir(client: string): string {
