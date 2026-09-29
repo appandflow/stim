@@ -40,7 +40,7 @@ export interface WorkerToolchain extends IosToolchain {
 
 /** The build a machine is asked to take, with this Mac's side of the toolchain comparison. */
 export type BuildTarget =
-  | { platform: 'ios'; local: IosToolchain; runtime: string }
+  | { platform: 'ios'; local: IosToolchain; runtime: string | null }
   | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
@@ -168,37 +168,73 @@ export function workerToolchain(): WorkerToolchain {
 /** The API level of an SDK `platforms/` directory: `android-37.0` and `android-37` are both 37. */
 const platformLevel = (dir: string): string | undefined => dir.replace(/^android-/, '').split('.')[0];
 
-function androidMismatches(local: AndroidToolchain, requires: AndroidRequirements, worker: WorkerToolchain): string[] {
-  const out: string[] = [];
-  if (!local.jdk || worker.jdk !== local.jdk)
-    out.push(`JDK ${worker.jdk ?? 'none'} there, ${local.jdk ?? 'none'} here`);
+/** One reason a build machine cannot take this build now, with a stable `code` for doctor's JSON. */
+export interface OffloadProblem {
+  code:
+    | 'unreachable'
+    | 'checkout'
+    | 'stim-build'
+    | 'arch'
+    | 'xcode'
+    | 'simulator-sdk'
+    | 'cocoapods'
+    | 'runtime'
+    | 'jdk'
+    | 'android-sdk'
+    | 'ndk'
+    | 'build-tools'
+    | 'compile-sdk'
+    | 'disk'
+    | 'busy';
+  reason: string;
+}
+
+function androidMismatches(
+  local: AndroidToolchain,
+  requires: AndroidRequirements,
+  worker: WorkerToolchain,
+): OffloadProblem[] {
+  const out: OffloadProblem[] = [];
+  if (!local.jdk || worker.jdk !== local.jdk) {
+    out.push({ code: 'jdk', reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk ?? 'none'} here` });
+  }
   const sdk = worker.androidSdk;
-  if (!sdk) return [...out, 'no Android SDK there'];
-  if (requires.ndk && !sdk.ndk.includes(requires.ndk)) out.push(`no NDK ${requires.ndk} there`);
+  if (!sdk) return [...out, { code: 'android-sdk', reason: 'no Android SDK there' }];
+  if (requires.ndk && !sdk.ndk.includes(requires.ndk))
+    out.push({ code: 'ndk', reason: `no NDK ${requires.ndk} there` });
   if (requires.buildTools && !sdk.buildTools.includes(requires.buildTools)) {
-    out.push(`no build-tools ${requires.buildTools} there`);
+    out.push({ code: 'build-tools', reason: `no build-tools ${requires.buildTools} there` });
   }
   if (requires.compileSdk && !sdk.platforms.some((dir) => platformLevel(dir) === requires.compileSdk)) {
-    out.push(`no platform android-${requires.compileSdk} there`);
+    out.push({ code: 'compile-sdk', reason: `no platform android-${requires.compileSdk} there` });
   }
   return out;
 }
 
 /** Why a build machine cannot build like this Mac; empty when it can. */
-export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): string[] {
+export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   const { local } = target;
-  const out: string[] = [];
+  const out: OffloadProblem[] = [];
   if (!local.stimBuild || worker.stimBuild !== local.stimBuild) {
-    out.push(`Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`);
+    out.push({
+      code: 'stim-build',
+      reason: `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,
+    });
   }
-  if (worker.arch !== local.arch) out.push(`CPU ${worker.arch} there, ${local.arch} here`);
+  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'android') return [...out, ...androidMismatches(target.local, target.requires, worker)];
   const ios = target.local;
-  if (!ios.xcode || worker.xcode !== ios.xcode) out.push(`Xcode ${worker.xcode} there, ${ios.xcode} here`);
-  if (!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) {
-    out.push(`simulator SDK ${worker.simulatorSdk} there, ${ios.simulatorSdk} here`);
+  if (!ios.xcode || worker.xcode !== ios.xcode) {
+    out.push({ code: 'xcode', reason: `Xcode ${worker.xcode} there, ${ios.xcode} here` });
   }
-  if (worker.cocoapods !== ios.cocoapods) out.push(`CocoaPods ${worker.cocoapods} there, ${ios.cocoapods} here`);
-  if (!worker.runtimes.includes(target.runtime)) out.push(`no iPhone simulator on ${target.runtime} there`);
+  if (!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) {
+    out.push({ code: 'simulator-sdk', reason: `simulator SDK ${worker.simulatorSdk} there, ${ios.simulatorSdk} here` });
+  }
+  if (worker.cocoapods !== ios.cocoapods) {
+    out.push({ code: 'cocoapods', reason: `CocoaPods ${worker.cocoapods} there, ${ios.cocoapods} here` });
+  }
+  if (target.runtime && !worker.runtimes.includes(target.runtime)) {
+    out.push({ code: 'runtime', reason: `no iPhone simulator on ${target.runtime} there` });
+  }
   return out;
 }

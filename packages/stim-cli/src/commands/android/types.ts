@@ -79,6 +79,8 @@ export interface AndroidRecord {
   deviceProfile?: string | null;
   /** The build machine that compiled the APK, when the build was offloaded. */
   offloadedTo?: string | null;
+  /** Why the APK was built here after the run considered offloading it. */
+  offloadFallback?: string | null;
 }
 
 export interface RunAndroidResult {

@@ -1,3 +1,4 @@
+export * from './build-capacity.ts';
 export * from './build-machines.ts';
 export * from './config.ts';
 export * from './config-types.ts';

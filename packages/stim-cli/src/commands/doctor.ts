@@ -1,8 +1,16 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
-import { findProjectRoot } from '../workspace/project.ts';
-import { repoRoot } from '../workspace/worktree.ts';
+import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { getProject } from '../workspace/config.ts';
+import { resolveSettings } from '../workspace/settings.ts';
+import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
+import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
+import { androidRequirements, androidToolchain, iosToolchain, type BuildTarget } from '../offload/toolchain.ts';
+import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
   applyClaudeAllowance,
@@ -34,6 +42,30 @@ interface DoctorOptions {
 export function parseDoctorPlatform(value: string): DoctorPlatform {
   if (value === 'ios' || value === 'android') return value;
   throw new InvalidArgumentError('expected one of: ios, android');
+}
+
+/**
+ * The simulator runtime `stim ios` would build for here: the one `ios.runtime` names, else the workspace's own
+ * simulator's, else the one it would create a simulator on.
+ */
+function iosTargetRuntime(root: string): string | null {
+  try {
+    const settings = resolveSettings({
+      projectPath: root,
+      gitCommonDir: gitCommonDir(root),
+      repoRoot: repoRoot(root) ?? root,
+    });
+    const runtimes = listIosRuntimes();
+    const runtime = resolveRuntime(null, settings);
+    if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
+    const udid = getProject(root)?.platforms?.ios?.deviceUdid;
+    const own = typeof udid === 'string' ? simulatorRuntime(udid) : null;
+    if (own) return own;
+    const deviceType = resolveDeviceType(null, settings) ?? undefined;
+    return pickDefaultIosCreation([], runtimes, { deviceType })?.runtimeId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function doctorTarget(platform?: DoctorPlatform): string {
@@ -237,7 +269,20 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
-      const buildMachines = await inspectBuildMachines({ fix: opts.fix === true });
+      const checksIos = opts.platform !== 'android' && host === 'darwin';
+      const checksAndroid =
+        opts.platform === 'android' ||
+        (opts.platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
+      const offloadTargets = (): BuildTarget[] => [
+        ...(checksIos ? [{ platform: 'ios' as const, local: iosToolchain(), runtime: iosTargetRuntime(root) }] : []),
+        ...(checksAndroid
+          ? [{ platform: 'android' as const, local: androidToolchain(), requires: androidRequirements(root) }]
+          : []),
+      ];
+      const buildMachines = await inspectBuildMachines({
+        fix: opts.fix === true,
+        check: checksIos || checksAndroid ? offloadCheck(root, offloadTargets) : null,
+      });
       findings.push(...buildMachines.findings);
 
       if (opts.json) {

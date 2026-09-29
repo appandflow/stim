@@ -531,9 +531,28 @@ export interface BuildToolchain {
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
 }
 
+/**
+ * How busy the build machine is. `running` counts offloaded builds and `max` is how many it runs at once.
+ * `cpus`, `loadPerCore` (5-minute load average per CPU), `builds` (its own Stim native builds plus the offloaded
+ * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited) and `maxLoadPerCore` are absent from a
+ * stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.
+ */
+export interface BuildCapacity {
+  running: number;
+  max: number;
+  diskFreeBytes: number | null;
+  minDiskFreeBytes: number;
+  cpus?: number;
+  loadPerCore?: number;
+  builds?: number;
+  maxBuilds?: number;
+  maxLoadPerCore?: number;
+  declined?: string | null;
+}
+
 export interface BuildOfferResult {
   toolchain: BuildToolchain;
-  capacity: { running: number; max: number; diskFreeBytes: number | null; minDiskFreeBytes: number };
+  capacity: BuildCapacity;
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
 }
 

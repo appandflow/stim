@@ -96,4 +96,5 @@ export interface BuildFailureFields {
   cacheSkipped?: boolean;
   appPath?: string | null;
   bundleId?: string | null;
+  offloadFallback?: string | null;
 }

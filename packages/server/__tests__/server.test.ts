@@ -557,6 +557,13 @@ describe('offloaded builds', () => {
     optimizations: null,
     stimBuild: 'b1',
   };
+  const configure = (config: Record<string, unknown>) =>
+    writeFileSync(
+      join(process.env.STIM_HOME!, 'config.json'),
+      JSON.stringify({ projects: { [workspace]: {} }, ...config }),
+    );
+
+  beforeEach(() => configure({ offload: { maxLoadPerCore: 100_000 } }));
 
   async function buildClient(port: number, peer = '100.64.0.2'): Promise<{ client: Client; id: string }> {
     const asking = await connect(port, peer);
@@ -679,6 +686,44 @@ describe('offloaded builds', () => {
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android });
       expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'declines an offer and a start while its own native builds fill concurrency.maxBuilds',
+    async () => {
+      configure({ concurrency: { maxBuilds: 1 }, offload: { maxLoadPerCore: 100_000 } });
+      const building = join(root, 'building');
+      mkdirSync(building);
+      const attempt = tryAcquireClaim({ root: join(root, 'native-run'), mode: 'exclusive', label: 'native run' });
+      const claim = attempt.acquired!;
+      mkdirSync(workspaceStateDir(building), { recursive: true });
+      const writeActive = (phase: string) =>
+        writeFileSync(
+          join(workspaceStateDir(building), 'state.json'),
+          JSON.stringify({ activeBuild: { phase, claim: { root: claim.root, claimId: claim.claimId } } }),
+        );
+      writeActive('install');
+      const port = await start();
+      const { client } = await buildClient(port);
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { builds: 0, maxBuilds: 1, declined: null, cpus: expect.any(Number) } },
+      });
+
+      writeActive('compile');
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { running: 0, builds: 1, maxBuilds: 1, declined: 'all 1 build slots busy' } },
+      });
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      expect(await client.request('build.start', START)).toMatchObject({
+        error: { code: 'build-busy', message: 'This Mac declines the build: all 1 build slots busy.' },
+      });
+
+      releaseClaim(claim);
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { builds: 0, declined: null } },
+      });
     },
   );
 

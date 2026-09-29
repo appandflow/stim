@@ -269,6 +269,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
     ...(reason ? { missReason: reason } : {}),
     ...(typeof record.offloadedTo === 'string' ? { offloadedTo: record.offloadedTo } : {}),
+    ...(typeof record.offloadFallback === 'string' ? { offloadFallback: record.offloadFallback } : {}),
     ...(diagnostics.length ? { diagnostics } : {}),
   };
 }

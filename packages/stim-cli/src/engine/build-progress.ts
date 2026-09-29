@@ -17,6 +17,7 @@ import {
   type BuildDetail,
   type BuildMissReason,
   type BuildPhase,
+  type BuildPlacement,
   type BuildReport,
   type BuildResult,
   type WorkspaceState,
@@ -42,12 +43,15 @@ export interface ActiveBuildRecord {
   phases: { phase: BuildPhase; startedAt: string }[];
   claim: ActiveBuildClaim;
   missReason?: BuildMissReason;
+  placement?: Exclude<BuildPlacement, 'local'>;
 }
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
   /** Records why the run's cache lookup missed. */
   miss(reason: BuildMissReason): void;
+  /** Records the build machine the run compiles on and its phase there; null when it compiles here again. */
+  place(remote: { host: string; phase: string } | null): void;
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
@@ -57,6 +61,7 @@ export interface BuildProgress {
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
   miss: () => {},
+  place: () => {},
   output: () => {},
   durations: () => ({}),
   clear: () => {},
@@ -165,6 +170,23 @@ export function startBuildProgress({
       record.missReason = reason;
       write();
     },
+    place(remote) {
+      const current = record.placement;
+      if (!remote) {
+        if (!current) return;
+        delete record.placement;
+        return write();
+      }
+      if (current?.host === remote.host && current.phase === remote.phase) return;
+      const at = new Date(now()).toISOString();
+      record.placement = {
+        host: remote.host,
+        phase: remote.phase,
+        startedAt: current?.host === remote.host ? current.startedAt : at,
+        phaseStartedAt: at,
+      };
+      write();
+    },
     output(line) {
       const msg = toolLine(line);
       if (msg === null || !parser.push(msg) || detailTimer) return;
@@ -215,6 +237,8 @@ const HISTORY_FIELDS = [
   'startedAt',
   'errorCode',
   'missReason',
+  'offloadedTo',
+  'offloadFallback',
   'diagnostics',
 ] as const;
 
@@ -289,6 +313,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ? record.phases.filter((entry) => isPhase(entry?.phase) && typeof entry?.startedAt === 'string')
     : [];
   const missReason = parseMissReason(record.missReason);
+  const placement = parsePlacement(record.placement);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -297,12 +322,25 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     phaseStartedAt: record.phaseStartedAt,
     phases,
     ...(missReason ? { missReason } : {}),
+    ...(placement ? { placement } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
       claimId: claim.claimId,
       pid: typeof claim.pid === 'number' ? claim.pid : 0,
     },
+  };
+}
+
+function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
+  if (!value || typeof value !== 'object') return null;
+  const { host, phase, startedAt, phaseStartedAt } = value as Record<string, unknown>;
+  if ([host, phase, startedAt, phaseStartedAt].some((field) => typeof field !== 'string')) return null;
+  return {
+    host: host as string,
+    phase: phase as string,
+    startedAt: startedAt as string,
+    phaseStartedAt: phaseStartedAt as string,
   };
 }
 
@@ -374,6 +412,7 @@ export function buildReport(
     phaseStartedAt: record.phaseStartedAt,
     ...estimateBuild(history, record.platform, liveOutcome(record), record.phase),
     ...(record.missReason ? { missReason: record.missReason } : {}),
+    placement: record.placement ?? 'local',
   };
 }
 
@@ -387,7 +426,11 @@ export function buildStatusLine(report: BuildReport, now: number): string {
     return `build: stale ${report.platform}${slot} record from ${report.startedAt} (its run is gone; the next run replaces it)`;
   }
   const elapsedMs = Math.max(0, now - Date.parse(report.startedAt));
-  const head = `build: ${report.platform}${slot} ${report.phase}, ${formatElapsed(elapsedMs)} elapsed`;
+  const remote =
+    typeof report.placement === 'object'
+      ? ` on ${report.placement.host} (${report.placement.phase}, ${formatElapsed(Math.max(0, now - Date.parse(report.placement.phaseStartedAt)))})`
+      : '';
+  const head = `build: ${report.platform}${slot} ${report.phase}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
   if (report.state === 'unknown') return `${head} (its native-run claim cannot be resolved, so it may not be running)`;
   if (report.expectedMs === null) return head;
   const basis = `median of ${plural(report.basis, `${report.outcome} run`)}`;

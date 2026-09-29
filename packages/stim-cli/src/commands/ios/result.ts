@@ -33,8 +33,10 @@ export function lastBuildRecord({
   diagnostics = null,
   configuration = null,
   offloadedTo = null,
+  offloadFallback = null,
 }: {
   offloadedTo?: string | null;
+  offloadFallback?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -64,6 +66,7 @@ export function lastBuildRecord({
   };
   if (errorCode) record.errorCode = errorCode;
   if (offloadedTo) record.offloadedTo = offloadedTo;
+  if (offloadFallback) record.offloadFallback = offloadFallback;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
@@ -95,8 +98,10 @@ export function iosFacts({
   lease,
   devServer = null,
   offloadedTo = null,
+  offloadFallback = null,
 }: {
   offloadedTo?: string | null;
+  offloadFallback?: string | null;
   slot?: string;
   udid: string;
   deviceName?: string | null;
@@ -135,6 +140,7 @@ export function iosFacts({
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
     ...(offloadedTo ? { offloadedTo } : {}),
+    ...(offloadFallback ? { offloadFallback } : {}),
     compilationCache,
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
@@ -219,6 +225,7 @@ export interface ReportIosResultArgs {
   launchWarning?: string;
   providerName: string | null;
   offloadedTo?: string | null;
+  offloadFallback?: string | null;
   closeWriter: () => void;
   webPreviewUrl: string | null;
   lease?: { kind: string; expiresAt: string } | null;
@@ -256,6 +263,7 @@ export function reportIosResult({
   launchWarning,
   providerName,
   offloadedTo = null,
+  offloadFallback = null,
   closeWriter,
   webPreviewUrl,
   lease,
@@ -281,6 +289,7 @@ export function reportIosResult({
       status: 'ok',
       configuration: configuration ?? 'Debug',
       offloadedTo,
+      offloadFallback,
     }),
   );
   closeWriter();
@@ -310,6 +319,7 @@ export function reportIosResult({
     lease,
     devServer,
     offloadedTo,
+    offloadFallback,
   });
   if (json) {
     console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));

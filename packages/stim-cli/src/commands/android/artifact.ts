@@ -57,15 +57,16 @@ import {
 } from '../../engine/remote-cache.ts';
 import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase } from '../../engine/build-progress.ts';
-import type { BuildMissReason } from '@stim-cli/core/state';
+import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
 import { pairedMachines } from '../../offload/build-machines.ts';
 import {
   chooseBuildMachine,
-  liveBuildSlots,
   offloadBuild,
   offloadMode,
   offloadPlacement,
+  placementLoad,
+  remotePhaseText,
   type OffloadChoice,
 } from '../../offload/client.ts';
 import { androidRequirements, androidToolchain } from '../../offload/toolchain.ts';
@@ -105,6 +106,7 @@ interface AndroidArtifactRequest {
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs'>;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason) => void;
+    place: (remote: { host: string; phase: string } | null) => void;
   };
 }
 
@@ -215,7 +217,11 @@ export async function acquireAndroidArtifact(
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats, step, miss } = progress;
+  const { phase, out, estimates, stats, step, miss, place } = progress;
+  const fallBack = (reason: string, line: string = reason) => {
+    record.offloadFallback = reason;
+    phase('build', `${line} -> building here`);
+  };
   const { variant, release, profile: buildProfile, cas, cache: cachePolicy } = buildPlan;
   const useBuildCache = cachePolicy.read;
   let androidPackage = initialPackage;
@@ -563,8 +569,15 @@ export async function acquireAndroidArtifact(
     return true;
   }
 
+  interface Candidate {
+    mode: OffloadMode;
+    here: MachineCapacity;
+    reason: string;
+    machines: ReturnType<typeof pairedMachines>;
+  }
+
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
-  function placeBuild(): { reason: string; machines: ReturnType<typeof pairedMachines> } | null {
+  function placeBuild(): Candidate | null {
     const mode = offloadMode();
     const machines = mode === 'off' ? [] : pairedMachines();
     if (mode === 'off' || machines.length === 0) return null;
@@ -579,39 +592,33 @@ export async function acquireAndroidArtifact(
             : !cachePolicy.write
               ? 'the build cache is off'
               : null;
-    const placement = offloadPlacement({
-      mode,
-      machines: machines.length,
-      liveSlots: maxBuilds ? liveBuildSlots() : 0,
-      maxBuilds: maxBuilds ?? 0,
-      unsupported,
-    });
+    const here = machineCapacity();
+    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported });
     if (!placement.offload) {
       phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { reason: placement.reason, machines };
+    return { mode, here, reason: placement.reason, machines };
   }
 
   const openOffload: { choice: OffloadChoice | null } = { choice: null };
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
-  async function chooseMachine(placement: {
-    reason: string;
-    machines: ReturnType<typeof pairedMachines>;
-  }): Promise<OffloadChoice | null> {
+  async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target: { platform: 'android', local: androidToolchain(), requires: androidRequirements(root) },
+      mode: candidate.mode,
+      here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
-      machines: placement.machines,
+      machines: candidate.machines,
     });
     if (typeof choice === 'string') {
-      phase('build', `offload failed: no machine can build it (${choice}) -> building here`);
+      fallBack(choice);
       return null;
     }
     openOffload.choice = choice;
-    phase('build', `placement: ${choice.machine} (${placement.reason})`);
+    phase('build', `placement: ${choice.machine} (${candidate.reason}${placementLoad(choice)})`);
     return choice;
   }
 
@@ -633,9 +640,14 @@ export async function acquireAndroidArtifact(
         },
       },
       stagingDir,
-      onPhase: (name, msg) => phase('build', chalk.dim(`${choice.machine} ${name}: ${msg.trim()}`)),
+      onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
+      onEnter: (name) => {
+        place({ host: choice.machine, phase: name });
+        step(name === 'prebuild' ? name : 'compile');
+      },
       onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice.machine }),
     });
+    place(null);
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
@@ -661,8 +673,10 @@ export async function acquireAndroidArtifact(
     try {
       rmSync(stagingDir, { recursive: true, force: true });
     } catch {}
+    step('compile');
     if (!outcome.ok || !stored) {
-      phase('build', `offload failed: ${reason ?? 'the APK was not stored'} -> building here`);
+      const why = reason ?? 'the APK was not stored';
+      fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`);
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
     }
@@ -763,9 +777,9 @@ export async function acquireAndroidArtifact(
           step('compile');
           let built = false;
           if (editedConfig.length) {
-            phase(
-              'build',
-              'offload failed: prebuild changed config inputs, so the APK cannot be cached -> building here',
+            fallBack(
+              'prebuild changed config inputs, so the APK cannot be cached',
+              'offload failed: prebuild changed config inputs, so the APK cannot be cached',
             );
           } else {
             const choice = await chooseMachine(offload);

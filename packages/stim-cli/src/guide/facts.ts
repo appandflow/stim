@@ -221,6 +221,10 @@ leased until <time>" for each one.`,
   offloadedTo     only on an app a build machine compiled: its
                   offload.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
+  offloadFallback only on an app compiled here after the run considered
+                  offloading it: why it built here -- one reason per
+                  machine when none took the build, or why the offload
+                  stopped. The Android payload carries it too
   compilationCache
                   Xcode compilation-cache activity for a compiled iOS app:
                     { status: "reported", hits, cacheableTasks, hitRatePercent }
@@ -460,11 +464,25 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
-  buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt? }
-                  per offload.machines entry; state is "approved",
-                  "pending", "not-asked", "revoked" (revoked, or the request
-                  lapsed), "node-changed", "not-on-tailnet", "tailscale-off",
-                  "unreachable" or "invalid"
+  buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
+                  offloadable?, reasons?, capacity? } per offload.machines
+                  entry; state is "approved", "pending", "not-asked",
+                  "revoked" (revoked, or the request lapsed), "node-changed",
+                  "not-on-tailnet", "tailscale-off", "unreachable" or
+                  "invalid". An approved machine also carries offloadable,
+                  true when it would take this app's builds now (iOS
+                  simulator unless --platform android, Android emulator when
+                  --platform android or the app has android/ or uses Expo),
+                  and reasons, each reason it would not, prefixed "iOS: " or
+                  "Android: " when only one platform has it, with a finding
+                  per reason (code build-machine-<reason>: unreachable,
+                  checkout, stim-build, arch, xcode, simulator-sdk,
+                  cocoapods, runtime, jdk, android-sdk, ndk, build-tools,
+                  compile-sdk, disk or busy). capacity
+                  is the machine's offer: { running, max, diskFreeBytes,
+                  minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
+                  maxLoadPerCore?, declined? }; an older stim-server omits the
+                  optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
 
@@ -1024,7 +1042,7 @@ RULES
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, expectedMs, expectedPhaseMs, basis, missReason?,
-            detail? }
+            detail?, placement }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1060,17 +1078,26 @@ RULES
                    to file names, at most 160 characters
     updatedAt      when the build last wrote it; the run writes it at most
                    every 2 seconds
+  placement        where the build runs: "local", or while it is offloaded
+                   { host, phase, startedAt, phaseStartedAt }. host is the
+                   offload.machines entry; phase is the step there: sync,
+                   deps, prebuild, pods, build (xcodebuild or Gradle) or fetch;
+                   startedAt is when the offload started and phaseStartedAt
+                   when that step did. Meanwhile phase above follows it as
+                   prebuild, pods or compile.
 
   Plain \`stim status\` prints the same as one line per workspace:
 
     build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)
+    build: ios compile on janics-mac-mini (build, 2m10s), 3m05s elapsed
 
   An environment with a recorded run also carries lastBuilds, each
   platform's most recent ios or android run, finished or failed:
 
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
-               errorCode?, missReason?, offloadedTo?, diagnostics? }
+               errorCode?, missReason?, offloadedTo?, offloadFallback?,
+               diagnostics? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -1091,6 +1118,11 @@ RULES
   diagnostics  only on a failed run whose compiler reported errors: up to
                5 { file, line, column, message }, null where the compiler
                gave no position.
+  offloadedTo  only on a run a build machine compiled: its name
+  offloadFallback
+               only on a run that considered offloading and built here: one
+               reason per machine when none took the build, or why the
+               offload stopped
 
   Plain status prints "last build: ios local cache in 12s, android compiled
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.

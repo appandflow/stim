@@ -116,6 +116,40 @@ under `buildMachines` with its `state`: `approved`, `pending`, `not-asked`,
 `revoked`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
 `invalid`.
 
+Doctor also asks each approved machine for one build offer, the same offer
+`stim ios` and `stim android` ask for, and reports every reason that machine
+would not take this app's builds now, each as a finding with a fix: it does
+not answer, it runs another Stim build (update it to this Mac's build), its
+CPU differs; for iOS (unless `--platform android`) its Xcode, simulator SDK or
+CocoaPods differ or it has no iPhone simulator on the runtime `stim ios`
+builds for here; for Android (with `--platform android`, or an app with
+`android/` or Expo) its JDK major differs or its SDK lacks the NDK,
+build-tools or compile platform; its worker volume has less than 10 GB free;
+or it is busy. Busy and no answer are notes; the
+others cost time. In `--json` such a machine also carries `offloadable`,
+`reasons`, and `capacity`, its reported load:
+
+```json
+{
+  "machine": "janics-mac-mini",
+  "state": "approved",
+  "offloadable": false,
+  "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
+  "capacity": {
+    "running": 0,
+    "max": 1,
+    "cpus": 10,
+    "loadPerCore": 0.4,
+    "builds": 0,
+    "maxBuilds": 0,
+    "maxLoadPerCore": 2,
+    "declined": null,
+    "diskFreeBytes": 812000000000,
+    "minDiskFreeBytes": 10737418240
+  }
+}
+```
+
 ## `ports`
 
 ```text
@@ -874,6 +908,28 @@ started work and `total` the targets in its dependency graph. For Gradle,
 names. These are counts, not a completion percentage: one target can take ten
 minutes and a cached one no time at all.
 
+`build.placement` says where the build runs: `"local"`, or, while it is
+offloaded to a [build machine](./settings.md#machine-settings), an object with
+the machine and its step there. `phase` is `sync`, `deps`, `prebuild`,
+`pods`, `build` (xcodebuild or Gradle) or `fetch`; `startedAt` is when the offload
+started and `phaseStartedAt` when that step did. Meanwhile `build.phase`
+follows it as `prebuild`, `pods` or `compile`.
+
+```json
+"placement": {
+  "host": "janics-mac-mini",
+  "phase": "build",
+  "startedAt": "2026-09-28T21:40:02.118Z",
+  "phaseStartedAt": "2026-09-28T21:40:09.530Z"
+}
+```
+
+Plain `status` adds the machine to the build line:
+
+```text
+  build: ios compile on janics-mac-mini (build, 2m10s), 3m05s elapsed
+```
+
 Each workspace also shows its last build per platform:
 
 ```text
@@ -882,9 +938,12 @@ Each workspace also shows its last build per platform:
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, diagnostics? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, offloadedTo?, offloadFallback?, diagnostics? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
-when the run compiled or failed before finding an app. A failed run whose
+when the run compiled or failed before finding an app. `offloadedTo` names the
+build machine that compiled the app; `offloadFallback` is why a run that
+considered offloading built here instead, such as
+`janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose
 compiler reported errors carries `diagnostics`: up to five
 `{ file, line, column, message }`, with `null` for a position the compiler
 did not give.

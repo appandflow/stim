@@ -27,11 +27,12 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { isJsonObject, loadConfig } from '@stim-cli/core/state';
+import { isJsonObject, loadConfig, machineCapacity, saturation } from '@stim-cli/core/state';
 import {
   BUILD_REPO_PATTERN,
   type BuildAndroidOptions,
   type BuildArtifactResult,
+  type BuildCapacity,
   type BuildFile,
   type BuildJobOutcome,
   type BuildOfferResult,
@@ -220,18 +221,38 @@ export class BuildHost {
     return {
       result: {
         toolchain,
-        capacity: {
-          running: this.jobs.size,
-          max: this.limits.maxJobs,
-          diskFreeBytes: freeBytes(root),
-          minDiskFreeBytes: this.limits.minFreeBytes,
-        },
+        capacity: this.capacity(),
         warm: {
           checkout: existsSync(join(area, 'src')),
           dependencies: typeof params.lockfile === 'string' && lockfile === params.lockfile,
           build: nonEmptyDir(join(area, 'home', 'workspaces')),
         },
       },
+    };
+  }
+
+  capacity(): BuildCapacity {
+    const machine = machineCapacity();
+    const running = this.jobs.size;
+    const diskFreeBytes = freeBytes(this.root());
+    const builds = machine.builds + running;
+    const declined =
+      running >= this.limits.maxJobs
+        ? `already running ${running} offloaded build(s), its limit`
+        : diskFreeBytes !== null && diskFreeBytes < this.limits.minFreeBytes
+          ? `${gb(diskFreeBytes)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
+          : saturation({ ...machine, builds });
+    return {
+      running,
+      max: this.limits.maxJobs,
+      diskFreeBytes,
+      minDiskFreeBytes: this.limits.minFreeBytes,
+      cpus: machine.cpus,
+      loadPerCore: machine.loadPerCore,
+      builds,
+      maxBuilds: machine.maxBuilds,
+      maxLoadPerCore: machine.maxLoadPerCore,
+      declined,
     };
   }
 
@@ -252,16 +273,8 @@ export class BuildHost {
     send: (event: BuildProgressEvent) => void;
   }): Job | Refusal {
     if (this.closed) return refusal('build-refused', 'This Mac is shutting down stim-server.');
-    if (this.jobs.size >= this.limits.maxJobs) {
-      return refusal('build-busy', `This Mac already runs ${this.jobs.size} offloaded build(s), its limit.`);
-    }
-    const free = freeBytes(this.root());
-    if (free !== null && free < this.limits.minFreeBytes) {
-      return refusal(
-        'build-refused',
-        `${this.root()} has ${gb(free)} GB free; builds need ${gb(this.limits.minFreeBytes)} GB.`,
-      );
-    }
+    const { declined } = this.capacity();
+    if (declined) return refusal('build-busy', `This Mac declines the build: ${declined}.`);
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
     mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });

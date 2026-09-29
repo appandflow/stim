@@ -103,6 +103,33 @@ describe('active build record', () => {
     }
   });
 
+  test('reports where the build runs: local, then the build machine and its phase there, then local again', () => {
+    const claim = takeClaim();
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+    expect(report().placement).toBe('local');
+
+    now += 10_000;
+    progress.place({ host: 'mini', phase: 'sync' });
+    now += 5_000;
+    progress.place({ host: 'mini', phase: 'build' });
+    progress.place({ host: 'mini', phase: 'build' });
+    expect(report().placement).toEqual({
+      host: 'mini',
+      phase: 'build',
+      startedAt: '2026-09-24T10:00:10.000Z',
+      phaseStartedAt: '2026-09-24T10:00:15.000Z',
+    });
+    now += 65_000;
+    expect(buildStatusLine(report(), now)).toBe('build: ios prepare on mini (build, 1m05s), 1m20s elapsed');
+
+    progress.place(null);
+    expect(report().placement).toBe('local');
+    progress.clear();
+    releaseClaim(claim);
+  });
+
   test('records phase transitions under the run claim, reports running, and clears on exit', () => {
     const claim = takeClaim();
     let now = T0;
@@ -217,6 +244,15 @@ describe('build history', () => {
     expect(history.ios!.map((entry) => entry.result).slice(0, 2)).toEqual(['cancelled', 'succeeded']);
     expect(history.ios!.at(-1)!.startedAt).toBe(new Date(T0 + 3 * 60_000).toISOString());
     expect(history.android!.map((entry) => entry.result)).toEqual(['failed']);
+
+    recordFinishedBuild(root, finished('2026-09-24T12:00:00.000Z', { offloadedTo: 'mini' }));
+    recordFinishedBuild(
+      root,
+      finished('2026-09-24T12:05:00.000Z', { offloadFallback: 'mini: busy (all 1 build slots busy)' }),
+    );
+    const [fellBack, offloaded] = readBuildHistory(readWorkspaceState(root)).ios!;
+    expect(fellBack).toMatchObject({ offloadFallback: 'mini: busy (all 1 build slots busy)' });
+    expect(offloaded).toMatchObject({ offloadedTo: 'mini' });
   });
 
   test("a run that finds an earlier run's active-build record records that run as interrupted", () => {
