@@ -42,11 +42,12 @@ import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
 import {
-  capacityText,
   chooseBuildMachine,
   offloadBuild,
   offloadMode,
   offloadPlacement,
+  placementLoad,
+  remotePhaseText,
   simulatorRuntime,
   type OffloadChoice,
 } from '../../offload/client.ts';
@@ -717,12 +718,7 @@ export async function acquireIosArtifact(
       return null;
     }
     openOffload.choice = choice;
-    const there = choice.offer.capacity;
-    const load =
-      typeof there.loadPerCore === 'number' && typeof there.builds === 'number'
-        ? `; ${capacityText({ loadPerCore: there.loadPerCore, builds: there.builds, maxBuilds: there.maxBuilds ?? 0 })} there`
-        : '';
-    phase('build', `placement: ${choice.machine} (${candidate.reason}${load})`);
+    phase('build', `placement: ${choice.machine} (${candidate.reason}${placementLoad(choice)})`);
     return choice;
   }
 
@@ -735,11 +731,7 @@ export async function acquireIosArtifact(
       expectedFingerprint: storeHash,
       request: { platform: 'ios', runtime, configuration, scheme: buildScheme ?? null, isExpo, optimizations },
       stagingDir,
-      onPhase: (name, msg) => {
-        const text = msg.trim();
-        const own = text.startsWith(`${name} `) ? text.slice(name.length).trimStart() : text;
-        phase(name, `${own} (on ${choice.machine})`);
-      },
+      onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
         place({ host: choice.machine, phase: name });
         step(name === 'prebuild' || name === 'pods' ? name : 'compile');

@@ -245,6 +245,11 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   'simulator-sdk': 'has another simulator SDK',
   cocoapods: 'has another CocoaPods',
   runtime: "has no simulator for this project's iOS runtime",
+  jdk: 'runs another JDK major version',
+  'android-sdk': 'has no Android SDK',
+  ndk: "lacks this project's NDK",
+  'build-tools': "lacks this project's Android build-tools",
+  'compile-sdk': "lacks this project's Android compile platform",
   disk: 'is low on disk',
   busy: 'is too busy to take builds',
 };
@@ -266,6 +271,13 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
       return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':
       return `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`;
+    case 'jdk':
+      return `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this Mac's.`;
+    case 'android-sdk':
+    case 'ndk':
+    case 'build-tools':
+    case 'compile-sdk':
+      return `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk).`;
     case 'disk':
       return `Free space on ${entry}'s worker root (offload.workerRoot there).`;
     case 'busy':

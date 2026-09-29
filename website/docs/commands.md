@@ -116,13 +116,16 @@ under `buildMachines` with its `state`: `approved`, `pending`, `not-asked`,
 `revoked`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
 `invalid`.
 
-Outside `--platform android`, doctor also asks each approved machine for one
-build offer, the same offer `stim ios` asks for, and reports every reason
-that machine would not take this app's simulator build now, each as a finding
-with a fix: it does not answer, it runs another Stim build (update it to this
-Mac's build), its CPU, Xcode, simulator SDK or CocoaPods differ, it has no
-iPhone simulator on the runtime `stim ios` builds for here, its worker volume
-has less than 10 GB free, or it is busy. Busy and no answer are notes; the
+Doctor also asks each approved machine for one build offer, the same offer
+`stim ios` and `stim android` ask for, and reports every reason that machine
+would not take this app's builds now, each as a finding with a fix: it does
+not answer, it runs another Stim build (update it to this Mac's build), its
+CPU differs; for iOS (unless `--platform android`) its Xcode, simulator SDK or
+CocoaPods differ or it has no iPhone simulator on the runtime `stim ios`
+builds for here; for Android (with `--platform android`, or an app with
+`android/` or Expo) its JDK major differs or its SDK lacks the NDK,
+build-tools or compile platform; its worker volume has less than 10 GB free;
+or it is busy. Busy and no answer are notes; the
 others cost time. In `--json` such a machine also carries `offloadable`,
 `reasons`, and `capacity`, its reported load:
 
@@ -908,7 +911,7 @@ minutes and a cached one no time at all.
 `build.placement` says where the build runs: `"local"`, or, while it is
 offloaded to a [build machine](./settings.md#machine-settings), an object with
 the machine and its step there. `phase` is `sync`, `deps`, `prebuild`,
-`pods`, `build` (xcodebuild) or `fetch`; `startedAt` is when the offload
+`pods`, `build` (xcodebuild or Gradle) or `fetch`; `startedAt` is when the offload
 started and `phaseStartedAt` when that step did. Meanwhile `build.phase`
 follows it as `prebuild`, `pods` or `compile`.
 

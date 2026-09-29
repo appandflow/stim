@@ -1071,7 +1071,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         androidPackage,
         record,
         maxBuilds: limits.maxBuilds,
-        progress: { phase, out, estimates, stats, step: progress.step, miss: progress.miss },
+        progress: { phase, out, estimates, stats, step: progress.step, miss: progress.miss, place: progress.place },
       },
       {
         deviceAbi,

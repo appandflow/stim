@@ -468,12 +468,16 @@ leased until <time>" for each one.`,
                   entry; state is "approved", "pending", "not-asked",
                   "revoked" (revoked, or the request lapsed), "node-changed",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
-                  "invalid". Outside --platform android, an approved machine
-                  also carries offloadable, true when it would take this app's
-                  iOS simulator build now, and reasons, each reason it would
-                  not, with a finding per reason (code build-machine-<reason>:
-                  unreachable, checkout, stim-build, arch, xcode,
-                  simulator-sdk, cocoapods, runtime, disk or busy). capacity
+                  "invalid". An approved machine also carries offloadable,
+                  true when it would take this app's builds now (iOS
+                  simulator unless --platform android, Android emulator when
+                  --platform android or the app has android/ or uses Expo),
+                  and reasons, each reason it would not, prefixed "iOS: " or
+                  "Android: " when only one platform has it, with a finding
+                  per reason (code build-machine-<reason>: unreachable,
+                  checkout, stim-build, arch, xcode, simulator-sdk,
+                  cocoapods, runtime, jdk, android-sdk, ndk, build-tools,
+                  compile-sdk, disk or busy). capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
                   maxLoadPerCore?, declined? }; an older stim-server omits the
@@ -1076,7 +1080,7 @@ RULES
   placement        where the build runs: "local", or while it is offloaded
                    { host, phase, startedAt, phaseStartedAt }. host is the
                    offload.machines entry; phase is the step there: sync,
-                   deps, prebuild, pods, build (xcodebuild) or fetch;
+                   deps, prebuild, pods, build (xcodebuild or Gradle) or fetch;
                    startedAt is when the offload started and phaseStartedAt
                    when that step did. Meanwhile phase above follows it as
                    prebuild, pods or compile.

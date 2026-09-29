@@ -200,7 +200,8 @@ function androidMismatches(
   }
   const sdk = worker.androidSdk;
   if (!sdk) return [...out, { code: 'android-sdk', reason: 'no Android SDK there' }];
-  if (requires.ndk && !sdk.ndk.includes(requires.ndk)) out.push({ code: 'ndk', reason: `no NDK ${requires.ndk} there` });
+  if (requires.ndk && !sdk.ndk.includes(requires.ndk))
+    out.push({ code: 'ndk', reason: `no NDK ${requires.ndk} there` });
   if (requires.buildTools && !sdk.buildTools.includes(requires.buildTools)) {
     out.push({ code: 'build-tools', reason: `no build-tools ${requires.buildTools} there` });
   }

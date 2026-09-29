@@ -45,8 +45,10 @@ export function androidFacts({
   lease,
   devServer = null,
   offloadedTo = null,
+  offloadFallback = null,
 }: {
   offloadedTo?: string | null;
+  offloadFallback?: string | null;
   slot?: string;
   serial?: string | null;
   avdName?: string | null;
@@ -88,6 +90,7 @@ export function androidFacts({
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
     ...(offloadedTo ? { offloadedTo } : {}),
+    ...(offloadFallback ? { offloadFallback } : {}),
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
@@ -121,8 +124,10 @@ export function lastBuildRecord({
   diagnostics = null,
   configuration = null,
   offloadedTo = null,
+  offloadFallback = null,
 }: {
   offloadedTo?: string | null;
+  offloadFallback?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -156,6 +161,7 @@ export function lastBuildRecord({
   };
   if (errorCode) record.errorCode = errorCode;
   if (offloadedTo) record.offloadedTo = offloadedTo;
+  if (offloadFallback) record.offloadFallback = offloadFallback;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
@@ -277,6 +283,7 @@ export function reportAndroidResult({
     lease,
     devServer,
     offloadedTo,
+    offloadFallback: record.offloadFallback ?? null,
   });
   writer.close();
 

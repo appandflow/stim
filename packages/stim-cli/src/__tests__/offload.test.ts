@@ -202,11 +202,7 @@ describe('pickOffer', () => {
       toolchain: { stimBuild: 'b2', runtimes: [] },
       capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }),
     });
-    expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual([
-      'stim-build',
-      'runtime',
-      'busy',
-    ]);
+    expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual(['stim-build', 'runtime', 'busy']);
   });
 
   it('prefers the warmest machine, then the least loaded, and names the machines it passed over', () => {

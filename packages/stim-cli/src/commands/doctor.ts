@@ -1,12 +1,15 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
-import { findProjectRoot } from '../workspace/project.ts';
+import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import { resolveSettings } from '../workspace/settings.ts';
 import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
-import { iosOffloadCheck, simulatorRuntime } from '../offload/client.ts';
+import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
+import { androidRequirements, androidToolchain, iosToolchain, type BuildTarget } from '../offload/toolchain.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
@@ -267,9 +270,18 @@ export default function doctorCommand(
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
       const checksIos = opts.platform !== 'android' && host === 'darwin';
+      const checksAndroid =
+        opts.platform === 'android' ||
+        (opts.platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
+      const offloadTargets = (): BuildTarget[] => [
+        ...(checksIos ? [{ platform: 'ios' as const, local: iosToolchain(), runtime: iosTargetRuntime(root) }] : []),
+        ...(checksAndroid
+          ? [{ platform: 'android' as const, local: androidToolchain(), requires: androidRequirements(root) }]
+          : []),
+      ];
       const buildMachines = await inspectBuildMachines({
         fix: opts.fix === true,
-        check: checksIos ? iosOffloadCheck(root, () => iosTargetRuntime(root)) : null,
+        check: checksIos || checksAndroid ? offloadCheck(root, offloadTargets) : null,
       });
       findings.push(...buildMachines.findings);
 
