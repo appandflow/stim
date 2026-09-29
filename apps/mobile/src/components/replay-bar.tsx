@@ -232,7 +232,7 @@ export function ReplayBar({
           hitSlop={4}
         >
           <Text weight="semibold" style={styles.mediaText}>
-            {showsPause ? '❚❚' : '▶'}
+            {showsPause ? '\u275A\u275A' : '\u25B6'}
           </Text>
         </Touch>
         <Touch
@@ -268,7 +268,7 @@ export function ReplayBar({
         <Text variant="caption" style={styles.time} numberOfLines={1}>
           {labelAt === null
             ? 'Loading...'
-            : `${replayLabel(labelAt, now)}${replay.ended && target === null ? ' · end' : ''}`}
+            : `${replayLabel(labelAt, now)}${replay.ended && target === null ? ' \u00B7 end' : ''}`}
         </Text>
       ) : null}
       <View

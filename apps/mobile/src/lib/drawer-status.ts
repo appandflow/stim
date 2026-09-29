@@ -22,7 +22,7 @@ export interface DrawerStatus {
 export const UPDATE_READY_TEXT = 'Update ready: restart to apply';
 
 const unreachableText = (machine: DrawerMachine): string =>
-  machine.state.kind === 'waiting' ? `Reconnecting to ${machine.name}…` : `Disconnected from ${machine.name}`;
+  machine.state.kind === 'waiting' ? `Reconnecting to ${machine.name}\u2026` : `Disconnected from ${machine.name}`;
 
 /**
  * The drawer footer's one status line. Highest priority first: a paired machine that's disconnected or

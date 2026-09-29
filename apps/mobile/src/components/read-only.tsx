@@ -14,7 +14,7 @@ export function grantCommand(deviceId: string | null): string {
 export function allowControlSteps(macName: string | undefined, deviceId: string | null): string {
   const where = macName ?? 'the Mac';
   const lookup = deviceId ? '' : " (`stim-server devices` lists this phone's id)";
-  return `On ${where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run \`${grantCommand(deviceId)}\`${lookup}. Then reconnect.`;
+  return `On ${where}, open Stim Desktop, Settings \u2192 Phones, and turn on Allow control for this phone. Or run \`${grantCommand(deviceId)}\`${lookup}. Then reconnect.`;
 }
 
 export function explainReadOnly(

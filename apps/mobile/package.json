@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "mock-server": "node mock-server/server.mjs",
     "dev:pair": "node scripts/dev-pair.mjs",
-    "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error && node scripts/check-ascii.mjs",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "format": "oxfmt .",

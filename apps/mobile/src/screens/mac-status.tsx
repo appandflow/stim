@@ -348,7 +348,7 @@ export function MacStatus({ id }: { id: string }) {
             <View style={styles.legendRow}>
               <ActivityIndicator size="small" color={theme.colors.secondary} />
               <Text variant="footnote" tone="secondary">
-                {'Checking build machines…'}
+                {'Checking build machines\u2026'}
               </Text>
             </View>
           ) : null}

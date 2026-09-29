@@ -145,7 +145,7 @@ export function Logs({
 
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: `Logs · ${workspaceTitleAt(path, status)}` }} />
+      <Stack.Screen options={{ title: `Logs \u00B7 ${workspaceTitleAt(path, status)}` }} />
       <ConnectionBanner state={state} />
       <View style={styles.filters}>
         <MetroLine metro={env?.metro} bundleMs={bundleMs} />
@@ -284,7 +284,7 @@ function MetroLine({ metro, bundleMs }: { metro: EnvironmentState['metro']; bund
         Metro :{metro.port}
       </Text>
       <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
-        {parts.join(' · ')}
+        {parts.join(' \u00B7 ')}
       </Text>
     </View>
   );
@@ -332,8 +332,8 @@ const LogRow = memo(function LogRow({
         </View>
         <Text variant="caption2" tone="tertiary" numberOfLines={1} style={styles.shrink}>
           {time}
-          {record.slot && record.slot !== 'default' ? ` · ${record.slot}` : ''}
-          {entry.related.length > 0 ? ` · ${entry.related.length + 1} records` : ''}
+          {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''}
+          {entry.related.length > 0 ? ` \u00B7 ${entry.related.length + 1} records` : ''}
         </Text>
       </View>
       <Text

@@ -143,7 +143,7 @@ export function shortDuration(ms: number): string {
 
 /** The label of a paused or playing frame: its time of day, and how long ago it was. */
 export function replayLabel(at: number, now: number, locale?: string): string {
-  return `${clockTime(at, locale)} · ${shortDuration(now - at)} ago`;
+  return `${clockTime(at, locale)} \u00B7 ${shortDuration(now - at)} ago`;
 }
 
 const LABEL_CHAR_WIDTH = 6.5;

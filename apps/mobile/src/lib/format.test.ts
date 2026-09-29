@@ -29,7 +29,7 @@ const reason = (summary: string): BuildMissReason => ({
 describe('clockTime', () => {
   const at = Date.parse('2026-09-25T22:31:05Z');
 
-  it('follows the requested locale’s 12- or 24-hour convention', () => {
+  it('follows the requested locale\u2019s 12- or 24-hour convention', () => {
     expect(clockTime(at, 'en-US')).toMatch(/^\d{1,2}:\d{2}:\d{2} (AM|PM)$/);
     expect(clockTime(at, 'en-GB')).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
@@ -213,7 +213,7 @@ describe('gitBadges', () => {
       uncommitted: 3,
       ahead: 3,
       behind: 1,
-      arrows: '↑3 ↓1',
+      arrows: '\u21913 \u21931',
       merged: false,
       label: '3 uncommitted changes, 3 commits not pushed, 1 commit behind the upstream',
     });
