@@ -23,6 +23,11 @@ import type { ReplayMarker, ReplayRate } from '@/protocol/types';
 
 const MARKER_REACH = 14;
 const TRACK_HEIGHT = 44;
+const textShadow = {
+  textShadowColor: 'rgba(0, 0, 0, 0.7)',
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 2,
+} as const;
 /** stim-server's `frames.seek` shows the newest frame for a time past every recording. */
 const NEWEST_FRAME = Number.MAX_SAFE_INTEGER;
 
@@ -370,7 +375,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.round,
     backgroundColor: theme.media.fill,
   },
-  time: { color: theme.media.textSecondary, fontVariant: ['tabular-nums'] },
+  time: { color: theme.media.textSecondary, fontVariant: ['tabular-nums'], ...textShadow },
   track: { height: TRACK_HEIGHT, justifyContent: 'center' },
   span: {
     position: 'absolute',
@@ -398,6 +403,7 @@ const styles = StyleSheet.create((theme) => ({
     top: TRACK_HEIGHT / 2 + 8,
     textAlign: 'center',
     color: theme.media.textTertiary,
+    ...textShadow,
   },
   played: {
     position: 'absolute',

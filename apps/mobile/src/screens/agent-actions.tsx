@@ -13,9 +13,9 @@ import { withAlpha } from '@/design/color';
 import { useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { useAgentActions } from '@/hooks/workspace-logs';
-import { shortDuration } from '@/lib/format';
+import { clockTime, shortDuration } from '@/lib/format';
 import { agentFilterOptions, matchesAgentFilter, type AgentFilter } from '@/lib/logs';
-import { deviceTitle, sinceLabel } from '@/lib/workspace-view';
+import { deviceTitle } from '@/lib/workspace-view';
 import { devicesOf, platformName } from '@/lib/workspaces';
 import type { DevicePlatform } from '@/protocol/types';
 
@@ -103,12 +103,12 @@ export function AgentActions({
                 key={key}
                 feedback="row"
                 onPress={() => openLog(record.ts)}
-                accessibilityLabel={`${sinceLabel(now - record.ts)} ago, ${record.msg}`}
+                accessibilityLabel={`${clockTime(record.ts)}, ${record.msg}`}
                 accessibilityHint="Opens this action in the agent log"
                 style={[styles.action, i > 0 && styles.separated]}
               >
                 <Text variant="caption" tone="tertiary" style={styles.time}>
-                  {sinceLabel(now - record.ts)}
+                  {clockTime(record.ts)}
                 </Text>
                 {typeof record.command === 'string' ? (
                   <Text variant="callout" weight="semibold" tone={failed ? 'error' : 'brand'}>
@@ -156,6 +156,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.md + 2,
   },
   separated: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.separator },
-  time: { width: 32, fontVariant: ['tabular-nums'] },
+  time: { width: 76, fontVariant: ['tabular-nums'] },
   grow: { flex: 1 },
 }));

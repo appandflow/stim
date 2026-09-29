@@ -47,7 +47,7 @@ import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
-import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
+import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
@@ -608,17 +608,22 @@ export function DeviceView({
               importantForAccessibility={controls.shown ? 'auto' : 'no-hide-descendants'}
               style={[
                 styles.controlsLayer,
-                landscape
-                  ? {
-                      ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
-                      bottom: rootHeight - rest[1] - rest[3],
-                    }
-                  : { left: insets.left, right: insets.right, bottom: rootHeight - rest[1] - rest[3] },
+                {
+                  ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
+                  bottom: rootHeight - rest[1] - rest[3],
+                },
                 zoom.fadeStyle,
                 lift,
               ]}
             >
-              <Animated.View style={[styles.controlsPanel, controlsFade]} onTouchStart={controls.reveal}>
+              <Animated.View
+                style={[
+                  styles.controlsPanel,
+                  rest[2] >= CONTROLS_MIN_WIDTH && styles.controlsPanelRounded,
+                  controlsFade,
+                ]}
+                onTouchStart={controls.reveal}
+              >
                 {replayBar}
               </Animated.View>
             </Animated.View>
@@ -823,8 +828,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.xl,
     paddingBottom: theme.space.sm,
   },
-  controlsLayer: { position: 'absolute', padding: theme.space.sm },
-  controlsPanel: { borderRadius: theme.radius.control, backgroundColor: theme.media.note },
+  controlsLayer: { position: 'absolute' },
+  controlsPanel: {
+    overflow: 'hidden',
+    backgroundImage: 'linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7) 65%, rgba(0, 0, 0, 0.78))',
+  },
+  controlsPanelRounded: {
+    borderBottomLeftRadius: LANDED_SCREEN_RADIUS,
+    borderBottomRightRadius: LANDED_SCREEN_RADIUS,
+  },
   noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
   note: {
     overflow: 'hidden',
