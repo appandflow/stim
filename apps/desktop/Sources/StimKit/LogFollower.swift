@@ -29,7 +29,8 @@ public struct LogQuery: Hashable, Sendable {
 
 /// Runs `stim logs --json --follow` for one query at a time. Starting a new
 /// query terminates the previous process, and nothing it still reports is
-/// delivered. Records arrive on the main queue in batches.
+/// delivered. Records arrive on the main queue in batches. `stopAll` stops
+/// every follower, for the app to call as it quits.
 public final class LogFollower: @unchecked Sendable {
   public enum Event: Sendable {
     case records([LogRecord])
@@ -39,6 +40,8 @@ public final class LogFollower: @unchecked Sendable {
   }
 
   static let batchInterval: TimeInterval = 0.1
+  private static let registryLock = NSLock()
+  nonisolated(unsafe) private static let followers = NSHashTable<LogFollower>.weakObjects()
 
   private let lock = NSLock()
   private var process: Process?
@@ -50,6 +53,11 @@ public final class LogFollower: @unchecked Sendable {
 
   public init(onEvent: @escaping @MainActor (Event) -> Void) {
     self.onEvent = onEvent
+    Self.registryLock.withLock { Self.followers.add(self) }
+  }
+
+  public static func stopAll() {
+    for follower in registryLock.withLock({ followers.allObjects }) { follower.stop() }
   }
 
   deinit {

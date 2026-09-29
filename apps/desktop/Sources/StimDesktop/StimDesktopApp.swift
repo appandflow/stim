@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     source.setEventHandler {
       MainActor.assumeIsolated {
         NSApp.terminate(nil)
+        LogFollower.stopAll()
         ServerController.shared.stopForQuit()
       }
       exit(0)
@@ -60,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    LogFollower.stopAll()
     MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
   }
 
