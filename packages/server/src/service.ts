@@ -124,6 +124,7 @@ interface Health {
   version: string;
   stim: string;
   stimHome: string;
+  tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
 }
 
@@ -282,7 +283,7 @@ export interface ServiceStatus {
   runs: number | null;
   lastExitCode: string | null;
   port: number | null;
-  health: { version: string; stim: string; stimHome: string; route: string | null } | null;
+  health: { version: string; stim: string; stimHome: string; tailscale: string | null; route: string | null } | null;
   serve: ServeRecord | null;
   logPath: string | null;
   node: string | null;
@@ -335,7 +336,13 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     lastExitCode: job?.lastExitCode && !job.lastExitCode.includes('never exited') ? job.lastExitCode : null,
     port: installed?.port ?? null,
     health: health
-      ? { version: health.version, stim: health.stim, stimHome: health.stimHome, route: routeText(health.route) }
+      ? {
+          version: health.version,
+          stim: health.stim,
+          stimHome: health.stimHome,
+          tailscale: tailscaleText(health.tailscale),
+          route: routeText(health.route),
+        }
       : null,
     serve: installed?.serve ?? null,
     logPath: installed?.logPath ?? null,
@@ -345,6 +352,13 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     pathPrepend: installed?.pathPrepend ?? [],
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
   };
+}
+
+function tailscaleText(tailscale: Health['tailscale']): string | null {
+  if (!tailscale) return null;
+  if (tailscale.state === 'running') return tailscale.dnsName ? `running (${tailscale.dnsName})` : 'running';
+  const detail = tailscale.backendState ?? tailscale.reason;
+  return detail ? `${tailscale.state} (${detail})` : tailscale.state;
 }
 
 function routeText(route: Health['route']): string | null {
@@ -369,6 +383,7 @@ export function statusLines(status: ServiceStatus): string[] {
       ? `  health: ok, stim-server ${status.health.version}, stim ${status.health.stim}, stim home ${status.health.stimHome}`
       : `  health: no answer on 127.0.0.1:${status.port}`,
   );
+  if (status.health?.tailscale) lines.push(`  tailscale: ${status.health.tailscale}`);
   if (status.health?.route) lines.push(`  tailscale route: ${status.health.route}`);
   if (status.serve) {
     lines.push(

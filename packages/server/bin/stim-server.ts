@@ -24,6 +24,7 @@ import {
   type PairedDevice,
 } from '../src/registry.ts';
 import { startServer } from '../src/server.ts';
+import { watchTailscale } from '../src/tailscale-monitor.ts';
 import {
   findTailscale,
   serveCommand,
@@ -64,7 +65,7 @@ function fail(message: string): never {
 }
 
 function tailscaleNote(tailscale: TailscaleState): string | null {
-  const remedy = `Remote clients cannot connect until Tailscale runs; then restart stim-server, which prints the \`tailscale serve\` command to run once.`;
+  const remedy = `Remote clients cannot connect until Tailscale runs; stim-server checks again every few seconds and then prints the \`tailscale serve\` command to run once.`;
   if (tailscale.state === 'not-running') return `Tailscale is not running (${tailscale.backendState}). ${remedy}`;
   if (tailscale.state === 'unavailable') return `Tailscale is unavailable: ${tailscale.reason}. ${remedy}`;
   return null;
@@ -100,12 +101,12 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   const tailscaleBinary = findTailscale(env);
   const tailscale = tailscaleStatus(tailscaleBinary, env);
   const stim = bundledStim();
-  const hosts = ['127.0.0.1', ...(tailscale.state === 'running' ? tailscale.ips : [])];
+  const monitor = watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
   let server;
   try {
     server = await startServer({
       name: macName(tailscale),
-      hosts,
+      hosts: ['127.0.0.1'],
       port,
       stimCli: stim.cli,
       stimVersion: stim.version,
@@ -113,6 +114,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
       env,
       tailscale: tailscaleBinary,
       tailscaleState: tailscale,
+      tailscaleMonitor: monitor,
     });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
@@ -124,15 +126,25 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
   }
-  let note = tailscaleNote(tailscale);
-  if (tailscale.state === 'running' && tailscale.dnsName) {
-    const route = await serveRoute(tailscaleBinary, env, port, tailscale.ips);
-    if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(tailscale.dnsName, route.port)}`);
-    note = routeNote(route, port);
-    if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
-  }
-  if (note) console.error(note);
+  const announce = async (binary: string | null, state: TailscaleState) => {
+    let note = tailscaleNote(state);
+    if (state.state === 'running' && state.dnsName) {
+      const route = await serveRoute(binary, env, port, state.ips);
+      if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(state.dnsName, route.port)}`);
+      note = routeNote(route, port);
+      if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
+    }
+    if (note) console.error(note);
+  };
+  await announce(tailscaleBinary, tailscale);
+  monitor.onChange((snapshot, previous) => {
+    const { state } = snapshot;
+    if (state.state === 'running') console.log('Tailscale is running.');
+    else if (previous.state.state === 'running') console.error('Tailscale stopped.');
+    if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
+  });
   const shutdown = () => {
+    monitor.stop();
     void server.close().then(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);

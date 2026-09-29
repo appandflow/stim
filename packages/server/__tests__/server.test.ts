@@ -28,6 +28,8 @@ import {
   readDevices,
   revokeDevice,
 } from '../src/registry.ts';
+import { watchTailscale } from '../src/tailscale-monitor.ts';
+import type { TailscaleState } from '../src/tailscale.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceStateDir } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
@@ -222,6 +224,7 @@ async function start(
     commandLimits?: ServerOptions['commandLimits'];
     actionLimits?: ServerOptions['actionLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
+    tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
     foldHelper?: string;
@@ -259,6 +262,7 @@ async function start(
       ...(overrides.whoisDelayMs ? { FAKE_TAILSCALE_DELAY_MS: String(overrides.whoisDelayMs) } : {}),
       ...overrides.env,
     },
+    tailscaleMonitor: overrides.tailscaleMonitor,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
     logLimits: overrides.logLimits,
@@ -1039,6 +1043,36 @@ describe('health', () => {
       }).on('error', reject);
     });
     expect(rebound).toBe(426);
+  });
+
+  it('follows Tailscale coming up and going away after start', async () => {
+    let next: TailscaleState = { state: 'unavailable', reason: 'it timed out' };
+    const initial = { binary: null, state: next };
+    const monitor = watchTailscale({
+      env: {},
+      initial,
+      find: () => 'tailscale',
+      read: async () => next,
+      backoffMs: 10,
+      maxMs: 20,
+    });
+    const port = await start({ tailscaleState: initial.state, tailscaleMonitor: monitor });
+    const health = async () =>
+      ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { tailscale: unknown }).tailscale;
+    const eventually = async (done: () => boolean | Promise<boolean>) => {
+      for (let attempt = 0; attempt < 200 && !(await done()); attempt++) await new Promise((r) => setTimeout(r, 10));
+      expect(await done()).toBe(true);
+    };
+    expect(await health()).toEqual({ state: 'unavailable', reason: 'it timed out' });
+    expect(server!.addresses).toHaveLength(1);
+    next = { state: 'running', ips: ['::1'], dnsName: 'mac.tail1.ts.net', hostName: 'mac' };
+    await eventually(() => server!.addresses.length === 2);
+    expect(server!.addresses[1]).toEqual({ host: '::1', port });
+    expect(await health()).toEqual({ state: 'running', dnsName: 'mac.tail1.ts.net' });
+    next = { state: 'not-running', backendState: 'Stopped' };
+    await eventually(() => server!.addresses.length === 1);
+    expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
+    monitor.stop();
   });
 
   test.skipIf(!fakeTailscale)('reports the current tailscale serve route to the server', async () => {
