@@ -1,7 +1,7 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
-import { isPackageResolvable } from '../workspace/project.ts';
+import { isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 
 export function devClientScheme(
   root: string,
@@ -70,4 +70,27 @@ function hasDevClient(root: string): boolean {
   );
   if (declared) return true;
   return isPackageResolvable(root, 'expo-dev-client');
+}
+
+/**
+ * Whether `version` of expo-dev-launcher reads the `disableFab=1` and `disableAutoLaunch=1` launch
+ * URL params (expo/expo#49651, first published in 58.0.0; no 58.0.0 prerelease carries it).
+ */
+export function devLauncherReadsDevMenuParams(version: string | null): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(version?.trim() ?? '');
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1, 4).map(Number) as [number, number, number];
+  if (major !== 58) return major > 58;
+  return minor > 0 || patch > 0 || match[4] === undefined;
+}
+
+export function devClientTakesDevMenuParams(root: string): boolean {
+  return devLauncherReadsDevMenuParams(installedDevLauncherVersion(root));
+}
+
+function installedDevLauncherVersion(root: string): string | null {
+  const devClient = resolvePackageJson(root, 'expo-dev-client');
+  const launcher = resolvePackageJson(devClient ? dirname(devClient) : root, 'expo-dev-launcher');
+  const version = launcher ? readJsonObject(launcher)?.version : null;
+  return typeof version === 'string' ? version : null;
 }

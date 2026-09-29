@@ -16,6 +16,7 @@ interface IosDeviceRecord {
   owned?: boolean;
   serial?: string;
   simslimManaged?: boolean;
+  schemeApprovals?: string[];
   [key: string]: unknown;
 }
 

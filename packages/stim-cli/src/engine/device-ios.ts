@@ -123,6 +123,7 @@ export async function ensureOwnedIosDevice({
           ...(record.adopted ? { adopted: true } : {}),
           ...(record.adoptionPending ? { adoptionPending: true } : {}),
           ...(record.parkedCacheKey ? { parkedCacheKey: record.parkedCacheKey } : {}),
+          ...(record.schemeApprovals ? { schemeApprovals: record.schemeApprovals } : {}),
         };
         const configure = async () => {
           if (record.adoptionPending) resetAdoptedSim(sim.udid, out);

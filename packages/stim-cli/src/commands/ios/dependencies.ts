@@ -1,7 +1,7 @@
 import { loadCacheProvider } from '@stim-cli/cache';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, recordIosSchemeApprovals, upsertProject } from '../../workspace/config.ts';
 import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
 import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
@@ -66,7 +66,7 @@ import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { startDevServer } from '../start.ts';
-import { devClientScheme } from '../dev-client.ts';
+import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
@@ -88,8 +88,10 @@ export interface IosDeps {
   detectBundleId: typeof detectBundleId;
   detectIsExpo: typeof detectIsExpo;
   devClientScheme: typeof devClientScheme;
+  devClientTakesDevMenuParams: typeof devClientTakesDevMenuParams;
   getProject: typeof getProject;
   upsertProject: typeof upsertProject;
+  recordIosSchemeApprovals: typeof recordIosSchemeApprovals;
   checkDeviceCapacity: typeof checkDeviceCapacity;
   budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
@@ -168,8 +170,10 @@ export const DEFAULT_DEPS: IosDeps = {
   detectBundleId,
   detectIsExpo,
   devClientScheme,
+  devClientTakesDevMenuParams,
   getProject,
   upsertProject,
+  recordIosSchemeApprovals,
   checkDeviceCapacity,
   budgetGate,
   ensureOwnedDevice,

@@ -371,7 +371,9 @@ function reportUnverified({
     waitedMs: verification.waitedMs,
     bundleId,
     udid,
-    devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined) : null,
+    devClientUrl: scheme
+      ? (launched?.url ?? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined))
+      : null,
     mode: isExpo ? MODE_EXPO : MODE_BARE,
     remote: remoteDevice,
     physical,
@@ -650,6 +652,7 @@ export async function finishIosRun({
   phase('device', `${deviceLabel(device, udid)} ${deviceOutcome}`);
 
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
+  const devMenuParams = d.devClientTakesDevMenuParams(root);
   const appName = appNameFromPath(appPath);
   const appExecutable = readRunExecutable(d, appPath, note);
   const dropSwapDir = artifact.release;
@@ -769,6 +772,8 @@ export async function finishIosRun({
         appPath: appPath!,
         bundleId,
         devClientScheme: scheme,
+        devMenuParams,
+        schemeApprovals: device.schemeApprovals,
         proveInstalled: !adopting || device?.parkedCacheKey === storeKey,
       },
       { now: d.now },
@@ -795,6 +800,7 @@ export async function finishIosRun({
     if (!remoteDevice && installed?.devClientPreparationDurationMs !== undefined) {
       phase('install', `dev client prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
     }
+    if (installed.schemeApprovals) d.recordIosSchemeApprovals(root, udid, installed.schemeApprovals, slot);
 
     dropSwapDir();
 
@@ -821,6 +827,7 @@ export async function finishIosRun({
       bundleId: bundleId!,
       metroPort,
       devClientScheme: scheme,
+      devMenuParams,
       consolePaths: simulatorConsolePaths(
         { deviceId: udid, appId: bundleId!, since: launchedAt },
         true,

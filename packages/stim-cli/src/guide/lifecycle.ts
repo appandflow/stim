@@ -794,8 +794,10 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
     install     unchanged (emulator-5584 already has this build) (0.4s)
 
   On iOS the install line names the identity proof separately from the Expo
-  dev-client preference writes, so a slow simulator command is never charged
-  to an install that did not run:
+  dev-client simulator writes, so a slow simulator command is never charged
+  to an install that did not run. Those writes run only when something is
+  missing (\`stim guide facts devmenu\`), so a rerun usually prints no
+  second line:
 
     install     unchanged (stim-app already has this build) (0.4s)
     install     dev client prepared (0.9s)

@@ -163,6 +163,21 @@ describe('the two pure port-wiring shapes', () => {
     );
   });
 
+  test('with dev-menu params the project url and the outer link each carry what the launcher reads there', () => {
+    const link = new URL(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
+    expect(link.searchParams.get('disableFab')).toBe('1');
+    expect(link.searchParams.get('disableAutoLaunch')).toBe('1');
+    const projectUrl = new URL(link.searchParams.get('url') as string);
+    expect(projectUrl.origin).toBe('http://localhost:8082');
+    expect(Object.fromEntries(projectUrl.searchParams)).toEqual({
+      disableOnboarding: '1',
+      disableFab: '1',
+      disableAutoLaunch: '1',
+      __expo_disable_fab: '1',
+      __expo_disable_auto_launch: '1',
+    });
+  });
+
   test('iOS scheme approvals cover the bundle id and dev-client scheme without duplicates', () => {
     expect(iosSchemeApprovalKeys('com.example.app', 'myapp')).toEqual([
       'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
@@ -248,7 +263,14 @@ describe('ios', () => {
         },
         { exec },
       ),
-    ).toEqual({ ok: true, appPath });
+    ).toEqual({
+      ok: true,
+      appPath,
+      schemeApprovals: [
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+      ],
+    });
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'install', 'U1', appPath],
@@ -329,7 +351,93 @@ describe('ios', () => {
       appPath,
       artifactDurationMs: 500,
       devClientPreparationDurationMs: 800,
+      schemeApprovals: [
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+      ],
     });
+  });
+
+  test('a launcher that reads the dev-menu params and recorded approvals leave nothing to prepare', () => {
+    const exec = recordingExec();
+    const times = [0, 500];
+    const appPath = '/tmp/My App.app';
+    const approvals = iosSchemeApprovalKeys('com.example.app', 'myapp');
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath,
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+        devMenuParams: true,
+        schemeApprovals: approvals,
+        proveInstalled: false,
+      },
+      {
+        exec,
+        now: () => {
+          const time = times.shift();
+          assert(time !== undefined);
+          return time;
+        },
+      },
+    );
+    expect(result).toEqual({ ok: true, appPath, artifactDurationMs: 500 });
+    expect(exec.calls).toEqual([['xcrun', 'simctl', 'install', 'U1', appPath]]);
+  });
+
+  test('only the approvals missing from the record are written, and the record grows by them', () => {
+    const exec = recordingExec();
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath: '/tmp/My App.app',
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+        devMenuParams: true,
+        schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app', 'other-->key'],
+        proveInstalled: false,
+      },
+      { exec },
+    );
+    expect(exec.calls.slice(1)).toEqual([
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.apple.launchservices.schemeapproval',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        '-string',
+        'com.example.app',
+      ],
+    ]);
+    expect(result.schemeApprovals).toEqual([
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+      'other-->key',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+    ]);
+  });
+
+  test('an older launcher still gets the dev-menu preference writes when its approvals are recorded', () => {
+    const exec = recordingExec();
+    installIosApp(
+      {
+        udid: 'U1',
+        appPath: '/tmp/My App.app',
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+        schemeApprovals: iosSchemeApprovalKeys('com.example.app', 'myapp'),
+        proveInstalled: false,
+      },
+      { exec },
+    );
+    expect(exec.calls.slice(1).map((call) => call.slice(6, 8))).toEqual([
+      ['com.example.app', 'EXDevMenuShowsAtLaunch'],
+      ['com.example.app', 'EXDevMenuShowFloatingActionButton'],
+    ]);
   });
 
   test.each([undefined, 'ETIMEDOUT'])(
@@ -526,6 +634,26 @@ describe('ios', () => {
       'http://localhost:8082/?disableOnboarding=1',
     ]);
     expect(exec.calls).toHaveLength(3);
+  });
+
+  test('a cold launch of a launcher that reads the dev-menu params passes them on its project URL', () => {
+    const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
+    const result = launchIosApp(
+      {
+        udid: 'U1',
+        bundleId: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'myapp',
+        devMenuParams: true,
+        consolePaths: { stdout: '/container/trace.out', stderr: '/container/trace.err' },
+      },
+      { exec },
+    );
+    expect(exec.calls[2]?.slice(-2)).toEqual([
+      '--initialUrl',
+      'http://localhost:8082/?disableOnboarding=1&disableFab=1&disableAutoLaunch=1&__expo_disable_fab=1&__expo_disable_auto_launch=1',
+    ]);
+    expect(result.url).toBe(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
   });
 
   test('a cold Expo launch recovers a no-process-handle error when its app started', () => {
@@ -2902,7 +3030,12 @@ describe('skipping an install the device already holds', () => {
       { udid: 'U1', appPath, bundleId: 'com.example.app', devClientScheme: 'myapp' },
       { exec },
     );
-    expect(result).toEqual({ ok: true, appPath, skipped: true });
+    expect(result).toEqual({
+      ok: true,
+      appPath,
+      skipped: true,
+      schemeApprovals: iosSchemeApprovalKeys('com.example.app', 'myapp'),
+    });
     expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
     expect(exec.calls.some((c) => c.includes('EXDevMenuShowsAtLaunch'))).toBe(true);
     expect(exec.calls.some((c) => c.includes('EXDevMenuShowFloatingActionButton'))).toBe(true);

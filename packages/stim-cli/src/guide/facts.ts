@@ -555,12 +555,28 @@ RULES
   preapproves CoreSimulatorBridge for exactly the installed
   bundle id and discovered scheme on its owned simulator. That
   suppresses iOS's first-launch confirmation;
-  unrelated schemes remain unapproved. It also writes
+  unrelated schemes remain unapproved. The approvals persist
+  until the simulator is erased, so Stim records the keys it
+  wrote on the workspace's device record and writes only the
+  ones missing from it. Parking drops the record, so an
+  adopted simulator gets them again once.
+  THE DEV MENU AND ITS BUTTON stay off a simulator by one of
+  two routes, picked from the project's installed
+  expo-dev-launcher (found through expo-dev-client, no
+  network). From 58.0.0 (expo/expo#49651) the deep link
+  carries \`disableFab=1&disableAutoLaunch=1\` on the outer
+  link and on the project url, plus
+  \`__expo_disable_fab=1&__expo_disable_auto_launch=1\` on the
+  project url, which is the only url \`simctl launch
+  --initialUrl\` hands the launcher and the one 58.0.7 reads
+  the \`__expo_\` spellings from. Before 58.0.0, and when the
+  version cannot be read, Stim writes
   EXDevMenuShowsAtLaunch=false and
-  EXDevMenuShowFloatingActionButton=false, which the flag does
-  NOT cover, and those together are what keep the menu and its
-  button off a simulator entirely, so device automation opens
-  on the app. The
+  EXDevMenuShowFloatingActionButton=false into the app's
+  defaults on every run instead, which the onboarding flag does
+  NOT cover. Either way device automation opens on the app.
+  The \`install     dev client prepared (...)\` line appears
+  only when one of those simulator writes ran. The
   unverified warning therefore leads with the picker, then
   prints the openurl
   retry. ON LOCAL ANDROID the same deep link also carries the
@@ -572,8 +588,8 @@ RULES
   Remote Android opens only the URL, so that intent-extra
   suppression does not apply there.
   Every Stim deep link also carries an outer \`disableFab=1\`
-  query parameter. Versions with expo/expo#49651 use that as a
-  session-only override; earlier versions ignore it. Stim does
+  query parameter. Versions with expo/expo#49651 read it and
+  hide the button; earlier versions ignore it. Stim does
   not rewrite expo-dev-menu's private SharedPreferences XML:
   that internal file is not a supported API, and changing it
   would persist over the user's own Tools-button setting. The
