@@ -893,8 +893,9 @@ In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, expectedMs, expectedPhaseMs, basis }`.
 `phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. `device` covers creating or
-adopting the owned simulator or emulator, and waiting for it to boot once the
-app is ready; a boot that finishes during the build adds no `device` time. `state` is `running` while the run's
+adopting the owned simulator or emulator, and, once the app is ready, waiting
+for the device (its boot, adoption cleanup, or a physical device's connection
+check); a boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
 `cold` once the run reaches prebuild, pods or compile, and `hit` once it

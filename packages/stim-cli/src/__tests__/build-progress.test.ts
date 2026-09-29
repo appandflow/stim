@@ -259,7 +259,9 @@ describe('build history', () => {
     let now = T0;
     const first = takeClaim();
     const killed = startBuildProgress({ root, platform: 'android', slot: 'default', claim: first, now: () => now });
-    now += 4_000;
+    now += 1_000;
+    killed.step('device');
+    now += 3_000;
     killed.step('compile');
     releaseClaim(first);
 
@@ -275,7 +277,7 @@ describe('build history', () => {
         startedAt: '2026-09-24T10:00:00.000Z',
         durationMs: null,
         finishedAt: null,
-        phases: { prepare: 4_000, compile: 0 },
+        phases: { prepare: 1_000, device: 3_000, compile: 0 },
       }),
     ]);
   });

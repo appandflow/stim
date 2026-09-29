@@ -1092,10 +1092,13 @@ RULES
                    settings and Metro; wait is waiting on another
                    workspace's build of the same fingerprint; device covers
                    creating or adopting the owned simulator or emulator
-                   before the cache lookup, and the wait for it to boot
-                   and be cleaned for adoption once the app is ready. A
-                   boot that finishes during the build adds no device
-                   time. A run enters device twice and records the sum.
+                   before the cache lookup, and, once the app is ready,
+                   waiting for the device: its boot, adoption cleanup, or
+                   a physical device's connection check. A boot that
+                   finishes during the build adds no device time. A run
+                   enters device twice and records the sum; an
+                   --eas-profile run has no cache lookup, so its outcome
+                   in device is the project's most recent one.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" once the run reached prebuild, pods or compile,
                    "hit" once it reached device after the cache lookup, or

@@ -168,7 +168,7 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
   /// The phases the run entered, in build order, as `compile 1m 58s · install 0m 3s`.
   public var phaseLine: String? {
     let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
-    let stoppedIn = result == "interrupted" ? order.last { phases[$0] != nil } : nil
+    let stoppedIn = result == "interrupted" ? order.last { phases[$0] == 0 } ?? order.last { phases[$0] != nil } : nil
     let parts = order.compactMap { phase in
       phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(formatDuration(ms: ms))" }
     }

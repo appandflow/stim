@@ -6544,6 +6544,42 @@ describe('run statistics', () => {
     ]);
   });
 
+  test('a simulator run waits for its boot in device and installs in install', async () => {
+    reserve();
+    const phase = () => (readWorkspaceState(root)?.activeBuild as { phase?: unknown } | undefined)?.phase;
+    let markBuilt!: () => void;
+    const built = new Promise<void>((resolve) => (markBuilt = resolve));
+    let waitPhase: unknown = null;
+    let installPhase: unknown = null;
+    const { exitCode } = await run(
+      {},
+      {
+        buildIos: async () => {
+          markBuilt();
+          return makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1,
+          });
+        },
+        ensureBooted: async () => {
+          await built;
+          while (!['device', 'install'].includes(phase() as string))
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          waitPhase = phase();
+          return { ok: true, udid: UDID };
+        },
+        installIosApp: () => {
+          installPhase = phase();
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(waitPhase).toBe('device');
+    expect(installPhase).toBe('install');
+  });
+
   test('a cache hit compiles nothing, so it carries no build duration', async () => {
     reserve();
     const { runs, recordStats } = recorder();

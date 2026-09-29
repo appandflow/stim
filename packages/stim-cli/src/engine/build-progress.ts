@@ -297,7 +297,7 @@ function withInterruptedBuild(state: WorkspaceState): WorkspaceState {
     cacheSkipped: false,
     durationMs: null,
     startedAt: left.startedAt,
-    phases: phaseDurations(left.phases, Date.parse(left.phaseStartedAt)),
+    phases: { ...phaseDurations(left.phases, Date.parse(left.phaseStartedAt)), [left.phase]: 0 },
   });
 }
 
