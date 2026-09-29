@@ -1,4 +1,4 @@
-import type { StimConfig } from '@stim-cli/core/state';
+import type { ProjectRecord, StimConfig } from '@stim-cli/core/state';
 import type { BuildMachineReport, MachineDetails } from './protocol.ts';
 import type { CommandOutcome } from './stim-command.ts';
 
@@ -27,6 +27,8 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
  * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
  * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
  */
+const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
+
 export function doctorWorkspace(
   config: Pick<StimConfig, 'projects' | 'offload'> | null,
   exists: (path: string) => boolean,
@@ -34,9 +36,8 @@ export function doctorWorkspace(
   const machines = config?.offload?.machines;
   if (!Array.isArray(machines) || machines.length === 0) return null;
   const candidates = Object.entries(config?.projects ?? {}).filter(([path]) => exists(path));
-  const ranAt = ([, record]: (typeof candidates)[number]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
   const newest = candidates.reduce<(typeof candidates)[number] | null>(
-    (best, entry) => (best === null || ranAt(entry) > ranAt(best) ? entry : best),
+    (best, entry) => (best === null || iosDoctorRanAt(entry) > iosDoctorRanAt(best) ? entry : best),
     null,
   );
   return { cwd: newest?.[0] ?? null };
