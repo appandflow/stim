@@ -73,6 +73,7 @@ export function StageLine({
   return (
     <View style={styles.stage}>
       <View
+        testID="stage-group"
         style={styles.stageGroup}
         accessible
         accessibilityLabel={[stage.label, stage.subtitle].filter(Boolean).join(', ')}
@@ -89,8 +90,8 @@ export function StageLine({
         ) : null}
       </View>
       {git ? (
-        <View style={styles.stageGroup} onLayout={(event) => setChipY(event.nativeEvent.layout.y)}>
-          {wrapped ? null : <View style={styles.divider} />}
+        <View testID="chip-group" style={styles.stageGroup} onLayout={(event) => setChipY(event.nativeEvent.layout.y)}>
+          <View testID="stage-divider" style={[styles.divider, wrapped && styles.dividerHidden]} />
           <Touch
             feedback="card"
             onPress={onGitPress}
@@ -461,6 +462,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   stageGroup: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, flexShrink: 1 },
   divider: { width: StyleSheet.hairlineWidth * 2, height: 14, backgroundColor: theme.colors.border },
+  dividerHidden: { backgroundColor: 'transparent' },
   gitChip: {
     flexDirection: 'row',
     alignItems: 'center',
