@@ -76,7 +76,7 @@ export function offloadPlacement({
   if (mode === 'force') return { offload: true, reason: 'offload.mode is force' };
   const busy = saturation(here);
   return busy
-    ? { offload: true, reason: `this Mac is busy: ${busy}` }
+    ? { offload: true, reason: `this Mac is busy: ${busy} (${capacityText(here)})` }
     : { offload: false, reason: `${capacityText(here)} here` };
 }
 

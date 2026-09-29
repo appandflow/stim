@@ -5,7 +5,7 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import { resolveSettings } from '../workspace/settings.ts';
-import { listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
+import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
 import { iosOffloadCheck, simulatorRuntime } from '../offload/client.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
@@ -42,22 +42,24 @@ export function parseDoctorPlatform(value: string): DoctorPlatform {
 }
 
 /**
- * The simulator runtime `stim ios` would build for here: the workspace's own simulator's runtime, else the one
- * it would create one on.
+ * The simulator runtime `stim ios` would build for here: the one `ios.runtime` names, else the workspace's own
+ * simulator's, else the one it would create a simulator on.
  */
 function iosTargetRuntime(root: string): string | null {
-  const udid = getProject(root)?.platforms?.ios?.deviceUdid;
-  const own = typeof udid === 'string' ? simulatorRuntime(udid) : null;
-  if (own) return own;
   try {
     const settings = resolveSettings({
       projectPath: root,
       gitCommonDir: gitCommonDir(root),
       repoRoot: repoRoot(root) ?? root,
     });
+    const runtimes = listIosRuntimes();
+    const runtime = resolveRuntime(null, settings);
+    if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
+    const udid = getProject(root)?.platforms?.ios?.deviceUdid;
+    const own = typeof udid === 'string' ? simulatorRuntime(udid) : null;
+    if (own) return own;
     const deviceType = resolveDeviceType(null, settings) ?? undefined;
-    const runtime = resolveRuntime(null, settings) ?? undefined;
-    return pickDefaultIosCreation([], listIosRuntimes(), { deviceType, runtime })?.runtimeId ?? null;
+    return pickDefaultIosCreation([], runtimes, { deviceType })?.runtimeId ?? null;
   } catch {
     return null;
   }

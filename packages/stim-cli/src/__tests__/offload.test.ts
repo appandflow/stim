@@ -73,13 +73,13 @@ describe('offloadPlacement', () => {
       'auto, every slot busy',
       { ...base, here: { ...IDLE, builds: 3 } },
       true,
-      'this Mac is busy: all 3 build slots busy',
+      'this Mac is busy: all 3 build slots busy (load 0.3/core, 3 of 3 build slots busy)',
     ],
     [
       'auto, no build limit but saturated',
       { ...base, here: { ...IDLE, maxBuilds: 0, loadPerCore: 8.2 } },
       true,
-      'this Mac is busy: load at or above 2/core',
+      'this Mac is busy: load at or above 2/core (load 8.2/core, 0 builds)',
     ],
     ['force on an idle Mac', { ...base, mode: 'force' as const }, true, 'offload.mode is force'],
     [

@@ -735,7 +735,11 @@ export async function acquireIosArtifact(
       expectedFingerprint: storeHash,
       request: { platform: 'ios', runtime, configuration, scheme: buildScheme ?? null, isExpo, optimizations },
       stagingDir,
-      onPhase: (name, msg) => phase(name, `${msg.trim()} (on ${choice.machine})`),
+      onPhase: (name, msg) => {
+        const text = msg.trim();
+        const own = text.startsWith(`${name} `) ? text.slice(name.length).trimStart() : text;
+        phase(name, `${own} (on ${choice.machine})`);
+      },
       onEnter: (name) => {
         place({ host: choice.machine, phase: name });
         step(name === 'prebuild' || name === 'pods' ? name : 'compile');
