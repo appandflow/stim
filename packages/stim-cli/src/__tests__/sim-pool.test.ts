@@ -135,8 +135,8 @@ test('adoption restores scheme approvals from the locked pool record, not a stal
   });
   upsertProject('/tmp/adopter', { platforms: {} });
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
-  // The caller's device object (built before adoptParked takes the lock) carries no approvals of its own.
-  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
+  // The caller's device object (built before adoptParked takes its lock) carries a stale value of its own.
+  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true, schemeApprovals: ['stale'] };
   const adopted = adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
   expect(adopted?.schemeApprovals).toEqual(schemeApprovals);
   expect(getProject('/tmp/adopter')?.platforms?.ios).toMatchObject({ schemeApprovals });

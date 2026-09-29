@@ -189,8 +189,12 @@ export function parkSim<P extends PoolPlatform>({
     const currentId = platform === 'ios' ? current?.deviceUdid : current?.avdName;
     if (!current?.owned || currentId !== record.udid)
       throw new Error(`The ${platform === 'ios' ? 'simulator' : 'emulator'} assignment changed before parking.`);
+    const currentApprovals =
+      platform === 'ios' ? (current as { schemeApprovals?: unknown }).schemeApprovals : undefined;
     const schemeApprovals =
-      platform === 'ios' ? (current as { schemeApprovals?: string[] }).schemeApprovals : undefined;
+      Array.isArray(currentApprovals) && currentApprovals.every((v) => typeof v === 'string')
+        ? currentApprovals
+        : undefined;
     const carried =
       schemeApprovals && schemeApprovals.length > 0 ? ({ ...record, schemeApprovals } as PoolRecords[P]) : record;
     const kept = readParked(platform, { config: cfg }).filter((r) => r.udid !== record.udid);
