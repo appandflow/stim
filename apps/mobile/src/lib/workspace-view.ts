@@ -472,11 +472,13 @@ export function bundleLine(env: EnvironmentState, now: number, reportsBundles: b
   }
   const last = bundle.last;
   if (!last) return null;
-  const finished = Date.parse(last.finishedAt);
-  const since = Number.isFinite(finished) ? sinceLabel(now - finished) : null;
-  const when = since ? ` \u00B7 ${since} ago` : '';
-  if (last.status === 'failed') return { text: `Bundle failed${when}`, tone: 'error' };
-  return { text: `Bundled in ${(last.durationMs / 1000).toFixed(1)}s${when}`, tone: 'tertiary' };
+  if (last.status === 'failed') {
+    const finished = Date.parse(last.finishedAt);
+    const since = Number.isFinite(finished) ? sinceLabel(now - finished) : null;
+    const when = since ? ` \u00B7 ${since} ago` : '';
+    return { text: `Bundle failed${when}`, tone: 'error' };
+  }
+  return { text: `Bundled in ${(last.durationMs / 1000).toFixed(1)}s`, tone: 'tertiary' };
 }
 
 export type MetroHealth = 'healthy' | 'unhealthy' | 'stopped';

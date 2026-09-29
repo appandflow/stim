@@ -374,8 +374,21 @@ describe('bundleLine', () => {
         NOW,
         true,
       )?.text,
-    ).toBe('Bundled in 1.8s \u00B7 12s ago');
+    ).toBe('Bundled in 1.8s');
     expect(bundleLine(metro(), NOW, true)?.text).toBe('Not bundled yet');
+  });
+
+  it('keeps the "ago" suffix on a failed bundle', () => {
+    expect(
+      bundleLine(
+        metro({
+          bundling: false,
+          last: { platform: 'ios', status: 'failed', durationMs: 1800, finishedAt: iso(12_000) },
+        }),
+        NOW,
+        true,
+      )?.text,
+    ).toBe('Bundle failed \u00B7 12s ago');
   });
 
   it('leaves the line out for a server that reports no bundles', () => {
