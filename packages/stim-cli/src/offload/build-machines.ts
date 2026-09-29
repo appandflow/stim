@@ -259,7 +259,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
 function problemFix(code: OffloadProblem['code'], entry: string): string {
   switch (code) {
     case 'unreachable':
-      return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again.`;
+      return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`;
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
@@ -433,7 +433,11 @@ async function inspectMachine(
   const reason = 'failed' in reply ? reply.failed : 'error' in reply ? reply.error.message : 'unexpected reply';
   return {
     report: { ...paired, state: 'unreachable' },
-    finding: note(`Could not reach build machine ${entry}`, reason),
+    finding: note(
+      `Could not reach build machine ${entry}`,
+      reason,
+      `Check that stim-server runs on ${entry}. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`,
+    ),
   };
 }
 

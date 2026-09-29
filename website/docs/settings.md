@@ -382,6 +382,16 @@ uses the macOS default JDK, which `java_home` may not find, for example with
 Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
 `~/Library/Android/sdk`). Each build stops the Gradle daemons it starts.
 
+To keep stim-server running on the build machine across logins, run
+`stim-server service install --serve` there. It installs a per-user LaunchAgent
+that starts at login and restarts the server if it exits, and `--serve` adds the
+tailnet-only `tailscale serve` route on port 7443. `--path-prepend <dir>` and
+`--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
+install, that stim-server's login-shell environment would otherwise replace.
+`stim-server service status` reports the process, its health, the route and
+whether its Stim build matches the `stim` on PATH. Doctor points to this
+command when a named machine does not answer.
+
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest
 git or Stim activity, the merge of its branch, or when its pull request was

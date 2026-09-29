@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
 
@@ -49,27 +49,10 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-function stimBuildId(dir: string = distDir): string | null {
-  try {
-    const hash = createHash('sha256');
-    const names = readdirSync(dir)
-      .filter((entry) => entry.endsWith('.mjs'))
-      .toSorted();
-    if (names.length === 0) return null;
-    for (const name of names) {
-      hash.update(name);
-      hash.update(readFileSync(join(dir, name)));
-    }
-    return hash.digest('hex').slice(0, 16);
-  } catch {
-    return null;
-  }
-}
-
 export function iosToolchain(): IosToolchain {
   const xcode = quiet('xcodebuild', ['-version']);
   return {
-    stimBuild: stimBuildId(),
+    stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
@@ -108,7 +91,7 @@ function localJdk(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 export function androidToolchain(): AndroidToolchain {
-  return { stimBuild: stimBuildId(), arch: process.arch, jdk: localJdk() };
+  return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk: localJdk() };
 }
 
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */

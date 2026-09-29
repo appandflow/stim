@@ -22,7 +22,12 @@ stim-server devices grant <id> --control|--read|--build
                                   # --build approves a Mac's request to build here
 stim-server devices revoke <id>   # revoke a paired device or build client, or deny a request
 stim-server log                   # list the actions paired devices ran
+stim-server service install|status|uninstall
+                                  # run stim-server as a macOS LaunchAgent, see below
 ```
+
+`--env KEY=VALUE` and `--path-prepend <dir>` (each repeatable) apply to the
+serving command: see [Run as a service](#run-as-a-service).
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
@@ -162,6 +167,77 @@ never grants it.
 `$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
 `stim-server` release without `build` never reads them and refuses their
 tokens.
+
+## Run as a service
+
+`stim-server service install` runs stim-server as a per-user LaunchAgent on
+macOS, so a build machine or a phone-serving Mac keeps it running without a
+terminal:
+
+```bash
+stim-server service install [--port <n>] [--label <name>] [--serve]
+                            [--env KEY=VALUE]... [--path-prepend <dir>]...
+stim-server service status [--label <name>] [--json]
+stim-server service uninstall [--label <name>]
+```
+
+`install` writes `~/Library/LaunchAgents/<label>.plist` (label `dev.stim.server`
+by default) and starts it with `launchctl bootstrap gui/<uid>`. The job runs the
+absolute `node` and `stim-server.mjs` of the install that ran the command, on
+`--port` (default 7787), with `RunAtLoad`, `KeepAlive` and a 30 second
+`ThrottleInterval`, and logs to `~/Library/Logs/Stim/<label>.log`. When
+`STIM_HOME` or `SHELL` is set in the installing shell, the job carries it. It
+takes the `node` from PATH when that path resolves to the running binary, so a
+Homebrew Node upgrade does not break the plist. Running `install` again
+rewrites the plist and restarts the job. It never touches pairings, anything
+under `$STIM_HOME/server` or settings. Start-up reads the login shell's
+environment, which can take a minute, so `install` waits up to 15 seconds for
+`/health` and otherwise tells you to run `status`.
+
+The job runs in your GUI login session, so it starts when you log in and not at
+boot. On a Mac with no one at the screen, turn on automatic login. Moving the
+install, or changing its Node, needs `install` again.
+
+`--serve` adds the tailnet-only route from [Tailscale](#tailscale) on the port
+`stim-server` would suggest. It refuses when Funnel is on for a port that
+reaches the server, and it never enables Funnel. When a route already reaches
+the port, `install` records that it did not create it. `uninstall` removes a
+route only when `install` created it and it still points at this port. Without
+`--serve`, `install` prints the command to run.
+
+`--env KEY=VALUE` and `--path-prepend <dir>` pin variables and PATH entries for
+the server. stim-server replaces its environment with the login shell's at
+start, so a `PATH` or `GEM_HOME` in the plist alone is lost and an entry in
+`~/.zshrc` changes the terminal too. These flags apply after that capture, to
+the server and to the builds it starts, and the plist stores them as
+`ProgramArguments`. `--path-prepend` puts directories in front of PATH in the
+order given; `--env` cannot set `STIM_HOME`. The values sit in plain text in the plist and in the process arguments, so do not pass secrets. For a private CocoaPods:
+
+```bash
+stim-server service install --serve \
+  --path-prepend /Volumes/SSD/gems/bin \
+  --env GEM_HOME=/Volumes/SSD/gems --env GEM_PATH=/Volumes/SSD/gems \
+  --env LANG=en_US.UTF-8 --env LC_ALL=en_US.UTF-8
+```
+
+`status` prints whether launchd loaded the job, its state, pid, run count and
+last exit code (a server that exits at start, for example on a port in use,
+restarts every 30 seconds), the `/health` answer, the serve route and whether
+`install` created it, the log path, and the digest of the bundled Stim's build
+next to the `stim` on PATH. Offload needs the same digest on the client, so a
+mismatch there is not an offload match either. `--json` prints the same fields
+as one object.
+
+`uninstall` boots the job out, removes the plist and, when `install` created it,
+the serve route. Logs and pairings stay. Use `--label` and `--port` to run a
+second service beside the first, for example with another `STIM_HOME`.
+
+To set up a build machine: install Stim and stim-server on the Mac, run
+`stim-server service install --serve` (with the pins its toolchain needs), set
+`offload.workerRoot` there, and on each client run
+`stim settings set offload.machines '["<mac>"]'` and `stim doctor --fix`.
+Approve the request on the build machine with
+`stim-server devices grant <id> --build`.
 
 ## Offloaded builds
 
