@@ -632,14 +632,16 @@ export async function finishAndroidRun({
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
   if (lostBeforeInstall) return lostBeforeInstall;
-  const installTimer = stepTimer(now);
-  const installApk = (target: string) =>
-    install({
+  let installTimer = stepTimer(now);
+  const installApk = (target: string) => {
+    installTimer = stepTimer(now);
+    return install({
       serial: target,
       apkPath: apkPath!,
       packageName: androidPackage,
       allowUninstall: release || adopting,
     });
+  };
   let installed: InstallResultLike;
   if (adopting && device.avdName && apkPath) {
     const room = {
