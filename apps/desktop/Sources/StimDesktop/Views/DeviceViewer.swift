@@ -13,7 +13,7 @@ struct DeviceViewer: View {
   var close: () -> Void
   @State private var takenOver = false
   @State private var escapeMonitor: Any?
-  @State private var window: NSWindow?
+  @State private var window = WindowRef()
   @EnvironmentObject private var actions: ActionCenter
 
   var body: some View {
@@ -46,7 +46,7 @@ struct DeviceViewer: View {
     }
     .background(Palette.background)
     .frame(minWidth: 480, idealWidth: 760, maxWidth: .infinity, minHeight: 600, idealHeight: 920, maxHeight: .infinity)
-    .background(WindowReader(window: $window))
+    .background(WindowReader(found: window))
     .onAppear(perform: watchEscape)
     .onDisappear(perform: unwatchEscape)
     .sheet(item: $actions.presented) { run in
@@ -121,11 +121,11 @@ struct DeviceViewer: View {
   /// only in the viewer's own window and only while nothing is presented over it.
   private func watchEscape() {
     let released = $takenOver
-    let viewerWindow = $window
+    let viewerWindow = window
     escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [close] event in
       guard event.keyCode == 0x35, !event.isARepeat,
         event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-        let window = viewerWindow.wrappedValue, event.window === window, window.attachedSheet == nil
+        let window = viewerWindow.window, event.window === window, window.attachedSheet == nil
       else { return event }
       if released.wrappedValue {
         released.wrappedValue = false
@@ -164,19 +164,25 @@ private struct ReplayingTile<Content: View>: View {
   }
 }
 
+/// The window a view is in, held weakly: the window owns the view's state, so a strong reference keeps a dismissed
+/// sheet and everything in it alive.
+private final class WindowRef {
+  weak var window: NSWindow?
+}
+
 /// Hands out the window a view is in.
 private struct WindowReader: NSViewRepresentable {
-  @Binding var window: NSWindow?
+  var found: WindowRef
 
-  func makeNSView(context: Context) -> NSView { WindowView(found: $window) }
+  func makeNSView(context: Context) -> NSView { WindowView(found: found) }
 
   func updateNSView(_ view: NSView, context: Context) {}
 
   private final class WindowView: NSView {
-    @Binding var found: NSWindow?
+    let found: WindowRef
 
-    init(found: Binding<NSWindow?>) {
-      _found = found
+    init(found: WindowRef) {
+      self.found = found
       super.init(frame: .zero)
     }
 
@@ -184,8 +190,7 @@ private struct WindowReader: NSViewRepresentable {
 
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
-      let window = window
-      DispatchQueue.main.async { self.found = window }
+      found.window = window
     }
   }
 }
