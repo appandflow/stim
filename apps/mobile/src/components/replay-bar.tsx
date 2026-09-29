@@ -6,6 +6,8 @@ import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import type { Replay } from '@/hooks/device-stream';
 import {
+  buildTimeline,
+  layoutGapLabels,
   MARKER_TITLES,
   markerSeek,
   positionOf,
@@ -21,18 +23,22 @@ const DRAG_SEEK_MS = 120;
 const DRAG_SLOP = 6;
 const MARKER_REACH = 14;
 const TRACK_HEIGHT = 44;
-const GAP_LABEL_WIDTH = 96;
+/** stim-server's `frames.seek` shows the newest frame for a time past every recording. */
+const NEWEST_FRAME = Number.MAX_SAFE_INTEGER;
 
 /**
  * Live pill, play and pause, speed, and a scrubber over the device's recorded footage with its agent actions
  * and errors as markers. Without a timeline, while replay shows footage that is gone, only the Live pill. Dragging shows the frame under the finger; tapping near a marker lands just before it,
- * and tapping elsewhere shows the frame there. The track takes every touch itself, so a tap is one seek.
+ * and tapping elsewhere shows the frame there. The track takes every touch itself, so a tap is one seek. While the
+ * device runs, the track ends at the Mac's time now, estimated from the last `timeline` and the time since it came;
+ * a finger on the track holds the track still until it lifts.
  */
 export function ReplayBar({
   timeline,
   markers,
   replay,
   canGoLive,
+  recording,
   onSeek,
   onLive,
   onScrubbing,
@@ -42,6 +48,8 @@ export function ReplayBar({
   replay: Replay | null;
   /** False while the device is not running, so only its recording can be shown. */
   canGoLive: boolean;
+  /** stim-server records the device now, so its newest span grows until the next `timeline`. */
+  recording: boolean;
   onSeek: (at: number, rate: ReplayRate) => void;
   onLive: () => void;
   /** A finger is on the track, so gestures around the bar should wait. */
@@ -59,8 +67,13 @@ export function ReplayBar({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+  const [received, setReceived] = useState({ timeline, at: now });
+  if (received.timeline !== timeline) setReceived({ timeline, at: now });
+  const [held, setHeld] = useState<Timeline | null>(null);
+  const [trackLength, setTrackLength] = useState<number | undefined>(undefined);
   const at = replay?.at ?? null;
   if (at !== null && at !== lastAt) setLastAt(at);
+  if (replay === null && lastAt !== null) setLastAt(null);
   const isLive = replay === null && canGoLive;
   const livePill = (
     <Touch
@@ -86,9 +99,14 @@ export function ReplayBar({
       </View>
     );
   }
+  const liveEnd = canGoLive && recording ? timeline.end + Math.max(0, now - received.at) : undefined;
+  const track = held ?? buildTimeline(timeline.spans, liveEnd, trackLength) ?? timeline;
+  if (track.length !== trackLength) setTrackLength(track.length);
   const shownAt = at ?? lastAt;
-  const position = dragging ?? (replay ? (shownAt === null ? 1 : positionOf(timeline, shownAt)) : 1);
+  const position = dragging ?? (replay ? (shownAt === null ? 1 : positionOf(track, shownAt)) : 1);
   const playing = replay !== null && replay.rate > 0 && !replay.ended;
+  const showsPause = playing || isLive;
+  const footageFrom = track.pieces[0]?.from ?? 0;
 
   const fractionAt = (x: number) => Math.min(1, Math.max(0, x / (width || 1)));
   const drag = (x: number, final: boolean) => {
@@ -97,31 +115,33 @@ export function ReplayBar({
     const stamp = Date.now();
     if (!final && stamp - lastSeek.current < DRAG_SEEK_MS) return;
     lastSeek.current = stamp;
-    onSeek(timeAt(timeline, fraction), 0);
+    onSeek(timeAt(track, fraction), 0);
   };
   const tap = (x: number) => {
     let near: ReplayMarker | null = null;
     let nearest = MARKER_REACH;
     for (const marker of markers) {
-      const distance = Math.abs(positionOf(timeline, marker.at) * width - x);
+      const distance = Math.abs(positionOf(track, marker.at) * width - x);
       if (distance <= nearest) {
         near = marker;
         nearest = distance;
       }
     }
-    onSeek(near ? markerSeek(timeline, near) : timeAt(timeline, fractionAt(x)), 0);
+    onSeek(near ? markerSeek(track, near) : timeAt(track, fractionAt(x)), 0);
   };
   const end = () => {
     touch.current = null;
     setDragging(null);
+    setHeld(null);
     onScrubbing(false);
   };
-  const track = {
+  const responder = {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
     onResponderTerminationRequest: () => false,
     onResponderGrant: (event: GestureResponderEvent) => {
       touch.current = { x: event.nativeEvent.locationX, dragged: false };
+      setHeld(track);
       onScrubbing(true);
     },
     onResponderMove: (event: GestureResponderEvent) => {
@@ -139,6 +159,7 @@ export function ReplayBar({
     onResponderTerminate: end,
   };
   const togglePlay = () => {
+    if (isLive) return onSeek(NEWEST_FRAME, 0);
     if (!replay) return onSeek(timeline.start, speed);
     if (playing) return onSeek(at ?? timeline.start, 0);
     const from = replay.ended || at === null ? timeline.start : at;
@@ -157,18 +178,22 @@ export function ReplayBar({
         <Touch
           onPress={togglePlay}
           accessibilityRole="button"
-          accessibilityLabel={playing ? 'Pause' : 'Play'}
+          accessibilityLabel={showsPause ? 'Pause' : 'Play'}
           style={styles.round}
           hitSlop={6}
         >
           <Text weight="semibold" style={styles.mediaText}>
-            {playing ? '❚❚' : '▶'}
+            {showsPause ? '❚❚' : '▶'}
           </Text>
         </Touch>
         <Touch
           onPress={toggleSpeed}
+          disabled={isLive}
           accessibilityRole="button"
           accessibilityLabel={`Playback speed ${speed}x`}
+          accessibilityElementsHidden={isLive}
+          importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
+          defaultOpacity={isLive ? 0 : 1}
           style={styles.round}
           hitSlop={6}
         >
@@ -187,25 +212,34 @@ export function ReplayBar({
       <View
         style={styles.track}
         onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)}
-        {...track}
+        {...responder}
       >
-        {timeline.pieces.map((piece) => (
+        {track.pieces.map((piece) => (
           <View
             key={`${piece.kind}-${piece.start}`}
             pointerEvents="none"
             style={[
-              piece.kind === 'span' ? styles.span : styles.gap,
+              piece.kind === 'span' ? styles.span : piece.collapsed ? styles.collapsedGap : styles.gap,
               { left: piece.from * width, width: Math.max(1, (piece.to - piece.from) * width) },
             ]}
-          >
-            {piece.kind === 'gap' ? (
-              <Text variant="caption2" style={styles.gapText} numberOfLines={1}>
-                {`stopped ${shortDuration(piece.end - piece.start)}`}
-              </Text>
-            ) : null}
-          </View>
+          />
         ))}
-        <View pointerEvents="none" style={[styles.played, { width: position * width }]} />
+        {layoutGapLabels(track.pieces, width).map((label) => (
+          <Text
+            key={`label-${label.start}`}
+            variant="caption2"
+            maxFontSizeMultiplier={1}
+            pointerEvents="none"
+            style={[styles.gapText, { left: label.left, width: label.width }]}
+            numberOfLines={1}
+          >
+            {label.text}
+          </Text>
+        ))}
+        <View
+          pointerEvents="none"
+          style={[styles.played, { left: footageFrom * width, width: Math.max(0, position - footageFrom) * width }]}
+        />
         {markers.map((marker, index) => (
           <View
             key={`${index}-${marker.at}`}
@@ -214,8 +248,8 @@ export function ReplayBar({
             accessibilityRole="button"
             accessibilityLabel={`${MARKER_TITLES[marker.kind]}: ${marker.label}`}
             accessibilityActions={[{ name: 'activate' }]}
-            onAccessibilityAction={() => onSeek(markerSeek(timeline, marker), 0)}
-            style={[styles.markerHit, { left: positionOf(timeline, marker.at) * width - 6 }]}
+            onAccessibilityAction={() => onSeek(markerSeek(track, marker), 0)}
+            style={[styles.markerHit, { left: positionOf(track, marker.at) * width - 6 }]}
           >
             <View
               style={[
@@ -242,7 +276,7 @@ export function ReplayBar({
           accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
           onAccessibilityAction={(event) => {
             const step = event.nativeEvent.actionName === 'increment' ? 0.05 : -0.05;
-            onSeek(timeAt(timeline, Math.min(1, Math.max(0, position + step))), 0);
+            onSeek(timeAt(track, Math.min(1, Math.max(0, position + step))), 0);
           }}
         />
       </View>
@@ -290,23 +324,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   gap: {
     position: 'absolute',
+    top: TRACK_HEIGHT / 2 - 0.5,
+    height: 1,
+    backgroundColor: theme.media.textTertiary,
+  },
+  collapsedGap: {
+    position: 'absolute',
     top: TRACK_HEIGHT / 2 - 1,
     height: 2,
-    alignItems: 'center',
     borderStyle: 'dashed',
     borderTopWidth: 1,
     borderColor: theme.media.textTertiary,
   },
   gapText: {
     position: 'absolute',
-    top: 6,
-    width: GAP_LABEL_WIDTH,
+    top: TRACK_HEIGHT / 2 + 8,
     textAlign: 'center',
     color: theme.media.textTertiary,
   },
   played: {
     position: 'absolute',
-    left: 0,
     top: TRACK_HEIGHT / 2 - 1,
     height: 2,
     backgroundColor: theme.media.textSecondary,

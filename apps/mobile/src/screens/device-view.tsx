@@ -435,6 +435,7 @@ export function DeviceView({
                     markers={range?.markers ?? []}
                     replay={stream.replay}
                     canGoLive={running}
+                    recording={range?.recording ?? false}
                     onSeek={seek}
                     onLive={goLive}
                     onScrubbing={setScrubbing}
