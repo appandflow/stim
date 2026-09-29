@@ -225,7 +225,9 @@ outside it moves to its own issue and pull request.
   stim-server's device recordings under `workspaces/<id>/recordings/`, which
   stim-server writes and prunes (it never creates a workspace directory), and
   the build worker root (`offload.workerRoot`, default `build-worker/`),
-  which stim-server and the builds it runs own.
+  which stim-server and the builds it runs own, and the build slot
+  stim-server takes under `build-slots/` for each offloaded build it runs,
+  through core's `tryAcquireBuildSlotClaim`.
 
 ## Comment policy
 

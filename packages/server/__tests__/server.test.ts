@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import { readViewedDevices } from '@stim-cli/core/state';
+import { buildSlotPath, machineCapacity, readViewedDevices, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
 import type { HelloResult, MachineUsage, ServerMessage, StatusEvent } from '../src/protocol.ts';
 import { readAudit } from '../src/actions.ts';
 import {
@@ -727,6 +727,43 @@ describe('offloaded builds', () => {
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { builds: 0, declined: null } },
       });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'holds one of its build slots for the whole offloaded build, and refuses a start while local runs hold them all',
+    async () => {
+      configure({ concurrency: { maxBuilds: 1 }, offload: { maxLoadPerCore: 100_000 } });
+      const local = tryAcquireBuildSlotClaim({ max: 1, details: { projectRoot: root } })!;
+      const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+      const { client, id } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      expect(await client.request('build.start', START)).toMatchObject({
+        error: { code: 'build-busy', message: 'This Mac declines the build: all 1 build slots busy.' },
+      });
+
+      releaseClaim(local.claim);
+      const started = await client.request('build.start', START);
+      expect(started).toMatchObject({ result: { job: expect.any(String) } });
+      const job = (started as { result: { job: string } }).result.job;
+      await eventually(() => existsSync(join(root, 'job.json')));
+      const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
+      expect(await client.next()).toMatchObject({ phase: 'build' });
+      expect(await client.next()).toMatchObject({ record: { msg: 'CompileC' } });
+      expect(readClaimSet(buildSlotPath(0)).live).toMatchObject([
+        { details: { offloaded: true, client: id, repo: 'app-1', job, index: 0 }, child: { pid } },
+      ]);
+      expect(tryAcquireBuildSlotClaim({ max: 1, details: {} })).toBeNull();
+      expect(machineCapacity().builds).toBe(1);
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { running: 1, builds: 1, maxBuilds: 1 } },
+      });
+
+      expect(await client.request('build.cancel', { job })).toEqual({ id: expect.anything(), result: {} });
+      await eventually(() => !alive(pid));
+      await eventually(() => readClaimSet(buildSlotPath(0)).live.length === 0);
+      expect(machineCapacity().builds).toBe(0);
     },
   );
 

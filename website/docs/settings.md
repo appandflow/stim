@@ -322,7 +322,9 @@ An offloaded build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build and
 CPU architecture match this Mac exactly, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
-least loaded:
+least loaded. When a machine that offered fails the sync or refuses to start
+the build, for example because it got busy meanwhile, Stim tries the next one
+in that order:
 
 - For iOS, its Xcode, simulator SDK and CocoaPods must match, and it needs an
   iPhone simulator on the target runtime.
@@ -361,8 +363,11 @@ large volume. It runs one offloaded build at a time and boots or installs
 nothing. It declines a build while that volume has less than 10 GB free,
 while its own Stim builds and the offloaded one fill its
 `concurrency.maxBuilds`, or while its load per core is at or above its
-`offload.maxLoadPerCore`. Delete a client's directory there to reclaim its
-space.
+`offload.maxLoadPerCore`. While an offloaded build runs, it holds one of the
+build machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
+`stim android` there waits for the slot and counts the machine as busy. The
+slot is freed when the build ends, is cancelled, or its process is gone. Delete
+a client's directory there to reclaim its space.
 
 For Android builds, start stim-server on the build machine with `JAVA_HOME`
 pointing at a JDK of the same major version as the clients (otherwise it

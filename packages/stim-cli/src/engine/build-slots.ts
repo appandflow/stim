@@ -1,20 +1,13 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { getConfigDir } from '../workspace/config.ts';
+import { buildSlotsDir, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
 import { formatElapsed } from '../command-output.ts';
-import {
-  isClaimRefusal,
-  readClaimSet,
-  releaseClaim,
-  tryAcquireClaim,
-  type ClaimHandle,
-  type ClaimHolder,
-  type ClaimRefusedError,
-} from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
+export { buildSlotPath, buildSlotsDir } from '@stim-cli/core/state';
+
 const SLOT_PREFIX = 'slot-';
-const SLOT_LABEL = 'build slot';
 
 export interface BuildSlotRecord {
   pid: number | null;
@@ -68,14 +61,6 @@ function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function buildSlotsDir(): string {
-  return join(getConfigDir(), 'build-slots');
-}
-
-export function buildSlotPath(index: number): string {
-  return join(buildSlotsDir(), `${SLOT_PREFIX}${index}`);
-}
-
 function toRecord(holder: ClaimHolder): BuildSlotRecord {
   const details = holder.details as { index?: unknown; projectRoot?: unknown; logFile?: unknown };
   return {
@@ -99,47 +84,22 @@ export function tryAcquireBuildSlot({
   logFile = null,
 }: TryAcquireBuildSlotOptions): BuildSlotHandle | null {
   if (!max || max <= 0) return { acquired: true, unlimited: true };
-  let refusal: ClaimRefusedError | null = null;
-  let busy = false;
-
-  for (let index = 0; index < max; index++) {
-    const path = buildSlotPath(index);
-    let attempt;
-    try {
-      attempt = tryAcquireClaim({
-        root: path,
-        mode: 'exclusive',
-        label: SLOT_LABEL,
-        details: { index, projectRoot: root, logFile },
-      });
-    } catch (err) {
-      if (!isClaimRefusal(err)) throw err;
-      refusal ??= err;
-      continue;
-    }
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired) {
-      busy = true;
-      continue;
-    }
-    declareSpawnsOn(attempt.acquired);
-    return {
-      acquired: true,
-      path,
-      index,
-      slot: {
-        pid: attempt.acquired.owner.pid,
-        index,
-        projectRoot: root,
-        startedAt: attempt.acquired.startedAt,
-        logFile,
-      },
-      claim: attempt.acquired,
-    };
-  }
-
-  if (refusal && !busy) throw refusal;
-  return null;
+  const got = tryAcquireBuildSlotClaim({ max, details: { projectRoot: root, logFile } });
+  if (!got) return null;
+  declareSpawnsOn(got.claim);
+  return {
+    acquired: true,
+    path: got.path,
+    index: got.index,
+    slot: {
+      pid: got.claim.owner.pid,
+      index: got.index,
+      projectRoot: root,
+      startedAt: got.claim.startedAt,
+      logFile,
+    },
+    claim: got.claim,
+  };
 }
 
 export function slotWaitingLine({ max, elapsedMs }: { max: number; elapsedMs: number }): string {

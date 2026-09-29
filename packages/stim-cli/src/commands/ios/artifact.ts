@@ -42,6 +42,7 @@ import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
 import {
+  closeOffload,
   chooseBuildMachine,
   offloadBuild,
   offloadMode,
@@ -737,6 +738,7 @@ export async function acquireIosArtifact(
         step(name === 'prebuild' || name === 'pods' ? name : 'compile');
       },
       onRecord: (record) => logWriter().write({ ...record, offloadedTo: choice.machine }),
+      note: (line) => phase('build', line),
     });
     place(null);
     let stored: string | null = null;
@@ -1056,7 +1058,7 @@ export async function acquireIosArtifact(
     if (error instanceof ArtifactRefusal) return { ok: false, failure: error.failure, compilationCache };
     throw error;
   } finally {
-    openOffload.choice?.connection.close();
+    if (openOffload.choice) closeOffload(openOffload.choice);
     releaseLock();
     releaseSlot();
     if (!transferred) releaseArtifact();

@@ -61,6 +61,7 @@ import { machineCapacity, type BuildMissReason, type MachineCapacity, type Offlo
 import { claimFailure } from '../../ownership-claim.ts';
 import { pairedMachines } from '../../offload/build-machines.ts';
 import {
+  closeOffload,
   chooseBuildMachine,
   offloadBuild,
   offloadMode,
@@ -646,6 +647,7 @@ export async function acquireAndroidArtifact(
         step(name === 'prebuild' ? name : 'compile');
       },
       onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice.machine }),
+      note: (line) => phase('build', line),
     });
     place(null);
     let stored: string | null = null;
@@ -913,7 +915,7 @@ export async function acquireAndroidArtifact(
           }
         }
       } finally {
-        openOffload.choice?.connection.close();
+        if (openOffload.choice) closeOffload(openOffload.choice);
         releaseHeldLock();
         releaseHeldSlot();
       }

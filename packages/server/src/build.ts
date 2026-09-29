@@ -27,7 +27,7 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { isJsonObject, loadConfig, machineCapacity, saturation } from '@stim-cli/core/state';
+import { isJsonObject, loadConfig, machineCapacity, saturation, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
 import {
   BUILD_REPO_PATTERN,
   type BuildAndroidOptions,
@@ -138,6 +138,8 @@ interface Job {
   client: string;
   child: ChildProcess;
   archive: string;
+  /** Whether the job holds one of this Mac's `concurrency.maxBuilds` slots, which `machineCapacity` counts. */
+  slotted: boolean;
   outcome: BuildJobOutcome | null;
   settled: boolean;
   cancel: () => void;
@@ -235,7 +237,7 @@ export class BuildHost {
     const machine = machineCapacity();
     const running = this.jobs.size;
     const diskFreeBytes = freeBytes(this.root());
-    const builds = machine.builds + running;
+    const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
     const declined =
       running >= this.limits.maxJobs
         ? `already running ${running} offloaded build(s), its limit`
@@ -295,11 +297,32 @@ export class BuildHost {
       return refusal('build-refused', (error as Error).message);
     }
     const id = randomUUID();
+    let slot: ClaimHandle | null = null;
+    const releaseClaims = () => {
+      releaseClaim(slot);
+      releaseClaim(claim);
+    };
+    const maxBuilds = machineCapacity().maxBuilds;
+    try {
+      const taken =
+        maxBuilds > 0
+          ? tryAcquireBuildSlotClaim({ max: maxBuilds, details: { offloaded: true, client, repo, job: id } })
+          : null;
+      if (maxBuilds > 0 && !taken) {
+        releaseClaim(claim);
+        return refusal('build-busy', `This Mac declines the build: all ${maxBuilds} build slots busy.`);
+      }
+      slot = taken?.claim ?? null;
+    } catch (error) {
+      releaseClaim(claim);
+      return refusal('build-refused', (error as Error).message);
+    }
     const started = Date.now();
     try {
       markClaimChildPending(claim);
+      if (slot) markClaimChildPending(slot);
     } catch (error) {
-      releaseClaim(claim);
+      releaseClaims();
       return refusal('build-refused', (error as Error).message);
     }
     let child: ChildProcess;
@@ -318,7 +341,7 @@ export class BuildHost {
         },
       });
     } catch (error) {
-      releaseClaim(claim);
+      releaseClaims();
       return refusal('build-refused', (error as Error).message);
     }
     const signalGroup = (signal: NodeJS.Signals) => {
@@ -337,8 +360,10 @@ export class BuildHost {
     };
     try {
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-      if (captured?.ok) setClaimChild(claim, { pid: child.pid, processToken: captured.token });
-      else cancel();
+      if (captured?.ok) {
+        setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+        if (slot) setClaimChild(slot, { pid: child.pid, processToken: captured.token });
+      } else cancel();
     } catch {
       cancel();
     }
@@ -350,6 +375,7 @@ export class BuildHost {
       client,
       child,
       archive: join(area, 'out', id, 'app.tgz'),
+      slotted: slot !== null,
       outcome: null,
       settled: false,
       cancel,
@@ -392,7 +418,7 @@ export class BuildHost {
           }
           if (killTimer) clearTimeout(killTimer);
           finished = true;
-          releaseClaim(claim);
+          releaseClaims();
           entry.settled = true;
           this.jobs.delete(entry);
           send({ event: 'build.progress', job: id, outcome: entry.outcome! });

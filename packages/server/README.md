@@ -210,7 +210,8 @@ closes its connections, which cancels its builds.
   `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
   synced on this connection. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
-  another build of the same client and repository runs, and with
+  another build of the same client and repository runs, or while every one
+  of this Mac's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
   `STIM_HOME` set to the repository's area. It makes the area's checkout
   hold exactly the manifest (a file git lists as untracked and not ignored,
@@ -246,7 +247,10 @@ DerivedData, the compilation cache and ccache, and the output. A build never rea
 writes this Mac's own Stim home. An ownership claim at
 `repos/<repo>.claims`, whose child is the build's process group, guards each
 area; it is released only once that group is gone, and a claim whose server
-and build are both gone is recovered by the next build. Each finished build
+and build are both gone is recovered by the next build. With a non-zero
+`concurrency.maxBuilds`, the build also holds one of this Mac's build slots
+(`$STIM_HOME/build-slots/`), the same claims local Stim builds take, with the
+same child, so a local build waits for it and `builds` counts it. Each finished build
 appends a `build` record to the [action log](#actions) with the repository as
 `workspace`. The worker root keeps growing with each repository; delete a
 client's directory to reclaim it.
