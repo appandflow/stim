@@ -196,8 +196,9 @@ emulator or simulator.
 worktree remove parks the workspace's simulator or emulator for later adoption.
 During owned-device teardown, Stim best-effort closes local agent-device sessions
 on that exact device; failures warn and teardown continues (guide cleanup).
-A parked device is Stim-owned: never delete one by hand. gc --delete clears verified
-entries and keeps failures; see guide lifecycle pool. First launch on a
+A parked device is Stim-owned: never delete or erase one by hand. gc --delete clears
+verified entries and keeps failures; gc --cache parked --delete erases them and keeps
+them parked; see guide lifecycle pool. First launch on a
 physical iPhone can need the one-time taps named by the remedy.
 
 stim android --device [serial] and stim ios --device [udid] install on a

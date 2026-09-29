@@ -739,10 +739,12 @@ RULES
                               recent-activity worktree becomes removable,
                               else null. Without --worktrees, the source
                               checkout and roots outside git are left out
-    parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
-                              listed }  with --older-than, only those parked
-                              at least that long
-    parkedEmulators         { name, systemImage, deviceProfile, parkedAt, bytes, listed }
+    parkedSimulators        { udid, name, model, runtime, parkedAt, app,
+                              bytes, listed }  app is the bundle id recorded
+                              at park, else null; with --older-than, only
+                              those parked at least that long
+    parkedEmulators         { name, systemImage, deviceProfile, parkedAt, app,
+                              bytes, listed }  app is the package name;
                               likewise
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this

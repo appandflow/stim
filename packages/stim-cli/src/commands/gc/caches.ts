@@ -40,8 +40,7 @@ const RECORDINGS = 'recordings';
 const PARKED_DEVICES = 'parked';
 
 export function includesParkedDevices(name: string | null | undefined): boolean {
-  const wanted = name?.trim().toLowerCase();
-  return wanted === EVERY_CACHE || wanted === PARKED_DEVICES;
+  return name?.trim().toLowerCase() === PARKED_DEVICES;
 }
 
 export function includesRecordings(name: string | null | undefined): boolean {

@@ -30,6 +30,10 @@ WHAT RECLAIMS AN OWNED DEVICE
                             command has used in that long, even though the
                             project is still on disk, and clears only the
                             devices parked at least that long
+  stim gc --cache parked --delete
+                            ERASES (never deletes) verified parked simulators
+                            and wipes parked emulators' user data; they stay
+                            parked for adoption (\`guide lifecycle pool\`)
   stim gc --delete --worktrees
                             also runs \`stim worktree remove\` on every clean,
                             idle, Stim-managed linked worktree
@@ -425,7 +429,8 @@ THE ONE CASE GC WILL NOT REAP
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
   use several GB. \`worktree remove\` parks the workspace's owned AVD with its
-  user data and snapshots wiped, or deletes it when the pool is off or full;
+  user data and snapshots kept, or deletes it when the pool is off or full;
+  \`gc --cache parked --delete\` wipes a parked AVD's user data and snapshots;
   plain \`stop\` only shuts it down for reuse. Stim uses Android's default Quick Boot
   unless displayless Linux requires software rendering, where snapshots are
   disabled. The first boot and a boot after the emulator, system image, or AVD
@@ -437,7 +442,7 @@ THE ONE CASE GC WILL NOT REAP
   errors teardown\`).
   New owned AVDs default to an 8 GiB data partition, though project settings can
   change it. When enabled, Quick Boot keeps one automatic snapshot until the AVD is
-  parked or deleted.
+  wiped or deleted.
   \`gc\` prints the on-disk size beside an orphaned or stale owned Android AVD
   when its content directory can be read, and beside an orphaned or stale
   owned simulator the data size simctl reports for it.

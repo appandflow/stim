@@ -474,7 +474,9 @@ to its app path for every command it starts.
 THE DEVICE POOL BOUNDS ARE MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
 leave behind for a later workspace to adopt. It is machine-level for the same
-reason: the disk they sit on is the whole machine's, about 18 MB each once erased.
+reason: the disk they sit on is the whole machine's. A parked simulator keeps
+its apps and data, so it can hold gigabytes until \`stim gc --cache parked
+--delete\` erases it.
 
   {
     "pool": { "iosParkedMax": 3 }

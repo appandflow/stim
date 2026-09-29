@@ -302,12 +302,17 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
-parked one before creating. Parked devices are Stim-owned and listed in the pool
-record. Android adoption matches the system image and recorded AVD creation
-settings, keeps the AVD name, clears app data and removes other third-party apps
-before launch. Skip Android installation only after verifying the APK bytes. Delete them only by eviction,
-adoption-time reconciliation of a listed unavailable simulator, or `gc
---delete`; every route uses centralized teardown and ownership revalidation.
+parked one before creating. Parking keeps the device's apps and data; the pool
+record names the installed app and its cache key. Parked devices are
+Stim-owned and listed in the pool record. Adoption removes other third-party
+apps and clears the adopting app's data before launch, on every adoption, and
+skips the install only after verifying the installed bytes. Android adoption
+matches the system image and recorded AVD creation settings and keeps the AVD
+name. When an adopted emulator lacks room on `/data` for the install, trim app
+caches, then wipe its user data through centralized teardown. Delete parked
+devices only by eviction, adoption-time reconciliation of a listed unavailable
+simulator, or `gc --delete`; erase them only with `gc --cache parked
+--delete`. Every route uses centralized teardown and ownership revalidation.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
@@ -377,8 +382,9 @@ distribution remain out of scope.
 
 ### 4. Centralize device teardown
 
-All shutdown and deletion flows must use `src/devices/teardown.ts`, and so does park,
-which is the flow that gives a simulator up without deleting it. Re-resolve
+All shutdown and deletion flows must use `src/devices/teardown.ts`, and so do park,
+which is the flow that gives a simulator up without deleting it, and the erase
+and wipe of an owned device's data. Re-resolve
 ownership before each destructive command. Contain per-device failures so batch cleanup
 can continue. `stop` shuts down devices; it never deletes them.
 

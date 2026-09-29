@@ -442,6 +442,10 @@ back through it in the Stim phone app.
 - `stim gc --delete` removes verified resources from the report, including
   parked simulators, emulators, and expired device lease files. With
   `--older-than <days>`, it removes only the devices parked at least that long.
+- `stim gc --cache parked` lists only the parked devices, with the app each
+  one holds and its size. With `--delete` it erases each verified parked
+  simulator (`simctl erase`) and wipes each parked emulator's user data and
+  snapshots, and keeps them parked for the next workspace.
 
 Before shutting down, parking or deleting an owned simulator or emulator, Stim
 attempts to close local `agent-device` sessions on that exact iOS UDID or live
@@ -489,18 +493,30 @@ for the recovery steps.
 Runtime state lives under `$STIM_HOME`, which defaults to `~/.stim`. Each
 workspace stores state and logs in a directory derived from its absolute path.
 
-Parking erases a simulator with `simctl erase` and wipes an emulator's user
-data and snapshots, so a parked device takes a few megabytes instead of
-gigabytes. The adopting workspace pays a first boot, about 15 seconds for a
-simulator and 20 for an emulator, and installs its app again. Stim erases a
-simulator only after it reports `Shutdown`: it waits up to 15 seconds,
-retries the shutdown once, and waits up to 15 seconds more. A simulator that
-stays booted is deleted instead, and `stim worktree remove` prints `could not
-park <name>: ... -- deleted it instead`.
+Parking keeps the device as it is: the app stays installed and the pool
+record names it. A parked device can therefore hold gigabytes until
+`stim gc --cache parked --delete` erases it. Stim parks a simulator only after
+it reports `Shutdown`: it waits up to 15 seconds, retries the shutdown once,
+and waits up to 15 seconds more. A simulator that stays booted is deleted
+instead, and `stim worktree remove` prints `could not park <name>: ... --
+deleted it instead`.
+
+Adoption gives the new workspace a clean app state without reinstalling. It
+resets privacy grants and the keychain, uninstalls every other user app, and
+clears the workspace app's data: on iOS it deletes the app's preferences and
+empties its data container, and on Android it runs `pm clear`. It does this on
+every adoption, whichever workspace parked the device. Stim then compares the
+installed app with the requested build byte for byte and skips the install
+when they match, so a new worktree running the same build as the parked
+device boots it warm and launches without copying the app. App-group
+containers, photos, the pasteboard and Simulator settings are not cleared.
 
 Android adoption requires the same system image, disk size and AVD creation
-settings. It keeps the AVD name. For an emulator parked with its data by an
-older Stim, adoption clears the adopting app's data and uninstalls other
-third-party apps before launch. Installation is skipped only when the
-installed APK matches the requested file by SHA-256. AVDs created before Stim
-recorded their creation configuration are deleted when removed.
+settings. It keeps the AVD name. An emulator's `/data` partition is fixed, so
+before installing, adoption checks its free space. When there is less than
+twice the APK size plus 512 MB, Stim trims app caches, and if that is not
+enough it wipes the emulator's user data, boots it again and says so in the
+output. An install that fails with `INSTALL_FAILED_INSUFFICIENT_STORAGE` gets
+the same cleanup and retries. Simulators use the Mac's disk, so iOS has no such
+check. AVDs created before Stim recorded their creation configuration are
+deleted when removed.
