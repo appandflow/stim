@@ -499,9 +499,8 @@ export class BuildHost {
 
   async close(): Promise<void> {
     this.closed = true;
-    const owned = [...this.owned.values()];
-    for (const job of owned) this.abandon(job);
-    await Promise.all(owned.map((job) => job.done));
+    for (const job of this.owned.values()) this.abandon(job);
+    await Promise.all([...this.jobs].map((job) => job.done));
   }
 }
 

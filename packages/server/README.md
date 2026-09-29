@@ -237,8 +237,8 @@ closes its connections and cancels its builds.
   whose client is revoked meanwhile. A job whose `build.start` answer was lost
   with the connection is only reclaimed this way.
 - `build.attach` takes the `job` of this client that another connection
-  started, such as one whose connection dropped, and moves it to this
-  connection: its later `build.progress` events come here, and
+  holds or held, such as one whose connection dropped or stalled, and moves it
+  to this connection: its later `build.progress` events come here, and
   `build.cancel` and `build.artifact` take it. It answers `{ "outcome" }`,
   the job's outcome when it already ended, else null. Progress sent while no
   connection held the job is not replayed. A job that is gone, or belongs to

@@ -56,9 +56,10 @@ async function fakeMachine(
   start: { error: { code: string; message: string } } | { result: { job: string } },
   {
     drop = false,
+    closeAfterStart = null,
     dropOnSync = false,
     attach = { result: { outcome: null } },
-  }: { drop?: boolean; dropOnSync?: boolean; attach?: object } = {},
+  }: { drop?: boolean; closeAfterStart?: number | null; dropOnSync?: boolean; attach?: object } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -80,6 +81,7 @@ async function fakeMachine(
       const fail = (job: string) => socket.send(JSON.stringify({ event: 'build.progress', job, outcome: FAILED }));
       if (method === 'build.start') {
         reply(start);
+        if ('result' in start && closeAfterStart !== null) return socket.close(closeAfterStart, 'device revoked');
         if ('result' in start) return drop ? socket.terminate() : fail(start.result.job);
       }
       if (method === 'build.attach') {
@@ -315,5 +317,18 @@ describe('offloadBuild', () => {
       reason:
         'closed: the connection closed (1006); the machine did not hand the build back (unknown-method: Unknown method build.attach.)',
     });
+  });
+
+  it('builds here at once when the machine closes the connection on purpose, as on a revocation', async () => {
+    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { closeAfterStart: 4401 });
+    machines.push(machine);
+    const lines: string[] = [];
+    expect(await run(['mini'], (line) => lines.push(line))).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'closed: the connection closed (4401 device revoked)',
+    });
+    expect(lines).toEqual([]);
+    expect(machine.methods).not.toContain('build.attach');
   });
 });

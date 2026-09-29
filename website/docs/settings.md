@@ -348,11 +348,12 @@ the build, one line gives each machine's reason, such as
 and a failure after a machine took it prints
 `offload failed: <reason> -> building here`; either way it compiles here.
 A dropped connection is not a failure by itself: Stim pings the machine every
-15 seconds, treats a minute of silence as a drop, then reconnects to the same
-machine for up to 4 minutes and takes the running build back. The machine
-keeps a build running for 5 minutes without a connection before it cancels it.
-A drop while the app is fetched still builds here, and interrupting the run
-cancels the build on the machine. An
+15 seconds, treats a minute of silence while it waits for the build as a drop,
+then reconnects to the same machine for up to 3 minutes and takes the running
+build back. The machine keeps a build running for 5 minutes without a
+connection before it cancels it. A drop while the app is fetched still builds
+here. Ctrl-C cancels the build on the machine; a run killed another way leaves
+it running until those 5 minutes pass. An
 offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there and builds here, so

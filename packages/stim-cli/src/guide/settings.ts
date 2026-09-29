@@ -569,11 +569,13 @@ and fingerprints this checkout again before it stores the app under the
 post-mutation key and installs it the usual way, so an APK is still compared
 with the installed one before an install is skipped.
 While a machine builds, Stim pings it every 15 seconds and treats a minute of
-silence as a dropped connection. When the connection drops, Stim reconnects
-to the same pinned machine for up to 4 minutes and takes the running build
-back; the machine keeps it running for 5 minutes without a connection, then
-cancels it. A drop while the app is fetched still builds here. Interrupting
-the run closes the connection, which cancels the build there. A failure after a machine took the build prints \`offload failed: <reason>
+silence as a dropped connection while it waits for the build. When the
+connection drops without a close, Stim reconnects to the same pinned machine
+for up to 3 minutes and takes the running build back; the machine keeps it
+running for 5 minutes without a connection, then cancels it. A drop while the
+app is fetched still builds here. Interrupting the run with Ctrl-C closes the
+connection, which cancels the build there; a run killed another way leaves it
+until that 5 minutes pass. A failure after a machine took the build prints \`offload failed: <reason>
 -> building here\` and compiles here. The run's lastBuilds entry and
 \`--json\` facts record the reason as offloadFallback. Offloading holds no
 local build slot; that fallback takes one.

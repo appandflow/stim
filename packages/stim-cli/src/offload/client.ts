@@ -37,7 +37,8 @@ const JOB_TIMEOUT_MS = 65 * 60_000;
 const PING_MS = 15_000;
 const SILENT_MS = 60_000;
 const CLOSE_TIMEOUT_MS = 2000;
-const RESUME_WINDOW_MS = 4 * 60_000;
+const CLOSE_ABNORMAL = 1006;
+const RESUME_WINDOW_MS = 3 * 60_000;
 const RESUME_DELAY_MS = 2000;
 const RESUME_MAX_DELAY_MS = 15_000;
 const PAGE_BYTES = 48 * 1024;
@@ -216,6 +217,8 @@ class BuildConnection {
   private binary: ((frame: Buffer) => void) | null = null;
   private closed: string | null = null;
   private heard = Date.now();
+  private watched = false;
+  private ended = false;
   private readonly keepalive: NodeJS.Timeout;
   private readonly socket: WebSocket;
 
@@ -223,7 +226,7 @@ class BuildConnection {
     this.socket = socket;
     closeOnExit(socket);
     this.keepalive = setInterval(() => {
-      if (Date.now() - this.heard > SILENT_MS) return void socket.terminate();
+      if (this.watched && Date.now() - this.heard > SILENT_MS) return void socket.terminate();
       socket.ping();
     }, PING_MS);
     this.keepalive.unref();
@@ -251,12 +254,18 @@ class BuildConnection {
       this.closed = `the connection closed (${code}${reason.length ? ` ${reason.toString()}` : ''})`;
       for (const resolve of this.pending.values()) resolve({ error: { code: 'closed', message: this.closed } });
       this.pending.clear();
-      this.progress?.({ job: '', outcome: { ok: false, code: 'closed', message: this.closed } });
+      const dropped = code === CLOSE_ABNORMAL;
+      this.progress?.({ job: '', outcome: { ok: false, code: dropped ? 'dropped' : 'closed', message: this.closed } });
     });
     socket.on('error', () => {});
   }
 
-  static open(target: Endpoint, token: string, timeoutMs: number): Promise<BuildConnection | string> {
+  /** Resolves why it could not connect; `refused` when the machine answered and turned this Mac away. */
+  static open(
+    target: Endpoint,
+    token: string,
+    timeoutMs: number,
+  ): Promise<BuildConnection | { failure: string; refused: boolean }> {
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
         handshakeTimeout: timeoutMs,
@@ -264,12 +273,12 @@ class BuildConnection {
         headers: { Host: target.host },
       };
       const socket = new WebSocket(target.url, options);
-      const fail = (reason: string) => {
+      const fail = (reason: string, refused = false) => {
         clearTimeout(timer);
         socket.removeAllListeners();
         socket.on('error', () => {});
         socket.terminate();
-        resolve(reason);
+        resolve({ failure: reason, refused });
       };
       const timer = setTimeout(() => fail('no reply in time'), timeoutMs);
       socket.once('error', (error) =>
@@ -298,10 +307,10 @@ class BuildConnection {
         } catch {
           return fail('the reply was not a hello result');
         }
-        if (isJsonObject(reply) && isJsonObject(reply.error)) return fail(String(reply.error.message));
+        if (isJsonObject(reply) && isJsonObject(reply.error)) return fail(String(reply.error.message), true);
         const capabilities = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.capabilities : null;
         if (!Array.isArray(capabilities) || !capabilities.includes('build')) {
-          return fail('it has not granted this Mac build access');
+          return fail('it has not granted this Mac build access', true);
         }
         resolve(new BuildConnection(socket));
       });
@@ -343,9 +352,20 @@ class BuildConnection {
     return this.closed;
   }
 
+  /**
+   * Treats `SILENT_MS` without a frame as a dropped connection from now on. Only while waiting on a job: a long
+   * upload or this process hashing the checkout can delay pongs without anything being wrong.
+   */
+  watch(): void {
+    this.heard = Date.now();
+    this.watched = true;
+  }
+
   /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
   close(): void {
+    if (this.ended) return;
     this.forget();
+    if (this.socket.readyState === WebSocket.CLOSED) return;
     const timer = setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
     this.socket.once('close', () => clearTimeout(timer));
     this.socket.close(1000);
@@ -353,11 +373,13 @@ class BuildConnection {
 
   /** Ends the connection without a close frame, which leaves its jobs on the machine for a new connection. */
   drop(): void {
+    if (this.ended) return;
     this.forget();
     this.socket.terminate();
   }
 
   private forget(): void {
+    this.ended = true;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
     openSockets.delete(this.socket);
@@ -495,7 +517,7 @@ async function probeMachine(
   const target = pinnedEndpoint(credential);
   if (typeof target === 'string') return { credential, failure: target };
   const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
-  if (typeof connection === 'string') return { credential, failure: connection };
+  if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
   const reply = await connection.request(
     'build.offer',
     { repo: identity.repo, ...(identity.lockfile ? { lockfile: identity.lockfile } : {}) },
@@ -603,10 +625,11 @@ async function resumeJob(
     const target = pinnedEndpoint(credential);
     const connection =
       typeof target === 'string'
-        ? target
+        ? { failure: target, refused: false }
         : await BuildConnection.open(target, credential.deviceToken, CONNECT_TIMEOUT_MS);
-    if (typeof connection === 'string') {
-      last = connection;
+    if (!(connection instanceof BuildConnection)) {
+      if (connection.refused) return `the machine turned this Mac away (${connection.failure})`;
+      last = connection.failure;
     } else {
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
@@ -726,6 +749,7 @@ export async function offloadBuild({
       }
       if (typeof resumed === 'string') return settle({ ok: false, code: 'closed', message: `${why}; ${resumed}` });
       choice.connection = resumed.connection;
+      resumed.connection.watch();
       note(`offload: reattached to the build on ${choice.machine}`);
       resumed.connection.onProgress(handle);
       if (resumed.outcome) settle(resumed.outcome);
@@ -733,7 +757,9 @@ export async function offloadBuild({
     };
     const handle = (event: ProgressEvent) => {
       if (event.job && event.job !== job) return;
-      if (event.outcome && !event.job && job !== null) return void reattach(String(event.outcome.message));
+      if (event.outcome?.code === 'dropped' && !event.job && job !== null) {
+        return void reattach(String(event.outcome.message));
+      }
       if (event.outcome) return settle(event.outcome);
       if (event.record) onRecord(event.record);
       if (event.phase && typeof event.msg === 'string') {
@@ -788,6 +814,7 @@ export async function offloadBuild({
       if (reply.error.code === 'bad-request' || !moveOn(refused)) return fail(refused);
     }
     for (const each of choice.runnersUp.splice(0)) each.connection.close();
+    choice.connection.watch();
     for (const event of early.splice(0)) handle(event);
     const timer = setTimeout(
       () => settle({ ok: false, code: 'timeout', message: 'the build did not finish in time' }),
