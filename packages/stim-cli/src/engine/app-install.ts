@@ -1,6 +1,7 @@
 import { getExecutor, type Executor } from '../exec.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
+import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
@@ -86,7 +87,6 @@ export function installIosApp(
     devClientScheme = null,
     schemeApprovals = [],
     proveInstalled = true,
-    dataCleared = false,
   }: {
     udid: string;
     appPath: string;
@@ -94,7 +94,6 @@ export function installIosApp(
     devClientScheme?: string | null;
     schemeApprovals?: string[];
     proveInstalled?: boolean;
-    dataCleared?: boolean;
   },
   { exec = null, now = null }: ExecOpt = {},
 ): IosInstallResult {
@@ -117,7 +116,13 @@ export function installIosApp(
     artifactStartedAt !== undefined && artifactFinishedAt !== undefined
       ? artifactFinishedAt - artifactStartedAt
       : undefined;
-  const devMenuKeys = bundleId && devClientScheme && (!skipped || dataCleared) ? IOS_DEV_MENU_OFF_KEYS : [];
+  // simctl launch --initialUrl carries the same keys as launch arguments
+  // (see launchIosApp), which cover Stim's own launches, so a real install is
+  // the only case that still needs the persistent defaults written: it covers
+  // launches Stim did not make (agent-device relaunches, crash restarts,
+  // home-screen taps), where expo-dev-launcher reads only the persisted
+  // domain.
+  const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
   const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
   const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
   const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
@@ -330,7 +335,9 @@ export function launchIosApp(
           const initialUrl = new URL(url).searchParams.get('url')!;
           launchedWithInitialUrl = true;
           const pid = parseLaunchedPid(
-            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl], { timeoutMs: 60000 }),
+            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
+              timeoutMs: 60000,
+            }),
           );
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         }

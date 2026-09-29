@@ -7,10 +7,13 @@ import type { NdjsonRecord } from '../ndjson.ts';
 // writes alone, and React Native logs through os_log (React/Base/RCTLog.mm).
 export const CONSOLE_ENV: Record<string, string> = { OS_ACTIVITY_DT_MODE: 'enable' };
 
-// devicectl passes everything after `--` to the app, and NSUserDefaults reads
-// the argument domain ahead of the persisted one, so these turn expo-dev-menu's
-// auto-launch and floating button off for this launch without writing to the
-// phone -- which devicectl cannot do (it has no `defaults` command).
+// devicectl passes everything after `--`, and simctl launch --initialUrl
+// (engine/app-install.ts) passes trailing argv, to the app. NSUserDefaults
+// reads the argument domain ahead of the persisted one, so these turn
+// expo-dev-menu's auto-launch and floating button off for this launch without
+// writing to the persisted domain -- which devicectl cannot do at all (it has
+// no `defaults` command) and which simctl only needs for launches it did not
+// make.
 export const DEV_MENU_LAUNCH_ARGS: readonly string[] = [
   '-EXDevMenuShowsAtLaunch',
   '0',

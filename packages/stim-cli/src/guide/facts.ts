@@ -561,14 +561,24 @@ RULES
   wrote on the workspace's device record and writes only the
   ones missing from it. Parking drops the record, so an
   adopted simulator gets them again once.
-  THE DEV MENU AND ITS BUTTON stay off a simulator through
+  THE DEV MENU AND ITS BUTTON stay off a simulator two ways,
+  which the onboarding flag does NOT cover. Stim's own
+  \`simctl launch --initialUrl\` ends in
+  \`-EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0\`
+  as trailing argv, the same mechanism the phone launch uses:
+  NSUserDefaults reads the argument domain ahead of the
+  persisted one, so Stim's own launch comes up on the app, not
+  the menu, without writing to the simulator. Stim also writes
   EXDevMenuShowsAtLaunch=false and
-  EXDevMenuShowFloatingActionButton=false in the app's
-  defaults, which the onboarding flag does NOT cover. Stim
-  writes them whenever it actually installs the app; an
-  install skipped as byte-identical keeps the app's data and
-  so the values already written. They cover every later
-  launch, including a home-screen tap or an agent relaunch.
+  EXDevMenuShowFloatingActionButton=false to the app's
+  persisted defaults, but only on a real install -- one that
+  is not skipped as byte-identical. Those persisted values
+  cover launches Stim did not make: a home-screen tap, an
+  agent relaunch, or a crash restart. An install skipped
+  because adoption reused a parked simulator (and cleared the
+  app's data first) does NOT rewrite them, so a non-Stim
+  relaunch after that adoption can show the menu and button
+  once, until the next real install.
   When the project's installed expo-dev-launcher (found
   through expo-dev-client, no network) is 58.0.0 or later
   (expo/expo#49651), Stim's own deep link also carries

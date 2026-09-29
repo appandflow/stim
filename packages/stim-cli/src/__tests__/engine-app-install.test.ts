@@ -587,6 +587,10 @@ describe('ios', () => {
       'com.example.app',
       '--initialUrl',
       'http://localhost:8082/?disableOnboarding=1',
+      '-EXDevMenuShowsAtLaunch',
+      '0',
+      '-EXDevMenuShowFloatingActionButton',
+      '0',
     ]);
     expect(exec.calls).toHaveLength(3);
   });
@@ -604,9 +608,13 @@ describe('ios', () => {
       },
       { exec },
     );
-    expect(exec.calls[2]?.slice(-2)).toEqual([
+    expect(exec.calls[2]?.slice(-6)).toEqual([
       '--initialUrl',
       'http://localhost:8082/?disableOnboarding=1&disableFab=1&disableAutoLaunch=1&__expo_disable_fab=1&__expo_disable_auto_launch=1',
+      '-EXDevMenuShowsAtLaunch',
+      '0',
+      '-EXDevMenuShowFloatingActionButton',
+      '0',
     ]);
     expect(result.url).toBe(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
   });
@@ -3013,7 +3021,7 @@ describe('skipping an install the device already holds', () => {
     }
   });
 
-  test('an identical .app whose data adoption cleared gets its dev-menu preferences written again', () => {
+  test('an identical .app that adoption cleared skips the dev-menu writes: the launch carries them instead', () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('built.app', 'macho');
     const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
@@ -3027,15 +3035,12 @@ describe('skipping an install the device already holds', () => {
           'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
           'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
         ],
-        dataCleared: true,
       },
       { exec, now: () => 0 },
     );
     expect(result.skipped).toBe(true);
-    expect(exec.calls.filter((c) => c.includes('write')).map((c) => c[7])).toEqual([
-      'EXDevMenuShowsAtLaunch',
-      'EXDevMenuShowFloatingActionButton',
-    ]);
+    expect(exec.calls.some((c) => c.includes('write'))).toBe(false);
+    expect(result.devClientPreparationDurationMs).toBeUndefined();
   });
 
   test('a .app whose JS was swapped is installed: the container holds the other one', () => {
