@@ -168,6 +168,10 @@ if (process.argv[2] === 'offer') {
     process.on('SIGTERM', () => {});
     setInterval(() => {}, 1000);
   } else {
+    if (process.env.FAKE_WORKER_GATE) {
+      const { existsSync } = await import('node:fs');
+      while (!existsSync(process.env.FAKE_WORKER_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     mkdirSync(join(job.area, 'out', job.job), { recursive: true });
     const archive = Buffer.from('app archive bytes');
     writeFileSync(join(job.area, 'out', job.job, 'app.tgz'), archive);
@@ -568,7 +572,10 @@ describe('offloaded builds', () => {
 
   beforeEach(() => configure({ offload: { maxLoadPerCore: 100_000 } }));
 
-  async function buildClient(port: number, peer = '100.64.0.2'): Promise<{ client: Client; id: string }> {
+  async function buildClient(
+    port: number,
+    peer = '100.64.0.2',
+  ): Promise<{ client: Client; id: string; deviceToken: string }> {
     const asking = await connect(port, peer);
     const reply = await asking.request('hello', {
       protocol: 1,
@@ -579,7 +586,7 @@ describe('offloaded builds', () => {
     grantDevice(device.id, ['build']);
     const client = await connect(port, peer);
     await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
-    return { client, id: device.id };
+    return { client, id: device.id, deviceToken: deviceToken! };
   }
 
   async function eventually(check: () => boolean): Promise<void> {
@@ -764,6 +771,70 @@ describe('offloaded builds', () => {
       await eventually(() => !alive(pid));
       await eventually(() => readClaimSet(buildSlotPath(0)).live.length === 0);
       expect(machineCapacity().builds).toBe(0);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'keeps a build running when its connection drops and hands it to a new connection of the same client',
+    async () => {
+      const gate = join(root, 'gate');
+      const port = await start({ env: { FAKE_WORKER_GATE: gate } });
+      const { client, deviceToken } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
+      expect(await client.next()).toMatchObject({ phase: 'build' });
+      client.socket.terminate();
+      expect(await client.closed).toBe(1006);
+
+      const other = await buildClient(port, '100.64.0.3');
+      expect(await other.client.request('build.attach', { job })).toMatchObject({ error: { code: 'bad-request' } });
+
+      const again = await connect(port, '100.64.0.2');
+      await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
+      writeFileSync(gate, '');
+      expect(await again.next()).toMatchObject({ job, outcome: { ok: true } });
+      again.socket.send(JSON.stringify({ id: 3, method: 'build.artifact', params: { job } }));
+      expect(((await again.next()) as unknown as { binary: Buffer }).binary.subarray(32).toString()).toBe(
+        'app archive bytes',
+      );
+      expect(await again.next()).toMatchObject({ id: 3, result: { name: 'App.app' } });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'cancels a build at once when its connection closes cleanly, and after the grace period when it drops',
+    async () => {
+      const port = await start({
+        env: { FAKE_WORKER_HANG: '1' },
+        buildLimits: { killGraceMs: 100, detachGraceMs: 1500 },
+      });
+      const pidOf = async () => {
+        await eventually(() => existsSync(join(root, 'job.json')));
+        const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
+        rmSync(join(root, 'job.json'));
+        return pid;
+      };
+      const run = async () => {
+        const { client } = await buildClient(port);
+        await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+        client.socket.send(blob('x'));
+        expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+        return { client, pid: await pidOf() };
+      };
+
+      const closing = await run();
+      closing.client.socket.close(1000);
+      await eventually(() => !alive(closing.pid));
+
+      const dropping = await run();
+      const dropped = Date.now();
+      dropping.client.socket.terminate();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(alive(dropping.pid)).toBe(true);
+      await eventually(() => !alive(dropping.pid));
+      expect(Date.now() - dropped).toBeGreaterThanOrEqual(1500);
     },
   );
 

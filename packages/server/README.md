@@ -169,7 +169,7 @@ A client with `build` runs its iOS simulator builds and Android emulator
 debug builds here with these methods.
 They need `build`, not `read`; a device without `build` gets `forbidden`.
 The server re-reads the build clients on every call, and revoking a client
-closes its connections, which cancels its builds.
+closes its connections and cancels its builds.
 
 - `build.offer` takes `repo` (the client's name for its repository: letters,
   digits, `.`, `_` and `-`, at most 80) and an optional `lockfile` sha256. It
@@ -229,13 +229,22 @@ closes its connections, which cancels its builds.
   `.apk`),
   `fingerprint`, `compilationCache` and `timings`, otherwise `code` and
   `message`.
-- `build.cancel` takes `job` and stops it. Closing the connection cancels its
-  jobs too. The build's process group gets SIGTERM, then SIGKILL 5 seconds
-  later.
+- `build.cancel` takes `job` and stops it. Closing the connection with a
+  close frame cancels its jobs too. The build's process group gets SIGTERM,
+  then SIGKILL 5 seconds later. A connection that ends without a close frame
+  (1006, for example when the network drops) leaves its jobs running for 5
+  minutes; a job no connection takes back by then is cancelled.
+- `build.attach` takes the `job` of this client that another connection
+  started, such as one whose connection dropped, and moves it to this
+  connection: its later `build.progress` events come here, and
+  `build.cancel` and `build.artifact` take it. It answers `{ "outcome" }`,
+  the job's outcome when it already ended, else null. Progress sent while no
+  connection held the job is not replayed. A job that is gone, or belongs to
+  another client, gets `bad-request`.
 - `build.artifact` takes the `job` of a successful build and sends the archive
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
   answers `{ "name", "size", "sha256" }`, and deletes it here. An archive
-  nobody fetched is deleted when its connection closes; one left by a server
+  nobody fetched is deleted when its job is cancelled; one left by a server
   that crashed stays under `repos/<repo>/out/` until you delete it.
 
 The worker root is `offload.workerRoot` in this Mac's Stim settings, or

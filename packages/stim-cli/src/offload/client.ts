@@ -34,6 +34,12 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 const JOB_TIMEOUT_MS = 65 * 60_000;
+const PING_MS = 15_000;
+const SILENT_MS = 60_000;
+const CLOSE_TIMEOUT_MS = 2000;
+const RESUME_WINDOW_MS = 4 * 60_000;
+const RESUME_DELAY_MS = 2000;
+const RESUME_MAX_DELAY_MS = 15_000;
 const PAGE_BYTES = 48 * 1024;
 const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
@@ -180,18 +186,31 @@ type ProgressEvent = {
   outcome?: Record<string, unknown>;
 };
 
-/** One authenticated connection to a build machine's stim-server. Closing it cancels its jobs there. */
+/**
+ * One authenticated connection to a build machine's stim-server. Closing it cancels its jobs there; a connection
+ * that drops, or that stays silent for `SILENT_MS` despite pings, leaves them running for a while so a new
+ * connection can `build.attach` to them.
+ */
 class BuildConnection {
   private nextId = 2;
   private readonly pending = new Map<number, (reply: Reply) => void>();
   private progress: ((event: ProgressEvent) => void) | null = null;
   private binary: ((frame: Buffer) => void) | null = null;
   private closed: string | null = null;
+  private heard = Date.now();
+  private readonly keepalive: NodeJS.Timeout;
   private readonly socket: WebSocket;
 
   private constructor(socket: WebSocket) {
     this.socket = socket;
+    this.keepalive = setInterval(() => {
+      if (Date.now() - this.heard > SILENT_MS) return void socket.terminate();
+      socket.ping();
+    }, PING_MS);
+    this.keepalive.unref();
+    socket.on('pong', () => (this.heard = Date.now()));
     socket.on('message', (data, isBinary) => {
+      this.heard = Date.now();
       const frame = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
       if (isBinary) return this.binary?.(frame);
       let message: unknown;
@@ -209,6 +228,7 @@ class BuildConnection {
       }
     });
     socket.on('close', (code, reason) => {
+      clearInterval(this.keepalive);
       this.closed = `the connection closed (${code}${reason.length ? ` ${reason.toString()}` : ''})`;
       for (const resolve of this.pending.values()) resolve({ error: { code: 'closed', message: this.closed } });
       this.pending.clear();
@@ -304,9 +324,13 @@ class BuildConnection {
     return this.closed;
   }
 
+  /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
   close(): void {
+    clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
-    this.socket.terminate();
+    this.socket.on('close', () => {});
+    this.socket.close(1000);
+    setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
   }
 }
 
@@ -406,6 +430,7 @@ export type OffloadOutcome =
 
 interface OfferingMachine {
   machine: string;
+  credential: BuildMachineCredential;
   connection: BuildConnection;
   offer: BuildOffer;
 }
@@ -498,7 +523,12 @@ export async function chooseBuildMachine({
   for (const reason of reasons) note(reason);
   const [first, ...rest] = order.map((at) => {
     const pick = asked[at] as { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
-    return { machine: pick.credential.machine, connection: pick.connection, offer: pick.offer };
+    return {
+      machine: pick.credential.machine,
+      credential: pick.credential,
+      connection: pick.connection,
+      offer: pick.offer,
+    };
   });
   return { ...first!, target, offerMs: Date.now() - started, identity, runnersUp: rest };
 }
@@ -525,6 +555,48 @@ export type BuildRequest =
   | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions };
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/ } as const;
+
+/**
+ * Reconnects to the machine that runs `job` and takes the job over with `build.attach`, retrying until
+ * `RESUME_WINDOW_MS`, shorter than the machine's grace for a dropped connection, has passed. Returns why it
+ * could not.
+ */
+async function resumeJob(
+  credential: BuildMachineCredential,
+  job: string,
+  abandoned: () => boolean,
+): Promise<{ connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] } | string> {
+  const deadline = Date.now() + RESUME_WINDOW_MS;
+  let delay = RESUME_DELAY_MS;
+  let last = 'no attempt';
+  while (!abandoned()) {
+    const target = pinnedEndpoint(credential);
+    const connection =
+      typeof target === 'string'
+        ? target
+        : await BuildConnection.open(target, credential.deviceToken, CONNECT_TIMEOUT_MS);
+    if (typeof connection === 'string') {
+      last = connection;
+    } else {
+      const early: ProgressEvent[] = [];
+      connection.onProgress((event) => early.push(event));
+      const reply = await connection.request('build.attach', { job }, OFFER_TIMEOUT_MS);
+      if ('result' in reply) {
+        const outcome = isJsonObject(reply.result) ? reply.result.outcome : null;
+        return { connection, outcome: isJsonObject(outcome) ? outcome : null, early };
+      }
+      connection.close();
+      last = replyError(reply)!;
+      if (reply.error.code !== 'closed' && reply.error.code !== 'timeout') {
+        return `the machine did not hand the build back (${last})`;
+      }
+    }
+    if (Date.now() + delay > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
+  }
+  return `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})`;
+}
 
 /** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
 async function syncSource(
@@ -603,11 +675,34 @@ export async function offloadBuild({
     let job: string | null = null;
     let early: ProgressEvent[] = [];
     let settle!: (outcome: Record<string, unknown>) => void;
+    let settled = false;
     const outcome = new Promise<Record<string, unknown>>((resolve) => {
-      settle = resolve;
+      settle = (value) => {
+        settled = true;
+        resolve(value);
+      };
     });
+    let resuming = false;
+    const reattach = async (why: string) => {
+      if (resuming || settled) return;
+      resuming = true;
+      note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
+      const resumed = await resumeJob(choice.credential, job!, () => settled);
+      resuming = false;
+      if (settled) {
+        if (typeof resumed !== 'string') resumed.connection.close();
+        return;
+      }
+      if (typeof resumed === 'string') return settle({ ok: false, code: 'closed', message: `${why}; ${resumed}` });
+      choice.connection = resumed.connection;
+      note(`offload: reattached to the build on ${choice.machine}`);
+      resumed.connection.onProgress(handle);
+      if (resumed.outcome) settle(resumed.outcome);
+      for (const event of resumed.early.splice(0)) handle(event);
+    };
     const handle = (event: ProgressEvent) => {
       if (event.job && event.job !== job) return;
+      if (event.outcome && !event.job && job !== null) return void reattach(String(event.outcome.message));
       if (event.outcome) return settle(event.outcome);
       if (event.record) onRecord(event.record);
       if (event.phase && typeof event.msg === 'string') {
@@ -662,7 +757,6 @@ export async function offloadBuild({
       if (reply.error.code === 'bad-request' || !moveOn(refused)) return fail(refused);
     }
     for (const each of choice.runnersUp.splice(0)) each.connection.close();
-    const { connection, machine } = choice;
     for (const event of early.splice(0)) handle(event);
     const timer = setTimeout(
       () => settle({ ok: false, code: 'timeout', message: 'the build did not finish in time' }),
@@ -670,6 +764,7 @@ export async function offloadBuild({
     );
     const result = await outcome;
     clearTimeout(timer);
+    const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = Date.now() - workerStarted;
     if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);

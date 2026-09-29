@@ -32,6 +32,7 @@ import {
   BUILD_REPO_PATTERN,
   type BuildAndroidOptions,
   type BuildArtifactResult,
+  type BuildAttachResult,
   type BuildCapacity,
   type BuildFile,
   type BuildJobOutcome,
@@ -50,6 +51,8 @@ export interface BuildLimits {
   minFreeBytes: number;
   timeoutMs: number;
   killGraceMs: number;
+  /** How long a build whose connection dropped keeps running for a new connection to attach to it. */
+  detachGraceMs: number;
   /** How long a toolchain report is reused before `build.offer` asks the toolchain again. */
   toolchainTtlMs: number;
 }
@@ -59,6 +62,7 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   minFreeBytes: 10 * 1024 ** 3,
   timeoutMs: 60 * 60_000,
   killGraceMs: 5000,
+  detachGraceMs: 5 * 60_000,
   toolchainTtlMs: 60_000,
 };
 
@@ -144,7 +148,13 @@ interface Job {
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
+  /** Where the job's progress goes: its connection, or nowhere while no connection holds it. */
+  send: (event: BuildProgressEvent) => void;
+  session: BuildSession | null;
+  grace: NodeJS.Timeout | null;
 }
+
+const nowhere = (): void => {};
 
 export interface BuildHostOptions {
   /** The `offload-worker.mjs` entry of the bundled Stim. */
@@ -159,6 +169,8 @@ export interface BuildHostOptions {
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
+  /** Every job a connection holds or may attach to again, by id, until its artifact is fetched or it is dropped. */
+  private readonly owned = new Map<string, Job>();
   private closed = false;
   private toolchainAt = 0;
   private toolchainValue: Promise<BuildToolchain | null> | null = null;
@@ -267,11 +279,13 @@ export class BuildHost {
     client,
     repo,
     job,
+    session,
     send,
   }: {
     client: string;
     repo: string;
     job: Record<string, unknown>;
+    session: BuildSession;
     send: (event: BuildProgressEvent) => void;
   }): Job | Refusal {
     if (this.closed) return refusal('build-refused', 'This Mac is shutting down stim-server.');
@@ -380,6 +394,9 @@ export class BuildHost {
       settled: false,
       cancel,
       done: Promise.resolve(),
+      send,
+      session,
+      grace: null,
     };
     const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
     lines.on('line', (line) => {
@@ -392,14 +409,15 @@ export class BuildHost {
       }
       if (!isJsonObject(value)) return;
       if (value.type === 'phase' && typeof value.phase === 'string' && typeof value.msg === 'string') {
-        send({ event: 'build.progress', job: id, phase: value.phase, msg: value.msg });
+        entry.send({ event: 'build.progress', job: id, phase: value.phase, msg: value.msg });
       } else if (value.type === 'log' && isJsonObject(value.record)) {
-        send({ event: 'build.progress', job: id, record: value.record });
+        entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
         entry.outcome = workerOutcome(value);
       }
     });
     this.jobs.add(entry);
+    this.owned.set(id, entry);
     entry.done = new Promise<void>((resolve) => {
       child.on('error', () => {});
       child.on('close', () => {
@@ -421,7 +439,7 @@ export class BuildHost {
           releaseClaims();
           entry.settled = true;
           this.jobs.delete(entry);
-          send({ event: 'build.progress', job: id, outcome: entry.outcome! });
+          entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
             client,
             repo,
@@ -439,8 +457,45 @@ export class BuildHost {
     return entry;
   }
 
+  /** Keeps a job whose connection dropped running for `detachGraceMs`, then cancels it. */
+  detach(job: Job): void {
+    job.session = null;
+    job.send = nowhere;
+    job.grace = setTimeout(() => this.abandon(job), this.limits.detachGraceMs);
+    job.grace.unref();
+  }
+
+  /** Cancels a job and deletes its archive once its process group is gone. */
+  abandon(job: Job): void {
+    if (job.grace) clearTimeout(job.grace);
+    job.grace = null;
+    job.session = null;
+    job.send = nowhere;
+    job.cancel();
+    this.owned.delete(job.id);
+    void job.done.then(() => rmSync(dirname(job.archive), { recursive: true, force: true }));
+  }
+
+  /** Hands a job of `client` to `session`, taking it from the connection that held it; null when there is none. */
+  attach(client: string, id: string, session: BuildSession): Job | null {
+    const job = this.owned.get(id);
+    if (!job || job.client !== client) return null;
+    if (job.grace) clearTimeout(job.grace);
+    job.grace = null;
+    if (job.session !== session) job.session?.release(id);
+    job.session = session;
+    return job;
+  }
+
+  forget(job: Job): void {
+    this.owned.delete(job.id);
+  }
+
   async close(): Promise<void> {
     this.closed = true;
+    for (const job of this.owned.values()) {
+      if (job.grace) clearTimeout(job.grace);
+    }
     for (const job of this.jobs) job.cancel();
     await Promise.all([...this.jobs].map((job) => job.done));
   }
@@ -468,7 +523,10 @@ function workerOutcome(value: Record<string, unknown>): BuildJobOutcome {
   };
 }
 
-/** One connection's manifest, blob uploads and jobs. Closing the connection cancels its jobs. */
+/**
+ * One connection's manifest, blob uploads and jobs. Closing the connection cancels its jobs; a dropped connection
+ * leaves them to `BuildHost.detach`.
+ */
 export class BuildSession {
   private repo: string | null = null;
   private files = new Map<string, BuildFile>();
@@ -598,6 +656,7 @@ export class BuildSession {
     const launched = this.host.launch({
       client: this.client,
       repo: params.repo,
+      session: this,
       send: this.send,
       job: {
         manifest: [...this.files.values()],
@@ -616,6 +675,20 @@ export class BuildSession {
     if ('error' in launched) return launched;
     this.jobs.set(launched.id, launched);
     return { result: { job: launched.id } };
+  }
+
+  /** Takes over a job of this client that another connection started, including one whose connection dropped. */
+  attach(params: unknown): { result: BuildAttachResult } | Refusal {
+    const id = isJsonObject(params) && typeof params.job === 'string' ? params.job : null;
+    const job = id === null ? null : this.host.attach(this.client, id, this);
+    if (!job) return refusal('bad-request', 'No such build job for this device; it ended or was cancelled.');
+    this.jobs.set(job.id, job);
+    job.send = this.send;
+    return { result: { outcome: job.settled ? job.outcome : null } };
+  }
+
+  release(id: string): void {
+    this.jobs.delete(id);
   }
 
   cancel(params: unknown): { result: Record<string, never> } | Refusal {
@@ -659,14 +732,16 @@ export class BuildSession {
     }
     rmSync(dirname(job.archive), { recursive: true, force: true });
     this.jobs.delete(job.id);
+    this.host.forget(job);
     return { result: outcome.artifact };
   }
 
-  close(): void {
+  /** `dropped`: the connection ended without a close frame, so its jobs wait for a new connection to attach. */
+  close(dropped: boolean): void {
     this.closed = true;
     for (const job of this.jobs.values()) {
-      job.cancel();
-      void job.done.then(() => rmSync(dirname(job.archive), { recursive: true, force: true }));
+      if (dropped) this.host.detach(job);
+      else this.host.abandon(job);
     }
     this.jobs.clear();
     if (this.incoming) rmSync(this.incoming.tmp, { force: true });

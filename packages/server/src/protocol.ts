@@ -57,10 +57,18 @@ export const METHODS = [
   'build.start',
   'build.cancel',
   'build.artifact',
+  'build.attach',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
-export const BUILD_METHODS = ['build.offer', 'build.sync', 'build.start', 'build.cancel', 'build.artifact'] as const;
+export const BUILD_METHODS = [
+  'build.offer',
+  'build.sync',
+  'build.start',
+  'build.cancel',
+  'build.artifact',
+  'build.attach',
+] as const;
 
 export type Method = (typeof METHODS)[number];
 
@@ -611,6 +619,11 @@ export interface BuildJobParams {
   job: string;
 }
 
+/** A job taken over by a new connection: its outcome once it ended, else null and its progress follows. */
+export interface BuildAttachResult {
+  outcome: BuildJobOutcome | null;
+}
+
 /** Sent after the artifact's binary frames: the archive's name, size and sha256. */
 export interface BuildArtifactResult {
   name: string;
@@ -856,6 +869,7 @@ export interface Methods {
   'build.start': { params: BuildStartParams; result: BuildJobParams };
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
+  'build.attach': { params: BuildJobParams; result: BuildAttachResult };
 }
 
 export type ClientRequest = {
@@ -1633,6 +1647,7 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('build.cancel', buildJob),
           request('build.artifact', buildJob),
+          request('build.attach', buildJob),
         ],
       },
       ServerResponse: {
