@@ -2,18 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import type { Replay } from '@/hooks/device-stream';
 import {
+  adjacentAction,
   buildTimeline,
   layoutGapLabels,
   MARKER_TITLES,
   markerSeek,
   positionOf,
-  recordedLength,
   replayLabel,
-  shortDuration,
+  stepFrom,
   timeAt,
   type Timeline,
 } from '@/lib/replay';
@@ -71,6 +72,8 @@ export function ReplayBar({
   if (received.timeline !== timeline) setReceived({ timeline, at: now });
   const [held, setHeld] = useState<Timeline | null>(null);
   const [trackLength, setTrackLength] = useState<number | undefined>(undefined);
+  const [stepped, setStepped] = useState<number | null>(null);
+  if ((replay === null || replay.ended) && stepped !== null) setStepped(null);
   const at = replay?.at ?? null;
   if (at !== null && at !== lastAt) setLastAt(at);
   if (replay === null && lastAt !== null) setLastAt(null);
@@ -108,6 +111,10 @@ export function ReplayBar({
   const showsPause = playing || isLive;
   const footageFrom = track.pieces[0]?.from ?? 0;
 
+  const seekTo = (to: number, rate: ReplayRate, action: number | null = null) => {
+    setStepped(action);
+    onSeek(to, rate);
+  };
   const fractionAt = (x: number) => Math.min(1, Math.max(0, x / (width || 1)));
   const drag = (x: number, final: boolean) => {
     const fraction = fractionAt(x);
@@ -115,7 +122,7 @@ export function ReplayBar({
     const stamp = Date.now();
     if (!final && stamp - lastSeek.current < DRAG_SEEK_MS) return;
     lastSeek.current = stamp;
-    onSeek(timeAt(track, fraction), 0);
+    seekTo(timeAt(track, fraction), 0);
   };
   const tap = (x: number) => {
     let near: ReplayMarker | null = null;
@@ -127,7 +134,7 @@ export function ReplayBar({
         nearest = distance;
       }
     }
-    onSeek(near ? markerSeek(track, near) : timeAt(track, fractionAt(x)), 0);
+    seekTo(near ? markerSeek(track, near) : timeAt(track, fractionAt(x)), 0);
   };
   const end = () => {
     touch.current = null;
@@ -158,12 +165,19 @@ export function ReplayBar({
     },
     onResponderTerminate: end,
   };
+  const from = stepFrom(shownAt ?? track.end, stepped, playing);
+  const previousAction = adjacentAction(markers, from, -1);
+  const nextAction = adjacentAction(markers, from, 1);
+  const step = (target: ReplayMarker | null) => {
+    if (!target) return onLive();
+    seekTo(markerSeek(track, target), playing ? speed : 0, target.at);
+  };
   const togglePlay = () => {
-    if (isLive) return onSeek(NEWEST_FRAME, 0);
-    if (!replay) return onSeek(timeline.start, speed);
-    if (playing) return onSeek(at ?? timeline.start, 0);
+    if (isLive) return seekTo(NEWEST_FRAME, 0);
+    if (!replay) return seekTo(timeline.start, speed);
+    if (playing) return seekTo(at ?? timeline.start, 0);
     const from = replay.ended || at === null ? timeline.start : at;
-    onSeek(from, speed);
+    seekTo(from, speed);
   };
   const toggleSpeed = () => {
     const next = speed === 1 ? 2 : 1;
@@ -176,15 +190,41 @@ export function ReplayBar({
       <View style={styles.controls}>
         {livePill}
         <Touch
+          onPress={() => step(previousAction)}
+          disabled={isLive || !previousAction}
+          accessibilityRole="button"
+          accessibilityLabel="Previous agent action"
+          accessibilityElementsHidden={isLive}
+          importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
+          defaultOpacity={isLive ? 0 : previousAction ? 1 : theme.opacity.disabled}
+          style={styles.round}
+          hitSlop={4}
+        >
+          <Icon name="backward.end.fill" size={14} color={theme.media.text} />
+        </Touch>
+        <Touch
           onPress={togglePlay}
           accessibilityRole="button"
           accessibilityLabel={showsPause ? 'Pause' : 'Play'}
           style={styles.round}
-          hitSlop={6}
+          hitSlop={4}
         >
           <Text weight="semibold" style={styles.mediaText}>
             {showsPause ? '❚❚' : '▶'}
           </Text>
+        </Touch>
+        <Touch
+          onPress={() => step(nextAction)}
+          disabled={isLive || (!nextAction && !canGoLive)}
+          accessibilityRole="button"
+          accessibilityLabel={nextAction || !canGoLive ? 'Next agent action' : 'Next agent action, none; go live'}
+          accessibilityElementsHidden={isLive}
+          importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
+          defaultOpacity={isLive ? 0 : nextAction || canGoLive ? 1 : theme.opacity.disabled}
+          style={styles.round}
+          hitSlop={4}
+        >
+          <Icon name="forward.end.fill" size={14} color={theme.media.text} />
         </Touch>
         <Touch
           onPress={toggleSpeed}
@@ -195,20 +235,18 @@ export function ReplayBar({
           importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
           defaultOpacity={isLive ? 0 : 1}
           style={styles.round}
-          hitSlop={6}
+          hitSlop={4}
         >
           <Text variant="caption" weight="semibold" style={styles.mediaText}>
             {`${speed}x`}
           </Text>
         </Touch>
-        <Text variant="caption" style={styles.time} numberOfLines={1}>
-          {replay
-            ? at === null
-              ? 'Loading...'
-              : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`
-            : `Replay ${shortDuration(recordedLength(timeline))} recorded`}
-        </Text>
       </View>
+      {replay ? (
+        <Text variant="caption" style={styles.time} numberOfLines={1}>
+          {at === null ? 'Loading...' : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`}
+        </Text>
+      ) : null}
       <View
         style={styles.track}
         onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)}
@@ -248,7 +286,7 @@ export function ReplayBar({
             accessibilityRole="button"
             accessibilityLabel={`${MARKER_TITLES[marker.kind]}: ${marker.label}`}
             accessibilityActions={[{ name: 'activate' }]}
-            onAccessibilityAction={() => onSeek(markerSeek(track, marker), 0)}
+            onAccessibilityAction={() => seekTo(markerSeek(track, marker), 0)}
             style={[styles.markerHit, { left: positionOf(track, marker.at) * width - 6 }]}
           >
             <View
@@ -276,7 +314,7 @@ export function ReplayBar({
           accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
           onAccessibilityAction={(event) => {
             const step = event.nativeEvent.actionName === 'increment' ? 0.05 : -0.05;
-            onSeek(timeAt(track, Math.min(1, Math.max(0, position + step))), 0);
+            seekTo(timeAt(track, Math.min(1, Math.max(0, position + step))), 0);
           }}
         />
       </View>
@@ -313,7 +351,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.round,
     backgroundColor: theme.media.fill,
   },
-  time: { flex: 1, color: theme.media.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums'] },
+  time: { color: theme.media.textSecondary, fontVariant: ['tabular-nums'] },
   track: { height: TRACK_HEIGHT, justifyContent: 'center' },
   span: {
     position: 'absolute',

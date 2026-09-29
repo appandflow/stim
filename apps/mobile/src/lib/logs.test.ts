@@ -1,5 +1,6 @@
 import captured from '@/lib/fixtures/metro-errors.json';
 import {
+  actionsAt,
   agentActions,
   agentFilterOptions,
   matchesAgentFilter,
@@ -211,6 +212,18 @@ describe('agentActions', () => {
     const next = agentActions(first, [action(1, sim)], sim, 5);
     expect(next.slice(1)).toEqual(first);
     expect(new Set(next.map((a) => a.key)).size).toBe(3);
+  });
+
+  it('shows in replay only the actions at or before the playhead, newest first', () => {
+    const actions = agentActions(
+      [],
+      [10, 20, 30].map((ts) => action(ts, 'sim')),
+      'sim',
+      5,
+    );
+    expect(actionsAt(actions, 20).map((a) => a.record.ts)).toEqual([20, 10]);
+    expect(actionsAt(actions, 5)).toEqual([]);
+    expect(actionsAt(actions, null).map((a) => a.record.ts)).toEqual([30, 20, 10]);
   });
 });
 

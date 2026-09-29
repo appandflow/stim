@@ -74,11 +74,6 @@ export function buildTimeline(
   return { start: shown[0]!.start, end: shown.at(-1)!.end, spans, length, pieces };
 }
 
-/** How much footage the timeline holds, gaps left out. */
-export function recordedLength(timeline: Timeline): number {
-  return timeline.pieces.reduce((sum, piece) => sum + (piece.kind === 'span' ? piece.end - piece.start : 0), 0);
-}
-
 /** Where `at` sits on the track, 0 to 1; a time before the oldest footage sits where the footage starts. */
 export function positionOf(timeline: Timeline, at: number): number {
   for (const piece of timeline.pieces) {
@@ -109,6 +104,30 @@ export function markerSeek(timeline: Timeline, marker: ReplayMarker, leadMs = 15
   const before = marker.at - leadMs;
   const piece = timeline.pieces.find((candidate) => candidate.kind === 'span' && marker.at <= candidate.end);
   return piece ? Math.max(before, piece.start) : Math.max(before, timeline.start);
+}
+
+/**
+ * Where to step from to the next or previous agent action: the action last stepped to, until playback carries the
+ * playhead past it. `markerSeek` lands before the action, or after it when clamped to footage, and the playhead
+ * updates only when the seek answers, so while paused the playhead alone would step to the same action again.
+ */
+export function stepFrom(at: number, stepped: number | null, playing: boolean): number {
+  return stepped !== null && (!playing || at <= stepped) ? stepped : at;
+}
+
+/** The first agent action after `from`, or with `direction` -1 the last one before it; null when there is none. */
+export function adjacentAction(markers: readonly ReplayMarker[], from: number, direction: 1 | -1): ReplayMarker | null {
+  const actions = markers.filter((marker) => marker.kind === 'action');
+  if (direction > 0) {
+    return actions.reduce<ReplayMarker | null>(
+      (best, marker) => (marker.at > from && (!best || marker.at < best.at) ? marker : best),
+      null,
+    );
+  }
+  return actions.reduce<ReplayMarker | null>(
+    (best, marker) => (marker.at < from && (!best || marker.at > best.at) ? marker : best),
+    null,
+  );
 }
 
 /** "2h", "14m", "40s": how long a gap or an age is, in its largest unit. */

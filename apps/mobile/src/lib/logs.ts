@@ -443,6 +443,11 @@ export function agentActions(
   return added.concat(existing).slice(0, max);
 }
 
+/** The actions at or before `at`, a Mac capture time, newest first; every action while `at` is null. */
+export function actionsAt(actions: readonly AgentAction[], at: number | null): AgentAction[] {
+  return at === null ? [...actions] : actions.filter((action) => action.record.ts <= at);
+}
+
 export type AgentFilter = { kind: 'all' } | { kind: 'failed' } | { kind: 'command'; command: string };
 
 export interface AgentFilterOption {

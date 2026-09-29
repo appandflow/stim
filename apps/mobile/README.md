@@ -271,22 +271,31 @@ ends a session because the Mac took control away.
 
 ### Replay
 
-When the Mac has recorded the device, the viewer shows a replay bar under the
-screen. The Mac records while an agent or automation tool drives the device, or
-while a phone watches it, and keeps the last 15 minutes of footage (see
-`packages/server/README.md`, Recording).
+When the Mac has recorded the device, the viewer shows replay controls over
+the bottom of the screen. The Mac records while an agent or automation tool
+drives the device, or while a phone watches it, and keeps the last 15 minutes
+of footage (see `packages/server/README.md`, Recording).
 
-- **The bar.** It has **Live**, play or pause, 1x or 2x (shown in replay
-  only, in a place kept while live), and the time of the frame shown. The scrubber is linear in time: a second of footage or of a
-  short stop takes the same width anywhere on it. A stop longer than a minute
-  takes a minute's width and is dashed. Each stop is labeled "stopped 24s"
-  under it; a label that would overlap a longer stop's is left out. The
-  track's length is rounded up to a whole minute, with the spare room before
-  the oldest footage, so it grows at most once a minute; it shrinks only when
-  the footage is two minutes shorter, so pruning at the 15 minute cap does not
-  rescale it. While the Mac records the device
-  runs, its right edge is the Mac's time now and the footage slides left as
-  time passes; a finger on the track holds it still.
+- **The controls.** They fade out 4 seconds after the last touch, and a tap on
+  the screen shows or hides them. While you control the device, taps go to it,
+  so taking control hides them and a **Replay** button in the toolbar shows
+  them. They stay while a finger is on the scrubber, while replay is paused,
+  and, unless you control the device, while a screen reader runs. A double tap
+  zooms without showing them.
+  Reduce Motion shows and hides them without a fade. A device that is not
+  streaming shows them under the screen instead.
+- **The bar.** It has **Live**, play or pause, and, in replay only, previous
+  and next agent action and 1x or 2x, which keep their places while live. In
+  replay, a line under the buttons shows the time of the frame shown. The
+  scrubber is linear in time: a second of footage or of a short stop takes the
+  same width anywhere on it. A stop longer than a minute takes a minute's width
+  and is dashed. Each stop is labeled "stopped 24s" under it; a label that
+  would overlap a longer stop's is left out. The track's length is rounded up
+  to a whole minute, with the spare room before the oldest footage, so it grows
+  at most once a minute; it shrinks only when the footage is two minutes
+  shorter, so pruning at the 15 minute cap does not rescale it. While the Mac
+  records the device, the track's right edge is the Mac's time now and the
+  footage slides left as time passes; a finger on the track holds it still.
 - **Markers.** Agent actions sit on the scrubber in the accent color, errors
   in orange and crashes in red.
 - **Moving through it.**
@@ -300,7 +309,14 @@ while a phone watches it, and keeps the last 15 minutes of footage (see
   - While live, the button shows pause: pressing it freezes on the newest
     frame, in replay. In replay, play plays on at the chosen speed and pauses
     at the newest frame.
+  - Previous and next agent action land 1.5 seconds before the agent action
+    before or after the frame shown, and keep playing or paused. Past the last
+    action, next returns to live while the device runs.
   - **Live** returns to the live screen.
+- **Agent actions.** Under the screen, in portrait, on a simulator, emulator
+  or Chrome page, the device's last three agent actions
+  show with their age, a failed one in red; in replay, the last three at or
+  before the frame shown. Tapping them opens the device's agent actions.
 - **While not live.** Control and **Take over** are disabled, and turning
   Control on is refused until Live.
 - **Stopped devices.** A device that is not running can still be replayed:
