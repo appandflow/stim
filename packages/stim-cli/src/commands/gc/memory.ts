@@ -471,8 +471,14 @@ export function reclaimableBytes(report: MemoryReport, kind?: MemoryCacheKind): 
 
 type BoundWatchman = (args: string[]) => Promise<unknown>;
 
-const boundWatchman: BoundWatchman = async (args) =>
-  JSON.parse(await getExecutor().runFileAsync('watchman', ['--no-spawn', ...args], { timeoutMs: WATCHMAN_TIMEOUT_MS }));
+const boundWatchman: BoundWatchman = async (args) => {
+  const answer: unknown = JSON.parse(
+    await getExecutor().runFileAsync('watchman', ['--no-spawn', ...args], { timeoutMs: WATCHMAN_TIMEOUT_MS }),
+  );
+  const error = (answer as { error?: unknown } | null)?.error;
+  if (error !== undefined) throw new Error(String(error));
+  return answer;
+};
 
 async function quietly<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
@@ -788,7 +794,7 @@ export function memoryLines(
 
 function sameProcess(entry: MemoryProcess, rows: ReadonlyMap<number, HostProcess> | null): boolean {
   const row = rows?.get(entry.pid);
-  return Boolean(row && row.startedAt === entry.startedAt);
+  return Boolean(row && entry.startedAt !== null && row.startedAt === entry.startedAt);
 }
 
 function signal(pid: number): string | null {
@@ -906,7 +912,7 @@ async function stopGradle(
       continue;
     }
     let states = await gradleStatus(command, home);
-    let current = rows;
+    let current = hostRows();
     const listed = states instanceof Map ? [...states].filter(([, state]) => state !== 'stopped') : [];
     const whole =
       distribution !== null &&
