@@ -1541,6 +1541,16 @@ function once<T>(read: () => T): () => T {
 }
 
 /**
+ * Floor for any single `listAvds`, `adb devices`, or `emu avd name` call made through
+ * {@link ownedAvdSerialResolver}, even once the resolver's shared budget is nearly spent. An earlier
+ * call that burns most of the budget (a host stall, a slow `adb devices`) must not starve a later
+ * call down to an unusable timeout: that clamped a running emulator's console query to ~1ms and made
+ * `status` report it as not running. The floor trades a loosely-kept overall budget (worst case, one
+ * floor per candidate emulator) for correct detection under load.
+ */
+const MIN_LOOKUP_TIMEOUT_MS = 1000;
+
+/**
  * `resolveOwnedAvdSerial` for several AVDs against one reading of the AVD list, `adb devices`, and
  * each emulator's AVD name. The timeout budget starts when the resolver is created.
  */
@@ -1549,7 +1559,8 @@ export function ownedAvdSerialResolver({ timeoutMs }: { timeoutMs?: number } = {
 ) => ResolvedAvdSerial {
   const started = Date.now();
   const remaining = () => ({
-    timeoutMs: timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - started)),
+    timeoutMs:
+      timeoutMs === undefined ? undefined : Math.max(MIN_LOOKUP_TIMEOUT_MS, timeoutMs - (Date.now() - started)),
   });
   const avds = once(() => listAvds(remaining()));
   const adb = once(() => listAdbDevices(remaining()));
