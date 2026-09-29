@@ -695,7 +695,7 @@ describe('clearIosAppData', () => {
   });
 
   test('treats a missing defaults domain as nothing to delete', () => {
-    exec('Domain com.example.app does not exist');
+    exec("Error: Domain 'com.example.app' not found.\nDefaults have not been changed.");
     clearIosAppData('U1', 'com.example.app');
     expect(readdirSync(join(container, 'Documents'))).toEqual([]);
   });

@@ -520,7 +520,7 @@ export function clearIosAppData(udid: string, bundleId: string): void {
   try {
     exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
   } catch (error) {
-    if (!/Domain .* does not exist/.test(String((error as Error)?.message))) throw error;
+    if (!/Domain .* not found/.test(String((error as Error)?.message))) throw error;
   }
   const output = exec.runFile('xcrun', ['simctl', 'get_app_container', udid, bundleId, 'data'], SIMCTL_OPTIONS);
   const container = parseAppContainerPath(output);
