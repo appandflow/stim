@@ -27,6 +27,8 @@ import {
   resolveCacheProviderConfig,
   resolveSettings,
   settingShapeErrors,
+  settingOriginScope,
+  settingsLayers,
   tunnelModeSetting,
   metroIdleStopMinutesSetting,
   deviceIdleShutdownMinutesSetting,
@@ -859,11 +861,33 @@ test('machine-only settings never leak into resolveSettings or read as unknown',
   expect(unknownSettingKeys(resolved)).toEqual([]);
 });
 
+test('an unknown or malformed key under machine optimizations still reaches unknownSettingKeys and settingShapeErrors', () => {
+  saveConfig({
+    version: 2,
+    projects: {},
+    repos: {},
+    optimizations: { buildCache: true, typoKey: false, android: 'not an object' },
+  });
+  const resolved = resolveSettings({});
+  expect(unknownSettingKeys(resolved)).toEqual(['optimizations.typoKey']);
+  expect(settingShapeErrors(resolved)).toEqual([
+    'Invalid optimizations.android setting "not an object". Expected an object.',
+  ]);
+});
+
 test('a machine ios.deviceType and ios.runtime apply, and a project layer overrides them', () => {
   saveConfig({ version: 2, projects: {}, repos: {}, ios: { deviceType: 'iPhone 17', runtime: '27.0' } });
   expect(resolveSettings({})).toEqual({ ios: { deviceType: 'iPhone 17', runtime: '27.0' } });
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { runtime: '18.5' } }));
   expect(resolveSettings({ repoRoot: tmpHome }).ios).toEqual({ deviceType: 'iPhone 17', runtime: '18.5' });
+});
+
+test('settingOriginScope names the machine layer, and a project layer over it', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, ios: { runtime: '27.0' } });
+  expect(settingOriginScope(settingsLayers({}), 'ios.runtime')).toBe('machine');
+  expect(settingOriginScope(settingsLayers({}), 'ios.deviceType')).toBe(null);
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { runtime: '18.5' } }));
+  expect(settingOriginScope(settingsLayers({ repoRoot: tmpHome }), 'ios.runtime')).toBe('committed');
 });
 
 test('devices.idleShutdownMinutes is off by default, set per machine, and a project layer overrides it', () => {

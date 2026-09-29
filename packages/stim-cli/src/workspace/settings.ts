@@ -458,11 +458,17 @@ function setSettingValueAt(settings: SettingsObject, path: string, value: unknow
 }
 
 const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
-  (setting) => isLayeredSetting(setting) && setting.scopes.includes('machine'),
+  (setting) =>
+    isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
 );
 
 function machineLayerSettings(machine: unknown): SettingsObject | null {
   const settings: SettingsObject = {};
+  // Copied whole, not key by key, so an unknown or malformed key under machine
+  // optimizations still reaches settingShapeErrors and doctor's inert-key check
+  // instead of silently disappearing.
+  const optimizations = settingValueAt(machine, 'optimizations');
+  if (optimizations !== undefined) settings.optimizations = optimizations;
   for (const setting of MACHINE_READABLE_SETTINGS) {
     const value = settingValueAt(machine, setting.key);
     if (value !== undefined) setSettingValueAt(settings, setting.key, value);
@@ -523,11 +529,7 @@ export function settingOrigin(layers: SettingsLayer[], dottedKey: string): { fil
   return null;
 }
 
-/**
- * The layer a resolved setting's value came from -- flags are not layers, so
- * this only answers for a value read from settingsLayers(). null means no
- * layer set the key (the caller is using a default or a flag).
- */
+/** The layer a resolved setting's value came from, or null when no layer set it (a default or a flag). */
 export function settingOriginScope(layers: SettingsLayer[], dottedKey: string): SettingScope | null {
   for (const layer of layers) {
     if (settingValueAt(layer.settings, dottedKey) !== undefined) return layer.scope;

@@ -165,11 +165,7 @@ function installedNames(names: Array<string | null | undefined>): string {
   return unique.length > 0 ? unique.join(', ') : 'none';
 }
 
-/**
- * Appends which settings layer supplied an unresolved device selector, so the
- * user knows where to fix it. A value from a flag (not a settings layer) or
- * with no known origin is left unchanged.
- */
+/** Appends which settings layer supplied an unresolved device selector, so the user knows where to fix it. */
 export function layerNote(
   refusal: UnknownDeviceNameRefusal,
   key: string,
