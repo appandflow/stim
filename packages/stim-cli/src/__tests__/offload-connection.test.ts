@@ -49,6 +49,7 @@ async function fakeMachine(
   machine: string,
   offer: BuildOffer,
   start: { error: { code: string; message: string } } | { result: { job: string } },
+  { dropOnSync = false }: { dropOnSync?: boolean } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -65,7 +66,7 @@ async function fakeMachine(
       const reply = (body: object) => socket.send(JSON.stringify({ id, ...body }));
       if (method === 'hello') return reply({ result: { capabilities: ['build'] } });
       if (method === 'build.offer') return reply({ result: offer });
-      if (method === 'build.sync') return reply({ result: { missing: [] } });
+      if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
       if (method === 'build.start') {
         reply(start);
         if ('result' in start) {
@@ -168,7 +169,7 @@ describe('offloadBuild', () => {
     });
 
     expect(placements).toEqual([
-      'placement: next (busy refused the build: start: build-busy: This Mac declines the build: all 1 build slots busy.)',
+      'placement: next (busy could not take the build: start: build-busy: This Mac declines the build: all 1 build slots busy.)',
     ]);
     expect(outcome).toEqual({ ok: false, machine: 'next', reason: 'worker-failed: xcodebuild failed' });
     expect(busy.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
@@ -208,5 +209,44 @@ describe('offloadBuild', () => {
       note: () => {},
     });
     expect(outcome).toEqual({ ok: false, machine: 'second', reason: 'start: build-busy: busy' });
+  });
+
+  it('moves past a machine whose connection dies during the sync', async () => {
+    const busy = await fakeMachine('busy', offer(0.1), { error: { code: 'build-busy', message: 'busy' } });
+    const dead = await fakeMachine('dead', offer(0.3), { result: { job: 'j0' } }, { dropOnSync: true });
+    const next = await fakeMachine('next', offer(0.5), { result: { job: 'j1' } });
+    machines.push(busy, dead, next);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: TARGET,
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('busy'), credential('dead'), credential('next')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const placements: string[] = [];
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: 'f00d',
+      request: {
+        platform: 'ios',
+        runtime: 'iOS-27-0',
+        configuration: null,
+        scheme: null,
+        isExpo: false,
+        optimizations: null,
+      },
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: (line) => placements.push(line),
+    });
+    expect(outcome).toEqual({ ok: false, machine: 'next', reason: 'worker-failed: xcodebuild failed' });
+    expect(placements).toEqual([
+      'placement: dead (busy could not take the build: start: build-busy: busy)',
+      expect.stringMatching(/^placement: next \(dead could not take the build: sync: /),
+    ]);
   });
 });

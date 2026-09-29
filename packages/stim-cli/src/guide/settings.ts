@@ -549,8 +549,8 @@ An offloaded build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
 build and CPU match this Mac exactly, with enough disk, that does not decline,
 preferring the one that already holds this repository, then the least loaded,
-and moves to the next one in that order when a machine refuses to start the
-build after its offer.
+and moves to the next one in that order when a machine that offered fails the
+sync or refuses to start the build.
 For iOS the machine's Xcode, simulator SDK and CocoaPods must match, and it
 needs an iPhone simulator on the target runtime. For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and

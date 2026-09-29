@@ -412,7 +412,7 @@ interface OfferingMachine {
 
 /**
  * The machine a build goes to, and the other machines that can take it, best first, whose connections stay open
- * until one of them starts the build. `offloadBuild` moves to the next one when a machine refuses `build.start`.
+ * until one of them starts the build. When a machine refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
   target: BuildTarget;
@@ -618,9 +618,20 @@ export async function offloadBuild({
     let syncMs = 0;
     let uploadedBytes = 0;
     let workerStarted = 0;
+    const moveOn = (why: string): boolean => {
+      const next = choice.runnersUp.shift();
+      if (!next) return false;
+      note(`placement: ${next.machine} (${choice.machine} could not take the build: ${why})`);
+      choice.connection.close();
+      Object.assign(choice, next);
+      return true;
+    };
     for (;;) {
       const synced = await syncSource(choice.connection, identity, onEnter);
-      if ('failure' in synced) return fail(synced.failure);
+      if ('failure' in synced) {
+        if (moveOn(synced.failure)) continue;
+        return fail(synced.failure);
+      }
       ({ syncMs, uploadedBytes } = synced);
       onPhase(
         'sync',
@@ -648,11 +659,7 @@ export async function offloadBuild({
         break;
       }
       const refused = `start: ${replyError(reply)}`;
-      const next = reply.error.code === 'bad-request' ? undefined : choice.runnersUp.shift();
-      if (!next) return fail(refused);
-      note(`placement: ${next.machine} (${choice.machine} refused the build: ${refused})`);
-      choice.connection.close();
-      Object.assign(choice, next);
+      if (reply.error.code === 'bad-request' || !moveOn(refused)) return fail(refused);
     }
     for (const each of choice.runnersUp.splice(0)) each.connection.close();
     const { connection, machine } = choice;

@@ -322,8 +322,9 @@ An offloaded build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build and
 CPU architecture match this Mac exactly, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
-least loaded. When a machine refuses to start the build after its offer, for
-example because it got busy meanwhile, Stim tries the next one in that order:
+least loaded. When a machine that offered fails the sync or refuses to start
+the build, for example because it got busy meanwhile, Stim tries the next one
+in that order:
 
 - For iOS, its Xcode, simulator SDK and CocoaPods must match, and it needs an
   iPhone simulator on the target runtime.
