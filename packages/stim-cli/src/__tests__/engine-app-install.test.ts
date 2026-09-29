@@ -3013,6 +3013,31 @@ describe('skipping an install the device already holds', () => {
     }
   });
 
+  test('an identical .app whose data adoption cleared gets its dev-menu preferences written again', () => {
+    const installed = localApp('installed.app', 'macho');
+    const appPath = localApp('built.app', 'macho');
+    const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath,
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+        schemeApprovals: [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+        ],
+        dataCleared: true,
+      },
+      { exec, now: () => 0 },
+    );
+    expect(result.skipped).toBe(true);
+    expect(exec.calls.filter((c) => c.includes('write')).map((c) => c[7])).toEqual([
+      'EXDevMenuShowsAtLaunch',
+      'EXDevMenuShowFloatingActionButton',
+    ]);
+  });
+
   test('a .app whose JS was swapped is installed: the container holds the other one', () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('js-swap.app', 'macho with this workspaces js');
