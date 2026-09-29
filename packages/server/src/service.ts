@@ -19,7 +19,7 @@ import { findTailscale, serveCommand, serveRoute, tailscaleStatus } from './tail
 const LAUNCHCTL_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 5_000;
 const HEALTH_WAIT_MS = 15_000;
-const UNLOAD_WAIT_MS = 15_000;
+const UNLOAD_WAIT_MS = 45_000;
 
 export class ServiceError extends Error {}
 
@@ -82,26 +82,42 @@ function stableNode(pathEnv: string | undefined): string {
 
 async function loaded(label: string): Promise<LaunchdJob | null> {
   const printed = await run('launchctl', ['print', `${domain()}/${label}`]);
-  return printed.ok ? parseLaunchctlPrint(printed.stdout) : null;
+  if (printed.ok) return parseLaunchctlPrint(printed.stdout);
+  if (/could not find service/i.test(printed.stderr)) return null;
+  throw new ServiceError(`launchctl print ${label} failed: ${printed.stderr.trim()}`);
 }
 
 async function readInstalled(label: string): Promise<InstalledService | null> {
   const path = plistPath(label);
   if (!existsSync(path)) return null;
   const converted = await run('plutil', ['-convert', 'json', '-o', '-', path]);
-  if (!converted.ok) throw new ServiceError(`Could not read ${path}: ${converted.stderr.trim()}`);
+  if (!converted.ok)
+    throw new ServiceError(
+      `Could not read ${path} to check that install wrote it: ${converted.stderr.trim()}. Fix or remove the file, then run this again.`,
+    );
   return parseInstalledPlist(JSON.parse(converted.stdout));
 }
 
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Boots the job out and waits until launchd forgets it and its process has exited, so the port is free. */
 async function unload(label: string): Promise<void> {
-  if (!(await loaded(label))) return;
-  await run('launchctl', ['bootout', `${domain()}/${label}`]);
+  const job = await loaded(label);
+  if (!job) return;
+  const stopped = await run('launchctl', ['bootout', `${domain()}/${label}`]);
   const deadline = Date.now() + UNLOAD_WAIT_MS;
   while (Date.now() < deadline) {
-    if (!(await loaded(label))) return;
+    if (!(await loaded(label)) && (job.pid === null || !alive(job.pid))) return;
     await sleep(250);
   }
-  throw new ServiceError(`launchd still lists ${label} after bootout; retry in a moment.`);
+  throw new ServiceError(`${label} did not stop within ${UNLOAD_WAIT_MS / 1000} s. ${stopped.stderr.trim()}`.trim());
 }
 
 interface Health {
@@ -144,12 +160,31 @@ async function prepareRoute(
   return { record: plan.record, create: plan.create ? serveCommand(plan.record.port, port).split(' ').slice(1) : null };
 }
 
+async function requireManaged(label: string): Promise<InstalledService | null> {
+  const installed = await readInstalled(label);
+  if (installed && !installed.managed) {
+    throw new ServiceError(
+      `${plistPath(label)} was not written by \`stim-server service install\`; not touching it. Use another --label.`,
+    );
+  }
+  if (!installed && (await loaded(label))) {
+    throw new ServiceError(
+      `launchd already runs a job named ${label} that install did not write. Use another --label.`,
+    );
+  }
+  return installed;
+}
+
 export async function installService(options: ServiceOptions): Promise<string[]> {
   requireMacOs();
   const script = realpathSync(process.argv[1] ?? '');
-  const previous = await readInstalled(options.label);
-  const notes: string[] = [];
-  let serve: ServeRecord | null = previous?.serve ?? null;
+  const previous = await requireManaged(options.label);
+  if (previous?.serve?.created && previous.port !== options.port) {
+    throw new ServiceError(
+      `${options.label} serves the route on https port ${previous.serve.port} for port ${previous.port}. Run \`service uninstall\` first to move it to port ${options.port}.`,
+    );
+  }
+  let serve: ServeRecord | null = previous?.port === options.port ? (previous.serve ?? null) : null;
   let createRoute: string[] | null = null;
   if (options.serve) {
     const prepared = await prepareRoute(options.port, previous);
@@ -172,28 +207,41 @@ export async function installService(options: ServiceOptions): Promise<string[]>
     serve,
   };
   const path = plistPath(options.label);
+  const tailscale = findTailscale(process.env) ?? 'tailscale';
+  const oldPlist = previous ? readFileSync(path, 'utf8') : null;
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(spec.logPath), { recursive: true });
-  const partial = `${path}.${process.pid}.tmp`;
-  writeFileSync(partial, renderPlist(spec), { mode: 0o644 });
-  renameSync(partial, path);
 
   await unload(options.label);
   let routeCreated = false;
-  if (createRoute) {
-    const made = await run(findTailscale(process.env) ?? 'tailscale', createRoute);
-    if (!made.ok) throw new ServiceError(`\`tailscale ${createRoute.join(' ')}\` failed: ${made.stderr.trim()}`);
-    routeCreated = true;
-  }
-  const started = await run('launchctl', ['bootstrap', domain(), path]);
-  if (!started.ok) {
-    if (routeCreated && serve)
-      await run(findTailscale(process.env) ?? 'tailscale', ['serve', `--https=${serve.port}`, 'off']);
-    throw new ServiceError(`launchctl bootstrap failed: ${started.stderr.trim()}`);
+  try {
+    if (await fetchHealth(options.port)) {
+      throw new ServiceError(
+        `port ${options.port} already answers as a stim-server that is not ${options.label} (Stim Desktop runs one on 7787). Pass --port to use another.`,
+      );
+    }
+    if (createRoute) {
+      const made = await run(tailscale, createRoute);
+      if (!made.ok) throw new ServiceError(`\`tailscale ${createRoute.join(' ')}\` failed: ${made.stderr.trim()}`);
+      routeCreated = true;
+    }
+    const partial = `${path}.${process.pid}.tmp`;
+    writeFileSync(partial, renderPlist(spec), { mode: 0o644 });
+    renameSync(partial, path);
+    const started = await run('launchctl', ['bootstrap', domain(), path]);
+    if (!started.ok) throw new ServiceError(`launchctl bootstrap failed: ${started.stderr.trim()}`);
+  } catch (error) {
+    if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
+    if (oldPlist === null) {
+      rmSync(path, { force: true });
+    } else {
+      writeFileSync(path, oldPlist, { mode: 0o644 });
+      await run('launchctl', ['bootstrap', domain(), path]);
+    }
+    throw error;
   }
 
-  notes.push(`Installed ${options.label}: ${path}`);
-  notes.push(`Log: ${spec.logPath}`);
+  const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
   const health = await waitForHealth(options.port);
   notes.push(
     health
@@ -331,33 +379,41 @@ export function statusLines(status: ServiceStatus): string[] {
 
 export async function uninstallService(label: string): Promise<string[]> {
   requireMacOs();
-  const installed = await readInstalled(label);
-  const job = await loaded(label);
-  if (!installed && !job) return [`${label} is not installed.`];
+  const installed = await requireManaged(label);
+  if (!installed) return [`${label} is not installed.`];
   const notes: string[] = [];
-  await unload(label);
-  if (installed?.serve?.created && installed.port !== null) {
-    const binary = findTailscale(process.env);
-    const status = tailscaleStatus(binary, process.env);
-    const route = status.state === 'running' ? await serveRoute(binary, process.env, installed.port, status.ips) : null;
-    if (binary && route?.state === 'routed' && route.port === installed.serve.port) {
-      const removed = await run(binary, ['serve', `--https=${installed.serve.port}`, 'off']);
-      notes.push(
-        removed.ok
-          ? `Removed the tailscale serve route on https port ${installed.serve.port}.`
-          : `Could not remove the tailscale serve route: ${removed.stderr.trim()}. Run \`tailscale serve --https=${installed.serve.port} off\`.`,
+  let routeOff: number | null = null;
+  const tailscale = findTailscale(process.env);
+  if (installed.serve?.created && installed.port !== null) {
+    const status = tailscaleStatus(tailscale, process.env);
+    if (!tailscale || status.state !== 'running') {
+      throw new ServiceError(
+        `${label} created the tailscale serve route on https port ${installed.serve.port}, and Tailscale is not answering, so uninstall cannot check it. Start Tailscale and run this again.`,
       );
+    }
+    const route = await serveRoute(tailscale, process.env, installed.port, status.ips);
+    if (route.state === 'routed' && route.port === installed.serve.port) {
+      routeOff = installed.serve.port;
     } else {
       notes.push(
         `The tailscale serve route on https port ${installed.serve.port} no longer points here; left as it is.`,
       );
     }
-  } else if (installed?.serve) {
+  } else if (installed.serve) {
     notes.push(`Kept the tailscale serve route on https port ${installed.serve.port}; install did not create it.`);
+  }
+  await unload(label);
+  if (routeOff && tailscale) {
+    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off']);
+    notes.push(
+      removed.ok
+        ? `Removed the tailscale serve route on https port ${routeOff}.`
+        : `Could not remove the tailscale serve route: ${removed.stderr.trim()}. Run \`tailscale serve --https=${routeOff} off\`.`,
+    );
   }
   rmSync(plistPath(label), { force: true });
   notes.unshift(
-    `Uninstalled ${label}. Pairings, stim home and the log ${installed?.logPath ?? logPath(label)} are kept.`,
+    `Uninstalled ${label}. Pairings, stim home and the log ${installed.logPath ?? logPath(label)} are kept.`,
   );
   return notes;
 }

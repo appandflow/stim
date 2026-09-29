@@ -270,13 +270,13 @@ async function main(): Promise<void> {
     fail(`--label and --serve apply only to \`service\`.\n${USAGE}`);
   }
   if (command === undefined) return serve(port, extraEnv, pathPrepend);
-  if (service) return runService(sub, arg, values, extraEnv, pathPrepend);
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
   if (values.build && !grant) fail(`--build applies only to \`devices grant\`.\n${USAGE}`);
   if (values.control && !grant && command !== 'pair') {
     fail(`--control applies only to \`pair\` and \`devices grant\`.\n${USAGE}`);
   }
+  if (service) return runService(sub, arg, values, extraEnv, pathPrepend);
   const scope = scopeFlag(values);
   if (command === 'pair' && sub === undefined) return pair(port, values.json === true, values.control === true);
   if (grant && arg !== undefined && rest.length === 0) {

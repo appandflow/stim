@@ -385,7 +385,7 @@ Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
 To keep stim-server running on the build machine across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
 that starts at login and restarts the server if it exits, and `--serve` adds the
-tailnet-only `tailscale serve` route on port 7443. `--path-prepend <dir>` and
+tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's login-shell environment would otherwise replace.
 `stim-server service status` reports the process, its health, the route and

@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import {
   applyServeEnvironment,
   parseEnvAssignment,
@@ -50,6 +50,7 @@ describe('service plist', () => {
           pathPrepend: SPEC.pathPrepend,
           stimHome: '/tmp/scratch home',
           logPath: SPEC.logPath,
+          managed: true,
           serve: { port: 7443, created: true },
         });
         const without = join(dir, 'plain.plist');
@@ -69,7 +70,7 @@ describe('serve environment', () => {
       ['LANG=en_US.UTF-8'],
       ['/a', '/b'],
     );
-    expect(result).toEqual({ PATH: '/a:/b:/usr/bin', LANG: 'en_US.UTF-8', KEEP: '1' });
+    expect(result).toEqual({ PATH: ['/a', '/b', '/usr/bin'].join(delimiter), LANG: 'en_US.UTF-8', KEEP: '1' });
   });
 
   it('keeps a value containing "="', () => {
@@ -81,6 +82,7 @@ describe('serve environment', () => {
     expect(validateServeEnvironment(['1BAD=x'], [])).toContain('KEY=VALUE');
     expect(validateServeEnvironment(['STIM_HOME=/x'], [])).toContain('STIM_HOME');
     expect(validateServeEnvironment([], ['relative/dir'])).toContain('absolute');
+    expect(validateServeEnvironment(['A=b\u0001'], [])).toContain('control');
     expect(validateServeEnvironment(['A=b'], ['/abs'])).toBeNull();
   });
 });

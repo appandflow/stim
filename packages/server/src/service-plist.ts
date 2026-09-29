@@ -48,8 +48,17 @@ export function parseEnvAssignment(entry: string): { key: string; value: string 
   return { key, value: entry.slice(equals + 1) };
 }
 
+const illegal = (value: string) =>
+  [...value].some((char) => {
+    const code = char.codePointAt(0)!;
+    return code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d;
+  });
+
 /** Returns the first problem in the `--env` and `--path-prepend` values, or null when both are usable. */
 export function validateServeEnvironment(env: string[], pathPrepend: string[]): string | null {
+  if ([...env, ...pathPrepend].some(illegal)) {
+    return '--env and --path-prepend values cannot contain control characters.';
+  }
   for (const entry of env) {
     const parsed = parseEnvAssignment(entry);
     if (typeof parsed === 'string') return parsed;
@@ -99,7 +108,7 @@ function escapeXml(value: string): string {
 const string = (value: string, indent: string) => `${indent}<string>${escapeXml(value)}</string>`;
 const key = (name: string, indent: string) => `${indent}<key>${name}</key>`;
 
-/** The LaunchAgent plist for `spec`. `StimService` is inert to launchd; `service status` and `uninstall` read it back. */
+/** The LaunchAgent plist for `spec`. `StimService` is inert to launchd: it marks the job as one `install` wrote, so `install` and `uninstall` never touch another agent, and records the serve route. */
 export function renderPlist(spec: ServiceSpec): string {
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -135,17 +144,16 @@ export function renderPlist(spec: ServiceSpec): string {
     key('StandardErrorPath', '\t'),
     string(spec.logPath, '\t'),
   );
+  lines.push(key('StimService', '\t'), '\t<dict>', key('Managed', '\t\t'), '\t\t<true/>');
   if (spec.serve) {
     lines.push(
-      key('StimService', '\t'),
-      '\t<dict>',
       key('ServePort', '\t\t'),
       `\t\t<integer>${spec.serve.port}</integer>`,
       key('ServeCreated', '\t\t'),
       spec.serve.created ? '\t\t<true/>' : '\t\t<false/>',
-      '\t</dict>',
     );
   }
+  lines.push('\t</dict>');
   lines.push('</dict>', '</plist>', '');
   return lines.join('\n');
 }
@@ -159,6 +167,8 @@ export interface InstalledService {
   pathPrepend: string[];
   stimHome: string | null;
   logPath: string | null;
+  /** Whether `install` wrote this plist. */
+  managed: boolean;
   serve: ServeRecord | null;
 }
 
@@ -193,6 +203,7 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     pathPrepend,
     stimHome: typeof environment.STIM_HOME === 'string' ? environment.STIM_HOME : null,
     logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
+    managed: meta.Managed === true,
     serve:
       typeof servePort === 'number' && Number.isInteger(servePort)
         ? { port: servePort, created: meta.ServeCreated === true }

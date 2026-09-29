@@ -189,7 +189,11 @@ absolute `node` and `stim-server.mjs` of the install that ran the command, on
 `STIM_HOME` or `SHELL` is set in the installing shell, the job carries it. It
 takes the `node` from PATH when that path resolves to the running binary, so a
 Homebrew Node upgrade does not break the plist. Running `install` again
-rewrites the plist and restarts the job. It never touches pairings, anything
+rewrites the plist and restarts the job; if the new job cannot start, it puts
+the old plist and job back. `install` and `uninstall` act only on a plist
+that `install` wrote, and refuse a port that another stim-server (Stim
+Desktop's, for example) already answers on. Install from a permanent
+installation, not from an `npx` cache, because the plist stores its paths. It never touches pairings, anything
 under `$STIM_HOME/server` or settings. Start-up reads the login shell's
 environment, which can take a minute, so `install` waits up to 15 seconds for
 `/health` and otherwise tells you to run `status`.
@@ -203,7 +207,9 @@ install, or changing its Node, needs `install` again.
 reaches the server, and it never enables Funnel. When a route already reaches
 the port, `install` records that it did not create it. `uninstall` removes a
 route only when `install` created it and it still points at this port. Without
-`--serve`, `install` prints the command to run.
+`--serve`, `install` prints the command to run. A route that exists only in a
+foreground `tailscale serve` session counts as present. To move a service that
+created a route to another `--port`, run `uninstall` first.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` pin variables and PATH entries for
 the server. stim-server replaces its environment with the login shell's at
