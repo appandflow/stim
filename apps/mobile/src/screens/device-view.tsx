@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -33,6 +34,7 @@ import * as Clipboard from 'expo-clipboard';
 import { NavigationBar } from 'expo-navigation-bar';
 
 import { Button } from '@/components/button';
+import { AgentFeed } from '@/components/agent-feed';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
@@ -95,6 +97,7 @@ export function DeviceView({
   slot: string;
   physical?: boolean;
 }) {
+  const router = useRouter();
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
   const landscape = window.width > window.height;
@@ -353,6 +356,21 @@ export function DeviceView({
         onScrubbing={setScrubbing}
       />
     ) : null;
+  const agentFeed =
+    !landscape && !physical && device?.id && streams ? (
+      <AgentFeed
+        workspace={workspace}
+        slot={slot}
+        deviceId={device.id}
+        at={stream.replay ? (stream.replay.at ?? undefined) : null}
+        onOpen={() =>
+          router.push({
+            pathname: '/mac/[id]/agent',
+            params: { id: mac?.id ?? '', path: workspace, platform, slot, device: device.id ?? '' },
+          })
+        }
+      />
+    ) : null;
   const overlayControls = replayBar !== null && streams && rest !== null && rootHeight > 0;
   const buttons =
     controlling || readOnly ? (
@@ -474,6 +492,7 @@ export function DeviceView({
                   )}
                 </View>
                 {overlayControls ? null : replayBar}
+                {agentFeed}
               </View>
             </View>
           </Animated.View>
