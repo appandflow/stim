@@ -14,7 +14,7 @@
     "apps/mobile": {
       "entry": ["plugins/*.js", "scripts/*.mjs", "mock-server/*.mjs", "fingerprint.config.js"],
       "ignoreBinaries": ["stim-server"],
-      "ignoreDependencies": ["expo-screen-orientation"],
+      "ignoreDependencies": ["expo-screen-orientation", "@expo/fingerprint"],
       "ignoreExportsUsedInFile": {
         "interface": true,
         "type": true
