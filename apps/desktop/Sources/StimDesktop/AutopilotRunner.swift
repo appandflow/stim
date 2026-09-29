@@ -240,8 +240,11 @@ final class AutopilotRunner: ObservableObject {
       let gh = GitHubCLI(environment: cli.environment)
       var finished: [String: Set<String>] = [:]
       for repository in repositories {
-        if let branches = gh.run(PullRequestCleanup.listArguments, cwd: repository).flatMap(PullRequestCleanup.branches) {
-          finished[repository] = branches
+        if let data = gh.run(PullRequestCleanup.listArguments, cwd: repository) {
+          let ownRepos = localRemoteRepos(at: repository)
+          if let branches = PullRequestCleanup.branches(data, ownRepos: ownRepos) {
+            finished[repository] = branches
+          }
         }
       }
       let problem = PullRequestCleanup.problem(
