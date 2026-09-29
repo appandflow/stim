@@ -1313,10 +1313,19 @@ function scanAvdEmulatorProcesses(
   return pids;
 }
 
+// A POSIX zombie keeps its pid, so kill(pid, 0) succeeds, until its parent reaps it. An emulator this
+// Stim process booted stays a zombie after it exits while this process runs synchronous code.
+function emulatorProcessRunning(pid: number): boolean {
+  if (!pidExists(pid)) return false;
+  if (process.platform === 'win32') return true;
+  const stat = getExecutor().runFileQuiet('ps', ['-o', 'stat=', '-p', String(pid)], { timeoutMs: 5000 });
+  return stat === null || !stat.trim().startsWith('Z');
+}
+
 export function assertOwnedAvdStopped(
   avdName: string,
   {
-    processAlive = pidExists,
+    processAlive = emulatorProcessRunning,
     listProcesses = listAvdEmulatorProcesses,
     ...resolveOptions
   }: {
