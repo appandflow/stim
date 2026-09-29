@@ -166,8 +166,8 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
 
   /// The phases the run entered, in build order, as `compile 1m 58s · install 0m 3s`.
   public var phaseLine: String? {
-    let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "install", "launch"]
-    let stoppedIn = result == "interrupted" ? order.last { phases[$0] != nil } : nil
+    let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
+    let stoppedIn = result == "interrupted" ? order.last { phases[$0] == 0 } ?? order.last { phases[$0] != nil } : nil
     let parts = order.compactMap { phase in
       phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(formatDuration(ms: ms))" }
     }
@@ -237,7 +237,7 @@ extension Build {
   /// Before prebuild, pods, compile or install, the CLI reports the outcome of the project's previous run.
   public var outcomeLabel: String? {
     guard let outcome else { return nil }
-    let settled = !["prepare", "cache-lookup", "wait"].contains(phase)
+    let settled = !["prepare", "cache-lookup", "wait", "device"].contains(phase)
     switch (outcome, settled) {
     case ("hit", true): return "Cache hit"
     case ("hit", false): return "Likely cache hit"

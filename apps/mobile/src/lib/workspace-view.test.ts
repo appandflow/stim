@@ -390,6 +390,24 @@ describe('phaseSteps', () => {
     ]);
   });
 
+  it('gives the device wait its own bar segment between the build and install', () => {
+    const hit: BuildHistoryEntry = {
+      ...history[0]!,
+      cacheHit: 'local',
+      phases: { prepare: 1000, device: 500, 'cache-lookup': 3000, install: 2000, launch: 1000 },
+    };
+    const steps = phaseSteps(
+      build({ outcome: 'hit', phase: 'device', phaseStartedAt: iso(0), expectedPhaseMs: null }),
+      [hit],
+      NOW,
+    );
+    expect(barSteps(steps).map((s) => [s.phase, s.state])).toEqual([
+      ['prepare', 'done'],
+      ['device', 'current'],
+      ['install', 'pending'],
+    ]);
+  });
+
   it('names phases only when there is more than one, so a first build in a fresh workspace does not repeat its stage', () => {
     const fresh = phaseSteps(build({ phase: 'prepare', phaseStartedAt: iso(0) }), [], NOW);
     expect(fresh.map((s) => s.phase)).toEqual(['prepare']);

@@ -205,6 +205,21 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(prepare.fraction == 2000.0 / 3000.0)
   }
 
+  @Test func givesTheDeviceWaitItsOwnBarSegment() throws {
+    let withDevice = try JSONDecoder().decode(
+      [BuildHistoryEntry].self,
+      from: Data(
+        ("[" + String(lastBuild(cacheHit: "false").dropLast())
+          + #","result":"succeeded","slot":"default","phases":{"prepare":2000,"device":500,"compile":94000,"install":8000}}]"#)
+          .utf8))
+    var waiting = try build()
+    waiting.phase = "device"
+    waiting.phaseStartedAt = iso(0)
+    let bar = barSteps(waiting.phaseSteps(history: withDevice, now: now))
+    #expect(bar.map(\.phase) == ["prepare", "compile", "device", "install"])
+    #expect(bar.map(\.state) == [.done, .done, .current, .pending])
+  }
+
   @Test func namesPhasesOnlyWhenThereIsMoreThanOne() throws {
     var fresh = try build()
     fresh.phase = "prepare"

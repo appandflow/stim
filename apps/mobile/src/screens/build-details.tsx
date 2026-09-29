@@ -474,7 +474,10 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
 
 function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: string }) {
   const entered = PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined);
-  const stoppedIn = entry.result === 'interrupted' ? entered.at(-1) : undefined;
+  const stoppedIn =
+    entry.result === 'interrupted'
+      ? (entered.findLast((phase) => entry.phases[phase] === 0) ?? entered.at(-1))
+      : undefined;
   const phases = entered
     .map((phase) =>
       phase === stoppedIn ? `stopped in ${phase}` : `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`,

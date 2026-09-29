@@ -259,7 +259,9 @@ describe('build history', () => {
     let now = T0;
     const first = takeClaim();
     const killed = startBuildProgress({ root, platform: 'android', slot: 'default', claim: first, now: () => now });
-    now += 4_000;
+    now += 1_000;
+    killed.step('device');
+    now += 3_000;
     killed.step('compile');
     releaseClaim(first);
 
@@ -275,7 +277,7 @@ describe('build history', () => {
         startedAt: '2026-09-24T10:00:00.000Z',
         durationMs: null,
         finishedAt: null,
-        phases: { prepare: 4_000, compile: 0 },
+        phases: { prepare: 1_000, device: 3_000, compile: 0 },
       }),
     ]);
   });
@@ -385,5 +387,30 @@ describe('estimates', () => {
     expect(buildStatusLine(report, T0 + 300_000)).toBe(
       'build: ios compile, 5m00s elapsed (usually ~4m10s, median of 4 cold runs)',
     );
+  });
+  test('a live record waiting on its device after the cache lookup is a hit, with no device estimate from older runs', () => {
+    const at = (ms: number) => new Date(T0 + ms).toISOString();
+    const record: ActiveBuildRecord = {
+      platform: 'ios',
+      slot: 'default',
+      startedAt: at(0),
+      phase: 'device',
+      phaseStartedAt: at(8_000),
+      phases: [
+        { phase: 'prepare', startedAt: at(0) },
+        { phase: 'device', startedAt: at(1_000) },
+        { phase: 'cache-lookup', startedAt: at(2_000) },
+        { phase: 'device', startedAt: at(8_000) },
+      ],
+      claim: { root: '/x', path: '/x/c', claimId: 'c', pid: 1 },
+    };
+    const coldLatest: RunHistory = { ios: { ...history.ios, cold: [histSample(100_000, {}, T0 + 2)] } };
+    expect(buildReport(record, { state: 'running', history: coldLatest })).toMatchObject({
+      outcome: 'hit',
+      expectedMs: 20_000,
+      expectedPhaseMs: null,
+    });
+    const beforeLookup = { ...record, phases: record.phases.slice(0, 2) };
+    expect(buildReport(beforeLookup, { state: 'running', history: coldLatest })).toMatchObject({ outcome: 'cold' });
   });
 });

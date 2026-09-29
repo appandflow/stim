@@ -204,8 +204,9 @@ doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
 
 A running build's progress bar carries its cache outcome: "Cache hit" or "Cold
 build" once the run has reached install or prebuild, pods or compile, and
-"Likely cache hit" or "Likely cold" before that, when `stim status` reports the
-outcome of the project's previous run. Its tooltip names how many runs the time
+"Likely cache hit" or "Likely cold" before that and while it waits for its
+device, when `stim status` may report the outcome of the project's previous
+run. Its tooltip names how many runs the time
 estimate comes from. The workspace inspector's **Build** section shows each
 platform's last build from `lastBuilds` (local cache, remote cache, compiled,
 or failed, with its duration and age). A compiled build shows why it missed

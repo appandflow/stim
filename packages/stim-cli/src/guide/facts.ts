@@ -1088,14 +1088,22 @@ RULES
                    record; "unknown" when the claim set cannot be resolved.
                    Never treat a stale record as a build in progress.
   phase            prepare | cache-lookup | wait | prebuild | pods |
-                   compile | install | launch. prepare covers settings,
-                   Metro and the owned device; wait is waiting on another
-                   workspace's build of the same fingerprint; install
-                   includes waiting for the device to boot.
+                   compile | device | install | launch. prepare covers
+                   settings and Metro; wait is waiting on another
+                   workspace's build of the same fingerprint; device covers
+                   creating or adopting the owned simulator or emulator
+                   before the cache lookup, and, once the app is ready,
+                   waiting for the device: its boot, adoption cleanup,
+                   or a physical device's lease and connection check. A
+                   boot that finishes during the build adds no device
+                   time. A run can enter device twice and records the
+                   sum; an --eas-profile run has no cache lookup, so its
+                   outcome in device is the project's most recent one.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" once the run reached prebuild, pods or compile,
-                   "hit" once it reached install without them. Before
-                   that, the outcome of this project's most recent run.
+                   "hit" once it reached device after the cache lookup,
+                   or install, without them. Before that, the outcome of
+                   this project's most recent run.
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
                    no history
@@ -1184,7 +1192,8 @@ RULES
   cacheKey       the cache key the run looked up or stored under
   phases         milliseconds spent in each phase the run entered, among
                  prepare, cache-lookup, wait, prebuild, pods, compile,
-                 install and launch
+                 device, install and launch; runs recorded before device
+                 existed count their device time in prepare and install
 
   Only runs that record a last build are listed: a run that stops before
   looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.

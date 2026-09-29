@@ -381,7 +381,7 @@ public struct PhaseStep: Equatable, Sendable {
   public var expectedMs: Double?
   public var fraction: Double?
 
-  public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "install", "launch"]
+  public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
 
   public static func name(_ phase: String) -> String {
     switch phase {

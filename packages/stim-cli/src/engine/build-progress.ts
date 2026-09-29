@@ -108,7 +108,7 @@ function writeBuildDetail(root: string, claimId: string, detail: BuildDetail): v
 }
 
 const COLD_PHASES: readonly BuildPhase[] = ['prebuild', 'pods', 'compile'];
-const DEVICE_PHASES: readonly BuildPhase[] = ['install', 'launch'];
+const HIT_PHASES: readonly BuildPhase[] = ['install', 'launch'];
 
 export function startBuildProgress({
   root,
@@ -297,7 +297,7 @@ function withInterruptedBuild(state: WorkspaceState): WorkspaceState {
     cacheSkipped: false,
     durationMs: null,
     startedAt: left.startedAt,
-    phases: phaseDurations(left.phases, Date.parse(left.phaseStartedAt)),
+    phases: { ...phaseDurations(left.phases, Date.parse(left.phaseStartedAt)), [left.phase]: 0 },
   });
 }
 
@@ -360,7 +360,8 @@ export function activeBuildState(
 function liveOutcome(record: ActiveBuildRecord): RunOutcomeKind | null {
   const seen = new Set(record.phases.map((entry) => entry.phase));
   if (COLD_PHASES.some((phase) => seen.has(phase))) return 'cold';
-  if (DEVICE_PHASES.some((phase) => seen.has(phase))) return 'hit';
+  if (HIT_PHASES.some((phase) => seen.has(phase))) return 'hit';
+  if (record.phase === 'device' && seen.has('cache-lookup')) return 'hit';
   return null;
 }
 

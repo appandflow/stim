@@ -3291,7 +3291,7 @@ describe('--remote', () => {
     ['proxy', true],
     ['proxy', false],
   ] as const)(
-    'a %s device boots in the install phase, only after its build succeeds (build ok=%s)',
+    'a %s device boots in the device phase, only after its build succeeds (build ok=%s)',
     async (backend, buildOk) => {
       const remote = remoteStub();
       const stubbed = remote.deps.remoteIosDeps();
@@ -3321,7 +3321,7 @@ describe('--remote', () => {
       expect(afterPrepare).toEqual(
         buildOk ? ['buildIos', 'ensureBooted', 'installIosApp', 'launchIosApp'] : ['buildIos'],
       );
-      expect(bootPhase).toBe(buildOk ? 'install' : null);
+      expect(bootPhase).toBe(buildOk ? 'device' : null);
     },
   );
 
@@ -6535,12 +6535,49 @@ describe('run statistics', () => {
     expect(runs[0]?.run.podsMs).toBe(18000);
     expect(Object.keys(runs[0]?.run.phases ?? {})).toEqual([
       'prepare',
+      'device',
       'cache-lookup',
       'pods',
       'compile',
       'install',
       'launch',
     ]);
+  });
+
+  test('a simulator run waits for its boot in device and installs in install', async () => {
+    reserve();
+    const phase = () => (readWorkspaceState(root)?.activeBuild as { phase?: unknown } | undefined)?.phase;
+    let markBuilt!: () => void;
+    const built = new Promise<void>((resolve) => (markBuilt = resolve));
+    let waitPhase: unknown = null;
+    let installPhase: unknown = null;
+    const { exitCode } = await run(
+      {},
+      {
+        buildIos: async () => {
+          markBuilt();
+          return makeIosBuildSuccess({
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 1,
+          });
+        },
+        ensureBooted: async () => {
+          await built;
+          while (!['device', 'install'].includes(phase() as string))
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          waitPhase = phase();
+          return { ok: true, udid: UDID };
+        },
+        installIosApp: () => {
+          installPhase = phase();
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(waitPhase).toBe('device');
+    expect(installPhase).toBe('install');
   });
 
   test('a cache hit compiles nothing, so it carries no build duration', async () => {

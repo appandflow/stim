@@ -39,7 +39,7 @@ import Testing
         "android":[
           {"platform":"android","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":null,
            "fingerprint":null,"startedAt":"2026-09-26T13:00:20.861Z","finishedAt":null,"result":"interrupted",
-           "slot":"tablet","configuration":null,"cacheKey":null,"phases":{"prepare":1524,"compile":0}}]}}
+           "slot":"tablet","configuration":null,"cacheKey":null,"phases":{"prepare":1524,"device":3000,"compile":0}}]}}
       """)
     let ios = try #require(workspace.builds?.builds(for: "ios"))
     #expect(ios.map(\.result) == ["cancelled", "succeeded"])
@@ -48,7 +48,7 @@ import Testing
     #expect(ios[1].outcome == "Local cache" && ios[1].slot == "default" && ios[1].phases.isEmpty)
     let android = try #require(workspace.builds?.builds(for: "android").first)
     #expect(android.outcome == "Interrupted" && android.detail == "slot tablet" && android.configuration == nil)
-    #expect(android.phaseLine == "prepare 0m 1s \u{00B7} stopped in compile")
+    #expect(android.phaseLine == "prepare 0m 1s \u{00B7} stopped in compile \u{00B7} device 0m 3s")
     let failed = try decode(
       BuildHistoryEntry.self,
       """

@@ -1189,7 +1189,7 @@ describe('explicit remote backend behavior', () => {
     expect(readState().remoteDevice).toBeUndefined();
   });
 
-  test('a new EAS session starts in the install phase and records when it was created', async () => {
+  test('a new EAS session starts in the device phase and records when it was created', async () => {
     const log: string[] = [];
     let clock = Date.parse('2026-09-25T14:51:27.000Z');
     const h = harness({
@@ -1228,7 +1228,7 @@ describe('explicit remote backend behavior', () => {
     });
 
     expect((await h.run()).ok).toBe(true);
-    expect(log[log.indexOf('boot') - 1]).toBe('install');
+    expect(log[log.indexOf('boot') - 1]).toBe('device');
     expect(readState().remoteDevice).toMatchObject({ sessionId: 'drs_42', startedAt: '2026-09-25T14:59:27.000Z' });
   });
 
@@ -5902,13 +5902,13 @@ describe('run statistics', () => {
       clear: () => {},
     };
     expect((await harness({ progress }).run()).ok).toBe(true);
-    expect(steps).toEqual(['cache-lookup', 'compile', 'install', 'launch']);
+    expect(steps).toEqual(['device', 'cache-lookup', 'compile', 'device', 'install', 'launch']);
 
     steps.length = 0;
     expect((await harness({ progress, resolveCached: () => fakeApk(), build: never('the build') }).run()).ok).toBe(
       true,
     );
-    expect(steps).toEqual(['cache-lookup', 'install', 'launch']);
+    expect(steps).toEqual(['device', 'cache-lookup', 'device', 'install', 'launch']);
   });
 
   test('a cache hit compiles nothing, so it carries no build duration', async () => {

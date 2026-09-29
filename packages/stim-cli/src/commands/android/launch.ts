@@ -580,7 +580,7 @@ export async function finishAndroidRun({
     return null;
   };
 
-  enterPhase('install');
+  enterPhase('device');
   const booted = await bootPromise;
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
@@ -644,6 +644,7 @@ export async function finishAndroidRun({
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
   if (lostBeforeInstall) return lostBeforeInstall;
+  enterPhase('install');
   let installTimer = stepTimer(now);
   const installApk = (target: string) => {
     installTimer = stepTimer(now);

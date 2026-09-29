@@ -114,7 +114,7 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
 /** Before prebuild, pods, compile or install, `stim status` reports the outcome of the project's previous run. */
 export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase'>): string | null {
   if (!build.outcome) return null;
-  const settled = !['prepare', 'cache-lookup', 'wait'].includes(build.phase);
+  const settled = !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
   if (build.outcome === 'hit') return settled ? 'Cache hit' : 'Likely cache hit';
   return settled ? 'Cold build' : 'Likely cold';
 }
