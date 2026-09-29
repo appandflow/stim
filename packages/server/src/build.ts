@@ -532,7 +532,10 @@ export class BuildSession {
     }
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
-      return refusal('bad-request', 'An android build needs params.android with variant, abi, and its caches.');
+      return refusal(
+        'bad-request',
+        'An android build needs params.android: variant and abi (string or null), gradleBuildCache, pch and compilerCache.',
+      );
     }
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');

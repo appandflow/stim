@@ -447,9 +447,26 @@ function stopGradleDaemons(root: string, timeoutMs: number): void {
   getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs });
 }
 
+/**
+ * Gradle reads `org.gradle.daemon.idletimeout` from the user home's gradle.properties, which overrides the
+ * project's, so a daemon that `--stop` missed exits a minute after its build instead of three hours.
+ */
+function limitDaemonIdle(): void {
+  const home = process.env.GRADLE_USER_HOME;
+  if (!home) return;
+  const file = join(home, 'gradle.properties');
+  const wanted = 'org.gradle.daemon.idletimeout=60000\n';
+  try {
+    if (readFileSync(file, 'utf8') === wanted) return;
+  } catch {}
+  mkdirSync(home, { recursive: true });
+  writeFileSync(file, wanted);
+}
+
 async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
+  limitDaemonIdle();
   const onNote = (line: string) => note('build', line);
   const stop = () => {
     stopGradleDaemons(root, 4000);
