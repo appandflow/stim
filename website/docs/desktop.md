@@ -211,6 +211,7 @@ With **Serve to phones** on in **Stim > Settings > Phones**, a device's viewer
 shows a replay bar under its screen, as in the phone app: drag to scrub, hover
 the track to preview a frame from that moment (one every 5 seconds or so),
 hover a marker to see the agent action or error, click it to land just before it,
+step to the previous or next agent action with the buttons beside play,
 and play at 1x or 2x. **Live** returns to the live screen; Take over is off
 while you look at the past. **Record device screens for replay** in the same
 tab turns `recording.enabled` on or off for the Mac. See

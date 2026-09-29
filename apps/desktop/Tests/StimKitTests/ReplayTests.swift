@@ -140,6 +140,32 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(timeline.seekTime(for: ReplayMarker(at: 2 * hour + 500, kind: "error", label: "boom")) == 2 * hour)
     #expect([40_000, 14 * minute, 2 * hour, 72 * hour].map(ReplayTimeline.shortDuration) == ["40s", "14m", "2h", "3d"])
   }
+
+  @Test func stepsToTheNextOrPreviousAgentActionSkippingErrorsAndTheActionItStandsOn() {
+    let markers = [
+      ReplayMarker(at: 30_000, kind: "action", label: "tap Settings"),
+      ReplayMarker(at: 10_000, kind: "action", label: "open app"),
+      ReplayMarker(at: 20_000, kind: "error", label: "boom"),
+      ReplayMarker(at: 50_000, kind: "action", label: "type hi"),
+    ]
+    let step = { (from: Double, forward: Bool) in
+      ReplayTimeline.adjacentAction(markers, from: from, forward: forward)?.at
+    }
+    #expect(step(12_000, true) == 30_000)
+    #expect(step(30_000, true) == 50_000)
+    #expect(step(50_000, true) == nil)
+    #expect(step(40_000, false) == 30_000)
+    #expect(step(30_000, false) == 10_000)
+    #expect(step(10_000, false) == nil)
+    #expect(ReplayTimeline.adjacentAction([], from: 0, forward: true) == nil)
+  }
+
+  @Test func stepsFromTheActionItLandedBeforeUntilThePlayheadPassesIt() {
+    #expect(ReplayTimeline.stepFrom(26_500, stepped: 30_000, playing: true) == 30_000)
+    #expect(ReplayTimeline.stepFrom(31_000, stepped: 30_000, playing: true) == 31_000)
+    #expect(ReplayTimeline.stepFrom(40_000, stepped: 30_000, playing: false) == 30_000)
+    #expect(ReplayTimeline.stepFrom(12_000, stepped: nil, playing: false) == 12_000)
+  }
 }
 
 @Suite struct ServerProtocolTests {
