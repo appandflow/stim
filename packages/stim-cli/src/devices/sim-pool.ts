@@ -236,13 +236,14 @@ export function adoptParked<P extends PoolPlatform>({
       );
       const project = cfg.projects[projectPath];
       if (!project) throw new Error(`Project not registered: ${projectPath}`);
-      const takenApprovals = platform === 'ios' ? (taken as { schemeApprovals?: string[] }).schemeApprovals : undefined;
+      const adopted = taken.deletionClaim === undefined ? { ...taken } : erasedRecord(taken);
+      delete adopted.deletionClaim;
+      const takenApprovals =
+        platform === 'ios' ? (adopted as { schemeApprovals?: string[] }).schemeApprovals : undefined;
       const assigned =
         takenApprovals && takenApprovals.length > 0 ? { ...device, schemeApprovals: takenApprovals } : device;
       assignSlotDevice(project, platform, assigned, slot);
       saveConfig(cfg);
-      const adopted = { ...taken };
-      delete adopted.deletionClaim;
       return adopted;
     });
   } finally {
@@ -273,14 +274,16 @@ export function eraseParkedAfter<P extends PoolPlatform>(
   udid: string,
   erase: (record: PoolRecords[P]) => void,
 ): PoolRecords[P] | null {
-  return settleParkedAfter(platform, udid, erase, (record) => {
-    const erased = { ...record };
-    delete (erased as { bundleId?: string }).bundleId;
-    delete (erased as { packageName?: string }).packageName;
-    delete erased.cacheKey;
-    delete (erased as { schemeApprovals?: string[] }).schemeApprovals;
-    return erased;
-  });
+  return settleParkedAfter(platform, udid, erase, erasedRecord);
+}
+
+function erasedRecord<T extends PoolRecords[PoolPlatform]>(record: T): T {
+  const erased = { ...record };
+  delete (erased as { bundleId?: string }).bundleId;
+  delete (erased as { packageName?: string }).packageName;
+  delete erased.cacheKey;
+  delete (erased as { schemeApprovals?: string[] }).schemeApprovals;
+  return erased;
 }
 
 function settleParkedAfter<P extends PoolPlatform>(

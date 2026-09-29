@@ -629,6 +629,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   the next attempt, unless it may have left native work running. Deletion also
   puts an opaque marker on the pool record so older Stim versions keep it
   protected. New versions resolve that marker through the same identity claim.
+  When a marker outlives its owner, Stim cannot tell whether the erase or
+  deletion ran, so adoption treats the device as erased and drops the recorded
+  app, cache key and scheme approvals.
   A crash during a synchronous device-tool call leaves that work unverifiable; inspect
   the old process and its native children before following the claim's removal
   remedy. See \`stim guide errors STIM_CLAIM_REFUSED\`.

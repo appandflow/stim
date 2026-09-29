@@ -283,10 +283,8 @@ describe('pool operation recovery', () => {
     expect(readParked('ios')).toEqual([]);
   });
 
-  test.each(['adopt', 'delete'])(
-    '%s recovers a claim after its owner is killed outside native work',
-    async (action) => {
-      const script = `
+  async function killOwnerAfterMarking(): Promise<void> {
+    const script = `
       const { tryAcquireClaim } = await import(process.argv[1]);
       const claim = tryAcquireClaim({ root: process.argv[2], mode: 'exclusive' });
       if (!claim.acquired) throw new Error('fixture did not acquire the claim');
@@ -298,20 +296,26 @@ describe('pool operation recovery', () => {
       });
       process.kill(process.pid, 'SIGKILL');
     `;
-      const child = getExecutor().spawn(
-        process.execPath,
-        [
-          '--input-type=module',
-          '-e',
-          script,
-          new URL('../ownership-claim.ts', import.meta.url).href,
-          claimRoot(),
-          new URL('../workspace/config.ts', import.meta.url).href,
-        ],
-        { stdio: 'ignore' },
-      );
-      expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
-      expect(readClaimSet(claimRoot()).dead).toHaveLength(1);
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        script,
+        new URL('../ownership-claim.ts', import.meta.url).href,
+        claimRoot(),
+        new URL('../workspace/config.ts', import.meta.url).href,
+      ],
+      { stdio: 'ignore' },
+    );
+    expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
+    expect(readClaimSet(claimRoot()).dead).toHaveLength(1);
+  }
+
+  test.each(['adopt', 'delete'])(
+    '%s recovers a claim after its owner is killed outside native work',
+    async (action) => {
+      await killOwnerAfterMarking();
       expect(selectParked(readParked('ios'), first)).toMatchObject([first]);
       let deleted = false;
       const result =
@@ -327,6 +331,24 @@ describe('pool operation recovery', () => {
       expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(action === 'adopt' ? device : undefined);
     },
   );
+
+  test('adoption after an owner died between marking and persisting drops what an erase would have cleared', async () => {
+    const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
+    withConfigLock(() => {
+      const config = loadConfig()!;
+      config.parked = { ios: [{ ...first, bundleId: 'com.example.app', cacheKey: 'before-erase', schemeApprovals }] };
+      saveConfig(config);
+    });
+    await killOwnerAfterMarking();
+    expect(selectParked(readParked('ios'), first)).toMatchObject([first]);
+
+    const adopted = adoptParked(request);
+
+    expect(adopted).toEqual(first);
+    expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
+    expect(readParked('ios')).toEqual([]);
+    expect(readClaimSet(claimRoot())).toMatchObject({ live: [], dead: [], unresolved: [] });
+  });
 
   test('a reused owner PID does not prevent adoption or deletion', () => {
     plantClaim(claimRoot(), 'exclusive', recycledClaimOwner());
