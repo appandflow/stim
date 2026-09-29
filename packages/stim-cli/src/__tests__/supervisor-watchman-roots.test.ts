@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { newRootsContaining, trackMetroWatchRoots, type WatchmanCommand } from '../supervisor/watchman-roots.ts';
+import { newRootsContaining, trackMetroWatchRoots } from '../supervisor/watchman-roots.ts';
+import type { WatchmanCommand } from '../watchman.ts';
 
 let base: string;
 let worktree: string;

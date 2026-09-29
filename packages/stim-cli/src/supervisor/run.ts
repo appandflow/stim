@@ -39,7 +39,8 @@ import {
   vanishedSupervisorMessage,
   type SupervisorExitTrigger,
 } from './stop-cause.ts';
-import { runWatchman, trackMetroWatchRoots, type WatchmanCommand } from './watchman-roots.ts';
+import { trackMetroWatchRoots } from './watchman-roots.ts';
+import { runWatchman, type WatchmanCommand } from '../watchman.ts';
 
 export {
   MODE_BARE,

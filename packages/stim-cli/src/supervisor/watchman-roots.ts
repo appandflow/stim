@@ -1,37 +1,18 @@
 import { realpathSync } from 'node:fs';
 import { sep } from 'node:path';
-import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { describeError } from './errors.ts';
-
-export type WatchmanCommand = (args: string[], timeoutMs: number) => Promise<unknown>;
+import {
+  parseSubscriberNames,
+  parseTriggerCount,
+  parseWatchRoots,
+  runWatchman,
+  type WatchmanCommand,
+} from '../watchman.ts';
 
 const WATCHMAN_TIMEOUT_MS = 2000;
 const SHUTDOWN_BUDGET_MS = 3000;
 const PROBE_DELAYS_MS = [3_000, 6_000, 10_000, 15_000, 20_000, 30_000, 45_000, 60_000, 120_000, 300_000];
-
-export const runWatchman: WatchmanCommand = async (args, timeoutMs) =>
-  JSON.parse(await getExecutor().runFileAsync('watchman', ['--no-spawn', ...args], { timeoutMs }));
-
-function parseWatchRoots(payload: unknown): string[] | null {
-  const roots = (payload as { roots?: unknown } | null)?.roots;
-  if (!Array.isArray(roots)) return null;
-  return roots.filter((root): root is string => typeof root === 'string');
-}
-
-function parseSubscriberNames(payload: unknown): string[] | null {
-  if (!payload || typeof payload !== 'object' || 'error' in payload) return null;
-  const subscribers = (payload as { subscribers?: unknown }).subscribers;
-  if (subscribers === undefined) return [];
-  if (!Array.isArray(subscribers)) return null;
-  const names: string[] = [];
-  for (const subscriber of subscribers) {
-    const name = (subscriber as { info?: { name?: unknown } } | null)?.info?.name;
-    if (typeof name !== 'string') return null;
-    names.push(name);
-  }
-  return names;
-}
 
 function canonical(path: string): string | null {
   try {
@@ -75,8 +56,7 @@ async function subscriberNames(watchman: BoundWatchman, root: string): Promise<s
 
 async function triggerCount(watchman: BoundWatchman, root: string): Promise<number | null> {
   try {
-    const triggers = ((await watchman(['trigger-list', root])) as { triggers?: unknown } | null)?.triggers;
-    return Array.isArray(triggers) ? triggers.length : null;
+    return parseTriggerCount(await watchman(['trigger-list', root]));
   } catch {
     return null;
   }
