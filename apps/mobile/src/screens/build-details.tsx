@@ -36,7 +36,6 @@ import {
   phaseName,
   phaseSteps,
   remoteBuild,
-  sinceLabel,
   type PhaseStep,
   type RemoteBuild,
 } from '@/lib/workspace-view';
@@ -296,12 +295,9 @@ function RunningBuild({ build, path, history }: { build: BuildReport; path: stri
 
 const OUTPUT_LINES = 6;
 
-/** The step a build machine runs, named only when the checklist names another phase, with its elapsed time. */
-function remoteStep(remote: RemoteBuild, build: BuildReport): string | null {
-  const elapsed = remote.phaseElapsedMs === null ? null : sinceLabel(remote.phaseElapsedMs);
-  const step = remote.phase === phaseName(build.phase) ? null : remote.phase;
-  return [step, elapsed].filter(Boolean).join(' ') || null;
-}
+/** The step a build machine runs, when the checklist names another phase for it. */
+const remoteStep = (remote: RemoteBuild, build: BuildReport) =>
+  remote.phase === phaseName(build.phase) ? null : remote.phase;
 
 function finishedSteps(entry: BuildHistoryEntry): PhaseStep[] {
   return PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined).map((phase) => ({

@@ -494,7 +494,7 @@ export function BuildInProgressCard({
           {`Building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}`}
         </Text>
         {remote ? <Icon name="desktopcomputer" size={14} color={theme.colors.secondary} /> : null}
-        {target ? (
+        {target && !remote ? (
           <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
             {target}
           </Text>

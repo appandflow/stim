@@ -1924,24 +1924,15 @@
         },
         "worktree": {
           "path": "/Users/dev/Developer/stim/.worktrees/a4-offloading",
-          "branch": "feat/1701-splash-ripple",
+          "branch": "feat/1880-remote-pods",
           "repository": "/Users/dev/Developer/stim",
           "git": {
             "changed": 0,
             "untracked": 0,
-            "upstream": "origin/feat/1701-splash-ripple",
+            "upstream": "origin/feat/1880-remote-pods",
             "ahead": 0,
             "behind": 0,
             "mergedInto": null
-          },
-          "pullRequest": {
-            "number": 1706,
-            "url": "https://github.com/appandflow/stim/pull/1706",
-            "title": "feat(mobile): replace the splash dismiss with the pixel ripple",
-            "state": "draft",
-            "checks": null,
-            "reviewDecision": null,
-            "checkedAt": "2026-09-25T04:20:09.012Z"
           }
         },
         "remoteDevices": [],
@@ -2220,28 +2211,15 @@
         },
         "worktree": {
           "path": "/Users/dev/Developer/stim/.worktrees/a4-offloaded",
-          "branch": "feat/1690-phone-android-video",
+          "branch": "feat/1881-share-sheet",
           "repository": "/Users/dev/Developer/stim",
           "git": {
             "changed": 3,
             "untracked": 0,
-            "upstream": "origin/feat/1690-phone-android-video",
+            "upstream": "origin/feat/1881-share-sheet",
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
-          },
-          "pullRequest": {
-            "number": 1695,
-            "url": "https://github.com/appandflow/stim/pull/1695",
-            "title": "feat(server): live video and control of a leased physical Android phone",
-            "state": "open",
-            "checks": {
-              "passing": 14,
-              "failing": 0,
-              "pending": 2
-            },
-            "reviewDecision": "review-required",
-            "checkedAt": "2026-09-25T04:21:09.012Z"
           }
         },
         "remoteDevices": [],
@@ -2543,28 +2521,15 @@
         },
         "worktree": {
           "path": "/Users/dev/Developer/stim/.worktrees/a4-offload-fallback",
-          "branch": "feat/1690-phone-android-video",
+          "branch": "feat/1882-settings-copy",
           "repository": "/Users/dev/Developer/stim",
           "git": {
             "changed": 3,
             "untracked": 0,
-            "upstream": "origin/feat/1690-phone-android-video",
+            "upstream": "origin/feat/1882-settings-copy",
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
-          },
-          "pullRequest": {
-            "number": 1695,
-            "url": "https://github.com/appandflow/stim/pull/1695",
-            "title": "feat(server): live video and control of a leased physical Android phone",
-            "state": "open",
-            "checks": {
-              "passing": 14,
-              "failing": 0,
-              "pending": 2
-            },
-            "reviewDecision": "review-required",
-            "checkedAt": "2026-09-25T04:21:09.012Z"
           }
         },
         "remoteDevices": [],
