@@ -804,6 +804,45 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)(
+    'moves a build off a connection that is still open, so closing that one does not cancel it',
+    async () => {
+      const gate = join(root, 'gate');
+      const port = await start({ env: { FAKE_WORKER_GATE: gate } });
+      const { client, deviceToken } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
+
+      const again = await connect(port, '100.64.0.2');
+      await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
+      client.socket.close(1000);
+      expect(await client.closed).toBe(1000);
+      writeFileSync(gate, '');
+      expect(await again.next()).toMatchObject({ job, outcome: { ok: true } });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('cancels a detached build when its client is revoked', async () => {
+    const port = await start({
+      env: { FAKE_WORKER_HANG: '1' },
+      buildLimits: { killGraceMs: 100, detachGraceMs: 60_000 },
+    });
+    const { client, id } = await buildClient(port);
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+    client.socket.send(blob('x'));
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+    await eventually(() => existsSync(join(root, 'job.json')));
+    const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
+    client.socket.terminate();
+    await client.closed;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(alive(pid)).toBe(true);
+    expect(revokeDevice(id)).toBe(true);
+    await eventually(() => !alive(pid));
+  });
+
+  test.skipIf(!fakeTailscale)(
     'cancels a build at once when its connection closes cleanly, and after the grace period when it drops',
     async () => {
       const port = await start({

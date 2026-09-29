@@ -233,7 +233,9 @@ closes its connections and cancels its builds.
   close frame cancels its jobs too. The build's process group gets SIGTERM,
   then SIGKILL 5 seconds later. A connection that ends without a close frame
   (1006, for example when the network drops) leaves its jobs running for 5
-  minutes; a job no connection takes back by then is cancelled.
+  minutes; a job no connection takes back by then is cancelled, and so is one
+  whose client is revoked meanwhile. A job whose `build.start` answer was lost
+  with the connection is only reclaimed this way.
 - `build.attach` takes the `job` of this client that another connection
   started, such as one whose connection dropped, and moves it to this
   connection: its later `build.progress` events come here, and

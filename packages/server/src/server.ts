@@ -523,6 +523,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       for (const [socket, device] of sessions) {
         if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
       }
+      builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
       for (const [socket, controller] of controllers) {
         if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
           control.endFor(controller, 'forbidden', 'This device can no longer control devices.');

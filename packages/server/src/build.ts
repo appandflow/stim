@@ -148,7 +148,6 @@ interface Job {
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
-  /** Where the job's progress goes: its connection, or nowhere while no connection holds it. */
   send: (event: BuildProgressEvent) => void;
   session: BuildSession | null;
   grace: NodeJS.Timeout | null;
@@ -169,7 +168,6 @@ export interface BuildHostOptions {
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
-  /** Every job a connection holds or may attach to again, by id, until its artifact is fetched or it is dropped. */
   private readonly owned = new Map<string, Job>();
   private closed = false;
   private toolchainAt = 0;
@@ -459,6 +457,7 @@ export class BuildHost {
 
   /** Keeps a job whose connection dropped running for `detachGraceMs`, then cancels it. */
   detach(job: Job): void {
+    if (this.closed) return this.abandon(job);
     job.session = null;
     job.send = nowhere;
     job.grace = setTimeout(() => this.abandon(job), this.limits.detachGraceMs);
@@ -491,13 +490,18 @@ export class BuildHost {
     this.owned.delete(job.id);
   }
 
+  /** Cancels the jobs no connection holds whose client `allowed` no longer accepts, such as a revoked one. */
+  abandonDetached(allowed: (client: string) => boolean): void {
+    for (const job of this.owned.values()) {
+      if (!job.session && !allowed(job.client)) this.abandon(job);
+    }
+  }
+
   async close(): Promise<void> {
     this.closed = true;
-    for (const job of this.owned.values()) {
-      if (job.grace) clearTimeout(job.grace);
-    }
-    for (const job of this.jobs) job.cancel();
-    await Promise.all([...this.jobs].map((job) => job.done));
+    const owned = [...this.owned.values()];
+    for (const job of owned) this.abandon(job);
+    await Promise.all(owned.map((job) => job.done));
   }
 }
 
@@ -736,7 +740,6 @@ export class BuildSession {
     return { result: outcome.artifact };
   }
 
-  /** `dropped`: the connection ended without a close frame, so its jobs wait for a new connection to attach. */
   close(dropped: boolean): void {
     this.closed = true;
     for (const job of this.jobs.values()) {

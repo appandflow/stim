@@ -186,6 +186,24 @@ type ProgressEvent = {
   outcome?: Record<string, unknown>;
 };
 
+const openSockets = new Set<WebSocket>();
+let closingOnExit = false;
+
+/**
+ * A close frame on every connection still open when this process exits, as on an interrupt, so the machine cancels
+ * its builds instead of keeping them for a new connection.
+ */
+function closeOnExit(socket: WebSocket): void {
+  if (!closingOnExit) {
+    closingOnExit = true;
+    process.once('exit', () => {
+      for (const each of openSockets) each.close(1000);
+    });
+  }
+  openSockets.add(socket);
+  socket.once('close', () => openSockets.delete(socket));
+}
+
 /**
  * One authenticated connection to a build machine's stim-server. Closing it cancels its jobs there; a connection
  * that drops, or that stays silent for `SILENT_MS` despite pings, leaves them running for a while so a new
@@ -203,6 +221,7 @@ class BuildConnection {
 
   private constructor(socket: WebSocket) {
     this.socket = socket;
+    closeOnExit(socket);
     this.keepalive = setInterval(() => {
       if (Date.now() - this.heard > SILENT_MS) return void socket.terminate();
       socket.ping();
@@ -326,11 +345,22 @@ class BuildConnection {
 
   /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
   close(): void {
+    this.forget();
+    const timer = setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
+    this.socket.once('close', () => clearTimeout(timer));
+    this.socket.close(1000);
+  }
+
+  /** Ends the connection without a close frame, which leaves its jobs on the machine for a new connection. */
+  drop(): void {
+    this.forget();
+    this.socket.terminate();
+  }
+
+  private forget(): void {
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
-    this.socket.on('close', () => {});
-    this.socket.close(1000);
-    setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
+    openSockets.delete(this.socket);
   }
 }
 
@@ -585,11 +615,12 @@ async function resumeJob(
         const outcome = isJsonObject(reply.result) ? reply.result.outcome : null;
         return { connection, outcome: isJsonObject(outcome) ? outcome : null, early };
       }
-      connection.close();
       last = replyError(reply)!;
       if (reply.error.code !== 'closed' && reply.error.code !== 'timeout') {
+        connection.close();
         return `the machine did not hand the build back (${last})`;
       }
+      connection.drop();
     }
     if (Date.now() + delay > deadline) break;
     await new Promise((resolve) => setTimeout(resolve, delay));
