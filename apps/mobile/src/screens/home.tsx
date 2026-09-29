@@ -141,7 +141,7 @@ export function Home() {
           />
         ) : (
           <Stack.Toolbar.Button
-            icon={FUNNEL_ICON}
+            icon={Platform.OS === 'ios' ? 'line.3.horizontal.decrease' : FUNNEL_ICON}
             iconRenderingMode="template"
             tintColor={theme.colors.text}
             accessibilityLabel="Filter"
