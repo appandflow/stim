@@ -32,6 +32,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { NavigationBar } from 'expo-navigation-bar';
+import { StatusBar } from 'expo-status-bar';
 
 import { Button } from '@/components/button';
 import { AgentFeed } from '@/components/agent-feed';
@@ -429,6 +430,7 @@ export function DeviceView({
 
   return (
     <GestureHandlerRootView style={styles.root}>
+      <StatusBar style="light" />
       <NavigationBar style="light" />
       <GestureDetector gesture={zoom.pan}>
         <View
