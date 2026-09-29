@@ -654,6 +654,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
 }
 
 @Suite @MainActor struct ServerClientTests {
+  private final class Box<Value>: @unchecked Sendable {
+    var value: Value
+    init(_ value: Value) { self.value = value }
+  }
+
   private let hello: JSONValue = .object([
     "protocol": .number(1), "server": .object(["name": .string("Mac"), "version": .string("1.14.0"), "stim": .string("1.14.0")]),
     "capabilities": .array([.string("read")]), "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
@@ -670,10 +675,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
         transports.append(transport)
         return transport
       }, scheduler: scheduler.schedule)
-    var at = 1.0
+    let at = Box(1.0)
     var subscribed: [String] = []
     _ = client.subscribe(
-      "frames.subscribe", params: { ["at": .number(at)] },
+      "frames.subscribe", params: { ["at": .number(at.value)] },
       onSubscribed: { subscribed.append($0["subscription"]?.string ?? "") }, onEvent: { _ in }, onVideo: { _ in })
     client.start()
     await settle()
@@ -689,7 +694,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     await settle()
     #expect(subscribed == ["s1"])
 
-    at = 2
+    at.value = 2
     first.onEvent(.closed("Connection lost."))
     #expect(client.state == .waiting(retryIn: 1, reason: "Connection lost."))
     scheduler.fire(delay: 1)

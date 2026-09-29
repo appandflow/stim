@@ -27,7 +27,7 @@ struct ReplayScreen: NSViewRepresentable {
 }
 
 final class ReplayScreenView: NSView {
-  private final class Decoding {
+  private final class Decoding: @unchecked Sendable {
     var configured = false
     var decoder: H264Decoder?
   }

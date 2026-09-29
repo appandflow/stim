@@ -480,8 +480,10 @@ struct SidebarFooter: View {
       .buttonStyle(.plain)
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
+      let help: String =
+        version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim"
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
-        .help(version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim")
+        .help(help)
     }
   }
 

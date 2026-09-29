@@ -43,8 +43,8 @@ jobs:
         run: node scripts/generate-tokens.mjs --check
       - name: Lint Swift formatting
         run: scripts/format.sh --check
-      - run: swift build
-      - run: swift test
+      - run: swift build -Xswiftc -warnings-as-errors
+      - run: swift test -Xswiftc -warnings-as-errors
       - name: Compile the stim-server frames helper
         run: |
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
