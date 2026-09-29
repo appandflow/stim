@@ -1094,7 +1094,7 @@ RULES
                    creating or adopting the owned simulator or emulator
                    before the cache lookup, and, once the app is ready,
                    waiting for the device: its boot, adoption cleanup, or
-                   a physical device's connection check. A boot that
+                   a physical device's lease and connection check. A boot that
                    finishes during the build adds no device time. A run
                    enters device twice and records the sum; an
                    --eas-profile run has no cache lookup, so its outcome

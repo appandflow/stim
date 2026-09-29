@@ -672,8 +672,8 @@ export async function finishIosRun({
     const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
-    enterPhase('install');
     await d.stopPreviousCollector({ root, note });
+    enterPhase('install');
     const installTimer = stepTimer(d.now);
     const installed = d.installIosDeviceApp(
       { udid, appPath: appPath!, bundleId, wireless: overWifi },

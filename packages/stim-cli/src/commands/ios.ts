@@ -856,6 +856,7 @@ async function runIos(
     }
 
     if (physicalDevice) {
+      progress.step('device');
       const acquired = await d.acquireRunLease({
         root,
         platform: PLATFORM,

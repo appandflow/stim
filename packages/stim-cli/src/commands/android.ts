@@ -1164,6 +1164,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       }
     };
     if (physical) {
+      progress.step('device');
       const acquired = await acquireLease({
         root,
         platform: PLATFORM,
