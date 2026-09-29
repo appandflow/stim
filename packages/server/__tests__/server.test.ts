@@ -1279,7 +1279,7 @@ describe('machine.details', () => {
     ).toEqual(['gc --json', 'stats --json']);
   });
 
-  it('reads build machines from doctor in the workspace that ran doctor for iOS most recently', async () => {
+  it('answers immediately with pending build machines, then reads them from doctor in the background', async () => {
     const other = join(root, 'other');
     mkdirSync(other);
     const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
@@ -1296,10 +1296,28 @@ describe('machine.details', () => {
     );
     const port = await start();
     const client = await authed(port);
-    expect(await client.request('machine.details')).toMatchObject({
-      result: { buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json --platform ios' }] },
+    const first = await client.request('machine.details');
+    expect(first).toMatchObject({ result: { buildMachines: null, buildMachinesPending: true } });
+
+    let reply: unknown;
+    for (let i = 0; i < 50; i++) {
+      reply = await client.request('machine.details');
+      if (!(reply as { result: { buildMachinesPending?: boolean } }).result.buildMachinesPending) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(reply).toMatchObject({
+      result: {
+        buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json --platform ios' }],
+        buildMachinesAt: expect.any(String),
+      },
     });
+    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
     expect(stimCalls().find((call) => call.args.startsWith('doctor'))).toMatchObject({ cwd: other });
+
+    expect(await client.request('machine.details')).toMatchObject({
+      result: { buildMachines: [{ machine: 'mini', state: 'approved' }] },
+    });
+    expect(stimCalls().filter((call) => call.args.startsWith('doctor'))).toHaveLength(1);
   });
 
   it('keeps the stats when gc fails, and says why gc is missing', async () => {

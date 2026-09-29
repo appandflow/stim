@@ -31,7 +31,13 @@ import {
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
-import { doctorWorkspace, loadMachineDetails, MachineDetailsCache, type DoctorTarget } from './machine-details.ts';
+import {
+  BuildMachinesCache,
+  doctorWorkspace,
+  loadMachineDetails,
+  MachineDetailsCache,
+  type DoctorTarget,
+} from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
@@ -354,6 +360,14 @@ function hasFootage(dir: string): boolean {
   return listSegments(dir).length > 0;
 }
 
+function doctorTarget(): DoctorTarget {
+  try {
+    return doctorWorkspace(loadConfig(), existsSync);
+  } catch (cause) {
+    return { error: (cause as Error).message };
+  }
+}
+
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
@@ -410,22 +424,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
-  const machineDetails = new MachineDetailsCache(() => {
-    let doctor: DoctorTarget;
-    try {
-      doctor = doctorWorkspace(loadConfig(), existsSync);
-    } catch (cause) {
-      doctor = { error: (cause as Error).message };
-    }
-    return loadMachineDetails((args, cwd = homedir()) => {
-      const run = runStim(options.stimCli, options.env, args, cwd, {
-        ...commandLimits,
-        timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
-      });
-      running.add(run.cancel);
-      return run.outcome.finally(() => running.delete(run.cancel));
-    }, doctor);
-  });
+  const runDetailsCommand = (args: string[], cwd: string = homedir()) => {
+    const run = runStim(options.stimCli, options.env, args, cwd, {
+      ...commandLimits,
+      timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+    });
+    running.add(run.cancel);
+    return run.outcome.finally(() => running.delete(run.cancel));
+  };
+  const machineDetails = new MachineDetailsCache(() => loadMachineDetails(runDetailsCommand));
+  const buildMachines = new BuildMachinesCache();
   let recordingTurn: Promise<void> = Promise.resolve();
   let closing = false;
   const sessions = new Map<WebSocket, PairedDevice>();
@@ -1509,7 +1517,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'machine.details') {
-        void machineDetails.get().then((result) => send(socket, { id, result }));
+        const machinesPart = buildMachines.snapshot(runDetailsCommand, doctorTarget());
+        void machineDetails.get().then((result) => send(socket, { id, result: { ...result, ...machinesPart } }));
         return;
       }
       if (message.method === 'machine.history') {

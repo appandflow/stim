@@ -692,9 +692,16 @@ export interface MachineDetails {
   gcError?: string;
   stats: Record<string, unknown> | null;
   statsError?: string;
-  /** `buildMachines` from `stim doctor --json --platform ios`; empty when `offload.machines` names none. */
+  /**
+   * `buildMachines` from `stim doctor --json --platform ios`; empty when `offload.machines` names none. The reply
+   * never waits for doctor: `buildMachines` and `buildMachinesError` are the last result a background doctor run
+   * settled, `buildMachinesAt` is when it settled, and `buildMachinesPending` is true while that result is stale
+   * (or absent) and a refresh is running. A client that wants the refreshed result asks `machine.details` again.
+   */
   buildMachines: BuildMachineReport[] | null;
   buildMachinesError?: string;
+  buildMachinesAt?: string;
+  buildMachinesPending?: boolean;
   measuredAt: string;
 }
 
@@ -1338,13 +1345,21 @@ export function protocolJsonSchema(): JsonSchema {
       },
       MachineDetails: {
         type: 'object',
-        required: ['gc', 'stats', 'measuredAt'],
+        required: ['gc', 'stats', 'buildMachines', 'measuredAt'],
         additionalProperties: false,
         properties: {
           gc: { type: ['object', 'null'], description: 'The payload of the `stim gc --json` dry run.' },
           gcError: { type: 'string' },
           stats: { type: ['object', 'null'], description: 'The payload of `stim stats --json`.' },
           statsError: { type: 'string' },
+          buildMachines: {
+            type: ['array', 'null'],
+            description: '`buildMachines` from `stim doctor --json --platform ios`.',
+            items: { type: 'object' },
+          },
+          buildMachinesError: { type: 'string' },
+          buildMachinesAt: { type: 'string' },
+          buildMachinesPending: { type: 'boolean' },
           measuredAt: { type: 'string' },
         },
       },
