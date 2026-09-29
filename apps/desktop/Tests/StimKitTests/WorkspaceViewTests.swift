@@ -285,3 +285,37 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(try GitChip(worktree(pullRequest: "null"))?.pullRequest == nil)
   }
 }
+
+@Suite struct OffloadedBuildTests {
+  @Test func namesTheBuildMachineWithoutItsPortAndTheStepItRunsThere() throws {
+    let placement = #","placement":{"host":"janics-mac-mini:7869","phase":"pods","startedAt":"\#(iso(90))","phaseStartedAt":"\#(iso(56))"}"#
+    let build = try #require(try workspace(#""build":\#(runningBuild(placement))"#).build)
+    #expect(build.remote(at: now) == RemoteBuild(host: "janics-mac-mini", phase: "Pods", phaseElapsedMs: 56_000))
+    #expect(build.currentPhaseLabel.phase == "Pods")
+    let local = try #require(try workspace(#""build":\#(runningBuild(#","placement":"local""#))"#).build)
+    #expect(local.remote(at: now) == nil && local.currentPhaseLabel.phase == "Compile")
+    #expect(machineName("mini") == "mini" && machineName("Mini.tail1.ts.net:7443") == "Mini.tail1.ts.net")
+  }
+
+  @Test func marksOffloadedRunsAndShortensTheFallbackReasonsStimRecords() throws {
+    let offloaded = try #require(
+      try workspace(#""lastBuilds":{"ios":\#(lastBuild(cacheHit: "false", durationMs: 71_000).dropLast()),"offloadedTo":"janics-mac-mini:7869"}}"#)
+        .lastBuilds?.ios)
+    #expect(offloaded.summary == "Built on janics-mac-mini in 1m 11s")
+    let cases: [(String, String)] = [
+      ("janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)", "janics-mac-mini busy \u{2192} built here"),
+      ("mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)", "mini on another Stim build \u{2192} built here"),
+      ("mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer", "mini no less loaded \u{2192} built here"),
+      ("mini: capacity unknown (older stim-server) while this Mac has a free slot", "mini too old \u{2192} built here"),
+      ("mini: no iPhone simulator on 27.0 there", "mini missing SDK \u{2192} built here"),
+      ("mini: 4.1 GB free, needs 10.0 GB", "mini low on disk \u{2192} built here"),
+      ("mini: the connection closed (1006)", "mini failed \u{2192} built here"),
+      ("this app is not in a git checkout (fatal: not a git repository)", "offload skipped \u{2192} built here"),
+    ]
+    for (reason, text) in cases {
+      var build = offloaded
+      build.offloadFallback = reason
+      #expect(build.fallbackLine?.text == text && build.fallbackLine?.reason == reason)
+    }
+  }
+}

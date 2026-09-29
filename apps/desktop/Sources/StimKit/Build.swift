@@ -16,8 +16,18 @@ public struct Build: Decodable, Hashable, Sendable {
   public var detail: BuildDetail?
   /// Present once the run knows why the cache missed.
   public var missReason: BuildMissReason?
+  /// Where it compiles; nil from a `stim` older than build offload.
+  public var placement: BuildPlacement?
 
   public var isRunning: Bool { state == "running" }
+
+  /// The build machine this build was offloaded to and the step it runs there; nil for a local build.
+  public func remote(at now: Date) -> RemoteBuild? {
+    guard case .remote(let host, let step, _, let stepStartedAt) = placement else { return nil }
+    return RemoteBuild(
+      host: machineName(host), phase: RemoteBuild.phaseName(step),
+      phaseElapsedMs: parseTimestamp(stepStartedAt).map { max(0, now.timeIntervalSince($0) * 1000) })
+  }
 
   public func progress(at now: Date) -> BuildProgress {
     let started = parseTimestamp(startedAt) ?? now
@@ -32,6 +42,50 @@ public struct Build: Decodable, Hashable, Sendable {
       : remainingMs < 60_000 ? "under a minute left" : "about \(Int((remainingMs / 60_000).rounded(.up))) min left"
     return BuildProgress(elapsedMs: elapsedMs, fraction: min(elapsedMs / expectedMs, 0.99), remaining: remaining)
   }
+}
+
+/// `local`, or the build machine a build was offloaded to (its `offload.machines` entry), the step it runs there
+/// (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that step started.
+public enum BuildPlacement: Decodable, Hashable, Sendable {
+  case local
+  case remote(host: String, phase: String, startedAt: String, phaseStartedAt: String)
+
+  private enum CodingKeys: String, CodingKey { case host, phase, startedAt, phaseStartedAt }
+
+  public init(from decoder: Decoder) throws {
+    if (try? decoder.singleValueContainer().decode(String.self)) != nil {
+      self = .local
+      return
+    }
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self = .remote(
+      host: try container.decode(String.self, forKey: .host), phase: try container.decode(String.self, forKey: .phase),
+      startedAt: try container.decode(String.self, forKey: .startedAt),
+      phaseStartedAt: try container.decode(String.self, forKey: .phaseStartedAt))
+  }
+}
+
+/// A running build on a build machine: the machine's name, the step it runs there and how long that step has run.
+public struct RemoteBuild: Equatable, Sendable {
+  public var host: String
+  public var phase: String
+  public var phaseElapsedMs: Double?
+
+  static func phaseName(_ step: String) -> String {
+    let names = [
+      "sync": "Sync", "deps": "Dependencies", "prebuild": "Prebuild", "pods": "Pods", "build": "Compile",
+      "fetch": "Download",
+    ]
+    return names[step] ?? step.prefix(1).uppercased() + step.dropFirst()
+  }
+}
+
+/// A build machine's `offload.machines` entry without its `:port`.
+public func machineName(_ entry: String) -> String {
+  guard let colon = entry.lastIndex(of: ":"), entry[entry.index(after: colon)...].allSatisfy(\.isNumber),
+    colon != entry.index(before: entry.endIndex)
+  else { return entry }
+  return String(entry[..<colon])
 }
 
 /// The build tool's step inside a build phase. `done` and `total` count `unit`s: xcodebuild `targets`, or Gradle

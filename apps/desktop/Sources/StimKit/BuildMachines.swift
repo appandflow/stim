@@ -101,11 +101,26 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
+  /// One reason `stim doctor` gave for a machine not taking builds, with its finding code.
+  public struct Problem: Decodable, Hashable, Sendable {
+    public var code: String
+    public var reason: String
+  }
+
+  public struct Capacity: Decodable, Hashable, Sendable {
+    public var loadPerCore: Double?
+  }
+
   public var machine: String
   public var state: State
   public var dnsName: String?
   public var deviceId: String?
   public var requestedAt: String?
+  /// For an approved machine: whether it would take builds now, and each reason it would not.
+  public var offloadable: Bool?
+  public var reasons: [String]?
+  public var problems: [Problem]?
+  public var capacity: Capacity?
 
   public var id: String { machine }
 
@@ -116,9 +131,32 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     self.deviceId = deviceId
   }
 
+  /// Whether it takes builds now: "Ready", or the first reason `stim doctor` gave with its remedy, such as
+  /// "Stim build differs" and "update the build machine", or "Busy (load 8.2/core)"; its pairing state when it is not
+  /// approved. `reasons` lists every reason, one per line. `detail` says the same remedy as a sentence.
+  public var readiness: MachineReadiness {
+    let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
+    guard state == .approved, let offloadable else {
+      return MachineReadiness(title: state.title, remedy: nil, tone: state == .approved ? .success : .neutral, reasons: all)
+    }
+    if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }
+    let first = problems?.first
+    if first?.code == "busy" {
+      let load = capacity?.loadPerCore.map { " (load \(formatLoad($0))/core)" } ?? ""
+      return MachineReadiness(title: "Busy\(load)", remedy: nil, tone: .warning, reasons: all)
+    }
+    if let first, let known = MachineReadiness.problems[first.code] {
+      return MachineReadiness(
+        title: known.0, remedy: known.1, tone: first.code == "unreachable" ? .warning : .error, reasons: all)
+    }
+    return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
+  }
+
   public var detail: String {
     switch state {
-    case .approved: return "Builds can run on this Mac."
+    case .approved:
+      if offloadable != false { return "Builds can run on this Mac." }
+      return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
     case .pending:
       let grant = deviceId.map { " or runs stim-server devices grant \($0) --build there" } ?? ""
       return "Someone on \(machine) allows it in Stim Desktop\(grant). The request lapses after 15 minutes."
@@ -134,6 +172,44 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     case .unknown: return "Update Stim Desktop to show this state."
     }
   }
+}
+
+/// A build machine's readiness for builds, as `BuildMachineStatus.readiness` reads it from `stim doctor`.
+public struct MachineReadiness: Equatable, Sendable {
+  public enum Tone: Sendable { case success, warning, error, neutral }
+
+  public var title: String
+  public var remedy: String?
+  public var tone: Tone
+  public var reasons: String?
+
+  /// `Stim build differs \u{2014} update the build machine`, or the title alone.
+  public var line: String { remedy.map { "\(title) \u{2014} \($0)" } ?? title }
+
+  /// The short title and remedy of each `stim doctor` build-machine reason code; `busy` is built from the load.
+  static let problems: [String: (String, String)] = {
+    let sdk = "install it with sdkmanager there"
+    return [
+      "unreachable": ("Not answering", "check its stim-server"),
+      "checkout": ("Not a git checkout", "run Stim from a git checkout"),
+      "stim-build": ("Stim build differs", "update the build machine"),
+      "arch": ("Other CPU", "use a Mac with the same CPU"),
+      "xcode": ("Xcode differs", "select the same Xcode on both"),
+      "simulator-sdk": ("Simulator SDK differs", "select the same Xcode on both"),
+      "cocoapods": ("CocoaPods differs", "install the same CocoaPods there"),
+      "runtime": ("No simulator runtime", "install the iOS runtime there"),
+      "jdk": ("JDK differs", "use the same JDK there"),
+      "android-sdk": ("No Android SDK", "install one there"),
+      "ndk": ("NDK missing", sdk),
+      "build-tools": ("Build-tools missing", sdk),
+      "compile-sdk": ("Android platform missing", sdk),
+      "disk": ("Low on disk", "free space there"),
+    ]
+  }()
+}
+
+private func formatLoad(_ value: Double) -> String {
+  value == value.rounded() ? String(Int(value)) : String(value)
 }
 
 /// `offload.machines` edits, as the JSON text `stim settings set` takes.

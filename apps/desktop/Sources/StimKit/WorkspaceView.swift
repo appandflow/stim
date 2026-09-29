@@ -432,7 +432,7 @@ extension Build {
       "configure": "Configuring", "compile": "Compiling", "link": "Linking", "resources": "Copying resources",
       "script": "Running scripts", "dex": "Dexing", "package": "Packaging", "sign": "Signing",
     ]
-    let name = detail?.step.flatMap { steps[$0] } ?? PhaseStep.name(phase)
+    let name = detail?.step.flatMap { steps[$0] } ?? remote(at: Date()).map(\.phase) ?? PhaseStep.name(phase)
     guard let unit = detail?.unit, let done = detail?.done else { return (name, nil) }
     return (name, detail?.total.map { "\(done) of \($0) \(unit)" } ?? "\(done) \(unit)")
   }

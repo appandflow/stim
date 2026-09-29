@@ -43,9 +43,13 @@ struct BuildInlineProgress: View {
         .monospacedDigit()
         .lineLimit(1)
         .fixedSize()
+      let host = build.remote(at: context.date)?.host
       ViewThatFits(in: .horizontal) {
         HStack(spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary).fixedSize()
+          if host != nil {
+            Image(systemName: "desktopcomputer").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          }
           bar(progress).frame(width: 96)
           time
         }
@@ -55,9 +59,10 @@ struct BuildInlineProgress: View {
         }
         time
       }
-      .help([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
+      .help([phase, counts, host.map { "on \($0)" }].compactMap { $0 }.joined(separator: " \u{00B7} "))
       .accessibilityElement(children: .ignore)
-      .accessibilityLabel("\(phase)\(counts.map { " \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")")
+      .accessibilityLabel(
+        "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")")
     }
   }
 

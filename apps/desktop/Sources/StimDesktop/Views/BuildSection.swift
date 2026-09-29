@@ -46,9 +46,13 @@ struct BuildSection: View {
     return VStack(alignment: .leading, spacing: Space.sm) {
       HStack(spacing: Space.sm) {
         PlatformGlyph(platform: platform, size: 12, color: building == nil ? Palette.text : Palette.primary)
-        Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
+        let host = building?.remote(at: Date())?.host
+        Text(building == nil ? platformName(platform) : "Building \(platformName(platform))\(host.map { " on \($0)" } ?? "")")
           .font(.stim(.callout, weight: .semibold))
           .lineLimit(1)
+        if host != nil {
+          Image(systemName: "desktopcomputer").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
         if let building { BuildOutcomeBadge(build: building) }
         Spacer()
         if building == nil { buttons(platform, entry: entry) }
@@ -104,6 +108,7 @@ struct BuildSection: View {
         .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
         .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
       }
+      OffloadFallbackLine(build: last)
       if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
         BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
       }
@@ -171,12 +176,16 @@ private struct RunningBuildDetail: View {
     TimelineView(.periodic(from: .now, by: 1)) { context in
       let steps = build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)
       let (phase, counts) = build.currentPhaseLabel
+      let remote = build.remote(at: context.date)
+      let detail = remote?.phaseElapsedMs.map { sinceLabel($0 / 1000) } ?? counts
       let elapsed = clockDuration(ms: build.progress(at: context.date).elapsedMs)
       let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
-          if let counts { Text(counts).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1) }
+          if let detail {
+            Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary).monospacedDigit().lineLimit(1)
+          }
           Spacer(minLength: Space.sm)
           (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
             .font(.stim(.footnote))
@@ -271,6 +280,7 @@ struct BuildHistoryRow: View {
           if let phases = entry.phaseLine {
             Text(phases).foregroundStyle(Palette.tertiary)
           }
+          OffloadFallbackLine(build: entry.build)
           if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
             BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
           }
@@ -280,6 +290,19 @@ struct BuildHistoryRow: View {
         }
         .padding(.leading, Space.lg)
       }
+    }
+  }
+}
+
+/// Why a run that considered offloading built here, in a few words; the tooltip holds the whole reason.
+struct OffloadFallbackLine: View {
+  var build: LastBuild
+
+  var body: some View {
+    if let line = build.fallbackLine {
+      Label(line.text, systemImage: "desktopcomputer")
+        .foregroundStyle(Palette.secondary)
+        .help(line.reason)
     }
   }
 }
