@@ -100,6 +100,7 @@ struct PhonesView: View {
     .sheet(isPresented: $pairing, onDismiss: server.reloadDevices) {
       PairSheet(server: server)
     }
+    .onQuitRequested { pairing = false }
     .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
       guard pairs else { return }
       OpenRequests.shared.pairsPhone = false
