@@ -125,7 +125,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.lg,
     paddingHorizontal: theme.space.lg,
-    paddingVertical: theme.space.sm * 2,
+    paddingVertical: theme.space.lg,
   },
   titles: { flex: 1, gap: theme.space.xxs },
 }));

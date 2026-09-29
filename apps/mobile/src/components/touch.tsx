@@ -22,7 +22,6 @@ const PRESS_SCALE = 0.97;
 const PRESS_IN: Transition = { type: 'timing', duration: 80, easing: 'easeOut' };
 const PRESS_OUT: Transition = { type: 'spring', damping: 11, stiffness: 320, mass: 1 };
 
-/** Style keys that place the card among its siblings. They move to the animated wrapper; the rest stays on the button. */
 const PLACEMENT_KEYS = new Set([
   'margin',
   'marginTop',
@@ -65,9 +64,8 @@ function splitStyle(style: object) {
 }
 
 /**
- * A `Touchable` inside an `EaseView` that scales the whole card. `EaseView` scales on the native thread, so the
- * bounce runs while the JS thread is busy. `Touchable` reports `onPressOut` when a press turns into a scroll, so the
- * card springs back without firing `onPress`.
+ * A `Touchable` inside an `EaseView` that scales the whole card. Gesture Handler reports `onPressOut` when a press
+ * turns into a scroll, so the card springs back without firing `onPress`.
  */
 function BouncingTouchable({ style, onPressIn, onPressOut, ...props }: TouchableProps) {
   const reduceMotion = useReducedMotion();
