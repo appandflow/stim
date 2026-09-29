@@ -2,6 +2,7 @@ import { machineName } from '@/lib/format';
 import type { BuildMachineReport } from '@/protocol/types';
 
 export interface MachineReadiness {
+  id: string;
   name: string;
   title: string;
   remedy: string | null;
@@ -46,16 +47,18 @@ const PROBLEMS: Record<string, [string, string | null]> = {
  * approved shows its pairing state.
  */
 export function machineReadiness(report: BuildMachineReport): MachineReadiness {
-  const name = machineName(report.machine);
+  const id = report.machine;
+  const name = machineName(id);
   const state = STATES[report.state] ?? { title: 'Unknown', tone: 'tertiary' as const };
   if (report.state !== 'approved' || report.offloadable === undefined) {
-    return { name, ...state, remedy: null };
+    return { id, name, ...state, remedy: null };
   }
-  if (report.offloadable) return { name, title: 'Ready', tone: 'success', remedy: null };
+  if (report.offloadable) return { id, name, title: 'Ready', tone: 'success', remedy: null };
   const first = report.problems?.[0];
   if (first?.code === 'busy') {
     const load = report.capacity?.loadPerCore;
     return {
+      id,
       name,
       title: typeof load === 'number' ? `Busy (load ${load}/core)` : 'Busy',
       tone: 'warning',
@@ -65,11 +68,12 @@ export function machineReadiness(report: BuildMachineReport): MachineReadiness {
   const known = first ? PROBLEMS[first.code] : undefined;
   if (known) {
     return {
+      id,
       name,
       title: known[0],
       remedy: known[1],
       tone: first!.code === 'unreachable' ? 'warning' : 'error',
     };
   }
-  return { name, title: report.reasons?.[0] ?? 'Cannot take builds', remedy: null, tone: 'error' };
+  return { id, name, title: report.reasons?.[0] ?? 'Cannot take builds', remedy: null, tone: 'error' };
 }

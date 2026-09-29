@@ -61,8 +61,8 @@ public struct LastBuild: Decodable, Hashable, Sendable {
       (["no iPhone simulator ", "no Android SDK", "no NDK ", "no build-tools ", "no platform "], "missing SDK"),
     ]
     let why =
-      rest.contains(" GB free, needs ")
-      ? "low on disk" : words.first { $0.0.contains { rest.hasPrefix($0) } }?.1 ?? "failed"
+      words.first { $0.0.contains { rest.hasPrefix($0) } }?.1
+      ?? (rest.contains(" GB free, needs ") ? "low on disk" : "failed")
     return ("\(machineName(String(machine))) \(why) \u{2192} built here", reason)
   }
 

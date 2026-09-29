@@ -707,11 +707,13 @@ struct MachineView: View {
 }
 
 /// The build machines in `offload.machines` and whether each takes builds now, from `stim doctor` in the workspace
-/// Settings > Build Machines uses; hidden when none is named. Read-only: that tab changes them.
+/// Settings > Build Machines uses, checked each minute while the page is open; hidden when none is named. Read-only:
+/// that tab changes them.
 private struct MachineBuildMachines: View {
   var cli: Task<StimCLI, Never>
   @ObservedObject var status: StatusStore
   @State private var machines: [BuildMachineStatus] = []
+  @State private var failure: String?
 
   private var checkout: String? {
     doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
@@ -719,20 +721,30 @@ private struct MachineBuildMachines: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      if !machines.isEmpty {
+      if !machines.isEmpty || failure != nil {
         Text("Build machines").font(.stim(.headline))
-        Card {
-          VStack(spacing: 0) {
-            ForEach(Array(machines.enumerated()), id: \.element.id) { index, machine in
-              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-              row(machine)
+        if let failure {
+          Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if !machines.isEmpty {
+          Card {
+            VStack(spacing: 0) {
+              ForEach(Array(machines.enumerated()), id: \.element.id) { index, machine in
+                if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
+                row(machine)
+              }
             }
           }
         }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .task(id: checkout) { await load() }
+    .task(id: checkout) {
+      while !Task.isCancelled {
+        await load()
+        try? await Task.sleep(for: .seconds(60))
+      }
+    }
   }
 
   private func row(_ machine: BuildMachineStatus) -> some View {
@@ -762,7 +774,21 @@ private struct MachineBuildMachines: View {
   private func load() async {
     guard let checkout else { return }
     let cli = await cli.value
-    let result = await Task.detached { try? cli.buildMachines(cwd: checkout, ask: false) }.value
-    machines = result.flatMap { $0 } ?? []
+    let named = await Task.detached {
+      (try? cli.settings(cwd: NSHomeDirectory()))?.entry("offload.machines")?.value.strings ?? []
+    }.value
+    guard !named.isEmpty else {
+      machines = []
+      failure = nil
+      return
+    }
+    let result = await Task.detached { Result { try cli.buildMachines(cwd: checkout, ask: false) } }.value
+    switch result {
+    case .success(let reported):
+      machines = reported ?? []
+      failure = reported == nil ? "This stim does not report build machines; update it." : nil
+    case .failure(let error):
+      failure = "Cannot check build machines: \(error.localizedDescription)"
+    }
   }
 }

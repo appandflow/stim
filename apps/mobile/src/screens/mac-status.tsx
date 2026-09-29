@@ -344,12 +344,12 @@ export function MacStatus({ id }: { id: string }) {
         <View style={styles.block}>
           <Text variant="headline">Build machines</Text>
           {machinesError ? (
-            <Text variant="footnote" tone="secondary">{`stim doctor did not answer: ${machinesError}`}</Text>
+            <Text variant="footnote" tone="secondary">{`Cannot check build machines: ${machinesError}`}</Text>
           ) : null}
           {machines.length > 0 ? (
             <Card>
               {machines.map((machine, index) => (
-                <View key={machine.name} style={[styles.row, index > 0 && styles.separated]}>
+                <View key={machine.id} style={[styles.row, index > 0 && styles.separated]}>
                   <Icon name="desktopcomputer" size={16} color={theme.colors.secondary} />
                   <View style={styles.grow}>
                     <Text variant="callout" numberOfLines={1}>

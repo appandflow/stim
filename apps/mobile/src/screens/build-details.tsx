@@ -295,7 +295,6 @@ function RunningBuild({ build, path, history }: { build: BuildReport; path: stri
 
 const OUTPUT_LINES = 6;
 
-/** The step a build machine runs, when the checklist names another phase for it. */
 const remoteStep = (remote: RemoteBuild, build: BuildReport) =>
   remote.phase === phaseName(build.phase) ? null : remote.phase;
 

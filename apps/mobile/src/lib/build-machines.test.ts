@@ -27,6 +27,7 @@ describe('machineReadiness', () => {
         }),
       ),
     ).toEqual({
+      id: 'janics-mac-mini:7869',
       name: 'janics-mac-mini',
       title: 'Stim build differs',
       remedy: 'update the build machine',

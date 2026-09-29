@@ -8,7 +8,6 @@ import type { CommandOutcome } from './stim-command.ts';
  */
 const GC_DRY_RUN = ['gc', '--json'];
 const STATS = ['stats', '--json'];
-/** `--platform ios` keeps doctor from probing Android toolchains; it never runs with `--fix`. */
 const DOCTOR = ['doctor', '--json', '--platform', 'ios'];
 
 const MACHINE_DETAILS_TTL_MS = 60_000;
@@ -22,13 +21,13 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
   return { payload: null, error: `${label} printed output that is not a JSON object.` };
 }
 
+const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
+
 /**
  * Where `machine.details` runs `stim doctor` for the build machines: null when `offload.machines` names none, else
  * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
  * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
  */
-const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
-
 export function doctorWorkspace(
   config: Pick<StimConfig, 'projects' | 'offload'> | null,
   exists: (path: string) => boolean,
@@ -43,13 +42,17 @@ export function doctorWorkspace(
   return { cwd: newest?.[0] ?? null };
 }
 
+/** Where to run doctor, why it cannot run, or null when no build machine is named. */
+export type DoctorTarget = { cwd: string | null } | { error: string } | null;
+
 async function buildMachinesPart(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
-  doctor: { cwd: string | null } | null,
+  doctor: DoctorTarget,
 ): Promise<{ buildMachines: BuildMachineReport[] | null; buildMachinesError?: string }> {
   if (doctor === null) return { buildMachines: [] };
+  if ('error' in doctor) return { buildMachines: null, buildMachinesError: doctor.error };
   if (doctor.cwd === null) {
-    return { buildMachines: null, buildMachinesError: 'No Stim workspace is registered to run stim doctor in.' };
+    return { buildMachines: null, buildMachinesError: 'no Stim workspace is registered to check them from' };
   }
   const { payload, error } = part(await run(DOCTOR, doctor.cwd), 'stim doctor');
   if (!payload) return { buildMachines: null, buildMachinesError: error! };
@@ -70,7 +73,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 export async function loadMachineDetails(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
-  doctor: { cwd: string | null } | null = null,
+  doctor: DoctorTarget = null,
 ): Promise<MachineDetails> {
   const measuredAt = new Date().toISOString();
   const [gc, stats, machines] = await Promise.all([run(GC_DRY_RUN), run(STATS), buildMachinesPart(run, doctor)]);

@@ -309,6 +309,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       ("mini: capacity unknown (older stim-server) while this Mac has a free slot", "mini too old \u{2192} built here"),
       ("mini: no iPhone simulator on 27.0 there", "mini missing SDK \u{2192} built here"),
       ("mini: 4.1 GB free, needs 10.0 GB", "mini low on disk \u{2192} built here"),
+      ("mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB", "mini on another Stim build \u{2192} built here"),
       ("mini: the connection closed (1006)", "mini failed \u{2192} built here"),
       ("this app is not in a git checkout (fatal: not a git repository)", "offload skipped \u{2192} built here"),
     ]

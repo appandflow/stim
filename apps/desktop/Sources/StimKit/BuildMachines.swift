@@ -95,6 +95,15 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       }
     }
 
+    var readinessTone: MachineReadiness.Tone {
+      switch self {
+      case .approved: return .success
+      case .pending, .notOnTailnet, .tailscaleOff, .unreachable: return .warning
+      case .revoked, .nodeChanged, .invalid: return .error
+      case .notAsked, .unknown: return .neutral
+      }
+    }
+
     /// Whether asking again through `stim doctor --fix` can change it, given whether this Mac already has a request.
     public func canAsk(requested: Bool) -> Bool {
       self == .notAsked || self == .revoked || (self == .unreachable && !requested)
@@ -137,7 +146,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var readiness: MachineReadiness {
     let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
     guard state == .approved, let offloadable else {
-      return MachineReadiness(title: state.title, remedy: nil, tone: state == .approved ? .success : .neutral, reasons: all)
+      return MachineReadiness(title: state.title, remedy: nil, tone: state.readinessTone, reasons: all)
     }
     if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }
     let first = problems?.first

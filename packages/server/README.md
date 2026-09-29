@@ -558,7 +558,9 @@ Events are `{ "event", "subscription", ... }`.
   in the registered workspace that ran doctor for iOS most recently, because
   doctor judges a machine against an app. Like a doctor run from a terminal,
   that records the run for the workspace. `buildMachines` is null with
-  `buildMachinesError` when doctor failed or no registered workspace exists.
+  `buildMachinesError` when doctor failed, the config could not be read, or no
+  registered workspace exists. The reply waits for doctor, whose offer to an
+  unreachable machine can take about 13 seconds.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
   [push notifications](#push-notifications) the phone wants (`started`,

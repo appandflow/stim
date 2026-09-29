@@ -55,7 +55,11 @@ describe('loadMachineDetails build machines', () => {
     expect(await loadMachineDetails(counted, null)).toMatchObject({ buildMachines: [] });
     expect(await loadMachineDetails(counted, { cwd: null })).toMatchObject({
       buildMachines: null,
-      buildMachinesError: 'No Stim workspace is registered to run stim doctor in.',
+      buildMachinesError: 'no Stim workspace is registered to check them from',
+    });
+    expect(await loadMachineDetails(counted, { error: 'config.json is not JSON' })).toMatchObject({
+      buildMachines: null,
+      buildMachinesError: 'config.json is not JSON',
     });
     expect(calls).not.toContain('doctor');
   });
