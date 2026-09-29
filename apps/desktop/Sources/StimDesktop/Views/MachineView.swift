@@ -3,6 +3,7 @@ import StimKit
 import SwiftUI
 
 struct MachineView: View {
+  var cli: Task<StimCLI, Never>
   @ObservedObject var status: StatusStore
   @ObservedObject var metrics: MetricsStore
   @ObservedObject var storage: StorageStore
@@ -33,6 +34,7 @@ struct MachineView: View {
         devices(report)
         runtimes(report)
         otherTools(report)
+        MachineBuildMachines(cli: cli, status: status)
       }
       .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -701,5 +703,92 @@ struct MachineView: View {
 
   private func reveal(_ path: String) {
     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+  }
+}
+
+/// The build machines in `offload.machines` and whether each takes builds now, from `stim doctor` in the workspace
+/// Settings > Build Machines uses, checked each minute while the page is open; hidden when none is named. Read-only:
+/// that tab changes them.
+private struct MachineBuildMachines: View {
+  var cli: Task<StimCLI, Never>
+  @ObservedObject var status: StatusStore
+  @State private var machines: [BuildMachineStatus] = []
+  @State private var failure: String?
+
+  private var checkout: String? {
+    doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      if !machines.isEmpty || failure != nil {
+        Text("Build machines").font(.stim(.headline))
+        if let failure {
+          Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if !machines.isEmpty {
+          Card {
+            VStack(spacing: 0) {
+              ForEach(Array(machines.enumerated()), id: \.element.id) { index, machine in
+                if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
+                row(machine)
+              }
+            }
+          }
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .task(id: checkout) {
+      while !Task.isCancelled {
+        await load()
+        try? await Task.sleep(for: .seconds(60))
+      }
+    }
+  }
+
+  private func row(_ machine: BuildMachineStatus) -> some View {
+    let ready = machine.readiness
+    return HStack(spacing: Space.lg) {
+      Image(systemName: "desktopcomputer").foregroundStyle(Palette.tertiary).frame(width: 16)
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(verbatim: machineName(machine.machine))
+        Text(ready.line).font(.stim(.caption)).foregroundStyle(color(ready.tone))
+      }
+      Spacer()
+    }
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.md)
+    .help(ready.reasons ?? "")
+  }
+
+  private func color(_ tone: MachineReadiness.Tone) -> Color {
+    switch tone {
+    case .success: return Palette.success
+    case .warning: return Palette.warning
+    case .error: return Palette.error
+    case .neutral: return Palette.secondary
+    }
+  }
+
+  private func load() async {
+    guard let checkout else { return }
+    let cli = await cli.value
+    let named = await Task.detached {
+      (try? cli.settings(cwd: NSHomeDirectory()))?.entry("offload.machines")?.value.strings ?? []
+    }.value
+    guard !named.isEmpty else {
+      machines = []
+      failure = nil
+      return
+    }
+    let result = await Task.detached { Result { try cli.buildMachines(cwd: checkout, ask: false) } }.value
+    switch result {
+    case .success(let reported):
+      machines = reported ?? []
+      failure = reported == nil ? "This stim does not report build machines; update it." : nil
+    case .failure(let error):
+      failure = "Cannot check build machines: \(error.localizedDescription)"
+    }
   }
 }

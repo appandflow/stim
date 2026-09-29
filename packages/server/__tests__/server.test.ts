@@ -85,6 +85,9 @@ if (command === 'status') {
 } else if (command === 'device' && args[1] === 'unlock') {
   print([]);
   exit(0);
+} else if (command === 'doctor') {
+  print({ project: process.cwd(), buildMachines: [{ machine: 'mini', state: 'approved', args: args.join(' ') }] });
+  exit(0);
 } else if (env.FAKE_STIM_REFUSE) {
   print({ code: 'STIM_NO_DEVICE', message: 'No system image is installed.', remedy: 'Install one.' });
   exit(1);
@@ -1263,6 +1266,7 @@ describe('machine.details', () => {
     const expected = {
       gc: { command: 'gc', cwd: home },
       stats: { command: 'stats', cwd: home },
+      buildMachines: [],
       measuredAt: expect.any(String),
     };
     const reply = await first.request('machine.details');
@@ -1273,6 +1277,29 @@ describe('machine.details', () => {
         .map((call) => call.args)
         .toSorted(),
     ).toEqual(['gc --json', 'stats --json']);
+  });
+
+  it('reads build machines from doctor in the workspace that ran doctor for iOS most recently', async () => {
+    const other = join(root, 'other');
+    mkdirSync(other);
+    const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
+    writeFileSync(
+      join(process.env.STIM_HOME!, 'config.json'),
+      JSON.stringify({
+        offload: { machines: ['mini'] },
+        projects: {
+          [workspace]: ran('2026-09-28T10:00:00.000Z'),
+          [other]: ran('2026-09-28T11:00:00.000Z'),
+          [join(root, 'gone')]: ran('2026-09-28T12:00:00.000Z'),
+        },
+      }),
+    );
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('machine.details')).toMatchObject({
+      result: { buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json --platform ios' }] },
+    });
+    expect(stimCalls().find((call) => call.args.startsWith('doctor'))).toMatchObject({ cwd: other });
   });
 
   it('keeps the stats when gc fails, and says why gc is missing', async () => {

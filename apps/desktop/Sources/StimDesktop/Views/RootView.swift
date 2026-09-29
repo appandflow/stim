@@ -327,7 +327,7 @@ struct RootView: View {
     case .attention:
       AttentionView(store: store, autopilot: autopilot, openLogs: openErrors)
     case .machine:
-      MachineView(status: store, metrics: metrics, storage: storage, autopilot: autopilot)
+      MachineView(cli: cli, status: store, metrics: metrics, storage: storage, autopilot: autopilot)
     default:
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }

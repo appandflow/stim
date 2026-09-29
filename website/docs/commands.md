@@ -127,7 +127,8 @@ builds for here; for Android (with `--platform android`, or an app with
 build-tools or compile platform; its worker volume has less than 10 GB free;
 or it is busy. Busy and no answer are notes; the
 others cost time. In `--json` such a machine also carries `offloadable`,
-`reasons`, and `capacity`, its reported load:
+`reasons`, `problems` (each reason with its finding code), and `capacity`,
+its reported load:
 
 ```json
 {
@@ -135,6 +136,7 @@ others cost time. In `--json` such a machine also carries `offloadable`,
   "state": "approved",
   "offloadable": false,
   "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
+  "problems": [{ "code": "stim-build", "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here" }],
   "capacity": {
     "running": 0,
     "max": 1,

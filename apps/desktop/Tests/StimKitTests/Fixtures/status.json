@@ -68,7 +68,37 @@
         "outcome": "cold",
         "expectedMs": 240000,
         "expectedPhaseMs": 200000,
-        "basis": 4
+        "basis": 4,
+        "placement": {
+          "host": "janics-mac-mini:7869",
+          "phase": "build",
+          "startedAt": "2026-09-24T19:50:04.000Z",
+          "phaseStartedAt": "2026-09-24T19:50:20.000Z"
+        }
+      },
+      "lastBuilds": {
+        "ios": {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 71000,
+          "fingerprint": "a4f00d1111111111111111111111111111111111",
+          "startedAt": "2026-09-24T19:05:11.000Z",
+          "finishedAt": "2026-09-24T19:06:22.000Z",
+          "offloadedTo": "janics-mac-mini:7869"
+        },
+        "android": {
+          "platform": "android",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 158000,
+          "fingerprint": "a4f00d2222222222222222222222222222222222",
+          "startedAt": "2026-09-24T19:12:40.000Z",
+          "finishedAt": "2026-09-24T19:15:18.000Z",
+          "offloadFallback": "janics-mac-mini:7869: busy (load at or above 2/core; load 8.2/core, 2 builds)"
+        }
       }
     }
   ],

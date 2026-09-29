@@ -31,7 +31,7 @@ import {
 } from './frames.ts';
 import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
-import { loadMachineDetails, MachineDetailsCache } from './machine-details.ts';
+import { doctorWorkspace, loadMachineDetails, MachineDetailsCache, type DoctorTarget } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
@@ -410,16 +410,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   const busyWorkspaces = new Set<string>();
   const planQueues = new Map<string, Promise<void>>();
-  const machineDetails = new MachineDetailsCache(() =>
-    loadMachineDetails((args) => {
-      const run = runStim(options.stimCli, options.env, args, homedir(), {
+  const machineDetails = new MachineDetailsCache(() => {
+    let doctor: DoctorTarget;
+    try {
+      doctor = doctorWorkspace(loadConfig(), existsSync);
+    } catch (cause) {
+      doctor = { error: (cause as Error).message };
+    }
+    return loadMachineDetails((args, cwd = homedir()) => {
+      const run = runStim(options.stimCli, options.env, args, cwd, {
         ...commandLimits,
         timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
       });
       running.add(run.cancel);
       return run.outcome.finally(() => running.delete(run.cancel));
-    }),
-  );
+    }, doctor);
+  });
   let recordingTurn: Promise<void> = Promise.resolve();
   let closing = false;
   const sessions = new Map<WebSocket, PairedDevice>();

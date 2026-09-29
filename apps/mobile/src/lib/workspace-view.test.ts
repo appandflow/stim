@@ -8,10 +8,12 @@ import {
   currentPhaseLabel,
   deviceTitle,
   deviceUsage,
+  fallbackLine,
   gitChip,
   namesPhases,
   phaseSteps,
   processRows,
+  remoteBuild,
   workspaceSeries,
   workspaceStage,
   workspaceUsage,
@@ -277,6 +279,9 @@ describe('buildLine', () => {
       sub: 'cold',
     });
     expect(buildLine('ios', last({ status: 'failed' }), undefined)).toMatchObject({ main: 'Failed', tone: 'error' });
+    expect(
+      buildLine('ios', last({ cacheHit: false, durationMs: 70_000, offloadedTo: 'janics-mac-mini:7869' }), undefined),
+    ).toMatchObject({ main: '1:10', sub: 'on janics-mac-mini', spoken: 'iOS last build 1:10, on janics-mac-mini' });
     const plan = {
       kind: 'done' as const,
       plan: {
@@ -300,6 +305,52 @@ describe('buildLine', () => {
     });
     expect(buildLine('ios', undefined, { kind: 'checking' })).toMatchObject({ main: 'Checking\u2026' });
     expect(buildLine('ios', undefined, { kind: 'failed', message: 'x' })).toMatchObject({ main: 'No build' });
+  });
+});
+
+describe('offloaded builds', () => {
+  const remote = { host: 'janics-mac-mini:7869', phase: 'pods', startedAt: iso(90_000), phaseStartedAt: iso(56_000) };
+
+  it('names the build machine without its port and the step it runs there, with that step elapsed', () => {
+    expect(remoteBuild(build({ phase: 'pods', placement: remote }), NOW)).toEqual({
+      host: 'janics-mac-mini',
+      phase: 'Pods',
+      phaseElapsedMs: 56_000,
+    });
+    expect(currentPhaseLabel(build({ phase: 'prepare', placement: { ...remote, phase: 'sync' } })).phase).toBe('Sync');
+    expect(currentPhaseLabel(build({ phase: 'compile', placement: { ...remote, phase: 'build' } })).phase).toBe(
+      'Compile',
+    );
+    expect(remoteBuild(build({ placement: 'local' }), NOW)).toBeNull();
+    expect(remoteBuild(build(), NOW)).toBeNull();
+  });
+
+  it('shortens the fallback reasons stim records to the first machine and why', () => {
+    const cases: [string, string][] = [
+      [
+        'janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)',
+        'janics-mac-mini busy \u2192 built here',
+      ],
+      [
+        'mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)',
+        'mini on another Stim build \u2192 built here',
+      ],
+      [
+        'mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer',
+        'mini no less loaded \u2192 built here',
+      ],
+      ['mini: capacity unknown (older stim-server) while this Mac has a free slot', 'mini too old \u2192 built here'],
+      ['mini: no iPhone simulator on 27.0 there', 'mini missing SDK \u2192 built here'],
+      ['mini: 4.1 GB free, needs 10.0 GB', 'mini low on disk \u2192 built here'],
+      [
+        'mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB',
+        'mini on another Stim build \u2192 built here',
+      ],
+      ['mini: the connection closed (1006)', 'mini failed \u2192 built here'],
+      ['this app is not in a git checkout (fatal: not a git repository)', 'offload skipped \u2192 built here'],
+    ];
+    for (const [reason, text] of cases) expect(fallbackLine({ offloadFallback: reason })).toEqual({ text, reason });
+    expect(fallbackLine({})).toBeNull();
   });
 });
 

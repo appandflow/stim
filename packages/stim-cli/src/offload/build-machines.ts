@@ -213,6 +213,8 @@ interface BuildMachineReport {
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
   offloadable?: boolean;
   reasons?: string[];
+  /** The same reasons with the code of each, in the same order. */
+  problems?: OffloadProblem[];
   /** The machine's reported capacity, when it answered an offer. */
   capacity?: Record<string, unknown>;
 }
@@ -400,6 +402,7 @@ async function inspectMachine(
         state: 'approved',
         offloadable: problems.length === 0,
         reasons: problems.map((problem) => problem.reason),
+        problems,
         ...(capacity ? { capacity } : {}),
       },
       finding: null,

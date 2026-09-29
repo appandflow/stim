@@ -53,6 +53,9 @@ struct BuildSection: View {
         Spacer()
         if building == nil { buttons(platform, entry: entry) }
       }
+      if let host = building?.remote(at: Date())?.host {
+        Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
+      }
       if let building {
         RunningBuildDetail(cli: cli, env: env, build: building)
       } else {
@@ -104,6 +107,7 @@ struct BuildSection: View {
         .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
         .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
       }
+      OffloadFallbackLine(build: last)
       if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
         BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
       }
@@ -271,6 +275,7 @@ struct BuildHistoryRow: View {
           if let phases = entry.phaseLine {
             Text(phases).foregroundStyle(Palette.tertiary)
           }
+          OffloadFallbackLine(build: entry.build)
           if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
             BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
           }
@@ -280,6 +285,19 @@ struct BuildHistoryRow: View {
         }
         .padding(.leading, Space.lg)
       }
+    }
+  }
+}
+
+/// Why a run that considered offloading built here, in a few words; the tooltip holds the whole reason.
+struct OffloadFallbackLine: View {
+  var build: LastBuild
+
+  var body: some View {
+    if let line = build.fallbackLine {
+      Label(line.text, systemImage: "desktopcomputer")
+        .foregroundStyle(Palette.secondary)
+        .help(line.reason)
     }
   }
 }

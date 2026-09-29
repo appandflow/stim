@@ -672,7 +672,11 @@ workspaces: build outputs, logs and recordings for them, 44 simulators and
 emulators with every owner kind, runtimes and system images with unused ones,
 14 caches, and merged, stale and open-pull-request worktrees, so the owners,
 Safe to free now, Simulators and emulators, Recordings and Caches sections have
-more than 10 rows to fold.
+more than 10 rows to fold. Its `buildMachines` lists one build machine ready, one
+busy and one on another Stim build. The `a4-offloading`, `a4-offloaded` and
+`a4-offload-fallback` workspaces show an iOS build running on
+`janics-mac-mini`, a last build that machine compiled, and a local build after
+it was busy.
 
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and

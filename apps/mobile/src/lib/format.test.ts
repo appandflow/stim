@@ -120,6 +120,9 @@ describe('build cache outcome', () => {
       'Cold build: app config changed \u00B7 1:23 \u00B7 <1m ago',
     );
     expect(lastBuildSummary({ ...last, cacheHit: 'local' }, now)).toBe('Cache hit (local) \u00B7 1:23 \u00B7 <1m ago');
+    expect(lastBuildSummary({ ...last, offloadedTo: 'janics-mac-mini:7869' }, now)).toBe(
+      'Built on janics-mac-mini \u00B7 1:23 \u00B7 <1m ago',
+    );
     expect(
       lastBuildSummary(
         { ...last, status: 'failed', errorCode: 'STIM_BUILD_FAILED', finishedAt: ago(3 * 3600_000) },
@@ -231,6 +234,7 @@ describe('build history rows', () => {
   test('the title says how the run ended, and where a finished app came from', () => {
     expect(historyTitle(entry({ cacheHit: 'local' }))).toBe('Cache hit (local)');
     expect(historyTitle(entry())).toBe('Cold build');
+    expect(historyTitle(entry({ offloadedTo: 'janics-mac-mini' }))).toBe('Built on janics-mac-mini');
     expect(historyTitle(entry({ result: 'failed', status: 'failed', errorCode: 'STIM_BUILD_FAILED' }))).toBe(
       'Failed (STIM_BUILD_FAILED)',
     );

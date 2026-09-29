@@ -692,7 +692,36 @@ export interface MachineDetails {
   gcError?: string;
   stats: Record<string, unknown> | null;
   statsError?: string;
+  /** `buildMachines` from `stim doctor --json --platform ios`; empty when `offload.machines` names none. */
+  buildMachines: BuildMachineReport[] | null;
+  buildMachinesError?: string;
   measuredAt: string;
+}
+
+/** One `offload.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
+export interface BuildMachineReport {
+  machine: string;
+  state: string;
+  dnsName?: string;
+  deviceId?: string;
+  requestedAt?: string;
+  offloadable?: boolean;
+  reasons?: string[];
+  problems?: { code: string; reason: string }[];
+  capacity?: BuildMachineCapacity;
+}
+
+export interface BuildMachineCapacity {
+  running?: number;
+  max?: number;
+  diskFreeBytes?: number | null;
+  minDiskFreeBytes?: number;
+  cpus?: number;
+  loadPerCore?: number;
+  builds?: number;
+  maxBuilds?: number;
+  maxLoadPerCore?: number;
+  declined?: string | null;
 }
 
 /**

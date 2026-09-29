@@ -35,6 +35,24 @@ import Testing
       .buildMachines == nil)
   }
 
+  @Test func readsReadinessAsReadyOrTheFirstReasonWithItsRemedy() throws {
+    let url = try #require(Bundle.module.url(forResource: "doctor", withExtension: "json", subdirectory: "Fixtures"))
+    let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).buildMachines)
+    #expect(machines.map(\.readiness.line) == [
+      "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the build machine",
+    ])
+    #expect(machines.map(\.readiness.tone) == [.success, .warning, .error])
+    #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
+    #expect(machines.map(\.detail) == [
+      "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the build machine.",
+    ])
+    let older = try JSONDecoder().decode(
+      BuildMachineStatus.self,
+      from: Data(#"{"machine":"mini","state":"approved","offloadable":false,"reasons":["CPU x86_64 there, arm64 here"]}"#.utf8))
+    #expect(older.readiness.line == "CPU x86_64 there, arm64 here")
+    #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.line == "Waiting for approval")
+  }
+
   @Test func editsTheSettingAndUnsetsItWhenEmpty() {
     #expect(OffloadMachines.adding("mini", to: ["studio:7444"]) == #"["studio:7444","mini"]"#)
     #expect(OffloadMachines.adding("mini", to: ["mini"]) == #"["mini"]"#)

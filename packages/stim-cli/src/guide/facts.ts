@@ -465,8 +465,8 @@ leased until <time>" for each one.`,
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
   buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
-                  offloadable?, reasons?, capacity? } per offload.machines
-                  entry; state is "approved", "pending", "not-asked",
+                  offloadable?, reasons?, problems?, capacity? } per
+                  offload.machines entry; state is "approved", "pending", "not-asked",
                   "revoked" (revoked, or the request lapsed), "node-changed",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". An approved machine also carries offloadable,
@@ -478,7 +478,8 @@ leased until <time>" for each one.`,
                   per reason (code build-machine-<reason>: unreachable,
                   checkout, stim-build, arch, xcode, simulator-sdk,
                   cocoapods, runtime, jdk, android-sdk, ndk, build-tools,
-                  compile-sdk, disk or busy). capacity
+                  compile-sdk, disk or busy). problems lists the same
+                  reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
                   maxLoadPerCore?, declined? }; an older stim-server omits the

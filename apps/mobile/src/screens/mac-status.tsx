@@ -24,6 +24,7 @@ import type { Theme } from '@/design/theme';
 import { useMachineDetails } from '@/hooks/machine-details';
 import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { machineReadiness } from '@/lib/build-machines';
 import { pairingScope } from '@/lib/connection';
 import { budgetRows, formatBytes, usageCharts, type BudgetRow } from '@/lib/home';
 import {
@@ -70,6 +71,8 @@ export function MacStatus({ id }: { id: string }) {
   const gc = useMemo(() => (details.kind === 'ready' ? parseGcReport(details.details.gc) : null), [details]);
   const report = useMemo(() => machineReport(status, gc, now), [status, gc, now]);
   const builds = details.kind === 'ready' ? buildStats(details.details.stats) : [];
+  const machines = details.kind === 'ready' ? (details.details.buildMachines ?? []).map(machineReadiness) : [];
+  const machinesError = details.kind === 'ready' ? details.details.buildMachinesError : undefined;
 
   useEffect(() => {
     if (!connection || !open) return;
@@ -334,6 +337,32 @@ export function MacStatus({ id }: { id: string }) {
               </View>
             ))}
           </Card>
+        </View>
+      ) : null}
+
+      {machines.length > 0 || machinesError ? (
+        <View style={styles.block}>
+          <Text variant="headline">Build machines</Text>
+          {machinesError ? (
+            <Text variant="footnote" tone="secondary">{`Cannot check build machines: ${machinesError}`}</Text>
+          ) : null}
+          {machines.length > 0 ? (
+            <Card>
+              {machines.map((machine, index) => (
+                <View key={machine.id} style={[styles.row, index > 0 && styles.separated]}>
+                  <Icon name="desktopcomputer" size={16} color={theme.colors.secondary} />
+                  <View style={styles.grow}>
+                    <Text variant="callout" numberOfLines={1}>
+                      {machine.name}
+                    </Text>
+                    <Text variant="footnote" tone={machine.tone}>
+                      {machine.remedy ? `${machine.title} \u2014 ${machine.remedy}` : machine.title}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </Card>
+          ) : null}
         </View>
       ) : null}
 

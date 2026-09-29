@@ -253,7 +253,12 @@ private struct MachineRow: View {
         HStack(spacing: Space.sm) {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
-            Pill(status.state.title, tone: tone(status.state), size: .small)
+            if status.state == .approved, status.offloadable != nil {
+              let ready = status.readiness
+              Pill(ready.title, tone: tone(ready.tone), size: .small).help(ready.reasons ?? "")
+            } else {
+              Pill(status.state.title, tone: tone(status.state), size: .small)
+            }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
           }
@@ -276,6 +281,15 @@ private struct MachineRow: View {
         .disabled(working || (status?.state == .nodeChanged && !canAsk))
     }
     .padding(.vertical, Space.xxs)
+  }
+
+  private func tone(_ tone: MachineReadiness.Tone) -> PillTone {
+    switch tone {
+    case .success: return .success
+    case .warning: return .warning
+    case .error: return .error
+    case .neutral: return .neutral
+    }
   }
 
   private func tone(_ state: BuildMachineStatus.State) -> PillTone {
