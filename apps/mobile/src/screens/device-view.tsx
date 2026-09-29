@@ -47,7 +47,7 @@ import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
-import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
+import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
@@ -71,8 +71,6 @@ const NOTE_INSET = 64;
 const SIDE_WIDTH = 208;
 const CONTROLS_FADE_MS = 200;
 const CONTROLS_MIN_WIDTH = 320;
-/** Matches the flying screen's landed corner radius in `useDeviceZoom`'s `screenStyle`: `(6 + 2 * 1) * 1`. */
-const SCREEN_RADIUS = 8;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -610,12 +608,10 @@ export function DeviceView({
               importantForAccessibility={controls.shown ? 'auto' : 'no-hide-descendants'}
               style={[
                 styles.controlsLayer,
-                landscape
-                  ? {
-                      ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
-                      bottom: rootHeight - rest[1] - rest[3],
-                    }
-                  : { left: rest[0], width: rest[2], bottom: rootHeight - rest[1] - rest[3] },
+                {
+                  ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
+                  bottom: rootHeight - rest[1] - rest[3],
+                },
                 zoom.fadeStyle,
                 lift,
               ]}
@@ -623,10 +619,7 @@ export function DeviceView({
               <Animated.View
                 style={[
                   styles.controlsPanel,
-                  // A narrow landscape screen (e.g. a portrait sim in a wide window) widens the panel past the
-                  // screen so the controls row still fits; its bottom corners then no longer sit on the screen's
-                  // own rounded edge, so it skips the corner match in that case only.
-                  !(landscape && rest[2] < CONTROLS_MIN_WIDTH) && styles.controlsPanelRounded,
+                  rest[2] >= CONTROLS_MIN_WIDTH && styles.controlsPanelRounded,
                   controlsFade,
                 ]}
                 onTouchStart={controls.reveal}
@@ -840,7 +833,10 @@ const styles = StyleSheet.create((theme) => ({
     overflow: 'hidden',
     backgroundImage: 'linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7) 65%, rgba(0, 0, 0, 0.78))',
   },
-  controlsPanelRounded: { borderBottomLeftRadius: SCREEN_RADIUS, borderBottomRightRadius: SCREEN_RADIUS },
+  controlsPanelRounded: {
+    borderBottomLeftRadius: LANDED_SCREEN_RADIUS,
+    borderBottomRightRadius: LANDED_SCREEN_RADIUS,
+  },
   noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
   note: {
     overflow: 'hidden',

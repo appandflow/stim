@@ -35,6 +35,8 @@ export interface ZoomOrigin {
 
 const OPEN_MS = 420;
 const CLOSE_MS = 340;
+/** The screen's corner radius once it has landed at its fitted place (`progress` 1, `scale` 1). */
+export const LANDED_SCREEN_RADIUS = 8;
 const RETARGET_MS = 250;
 const DISMISS_DRAG = 120;
 const DISMISS_VELOCITY = 900;
@@ -207,7 +209,7 @@ export function useDeviceZoom(
       width: width * scale,
       height: height * scale,
       opacity: hasOrigin ? 1 : progress.get(),
-      borderRadius: (6 + 2 * progress.get()) * scale,
+      borderRadius: (LANDED_SCREEN_RADIUS - 2 + 2 * progress.get()) * scale,
     };
   });
   const fadeStyle = useAnimatedStyle(() => ({

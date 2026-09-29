@@ -23,7 +23,6 @@ import type { ReplayMarker, ReplayRate } from '@/protocol/types';
 
 const MARKER_REACH = 14;
 const TRACK_HEIGHT = 44;
-/** Keeps the time and gap labels legible where the scrim behind them is lightest, over light app content. */
 const textShadow = {
   textShadowColor: 'rgba(0, 0, 0, 0.7)',
   textShadowOffset: { width: 0, height: 1 },

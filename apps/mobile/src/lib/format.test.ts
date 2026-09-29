@@ -34,8 +34,12 @@ describe('clockTime', () => {
     expect(clockTime(at, 'en-GB')).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 
-  it('does not depend on the current time, only on `at`', () => {
-    expect(clockTime(at, 'en-GB')).toBe(clockTime(at, 'en-GB'));
+  it('reads the seconds from `at`, not from the current time', () => {
+    const later = Date.parse('2026-09-25T22:31:42Z');
+    const secondsOf = (ms: number) => String(new Date(ms).getSeconds()).padStart(2, '0');
+    expect(clockTime(at, 'en-GB')).toMatch(new RegExp(`:${secondsOf(at)}$`));
+    expect(clockTime(later, 'en-GB')).toMatch(new RegExp(`:${secondsOf(later)}$`));
+    expect(clockTime(at, 'en-GB')).not.toBe(clockTime(later, 'en-GB'));
   });
 });
 
