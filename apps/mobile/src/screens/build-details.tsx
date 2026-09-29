@@ -222,7 +222,7 @@ function PlatformSwitch({
             {[false, true].map((layerSelected) => (
               <EaseView
                 key={String(layerSelected)}
-                animate={{ opacity: layerSelected === selected ? 1 : 0 }}
+                animate={{ opacity: !layerSelected || selected ? 1 : 0 }}
                 transition={reduceMotion ? { type: 'none' } : LABEL_FADE}
                 style={[styles.segmentLabel, layerSelected && styles.segmentLabelOverlay]}
                 importantForAccessibility="no-hide-descendants"
