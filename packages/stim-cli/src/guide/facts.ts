@@ -556,25 +556,28 @@ RULES
   bundle id and discovered scheme on its owned simulator. That
   suppresses iOS's first-launch confirmation;
   unrelated schemes remain unapproved. The approvals persist
-  until the simulator is erased, so Stim records the keys it
+  until the simulator is erased, so Stim records the ones it
   wrote on the workspace's device record and writes only the
   ones missing from it. Parking drops the record, so an
   adopted simulator gets them again once.
-  THE DEV MENU AND ITS BUTTON stay off a simulator by one of
-  two routes, picked from the project's installed
-  expo-dev-launcher (found through expo-dev-client, no
-  network). From 58.0.0 (expo/expo#49651) the deep link
-  carries \`disableFab=1&disableAutoLaunch=1\` on the outer
-  link and on the project url, plus
+  THE DEV MENU AND ITS BUTTON stay off a simulator through
+  EXDevMenuShowsAtLaunch=false and
+  EXDevMenuShowFloatingActionButton=false in the app's
+  defaults, which the onboarding flag does NOT cover. Stim
+  writes them whenever it actually installs the app; an
+  install skipped as byte-identical keeps the app's data and
+  so the values already written. They cover every later
+  launch, including a home-screen tap or an agent relaunch.
+  When the project's installed expo-dev-launcher (found
+  through expo-dev-client, no network) is 58.0.0 or later
+  (expo/expo#49651), Stim's own deep link also carries
+  \`disableFab=1&disableAutoLaunch=1\` on the outer link and
+  on the project url, plus
   \`__expo_disable_fab=1&__expo_disable_auto_launch=1\` on the
   project url, which is the only url \`simctl launch
   --initialUrl\` hands the launcher and the one 58.0.7 reads
-  the \`__expo_\` spellings from. Before 58.0.0, and when the
-  version cannot be read, Stim writes
-  EXDevMenuShowsAtLaunch=false and
-  EXDevMenuShowFloatingActionButton=false into the app's
-  defaults on every run instead, which the onboarding flag does
-  NOT cover. Either way device automation opens on the app.
+  the \`__expo_\` spellings from, for that launch only. So
+  device automation opens on the app.
   The \`install     dev client prepared (...)\` line appears
   only when one of those simulator writes ran. The
   unverified warning therefore leads with the picker, then
@@ -636,7 +639,7 @@ RULES
   writes and the Local Network grant both survive an
   UPGRADE install. Android's intent extra prevents the menu's
   automatic launch; versions with expo/expo#49651 also honor
-  the session-only FAB flag in Stim's deep link.
+  the outer FAB flag in Stim's deep link.
   The phone's unverified remedy is also ROUTED, not a fixed
   list. When this launch's device records carry the Local
   Network path reason, the remedy leads with that evidence and

@@ -772,7 +772,6 @@ export async function finishIosRun({
         appPath: appPath!,
         bundleId,
         devClientScheme: scheme,
-        devMenuParams,
         schemeApprovals: device.schemeApprovals,
         proveInstalled: !adopting || device?.parkedCacheKey === storeKey,
       },

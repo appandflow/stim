@@ -84,7 +84,6 @@ export function installIosApp(
     appPath,
     bundleId = null,
     devClientScheme = null,
-    devMenuParams = false,
     schemeApprovals = [],
     proveInstalled = true,
   }: {
@@ -92,7 +91,6 @@ export function installIosApp(
     appPath: string;
     bundleId?: string | null;
     devClientScheme?: string | null;
-    devMenuParams?: boolean;
     schemeApprovals?: string[];
     proveInstalled?: boolean;
   },
@@ -117,9 +115,9 @@ export function installIosApp(
     artifactStartedAt !== undefined && artifactFinishedAt !== undefined
       ? artifactFinishedAt - artifactStartedAt
       : undefined;
-  const devMenuKeys = bundleId && devClientScheme && !devMenuParams ? IOS_DEV_MENU_OFF_KEYS : [];
+  const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
   const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
-  const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(key));
+  const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
   const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
   const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
   if (bundleId && preparing) {
@@ -149,7 +147,9 @@ export function installIosApp(
   const timing = {
     ...(artifactDurationMs === undefined ? {} : { artifactDurationMs }),
     ...(devClientPreparationDurationMs === undefined ? {} : { devClientPreparationDurationMs }),
-    ...(missingApprovals.length > 0 ? { schemeApprovals: [...schemeApprovals, ...missingApprovals] } : {}),
+    ...(missingApprovals.length > 0
+      ? { schemeApprovals: [...schemeApprovals, ...missingApprovals.map((key) => `${key}=${bundleId}`)] }
+      : {}),
   };
   return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
 }

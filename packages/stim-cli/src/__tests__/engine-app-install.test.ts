@@ -267,8 +267,8 @@ describe('ios', () => {
       ok: true,
       appPath,
       schemeApprovals: [
-        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
-        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
       ],
     });
     expect(exec.calls).toEqual([
@@ -352,38 +352,10 @@ describe('ios', () => {
       artifactDurationMs: 500,
       devClientPreparationDurationMs: 800,
       schemeApprovals: [
-        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
-        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
       ],
     });
-  });
-
-  test('a launcher that reads the dev-menu params and recorded approvals leave nothing to prepare', () => {
-    const exec = recordingExec();
-    const times = [0, 500];
-    const appPath = '/tmp/My App.app';
-    const approvals = iosSchemeApprovalKeys('com.example.app', 'myapp');
-    const result = installIosApp(
-      {
-        udid: 'U1',
-        appPath,
-        bundleId: 'com.example.app',
-        devClientScheme: 'myapp',
-        devMenuParams: true,
-        schemeApprovals: approvals,
-        proveInstalled: false,
-      },
-      {
-        exec,
-        now: () => {
-          const time = times.shift();
-          assert(time !== undefined);
-          return time;
-        },
-      },
-    );
-    expect(result).toEqual({ ok: true, appPath, artifactDurationMs: 500 });
-    expect(exec.calls).toEqual([['xcrun', 'simctl', 'install', 'U1', appPath]]);
   });
 
   test('only the approvals missing from the record are written, and the record grows by them', () => {
@@ -394,13 +366,14 @@ describe('ios', () => {
         appPath: '/tmp/My App.app',
         bundleId: 'com.example.app',
         devClientScheme: 'myapp',
-        devMenuParams: true,
-        schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app', 'other-->key'],
-        proveInstalled: false,
+        schemeApprovals: [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.other',
+        ],
       },
-      { exec },
+      { exec, now: () => 0 },
     );
-    expect(exec.calls.slice(1)).toEqual([
+    expect(exec.calls.filter((call) => call.includes('com.apple.launchservices.schemeapproval'))).toEqual([
       [
         'xcrun',
         'simctl',
@@ -415,28 +388,9 @@ describe('ios', () => {
       ],
     ]);
     expect(result.schemeApprovals).toEqual([
-      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
-      'other-->key',
-      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
-    ]);
-  });
-
-  test('an older launcher still gets the dev-menu preference writes when its approvals are recorded', () => {
-    const exec = recordingExec();
-    installIosApp(
-      {
-        udid: 'U1',
-        appPath: '/tmp/My App.app',
-        bundleId: 'com.example.app',
-        devClientScheme: 'myapp',
-        schemeApprovals: iosSchemeApprovalKeys('com.example.app', 'myapp'),
-        proveInstalled: false,
-      },
-      { exec },
-    );
-    expect(exec.calls.slice(1).map((call) => call.slice(6, 8))).toEqual([
-      ['com.example.app', 'EXDevMenuShowsAtLaunch'],
-      ['com.example.app', 'EXDevMenuShowFloatingActionButton'],
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.other',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
     ]);
   });
 
@@ -3022,24 +2976,40 @@ describe('skipping an install the device already holds', () => {
     expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', apkPath]);
   });
 
-  test('an identical .app is not installed again, but the dev client is still prepared', () => {
+  test('an identical .app keeps its dev-menu preferences, and recorded approvals leave nothing to prepare', () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('built.app', 'macho');
-    const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-    const result = installIosApp(
-      { udid: 'U1', appPath, bundleId: 'com.example.app', devClientScheme: 'myapp' },
-      { exec },
-    );
-    expect(result).toEqual({
-      ok: true,
-      appPath,
-      skipped: true,
-      schemeApprovals: iosSchemeApprovalKeys('com.example.app', 'myapp'),
-    });
-    expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
-    expect(exec.calls.some((c) => c.includes('EXDevMenuShowsAtLaunch'))).toBe(true);
-    expect(exec.calls.some((c) => c.includes('EXDevMenuShowFloatingActionButton'))).toBe(true);
-    expect(exec.calls.some((c) => c.includes('com.apple.CoreSimulator.CoreSimulatorBridge-->myapp'))).toBe(true);
+    for (const [schemeApprovals, writes] of [
+      [
+        [],
+        [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        ],
+      ],
+      [
+        [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+        ],
+        [],
+      ],
+    ] as const) {
+      const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
+      const result = installIosApp(
+        {
+          udid: 'U1',
+          appPath,
+          bundleId: 'com.example.app',
+          devClientScheme: 'myapp',
+          schemeApprovals: [...schemeApprovals],
+        },
+        { exec, now: () => 0 },
+      );
+      expect(result.skipped).toBe(true);
+      expect(exec.calls.filter((c) => c.includes('write')).map((c) => c[7])).toEqual(writes);
+      expect(result.devClientPreparationDurationMs === undefined).toBe(writes.length === 0);
+    }
   });
 
   test('a .app whose JS was swapped is installed: the container holds the other one', () => {

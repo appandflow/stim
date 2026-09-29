@@ -4908,7 +4908,7 @@ describe('an app the simulator already holds', () => {
           },
         },
       );
-      expect(installArgs).toMatchObject({ devMenuParams: true, schemeApprovals: recorded });
+      expect(installArgs).toMatchObject({ schemeApprovals: recorded });
       expect(calls.args.launchIosApp).toMatchObject({ devMenuParams: true });
       expect(recordedCalls).toEqual(expected);
     }
