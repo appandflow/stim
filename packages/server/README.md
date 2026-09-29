@@ -551,7 +551,14 @@ Events are `{ "event", "subscription", ... }`.
   one result for 60 seconds, shared by every connection: a request while the
   commands run waits for them, and `measuredAt` says when they started. The
   commands fail after 150 seconds. Servers that predate it answer
-  `unknown-method`.
+  `unknown-method`. It also carries `buildMachines`, the `buildMachines` list
+  of `stim doctor --json --platform ios` (never with `--fix`), so a phone can
+  show whether each build machine takes builds. The server runs doctor only
+  when `offload.machines` names a machine, else the list is empty; it runs it
+  in the registered workspace that ran doctor for iOS most recently, because
+  doctor judges a machine against an app. Like a doctor run from a terminal,
+  that records the run for the workspace. `buildMachines` is null with
+  `buildMachinesError` when doctor failed or no registered workspace exists.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
   [push notifications](#push-notifications) the phone wants (`started`,

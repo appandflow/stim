@@ -1,4 +1,5 @@
-import type { MachineDetails } from './protocol.ts';
+import type { StimConfig } from '@stim-cli/core/state';
+import type { BuildMachineReport, MachineDetails } from './protocol.ts';
 import type { CommandOutcome } from './stim-command.ts';
 
 /**
@@ -7,6 +8,8 @@ import type { CommandOutcome } from './stim-command.ts';
  */
 const GC_DRY_RUN = ['gc', '--json'];
 const STATS = ['stats', '--json'];
+/** `--platform ios` keeps doctor from probing Android toolchains; it never runs with `--fix`. */
+const DOCTOR = ['doctor', '--json', '--platform', 'ios'];
 
 const MACHINE_DETAILS_TTL_MS = 60_000;
 
@@ -14,16 +17,62 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
   if (!outcome.ok) return { payload: null, error: outcome.message };
   try {
     const value: unknown = JSON.parse(outcome.stdout);
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      return { payload: value as Record<string, unknown> };
-    }
+    if (isObject(value)) return { payload: value };
   } catch {}
   return { payload: null, error: `${label} printed output that is not a JSON object.` };
 }
 
-export async function loadMachineDetails(run: (args: string[]) => Promise<CommandOutcome>): Promise<MachineDetails> {
+/**
+ * Where `machine.details` runs `stim doctor` for the build machines: null when `offload.machines` names none, else
+ * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
+ * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
+ */
+export function doctorWorkspace(
+  config: Pick<StimConfig, 'projects' | 'offload'> | null,
+  exists: (path: string) => boolean,
+): { cwd: string | null } | null {
+  const machines = config?.offload?.machines;
+  if (!Array.isArray(machines) || machines.length === 0) return null;
+  const candidates = Object.entries(config?.projects ?? {}).filter(([path]) => exists(path));
+  const ranAt = ([, record]: (typeof candidates)[number]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
+  const newest = candidates.reduce<(typeof candidates)[number] | null>(
+    (best, entry) => (best === null || ranAt(entry) > ranAt(best) ? entry : best),
+    null,
+  );
+  return { cwd: newest?.[0] ?? null };
+}
+
+async function buildMachinesPart(
+  run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
+  doctor: { cwd: string | null } | null,
+): Promise<{ buildMachines: BuildMachineReport[] | null; buildMachinesError?: string }> {
+  if (doctor === null) return { buildMachines: [] };
+  if (doctor.cwd === null) {
+    return { buildMachines: null, buildMachinesError: 'No Stim workspace is registered to run stim doctor in.' };
+  }
+  const { payload, error } = part(await run(DOCTOR, doctor.cwd), 'stim doctor');
+  if (!payload) return { buildMachines: null, buildMachinesError: error! };
+  const machines = payload.buildMachines;
+  if (!Array.isArray(machines)) {
+    return { buildMachines: null, buildMachinesError: 'This stim does not report build machines; update it.' };
+  }
+  return {
+    buildMachines: machines.filter(
+      (entry): entry is BuildMachineReport =>
+        isObject(entry) && typeof entry.machine === 'string' && typeof entry.state === 'string',
+    ),
+  };
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+export async function loadMachineDetails(
+  run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
+  doctor: { cwd: string | null } | null = null,
+): Promise<MachineDetails> {
   const measuredAt = new Date().toISOString();
-  const [gc, stats] = await Promise.all([run(GC_DRY_RUN), run(STATS)]);
+  const [gc, stats, machines] = await Promise.all([run(GC_DRY_RUN), run(STATS), buildMachinesPart(run, doctor)]);
   const gcPart = part(gc, 'stim gc');
   const statsPart = part(stats, 'stim stats');
   return {
@@ -31,6 +80,7 @@ export async function loadMachineDetails(run: (args: string[]) => Promise<Comman
     ...(gcPart.error ? { gcError: gcPart.error } : {}),
     stats: statsPart.payload,
     ...(statsPart.error ? { statsError: statsPart.error } : {}),
+    ...machines,
     measuredAt,
   };
 }

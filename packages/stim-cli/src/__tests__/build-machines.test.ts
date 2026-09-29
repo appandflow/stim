@@ -143,6 +143,10 @@ describe('inspectBuildMachines', () => {
         state: 'approved',
         offloadable: false,
         reasons: ['Stim build 6bbe there, e774 here', 'busy (load at or above 2/core; load 8.2/core, 2 builds)'],
+        problems: [
+          { code: 'stim-build', reason: 'Stim build 6bbe there, e774 here' },
+          { code: 'busy', reason: 'busy (load at or above 2/core; load 8.2/core, 2 builds)' },
+        ],
         capacity: { running: 0, max: 1, loadPerCore: 8.2, builds: 2 },
       }),
     ]);

@@ -1,4 +1,4 @@
-import { MachineDetailsCache } from '../src/machine-details.ts';
+import { loadMachineDetails, MachineDetailsCache } from '../src/machine-details.ts';
 import type { MachineDetails } from '../src/protocol.ts';
 
 function deferred() {
@@ -9,7 +9,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-const RESULT: MachineDetails = { gc: {}, stats: {}, measuredAt: '2026-09-28T10:00:00.000Z' };
+const RESULT: MachineDetails = { gc: {}, stats: {}, buildMachines: [], measuredAt: '2026-09-28T10:00:00.000Z' };
 
 describe('MachineDetailsCache', () => {
   it('shares a running load, reuses its result for the ttl, then loads again', async () => {
@@ -40,5 +40,30 @@ describe('MachineDetailsCache', () => {
     now = 30_000 + 60_000;
     void cache.get();
     expect(loads).toHaveLength(2);
+  });
+});
+
+describe('loadMachineDetails build machines', () => {
+  const run = (args: string[]) => Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
+
+  it('runs no doctor when offload.machines names none, and says why when no workspace can run it', async () => {
+    const calls: string[] = [];
+    const counted = (args: string[]) => {
+      calls.push(args[0]!);
+      return run(args);
+    };
+    expect(await loadMachineDetails(counted, null)).toMatchObject({ buildMachines: [] });
+    expect(await loadMachineDetails(counted, { cwd: null })).toMatchObject({
+      buildMachines: null,
+      buildMachinesError: 'No Stim workspace is registered to run stim doctor in.',
+    });
+    expect(calls).not.toContain('doctor');
+  });
+
+  it('says to update a stim whose doctor reports no build machines', async () => {
+    expect(await loadMachineDetails(run, { cwd: '/app' })).toMatchObject({
+      buildMachines: null,
+      buildMachinesError: 'This stim does not report build machines; update it.',
+    });
   });
 });
