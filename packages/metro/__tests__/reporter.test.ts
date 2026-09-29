@@ -84,6 +84,47 @@ test('a client symbolication response becomes info-level error context', () => {
   });
 });
 
+test('symbolication code frames from a real Metro /symbolicate response lose their escape codes and keep their frame lines', () => {
+  withDir((dir) => {
+    const reporter = ndjsonReporter({ dir });
+    const content =
+      '\x1b[0m \x1b[90m 29 |\x1b[39m       \x1b[36mthis\x1b[39m\x1b[33m.\x1b[39m\x1b[33m#\x1b[39mjsHeapSizeLimit \x1b[33m=\x1b[39m memoryInfo\x1b[33m.\x1b[39mjsHeapSizeLimit\x1b[33m;\x1b[39m\n' +
+      '\x1b[31m\x1b[1m>\x1b[22m\x1b[39m\x1b[90m 30 |\x1b[39m       \x1b[36mthis\x1b[39m\x1b[33m.\x1b[39m\x1b[33m#\x1b[39mtotalJSHeapSize \x1b[33m=\x1b[39m memoryInfo\x1b[33m.\x1b[39mtotalJSHeapSize\x1b[33m;\x1b[39m\n' +
+      ' \x1b[90m    |\x1b[39m                                         \x1b[31m\x1b[1m^\x1b[22m\x1b[39m\n' +
+      ' \x1b[90m 31 |\x1b[39m   }\x1b[0m';
+    reporter.update({
+      type: 'client_symbolication',
+      codeFrame: { fileName: '/app/MemoryInfo.js', location: { row: 30, column: 40 }, content },
+    });
+
+    const [record] = records(dir, 'client.ndjson');
+    expect(record.msg).toBe(
+      [
+        'Code: /app/MemoryInfo.js:30:40',
+        '  29 |       this.#jsHeapSizeLimit = memoryInfo.jsHeapSizeLimit;',
+        '> 30 |       this.#totalJSHeapSize = memoryInfo.totalJSHeapSize;',
+        '     |                                         ^',
+        '  31 |   }',
+        'Call Stack',
+      ].join('\n'),
+    );
+  });
+});
+
+test('OSC sequences such as hyperlinks are stripped from any record message', () => {
+  withDir((dir) => {
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({
+      type: 'client_log',
+      level: 'warn',
+      data: ['\x1b]8;;https://example.com\x07docs\x1b]8;;\x07 and \x1b]0;title\x1b\\\x1b[1;31mred\x1b[m'],
+    });
+
+    const [record] = records(dir, 'client.ndjson');
+    expect(record.msg).toBe('docs and red');
+  });
+});
+
 test('bundling_error and transformer_error are metro-side errors with the message extracted', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });

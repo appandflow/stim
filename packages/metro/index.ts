@@ -89,6 +89,15 @@ function registerOnce(
   });
 }
 
+const ANSI_ESCAPE = new RegExp(
+  [String.raw`\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)`, String.raw`\u001b\[[0-?]*[ -/]*[@-~]`].join('|'),
+  'g',
+);
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE, '');
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -245,7 +254,7 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
         ensured = true;
       }
       const target = path.join(logDir, file);
-      const line = JSON.stringify(record) + '\n';
+      const line = JSON.stringify({ ...record, msg: stripAnsi(record.msg) }) + '\n';
       const unchecked = uncheckedBytes.get(file);
       if (unchecked === undefined || unchecked >= LOG_ROTATE_BYTES / 8) {
         uncheckedBytes.set(file, 0);
