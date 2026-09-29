@@ -18,3 +18,8 @@ export function agentsSummary(agents: AgentSession[] | undefined, now: number): 
   if (!first) return null;
   return rest.length ? `${agentLabel(first, now)} +${rest.length}` : agentLabel(first, now);
 }
+
+/** The session's https link for other devices, which opens it in the Claude app or a browser; any other scheme is ignored. */
+export function agentWebUrl(agent: AgentSession): string | null {
+  return agent.webUrl?.startsWith('https://') ? agent.webUrl : null;
+}

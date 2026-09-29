@@ -18,6 +18,12 @@ const COMMAND_ATTRIBUTION_MS = 30 * 60_000;
  */
 const CLAUDE_DESKTOP_SESSION = /^local_[A-Za-z0-9-]{1,64}$/;
 
+/**
+ * Claude Code writes a Remote Control session's claude.ai id to its session file as `bridgeSessionId`, and prints
+ * `https://claude.ai/code/<id>` as the session URL, which the Claude mobile app also opens as a universal link.
+ */
+const CLAUDE_REMOTE_SESSION = /^session_[A-Za-z0-9]{1,64}$/;
+
 /** Which desktop apps that open agent sessions are installed on this Mac. */
 export interface AgentApps {
   claude: boolean;
@@ -65,6 +71,7 @@ export function parseClaudeSession(entry: unknown, apps: AgentApps): AgentSessio
   if (typeof raw.sessionId !== 'string' || !SESSION_ID.test(raw.sessionId)) return null;
   if (typeof raw.cwd !== 'string' || !isAbsolute(raw.cwd)) return null;
   const host = raw.hostSessionId;
+  const bridge = raw.bridgeSessionId;
   return withOptional(
     { tool: 'claude-code', sessionId: raw.sessionId, cwd: raw.cwd },
     {
@@ -75,6 +82,10 @@ export function parseClaudeSession(entry: unknown, apps: AgentApps): AgentSessio
       openUrl:
         apps.claude && typeof host === 'string' && CLAUDE_DESKTOP_SESSION.test(host)
           ? `claude://code/continue?session=${host}`
+          : undefined,
+      webUrl:
+        typeof bridge === 'string' && CLAUDE_REMOTE_SESSION.test(bridge)
+          ? `https://claude.ai/code/${bridge}`
           : undefined,
     },
   );

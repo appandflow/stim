@@ -258,7 +258,9 @@ Events are `{ "event", "subscription", ... }`.
   Claude Code and Codex sessions working in it. Those carry the session id,
   working directory, the short session name the tool keeps, and times, never
   prompts or conversation. `openUrl` there is a `claude://` or `codex://` link
-  that only the Mac can open; the server has no action that opens it. The server
+  that only the Mac can open; the server has no action that opens it. `webUrl`
+  is a Claude Code session's `https://claude.ai/code/` link while Remote Control
+  is connected, which a phone opens in the Claude app or a browser. The server
   drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
   the `stim` commands it runs, so a phone's reload is not recorded as the work
   of the agent session that started the server. All subscribers share

@@ -1565,7 +1565,8 @@
             "startedAt": "2026-09-25T03:10:00.000Z",
             "lastActiveAt": "2026-09-25T04:20:00.000Z",
             "pid": 20606,
-            "openUrl": "claude://code/continue?session=local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7"
+            "openUrl": "claude://code/continue?session=local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7",
+            "webUrl": "https://claude.ai/code/session_016mNVcEGnttEVda1aDtiDUK"
           }
         ]
       },
@@ -3189,6 +3190,6 @@
     "environments[path*=wide-split-layout].web: added by hand in the WebBrowserState shape of stim web, so a workspace shows the Stim-owned Chrome",
     "environments[path*=chat-perf-demo].physicalDevices and deviceLeases: added by hand in the PhysicalDeviceState shape, a connected iPhone leased in the default slot and a disconnected Android phone in the pixel slot; the capture machine leased no physical device",
     "environments[path*=a4-ready]: added by hand in the shape stim status --json reports for a worktree stim worktree warm prepared that never built or ran, with an open pull request whose checks all pass",
-    "environments[path*=a4-running].agents and environments[path*=1123-mobile-app].agents: added by hand in the AgentSession shape; the capture predates the field"
+    "environments[path*=a4-running].agents and environments[path*=1123-mobile-app].agents: added by hand in the AgentSession shape; the capture predates the field. The a4-running session carries a webUrl as a Remote Control session does"
   ]
 }

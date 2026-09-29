@@ -281,7 +281,8 @@ export interface EnvironmentState {
 
 /**
  * A Claude Code or Codex session working in a workspace. `title` is the short name the tool keeps for the session.
- * `openUrl` opens it in the Mac's desktop app, so the phone does not use it.
+ * `openUrl` opens it in the Mac's desktop app, so the phone does not use it. `webUrl` is its claude.ai/code link while
+ * Claude Code Remote Control is connected, which the phone opens in the Claude app or a browser.
  */
 export interface AgentSession {
   tool: 'claude-code' | 'codex';
@@ -292,6 +293,7 @@ export interface AgentSession {
   lastActiveAt?: string;
   pid?: number;
   openUrl?: string;
+  webUrl?: string;
 }
 
 /**
