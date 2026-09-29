@@ -113,10 +113,14 @@ export function isKotlinDaemonCommand(command: string): boolean {
   return KOTLIN_DAEMON_CLASS.test(command) && !GRADLE_DAEMON_CLASS.test(command);
 }
 
-/** The offload client whose Gradle home under `workerRoot` a daemon's classpath names, as stim-server matches it. */
-export function offloadClientOf(command: string, workerRoot: string): string | null {
+/**
+ * The offload client whose Gradle home under `workerRoot` a daemon uses: named by its classpath, as stim-server
+ * matches it, or by the Gradle home it runs in.
+ */
+export function offloadClientOf(command: string, workerRoot: string, gradleHome: string | null): string | null {
   const root = resolve(workerRoot).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`${root}/([^/\\s]+)/cache/gradle/`).exec(command)?.[1] ?? null;
+  const home = new RegExp(`${root}/([^/\\s]+)/cache/gradle(/|$)`);
+  return home.exec(command)?.[1] ?? (gradleHome ? (home.exec(gradleHome)?.[1] ?? null) : null);
 }
 
 /** `gradle --status` rows: the state of each daemon pid it lists, lowercased (idle, busy, stopped, ...). */
@@ -216,7 +220,8 @@ export function watchmanRootStaleness(path: string, probe: RootProbe = fsProbe):
       if (!probe.isFile(git)) return null;
       const target = /^gitdir:\s*(.+?)\s*$/m.exec(probe.read(git) ?? '')?.[1];
       if (!target) return null;
-      return probe.exists(isAbsolute(target) ? target : resolve(dir, target)) ? null : 'pruned-worktree';
+      const gitdir = isAbsolute(target) ? target : resolve(dir, target);
+      return probe.exists(gitdir) || !probe.mounted(gitdir) ? null : 'pruned-worktree';
     }
     if (dirname(dir) === dir) return null;
   }
@@ -270,14 +275,17 @@ function planWatchmanRoot(root: WatchmanRootFacts): WatchmanRoot {
 /**
  * Decides the watchman roots gc removes and whether it may shut the daemon down. A stale root goes only while no
  * subscription or trigger uses it. The daemon goes only when `debug-status` lists no client besides gc's own call and
- * every root's subscriptions could be read and are empty; `describeClient` names each client that keeps it.
+ * every root's subscriptions and triggers could be read, no kept root has a trigger, and no root has a subscription;
+ * `describeClient` names each client that keeps it.
  */
 export function planWatchman(
   facts: WatchmanFacts,
   describeClient: (client: WatchmanClient) => string,
 ): { process: MemoryProcess; roots: WatchmanRoot[] } {
   const roots = (facts.roots ?? []).map(planWatchmanRoot);
-  const unreadRoots = facts.roots === null || roots.some((root) => root.subscriptions === null);
+  const unreadRoots =
+    facts.roots === null || roots.some((root) => root.subscriptions === null || root.triggers === null);
+  const triggered = roots.filter((root) => !root.removable && (root.triggers ?? 0) > 0);
   let reason: MemoryKeptCode | null = null;
   let detail: string | null = null;
   if (facts.clients === null || unreadRoots) {
@@ -285,13 +293,16 @@ export function planWatchman(
     detail =
       facts.clients === null
         ? 'watchman debug-status did not list its clients'
-        : 'could not list the subscriptions of every root';
+        : 'could not list the subscriptions and triggers of every root';
   } else if (facts.clients.length > 0) {
     reason = 'in-use';
     detail = `used by ${[...new Set(facts.clients.map(describeClient))].join(', ')}; shutting it down would break their file watching`;
   } else if (roots.some((root) => !root.removable && (root.subscriptions ?? 0) > 0)) {
     reason = 'in-use';
     detail = 'a root still has a subscription';
+  } else if (triggered.length > 0) {
+    reason = 'in-use';
+    detail = `${triggered.map((root) => root.path).join(', ')} ha${triggered.length === 1 ? 's' : 've'} triggers that stop firing while watchman is down`;
   }
   return {
     process: {
@@ -549,9 +560,10 @@ async function readLsof(pids: readonly number[]): Promise<Map<number, LsofProces
       }),
     );
   } catch (error) {
-    // lsof exits 1 when one of the pids has exited; what it printed for the others is still valid.
-    const stdout = (error as { stdout?: unknown }).stdout;
-    return typeof stdout === 'string' && stdout ? parseLsof(stdout) : null;
+    // lsof exits 1 when one of the pids has exited; what it printed for the others is still valid. Output cut off by
+    // the timeout is not.
+    const { status, signal: killed, stdout } = error as { status?: unknown; signal?: unknown; stdout?: unknown };
+    return status === 1 && !killed && typeof stdout === 'string' && stdout ? parseLsof(stdout) : null;
   }
 }
 
@@ -583,6 +595,7 @@ async function collectGradleFacts(
   rows: readonly HostProcess[],
   byPid: ReadonlyMap<number, HostProcess>,
   footprints: ReadonlyMap<number, number> | null,
+  stimServerRunning: boolean,
 ): Promise<{ gradle: GradleDaemonFacts[]; kotlin: KotlinDaemonFacts[] }> {
   const gradleRows = rows.flatMap((row) => {
     const command = parseGradleDaemonCommand(row.command);
@@ -596,9 +609,11 @@ async function collectGradleFacts(
     const files = lsof?.get(row.pid)?.files;
     return files ? gradleHomeFromFiles(row.pid, command.version, files) : null;
   });
+  const offload = gradleRows.map(({ row }, index) => offloadClientOf(row.command, workerRoot, homes[index] ?? null));
   const statuses = new Map<string, Promise<Map<number, string> | { unknown: string }>>();
   gradleRows.forEach(({ command }, index) => {
     const home = homes[index];
+    if (offload[index] !== null && stimServerRunning) return;
     if (home && !statuses.has(groupKey(command, home)))
       statuses.set(groupKey(command, home), gradleStatus(command, home));
   });
@@ -606,7 +621,9 @@ async function collectGradleFacts(
   for (const [index, { row, command }] of gradleRows.entries()) {
     const home = homes[index] ?? null;
     let status: GradleDaemonFacts['status'];
-    if (!home) {
+    if (offload[index] !== null && stimServerRunning) {
+      status = { unknown: 'stim-server manages it' };
+    } else if (!home) {
       status = { unknown: lsof ? 'could not find its Gradle user home among its open files' : 'lsof failed' };
     } else {
       const states = await statuses.get(groupKey(command, home))!;
@@ -623,7 +640,7 @@ async function collectGradleFacts(
       ...measureOf(row.pid, byPid, footprints),
       command,
       gradleHome: home,
-      offloadClient: offloadClientOf(row.command, workerRoot),
+      offloadClient: offload[index] ?? null,
       status,
     });
   }
@@ -699,13 +716,14 @@ export async function collectMemoryReport(scope: MemoryScope): Promise<MemoryRep
     }
   }
   if (scope.gradle) {
-    const facts = await collectGradleFacts(rows, byPid, footprints);
+    const stimServerRunning = rows.some((row) => STIM_SERVER_COMMAND.test(row.command));
+    const facts = await collectGradleFacts(rows, byPid, footprints, stimServerRunning);
     report.processes.push(
       ...planDaemons({
         ...facts,
         buildRunning:
           facts.gradle.length || facts.kotlin.length ? runningBuild(listBuildLocks(), listBuildSlots()) : null,
-        stimServerRunning: rows.some((row) => STIM_SERVER_COMMAND.test(row.command)),
+        stimServerRunning,
       }),
     );
     if (!scope.watchman && report.processes.length === 0) report.notices.push('no Gradle or Kotlin daemon is running');
@@ -882,7 +900,13 @@ async function stopGradle(
   for (const [key, entries] of groups) {
     const [home, , distribution, javaHome] = JSON.parse(key) as [string, string, string | null, string];
     const command = parseGradleDaemonCommand(rows!.get(entries[0]!.pid)!.command)!;
-    const states = await gradleStatus(command, home);
+    const building = runningBuild(listBuildLocks(), listBuildSlots());
+    if (building) {
+      for (const entry of entries) keep(entry, 'gradleDaemon', building);
+      continue;
+    }
+    let states = await gradleStatus(command, home);
+    let current = rows;
     const listed = states instanceof Map ? [...states].filter(([, state]) => state !== 'stopped') : [];
     const whole =
       distribution !== null &&
@@ -909,10 +933,16 @@ async function stopGradle(
             `gradle --stop failed for ${home}; signalling each idle daemon: ${(error as Error).message.split('\n')[0]}`,
           ),
         );
+        states = await gradleStatus(command, home);
+        current = hostRows();
       }
     }
     for (const entry of entries) {
       const state = states instanceof Map ? states.get(entry.pid) : undefined;
+      if (!sameProcess(entry, current)) {
+        keep(entry, 'gradleDaemon', 'the process changed or exited since the check');
+        continue;
+      }
       if (state !== 'idle') {
         keep(
           entry,
@@ -979,7 +1009,7 @@ async function reclaimDaemons(before: MemoryReport): Promise<number> {
   await waitForExit(stopping.map((entry) => entry.pid));
   const kotlin = stillPlanned(await collectMemoryReport(scope), before, 'kotlinDaemon');
   for (const entry of before.processes.filter((e) => e.kind === 'kotlinDaemon' && e.reclaimable)) {
-    if (kotlin.some((current) => current.pid === entry.pid)) continue;
+    if (kotlin.some((current) => current.pid === entry.pid) || alive(entry.pid)) continue;
     console.log(
       chalk.green(`${processLabel(entry)} exited with its Gradle daemon, freeing ${formatBytes(entry.bytes)}`),
     );

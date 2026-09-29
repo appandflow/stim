@@ -10,6 +10,7 @@ import {
   isKotlinDaemonCommand,
   parseGradleDaemonCommand,
   parseGradleStatus,
+  offloadClientOf,
   parseLsof,
   connectionPeers,
   planDaemons,
@@ -131,6 +132,13 @@ test.skipIf(process.platform === 'win32')(
       expect(watchmanRootStaleness(join(root, 'gone'))).toBe('missing');
       const unmounted = { exists: () => false, isFile: () => false, read: () => null, mounted: () => false };
       expect(watchmanRootStaleness('/Volumes/Ext/repo', unmounted)).toBeNull();
+      const gitdirUnmounted = {
+        exists: (path: string) => !path.startsWith('/Volumes/'),
+        isFile: (path: string) => path.endsWith('.git'),
+        read: () => 'gitdir: /Volumes/Ext/main/.git/worktrees/wt',
+        mounted: (path: string) => !path.startsWith('/Volumes/'),
+      };
+      expect(watchmanRootStaleness('/Users/me/wt', gitdirUnmounted)).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -170,6 +178,11 @@ test('watchman may be shut down only when no client is connected and every root 
   const unread = watchmanFacts({ roots: [{ path: '/repo', stale: null, subscribers: null, triggers: 0 }] });
   expect(planWatchman(unread, describe).process).toMatchObject({ reason: 'unknown', reclaimable: false });
   expect(planWatchman(watchmanFacts({ roots: null }), describe).process.reclaimable).toBe(false);
+
+  const triggered = watchmanFacts({ roots: [{ path: '/repo', stale: null, subscribers: [], triggers: 1 }] });
+  expect(planWatchman(triggered, describe).process).toMatchObject({ reason: 'in-use', reclaimable: false });
+  const unreadTriggers = watchmanFacts({ roots: [{ path: '/repo', stale: null, subscribers: [], triggers: null }] });
+  expect(planWatchman(unreadTriggers, describe).process).toMatchObject({ reason: 'unknown' });
 
   const idle = planWatchman(
     watchmanFacts({ roots: [{ path: '/repo', stale: null, subscribers: [], triggers: 0 }] }),
@@ -416,4 +429,11 @@ test('a Kotlin daemon connection is traced to the lsof process holding its other
     ].join('\n'),
   );
   expect(connectionPeers(87114, lsof)).toEqual([13679, null]);
+});
+
+test('an offload daemon is found by its classpath or by the Gradle home it runs in', () => {
+  const root = '/Users/me/.stim/build-worker';
+  expect(offloadClientOf(`java -cp ${root}/client-a/cache/gradle/wrapper/dists/x.jar`, root, null)).toBe('client-a');
+  expect(offloadClientOf(GRADLE_DAEMON, root, `${root}/client-b/cache/gradle`)).toBe('client-b');
+  expect(offloadClientOf(GRADLE_DAEMON, root, '/Users/me/.gradle')).toBeNull();
 });

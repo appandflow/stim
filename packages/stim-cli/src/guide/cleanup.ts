@@ -439,10 +439,10 @@ THE ONE CASE GC WILL NOT REAP
                                   with no subscription or trigger, then
                                   \`watchman shutdown-server\` only when
                                   \`debug-status\` lists no client but gc's own
-                                  call; otherwise the daemon is kept and the
-                                  report names each client, as the Stim
-                                  workspace whose dev server it belongs to
-                                  where it can
+                                  call and no root has a trigger; otherwise
+                                  the daemon is kept and the report names
+                                  each client, as the Stim workspace whose
+                                  dev server it belongs to where it can
     stim gc --delete --cache gradle-daemons
                                   stops each Gradle daemon its own
                                   \`gradle --status\` reports IDLE, then each
@@ -464,8 +464,9 @@ THE ONE CASE GC WILL NOT REAP
   that home and the daemon's Java. When every daemon that status lists for a
   home and version is idle, gc runs that distribution's \`gradle --stop\`;
   otherwise it sends SIGTERM to each idle daemon, after checking the pid still
-  has the same start time. A build that connects in between starts a new
-  daemon. Nothing is stopped while an Android build lock, or a build slot no
+  has the same start time. A build that picks a daemon between gc's last
+  check and the stop fails and must be run again, so gc re-checks the build
+  locks and the daemon's status right before each stop. Nothing is stopped while an Android build lock, or a build slot no
   iOS build holds, is live or unresolved. stim-server stops the daemons of
   offloaded builds (offload.gradleDaemonIdleMinutes, \`guide settings\`), so
   while it runs gc keeps those. A daemon whose home, distribution or status cannot be read is

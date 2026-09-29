@@ -1184,7 +1184,7 @@ stop them; each kind has its own `--cache` value:
 
 - `stim gc --delete --cache watchman` removes the stale roots (a directory that
   is gone, or a linked worktree git pruned) that no subscription or trigger
-  uses. It then shuts watchman down only when no other client is connected;
+  uses. It then shuts watchman down only when no other client is connected and no root has a trigger;
   otherwise it keeps the daemon and names each client, such as the Stim
   workspace whose Metro uses it. Removing roots does not shrink watchman; only a
   restart does, and the next client that needs watchman starts it again.
