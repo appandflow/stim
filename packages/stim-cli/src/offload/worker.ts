@@ -54,8 +54,8 @@ export interface WorkerJob {
   android: AndroidBuildOptions | null;
   expectedFingerprint: string;
   optimizations: Optimizations['ios'] | null;
-  /** How long the client's Gradle daemon stays warm after an Android build; 0 stops it when the build ends. */
-  gradleDaemonIdleMs: number;
+  /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
+  gradleDaemonIdleMs?: number;
 }
 
 export interface WorkerTimings {
@@ -468,8 +468,9 @@ function limitDaemonIdle(idleMs: number): void {
 async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
-  const keepDaemon = job.gradleDaemonIdleMs > 0;
-  limitDaemonIdle(keepDaemon ? job.gradleDaemonIdleMs : 60_000);
+  const idleMs = job.gradleDaemonIdleMs ?? 0;
+  const keepDaemon = idleMs > 0;
+  limitDaemonIdle(keepDaemon ? idleMs : 60_000);
   const onNote = (line: string) => note('build', line);
   const stop = () => {
     stopGradleDaemons(root, 4000);

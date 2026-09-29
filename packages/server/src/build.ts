@@ -14,7 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
@@ -33,6 +33,7 @@ import {
   machineCapacity,
   saturation,
   settingDefinition,
+  settingValueError,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
 import { readAvailableMemory } from './machine.ts';
@@ -145,14 +146,11 @@ function nonEmptyDir(path: string): boolean {
   }
 }
 
-/** `offload.gradleDaemonIdleMinutes` in milliseconds. */
 function gradleDaemonIdleMs(): number {
+  const definition = settingDefinition('offload.gradleDaemonIdleMinutes')!;
   const value = loadConfig()?.offload?.gradleDaemonIdleMinutes;
-  const minutes =
-    typeof value === 'number' && Number.isInteger(value) && value >= 0
-      ? value
-      : (settingDefinition('offload.gradleDaemonIdleMinutes')!.default as number);
-  return minutes * 60_000;
+  const valid = typeof value === 'number' && settingValueError(definition, value) === null;
+  return (valid ? value : (definition.default as number)) * 60_000;
 }
 
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
@@ -162,7 +160,7 @@ const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
  * which the wrapper distribution on their classpath names.
  */
 function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; client: string }> {
-  const home = new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+  const home = new RegExp(`${resolvePath(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
   const daemons: Array<{ pid: number; client: string }> = [];
   for (const line of ps.split('\n')) {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -254,10 +252,10 @@ export class BuildHost {
   }
 
   private async sweep(client: string | null): Promise<void> {
-    const daemons = workerGradleDaemons(await listProcesses(), this.root());
-    if (daemons.length === 0) return;
+    if (this.closed) return;
     const available = await readAvailableMemory();
     const low = available !== null && available < this.limits.minFreeMemoryBytes;
+    const daemons = workerGradleDaemons(await listProcesses(), this.root());
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
@@ -600,6 +598,7 @@ export class BuildHost {
     clearInterval(this.sweeper);
     for (const job of this.owned.values()) this.abandon(job);
     await Promise.all([...this.jobs].map((job) => job.done));
+    await this.sweeping;
   }
 }
 

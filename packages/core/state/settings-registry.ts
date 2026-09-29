@@ -420,7 +420,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'offload.gradleDaemonIdleMinutes',
-    type: CAPACITY,
+    type: { kind: 'number', integer: true, minimum: 0, maximum: 35_791 },
     scopes: MACHINE,
     default: 30,
     description:
