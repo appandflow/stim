@@ -54,6 +54,8 @@ export interface WorkerJob {
   android: AndroidBuildOptions | null;
   expectedFingerprint: string;
   optimizations: Optimizations['ios'] | null;
+  /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
+  gradleDaemonIdleMs?: number;
 }
 
 export interface WorkerTimings {
@@ -449,13 +451,13 @@ function stopGradleDaemons(root: string, timeoutMs: number): void {
 
 /**
  * Gradle reads `org.gradle.daemon.idletimeout` from the user home's gradle.properties, which overrides the
- * project's, so a daemon that `--stop` missed exits a minute after its build instead of three hours.
+ * project's, so the daemon exits after that idle time instead of Gradle's three hours.
  */
-function limitDaemonIdle(): void {
+function limitDaemonIdle(idleMs: number): void {
   const home = process.env.GRADLE_USER_HOME;
   if (!home) return;
   const file = join(home, 'gradle.properties');
-  const wanted = 'org.gradle.daemon.idletimeout=60000\n';
+  const wanted = `org.gradle.daemon.idletimeout=${idleMs}\n`;
   try {
     if (readFileSync(file, 'utf8') === wanted) return;
   } catch {}
@@ -466,7 +468,9 @@ function limitDaemonIdle(): void {
 async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
-  limitDaemonIdle();
+  const idleMs = job.gradleDaemonIdleMs ?? 0;
+  const keepDaemon = idleMs > 0;
+  limitDaemonIdle(keepDaemon ? idleMs : 60_000);
   const onNote = (line: string) => note('build', line);
   const stop = () => {
     stopGradleDaemons(root, 4000);
@@ -495,7 +499,7 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
     return { ok: true, path: built.apkPath, cache: built.ccache ?? CCACHE_UNAVAILABLE };
   } finally {
     process.off('SIGTERM', stop);
-    stopGradleDaemons(root, 60_000);
+    if (!keepDaemon) stopGradleDaemons(root, 60_000);
   }
 }
 

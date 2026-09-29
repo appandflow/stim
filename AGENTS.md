@@ -218,8 +218,11 @@ outside it moves to its own issue and pull request.
   writes the cache. The worker builds each client and repository in its own
   area and Stim home under `offload.workerRoot`, guarded by an ownership
   claim whose child is the build's process group. A Gradle daemon leaves
-  that group, so the worker stops the daemons of the client's Gradle home
-  when an Android build ends or is cancelled. `stim-server service` installs,
+  that group, so it never holds a claim or build slot. The client's daemon
+  stays warm after an Android build for `offload.gradleDaemonIdleMinutes`,
+  and stim-server stops it when the build is cancelled, the client loses
+  `build`, or the Mac's available memory runs low. Gradle stops a daemon
+  whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user LaunchAgent and, only when asked, a
   tailnet-only serve route; it never enables Funnel and never touches
   pairings, `$STIM_HOME/server` or settings.

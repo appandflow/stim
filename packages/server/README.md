@@ -302,9 +302,20 @@ closes its connections and cancels its builds.
   runs prebuild and `pod install` when needed, refuses unless the fingerprint
   equals `fingerprint`, and runs `xcodebuild` for one of this Mac's iPhone
   simulators on `runtime`, which it never boots, or Gradle's
-  `assemble<variant>` for `abi` with ccache under the area's Stim home. An
-  Android build stops the Gradle daemons of the client's Gradle home when it
-  ends or gets SIGTERM, because a daemon leaves the build's process group.
+  `assemble<variant>` for `abi` with ccache under the area's Stim home. A
+  Gradle daemon leaves the build's process group, so no claim or slot tracks
+  it. An Android build keeps the client's daemon warm, with Gradle's idle
+  timeout set to `offload.gradleDaemonIdleMinutes` (default 30; 0 stops it
+  when the build ends), and stops it when the build gets SIGTERM. Gradle
+  fixes a daemon's idle timeout when the daemon starts, so a new value
+  applies to the next daemon. Once no build of that client runs, stim-server
+  sends SIGTERM to each daemon whose command line runs from the client's
+  Gradle home when a build of the client was cancelled, when the client
+  loses `build`, and, for every client, while this Mac has less than 2 GB of
+  available memory (total memory minus Activity Monitor's Memory Used). It
+  checks every minute and on each change under its server directory. A daemon
+  whose Gradle home is deleted stops itself within seconds, because Gradle
+  expires a daemon whose registry file is gone.
 - `build.progress` events `{ "event": "build.progress", "job", ... }` carry a
   `phase` and `msg`, a build-log `record`, and last the `outcome`: `ok`, and
   on success `artifact` (`name`, `size`, `sha256` of a tar of the `.app` or
