@@ -162,6 +162,11 @@ async function prepareRoute(
 
 async function requireManaged(label: string): Promise<InstalledService | null> {
   const installed = await readInstalled(label);
+  if (!installed && existsSync(plistPath(label))) {
+    throw new ServiceError(
+      `${plistPath(label)} is not a plist that install wrote; not touching it. Use another --label.`,
+    );
+  }
   if (installed && !installed.managed) {
     throw new ServiceError(
       `${plistPath(label)} was not written by \`stim-server service install\`; not touching it. Use another --label.`,
@@ -212,9 +217,10 @@ export async function installService(options: ServiceOptions): Promise<string[]>
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(spec.logPath), { recursive: true });
 
-  await unload(options.label);
+  const wasLoaded = (await loaded(options.label)) !== null;
   let routeCreated = false;
   try {
+    await unload(options.label);
     if (await fetchHealth(options.port)) {
       throw new ServiceError(
         `port ${options.port} already answers as a stim-server that is not ${options.label} (Stim Desktop runs one on 7787). Pass --port to use another.`,
@@ -234,9 +240,14 @@ export async function installService(options: ServiceOptions): Promise<string[]>
     if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
     if (oldPlist === null) {
       rmSync(path, { force: true });
-    } else {
-      writeFileSync(path, oldPlist, { mode: 0o644 });
-      await run('launchctl', ['bootstrap', domain(), path]);
+      throw error;
+    }
+    writeFileSync(path, oldPlist, { mode: 0o644 });
+    const restored = wasLoaded ? await run('launchctl', ['bootstrap', domain(), path]) : null;
+    if (restored && !restored.ok && !(await loaded(options.label))) {
+      throw new ServiceError(
+        `${(error as Error).message} The previous service could not be restarted either (${restored.stderr.trim()}); run install again.`,
+      );
     }
     throw error;
   }
