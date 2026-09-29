@@ -118,6 +118,7 @@ struct RootView: View {
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)
     }
+    .onQuitRequested { actions.presented = nil }
     .onAppear {
       store.start()
       metrics.start()

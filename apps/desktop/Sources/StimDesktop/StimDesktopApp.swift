@@ -17,6 +17,35 @@ final class OpenRequests: ObservableObject {
   var openMainWindow: (() -> Void)?
 }
 
+extension Notification.Name {
+  static let stimQuitRequested = Notification.Name("stimQuitRequested")
+}
+
+extension View {
+  func onQuitRequested(_ dismiss: @escaping () -> Void) -> some View {
+    onReceive(NotificationCenter.default.publisher(for: .stimQuitRequested)) { _ in dismiss() }
+  }
+}
+
+/// AppKit refuses `terminate:` while a window has an attached sheet, such as the device viewer. The sheets are
+/// dismissed through the state that presents them, which tears down the viewer and releases a device it took over,
+/// and the quit retries until none is attached. AppKit's own quit Apple Event handler fails with "User cancelled
+/// (-128)" without calling `terminate:`, so `AppDelegate` handles that event itself.
+final class StimApplication: NSApplication {
+  private var sheetRetries = 0
+
+  override func terminate(_ sender: Any?) {
+    guard windows.contains(where: { $0.attachedSheet != nil }), sheetRetries < 20 else {
+      sheetRetries = 0
+      super.terminate(sender)
+      return
+    }
+    sheetRetries += 1
+    NotificationCenter.default.post(name: .stimQuitRequested, object: nil)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.terminate(sender) }
+  }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationSource: DispatchSourceSignal?
 
@@ -33,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillFinishLaunching(_ notification: Notification) {
+    NSAppleEventManager.shared().setEventHandler(
+      self, andSelector: #selector(handleQuitEvent(_:withReplyEvent:)),
+      forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEQuitApplication))
     MainActor.assumeIsolated { NotificationResponder.shared.install() }
   }
 
@@ -45,12 +77,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     signal(SIGTERM, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     source.setEventHandler {
-      MainActor.assumeIsolated {
-        NSApp.terminate(nil)
+      MainActor.assumeIsolated { NSApp.terminate(nil) }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
         LogFollower.stopAll()
-        ServerController.shared.stopForQuit()
+        MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
+        exit(0)
       }
-      exit(0)
     }
     source.resume()
     terminationSource = source
@@ -58,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       _ = AppUpdater.shared
       Theme.apply(Appearance(rawValue: UserDefaults.standard.string(forKey: AppPreferences.Key.appearance) ?? "") ?? .auto)
     }
+  }
+
+  @objc private func handleQuitEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+    NSApp.terminate(nil)
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -70,7 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 }
 
-@main
 struct StimDesktopApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @StateObject private var store: StatusStore

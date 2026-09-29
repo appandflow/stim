@@ -67,6 +67,7 @@ struct WorkspaceDetail: View {
       )
       .environmentObject(actions)
     }
+    .onQuitRequested { viewing = nil }
     .task(id: env.path) {
       let path = env.path
       let cli = await cli.value
