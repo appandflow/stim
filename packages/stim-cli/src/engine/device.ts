@@ -27,6 +27,8 @@ export interface OwnedDeviceRecord {
   systemImage?: string | null;
   deviceProfile?: string | null;
   adopted?: boolean;
+  /** This call created, adopted or booted the device on Android. Never persisted. */
+  setup?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
   schemeApprovals?: string[];
@@ -68,6 +70,14 @@ export type Liveness = (pid: number) => boolean;
 export interface EmulatorLogging {
   logFile?: string | null;
   alive?: Liveness;
+}
+
+/**
+ * Whether `ensureOwnedDevice` created, adopted or started booting the device, rather than finding it booted.
+ * Undefined for a remote device, which those functions do not describe.
+ */
+export function didSetUpDevice(device: OwnedDeviceRecord, remote: boolean): boolean | undefined {
+  return remote ? undefined : Boolean(device.setup || device.booting);
 }
 
 export async function ensureOwnedDevice({

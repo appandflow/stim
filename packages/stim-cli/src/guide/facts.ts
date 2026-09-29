@@ -1106,9 +1106,16 @@ RULES
                    this project's most recent run.
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
-                   no history
-  expectedPhaseMs  the median duration of this phase in those runs, or null
-  basis            how many runs the medians come from (at most 10)
+                   no history. Once the run knows whether it creates,
+                   adopts or cold-boots its device (right after the device
+                   is prepared), only runs that did the same count; a run
+                   that reuses a booted device also counts runs recorded
+                   before Stim tagged them. Until then all runs count.
+  expectedPhaseMs  the median duration of this phase in those runs, or null.
+                   For device it counts only the runs that match the run's
+                   device situation; other phases use every run
+  basis            how many runs the expectedMs median comes from (at most
+                   10 per kind: device-setup runs keep their own 10)
   missReason       once the run knows its cache lookup missed, why, in the
                    shape of lastBuilds missReason below
   detail           on a running build whose tool printed a line Stim reads:

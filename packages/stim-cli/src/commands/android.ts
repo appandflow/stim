@@ -85,7 +85,7 @@ import {
 import type { teardownOwnedAvd } from '../devices/teardown.ts';
 import { checkDeviceCapacity } from '../engine/device-capacity.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
-import { ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
+import { didSetUpDevice, ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
 import { AvdRecoveryError, AvdBootError } from '../engine/device-android.ts';
 import {
   ensureRemoteBootOwned,
@@ -731,6 +731,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     now,
     note: (line) => out(phaseLine('stats', chalk.dim(line))),
     phases: () => progress.durations(),
+    deviceSetup: () => progress.deviceSetupKnown(),
   });
   const recordRun = stats.record;
 
@@ -1010,6 +1011,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       const failure = avdSetupFailure(err, root, emuLog);
       return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
+    progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
     const prepareMs = prepare();
     if (device.created || prepareMs >= SLOW_STEP_MS) {
       phase(

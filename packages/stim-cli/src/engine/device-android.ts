@@ -430,7 +430,7 @@ async function bootOwnedAvdOnFreshPort({
     }
     clearAndroidBootPending(projectPath, avdName, slot);
     const { bootPending: _booted, ...booted } = claim;
-    return { ...booted, serial };
+    return { ...booted, serial, setup: true };
   } catch (error) {
     releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
     throw error;

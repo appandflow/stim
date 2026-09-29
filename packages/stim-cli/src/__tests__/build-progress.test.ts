@@ -324,6 +324,19 @@ describe('run history', () => {
     expect(lists?.hit).toEqual([{ at: new Date(T0).toISOString(), durationMs: 7_000, phases: { install: 5_000 } }]);
   });
 
+  test('tags samples with the device situation and keeps setup runs beside a flood of reruns', () => {
+    let record = emptyStats();
+    record = updateStats(record, run({ deviceSetup: true, durationMs: 60_000 }), T0);
+    for (let i = 1; i <= HISTORY_LIMIT + 2; i++)
+      record = updateStats(record, run({ deviceSetup: false, durationMs: i * 1000 }), T0 + i);
+    record = updateStats(record, run({ durationMs: 5_000 }), T0);
+
+    const cold = record.history?.['/repo/app']?.ios?.cold ?? [];
+    expect(cold.filter((sample) => sample.deviceSetup === true).map((sample) => sample.durationMs)).toEqual([60_000]);
+    expect(cold.filter((sample) => sample.deviceSetup === false)).toHaveLength(HISTORY_LIMIT - 1);
+    expect(cold.at(-1)).not.toHaveProperty('deviceSetup');
+  });
+
   test('survives a write and read of stats.json', () => {
     recordRunStats(run({}), T0);
     expect(readStats().record?.history?.['/repo/app']?.ios?.cold).toHaveLength(1);
@@ -353,6 +366,88 @@ describe('estimates', () => {
       expectedMs: 250_000,
       expectedPhaseMs: 150_000,
       basis: 4,
+    });
+  });
+
+  describe("matching the run's device situation", () => {
+    const tagged = (durationMs: number, device: number, deviceSetup?: boolean) => ({
+      ...histSample(durationMs, { device }),
+      ...(deviceSetup === undefined ? {} : { deviceSetup }),
+    });
+    const mixed: RunHistory = {
+      android: {
+        hit: [
+          tagged(50_000, 45_000, true),
+          tagged(60_000, 50_000, true),
+          tagged(9_000, 300, false),
+          tagged(8_000, 400, false),
+          tagged(8_500, 500, false),
+          tagged(7_000, 200),
+        ],
+      },
+    };
+
+    test('a run that sets up its device is estimated from setup runs only', () => {
+      expect(estimateBuild(mixed, 'android', 'hit', 'device', true)).toEqual({
+        outcome: 'hit',
+        expectedMs: 55_000,
+        expectedPhaseMs: 47_500,
+        basis: 2,
+      });
+    });
+
+    test('a run that reuses its device ignores setup runs', () => {
+      expect(estimateBuild(mixed, 'android', 'hit', 'device', false)).toEqual({
+        outcome: 'hit',
+        expectedMs: 8_500,
+        expectedPhaseMs: 400,
+        basis: 3,
+      });
+    });
+
+    test('untagged samples serve a reuse run only when no tagged one matches, and never a setup run', () => {
+      const legacy: RunHistory = { android: { hit: [tagged(7_000, 200), tagged(9_000, 600)] } };
+      expect(estimateBuild(legacy, 'android', 'hit', 'device', false)).toMatchObject({
+        expectedMs: 8_000,
+        expectedPhaseMs: 400,
+        basis: 2,
+      });
+      expect(estimateBuild(legacy, 'android', 'hit', 'device', true)).toEqual({
+        outcome: 'hit',
+        expectedMs: null,
+        expectedPhaseMs: null,
+        basis: 0,
+      });
+    });
+
+    test('other phases keep using every run, and an unknown situation uses all runs', () => {
+      expect(estimateBuild(mixed, 'android', 'hit', 'install', true).basis).toBe(2);
+      const withInstall: RunHistory = {
+        android: { hit: [{ ...histSample(1, { install: 10 }), deviceSetup: true }, histSample(1, { install: 30 })] },
+      };
+      expect(estimateBuild(withInstall, 'android', 'hit', 'install', true).expectedPhaseMs).toBe(20);
+      expect(estimateBuild(mixed, 'android', 'hit', 'device')).toMatchObject({ basis: 6 });
+    });
+
+    test('a live record carries the device situation into its estimate', () => {
+      const record: ActiveBuildRecord = {
+        platform: 'android',
+        slot: 'default',
+        startedAt: new Date(T0).toISOString(),
+        phase: 'device',
+        phaseStartedAt: new Date(T0 + 1_000).toISOString(),
+        phases: [
+          { phase: 'prepare', startedAt: new Date(T0).toISOString() },
+          { phase: 'device', startedAt: new Date(T0 + 1_000).toISOString() },
+        ],
+        claim: { root: '/r', path: '', claimId: 'c', pid: 1 },
+        deviceSetup: true,
+      };
+      expect(buildReport(record, { state: 'running', history: { android: mixed.android } })).toMatchObject({
+        expectedMs: 55_000,
+        expectedPhaseMs: 47_500,
+      });
+      expect(parseActiveBuild(JSON.parse(JSON.stringify(record)))?.deviceSetup).toBe(true);
     });
   });
 

@@ -37,7 +37,7 @@ import {
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
-import { ensureOwnedDevice } from '../engine/device.ts';
+import { didSetUpDevice, ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
 import {
@@ -347,6 +347,7 @@ async function runIos(
     now: () => d.now(),
     note: (line) => note(chalk.dim(line)),
     phases: () => progress.durations(),
+    deviceSetup: () => progress.deviceSetupKnown(),
   });
   const recordRun = stats.record;
 
@@ -645,6 +646,7 @@ async function runIos(
     } catch (e) {
       return fail(ownedSimFailure(e));
     }
+    progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
     const prepareMs = prepare();
     if (device.created || prepareMs >= SLOW_STEP_MS) {
       phase(

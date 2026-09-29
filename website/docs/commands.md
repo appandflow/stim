@@ -901,8 +901,13 @@ replaces the record), and `unknown` when the claim cannot be read. `outcome` is
 `cold` once the run reaches prebuild, pods or compile, and `hit` once it
 reaches `device` after the cache lookup, or install, without them; before that it follows the project's most recent
 run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
-successful runs with that outcome, and `basis` counts them. Both are `null`
-until the project has such a run.
+successful runs with that outcome, and `basis` counts the runs behind
+`expectedMs`. Both are `null` until the project has such a run. Once the run
+knows whether it creates, adopts or cold-boots its device, `expectedMs` and the
+`device` estimate use only runs that did the same, so a new worktree is not
+estimated from reruns that reused a booted device. Runs recorded before Stim
+tagged them count only for a run that reuses its device and for phases other
+than `device`.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
 in the shape of `lastBuilds.<platform>.missReason` below. Once the native

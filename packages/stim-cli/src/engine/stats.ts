@@ -33,6 +33,8 @@ export interface RunSample {
   at: string;
   durationMs: number;
   phases: Record<string, number>;
+  /** Whether the run created, adopted or cold-booted its device; absent on samples recorded before the tag. */
+  deviceSetup?: boolean;
 }
 
 export type RunHistory = Partial<Record<StatsPlatform, Partial<Record<RunOutcomeKind, RunSample[]>>>>;
@@ -55,6 +57,7 @@ export interface StatsRun {
   coldBuildMs?: number;
   podsMs?: number;
   phases?: Record<string, number>;
+  deviceSetup?: boolean;
 }
 
 /**
@@ -138,13 +141,31 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
     const outcome: RunOutcomeKind = isHit(run.cacheHit) ? 'hit' : 'cold';
     const project: RunHistory = { ...history[run.projectKey] };
     const lists = { ...project[run.platform] };
-    const sample: RunSample = { at, durationMs, phases: wholePhases(run.phases) };
-    lists[outcome] = [...(lists[outcome] ?? []), sample].slice(-HISTORY_LIMIT);
+    const sample: RunSample = {
+      at,
+      durationMs,
+      phases: wholePhases(run.phases),
+      ...(run.deviceSetup === undefined ? {} : { deviceSetup: run.deviceSetup }),
+    };
+    lists[outcome] = trimSamples([...(lists[outcome] ?? []), sample]);
     project[run.platform] = lists;
     history[run.projectKey] = project;
   }
 
   return { version: STATS_VERSION, machine, projects, ...(Object.keys(history).length ? { history } : {}) };
+}
+
+/** Keeps the newest HISTORY_LIMIT samples of each kind, so reruns never push out the rarer device-setup runs. */
+function trimSamples(samples: RunSample[]): RunSample[] {
+  const kept = { setup: 0, other: 0 };
+  const out: RunSample[] = [];
+  for (const sample of samples.toReversed()) {
+    const kind = sample.deviceSetup === true ? 'setup' : 'other';
+    if (kept[kind] >= HISTORY_LIMIT) continue;
+    kept[kind] += 1;
+    out.push(sample);
+  }
+  return out.toReversed();
 }
 
 export function readStats(): ReadStatsResult {
@@ -219,12 +240,14 @@ export function createRunRecorder({
   now,
   note,
   phases,
+  deviceSetup,
 }: {
   platform: StatsPlatform;
   write: (run: StatsRun, now: number) => RecordStatsResult;
   now: () => number;
   note: (line: string) => void;
   phases?: () => Record<string, number>;
+  deviceSetup?: () => boolean | undefined;
 }): RunRecorder {
   let projectKey: string | null = null;
   let cacheKey: string | null = null;
@@ -261,6 +284,7 @@ export function createRunRecorder({
             ...(coldBuildMs > 0 ? { coldBuildMs } : {}),
             ...(podsMs > 0 ? { podsMs } : {}),
             ...(Object.keys(ran).length ? { phases: ran } : {}),
+            ...(failed || deviceSetup?.() === undefined ? {} : { deviceSetup: deviceSetup()! }),
           },
           now(),
         );
@@ -360,9 +384,16 @@ function normalizeHistory(scope: unknown): RunHistory {
       const kept = samples.filter(isObject).flatMap((sample): RunSample[] => {
         const durationMs = wholeMs(sample.durationMs);
         if (durationMs <= 0) return [];
-        return [{ at: timestamp(sample.at), durationMs, phases: wholePhases(sample.phases) }];
+        return [
+          {
+            at: timestamp(sample.at),
+            durationMs,
+            phases: wholePhases(sample.phases),
+            ...(typeof sample.deviceSetup === 'boolean' ? { deviceSetup: sample.deviceSetup } : {}),
+          },
+        ];
       });
-      if (kept.length) normalized[outcome] = kept.slice(-HISTORY_LIMIT);
+      if (kept.length) normalized[outcome] = trimSamples(kept);
     }
     if (Object.keys(normalized).length) history[platform] = normalized;
   }
