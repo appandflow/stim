@@ -510,12 +510,15 @@ async function runIos(
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, remoteBackend);
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
+  const settingsLayersForOrigin = d.settingsLayers(settingsContext);
   const modelRefusal = deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
     deviceType,
     runtime,
+    deviceTypeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.deviceType'),
+    runtimeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.runtime'),
     physical,
     remoteBackend,
     listRuntimes: d.listIosRuntimes,

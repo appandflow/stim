@@ -133,8 +133,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   optimization('android.gradleBuildCache', 'Gradle build cache'),
   optimization('android.targetAbiOnly', 'Narrow Debug builds to the device ABI'),
-  { key: 'ios.deviceType', type: STRING, scopes: PROJECT, description: 'Simulator model for owned simulators' },
-  { key: 'ios.runtime', type: STRING, scopes: PROJECT, description: 'iOS runtime owned simulators are created on' },
+  { key: 'ios.deviceType', type: STRING, scopes: EVERY, description: 'Simulator model for owned simulators' },
+  { key: 'ios.runtime', type: STRING, scopes: EVERY, description: 'iOS runtime owned simulators are created on' },
   {
     key: 'ios.configuration',
     type: STRING,
@@ -171,7 +171,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     description: "Address a phone uses to reach this workspace's Metro",
   },
-  { key: 'android.systemImage', type: STRING, scopes: PROJECT, description: 'SDK system image for owned AVDs' },
+  { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
   {
     key: 'android.deviceProfile',
     type: STRING,

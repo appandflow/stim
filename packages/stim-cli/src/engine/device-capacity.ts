@@ -8,6 +8,7 @@ import {
   type IosRuntime,
 } from '../devices/ios.ts';
 import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import type { SettingScope } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 type DeviceTypeInfo = ReturnType<typeof listIosDeviceTypes>[number];
@@ -162,6 +163,21 @@ export interface UnknownDeviceNameRefusal {
 function installedNames(names: Array<string | null | undefined>): string {
   const unique = [...new Set(names.filter((n): n is string => typeof n === 'string' && n !== ''))];
   return unique.length > 0 ? unique.join(', ') : 'none';
+}
+
+/** Appends which settings layer supplied an unresolved device selector, so the user knows where to fix it. */
+export function layerNote(
+  refusal: UnknownDeviceNameRefusal,
+  key: string,
+  flag: string | null | undefined,
+  origin: SettingScope | null,
+): UnknownDeviceNameRefusal {
+  if (flag !== undefined && flag !== null) return refusal;
+  if (!origin) return refusal;
+  return {
+    message: `${refusal.message} ${key} is set at the ${origin} layer.`,
+    remedy: `${refusal.remedy} Fix it with \`stim settings set ${key} <value> --scope ${origin}\` or \`stim settings unset ${key} --scope ${origin}\`.`,
+  };
 }
 
 export function unknownIosRuntimeRefusal(

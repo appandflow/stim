@@ -45,6 +45,7 @@ Resolution order, first match wins:
   2. repo            ~/.stim/config.json, under this repo's git common dir
   3. committed       .stim.json beside the app's package.json
   4. machine         ~/.stim/config.json, top-level optimizations,
+                     ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile and devices.idleShutdownMinutes
                      only
   5. Stim default
@@ -76,15 +77,21 @@ KEYS STIM READS
   ios.deviceType        e.g. "iPhone 17 Pro" -- the simulator model this
                         workspace's owned sim is created as, spelled exactly as
                         \`xcrun simctl list devicetypes\` names it, and one an
-                        installed runtime can create. The \`--device-type\`
-                        flag overrides this per invocation. A name no installed
-                        runtime offers is STIM_BAD_ARG and the creatable names
-                        are printed
+                        installed runtime can create. Readable from the
+                        machine layer too, so one machine can default every
+                        workspace to a model; a project layer still wins. The
+                        \`--device-type\` flag overrides this per invocation. A
+                        name no installed runtime offers is STIM_BAD_ARG and
+                        the creatable names are printed, naming the layer the
+                        value came from
   ios.runtime           e.g. "26.2" -- the iOS runtime that sim is created on,
                         as a version ("26.2") or a runtime's full name
-                        ("iOS 26.2"); nothing else matches. The \`--runtime\`
-                        flag overrides this per invocation, and an uninstalled
-                        version refuses the same way
+                        ("iOS 26.2"); nothing else matches. Readable from the
+                        machine layer too, so one machine can default every
+                        workspace to a runtime; a project layer still wins.
+                        The \`--runtime\` flag overrides this per invocation,
+                        and an uninstalled version refuses the same way,
+                        naming the layer the value came from
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
@@ -136,9 +143,12 @@ KEYS STIM READS
                         interface.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
                         -- the sdkmanager package id the owned AVD is created
-                        from. The \`--system-image\` flag overrides this per
-                        invocation, and an id this SDK has not installed is
-                        STIM_BAD_ARG with the installed ids printed.
+                        from. Readable from the machine layer too, so one
+                        machine can default every workspace to an image; a
+                        project layer still wins. The \`--system-image\` flag
+                        overrides this per invocation, and an id this SDK has
+                        not installed is STIM_BAD_ARG with the installed ids
+                        printed, naming the layer the value came from.
   android.deviceProfile e.g. "pixel_fold" -- the avdmanager hardware profile a
                         new owned AVD is created with, spelled exactly as
                         \`avdmanager list device -c\` prints it. Defaults to

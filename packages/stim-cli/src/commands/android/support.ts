@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
-import type { SettingsObject } from '@stim-cli/core/state';
+import type { SettingsObject, SettingScope } from '@stim-cli/core/state';
 import {
   androidDeviceAbi,
   androidSystemImageAbi,
@@ -22,7 +22,11 @@ import {
   profileNeedsFoldFeature,
   type SystemImage,
 } from '../../devices/android.ts';
-import { unknownAndroidDeviceProfileRefusal, unknownAndroidSystemImageRefusal } from '../../engine/device-capacity.ts';
+import {
+  layerNote,
+  unknownAndroidDeviceProfileRefusal,
+  unknownAndroidSystemImageRefusal,
+} from '../../engine/device-capacity.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import { getExecutor } from '../../exec.ts';
 import { devClientScheme as configuredDevClientScheme, pickDevClientScheme } from '../dev-client.ts';
@@ -89,6 +93,7 @@ export function systemImageRefusal({
   slot,
   flag,
   resolved,
+  origin = null,
   physical,
   remoteBackend,
   listImages,
@@ -96,6 +101,7 @@ export function systemImageRefusal({
   slot?: string;
   flag: string | null | undefined;
   resolved: string | null;
+  origin?: SettingScope | null;
   physical: boolean;
   remoteBackend: string | null;
   listImages: typeof listInstalledSystemImages;
@@ -127,7 +133,9 @@ export function systemImageRefusal({
     };
   }
   const refusal = unknownAndroidSystemImageRefusal(resolved, images);
-  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
+  if (!refusal) return null;
+  const { message, remedy } = layerNote(refusal, 'android.systemImage', flag, origin);
+  return { code: 'STIM_BAD_ARG', message, remedy };
 }
 
 export function resolveDeviceProfile(
@@ -146,12 +154,14 @@ export function resolveDeviceProfile(
 export function deviceProfileRefusal({
   flag,
   resolved,
+  origin = null,
   physical,
   remoteBackend,
   listProfiles,
 }: {
   flag: string | null | undefined;
   resolved: string | null;
+  origin?: SettingScope | null;
   physical: boolean;
   remoteBackend: string | null;
   listProfiles: typeof listAvdDeviceProfiles;
@@ -176,7 +186,9 @@ export function deviceProfileRefusal({
     };
   }
   const refusal = unknownAndroidDeviceProfileRefusal(resolved, profiles);
-  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
+  if (!refusal) return null;
+  const { message, remedy } = layerNote(refusal, 'android.deviceProfile', flag, origin);
+  return { code: 'STIM_BAD_ARG', message, remedy };
 }
 
 export function foldableImageRefusal({

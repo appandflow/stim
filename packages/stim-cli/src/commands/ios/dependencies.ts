@@ -54,7 +54,12 @@ import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { detectBundleId } from '../../workspace/app-id.ts';
 import { detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
-import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
+import {
+  resolveCacheProviderConfig,
+  resolveSettings,
+  settingsLayers,
+  settingOriginScope,
+} from '../../workspace/settings.ts';
 import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
@@ -76,6 +81,8 @@ export interface IosDeps {
   resolveEasCliBin: typeof resolveEasCliBin;
   findProjectRoot: typeof findProjectRoot;
   resolveSettings: typeof resolveSettings;
+  settingsLayers: typeof settingsLayers;
+  settingOriginScope: typeof settingOriginScope;
   gitCommonDir: typeof gitCommonDir;
   repoRoot: typeof repoRoot;
   detectBundleId: typeof detectBundleId;
@@ -154,6 +161,8 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveEasDevelopmentBuild,
   findProjectRoot,
   resolveSettings,
+  settingsLayers,
+  settingOriginScope,
   gitCommonDir,
   repoRoot,
   detectBundleId,

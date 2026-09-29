@@ -14,7 +14,7 @@ const MACHINE = '/home/.stim/config.json';
 function check(settings: SettingsObject, present: string[] = [], env: NodeJS.ProcessEnv = {}) {
   return checkMachineSettings({
     settings,
-    layers: [{ file: MACHINE, settings }],
+    layers: [{ scope: 'machine', file: MACHINE, settings }],
     projectRoot: '/app',
     optimizations: resolveOptimizations(settings, env),
     exists: (path) => present.includes(path),
@@ -153,7 +153,7 @@ test.each(['tc/toolchain.json', '/abs/toolchain.json\n'])(
     expect(
       checkMachineSettings({
         settings,
-        layers: [{ file: MACHINE, settings }],
+        layers: [{ scope: 'machine', file: MACHINE, settings }],
         projectRoot: '/app',
         exists: () => false,
       }),

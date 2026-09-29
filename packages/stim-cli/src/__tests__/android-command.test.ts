@@ -24,7 +24,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { loadConfig, setDevice, setProjectSetting, upsertProject } from '../workspace/config.ts';
+import { loadConfig, saveConfig, setDevice, setProjectSetting, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -5643,6 +5643,26 @@ describe('the emulator system-image flag', () => {
       /system-images;android-36;google_apis;arm64-v8a, system-images;android-35;google_apis;arm64-v8a/,
     );
     expect(payload.remedy).toMatch(/--system-image/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('an unknown system image set at the machine layer names that layer in the refusal', async () => {
+    saveConfig({
+      version: 2,
+      projects: {},
+      repos: {},
+      android: { systemImage: 'system-images;android-99;google_apis;arm64-v8a' },
+    });
+    const h = harness({ json: true });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    const payload = JSON.parse(stdout0);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(/android\.systemImage is set at the machine layer\./);
+    expect(payload.remedy).toMatch(/stim settings set android\.systemImage <value> --scope machine/);
+    expect(payload.remedy).toMatch(/stim settings unset android\.systemImage --scope machine/);
     expect(h.calls.ensureDevice.length).toBe(0);
   });
 

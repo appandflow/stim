@@ -61,7 +61,8 @@ Stim reads the first value found in this order:
    (`--scope repo`).
 3. Committed `.stim.json` beside the app's `package.json` (`--scope committed`).
 4. Machine defaults in `~/.stim/config.json` (`--scope machine`), for the
-   top-level `optimizations` settings, `android.deviceProfile` and
+   top-level `optimizations` settings, `ios.deviceType`, `ios.runtime`,
+   `android.systemImage`, `android.deviceProfile` and
    `devices.idleShutdownMinutes` only.
 5. The Stim default.
 
@@ -163,6 +164,26 @@ The setting only changes the prefetch, not the app. Setting
 ```json
 { "metro": { "warmupUrl": { "ios": "/src/main.bundle?platform=ios&dev=true&lazy=true" } } }
 ```
+
+### Default simulator model and runtime
+
+`ios.deviceType`, `ios.runtime`, `android.systemImage`, and
+`android.deviceProfile` can all be set at the machine layer, so one machine
+can default every workspace's owned simulator or emulator without touching
+each project's `.stim.json`. A workspace, repo, or committed layer still wins
+over the machine value, and the `--device-type`, `--runtime`,
+`--system-image`, and `--device-profile` flags still win over every layer:
+
+```sh
+stim settings set ios.runtime 26.2 --scope machine
+stim settings set ios.deviceType "iPhone 17 Pro" --scope machine
+stim settings set android.systemImage "system-images;android-36;google_apis;arm64-v8a" --scope machine
+```
+
+A model or runtime the machine value names that no installed toolchain offers
+refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
+per-invocation value does, and the message names the machine layer so it is
+clear where to fix it.
 
 ### Android AVD overrides
 

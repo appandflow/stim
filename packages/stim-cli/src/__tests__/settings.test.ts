@@ -27,6 +27,8 @@ import {
   resolveCacheProviderConfig,
   resolveSettings,
   settingShapeErrors,
+  settingOriginScope,
+  settingsLayers,
   tunnelModeSetting,
   metroIdleStopMinutesSetting,
   deviceIdleShutdownMinutesSetting,
@@ -828,16 +830,64 @@ test('machine optimization defaults merge with committed, repository and project
   expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
 });
 
-test('a machine android.deviceProfile applies under every project layer, and only that android key does', () => {
+test('a machine android.deviceProfile and android.systemImage apply under every project layer', () => {
   saveConfig({
     version: 2,
     projects: {},
     repos: {},
     android: { deviceProfile: 'pixel_tablet', systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
   });
-  expect(resolveSettings({})).toEqual({ android: { deviceProfile: 'pixel_tablet' } });
+  expect(resolveSettings({})).toEqual({
+    android: { deviceProfile: 'pixel_tablet', systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
+  });
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ android: { deviceProfile: 'pixel_fold' } }));
-  expect(resolveSettings({ repoRoot: tmpHome }).android).toEqual({ deviceProfile: 'pixel_fold' });
+  expect(resolveSettings({ repoRoot: tmpHome }).android).toEqual({
+    deviceProfile: 'pixel_fold',
+    systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+  });
+});
+
+test('machine-only settings never leak into resolveSettings or read as unknown', () => {
+  saveConfig({
+    version: 2,
+    projects: {},
+    repos: {},
+    concurrency: { maxBuilds: 3, maxDevices: 6 },
+    iosSimulatorApp: 'stim-desktop',
+    ios: { runtime: '27.0' },
+  });
+  const resolved = resolveSettings({});
+  expect(resolved).toEqual({ ios: { runtime: '27.0' } });
+  expect(unknownSettingKeys(resolved)).toEqual([]);
+});
+
+test('an unknown or malformed key under machine optimizations still reaches unknownSettingKeys and settingShapeErrors', () => {
+  saveConfig({
+    version: 2,
+    projects: {},
+    repos: {},
+    optimizations: { buildCache: true, typoKey: false, android: 'not an object' },
+  });
+  const resolved = resolveSettings({});
+  expect(unknownSettingKeys(resolved)).toEqual(['optimizations.typoKey']);
+  expect(settingShapeErrors(resolved)).toEqual([
+    'Invalid optimizations.android setting "not an object". Expected an object.',
+  ]);
+});
+
+test('a machine ios.deviceType and ios.runtime apply, and a project layer overrides them', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, ios: { deviceType: 'iPhone 17', runtime: '27.0' } });
+  expect(resolveSettings({})).toEqual({ ios: { deviceType: 'iPhone 17', runtime: '27.0' } });
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { runtime: '18.5' } }));
+  expect(resolveSettings({ repoRoot: tmpHome }).ios).toEqual({ deviceType: 'iPhone 17', runtime: '18.5' });
+});
+
+test('settingOriginScope names the machine layer, and a project layer over it', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, ios: { runtime: '27.0' } });
+  expect(settingOriginScope(settingsLayers({}), 'ios.runtime')).toBe('machine');
+  expect(settingOriginScope(settingsLayers({}), 'ios.deviceType')).toBe(null);
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { runtime: '18.5' } }));
+  expect(settingOriginScope(settingsLayers({ repoRoot: tmpHome }), 'ios.runtime')).toBe('committed');
 });
 
 test('devices.idleShutdownMinutes is off by default, set per machine, and a project layer overrides it', () => {
