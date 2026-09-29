@@ -224,8 +224,19 @@ approves this Mac. On this Mac, **Stim > Settings > Build Machines** lists the
 Macs on your tailnet that run stim-server; **Use for Builds** adds one to the
 `offload.machines` setting and sends it a request. Each listed Mac shows
 whether it approved this Mac, is waiting, revoked it, or is now a different
-tailnet node, which Stim refuses to connect to. **Remove** takes it out of the
-setting.
+tailnet node, which Stim refuses to connect to. An approved Mac shows
+**Ready**, or the first reason `stim doctor` gives that it would not take a
+build now, with its remedy, such as **Stim build differs** (update the build
+machine) or **Busy (load 8.2/core)**; hover it for every reason. **Remove**
+takes it out of the setting. The **Machine** page lists the same readiness
+under **Build machines**, and so does the phone app's Machine screen.
+
+While a build runs on another Mac, the workspace's build card says
+**Building iOS on janics-mac-mini** and shows the step it runs there, such as
+Pods, with how long that step has taken. A run another Mac compiled reads
+**Built on janics-mac-mini** in the last build and **Recent builds**. A run
+that considered offloading and built here shows a short line such as
+**janics-mac-mini busy → built here**; hover it for the full reason.
 
 On the other Mac, with **Serve to phones** on and its `tailscale serve` route
 set up, Stim Desktop notifies "<Mac> wants to build on this Mac". **Review**
