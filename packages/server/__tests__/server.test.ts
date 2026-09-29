@@ -794,7 +794,7 @@ describe('offloaded builds', () => {
       await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
       expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
       writeFileSync(gate, '');
-      expect(await again.next()).toMatchObject({ job, outcome: { ok: true } });
+      expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
       again.socket.send(JSON.stringify({ id: 3, method: 'build.artifact', params: { job } }));
       expect(((await again.next()) as unknown as { binary: Buffer }).binary.subarray(32).toString()).toBe(
         'app archive bytes',
@@ -819,7 +819,7 @@ describe('offloaded builds', () => {
       client.socket.close(1000);
       expect(await client.closed).toBe(1000);
       writeFileSync(gate, '');
-      expect(await again.next()).toMatchObject({ job, outcome: { ok: true } });
+      expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
     },
   );
 
