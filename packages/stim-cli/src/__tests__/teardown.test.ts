@@ -711,7 +711,10 @@ test('eraseParkedIosSim leaves a booted parked simulator and its record alone', 
   expect(result).toMatchObject({ status: 'failed', reason: expect.stringMatching(/Booted, not Shutdown/) });
   expect(exec.calls).not.toContain('xcrun simctl erase U1');
   expect(readParked('ios')).toEqual([
-    expect.objectContaining({ bundleId: 'com.example.app', schemeApprovals: expect.any(Array) }),
+    expect.objectContaining({
+      bundleId: 'com.example.app',
+      schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
+    }),
   ]);
 });
 
