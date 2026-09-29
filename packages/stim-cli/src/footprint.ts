@@ -40,15 +40,7 @@ const RETRY_BACKOFF_MAX_MS = 10 * 60_000;
 let built: { home: string; promise: Promise<string | null> } | null = null;
 let failure: { home: string; nextRetryAt: number; backoffMs: number } | null = null;
 
-/**
- * The `stim-footprint` helper, compiled into `$STIM_HOME/helpers/` on first use, or null where it cannot be built:
- * without the Xcode command line tools, or off macOS, where `xcode-select` does not exist. A successful build is
- * kept for the life of the process. A failed build is retried with a doubling backoff (starting at
- * `RETRY_BACKOFF_INITIAL_MS`, capped at `RETRY_BACKOFF_MAX_MS`) instead of pinned forever: a `status --watch`
- * whose first lookup hits a transient failure (a stalled `xcode-select`, a dev-checkout rebuild that has
- * removed `dist/stim-footprint.swift`) recovers once the cause clears, while a machine with no Xcode command
- * line tools at all still does not retry on every refresh.
- */
+/** The `stim-footprint` helper, compiled on first use. A success is kept for the process's life; a failure retries after a doubling backoff instead of being pinned forever. */
 function footprintHelper(): Promise<string | null> {
   const home = configDir();
   if (built?.home === home) return built.promise;
@@ -61,7 +53,6 @@ function footprintHelper(): Promise<string | null> {
       if (built?.promise === promise) built = null;
       return null;
     }
-    failure = null;
     return helper;
   });
   built = { home, promise };

@@ -11,8 +11,6 @@ let savedHome: string | undefined;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-footprint-')));
   savedHome = process.env.STIM_HOME;
-  // Each test gets its own $STIM_HOME so footprint.ts's home-keyed caches start empty: the module
-  // has no test-only reset hook, matching the codebase rule against exports added solely for tests.
   process.env.STIM_HOME = join(root, 'state');
 });
 
@@ -53,27 +51,24 @@ test('readFootprints retries a failed helper build after a backoff instead of pi
   expect(await readFootprints()).toBeNull();
   expect(calls).toEqual(['xcode-select']);
 
-  // Still inside the backoff window: no retry, no new xcode-select call.
   calls.length = 0;
   vi.setSystemTime(5_000);
   expect(await readFootprints()).toBeNull();
   expect(calls).toEqual([]);
 
-  // Backoff elapsed and the transient cause is gone: the helper builds and is used.
   calls.length = 0;
   allowXcode = true;
   vi.setSystemTime(10_001);
   expect(await readFootprints()).toEqual(new Map([[123, 456]]));
   expect(calls).toEqual(['xcode-select', 'compile', 'helper']);
 
-  // A success is cached for the life of the process: no rebuild on the next call.
   calls.length = 0;
   vi.setSystemTime(999_999);
   expect(await readFootprints()).toEqual(new Map([[123, 456]]));
   expect(calls).toEqual(['helper']);
 });
 
-test('readFootprints doubles the backoff on repeated failures, capped, and resets it after a success', async () => {
+test('readFootprints doubles the backoff on repeated failures, then recovers once the cause clears', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(0);
   let allowXcode = false;
@@ -87,7 +82,6 @@ test('readFootprints doubles the backoff on repeated failures, capped, and reset
   expect(await readFootprints()).toBeNull(); // backoff -> 20s
   expect(calls).toEqual(['xcode-select']);
 
-  // Only 15s after the second failure: still within the doubled 20s backoff.
   calls.length = 0;
   vi.setSystemTime(25_000);
   expect(await readFootprints()).toBeNull();
@@ -98,4 +92,33 @@ test('readFootprints doubles the backoff on repeated failures, capped, and reset
   vi.setSystemTime(30_002);
   expect(await readFootprints()).toEqual(new Map([[123, 456]]));
   expect(calls).toEqual(['xcode-select', 'compile', 'helper']);
+});
+
+test('readFootprints caps the backoff at 10 minutes after repeated failures', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const calls: string[] = [];
+  mockExecutor(() => false, calls);
+
+  // Uncapped doubling from 10s would exceed a 600001ms wait by the 7th failure (10s, 20s, ..., 640s).
+  // A retry on every iteration proves the backoff never grew past the 10-minute cap.
+  let now = 0;
+  for (let i = 0; i < 8; i++) {
+    calls.length = 0;
+    expect(await readFootprints()).toBeNull();
+    expect(calls).toEqual(['xcode-select']);
+    now += 600_001;
+    vi.setSystemTime(now);
+  }
+});
+
+test('readFootprints shares one in-flight build between concurrent calls', async () => {
+  vi.setSystemTime(0);
+  const calls: string[] = [];
+  mockExecutor(() => true, calls);
+
+  const [first, second] = await Promise.all([readFootprints(), readFootprints()]);
+  expect(first).toEqual(new Map([[123, 456]]));
+  expect(second).toEqual(new Map([[123, 456]]));
+  expect(calls.filter((c) => c === 'compile')).toHaveLength(1);
 });
