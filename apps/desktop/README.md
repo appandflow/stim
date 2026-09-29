@@ -540,8 +540,9 @@ frame above the time: the keyframe that starts the recorded segment of about
 5 seconds there, from `replay.keyframe`, so the preview can be up to about 5
 seconds early. The app decodes it on its own queue, apart from playback, keeps
 the last 200 segments' frames, and also fetches the two segments on each side
-of the one hovered; hovering never seeks. A server without `replay.keyframe`
-shows the time alone. Dragging shows the frame under the
+of the one hovered; hovering never seeks. The frame's box appears once the
+first keyframe arrives, sized to it, so a server without `replay.keyframe`
+shows the time alone. A keyframe that fails to decode is not asked for again. Dragging shows the frame under the
 pointer. The first seek opens a `frames.subscribe` with `video: ["h264"]` and
 `at`, which also works for a device that is not running; later seeks send
 `frames.seek`. The app decodes the H.264 itself. A server that answers without

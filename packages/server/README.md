@@ -455,9 +455,11 @@ Events are `{ "event", "subscription", ... }`.
   `at`, `width`, `height`, `posture` on an iPhone Duo, and `data`, the
   base64 Annex-B H.264 access unit with its SPS and PPS, so a client decodes
   it on its own; the server decodes nothing. The frame is the segment's first,
-  so it can be up to about 5 seconds before `at`. It needs only `read`, fails with `no-recording` when the device
-  has no footage, and a connection can have 8 of these reads in flight; more
-  fail with `limit-exceeded`.
+  so it can be up to about 5 seconds before `at`. It needs only `read`. It
+  fails with `no-recording` when the device has no footage or that segment's
+  first record is not a whole keyframe yet, as while it is being written. A
+  connection can have 8 of these reads in flight; more fail with
+  `limit-exceeded`.
 
   A video subscription can replay the recording instead of the live screen.
   `frames.seek` takes the `subscription`, `at` (epoch milliseconds) and `rate`

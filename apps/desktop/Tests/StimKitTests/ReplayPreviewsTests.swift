@@ -87,19 +87,16 @@ private let image = CGContext(
     #expect(previews.image(at: 10_500) != nil)
   }
 
-  @Test func aKeyframeThatFailsToDecodeIsAskedForAgain() async throws {
+  @Test func aKeyframeThatFailsToDecodeIsNotAskedForAgain() async throws {
     let server = FakeServer()
-    var fail = true
-    let previews = previews(server) { _ in fail ? nil : image }
+    let previews = previews(server) { _ in nil }
     previews.want(1000, within: 1000...1000)
     await settle()
     _ = try await answer(server, start: 0, end: 5000)
+    previews.want(1000, within: 1000...1000)
+    await settle()
+    #expect(server.requests.isEmpty)
     #expect(previews.image(at: 1000) == nil)
-    fail = false
-    previews.want(1000, within: 1000...1000)
-    await settle()
-    _ = try await answer(server, start: 0, end: 5000)
-    #expect(previews.image(at: 1000) != nil)
   }
 
   @Test func stopsAskingAServerWithoutReplayKeyframe() async throws {

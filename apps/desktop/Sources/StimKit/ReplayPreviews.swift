@@ -3,7 +3,8 @@ import Foundation
 
 /// Still frames for hovering a replay track. stim-server's `replay.keyframe` answers with the keyframe that starts
 /// the recorded segment of about 5 seconds `frames.seek` would show a time from, so a preview is at segment
-/// granularity. `decode` turns each keyframe into an image, kept for the `capacity` segments used last.
+/// granularity. `decode` turns each keyframe into an image, kept for the `capacity` segments used last; a keyframe
+/// that fails to decode is not asked for again, and its segment shows no image.
 ///
 /// One request is out at a time. `want` replaces the times waiting with the hovered one and its neighbours, so a
 /// pointer that moves on drops them; the answer to the one out is kept. A server without `replay.keyframe` gets no
@@ -43,7 +44,7 @@ import Foundation
     self.target = target
   }
 
-  /// Whether a preview can show: connected to a server that serves `replay.keyframe`, as far as is known.
+  /// Whether previews can be asked for: connected to a server not known to lack `replay.keyframe`.
   public var isAvailable: Bool { server != nil && supported }
 
   func connect(_ server: ReplayServer?) {
@@ -98,7 +99,7 @@ import Foundation
       switch result {
       case .success(let value):
         if let keyframe = ReplayKeyframe(value) { store(keyframe, for: at) }
-      case .failure(let failure as ServerError) where ["unknown-method", "bad-request"].contains(failure.code):
+      case .failure(let failure as ServerError) where failure.code == "unknown-method":
         supported = false
         waiting = []
       case .failure:
@@ -124,11 +125,8 @@ import Foundation
       entries.remove(at: oldest)
     }
     decode(keyframe) { [weak self] image in
-      guard let self, let index = self.entries.firstIndex(where: { $0.start == keyframe.start }) else { return }
-      guard let image else {
-        self.entries.remove(at: index)
-        return
-      }
+      guard let self, let image, let index = self.entries.firstIndex(where: { $0.start == keyframe.start })
+      else { return }
       self.entries[index].image = image
       self.onImage()
     }

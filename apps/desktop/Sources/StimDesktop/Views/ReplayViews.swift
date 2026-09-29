@@ -464,7 +464,6 @@ final class ReplayTooltipView: NSView {
   private static let maxLines = 3
   /// The longer side of a preview, in points; `ReplayPreviewDecoder.maxPixels` covers it at 2x.
   private static let previewSide: CGFloat = 160
-  private static let portrait = 9.0 / 19.5
 
   var dragging: CGFloat?
   var maxWidth: CGFloat = 0
@@ -532,8 +531,9 @@ final class ReplayTooltipView: NSView {
       bubble.isHidden = true
       return
     }
-    let previewAt = dragging == nil && previews.isAvailable ? previewTime?(x, hover.marker) : nil
-    previews.want(previewAt, within: range)
+    let wanted = dragging == nil && previews.isAvailable ? previewTime?(x, hover.marker) : nil
+    previews.want(wanted, within: range)
+    let previewAt = previews.aspect == nil ? nil : wanted
     var color = NSColor.clear
     effectiveAppearance.performAsCurrentDrawingAppearance {
       bubble.backgroundColor = NSColor(Palette.surface).cgColor
@@ -568,9 +568,10 @@ final class ReplayTooltipView: NSView {
     bubble.isHidden = false
   }
 
-  /// The same box whether the frame is loaded or not, so the tooltip never changes size when it arrives.
+  /// The box has the aspect of the newest keyframe the server answered, and shows only once there is one, so a
+  /// frame arriving fills the box without resizing it.
   private func previewSize(maxWidth: CGFloat) -> CGSize {
-    let aspect = CGFloat(previews.aspect ?? Self.portrait)
+    let aspect = CGFloat(previews.aspect ?? 1)
     let size =
       aspect < 1
       ? CGSize(width: Self.previewSide * aspect, height: Self.previewSide)

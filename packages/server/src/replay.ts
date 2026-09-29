@@ -84,7 +84,7 @@ export async function segmentKeyframe(
   } catch {
     return null;
   } finally {
-    await file.close();
+    await file.close().catch(() => {});
   }
 }
 
