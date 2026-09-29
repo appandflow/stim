@@ -77,12 +77,15 @@ export async function planIos(
     projectKey: statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsContext.repoRoot }),
   } as const;
   const isExpo = d.detectIsExpo(root);
+  const settingsLayersForOrigin = d.settingsLayers(settingsContext);
   const modelRefusal = deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
     runtimeFlag: opts.runtime,
     deviceType: resolveDeviceType(opts.deviceType, settings),
     runtime: resolveRuntime(opts.runtime, settings),
+    deviceTypeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.deviceType'),
+    runtimeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.runtime'),
     physical: false,
     remoteBackend: remoteIosSetting(settings),
     listRuntimes: d.listIosRuntimes,

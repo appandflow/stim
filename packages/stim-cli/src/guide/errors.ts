@@ -1032,7 +1032,10 @@ captured"  (in metro.ndjson, bare RN)
   ios.deviceType, ios.runtime, android.systemImage or android.deviceProfile
   setting is checked the same way, and the check applies
   even when this workspace ALREADY owns a device, so a name that could never
-  create anything is caught rather than left to a later run. The
+  create anything is caught rather than left to a later run. When the bad
+  value came from a settings layer rather than a flag, the message also names
+  the layer (workspace, repo, committed, or machine) it is set at, since all
+  four settings are readable from the machine layer too. The
   \`pixel_fold\` and \`resizable\` profiles on a system image without
   foldable support (SupportPixelFold in its advancedFeatures.ini) refuse the
   same way, since the emulator quits on boot; the remedy names an installed

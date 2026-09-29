@@ -16,6 +16,7 @@ import {
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
+  type SettingScope,
   type SettingsObject,
   type WebViewport,
 } from '@stim-cli/core/state';
@@ -445,18 +446,32 @@ export function readCommittedSettings(directory?: string | null): SettingsObject
   }
 }
 
+function setSettingValueAt(settings: SettingsObject, path: string, value: unknown): void {
+  const segments = path.split('.');
+  let node = settings;
+  for (const segment of segments.slice(0, -1)) {
+    const next = node[segment];
+    if (!isPlainObject(next)) node[segment] = {};
+    node = node[segment] as SettingsObject;
+  }
+  node[segments[segments.length - 1]!] = value;
+}
+
+const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
+  (setting) => isLayeredSetting(setting) && setting.scopes.includes('machine'),
+);
+
 function machineLayerSettings(machine: unknown): SettingsObject | null {
   const settings: SettingsObject = {};
-  const optimizations = settingValueAt(machine, 'optimizations');
-  if (optimizations !== undefined) settings.optimizations = optimizations;
-  const deviceProfile = settingValueAt(machine, 'android.deviceProfile');
-  if (deviceProfile !== undefined) settings.android = { deviceProfile };
-  const idleShutdownMinutes = settingValueAt(machine, 'devices.idleShutdownMinutes');
-  if (idleShutdownMinutes !== undefined) settings.devices = { idleShutdownMinutes };
+  for (const setting of MACHINE_READABLE_SETTINGS) {
+    const value = settingValueAt(machine, setting.key);
+    if (value !== undefined) setSettingValueAt(settings, setting.key, value);
+  }
   return Object.keys(settings).length > 0 ? settings : null;
 }
 
 export interface SettingsLayer {
+  scope: SettingScope;
   file: string;
   settings: SettingsObject;
 }
@@ -476,13 +491,27 @@ export function settingsLayers({
   const machineSettings = machineLayerSettings(machine);
   return [
     projectPath
-      ? { file: `${machineFile} (projects["${projectPath}"].settings)`, settings: getProjectSettings(projectPath) }
+      ? {
+          scope: 'workspace' as const,
+          file: `${machineFile} (projects["${projectPath}"].settings)`,
+          settings: getProjectSettings(projectPath),
+        }
       : null,
     gitCommonDir
-      ? { file: `${machineFile} (repos["${gitCommonDir}"].settings)`, settings: getRepoSettings(gitCommonDir) }
+      ? {
+          scope: 'repo' as const,
+          file: `${machineFile} (repos["${gitCommonDir}"].settings)`,
+          settings: getRepoSettings(gitCommonDir),
+        }
       : null,
-    committedDir ? { file: join(committedDir, '.stim.json'), settings: readCommittedSettings(committedDir) } : null,
-    machineSettings ? { file: machineFile, settings: machineSettings } : null,
+    committedDir
+      ? {
+          scope: 'committed' as const,
+          file: join(committedDir, '.stim.json'),
+          settings: readCommittedSettings(committedDir),
+        }
+      : null,
+    machineSettings ? { scope: 'machine' as const, file: machineFile, settings: machineSettings } : null,
   ].filter((layer): layer is SettingsLayer => layer !== null);
 }
 
@@ -490,6 +519,18 @@ export function settingOrigin(layers: SettingsLayer[], dottedKey: string): { fil
   for (const layer of layers) {
     const value = settingValueAt(layer.settings, dottedKey);
     if (value !== undefined) return { file: layer.file, value };
+  }
+  return null;
+}
+
+/**
+ * The layer a resolved setting's value came from -- flags are not layers, so
+ * this only answers for a value read from settingsLayers(). null means no
+ * layer set the key (the caller is using a default or a flag).
+ */
+export function settingOriginScope(layers: SettingsLayer[], dottedKey: string): SettingScope | null {
+  for (const layer of layers) {
+    if (settingValueAt(layer.settings, dottedKey) !== undefined) return layer.scope;
   }
   return null;
 }

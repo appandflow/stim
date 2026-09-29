@@ -6252,6 +6252,43 @@ describe('the simulator model and runtime flags', () => {
     expect(parseFirst(suffix.logs).message).toMatch(/No installed simulator runtime matches "5"/);
   });
 
+  test('an unknown runtime set at the machine layer names that layer in the refusal', async () => {
+    reserve();
+    const { exitCode, logs } = await run(
+      { json: true },
+      {
+        resolveSettings: () => ({ ios: { runtime: '99.9' } }),
+        settingsLayers: () => [
+          { scope: 'machine', file: '/home/.stim/config.json', settings: { ios: { runtime: '99.9' } } },
+        ],
+      },
+    );
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(
+      /No installed simulator runtime matches "99\.9"\. Installed runtimes: 26\.5, 18\.5\. ios\.runtime is set at the machine layer\./,
+    );
+    expect(payload.remedy).toMatch(/stim settings set ios\.runtime <value> --scope machine/);
+    expect(payload.remedy).toMatch(/stim settings unset ios\.runtime --scope machine/);
+  });
+
+  test('the --runtime flag overriding a bad machine value refuses without a layer note', async () => {
+    reserve();
+    const { exitCode, logs } = await run(
+      { runtime: '99.9', json: true },
+      {
+        resolveSettings: () => ({ ios: { runtime: '26.5' } }),
+        settingsLayers: () => [
+          { scope: 'machine', file: '/home/.stim/config.json', settings: { ios: { runtime: '26.5' } } },
+        ],
+      },
+    );
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.message).not.toMatch(/is set at the machine layer/);
+  });
+
   test('a plain run with neither flag nor setting never spawns the runtime listing', async () => {
     reserve();
     let listed = 0;

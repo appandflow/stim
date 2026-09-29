@@ -5,7 +5,8 @@ import { shortUdid, phaseLine } from '../../command-output.ts';
 import type { DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
-import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device-capacity.ts';
+import type { SettingScope } from '@stim-cli/core/state';
+import { layerNote, unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device-capacity.ts';
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
@@ -104,6 +105,8 @@ export function deviceModelRefusal({
   runtimeFlag,
   deviceType,
   runtime,
+  deviceTypeOrigin = null,
+  runtimeOrigin = null,
   physical,
   remoteBackend,
   listRuntimes,
@@ -113,6 +116,8 @@ export function deviceModelRefusal({
   runtimeFlag: string | undefined;
   deviceType: string | null;
   runtime: string | null;
+  deviceTypeOrigin?: SettingScope | null;
+  runtimeOrigin?: SettingScope | null;
   physical: boolean;
   remoteBackend: RemoteDeviceBackend | null;
   listRuntimes: typeof listIosRuntimes;
@@ -162,9 +167,17 @@ export function deviceModelRefusal({
       remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
     };
   }
-  const refusal =
-    unknownIosRuntimeRefusal(runtime, runtimes) ?? unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
-  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
+  const runtimeRefusal = unknownIosRuntimeRefusal(runtime, runtimes);
+  if (runtimeRefusal) {
+    const { message, remedy } = layerNote(runtimeRefusal, 'ios.runtime', runtimeFlag, runtimeOrigin);
+    return { code: 'STIM_BAD_ARG', message, remedy };
+  }
+  const deviceTypeRefusal = unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
+  if (deviceTypeRefusal) {
+    const { message, remedy } = layerNote(deviceTypeRefusal, 'ios.deviceType', deviceTypeFlag, deviceTypeOrigin);
+    return { code: 'STIM_BAD_ARG', message, remedy };
+  }
+  return null;
 }
 
 export function ownedSimFailure(error: unknown): { code: string; message: string; remedy: string } {

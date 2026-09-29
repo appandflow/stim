@@ -33,7 +33,9 @@ import {
   resolveCacheProviderConfig,
   SETTING_SHAPE_REMEDY,
   settingFile,
+  settingOriginScope,
   settingShapeErrors,
+  settingsLayers,
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
@@ -292,10 +294,12 @@ export function resolveAndroidRunPlan(
   const waitSeconds = waitParsed.seconds;
 
   const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
+  const settingsLayersForOrigin = settingsLayers(settingsContext);
   const imageRefusal = systemImageRefusal({
     slot,
     flag: systemImageFlag,
     resolved: systemImage,
+    origin: settingOriginScope(settingsLayersForOrigin, 'android.systemImage'),
     physical,
     remoteBackend,
     listImages: listSystemImages,
@@ -304,6 +308,7 @@ export function resolveAndroidRunPlan(
   const profileRefusal = deviceProfileRefusal({
     flag: deviceProfileFlag,
     resolved: deviceProfile,
+    origin: settingOriginScope(settingsLayersForOrigin, 'android.deviceProfile'),
     physical,
     remoteBackend,
     listProfiles: listDeviceProfiles,
