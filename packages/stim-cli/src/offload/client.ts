@@ -128,11 +128,11 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadPr
 }
 
 /**
- * Which asked machine takes the build, or none, and one reason per machine that does not. A machine with any
+ * The asked machines that can take the build, best first, and one reason per machine that cannot. A machine with any
  * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this Mac: while
  * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
  * this Mac's. A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
- * every local slot is busy. Among the rest, the warmest wins, then the least loaded.
+ * every local slot is busy. The rest rank warmest first, then least loaded.
  */
 export function pickOffer({
   mode,
@@ -144,10 +144,10 @@ export function pickOffer({
   here: MachineCapacity;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
-}): { index: number | null; reasons: string[] } {
+}): { order: number[]; reasons: string[] } {
   const slotsFull = here.maxBuilds > 0 && here.builds >= here.maxBuilds;
   const reasons: string[] = [];
-  let best: { index: number; score: number; load: number } | null = null;
+  const ranked: Array<{ index: number; score: number; load: number }> = [];
   offers.forEach(({ machine, offer, failure }, index) => {
     if (!offer) return void reasons.push(`${machine}: ${failure ?? 'no offer'}`);
     const problems = offerProblems(offer, target);
@@ -164,12 +164,10 @@ export function pickOffer({
       }
     }
     const score = Number(offer.warm.checkout) + Number(offer.warm.dependencies) + Number(offer.warm.build);
-    const rank = typeof load === 'number' ? load : Number.POSITIVE_INFINITY;
-    if (!best || score > best.score || (score === best.score && rank < best.load)) {
-      best = { index, score, load: rank };
-    }
+    ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
   });
-  return { index: (best as { index: number } | null)?.index ?? null, reasons };
+  ranked.sort((a, b) => b.score - a.score || a.load - b.load);
+  return { order: ranked.map((each) => each.index), reasons };
 }
 
 type Reply = { result: unknown } | { error: { code: string; message: string } };
@@ -406,13 +404,27 @@ export type OffloadOutcome =
     }
   | { ok: false; machine: string | null; reason: string };
 
-export interface OffloadChoice {
+interface OfferingMachine {
   machine: string;
-  target: BuildTarget;
   connection: BuildConnection;
+  offer: BuildOffer;
+}
+
+/**
+ * The machine a build goes to, and the other machines that can take it, best first, whose connections stay open
+ * until one of them starts the build. `offloadBuild` moves to the next one when a machine refuses `build.start`.
+ */
+export interface OffloadChoice extends OfferingMachine {
+  target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
-  offer: BuildOffer;
+  runnersUp: OfferingMachine[];
+}
+
+/** Closes every connection the choice still holds. */
+export function closeOffload(choice: OffloadChoice): void {
+  choice.connection.close();
+  for (const each of choice.runnersUp.splice(0)) each.connection.close();
 }
 
 type MachineProbe =
@@ -469,7 +481,7 @@ export async function chooseBuildMachine({
     return `this app is not in a git checkout (${(error as Error).message.split('\n')[0]})`;
   }
   const asked = await Promise.all(machines.map((credential) => probeMachine(credential, identity)));
-  const { index, reasons } = pickOffer({
+  const { order, reasons } = pickOffer({
     mode,
     here,
     target,
@@ -480,19 +492,15 @@ export async function chooseBuildMachine({
     })),
   });
   asked.forEach((each, at) => {
-    if (at !== index && 'connection' in each) each.connection.close();
+    if (!order.includes(at) && 'connection' in each) each.connection.close();
   });
-  if (index === null) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
+  if (order.length === 0) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
   for (const reason of reasons) note(reason);
-  const pick = asked[index] as { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
-  return {
-    machine: pick.credential.machine,
-    target,
-    connection: pick.connection,
-    offerMs: Date.now() - started,
-    identity,
-    offer: pick.offer,
-  };
+  const [first, ...rest] = order.map((at) => {
+    const pick = asked[at] as { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
+    return { machine: pick.credential.machine, connection: pick.connection, offer: pick.offer };
+  });
+  return { ...first!, target, offerMs: Date.now() - started, identity, runnersUp: rest };
 }
 
 /** The Gradle choices that shape the APK, so the machine builds what this Mac's cache key describes. */
@@ -518,6 +526,49 @@ export type BuildRequest =
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/ } as const;
 
+/** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
+async function syncSource(
+  connection: BuildConnection,
+  identity: RepoIdentity,
+  onEnter: (phase: string) => void,
+): Promise<{ files: number; uploaded: number; uploadedBytes: number; syncMs: number } | { failure: string }> {
+  onEnter('sync');
+  const syncStarted = Date.now();
+  const manifest = sourceManifest(identity.repoRoot);
+  const bySha = new Map(manifest.map((file) => [file.sha256, file]));
+  const missing: string[] = [];
+  for (let index = 0; index < manifest.length || index === 0;) {
+    const page: ManifestFile[] = [];
+    let bytes = 0;
+    while (index < manifest.length && (page.length === 0 || bytes < PAGE_BYTES)) {
+      const file = manifest[index++]!;
+      bytes += Buffer.byteLength(JSON.stringify(file)) + 1;
+      page.push(file);
+    }
+    const done = index >= manifest.length;
+    const reply = await connection.request('build.sync', { repo: identity.repo, files: page, done });
+    const failure = replyError(reply);
+    if (failure || !('result' in reply)) return { failure: `sync: ${failure ?? 'no reply'}` };
+    missing.push(...((reply.result as { missing?: string[] }).missing ?? []));
+    if (done) break;
+  }
+  let uploadedBytes = 0;
+  for (const digest of missing) {
+    const file = bySha.get(digest);
+    if (!file) return { failure: `sync: the machine asked for an unknown blob ${digest}` };
+    const content = blobContent(identity.repoRoot, file);
+    if (sha256(content) !== digest) return { failure: `sync: ${file.path} changed while syncing` };
+    const header = Buffer.from(digest, 'hex');
+    for (let offset = 0; offset < content.length || offset === 0; offset += CHUNK_BYTES) {
+      await connection.sendBinary(Buffer.concat([header, content.subarray(offset, offset + CHUNK_BYTES)]));
+      if (content.length === 0) break;
+    }
+    uploadedBytes += content.length;
+    if (connection.failure) return { failure: `sync: ${connection.failure}` };
+  }
+  return { files: manifest.length, uploaded: missing.length, uploadedBytes, syncMs: Date.now() - syncStarted };
+}
+
 /**
  * Builds on the chosen machine and brings the `.app` or `.apk` back into `stagingDir`, verified against the
  * sha256 the machine reports. The caller re-fingerprints and stores it.
@@ -530,6 +581,7 @@ export async function offloadBuild({
   onPhase,
   onEnter,
   onRecord,
+  note,
 }: {
   choice: OffloadChoice;
   expectedFingerprint: string;
@@ -538,57 +590,18 @@ export async function offloadBuild({
   onPhase: (phase: string, msg: string) => void;
   onEnter: (phase: string) => void;
   onRecord: (record: Record<string, unknown>) => void;
+  /** One line about where the build goes, such as the next machine after a refusal. */
+  note: (line: string) => void;
 }): Promise<OffloadOutcome> {
-  const { machine, connection, identity } = choice;
+  const { identity } = choice;
   const started = Date.now();
   const fail = (reason: string): OffloadOutcome => {
-    connection.close();
-    return { ok: false, machine, reason: reason.split('\n')[0]!.slice(0, 300) };
+    closeOffload(choice);
+    return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
   try {
-    onEnter('sync');
-    const syncStarted = Date.now();
-    const manifest = sourceManifest(identity.repoRoot);
-    const bySha = new Map(manifest.map((file) => [file.sha256, file]));
-    const missing: string[] = [];
-    for (let index = 0; index < manifest.length || index === 0;) {
-      const page: ManifestFile[] = [];
-      let bytes = 0;
-      while (index < manifest.length && (page.length === 0 || bytes < PAGE_BYTES)) {
-        const file = manifest[index++]!;
-        bytes += Buffer.byteLength(JSON.stringify(file)) + 1;
-        page.push(file);
-      }
-      const done = index >= manifest.length;
-      const reply = await connection.request('build.sync', { repo: identity.repo, files: page, done });
-      const failure = replyError(reply);
-      if (failure || !('result' in reply)) return fail(`sync: ${failure ?? 'no reply'}`);
-      missing.push(...((reply.result as { missing?: string[] }).missing ?? []));
-      if (done) break;
-    }
-    let uploadedBytes = 0;
-    for (const digest of missing) {
-      const file = bySha.get(digest);
-      if (!file) return fail(`sync: the machine asked for an unknown blob ${digest}`);
-      const content = blobContent(identity.repoRoot, file);
-      if (sha256(content) !== digest) return fail(`sync: ${file.path} changed while syncing`);
-      const header = Buffer.from(digest, 'hex');
-      for (let offset = 0; offset < content.length || offset === 0; offset += CHUNK_BYTES) {
-        await connection.sendBinary(Buffer.concat([header, content.subarray(offset, offset + CHUNK_BYTES)]));
-        if (content.length === 0) break;
-      }
-      uploadedBytes += content.length;
-      if (connection.failure) return fail(`sync: ${connection.failure}`);
-    }
-    const syncMs = Date.now() - syncStarted;
-    onPhase(
-      'sync',
-      `${manifest.length} files, uploaded ${missing.length} (${mb(uploadedBytes)}) in ${seconds(syncMs)}`,
-    );
-
-    const workerStarted = Date.now();
     let job: string | null = null;
-    const early: ProgressEvent[] = [];
+    let early: ProgressEvent[] = [];
     let settle!: (outcome: Record<string, unknown>) => void;
     const outcome = new Promise<Record<string, unknown>>((resolve) => {
       settle = resolve;
@@ -602,24 +615,47 @@ export async function offloadBuild({
         onPhase(event.phase, event.msg);
       }
     };
-    connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
-    const reply = await connection.request('build.start', {
-      repo: identity.repo,
-      project: identity.project,
-      platform: request.platform,
-      configuration: request.platform === 'ios' ? request.configuration : null,
-      scheme: request.platform === 'ios' ? request.scheme : null,
-      runtime: request.platform === 'ios' ? request.runtime : null,
-      fingerprint: expectedFingerprint,
-      packageName: packageName(join(identity.repoRoot, identity.project)),
-      isExpo: request.isExpo,
-      optimizations: request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
-      ...(request.platform === 'android' ? { android: request.android } : {}),
-      stimBuild: choice.target.local.stimBuild,
-    });
-    const refused = replyError(reply);
-    if (refused || !('result' in reply)) return fail(`start: ${refused ?? 'no reply'}`);
-    job = (reply.result as { job: string }).job;
+    let syncMs = 0;
+    let uploadedBytes = 0;
+    let workerStarted = 0;
+    for (;;) {
+      const synced = await syncSource(choice.connection, identity, onEnter);
+      if ('failure' in synced) return fail(synced.failure);
+      ({ syncMs, uploadedBytes } = synced);
+      onPhase(
+        'sync',
+        `${synced.files} files, uploaded ${synced.uploaded} (${mb(uploadedBytes)}) in ${seconds(syncMs)}`,
+      );
+      workerStarted = Date.now();
+      early = [];
+      choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
+      const reply = await choice.connection.request('build.start', {
+        repo: identity.repo,
+        project: identity.project,
+        platform: request.platform,
+        configuration: request.platform === 'ios' ? request.configuration : null,
+        scheme: request.platform === 'ios' ? request.scheme : null,
+        runtime: request.platform === 'ios' ? request.runtime : null,
+        fingerprint: expectedFingerprint,
+        packageName: packageName(join(identity.repoRoot, identity.project)),
+        isExpo: request.isExpo,
+        optimizations: request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
+        ...(request.platform === 'android' ? { android: request.android } : {}),
+        stimBuild: choice.target.local.stimBuild,
+      });
+      if ('result' in reply) {
+        job = (reply.result as { job: string }).job;
+        break;
+      }
+      const refused = `start: ${replyError(reply)}`;
+      const next = reply.error.code === 'bad-request' ? undefined : choice.runnersUp.shift();
+      if (!next) return fail(refused);
+      note(`placement: ${next.machine} (${choice.machine} refused the build: ${refused})`);
+      choice.connection.close();
+      Object.assign(choice, next);
+    }
+    for (const each of choice.runnersUp.splice(0)) each.connection.close();
+    const { connection, machine } = choice;
     for (const event of early.splice(0)) handle(event);
     const timer = setTimeout(
       () => settle({ ok: false, code: 'timeout', message: 'the build did not finish in time' }),

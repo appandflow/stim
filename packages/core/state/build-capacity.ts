@@ -2,16 +2,87 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { availableParallelism, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import {
+  isClaimRefusal,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+  type ClaimRefusedError,
+} from '../ownership-claim.ts';
 import { getConcurrencyLimits, loadConfig } from './config.ts';
 import { settingDefinition } from './settings-registry.ts';
 
 const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
+const SLOT_PREFIX = 'slot-';
+const SLOT_LABEL = 'build slot';
+
+export function buildSlotsDir(): string {
+  return join(configDir(), 'build-slots');
+}
+
+export function buildSlotPath(index: number): string {
+  return join(buildSlotsDir(), `${SLOT_PREFIX}${index}`);
+}
+
+/**
+ * Takes the first free one of `max` `concurrency.maxBuilds` slots, recording `details` and the slot `index`. Returns
+ * null while every slot is held; throws the claim refusal when no slot is busy but one cannot be resolved.
+ */
+export function tryAcquireBuildSlotClaim({
+  max,
+  details,
+}: {
+  max: number;
+  details: Record<string, unknown>;
+}): { claim: ClaimHandle; index: number; path: string } | null {
+  let refusal: ClaimRefusedError | null = null;
+  let busy = false;
+  for (let index = 0; index < max; index++) {
+    const path = buildSlotPath(index);
+    let attempt;
+    try {
+      attempt = tryAcquireClaim({ root: path, mode: 'exclusive', label: SLOT_LABEL, details: { ...details, index } });
+    } catch (err) {
+      if (!isClaimRefusal(err)) throw err;
+      refusal ??= err;
+      continue;
+    }
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired) {
+      busy = true;
+      continue;
+    }
+    return { claim: attempt.acquired, index, path };
+  }
+  if (refusal && !busy) throw refusal;
+  return null;
+}
+
+/** Build slots held for a build machine's offloaded builds, which run under another Stim home. */
+function liveOffloadedSlots(): number {
+  let names: string[];
+  try {
+    names = readdirSync(buildSlotsDir());
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const name of names) {
+    if (!name.startsWith(SLOT_PREFIX)) continue;
+    try {
+      if (readClaimSet(join(buildSlotsDir(), name)).live.some((holder) => holder.details.offloaded === true))
+        count += 1;
+    } catch {}
+  }
+  return count;
+}
 
 /**
  * How busy this Mac is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
  * rounded to one decimal. `builds` counts this Stim home's runs that hold a live native-run claim and are in
- * prebuild, pods or compile here, not on a build machine. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
+ * prebuild, pods or compile here, not on a build machine, plus the build slots this Mac holds for other Macs'
+ * offloaded builds. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
  */
 export interface MachineCapacity {
   cpus: number;
@@ -64,7 +135,7 @@ export function machineCapacity(): MachineCapacity {
   return {
     cpus,
     loadPerCore: Math.round((loadavg()[1]! / cpus) * 10) / 10,
-    builds: liveNativeBuilds(),
+    builds: liveNativeBuilds() + liveOffloadedSlots(),
     maxBuilds: getConcurrencyLimits().maxBuilds,
     maxLoadPerCore: maxLoadPerCore(),
   };

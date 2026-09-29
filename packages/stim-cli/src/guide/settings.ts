@@ -548,7 +548,9 @@ and runs with the build cache off, always build here.
 An offloaded build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
 build and CPU match this Mac exactly, with enough disk, that does not decline,
-preferring the one that already holds this repository, then the least loaded.
+preferring the one that already holds this repository, then the least loaded,
+and moves to the next one in that order when a machine refuses to start the
+build after its offer.
 For iOS the machine's Xcode, simulator SDK and CocoaPods must match, and it
 needs an iPhone simulator on the target runtime. For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
@@ -582,7 +584,10 @@ runs one offloaded build at a time. It declines a build while that volume has
 less than 10 GB free, while its own native builds and the offloaded one fill
 its \`concurrency.maxBuilds\`, or while its load per core is at or above its
 \`offload.maxLoadPerCore\`, and reports the reason in its offer. It boots and
-installs nothing. Android builds there run on the JDK in stim-server's
+installs nothing. While an offloaded build runs there, it holds one of that
+Mac's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
+and counts it as busy; the slot is freed when the build ends, is cancelled or
+its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
 ~/Library/Android/sdk), and stop the Gradle daemons they start when they end.
 

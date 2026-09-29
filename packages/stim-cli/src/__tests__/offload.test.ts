@@ -127,10 +127,10 @@ describe('pickOffer', () => {
         offer({ capacity: capacity({ diskFreeBytes: 1024 ** 3, declined: '1.0 GB free, builds need 10.0 GB' }) }),
         offer({ capacity: { running: 1, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } }),
       ]) {
-        expect(pick([refused], { mode }).index).toBeNull();
+        expect(pick([refused], { mode }).order).toEqual([]);
       }
     }
-    expect(pick([offer()], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).index).toBeNull();
+    expect(pick([offer()], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).order).toEqual([]);
   });
 
   it.each([
@@ -194,7 +194,10 @@ describe('pickOffer', () => {
       ['mac0: busy (all 2 build slots busy; load 0.2/core, 2 of 2 build slots busy)'],
     ],
   ] as const)('%s', (_, mode, here, offered, index, reasons) => {
-    expect(pick([offer({ capacity: offered })], { mode, here })).toEqual({ index, reasons });
+    expect(pick([offer({ capacity: offered })], { mode, here })).toEqual({
+      order: index === null ? [] : [index],
+      reasons,
+    });
   });
 
   it('names every problem of one machine, as doctor reports them', () => {
@@ -205,19 +208,20 @@ describe('pickOffer', () => {
     expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual(['stim-build', 'runtime', 'busy']);
   });
 
-  it('prefers the warmest machine, then the least loaded, and names the machines it passed over', () => {
+  it('ranks the warmest machine first, then the least loaded, and names the machines it passed over', () => {
     const cold = offer();
     const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });
-    expect(pick([cold, null, warm])).toEqual({ index: 2, reasons: ['mac1: unreachable'] });
+    expect(pick([cold, null, warm])).toEqual({ order: [2, 0], reasons: ['mac1: unreachable'] });
     const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
-    expect(pick([older, loaded, cold]).index).toBe(2);
+    expect(pick([older, loaded, cold]).order).toEqual([2, 1, 0]);
   });
 });
 
 describe('pickOffer for Android', () => {
   const pickAndroid = (each: BuildOffer) =>
-    pickOffer({ mode: 'force', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] }).index;
+    pickOffer({ mode: 'force', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] }).order[0] ??
+    null;
 
   it('takes a machine whose JDK major and SDK packages match, whatever its Xcode or JDK vendor', () => {
     expect(pickAndroid(offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
