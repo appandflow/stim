@@ -300,9 +300,11 @@ struct BuildProgressBar: View {
       let progress = build.progress(at: context.date)
       VStack(alignment: .leading, spacing: Space.xs) {
         HStack(spacing: Space.md) {
-          (Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")  ")
+          let remote = build.remote(at: context.date)
+          (Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")\(remote.map { " on \($0.host)" } ?? "")  ")
             .foregroundStyle(Palette.text)
-            + Text(build.phase).font(.stim(.caption, mono: true)).foregroundStyle(Palette.primary))
+            + Text(remote.map { $0.phase.lowercased() } ?? build.phase).font(.stim(.caption, mono: true))
+            .foregroundStyle(Palette.primary))
           .lineLimit(1)
           .truncationMode(.tail)
           BuildOutcomeBadge(build: build)

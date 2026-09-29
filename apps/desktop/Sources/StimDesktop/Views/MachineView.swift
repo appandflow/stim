@@ -718,21 +718,20 @@ private struct MachineBuildMachines: View {
   }
 
   var body: some View {
-    Group {
+    VStack(alignment: .leading, spacing: Space.md) {
       if !machines.isEmpty {
-        VStack(alignment: .leading, spacing: Space.md) {
-          Text("Build machines").font(.stim(.headline))
-          Card {
-            VStack(spacing: 0) {
-              ForEach(Array(machines.enumerated()), id: \.element.id) { index, machine in
-                if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-                row(machine)
-              }
+        Text("Build machines").font(.stim(.headline))
+        Card {
+          VStack(spacing: 0) {
+            ForEach(Array(machines.enumerated()), id: \.element.id) { index, machine in
+              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
+              row(machine)
             }
           }
         }
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .task(id: checkout) { await load() }
   }
 
