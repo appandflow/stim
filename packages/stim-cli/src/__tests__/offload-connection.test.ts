@@ -57,9 +57,16 @@ async function fakeMachine(
   {
     drop = false,
     closeAfterStart = null,
+    hello = () => ({ result: { capabilities: ['build'] } }),
     dropOnSync = false,
     attach = { result: { outcome: null } },
-  }: { drop?: boolean; closeAfterStart?: number | null; dropOnSync?: boolean; attach?: object } = {},
+  }: {
+    drop?: boolean;
+    closeAfterStart?: number | null;
+    dropOnSync?: boolean;
+    attach?: object;
+    hello?: () => object;
+  } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -74,7 +81,7 @@ async function fakeMachine(
       const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
       methods.push(method);
       const reply = (body: object) => socket.send(JSON.stringify({ id, ...body }));
-      if (method === 'hello') return reply({ result: { capabilities: ['build'] } });
+      if (method === 'hello') return reply(hello());
       if (method === 'build.cancel') return;
       if (method === 'build.offer') return reply({ result: offer });
       if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
@@ -330,5 +337,54 @@ describe('offloadBuild', () => {
     });
     expect(lines).toEqual([]);
     expect(machine.methods).not.toContain('build.attach');
+  });
+
+  it('keeps reconnecting while the machine cannot identify this Mac for a moment', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        drop: true,
+        hello: () =>
+          ++hellos === 2
+            ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
+            : { result: { capabilities: ['build'] } },
+      },
+    );
+    machines.push(machine);
+    const lines: string[] = [];
+    expect(await run(['mini'], (line) => lines.push(line))).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'worker-failed: xcodebuild failed',
+    });
+    expect(lines.at(-1)).toBe('offload: reattached to the build on mini');
+    expect(hellos).toBe(3);
+  });
+
+  it('stops reconnecting when the machine turns this Mac away', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        drop: true,
+        hello: () =>
+          ++hellos === 1
+            ? { result: { capabilities: ['build'] } }
+            : { error: { code: 'unauthorized', message: 'This Mac does not recognize this device token.' } },
+      },
+    );
+    machines.push(machine);
+    expect(await run(['mini'], () => {})).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason:
+        'closed: the connection closed (1006); the machine turned this Mac away (This Mac does not recognize this device token.)',
+    });
+    expect(hellos).toBe(2);
   });
 });

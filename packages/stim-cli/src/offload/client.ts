@@ -38,6 +38,7 @@ const PING_MS = 15_000;
 const SILENT_MS = 60_000;
 const CLOSE_TIMEOUT_MS = 2000;
 const CLOSE_ABNORMAL = 1006;
+const TURNED_AWAY = new Set(['unauthorized', 'forbidden', 'approval-pending', 'protocol-unsupported']);
 const RESUME_WINDOW_MS = 3 * 60_000;
 const RESUME_DELAY_MS = 2000;
 const RESUME_MAX_DELAY_MS = 15_000;
@@ -207,7 +208,7 @@ function closeOnExit(socket: WebSocket): void {
 
 /**
  * One authenticated connection to a build machine's stim-server. Closing it cancels its jobs there; a connection
- * that drops, or that stays silent for `SILENT_MS` despite pings, leaves them running for a while so a new
+ * that drops, or that stays silent for `SILENT_MS` after `watch()`, leaves them running for a while so a new
  * connection can `build.attach` to them.
  */
 class BuildConnection {
@@ -307,7 +308,9 @@ class BuildConnection {
         } catch {
           return fail('the reply was not a hello result');
         }
-        if (isJsonObject(reply) && isJsonObject(reply.error)) return fail(String(reply.error.message), true);
+        if (isJsonObject(reply) && isJsonObject(reply.error)) {
+          return fail(String(reply.error.message), TURNED_AWAY.has(String(reply.error.code)));
+        }
         const capabilities = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.capabilities : null;
         if (!Array.isArray(capabilities) || !capabilities.includes('build')) {
           return fail('it has not granted this Mac build access', true);

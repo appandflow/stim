@@ -352,8 +352,8 @@ A dropped connection is not a failure by itself: Stim pings the machine every
 then reconnects to the same machine for up to 3 minutes and takes the running
 build back. The machine keeps a build running for 5 minutes without a
 connection before it cancels it. A drop while the app is fetched still builds
-here. Ctrl-C cancels the build on the machine; a run killed another way leaves
-it running until those 5 minutes pass. An
+here. Ctrl-C cancels the build on the machine; a run killed another way, or
+interrupted while it reconnects, leaves it running until those 5 minutes pass. An
 offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there and builds here, so
