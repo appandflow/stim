@@ -576,9 +576,14 @@ RULES
   cover launches Stim did not make: a home-screen tap, an
   agent relaunch, or a crash restart. An install skipped
   because adoption reused a parked simulator (and cleared the
-  app's data first) does NOT rewrite them, so a non-Stim
-  relaunch after that adoption can show the menu and button,
-  until the next real install.
+  app's data first) does NOT rewrite them UNLESS Stim's own
+  upcoming launch could not read the app's data container
+  either (the same check \`simctl launch\` needs to attach
+  console capture): that launch falls back to \`simctl openurl\`,
+  which carries no launch arguments, so Stim writes the
+  persisted defaults on that skipped install too. Otherwise a
+  non-Stim relaunch after that adoption can show the menu and
+  button, until the next real install.
   When the project's installed expo-dev-launcher (found
   through expo-dev-client, no network) is 58.0.0 or later
   (expo/expo#49651), Stim's own deep link also carries

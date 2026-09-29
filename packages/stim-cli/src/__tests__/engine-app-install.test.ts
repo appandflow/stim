@@ -3043,6 +3043,36 @@ describe('skipping an install the device already holds', () => {
     expect(result.devClientPreparationDurationMs).toBeUndefined();
   });
 
+  test('a skipped install still writes the dev-menu defaults when the app data container is unreachable', () => {
+    // The upcoming launch can only carry the dev-menu keys as launch argv when
+    // it can read the app's data container to attach console capture; without
+    // it, simctl launch falls back to openurl, which takes no argv at all.
+    const installed = localApp('installed.app', 'macho');
+    const appPath = localApp('built.app', 'macho');
+    const exec = recordingExec({
+      fail: 'get_app_container U1 com.example.app data',
+      outputs: { get_app_container: `${installed}\n` },
+    });
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath,
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+        schemeApprovals: [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+        ],
+      },
+      { exec, now: () => 0 },
+    );
+    expect(result.skipped).toBe(true);
+    expect(exec.calls.filter((c) => c.includes('write')).map((c) => c[7])).toEqual([
+      'EXDevMenuShowsAtLaunch',
+      'EXDevMenuShowFloatingActionButton',
+    ]);
+  });
+
   test('a .app whose JS was swapped is installed: the container holds the other one', () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('js-swap.app', 'macho with this workspaces js');
