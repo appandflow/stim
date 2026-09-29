@@ -1,8 +1,16 @@
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
-import { resetAdoptedAvd, type resolveOwnedAvdSerial, type waitForBoot } from '../../devices/android.ts';
+import {
+  androidDataFreeBytes,
+  resetAdoptedAvd,
+  trimAndroidCaches,
+  type resolveOwnedAvdSerial,
+  type waitForBoot,
+} from '../../devices/android.ts';
+import { teardownOwnedAvd } from '../../devices/teardown.ts';
+import { formatBytes } from '../../fs-util.ts';
 import type { ChildProcess } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { rmSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase, recordFinishedBuild } from '../../engine/build-progress.ts';
@@ -372,6 +380,83 @@ interface FinishAndroidRunArgs {
   reclaimed: ReportAndroidResultArgs['reclaimed'];
   devServer: ReportAndroidResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
+  rebootDevice: () => Promise<AndroidBootLike>;
+  dataFreeBytes?: typeof androidDataFreeBytes;
+  trimCaches?: typeof trimAndroidCaches;
+  wipeDevice?: typeof teardownOwnedAvd;
+}
+
+const ADOPTED_INSTALL_HEADROOM_BYTES = 512 * 1024 * 1024;
+const INSUFFICIENT_STORAGE = /INSTALL_FAILED_INSUFFICIENT_STORAGE/;
+
+interface AdoptedRoom {
+  root: string;
+  slot?: string;
+  avdName: string;
+  apkPath: string;
+  phase: (label: unknown, text: string) => void;
+  rebootDevice: () => Promise<AndroidBootLike>;
+  dataFreeBytes: typeof androidDataFreeBytes;
+  trimCaches: typeof trimAndroidCaches;
+  wipeDevice: typeof teardownOwnedAvd;
+  resolveAvdSerial: typeof resolveOwnedAvdSerial;
+}
+
+async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<string> {
+  room.phase(
+    'device',
+    chalk.yellow(
+      `${room.avdName} has ${free === null ? 'too little space' : `${formatBytes(free)} free`} on /data after removing other apps and trimming caches; wiping its user data`,
+    ),
+  );
+  const expectedRecord = deviceSlotPlatforms(loadConfig()?.projects?.[room.root], room.slot)?.android;
+  if (!expectedRecord?.adoptionPending || expectedRecord.avdName !== room.avdName) {
+    throw new Error('the emulator assignment changed before the wipe; its data was kept');
+  }
+  const wiped = room.wipeDevice(room.avdName, {
+    wipe: true,
+    owner: { projectPath: room.root, slot: room.slot, expectedRecord },
+    workspace: room.root,
+  });
+  if (wiped.status !== 'torn-down') throw new Error(`could not wipe it: ${wiped.reason ?? wiped.status}`);
+  const rebooted = await room.rebootDevice();
+  if (!rebooted.ok || !rebooted.serial) {
+    throw new Error(`it did not boot after its user data was wiped: ${rebooted.reason ?? 'no serial'}`);
+  }
+  if (room.resolveAvdSerial(room.avdName).serial !== rebooted.serial) {
+    throw new Error(`${rebooted.serial} is not running ${room.avdName} after the wipe`);
+  }
+  room.phase('device', `${room.avdName} (${rebooted.serial}) booted with wiped user data`);
+  return rebooted.serial;
+}
+
+async function installOnAdoptedAvd(
+  room: AdoptedRoom,
+  serial: string,
+  installApk: (serial: string) => InstallResultLike,
+): Promise<{ serial: string; installed: InstallResultLike }> {
+  const neededBytes = 2 * statSync(room.apkPath).size + ADOPTED_INSTALL_HEADROOM_BYTES;
+  const roomy = (free: number | null) => free === null || free >= neededBytes;
+  const outOfSpace = (result: InstallResultLike) =>
+    Boolean(result.failed) && INSUFFICIENT_STORAGE.test(result.reason ?? '');
+  let target = serial;
+  let wiped = false;
+  if (!roomy(room.dataFreeBytes(target))) {
+    room.trimCaches(target, neededBytes);
+    const free = room.dataFreeBytes(target);
+    if (roomy(free)) room.phase('install', `trimmed app caches on ${room.avdName} to make room for the APK`);
+    else {
+      target = await wipeAdoptedAvd(room, free);
+      wiped = true;
+    }
+  }
+  let installed = installApk(target);
+  if (wiped || !outOfSpace(installed)) return { serial: target, installed };
+  room.trimCaches(target, neededBytes);
+  installed = installApk(target);
+  if (!outOfSpace(installed)) return { serial: target, installed };
+  target = await wipeAdoptedAvd(room, room.dataFreeBytes(target));
+  return { serial: target, installed: installApk(target) };
 }
 
 async function resolveInstallSerial({
@@ -474,6 +559,10 @@ export async function finishAndroidRun({
   reclaimed,
   devServer,
   enterPhase,
+  rebootDevice,
+  dataFreeBytes = androidDataFreeBytes,
+  trimCaches = trimAndroidCaches,
+  wipeDevice = teardownOwnedAvd,
 }: FinishAndroidRunArgs): Promise<RunAndroidResult> {
   let androidPackage = initialPackage;
   let leaseWarned = false;
@@ -555,13 +644,40 @@ export async function finishAndroidRun({
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
   if (lostBeforeInstall) return lostBeforeInstall;
-  const installTimer = stepTimer(now);
-  const installed: InstallResultLike = install({
-    serial,
-    apkPath: apkPath!,
-    packageName: androidPackage,
-    allowUninstall: release || adopting,
-  });
+  let installTimer = stepTimer(now);
+  const installApk = (target: string) => {
+    installTimer = stepTimer(now);
+    return install({
+      serial: target,
+      apkPath: apkPath!,
+      packageName: androidPackage,
+      allowUninstall: release || adopting,
+    });
+  };
+  let installed: InstallResultLike;
+  if (adopting && device.avdName && apkPath) {
+    const room = {
+      root,
+      slot,
+      avdName: device.avdName,
+      apkPath,
+      phase,
+      rebootDevice,
+      dataFreeBytes,
+      trimCaches,
+      wipeDevice,
+      resolveAvdSerial,
+    };
+    try {
+      ({ serial, installed } = await installOnAdoptedAvd(room, serial, installApk));
+    } catch (error) {
+      return fail(
+        INSTALL_FAILED,
+        `Could not make room on adopted emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
+        `Run \`${runCommand}\` again; adoption remains pending, so it retries the cleanup.`,
+      );
+    }
+  } else installed = installApk(serial);
   if (installed.failed) {
     const installRemedy =
       remoteDevice?.failureRemedy() ??

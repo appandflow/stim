@@ -53,7 +53,7 @@ import {
   sleepSync,
   wipeAvdUserData,
 } from './android.ts';
-import { parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
+import { eraseParkedAfter, parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import {
   claimRemoveCommand,
@@ -89,6 +89,8 @@ export interface ParkRequest {
   max: number;
   simslimManaged?: boolean;
   configuration?: string;
+  appId?: string | null;
+  cacheKey?: string | null;
 }
 
 export function teardownParkedAvd(avdName: string): TeardownOutcome {
@@ -116,6 +118,39 @@ export function teardownParkedIosSim(
     });
     if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? removed.name };
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  }
+}
+
+export function eraseParkedIosSim(udid: string, { label }: { label?: string } = {}): TeardownOutcome {
+  try {
+    const erased = eraseParkedAfter('ios', udid, () => {
+      closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
+      const resolved = resolveOwnedIosSim(udid);
+      if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
+      if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
+      const state = (resolved.sim as IosSimRecord).state;
+      if (state !== 'Shutdown') throw new Error(`simulator ${udid} is ${state}, not Shutdown; it was kept`);
+      eraseIosSim(udid);
+    });
+    if (!erased) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
+    return { status: 'torn-down', label: label ?? erased.name };
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  }
+}
+
+export function eraseParkedAvd(avdName: string): TeardownOutcome {
+  try {
+    const erased = eraseParkedAfter('android', avdName, () => {
+      if (resolveOwnedAvdSerial(avdName).serial) throw new Error(`AVD ${avdName} is running; it was kept`);
+      const result = teardownOwnedAvd(avdName, { wipe: true, owner: { pool: true } });
+      if (result.status !== 'torn-down') throw new Error(result.reason ?? `AVD ${avdName} is ${result.status}`);
+    });
+    return erased
+      ? { status: 'torn-down', label: avdName }
+      : { status: 'skipped', kind: 'not-parked', reason: 'emulator is no longer parked' };
   } catch (error) {
     return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
@@ -175,7 +210,6 @@ function parkOwnedIosSim(
   }
   const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
-  eraseIosSim(sim.udid);
   const name = parkedSimName(sim.udid, { model, runtime });
   renameIosSim(sim.udid, name);
   const record: ParkedSim = {
@@ -185,6 +219,8 @@ function parkOwnedIosSim(
     runtimeIdentifier: sim.runtime,
     parkedAt: new Date().toISOString(),
     simslimManaged: Boolean(park.simslimManaged),
+    ...(park.appId ? { bundleId: park.appId } : {}),
+    ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
   };
   const evicted = parkSim({ platform: 'ios', projectPath: park.projectPath, slot: park.slot, record, max: park.max });
   return { record, evicted };
@@ -387,6 +423,7 @@ function teardownUnregisteredAvd(
 
 interface AvdTeardownOptions {
   del?: boolean;
+  wipe?: boolean;
   park?: ParkRequest;
   owner?: AvdOwner;
   workspace?: string;
@@ -429,6 +466,7 @@ function teardownClaimedAvd(
   claim: ClaimHandle,
   {
     del = false,
+    wipe = false,
     park,
     owner,
     workspace,
@@ -441,7 +479,7 @@ function teardownClaimedAvd(
 ): TeardownOutcome {
   let parkFallback: string | undefined;
   try {
-    if (del) withConfigLock(() => assertAvdReferences(avdName, owner));
+    if (del || wipe) withConfigLock(() => assertAvdReferences(avdName, owner));
     const resolved = resolveAvd(avdName);
     if (resolved.notOwned) {
       return {
@@ -450,7 +488,10 @@ function teardownClaimedAvd(
         reason: `AVD ${avdName} is not Stim-owned: Stim has no record of creating it`,
       };
     }
-    if (resolved.missing) return teardownUnregisteredAvd(avdName, del, owner, orphanedDirectory);
+    if (resolved.missing) {
+      if (wipe) throw new Error(`AVD ${avdName} is not registered; its data was kept.`);
+      return teardownUnregisteredAvd(avdName, del, owner, orphanedDirectory);
+    }
     if (onlyIfMissing) return { status: 'skipped', reason: 'AVD registration appeared; its record was kept.' };
     if (orphanedDirectory) return { status: 'skipped', reason: 'AVD registration appeared; its data was kept.' };
     const serial = resolved.serial;
@@ -484,6 +525,16 @@ function teardownClaimedAvd(
       closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);
       waitForShutdown(avdName, null);
     }
+    if (wipe && !del) {
+      const current = resolveAvd(avdName);
+      if (current.notOwned || current.missing) throw new Error(`AVD ${avdName} changed before its data was wiped.`);
+      if (current.serial) throw new Error(`Owned AVD ${avdName} started again before its data was wiped.`);
+      assertStopped(avdName);
+      withConfigLock(() => assertAvdReferences(avdName, owner));
+      const directory = ownedAvdDirectory(avdName);
+      if (!directory) throw new Error(`The data directory of AVD ${avdName} could not be resolved.`);
+      wipeAvdUserData(directory);
+    }
     if (del) {
       const current = resolveAvd(avdName);
       if (current.notOwned) {
@@ -503,9 +554,6 @@ function teardownClaimedAvd(
           if (!systemImage || !park.configuration || !ownedAvdMatchesConfiguration(avdName, park.configuration)) {
             throw new Error('the AVD has no verified creation configuration');
           }
-          const directory = ownedAvdDirectory(avdName);
-          if (!directory) throw new Error('the AVD data directory could not be resolved');
-          wipeAvdUserData(directory);
           const evicted = parkSim({
             platform: 'android',
             projectPath: park.projectPath,
@@ -517,6 +565,8 @@ function teardownClaimedAvd(
               systemImage,
               configuration: park.configuration,
               parkedAt: new Date().toISOString(),
+              ...(park.appId ? { packageName: park.appId } : {}),
+              ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
             },
           });
           const removed: ParkedDevice[] = [];

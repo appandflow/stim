@@ -208,7 +208,9 @@ use. A workspace is in use while its dev server runs, a `stim ios` or
 `stim android` run holds it, a build names it, or a tunnel or remote lock is
 held. `--older-than <days>` clears only workspaces no Stim command has used for
 that many days. `--cache workspaces` clears the outputs and nothing else, and
-`--cache all` includes them. The workspace keeps its `workspace.json`,
+`--cache all` includes them. `--cache parked` is the one reserved name that
+`all` leaves out: it erases parked simulators and emulators (see
+[owned devices](./owned-devices.md)). The workspace keeps its `workspace.json`,
 `state.json`, logs, devices and ports.
 
 The next build of an unchanged app installs from the shared build cache. After

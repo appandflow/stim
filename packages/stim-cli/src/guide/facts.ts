@@ -655,7 +655,7 @@ RULES
     },
     gc: {
       summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
-      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings>]
+      body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked>]
           [--worktrees] [--idle <duration>] --json
 
   The report the text prints, as one payload. Show the user its sections
@@ -668,7 +668,8 @@ RULES
   idle            the --idle duration in milliseconds, or null
   cacheScope      the --cache name, or null. When set, devices, project
                   entries and locks were not inspected and their sections
-                  are empty
+                  are empty, except that --cache parked fills
+                  parkedSimulators and parkedEmulators
   olderThan       the --older-than days, or null
   worktreeSweep   null without --worktrees; otherwise { olderThan, defaulted }:
                   the idle days a linked worktree needs, and whether that is
@@ -686,7 +687,9 @@ RULES
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache.
                   label is a device, path or cache name; id is the UDID,
-                  AVD name or path behind it, or null
+                  AVD name or path behind it, or null. Under --cache
+                  parked, a "done" parkedDevice was erased and stays
+                  parked; otherwise it was deleted
   inventory       null except on a dry run without --cache or --idle. Report
                   only: gc never acts on it, even under --delete.
                   { devices, runtimes, systemImages, notices }
@@ -740,10 +743,12 @@ RULES
                               recent-activity worktree becomes removable,
                               else null. Without --worktrees, the source
                               checkout and roots outside git are left out
-    parkedSimulators        { udid, name, model, runtime, parkedAt, bytes,
-                              listed }  with --older-than, only those parked
-                              at least that long
-    parkedEmulators         { name, systemImage, deviceProfile, parkedAt, bytes, listed }
+    parkedSimulators        { udid, name, model, runtime, parkedAt, app,
+                              bytes, listed }  app is the bundle id recorded
+                              at park, else null; with --older-than, only
+                              those parked at least that long
+    parkedEmulators         { name, systemImage, deviceProfile, parkedAt, app,
+                              bytes, listed }  app is the package name;
                               likewise
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this

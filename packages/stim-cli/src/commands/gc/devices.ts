@@ -11,6 +11,8 @@ import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRec
 import { listAvds, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
 import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
 import {
+  eraseParkedAvd,
+  eraseParkedIosSim,
   teardownOwnedIosSim,
   teardownOwnedAvd,
   teardownParkedIosSim,
@@ -62,6 +64,7 @@ export interface ParkedSimReport {
   model: string | null;
   runtime: string | null;
   parkedAt: string;
+  app: string | null;
   bytes: number | null;
   listed: boolean | null;
 }
@@ -339,6 +342,7 @@ export function describeParkedSims(
       model: deviceTypes.find((d) => d.identifier === record.deviceTypeIdentifier)?.name ?? null,
       runtime: sim ? parseRuntimeVersion(sim.runtime) : parseRuntimeVersion(record.runtimeIdentifier),
       parkedAt: record.parkedAt,
+      app: record.bundleId ?? null,
       bytes: typeof sim?.dataPathSize === 'number' ? sim.dataPathSize : null,
       listed: simsChecked ? Boolean(sim) : null,
     };
@@ -380,6 +384,7 @@ export interface ParkedAvdReport {
   systemImage: string;
   deviceProfile: string | null;
   parkedAt: string;
+  app: string | null;
   bytes: number | null;
   listed: boolean | null;
 }
@@ -414,10 +419,45 @@ export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {
       systemImage: record.systemImage,
       deviceProfile: poolConfigurationDeviceProfile(record.configuration),
       parkedAt: record.parkedAt,
+      app: record.packageName ?? null,
       bytes,
       listed: avds === null ? null : avds.includes(record.name),
     };
   });
+}
+
+export function eraseParkedDevices(sims: readonly ParkedSimReport[], avds: readonly ParkedAvdReport[]): number {
+  let failures = 0;
+  const devices = [
+    ...sims.map((sim) => ({ platform: 'ios', id: sim.udid, name: sim.name, listed: sim.listed, bytes: sim.bytes })),
+    ...avds.map((avd) => ({ platform: 'android', id: avd.name, name: avd.name, listed: avd.listed, bytes: avd.bytes })),
+  ];
+  for (const device of devices) {
+    const what = `parked ${device.platform === 'ios' ? 'ios sim' : 'android emulator'} ${device.name}`;
+    if (device.listed !== true) {
+      const unverified = device.listed === null;
+      const detail = unverified
+        ? 'Stim could not list devices to verify it; it was kept. Retry stim gc --cache parked --delete.'
+        : 'it is not on this machine; stim gc --delete drops its pool record.';
+      if (unverified) failures++;
+      console.log((unverified ? chalk.red : chalk.dim)(`Did not erase ${what}: ${detail}`));
+      recordGcResult('parkedDevice', unverified ? 'failed' : 'kept', device.name, { id: device.id, detail });
+      continue;
+    }
+    const result =
+      device.platform === 'ios' ? eraseParkedIosSim(device.id, { label: device.name }) : eraseParkedAvd(device.id);
+    if (result.status === 'torn-down') {
+      console.log(chalk.green(`Erased ${what}; it stays parked`));
+      recordGcResult('parkedDevice', 'done', device.name, { id: device.id, bytes: device.bytes });
+    } else if (result.status === 'failed') {
+      failures++;
+      console.log(chalk.red(`Failed to erase ${what}: ${result.reason}`));
+      recordGcResult('parkedDevice', 'failed', device.name, { id: device.id, detail: result.reason });
+    } else {
+      console.log(chalk.dim(`Skipped ${device.name}; it is no longer parked.`));
+    }
+  }
+  return failures;
 }
 
 export function deleteParkedAvds(avds: readonly ParkedAvdReport[]): number {

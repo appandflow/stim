@@ -27,6 +27,7 @@ test('GC renders a mixed resource report in its established order', () => {
       model: 'iPhone 17',
       runtime: '26.5',
       parkedAt: '2026-09-03T00:00:00Z',
+      app: null,
       bytes: 2048,
       listed: true,
     },

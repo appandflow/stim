@@ -973,6 +973,30 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
   }
 }
 
+export function parseDfAvailableBytes(text: unknown): number | null {
+  const lines = String(text ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length !== 2 || !/^Filesystem\s/.test(lines[0]!)) return null;
+  const available = lines[1]!.split(/\s+/)[3];
+  return available && /^\d+$/.test(available) ? Number(available) * 1024 : null;
+}
+
+export function androidDataFreeBytes(serial: string): number | null {
+  const output = getExecutor().runFileQuiet('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
+    timeoutMs: 30000,
+  });
+  return parseDfAvailableBytes(output);
+}
+
+export function trimAndroidCaches(serial: string, desiredFreeBytes: number): void {
+  getExecutor().runFile('adb', ['-s', serial, 'shell', 'pm', 'trim-caches', String(desiredFreeBytes)], {
+    timeoutMs: 120000,
+    killSignal: 'SIGKILL',
+  });
+}
+
 export function parseEmulatorVersion(text: unknown): number | null {
   const match = /Android emulator version (\d+)\./.exec(String(text ?? ''));
   return match ? Number(match[1]) : null;
@@ -1288,10 +1312,19 @@ function scanAvdEmulatorProcesses(
   return pids;
 }
 
+// A POSIX zombie keeps its pid, so kill(pid, 0) succeeds, until its parent reaps it. An emulator this
+// Stim process booted stays a zombie after it exits while this process runs synchronous code.
+function emulatorProcessRunning(pid: number): boolean {
+  if (!pidExists(pid)) return false;
+  if (process.platform === 'win32') return true;
+  const stat = getExecutor().runFileQuiet('ps', ['-o', 'stat=', '-p', String(pid)], { timeoutMs: 5000 });
+  return stat === null || !stat.trim().startsWith('Z');
+}
+
 export function assertOwnedAvdStopped(
   avdName: string,
   {
-    processAlive = pidExists,
+    processAlive = emulatorProcessRunning,
     listProcesses = listAvdEmulatorProcesses,
     ...resolveOptions
   }: {

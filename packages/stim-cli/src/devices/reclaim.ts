@@ -23,6 +23,7 @@ import {
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
@@ -192,10 +193,29 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
   return devices;
 }
 
-function parkRequest(projectPath: string, slot: string, simslimManaged: boolean): ParkRequest | undefined {
+function lastBuildCacheKey(projectPath: string, platform: 'ios' | 'android'): string | null {
+  const build = readWorkspaceState(projectPath)?.[LAST_BUILD_KEYS[platform]];
+  if (build === null || typeof build !== 'object' || Array.isArray(build)) return null;
+  const { cacheKey } = build as Record<string, unknown>;
+  return typeof cacheKey === 'string' ? cacheKey : null;
+}
+
+function parkRequest(
+  project: ProjectRecord | null,
+  projectPath: string,
+  slot: string,
+  simslimManaged: boolean,
+): ParkRequest | undefined {
   const { max, error } = parkedMaxSetting('ios');
   if (error || max <= 0) return undefined;
-  return { projectPath, max, simslimManaged, slot };
+  return {
+    projectPath,
+    max,
+    simslimManaged,
+    slot,
+    appId: typeof project?.bundleId === 'string' ? project.bundleId : null,
+    cacheKey: lastBuildCacheKey(projectPath, 'ios'),
+  };
 }
 
 function reclaimOwnedDevices(
@@ -225,7 +245,7 @@ function reclaimOwnedDevices(
       const r = teardownOwnedIosSim(udid, {
         del: true,
         label,
-        ...(park ? { park: parkRequest(projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
+        ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
       });
       if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
@@ -258,6 +278,8 @@ function reclaimOwnedDevices(
                 slot,
                 max: bound.max,
                 configuration: typeof android.poolConfiguration === 'string' ? android.poolConfiguration : undefined,
+                appId: typeof project?.androidPackage === 'string' ? project.androidPackage : null,
+                cacheKey: lastBuildCacheKey(projectPath, 'android'),
               },
             }
           : {}),

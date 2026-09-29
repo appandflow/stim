@@ -79,7 +79,10 @@ import {
   resolveOwnedAvdSerial,
   resolvePhysicalDevice,
   waitForBoot,
+  type trimAndroidCaches,
+  type androidDataFreeBytes,
 } from '../devices/android.ts';
+import type { teardownOwnedAvd } from '../devices/teardown.ts';
 import { checkDeviceCapacity } from '../engine/device-capacity.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
 import { ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
@@ -322,6 +325,9 @@ interface RunAndroidOptions {
   ensureDeviceBooted?: typeof ensureBooted;
   resolveAvdSerial?: typeof resolveOwnedAvdSerial;
   waitForDeviceBoot?: typeof waitForBoot;
+  dataFreeBytes?: typeof androidDataFreeBytes;
+  trimCaches?: typeof trimAndroidCaches;
+  wipeDevice?: typeof teardownOwnedAvd;
   resolveMetro?: typeof resolveProjectMetro;
   warmMetro?: typeof warmMetro;
   startServer?: typeof startDevServer;
@@ -409,6 +415,9 @@ function resolveRunAndroidOptions(
     ensureDeviceBooted = ensureBooted,
     resolveAvdSerial = resolveOwnedAvdSerial,
     waitForDeviceBoot = waitForBoot,
+    dataFreeBytes,
+    trimCaches,
+    wipeDevice,
     resolveMetro = resolveProjectMetro,
     warmMetro: prewarmMetro = warmMetro,
     startServer = startDevServer,
@@ -495,6 +504,9 @@ function resolveRunAndroidOptions(
     ensureDeviceBooted,
     resolveAvdSerial,
     waitForDeviceBoot,
+    dataFreeBytes,
+    trimCaches,
+    wipeDevice,
     resolveMetro,
     prewarmMetro,
     startServer,
@@ -625,6 +637,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ensureDeviceBooted,
     resolveAvdSerial,
     waitForDeviceBoot,
+    dataFreeBytes,
+    trimCaches,
+    wipeDevice,
     resolveMetro,
     prewarmMetro,
     startServer,
@@ -1203,6 +1218,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         bootPromise,
         resolveAvdSerial,
         waitForDeviceBoot,
+        dataFreeBytes,
+        trimCaches,
+        wipeDevice,
         bootDuration: () => bootDuration,
         apkPath,
         androidPackage,
@@ -1240,6 +1258,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         reclaimed,
         devServer,
         enterPhase: progress.step,
+        rebootDevice: () =>
+          Promise.resolve(
+            ensureDeviceBooted({
+              platform: PLATFORM,
+              device: { ...device, serial: undefined },
+              projectPath: root,
+              out,
+              logFile: emuLog,
+            }),
+          ).catch((e) => ({ failed: true as const, reason: String((e as Error)?.message || e) })),
       });
     } finally {
       releaseLease();

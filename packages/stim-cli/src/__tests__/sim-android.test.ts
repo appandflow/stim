@@ -14,6 +14,7 @@ import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { makeExecutor } from './_factories.ts';
 import {
   MAX_EMULATOR_FAILURE_LINES,
   androidDeviceAbi,
@@ -47,6 +48,7 @@ import {
   assertOwnedAvdStopped,
   parseAvdEmulatorProcesses,
   parseEmulatorVersion,
+  parseDfAvailableBytes,
   suppressEmulatorCrashConsent,
   waitForAndroidEmulatorShutdown,
   waitForBoot,
@@ -573,6 +575,32 @@ test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', ()
       processAlive: () => false,
     }),
   ).not.toThrow();
+});
+
+describe.skipIf(process.platform === 'win32')('zombie emulator processes (ps stat is POSIX; skipped on win32)', () => {
+  test.each([
+    ['Z', false],
+    ['S', true],
+    [null, true],
+  ])('assertOwnedAvdStopped treats a %s lock holder as live: %s', (stat, live) => {
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file, args = []) =>
+          file === 'ps' && args.includes(String(process.pid)) && stat ? `${stat}\n` : null,
+      }),
+    );
+    let refused = false;
+    try {
+      assertOwnedAvdStopped('stim-app', {
+        listProcesses: () => [],
+        resolveDirectory: () => '/avds/stim-app.avd',
+        readProcessId: () => process.pid,
+      });
+    } catch (error) {
+      refused = /still has a live emulator process/.test(String(error));
+    }
+    expect(refused).toBe(live);
+  });
 });
 
 test.each([
@@ -1326,6 +1354,18 @@ test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 3
       remove,
     }),
   ).toEqual([]);
+});
+
+test('parseDfAvailableBytes reads the free bytes of /data from toybox df -k', () => {
+  expect(
+    parseDfAvailableBytes(
+      'Filesystem     1K-blocks    Used Available Use% Mounted on\n/dev/block/dm-5  5980136 2170152   3793600  37% /data\n',
+    ),
+  ).toBe(3793600 * 1024);
+  expect(parseDfAvailableBytes('df: /data: Permission denied')).toBe(null);
+  expect(parseDfAvailableBytes('Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/a 1 1 - 1% /data')).toBe(
+    null,
+  );
 });
 
 test('parseEmulatorVersion reads the major from the launcher banner', () => {
