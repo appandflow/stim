@@ -34,17 +34,38 @@ async function buildHelper(): Promise<string | null> {
   }
 }
 
-let built: { home: string; helper: Promise<string | null> } | null = null;
+const RETRY_BACKOFF_INITIAL_MS = 10_000;
+const RETRY_BACKOFF_MAX_MS = 10 * 60_000;
+
+let built: { home: string; promise: Promise<string | null> } | null = null;
+let failure: { home: string; nextRetryAt: number; backoffMs: number } | null = null;
 
 /**
  * The `stim-footprint` helper, compiled into `$STIM_HOME/helpers/` on first use, or null where it cannot be built:
- * without the Xcode command line tools, or off macOS, where `xcode-select` does not exist. The outcome is kept for
- * the life of the process, so a `status --watch` that cannot build it does not try again on every refresh.
+ * without the Xcode command line tools, or off macOS, where `xcode-select` does not exist. A successful build is
+ * kept for the life of the process. A failed build is retried with a doubling backoff (starting at
+ * `RETRY_BACKOFF_INITIAL_MS`, capped at `RETRY_BACKOFF_MAX_MS`) instead of pinned forever: a `status --watch`
+ * whose first lookup hits a transient failure (a stalled `xcode-select`, a dev-checkout rebuild that has
+ * removed `dist/stim-footprint.swift`) recovers once the cause clears, while a machine with no Xcode command
+ * line tools at all still does not retry on every refresh.
  */
 function footprintHelper(): Promise<string | null> {
   const home = configDir();
-  if (built?.home !== home) built = { home, helper: buildHelper() };
-  return built.helper;
+  if (built?.home === home) return built.promise;
+  if (failure?.home === home && Date.now() < failure.nextRetryAt) return Promise.resolve(null);
+  const promise = buildHelper().then((helper) => {
+    if (helper === null) {
+      const backoffMs =
+        failure?.home === home ? Math.min(failure.backoffMs * 2, RETRY_BACKOFF_MAX_MS) : RETRY_BACKOFF_INITIAL_MS;
+      failure = { home, nextRetryAt: Date.now() + backoffMs, backoffMs };
+      if (built?.promise === promise) built = null;
+      return null;
+    }
+    failure = null;
+    return helper;
+  });
+  built = { home, promise };
+  return promise;
 }
 
 /** Parses the helper's `<pid> <bytes>` lines into footprint bytes by pid. */
