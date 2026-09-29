@@ -3044,9 +3044,6 @@ describe('skipping an install the device already holds', () => {
   });
 
   test('a skipped install still writes the dev-menu defaults when the app data container is unreachable', () => {
-    // The upcoming launch can only carry the dev-menu keys as launch argv when
-    // it can read the app's data container to attach console capture; without
-    // it, simctl launch falls back to openurl, which takes no argv at all.
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('built.app', 'macho');
     const exec = recordingExec({
