@@ -71,7 +71,7 @@ reload and stop a workspace:
   Tapping a machine opens that machine's status. Whichever of the three
   destinations is open is saved on the phone and is what home shows next
   launch.
-- **Filters**: the funnel button filters the list by machine, by project, by live
+- **Filters**: the filter button filters the list by machine, by project, by live
   or idle, and to workspaces with errors or with remote sessions. The filters
   are saved on the phone; a dot on the button shows that some are on. Live only
   is the default.
