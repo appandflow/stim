@@ -296,6 +296,7 @@ Read the matching guide before acting in these situations:
 | Parallel iOS, simulator stall, or memory pressure     | stim guide lifecycle simslim     |
 | Android boot timeout                                  | stim guide errors STIM_NO_DEVICE |
 | gc or orphaned resources                              | stim guide cleanup gc            |
+| watchman or Gradle daemon memory                      | stim guide cleanup memory        |
 | worktree remove refusal or --force                    | stim guide errors remove         |
 | Cleanup failure or unverified cleanup ownership       | stim guide errors teardown       |
 | Unfamiliar state or JSON field                        | stim guide facts payloads        |
@@ -332,5 +333,6 @@ FULL TOPIC LIST
   stim guide logs                 # filters, record shape, and capture limits
   stim guide cleanup              # what reclaims a device, and what deletes
   stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
+  stim guide cleanup memory       # watchman and Gradle daemon memory; gc --cache watchman
   stim guide settings             # configuration files and supported keys`,
 };

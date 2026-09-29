@@ -12,7 +12,11 @@ export type GcResultKind =
   | 'deviceLease'
   | 'easSession'
   | 'worktree'
-  | 'cache';
+  | 'cache'
+  | 'watchmanRoot'
+  | 'watchman'
+  | 'gradleDaemon'
+  | 'kotlinDaemon';
 
 export type GcResultStatus = 'done' | 'kept' | 'failed';
 

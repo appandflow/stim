@@ -34,6 +34,7 @@ import type { StaleLedgerEntry } from './ledger.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
+import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
   skipped: GcSkip[];
@@ -59,6 +60,7 @@ export interface GcReport {
   workspaceLogs: WorkspaceLogs[];
   recordings: WorkspaceRecordings[];
   worktreeSweep?: WorktreeSweep | null;
+  memory?: MemoryReport | null;
   cacheScope: string | null;
   olderThan: number | null;
   all: boolean;
@@ -134,6 +136,13 @@ function unresolvedLockLines(
   ];
 }
 
+function scopeLine(cacheScope: string): string {
+  if (memoryCacheKind(cacheScope)) return `Cache scope: "${cacheScope}". Only these helper processes were inspected.`;
+  return includesParkedDevices(cacheScope)
+    ? `Cache scope: "${cacheScope}". Unparked devices, project entries and locks were not inspected.`
+    : `Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`;
+}
+
 export function formatGcReport(
   {
     skipped = [],
@@ -159,6 +168,7 @@ export function formatGcReport(
     workspaceLogs = [],
     recordings = [],
     worktreeSweep = null,
+    memory,
     cacheScope = null,
     olderThan = null,
   }: Partial<GcReport>,
@@ -171,11 +181,7 @@ export function formatGcReport(
   const expiredLeases = deviceLeases?.expired ?? [];
 
   if (cacheScope) {
-    lines.push(
-      includesParkedDevices(cacheScope)
-        ? `Cache scope: "${cacheScope}". Unparked devices, project entries and locks were not inspected.`
-        : `Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`,
-    );
+    lines.push(scopeLine(cacheScope));
   } else if (
     [
       deadProjects,
@@ -327,6 +333,7 @@ export function formatGcReport(
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
+  lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
 
   return lines;
 }
@@ -593,6 +600,9 @@ export interface GcJsonSections {
     willEmpty: boolean;
     emptySkipped: string | null;
   }[];
+  memory: MemoryProcess[];
+  watchmanRoots: WatchmanRoot[];
+  memoryNotices: { message: string }[];
 }
 
 export function gcReportSections({
@@ -619,6 +629,7 @@ export function gcReportSections({
   workspaceLogs = [],
   recordings = [],
   caches = [],
+  memory = null,
 }: Partial<GcReport>): GcJsonSections {
   return {
     deadProjects: deadProjects.map((path) => ({ path })),
@@ -766,5 +777,8 @@ export function gcReportSections({
       willEmpty: Boolean(c.willEmpty),
       emptySkipped: c.emptySkipped ?? null,
     })),
+    memory: memory?.processes ?? [],
+    watchmanRoots: memory?.watchmanRoots ?? [],
+    memoryNotices: (memory?.notices ?? []).map((message) => ({ message })),
   };
 }

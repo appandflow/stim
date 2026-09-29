@@ -24,6 +24,7 @@ import {
   includesWorkspaceOutputs,
   planCacheEmptying,
   selectCaches,
+  selectsBeyondCaches,
   trimCaches,
 } from './gc/caches.ts';
 import {
@@ -77,6 +78,19 @@ import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDe
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
+import {
+  collectMemoryReport,
+  GRADLE_DAEMONS_KIND,
+  memoryCacheKind,
+  memoryScope,
+  memorySweepIsScoped,
+  memoryWorkPending,
+  reclaimMemory,
+  scopedMemoryReport,
+  type MemoryReport,
+  type MemoryScope,
+  WATCHMAN_KIND,
+} from './gc/memory.ts';
 
 export { selectCaches } from './gc/caches.ts';
 export {
@@ -138,6 +152,10 @@ function removeInvalidProjectEntries(invalidProjects: string[]): void {
   }
 }
 
+function collectGcMemory(scope: MemoryScope): Promise<MemoryReport> {
+  return memorySweepIsScoped() ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope);
+}
+
 export async function collectGcReport(
   {
     olderThan = null,
@@ -178,6 +196,7 @@ export async function collectGcReport(
       workspaceLogs: [],
       recordings: includesRecordings(scope) ? collectRecordings({ whole: all, olderThan, now }) : [],
       worktreeSweep: null,
+      memory: memoryCacheKind(scope) ? await collectGcMemory(memoryScope(scope)!) : null,
       cacheScope: scope,
       olderThan,
       all,
@@ -391,6 +410,7 @@ export async function collectGcReport(
     workspaceLogs: collectWorkspaceLogs({ exclude: goneWorkspaceDirs }),
     recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
     worktreeSweep: await collectWorktreeSweep({ idle: worktrees, olderThan, now }),
+    memory: await collectGcMemory({ watchman: true, gradle: true }),
     cacheScope: null,
     olderThan,
     all,
@@ -420,6 +440,16 @@ async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayloa
       ? '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'
       : '--cache acts only on the named caches, and --idle shuts down idle owned devices.';
     const remedy = `Run \`stim gc ${flag}${opts.worktrees ? '' : ' <duration>'}\` and \`stim gc --cache <name>\` separately.`;
+    console.error(chalk.red(message));
+    console.error(chalk.dim(remedy));
+    console.error(chalk.red('failed: STIM_BAD_ARG'));
+    process.exitCode = 1;
+    return { code: 'STIM_BAD_ARG', message, remedy };
+  }
+  const memoryKind = memoryCacheKind(opts.cache);
+  if (memoryKind && opts.olderThan !== undefined) {
+    const message = `--older-than does not apply to --cache ${memoryKind}, which acts on running processes.`;
+    const remedy = `Run \`stim gc --cache ${memoryKind}\` without --older-than.`;
     console.error(chalk.red(message));
     console.error(chalk.dim(remedy));
     console.error(chalk.red('failed: STIM_BAD_ARG'));
@@ -551,7 +581,20 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
 }
 
 function scopedDryRunAction(cache: string | null): string {
+  const memory = memoryCacheKind(cache);
+  if (memory === WATCHMAN_KIND) return 'remove the stale roots and shut down the unused watchman';
+  if (memory === GRADLE_DAEMONS_KIND) return 'stop the idle daemons';
   return includesParkedDevices(cache) ? 'erase the parked devices' : 'empty the caches';
+}
+
+function dryRunHint(cache: string | null, all: boolean, actionable: boolean, caches: boolean): string | null {
+  if (all && (!memoryCacheKind(cache) || actionable)) {
+    return `Dry run. Re-run with --delete to ${scopedDryRunAction(cache)} above.`;
+  }
+  if (actionable) return 'Dry run. Re-run with --delete to reclaim.';
+  if (caches)
+    return 'Pass --delete --cache all to empty the caches above, or --delete --older-than <days> to trim them.';
+  return null;
 }
 
 function reclaimParkedDevices(report: GcReport, deps: GcDependencies): number {
@@ -572,13 +615,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     },
     deps,
   );
-  if (
-    cache &&
-    report.caches.length === 0 &&
-    report.workspaceOutputs === null &&
-    !includesRecordings(cache) &&
-    !includesParkedDevices(cache)
-  ) {
+  if (cache && report.caches.length === 0 && report.workspaceOutputs === null && !selectsBeyondCaches(cache)) {
     const names = [...new Set(discoverCaches().map((c) => c.name))];
     const message = `No shared cache carries "${cache}" in its name or directory.`;
     console.log(chalk.yellow(message));
@@ -626,7 +663,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     buildSlots.stale.length > 0 ||
     deviceLeases.expired.length > 0 ||
     easSessionSweep.orphaned.length > 0 ||
-    ((olderThan !== null || all) && caches.length > 0);
+    ((olderThan !== null || all) && caches.length > 0) ||
+    memoryWorkPending(cache, report.memory);
   const idle = opts.idle ?? null;
   const idleFailures =
     idle === null
@@ -653,15 +691,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   });
 
   if (!opts.delete) {
-    if (all) console.log(chalk.dim(`\nDry run. Re-run with --delete to ${scopedDryRunAction(cache)} above.`));
-    else if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
-    else if (caches.length) {
-      console.log(
-        chalk.dim(
-          '\nPass --delete --cache all to empty the caches above, or --delete --older-than <days> to trim them.',
-        ),
-      );
-    }
+    const hint = dryRunHint(cache, all, actionable, caches.length > 0);
+    if (hint) console.log(chalk.dim(`\n${hint}`));
     return payload(idle === null ? null : idleFailures);
   }
 
@@ -672,6 +703,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs);
   deleteFailures += deleteRecordings(report.recordings, { whole: all, olderThan, now: Date.now() });
   deleteFailures += reclaimParkedDevices(report, deps);
+  deleteFailures += await reclaimMemory(cache, report.memory);
 
   removeInvalidProjectEntries(invalidProjects);
 
@@ -780,7 +812,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, and the build outputs and logs of each workspace. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, and the memory of watchman and of the Gradle and Kotlin daemons. Reports by default; pass --delete to act.',
     )
     .option(
       '--worktrees',
@@ -803,7 +835,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, or only the parked simulators and emulators with --cache parked; all, workspaces, recordings and parked are reserved names that never select a single cache. With --delete they are emptied whole (a parked device is erased and stays parked), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, or the Gradle and Kotlin compile daemons with --cache gradle-daemons; all, workspaces, recordings, parked, watchman and gradle-daemons are reserved names that never select a single cache, and --cache all never includes watchman or gradle-daemons. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

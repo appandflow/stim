@@ -25,7 +25,7 @@ const SHARED: { name: string; pattern: RegExp }[] = [
   { name: 'Watchman', pattern: /(^|\/)watchman(\s|$)/ },
 ];
 
-const SERVER = /(^|[\s/])stim-server(\.mjs)?(\s|$)/;
+export const STIM_SERVER_COMMAND: RegExp = /(^|[\s/])stim-server(\.mjs)?(\s|$)/;
 const LAUNCHD_SIM = /^launchd_sim\s.*\/Devices\/([^/\s]+)\//;
 const MAX_DEPTH = 64;
 
@@ -111,7 +111,7 @@ export function attributeMachineUsage({
       claim(p.pid, `shared:${shared.name}`, owner, fallbackOf);
       continue;
     }
-    if (SERVER.test(p.command)) {
+    if (STIM_SERVER_COMMAND.test(p.command)) {
       const owner: Owner = { kind: 'server', name: 'stim-server', workspace: null, id: null, owned: false };
       claim(p.pid, 'server', owner, fallbackOf);
       continue;

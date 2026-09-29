@@ -177,7 +177,9 @@ WHAT THE SUPERVISOR IS
   A supervisor that dies without stopping leaves its root: remove it with
   \`watchman watch-del <root>\`. Removing a root stops its recrawls; the
   daemon's memory footprint shrinks only when the daemon restarts, which drops
-  the watches of every other client.
+  the watches of every other client. \`stim gc --cache watchman\` reports the
+  daemon's footprint, roots and clients, and with --delete shuts it down only
+  when no client is connected (\`guide cleanup memory\`).
 
   ENVIRONMENT: the supervisor -- and through it the dev server, including a
   metro.config.js evaluated inside the expo child -- inherits the environment

@@ -32,6 +32,7 @@ import { compareStimVersions, inspectStimVersions, type StimVersionReport } from
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
+import { inspectWatchmanMemory } from './gc/memory.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -269,6 +270,8 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
+      const watchman = await inspectWatchmanMemory();
+      if (watchman) findings.push(watchman);
       const checksIos = opts.platform !== 'android' && host === 'darwin';
       const checksAndroid =
         opts.platform === 'android' ||
