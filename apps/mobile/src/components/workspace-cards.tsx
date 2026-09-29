@@ -32,16 +32,11 @@ import {
   type GitChip,
   type MetroHealth,
   type PhaseStep,
-  type StageTone,
   type Usage,
   type WorkspaceStage,
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
 import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
-
-function stageColor(tone: StageTone, colors: Theme['colors']): string {
-  return tone === 'brand' ? colors.primary : colors[tone];
-}
 
 const CHIP_TONE: Record<ChipTone, TextTone> = {
   default: 'default',
@@ -56,23 +51,6 @@ const CHIP_TONE: Record<ChipTone, TextTone> = {
 export function chipColor(tone: ChipTone, colors: Theme['colors']): string {
   if (tone === 'default') return colors.text;
   return tone === 'brand' ? colors.primary : colors[tone];
-}
-
-export function StageLine({ stage }: { stage: WorkspaceStage }) {
-  const { theme } = useUnistyles();
-  return (
-    <View style={styles.stage} accessible accessibilityLabel={[stage.label, stage.subtitle].filter(Boolean).join(', ')}>
-      <StatusDot color={stageColor(stage.tone, theme.colors)} />
-      <Text variant="footnote" weight="semibold">
-        {stage.label}
-      </Text>
-      {stage.subtitle ? (
-        <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
-          {stage.subtitle}
-        </Text>
-      ) : null}
-    </View>
-  );
 }
 
 const VALUE: TextVariant = 'caption';
@@ -126,47 +104,49 @@ export const usageLabel = (usage: Usage) =>
     .map((part) => `${part.label} ${part.value}`)
     .join(', ');
 
-function UsagePart({ kind, value, unit }: { kind: keyof typeof STAT_ICON; value: string; unit?: string }) {
+function UsagePart({ kind, value }: { kind: keyof typeof STAT_ICON; value: string }) {
   const { theme } = useUnistyles();
   return (
-    <View style={styles.stat}>
-      <Icon name={STAT_ICON[kind]} size={12} color={theme.colors.secondary} />
-      <Text variant={VALUE} weight={VALUE_WEIGHT} style={styles.tabular} numberOfLines={1}>
+    <View style={[styles.usageItem, kind === 'disk' && styles.shrink]}>
+      <Icon name={STAT_ICON[kind]} size={11} color={theme.colors.secondary} />
+      <Text variant={VALUE} style={[styles.tabular, styles.shrink]} numberOfLines={1}>
         {value}
-        {unit ? (
-          <Text variant={VALUE} weight="regular" tone="secondary">
-            {` ${unit}`}
-          </Text>
-        ) : null}
       </Text>
     </View>
   );
 }
 
-export function ResourcesCard({ usage, onPress }: { usage: Usage; onPress: () => void }) {
+export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; usage: Usage; onPress: () => void }) {
   const parts = usageParts(usage);
-  const live = parts.filter((part) => part.kind !== 'disk');
-  const disk = parts.find((part) => part.kind === 'disk');
+  const note = stage.label === 'Building' ? null : stage.subtitle;
   return (
     <SmallCard
-      title="Resources"
+      title="Status"
       onPress={onPress}
-      accessibilityLabel={`Resources: ${usageLabel(usage) || 'not measured'}`}
-      accessibilityHint="Shows what this workspace uses"
+      accessibilityLabel={['Status', stage.label, note, usageLabel(usage) || 'resources not measured']
+        .filter(Boolean)
+        .join(', ')}
+      accessibilityHint="Shows the status and what this workspace uses"
     >
-      {parts.length === 0 ? (
-        <Text variant={VALUE} tone="tertiary">
-          Not measured
-        </Text>
-      ) : null}
-      {live.length ? (
-        <View style={styles.line}>
-          {live.map((part) => (
+      <Text variant={VALUE} weight="semibold" tone={stage.tone} numberOfLines={1}>
+        {stage.label}
+        {note ? (
+          <Text variant={VALUE} weight="regular" tone="secondary">
+            {` \u00B7 ${note}`}
+          </Text>
+        ) : null}
+      </Text>
+      {parts.length ? (
+        <View style={styles.usage}>
+          {parts.map((part) => (
             <UsagePart key={part.kind} kind={part.kind} value={part.value} />
           ))}
         </View>
-      ) : null}
-      {disk ? <UsagePart kind="disk" value={disk.value} unit="disk" /> : null}
+      ) : (
+        <Text variant={VALUE} tone="tertiary">
+          Not measured
+        </Text>
+      )}
     </SmallCard>
   );
 }
@@ -527,14 +507,14 @@ export function BuildInProgressCard({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  stage: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: theme.space.sm },
   shrink: { flexShrink: 1 },
   spacer: { flex: 1 },
   tabular: { fontVariant: ['tabular-nums'] },
   caps: { textTransform: 'uppercase', letterSpacing: 0.4, flexShrink: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.md },
   small: { flexGrow: 1, flexBasis: '40%', padding: theme.space.md + 2, gap: theme.space.xs },
-  line: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, overflow: 'hidden' },
+  usage: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, overflow: 'hidden' },
+  usageItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   gitLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs + 1, overflow: 'hidden' },
   alert: {
     borderColor: withAlpha(theme.colors.error, 0.45),
