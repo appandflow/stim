@@ -7,21 +7,18 @@ function toolName(tool: AgentSession['tool']): string {
 
 function activityAge(agent: AgentSession, now: number): string | null {
   const at = Date.parse(agent.lastActiveAt ?? '');
-  return Number.isFinite(at) ? `${shortDuration(Math.max(0, now - at))} ago` : null;
+  return Number.isFinite(at) ? shortDuration(Math.max(0, now - at)) : null;
 }
 
-/** "Claude Code · Fix the login bug · 5m ago": the tool, the session's title when it has one, and its activity age. */
+/** The tool, the session's title when it has one, and its activity age, joined by middle dots. */
 export function agentLabel(agent: AgentSession, now: number): string {
-  return [toolName(agent.tool), agent.title, activityAge(agent, now)].filter(Boolean).join(' · ');
+  const age = activityAge(agent, now);
+  return [toolName(agent.tool), agent.title, age ? `${age} ago` : null].filter(Boolean).join(' \u00B7 ');
 }
 
 /** The session's title, or the tool when it has none, and its activity age, for a line too narrow for both. */
 export function agentShortLabel(agent: AgentSession, now: number): { name: string; age: string | null } {
-  const at = Date.parse(agent.lastActiveAt ?? '');
-  return {
-    name: agent.title || toolName(agent.tool),
-    age: Number.isFinite(at) ? shortDuration(Math.max(0, now - at)) : null,
-  };
+  return { name: agent.title || toolName(agent.tool), age: activityAge(agent, now) };
 }
 
 /** The most recently active session's label, with how many others work in the workspace. */

@@ -3,11 +3,11 @@ import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivityChip } from '@/components/activity-chip';
+import { AgentSessionLine } from '@/components/agent-sessions';
 import { BuildProgressBar } from '@/components/build-progress';
 import { GitIndicator } from '@/components/git-indicator';
 import { Icon } from '@/components/icon';
 import { Pill } from '@/components/pill';
-import { AgentSessionLine } from '@/components/agent-sessions';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';

@@ -359,7 +359,7 @@ export function WorkCard({
         <View style={styles.gitLine}>
           {git.pr ? (
             <>
-              <Text variant={VALUE} weight={VALUE_WEIGHT} tone={CHIP_TONE[git.pr.tone]}>
+              <Text variant={VALUE} weight={VALUE_WEIGHT} tone={CHIP_TONE[git.pr.tone]} numberOfLines={1}>
                 {git.pr.text}
               </Text>
               {git.pr.ci ? <CiMark state={git.pr.ci} /> : null}

@@ -10,7 +10,10 @@ import type { FontWeight, TextVariant } from '@/design/tokens';
 import { agentLabel, agentShortLabel, agentWebUrl } from '@/lib/agents';
 import type { AgentSession } from '@/protocol/types';
 
-/** A workspace's most recent coding-agent session on one line: the tool's mark, the title, its age and how many others work there. */
+/**
+ * A workspace's most recent coding-agent session on one line: the tool's mark, the title, its age and how many others
+ * work there. It is not an accessibility element; the row or card around it carries the spoken label.
+ */
 export function AgentSessionLine({
   agents,
   now,
@@ -27,11 +30,10 @@ export function AgentSessionLine({
   const { theme } = useUnistyles();
   const [agent, ...rest] = agents;
   if (!agent) return null;
-  const label = agentLabel(agent, now);
   const short = agentShortLabel(agent, now);
   const tail = [short.age, rest.length ? `+${rest.length}` : null].filter(Boolean).join(' \u00B7 ');
   return (
-    <View style={styles.row} accessible accessibilityLabel={rest.length ? `${label}, and ${rest.length} more` : label}>
+    <View style={styles.row}>
       <AgentIcon tool={agent.tool} size={theme.typography[variant].fontSize ?? 13} color={theme.colors.secondary} />
       <Text variant={variant} weight={weight} tone={tone} numberOfLines={1} style={styles.shrink}>
         {short.name}
