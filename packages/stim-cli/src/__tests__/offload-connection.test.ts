@@ -44,12 +44,29 @@ interface FakeMachine {
   stop: () => Promise<void>;
 }
 
-/** A build machine that offers `offer` and answers `build.start` with `start`, then reports a failed build. */
+const FAILED = { ok: false, code: 'worker-failed', message: 'xcodebuild failed' };
+
+/**
+ * A build machine that offers `offer` and answers `build.start` with `start`, then reports a failed build. With
+ * `drop`, it drops the connection after the start instead, and answers `build.attach` with `attach`.
+ */
 async function fakeMachine(
   machine: string,
   offer: BuildOffer,
   start: { error: { code: string; message: string } } | { result: { job: string } },
-  { dropOnSync = false }: { dropOnSync?: boolean } = {},
+  {
+    drop = false,
+    closeAfterStart = null,
+    hello = () => ({ result: { capabilities: ['build'] } }),
+    dropOnSync = false,
+    attach = { result: { outcome: null } },
+  }: {
+    drop?: boolean;
+    closeAfterStart?: number | null;
+    dropOnSync?: boolean;
+    attach?: object;
+    hello?: () => object;
+  } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -64,21 +81,22 @@ async function fakeMachine(
       const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
       methods.push(method);
       const reply = (body: object) => socket.send(JSON.stringify({ id, ...body }));
-      if (method === 'hello') return reply({ result: { capabilities: ['build'] } });
+      if (method === 'hello') return reply(hello());
+      if (method === 'build.cancel') return;
       if (method === 'build.offer') return reply({ result: offer });
       if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
+      const fail = (job: string) => socket.send(JSON.stringify({ event: 'build.progress', job, outcome: FAILED }));
       if (method === 'build.start') {
         reply(start);
-        if ('result' in start) {
-          socket.send(
-            JSON.stringify({
-              event: 'build.progress',
-              job: start.result.job,
-              outcome: { ok: false, code: 'worker-failed', message: 'xcodebuild failed' },
-            }),
-          );
-        }
+        if ('result' in start && closeAfterStart !== null) return socket.close(closeAfterStart, 'device revoked');
+        if ('result' in start) return drop ? socket.terminate() : fail(start.result.job);
       }
+      if (method === 'build.attach') {
+        reply(attach);
+        if ('result' in attach && 'result' in start) fail(start.result.job);
+        return;
+      }
+      reply({ error: { code: 'unknown-method', message: `Unknown method ${method}.` } });
     });
   });
   return {
@@ -129,6 +147,35 @@ afterEach(async () => {
   rmSync(repo, { recursive: true, force: true });
   ports.clear();
 });
+
+async function run(names: string[], note: (line: string) => void) {
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: TARGET,
+    mode: 'auto',
+    here: HERE,
+    note: () => {},
+    machines: names.map(credential),
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  return offloadBuild({
+    choice,
+    expectedFingerprint: 'f00d',
+    request: {
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      configuration: null,
+      scheme: null,
+      isExpo: false,
+      optimizations: null,
+    },
+    stagingDir: join(repo, 'staging'),
+    onPhase: () => {},
+    onEnter: () => {},
+    onRecord: () => {},
+    note,
+  });
+}
 
 describe('offloadBuild', () => {
   it('moves to the next machine in placement order when the chosen one refuses build.start', async () => {
@@ -248,5 +295,96 @@ describe('offloadBuild', () => {
       'placement: dead (busy could not take the build: start: build-busy: busy)',
       expect.stringMatching(/^placement: next \(dead could not take the build: sync: /),
     ]);
+  });
+
+  it('reconnects and reattaches to the build when the connection drops while it runs', async () => {
+    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { drop: true });
+    machines.push(machine);
+    const lines: string[] = [];
+    const outcome = await run(['mini'], (line) => lines.push(line));
+    expect(outcome).toEqual({ ok: false, machine: 'mini', reason: 'worker-failed: xcodebuild failed' });
+    expect(lines).toEqual([
+      expect.stringMatching(/^offload: the connection to mini dropped \(the connection closed \(1006\)\); reattaching/),
+      'offload: reattached to the build on mini',
+    ]);
+    expect(machine.methods.slice(-2)).toEqual(['hello', 'build.attach']);
+  });
+
+  it('builds here when the machine does not hand the build back', async () => {
+    const machine = await fakeMachine(
+      'old',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      { drop: true, attach: { error: { code: 'unknown-method', message: 'Unknown method build.attach.' } } },
+    );
+    machines.push(machine);
+    expect(await run(['old'], () => {})).toEqual({
+      ok: false,
+      machine: 'old',
+      reason:
+        'closed: the connection closed (1006); the machine did not hand the build back (unknown-method: Unknown method build.attach.)',
+    });
+  });
+
+  it('builds here at once when the machine closes the connection on purpose, as on a revocation', async () => {
+    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { closeAfterStart: 4401 });
+    machines.push(machine);
+    const lines: string[] = [];
+    expect(await run(['mini'], (line) => lines.push(line))).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'closed: the connection closed (4401 device revoked)',
+    });
+    expect(lines).toEqual([]);
+    expect(machine.methods).not.toContain('build.attach');
+  });
+
+  it('keeps reconnecting while the machine cannot identify this Mac for a moment', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        drop: true,
+        hello: () =>
+          ++hellos === 2
+            ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
+            : { result: { capabilities: ['build'] } },
+      },
+    );
+    machines.push(machine);
+    const lines: string[] = [];
+    expect(await run(['mini'], (line) => lines.push(line))).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'worker-failed: xcodebuild failed',
+    });
+    expect(lines.at(-1)).toBe('offload: reattached to the build on mini');
+    expect(hellos).toBe(3);
+  });
+
+  it('stops reconnecting when the machine turns this Mac away', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        drop: true,
+        hello: () =>
+          ++hellos === 1
+            ? { result: { capabilities: ['build'] } }
+            : { error: { code: 'unauthorized', message: 'This Mac does not recognize this device token.' } },
+      },
+    );
+    machines.push(machine);
+    expect(await run(['mini'], () => {})).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason:
+        'closed: the connection closed (1006); the machine turned this Mac away (This Mac does not recognize this device token.)',
+    });
+    expect(hellos).toBe(2);
   });
 });

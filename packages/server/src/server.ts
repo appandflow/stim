@@ -183,6 +183,7 @@ export interface RunningServer {
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_BAD_REQUEST = 4400;
 const CLOSE_AUTH_TIMEOUT = 4408;
+const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
@@ -530,6 +531,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       for (const [socket, device] of sessions) {
         if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
       }
+      builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
       for (const [socket, controller] of controllers) {
         if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
           control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
@@ -1442,7 +1444,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ? await buildSession.start(params)
               : method === 'build.cancel'
                 ? buildSession.cancel(params)
-                : await buildSession.artifact(params);
+                : method === 'build.attach'
+                  ? buildSession.attach(params)
+                  : await buildSession.artifact(params);
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
@@ -1595,9 +1599,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const raw = data.toString();
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
-    socket.on('close', () => {
+    socket.on('close', (code) => {
       clearTimeout(timer);
-      buildSession?.close();
+      buildSession?.close(code === CLOSE_ABNORMAL && device !== null && buildAllowed(device));
       sessions.delete(socket);
       listeners.delete(socket);
       if (sessions.size === 0) sampler.stop();
