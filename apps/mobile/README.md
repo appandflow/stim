@@ -117,32 +117,20 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
-- **Workspace**: under the title, a centered stage line: a dot and **Running**
-  ("up 42m", red with the error count or a closed app), **Building** (the
-  platform and when it started), **Build failed** (when the newest build of
-  either platform failed), **Warming** (installing dependencies or copying
-  ignored files), **Ready**, or **Stopped** (nothing runs, with when Metro stopped when known). After a thin
-  divider comes the git chip. With a pull request `stim status` reports, it
-  starts with the number colored by its state (open, draft, merged, closed)
-  and one mark for its worst check: a check when all pass, a cross when one
-  fails, a dot while one is pending. Without one, it starts with a branch
-  icon. Then only what is not zero or unusual: commits ahead and behind, the
-  count of changed files, **merged into** a branch (unless the pull request
-  already reads merged), and **no upstream**. Its accessibility label spells
-  out each part. It wraps onto its own line when both do not fit, and opens
-  the **Git** sheet: upstream, ahead, behind, changed and untracked files,
-  merged into, and the pull request's title, state, checks and review with
-  **Open in GitHub**. Under it, one line for each Claude Code or Codex session
-  working in the workspace; a Claude Code session with Remote Control
-  connected shows as a link that opens it in the Claude app, or claude.ai/code
-  without the app. Below, three small cards open more:
-  - **Resources**: the workspace's CPU (`ps` CPU summed over its processes,
-    so above 100% on several cores) and memory from the status `machine`
-    owners, and its disk (the worktree plus Stim's build folder) once a status
-    watcher measured it. It opens the **Resources** sheet: CPU, memory and disk
-    tiles, with sparklines of the last 10 minutes when the server sends usage
-    history, a process table of the workspace's simulators, emulators, Chrome,
-    Metro and build, and the disk split with the Mac's free space.
+- **Workspace**: under the title, four small cards in a 2x2 grid open more:
+  - **Status**: the stage in its color, **Running** ("up 42m", red with the
+    error count or a closed app), **Building**, **Build failed** (when the
+    newest build of either platform failed, with the platform and when),
+    **Warming** (installing dependencies or copying ignored files), **Ready**,
+    or **Stopped** (with when Metro stopped when known), cut to one line.
+    Under it, on one line, the workspace's CPU (`ps` CPU summed over its
+    processes, so above 100% on several cores) and memory from the status
+    `machine` owners, and its disk (the worktree plus Stim's build folder) once
+    a status watcher measured it. It opens the **Status** sheet: the whole
+    stage line, CPU, memory and disk tiles, with sparklines of the last 10
+    minutes when the server sends usage history, a process table of the
+    workspace's simulators, emulators, Chrome, Metro and build, and the disk
+    split with the Mac's free space.
   - **Build**: one row per platform with the Apple or Android glyph, the last
     run's time and whether it hit the cache, **Failed** in red, or the next
     build's prediction from `build.plan` before any run, in grey with a tilde
@@ -156,6 +144,19 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     (**Bundling** with Metro's percent, **Bundled in 1.8s** and when, or **Not
     bundled yet** once the server reports bundles). It opens the logs, on
     errors when there are some.
+  - **Work**: the Claude Code or Codex session working in the workspace, then
+    the git state. With a pull request `stim status` reports, the git line
+    starts with the number colored by its state (open, draft, merged, closed)
+    and **CI failing** in red when a check fails; the sheet shows every check
+    state. Without one, it starts with a branch icon. Then only what is not
+    zero or unusual: commits ahead and behind, the count of changed files,
+    **merged into** a branch (unless the pull request already reads merged),
+    and **no upstream**. Its accessibility label spells out each part. It
+    opens the **Work** sheet: every agent session, where a Claude Code session
+    with Remote Control connected shows as a link that opens it in the Claude
+    app, or claude.ai/code without the app, and the upstream, ahead, behind,
+    changed and untracked files, merged into, and the pull request's title,
+    state, checks and review with **Open in GitHub**.
 
   A card with a problem turns red; there is no separate banner. While a build
   runs, the Build card gives its place to a full-width card: the platform and
@@ -163,12 +164,13 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   targets") and the elapsed time against the estimate, a bar of the phases
   sized by the last comparable run, the cache-miss reason, the other
   platform's last build, and the latest compiler line. Then **Devices**, one
-  card per device: a dot, the model and runtime, and the device's CPU,
+  card per device: the model and runtime, and the device's CPU,
   memory and disk; the latest frame the server sends, fitted to the card, with
   **Folded** or **Unfolded** for an iPhone Duo or an Android foldable emulator.
   Tapping the frame opens the [device view](#device-view). A device waiting on
   a build shows the build's step, a device with a failed build and no app shows
-  **No app installed**, and a closed app dims the frame under **App closed**. A
+  **No app installed**, and a closed app dims the frame under **App closed**, or
+  shows an **App closed** pill while there is no frame. A
   warming workspace shows one card while it warms, and a stopped one says that
   nothing is running. Under a running simulator, emulator or Web device that
   Stim owns, the agent row names the driving tool with its latest action and

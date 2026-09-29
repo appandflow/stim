@@ -14,15 +14,7 @@ import { ScrollView } from '@/components/lists';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { Text } from '@/components/text';
-import {
-  BuildCard,
-  BuildInProgressCard,
-  CardGrid,
-  LogsCard,
-  ResourcesCard,
-  StageLine,
-  WorkCard,
-} from '@/components/workspace-cards';
+import { BuildCard, BuildInProgressCard, CardGrid, LogsCard, StatusCard, WorkCard } from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
 import {
   useAction,
@@ -253,9 +245,8 @@ export function WorkspaceDetail({ path }: { path: string }) {
         contentContainerStyle={[styles.container, { paddingTop: theme.space.md + bannerHeight }]}
       >
         {header}
-        <StageLine stage={stage} />
         <CardGrid>
-          <ResourcesCard usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
+          <StatusCard stage={stage} usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
           <BuildCard
             lines={lines}
             building={build}

@@ -5,6 +5,7 @@ import { ListSection } from '@/components/list';
 import { ScrollView } from '@/components/lists';
 import { Text } from '@/components/text';
 import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/mac-connection';
+import { useNow } from '@/hooks/use-now';
 import { formatBytes } from '@/lib/home';
 import {
   diskBreakdown,
@@ -13,6 +14,7 @@ import {
   processRows,
   sparkline,
   workspaceSeries,
+  workspaceStage,
   workspaceUsage,
 } from '@/lib/workspace-view';
 import { devicesOf, orderDevices } from '@/lib/workspaces';
@@ -31,17 +33,20 @@ export function WorkspaceResources({ path }: { path: string }) {
   const { mac } = useMacConnection();
   const machineUsage = useMachineUsage(mac?.id);
   const history = useStatusHistory(mac?.id);
+  const now = useNow(30_000);
   const env = status?.environments.find((e) => e.path === path);
   if (!env) {
     return (
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-        <Text variant="title">Resources</Text>
+        <Text variant="title">Status</Text>
         <Text tone="secondary">This workspace is no longer in the status.</Text>
       </View>
     );
   }
   const usage = workspaceUsage(env, status?.machine);
-  const rows = processRows(env, orderDevices(devicesOf(env)), status?.machine);
+  const devices = orderDevices(devicesOf(env));
+  const stage = workspaceStage(env, devices, now);
+  const rows = processRows(env, devices, status?.machine);
   const series = workspaceSeries(history, path);
   const free = workspaceVolumeFree(machineUsage);
   const diskNote = [
@@ -53,7 +58,15 @@ export function WorkspaceResources({ path }: { path: string }) {
   return (
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
       <View style={styles.titles}>
-        <Text variant="title">Resources</Text>
+        <Text variant="title">Status</Text>
+        <Text variant="callout" weight="semibold" tone={stage.tone}>
+          {stage.label}
+          {stage.subtitle ? (
+            <Text variant="callout" weight="regular" tone="secondary">
+              {` \u00B7 ${stage.subtitle}`}
+            </Text>
+          ) : null}
+        </Text>
         <Text variant="footnote" tone="secondary">
           {series && series.minutes > 0 ? `This workspace \u00B7 last ${series.minutes} min` : 'This workspace'}
         </Text>
