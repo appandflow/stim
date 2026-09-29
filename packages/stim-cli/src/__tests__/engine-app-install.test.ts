@@ -527,12 +527,54 @@ describe('ios', () => {
       [
         'xcrun',
         'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.example.app',
+        'EXDevMenuShowsAtLaunch',
+        '-bool',
+        'false',
+      ],
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.example.app',
+        'EXDevMenuShowFloatingActionButton',
+        '-bool',
+        'false',
+      ],
+      [
+        'xcrun',
+        'simctl',
         'openurl',
         'U1',
         'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
       ],
     ]);
-    expect(exec.options).toEqual([{ timeoutMs: 2000 }, { timeoutMs: 60000 }, { timeoutMs: 60000 }]);
+    expect(exec.options).toEqual([
+      { timeoutMs: 2000 },
+      { timeoutMs: 60000 },
+      { timeoutMs: 60000 },
+      { timeoutMs: 60000 },
+      { timeoutMs: 60000 },
+    ]);
+  });
+
+  test('the openurl fallback stops the launch when it cannot turn off the dev menu first', () => {
+    const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch' });
+    const result = launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result.failed).toBe(true);
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(result.reason).toMatch(/dev menu/);
+    expect(exec.calls.some((call) => call.includes('openurl'))).toBe(false);
   });
 
   test('a failed defaults write stops the launch rather than launching unwired', () => {
@@ -3041,33 +3083,6 @@ describe('skipping an install the device already holds', () => {
     expect(result.skipped).toBe(true);
     expect(exec.calls.some((c) => c.includes('write'))).toBe(false);
     expect(result.devClientPreparationDurationMs).toBeUndefined();
-  });
-
-  test('a skipped install still writes the dev-menu defaults when the app data container is unreachable', () => {
-    const installed = localApp('installed.app', 'macho');
-    const appPath = localApp('built.app', 'macho');
-    const exec = recordingExec({
-      fail: 'get_app_container U1 com.example.app data',
-      outputs: { get_app_container: `${installed}\n` },
-    });
-    const result = installIosApp(
-      {
-        udid: 'U1',
-        appPath,
-        bundleId: 'com.example.app',
-        devClientScheme: 'myapp',
-        schemeApprovals: [
-          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
-          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
-        ],
-      },
-      { exec, now: () => 0 },
-    );
-    expect(result.skipped).toBe(true);
-    expect(exec.calls.filter((c) => c.includes('write')).map((c) => c[7])).toEqual([
-      'EXDevMenuShowsAtLaunch',
-      'EXDevMenuShowFloatingActionButton',
-    ]);
   });
 
   test('a .app whose JS was swapped is installed: the container holds the other one', () => {
