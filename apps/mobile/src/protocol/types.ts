@@ -80,7 +80,15 @@ export interface BuildReport {
   detail?: BuildDetail;
   /** Present once the run knows why the cache missed. */
   missReason?: BuildMissReason;
+  /** Where it compiles; absent from a stim older than build offload. */
+  placement?: BuildPlacement;
 }
+
+/**
+ * `local`, or the build machine a build was offloaded to (its `offload.machines` entry), the step it runs there
+ * (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that step started.
+ */
+export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
 
 /**
  * The build tool's step inside `phase`. `done` and `total` count `unit`s: xcodebuild targets that started work of
@@ -364,6 +372,10 @@ export interface LastBuild {
   finishedAt: string | null;
   errorCode?: string;
   missReason?: BuildMissReason;
+  /** The build machine that compiled the app when the build was offloaded. */
+  offloadedTo?: string;
+  /** Why the run built here after it considered offloading. */
+  offloadFallback?: string;
   /** The first compiler diagnostics of a failed build, when the build tool reported any. */
   diagnostics?: BuildDiagnostic[];
 }
@@ -598,7 +610,33 @@ export interface MachineDetails {
   gcError?: string;
   stats: Record<string, unknown> | null;
   statsError?: string;
+  /** Absent from a server older than it; empty when `offload.machines` names no machine. */
+  buildMachines?: BuildMachineReport[] | null;
+  buildMachinesError?: string;
   measuredAt: string;
+}
+
+/** One `offload.machines` entry as `stim doctor --json` reports it. */
+export interface BuildMachineReport {
+  machine: string;
+  state: string;
+  dnsName?: string;
+  /** For an approved machine: whether it would take builds now, and each reason it would not. */
+  offloadable?: boolean;
+  reasons?: string[];
+  problems?: { code: string; reason: string }[];
+  capacity?: {
+    running?: number;
+    max?: number;
+    diskFreeBytes?: number | null;
+    minDiskFreeBytes?: number;
+    cpus?: number;
+    loadPerCore?: number;
+    builds?: number;
+    maxBuilds?: number;
+    maxLoadPerCore?: number;
+    declined?: string | null;
+  };
 }
 
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };

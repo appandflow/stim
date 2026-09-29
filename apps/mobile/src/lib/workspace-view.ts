@@ -1,4 +1,4 @@
-import { clockDuration, gitBadges, shortDuration } from '@/lib/format';
+import { clockDuration, gitBadges, machineName, shortDuration } from '@/lib/format';
 import { formatBytes } from '@/lib/home';
 import type { PlanState } from '@/lib/plan-checks';
 import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
@@ -263,6 +263,34 @@ export interface BuildLine {
   spoken: string;
 }
 
+const FALLBACK_WORDS: [RegExp, string][] = [
+  [/^busy\b/, 'busy'],
+  [/^no less loaded\b/, 'no less loaded'],
+  [/^capacity unknown\b/, 'too old'],
+  [/^Stim build /, 'on another Stim build'],
+  [/^(CPU|Xcode|simulator SDK|CocoaPods|JDK) /, 'toolchain differs'],
+  [/^no (iPhone simulator|Android SDK|NDK|build-tools|platform) /, 'missing SDK'],
+  [/ GB free, needs /, 'low on disk'],
+];
+
+export interface FallbackLine {
+  text: string;
+  reason: string;
+}
+
+/**
+ * A short line for a run that considered offloading and built here, such as "janics-mac-mini busy -> built here",
+ * from the first machine `offloadFallback` names; `reason` is the whole of it.
+ */
+export function fallbackLine(build: Pick<LastBuild, 'offloadFallback'>): FallbackLine | null {
+  const reason = build.offloadFallback;
+  if (!reason) return null;
+  const match = /^([A-Za-z0-9][A-Za-z0-9.-]*(?::\d{1,5})?): (.+)$/.exec(reason);
+  const why = match ? (FALLBACK_WORDS.find(([pattern]) => pattern.test(match[2]!))?.[1] ?? 'failed') : null;
+  const what = match ? `${machineName(match[1]!)} ${why}` : 'offload skipped';
+  return { text: `${what} \u2192 built here`, reason };
+}
+
 export function buildLine(platform: Platform, last: LastBuild | undefined, plan: PlanState | undefined): BuildLine {
   const line = (main: string, sub: string | null, tone: BuildLine['tone'], spoken: string): BuildLine => ({
     platform,
@@ -273,7 +301,7 @@ export function buildLine(platform: Platform, last: LastBuild | undefined, plan:
   });
   if (last) {
     if (last.status === 'failed') return line('Failed', null, 'error', 'last build failed');
-    const cache = last.cacheHit ? 'hit' : 'cold';
+    const cache = last.cacheHit ? 'hit' : last.offloadedTo ? `on ${machineName(last.offloadedTo)}` : 'cold';
     if (last.durationMs === null) return line('\u2014', cache, 'default', `last build ${cache}`);
     const took = clockDuration(last.durationMs);
     return line(took, cache, 'default', `last build ${took}, ${cache}`);
@@ -429,9 +457,37 @@ export function barSteps(steps: PhaseStep[]): PhaseStep[] {
 /** Whether a phase bar or checklist names its phases: only with more than one, since the stage line names a lone phase. */
 export const namesPhases = (steps: readonly PhaseStep[]) => steps.length > 1;
 
+const REMOTE_PHASES: Record<string, string> = {
+  sync: 'Sync',
+  deps: 'Dependencies',
+  prebuild: 'Prebuild',
+  pods: 'Pods',
+  build: 'Compile',
+  fetch: 'Download',
+};
+
+export interface RemoteBuild {
+  host: string;
+  phase: string;
+  phaseElapsedMs: number | null;
+}
+
+/** The build machine a running build was offloaded to, and the step it runs there; null for a local build. */
+export function remoteBuild(build: BuildReport, now: number): RemoteBuild | null {
+  const placement = build.placement;
+  if (!placement || placement === 'local') return null;
+  const started = Date.parse(placement.phaseStartedAt);
+  return {
+    host: machineName(placement.host),
+    phase: REMOTE_PHASES[placement.phase] ?? placement.phase.charAt(0).toUpperCase() + placement.phase.slice(1),
+    phaseElapsedMs: Number.isFinite(started) ? Math.max(0, now - started) : null,
+  };
+}
+
 export function currentPhaseLabel(build: BuildReport): { phase: string; counts: string | null } {
   const detail = build.detail;
-  const phase = detail?.step ? STEP_NAMES[detail.step] : phaseName(build.phase);
+  const remote = remoteBuild(build, 0);
+  const phase = detail?.step ? STEP_NAMES[detail.step] : (remote?.phase ?? phaseName(build.phase));
   if (!detail?.unit || typeof detail.done !== 'number') return { phase, counts: null };
   return {
     phase,

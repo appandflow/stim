@@ -26,6 +26,8 @@ import {
   otherPlatformLine,
   phaseName,
   phaseSteps,
+  remoteBuild,
+  sinceLabel,
   type BuildLine,
   type BundleLine,
   type ChipTone,
@@ -228,14 +230,16 @@ export function BuildCard({
 }
 
 function BuildingCard({ build, onPress }: { build: BuildReport; onPress: () => void }) {
+  const { theme } = useUnistyles();
   const now = useNow(1000);
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase } = currentPhaseLabel(build);
+  const remote = remoteBuild(build, now);
   return (
     <SmallCard
       title="Build"
       onPress={onPress}
-      accessibilityLabel={`Build: building ${platformName(build.platform)}, ${phase}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
+      accessibilityLabel={`Build: building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}, ${phase}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
       accessibilityHint="Shows the build"
     >
       <View style={styles.stat}>
@@ -245,6 +249,7 @@ function BuildingCard({ build, onPress }: { build: BuildReport; onPress: () => v
         <Text variant={VALUE} weight={VALUE_WEIGHT} tone="brand" numberOfLines={1} style={styles.shrink}>
           {phase}
         </Text>
+        {remote ? <Icon name="desktopcomputer" size={13} color={theme.colors.secondary} /> : null}
       </View>
       <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.tabular}>
         {elapsed}
@@ -469,10 +474,12 @@ export function BuildInProgressCard({
   const line = build.detail?.line ?? output.at(-1)?.msg ?? null;
   const other = otherPlatformLine(env, build.platform, now);
   const miss = build.missReason?.summary;
+  const remote = remoteBuild(build, now);
+  const detail = remote?.phaseElapsedMs != null ? sinceLabel(remote.phaseElapsedMs) : counts;
   return (
     <Card
       onPress={onPress}
-      accessibilityLabel={`Building ${platformName(build.platform)}, ${phase}${counts ? ` ${counts}` : ''}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
+      accessibilityLabel={`Building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}, ${phase}${detail ? ` ${detail}` : ''}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
       accessibilityHint="Shows the build"
       style={styles.building}
     >
@@ -483,9 +490,10 @@ export function BuildInProgressCard({
           color={theme.colors.primary}
           background={theme.colors.raised}
         />
-        <Text variant="body" weight="semibold">
-          {`Building ${platformName(build.platform)}`}
+        <Text variant="body" weight="semibold" numberOfLines={1} style={remote ? styles.shrink : undefined}>
+          {`Building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}`}
         </Text>
+        {remote ? <Icon name="desktopcomputer" size={14} color={theme.colors.secondary} /> : null}
         {target ? (
           <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
             {target}
@@ -498,9 +506,9 @@ export function BuildInProgressCard({
         <Text variant="footnote" weight="semibold" tone="brand">
           {phase}
         </Text>
-        {counts ? (
-          <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
-            {counts}
+        {detail ? (
+          <Text variant="footnote" tone="secondary" numberOfLines={1} style={[styles.shrink, styles.tabular]}>
+            {detail}
           </Text>
         ) : null}
         <View style={styles.spacer} />

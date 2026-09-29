@@ -1733,5 +1733,83 @@
       }
     }
   },
+  "buildMachines": [
+    {
+      "machine": "janics-mac-mini:7869",
+      "state": "approved",
+      "dnsName": "janics-mac-mini.tail0000.ts.net",
+      "deviceId": "fff01a8e",
+      "requestedAt": "2026-09-24T23:34:58.162Z",
+      "offloadable": true,
+      "reasons": [],
+      "problems": [],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 0.4,
+        "builds": 0,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": null
+      }
+    },
+    {
+      "machine": "build-box",
+      "state": "approved",
+      "dnsName": "build-box.tail0000.ts.net",
+      "deviceId": "ab12cd34",
+      "requestedAt": "2026-09-22T15:10:00.000Z",
+      "offloadable": false,
+      "reasons": ["busy (load at or above 2/core; load 8.2/core, 2 builds)"],
+      "problems": [
+        {
+          "code": "busy",
+          "reason": "busy (load at or above 2/core; load 8.2/core, 2 builds)"
+        }
+      ],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 8.2,
+        "builds": 2,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": "load at or above 2/core"
+      }
+    },
+    {
+      "machine": "old-mini",
+      "state": "approved",
+      "dnsName": "old-mini.tail0000.ts.net",
+      "deviceId": "9f8e7d6c",
+      "requestedAt": "2026-09-20T09:00:00.000Z",
+      "offloadable": false,
+      "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
+      "problems": [
+        {
+          "code": "stim-build",
+          "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"
+        }
+      ],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 0.1,
+        "builds": 0,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": null
+      }
+    }
+  ],
   "measuredAt": "2026-09-25T04:23:09.012Z"
 }

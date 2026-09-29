@@ -31,10 +31,14 @@ import { planKey } from '@/lib/plan-checks';
 import {
   currentPhaseLabel,
   deviceTitle,
+  fallbackLine,
   PHASE_ORDER,
   phaseName,
   phaseSteps,
+  remoteBuild,
+  sinceLabel,
   type PhaseStep,
+  type RemoteBuild,
 } from '@/lib/workspace-view';
 import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
 import type {
@@ -75,6 +79,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
   const canCheck = recheck !== null && !checking;
   const target = running && env ? devicesOf(env).find((d) => d.platform === platform && d.slot === running.slot) : null;
   const started = running ? Date.parse(running.startedAt) : NaN;
+  const remote = running ? remoteBuild(running, now) : null;
   const lastRun = history.find(
     (entry) =>
       entry.startedAt === last?.startedAt && entry.result === 'succeeded' && Object.keys(entry.phases).length > 0,
@@ -87,6 +92,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
           <Text variant="footnote" tone="secondary">
             {[
               target ? deviceTitle(target).name : null,
+              remote ? `on ${remote.host}` : null,
               Number.isFinite(started) ? `started ${shortDuration(Math.max(0, now - started))} ago` : null,
             ]
               .filter(Boolean)
@@ -250,6 +256,7 @@ function PlatformSwitch({
 function RunningBuild({ build, path, history }: { build: BuildReport; path: string; history: BuildHistoryEntry[] }) {
   const now = useNow(1000);
   const { elapsed, estimate } = buildTiming(build, now);
+  const remote = remoteBuild(build, now);
   const output = useBuildOutput(path, build.slot, build.startedAt, OUTPUT_LINES).map((record) => record.msg);
   const reported = build.detail?.line;
   const lines = reported && output.at(-1) !== reported ? [...output, reported].slice(-OUTPUT_LINES) : output;
@@ -262,7 +269,10 @@ function RunningBuild({ build, path, history }: { build: BuildReport; path: stri
           {[estimate ? `of ${estimate}` : null, miss ? `cache miss, ${miss}` : null].filter(Boolean).join(' \u00B7 ')}
         </Text>
       </View>
-      <PhaseList steps={phaseSteps(build, history, now)} counts={currentPhaseLabel(build).counts} />
+      <PhaseList
+        steps={phaseSteps(build, history, now)}
+        counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
+      />
       {lines.length ? (
         <Section title="Live output">
           <View style={styles.output}>
@@ -285,6 +295,13 @@ function RunningBuild({ build, path, history }: { build: BuildReport; path: stri
 }
 
 const OUTPUT_LINES = 6;
+
+/** The step a build machine runs, named only when the checklist names another phase, with its elapsed time. */
+function remoteStep(remote: RemoteBuild, build: BuildReport): string | null {
+  const elapsed = remote.phaseElapsedMs === null ? null : sinceLabel(remote.phaseElapsedMs);
+  const step = remote.phase === phaseName(build.phase) ? null : remote.phase;
+  return [step, elapsed].filter(Boolean).join(' ') || null;
+}
 
 function finishedSteps(entry: BuildHistoryEntry): PhaseStep[] {
   return PHASE_ORDER.filter((phase) => entry.phases[phase] !== undefined).map((phase) => ({
@@ -361,6 +378,7 @@ function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; r
         {lastBuildSummary(last, now, false)}
       </Text>
       <Note>{when}</Note>
+      <Fallback build={last} />
       {last.diagnostics?.length ? <Diagnostics diagnostics={last.diagnostics} root={root} /> : null}
       {last.missReason ? <MissReason reason={last.missReason} /> : null}
     </>
@@ -485,9 +503,38 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
       {entry.result === 'interrupted' ? (
         <Note>The run ended without recording a result; the next run in this workspace recorded it.</Note>
       ) : null}
+      <Fallback build={entry} />
       {entry.diagnostics?.length ? <Diagnostics diagnostics={entry.diagnostics} root={root} /> : null}
       {entry.missReason ? <MissReason reason={entry.missReason} /> : null}
     </View>
+  );
+}
+
+/** Why a run that considered offloading built here, in a few words; a tap shows the whole reason. */
+function Fallback({ build }: { build: LastBuild }) {
+  const { theme } = useUnistyles();
+  const [open, setOpen] = useState(false);
+  const line = fallbackLine(build);
+  if (!line) return null;
+  return (
+    <Touch
+      onPress={() => setOpen(!open)}
+      accessibilityState={{ expanded: open }}
+      accessibilityLabel={open ? line.reason : `${line.text}. Shows why.`}
+      style={styles.fallback}
+    >
+      <View style={styles.row}>
+        <Icon name="desktopcomputer" size={12} color={theme.colors.tertiary} />
+        <Text variant="footnote" tone="secondary" style={styles.grow}>
+          {line.text}
+        </Text>
+      </View>
+      {open ? (
+        <Text variant="footnote" tone="tertiary" selectable>
+          {line.reason}
+        </Text>
+      ) : null}
+    </Touch>
   );
 }
 
@@ -545,6 +592,7 @@ function Note({ children }: { children: ReactNode }) {
 const styles = StyleSheet.create((theme) => ({
   container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
   titles: { gap: theme.space.xxs },
+  fallback: { gap: theme.space.xxs },
   switch: {
     flexDirection: 'row',
     padding: SWITCH_INSET,

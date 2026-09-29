@@ -129,8 +129,11 @@ export function lastBuildSummary(last: LastBuild, now: number, withReason = true
     : last.cacheSkipped
       ? ' (cache reads off)'
       : '';
-  return `Cold build${why}${took}`;
+  return `${last.offloadedTo ? `Built on ${machineName(last.offloadedTo)}` : 'Cold build'}${why}${took}`;
 }
+
+/** A build machine's `offload.machines` entry without its `:port`. */
+export const machineName = (entry: string) => entry.replace(/:\d+$/, '');
 
 /** A history row's title: how the run ended, and for a finished run where its app came from. */
 export function historyTitle(entry: BuildHistoryEntry): string {
@@ -138,7 +141,7 @@ export function historyTitle(entry: BuildHistoryEntry): string {
   if (entry.result === 'cancelled') return 'Cancelled';
   if (entry.result === 'failed') return `Failed (${entry.errorCode ?? 'error'})`;
   if (entry.cacheHit) return `Cache hit (${entry.cacheHit})`;
-  return 'Cold build';
+  return entry.offloadedTo ? `Built on ${machineName(entry.offloadedTo)}` : 'Cold build';
 }
 
 /** A history row's detail line: the cache outcome of a run that looked one up, when it ran, and its slot. */
