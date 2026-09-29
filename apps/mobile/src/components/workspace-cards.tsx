@@ -198,13 +198,7 @@ export function ResourcesCard({ usage, onPress }: { usage: Usage; onPress: () =>
       {parts.map((part) => (
         <View key={part.kind} style={styles.stat}>
           <Icon name={STAT_ICON[part.kind]} size={12} color={theme.colors.secondary} />
-          <Text
-            variant={part.kind === 'disk' ? 'caption' : 'callout'}
-            weight={part.kind === 'disk' ? undefined : 'semibold'}
-            tone={part.kind === 'disk' ? 'secondary' : 'default'}
-            style={styles.tabular}
-            numberOfLines={1}
-          >
+          <Text variant="callout" weight="semibold" tone="default" style={styles.tabular} numberOfLines={1}>
             {part.value}
           </Text>
         </View>
