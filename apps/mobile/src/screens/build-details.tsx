@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { EaseView, type Transition } from 'react-native-ease';
+import { useReducedMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/icon';
@@ -48,6 +50,10 @@ import type {
 const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', removed: '\u2212', changed: '~' };
 
 const PLATFORMS: Platform[] = ['ios', 'android'];
+
+const SWITCH_INSET = 3;
+const PILL_SPRING: Transition = { type: 'spring', damping: 22, stiffness: 260, mass: 1 };
+const LABEL_FADE: Transition = { type: 'timing', duration: 180, easing: 'easeInOut' };
 
 /**
  * One workspace's builds, with a switch between iOS and Android: the running build's phases and output, the last
@@ -186,8 +192,22 @@ function PlatformSwitch({
   building: Platform | null;
 }) {
   const { theme } = useUnistyles();
+  const reduceMotion = useReducedMotion();
+  const [width, setWidth] = useState(0);
+  const segmentWidth = (width - 2 * SWITCH_INSET) / PLATFORMS.length;
   return (
-    <View style={styles.switch} accessibilityRole="tablist">
+    <View
+      style={styles.switch}
+      accessibilityRole="tablist"
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+    >
+      {width > 0 ? (
+        <EaseView
+          animate={{ translateX: PLATFORMS.indexOf(value) * segmentWidth }}
+          transition={reduceMotion ? { type: 'none' } : PILL_SPRING}
+          style={[styles.pill, { width: segmentWidth, backgroundColor: theme.colors.background }]}
+        />
+      ) : null}
       {PLATFORMS.map((platform) => {
         const selected = platform === value;
         return (
@@ -197,18 +217,29 @@ function PlatformSwitch({
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             accessibilityLabel={`${platformName(platform)}${building === platform ? ', building' : ''}`}
-            style={[styles.segment, selected && styles.segmentSelected]}
+            style={styles.segment}
           >
-            <PlatformGlyph
-              platform={platform}
-              size={13}
-              color={selected ? theme.colors.text : theme.colors.secondary}
-              background={selected ? theme.colors.background : theme.colors.raised}
-            />
-            <Text variant="footnote" weight="semibold" tone={selected ? 'default' : 'secondary'}>
-              {platformName(platform)}
-            </Text>
-            {building === platform ? <View style={styles.buildingDot} /> : null}
+            {[false, true].map((layerSelected) => (
+              <EaseView
+                key={String(layerSelected)}
+                animate={{ opacity: !layerSelected || selected ? 1 : 0 }}
+                transition={reduceMotion ? { type: 'none' } : LABEL_FADE}
+                style={[styles.segmentLabel, layerSelected && styles.segmentLabelOverlay]}
+                importantForAccessibility="no-hide-descendants"
+                accessibilityElementsHidden
+              >
+                <PlatformGlyph
+                  platform={platform}
+                  size={13}
+                  color={layerSelected ? theme.colors.text : theme.colors.secondary}
+                  background={layerSelected ? theme.colors.background : theme.colors.raised}
+                />
+                <Text variant="footnote" weight="semibold" tone={layerSelected ? 'default' : 'secondary'}>
+                  {platformName(platform)}
+                </Text>
+                {building === platform ? <View style={styles.buildingDot} /> : null}
+              </EaseView>
+            ))}
           </Touch>
         );
       })}
@@ -516,22 +547,28 @@ const styles = StyleSheet.create((theme) => ({
   titles: { gap: theme.space.xxs },
   switch: {
     flexDirection: 'row',
-    padding: 3,
+    padding: SWITCH_INSET,
     borderRadius: theme.radius.control,
     borderCurve: 'continuous',
     backgroundColor: theme.colors.raised,
   },
-  segment: {
+  pill: {
+    position: 'absolute',
+    top: SWITCH_INSET,
+    bottom: SWITCH_INSET,
+    left: SWITCH_INSET,
+    borderRadius: theme.radius.control - 2,
+    borderCurve: 'continuous',
+  },
+  segment: { flex: 1, height: 32 },
+  segmentLabel: {
     flex: 1,
-    height: 32,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: theme.space.sm,
-    borderRadius: theme.radius.control - 2,
-    borderCurve: 'continuous',
   },
-  segmentSelected: { backgroundColor: theme.colors.background },
+  segmentLabelOverlay: { ...StyleSheet.absoluteFill },
   buildingDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
   elapsed: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.md },
   big: {
