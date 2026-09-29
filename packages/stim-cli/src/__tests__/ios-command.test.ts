@@ -736,7 +736,10 @@ describe('parked simulator adoption', () => {
         }),
         clearOtherUserApps: () => {
           events.push('sweep');
-          return { listed: true, removed: ['com.example.old'], failed: [] };
+          return { listed: true, kept: true, removed: ['com.example.old'], failed: [] };
+        },
+        clearIosAppData: () => {
+          events.push('data');
         },
         clearIosAdoptionPending: () => events.push('clear'),
         installIosApp: (args) => {
@@ -747,10 +750,73 @@ describe('parked simulator adoption', () => {
       },
     );
     expect(exitCode).toBe(null);
-    expect(events).toEqual(['sweep', 'clear', 'install']);
+    expect(events).toEqual(['sweep', 'data', 'clear', 'install']);
     expect(installArgs.proveInstalled).toBe(true);
     expect(errs.join('\n')).toMatch(/device\s+stim-fixture .* adopted/);
     expect(errs.join('\n')).toMatch(/removed com\.example\.old/);
+    expect(errs.join('\n')).toMatch(/cleared \S+ data left by the previous workspace/);
+  });
+
+  test.each([
+    ['no parked cache key', undefined, true],
+    ['a different parked cache key', 'different-build', false],
+  ])('adoption with %s proves the installed bytes: %s', async (_label, parkedCacheKey, proves) => {
+    reserve();
+    let proveInstalled: unknown;
+    const { exitCode } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+          ...(parkedCacheKey ? { parkedCacheKey } : {}),
+        }),
+        clearOtherUserApps: () => ({ listed: true, kept: false, removed: [], failed: [] }),
+        clearIosAdoptionPending: () => {},
+        installIosApp: (args) => {
+          proveInstalled = args.proveInstalled;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(proveInstalled).toBe(proves);
+  });
+
+  test('a failed data clear refuses before install and leaves adoption pending', async () => {
+    reserve();
+    let cleared = false;
+    let installed = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+        }),
+        clearOtherUserApps: () => ({ listed: true, kept: true, removed: [], failed: [] }),
+        clearIosAppData: () => {
+          throw new Error('container busy');
+        },
+        clearIosAdoptionPending: () => {
+          cleared = true;
+        },
+        installIosApp: () => {
+          installed = true;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(cleared).toBe(false);
+    expect(installed).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not clear the data .*container busy.*did not install or launch/s);
   });
 
   test('a failed app listing refuses before install and leaves adoption pending', async () => {
@@ -768,7 +834,7 @@ describe('parked simulator adoption', () => {
           adoptionPending: true,
           parkedCacheKey: 'different-build',
         }),
-        clearOtherUserApps: () => ({ listed: false, removed: [], failed: [] }),
+        clearOtherUserApps: () => ({ listed: false, kept: false, removed: [], failed: [] }),
         clearIosAdoptionPending: () => {
           cleared = true;
         },
@@ -798,7 +864,7 @@ describe('parked simulator adoption', () => {
           adopted: true,
           adoptionPending: true,
         }),
-        clearOtherUserApps: () => ({ listed: true, removed: [], failed: ['com.example.old'] }),
+        clearOtherUserApps: () => ({ listed: true, kept: false, removed: [], failed: ['com.example.old'] }),
         clearIosAdoptionPending: () => {
           cleared = true;
         },

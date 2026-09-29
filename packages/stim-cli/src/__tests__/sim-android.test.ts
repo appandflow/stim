@@ -47,6 +47,7 @@ import {
   assertOwnedAvdStopped,
   parseAvdEmulatorProcesses,
   parseEmulatorVersion,
+  parseDfAvailableBytes,
   suppressEmulatorCrashConsent,
   waitForAndroidEmulatorShutdown,
   waitForBoot,
@@ -1326,6 +1327,18 @@ test('suppressEmulatorCrashConsent passes -crash-report-mode never to emulator 3
       remove,
     }),
   ).toEqual([]);
+});
+
+test('parseDfAvailableBytes reads the free bytes of /data from toybox df -k', () => {
+  expect(
+    parseDfAvailableBytes(
+      'Filesystem     1K-blocks    Used Available Use% Mounted on\n/dev/block/dm-5  5980136 2170152   3793600  37% /data\n',
+    ),
+  ).toBe(3793600 * 1024);
+  expect(parseDfAvailableBytes('df: /data: Permission denied')).toBe(null);
+  expect(parseDfAvailableBytes('Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/a 1 1 - 1% /data')).toBe(
+    null,
+  );
 });
 
 test('parseEmulatorVersion reads the major from the launcher banner', () => {

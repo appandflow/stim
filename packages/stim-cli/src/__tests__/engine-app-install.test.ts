@@ -200,13 +200,14 @@ describe('ios', () => {
           uninstall: (_udid, bundleId) => removed.push(bundleId),
         },
       ),
-    ).toEqual({ listed: true, removed: ['com.example.old', 'com.example.other'], failed: [] });
+    ).toEqual({ listed: true, kept: true, removed: ['com.example.old', 'com.example.other'], failed: [] });
     expect(removed).toEqual(['com.example.old', 'com.example.other']);
   });
 
   test('clearOtherUserApps distinguishes a failed listing from an empty simulator', () => {
-    expect(clearOtherUserApps({ udid: 'U1' }, { list: () => [] })).toEqual({
+    expect(clearOtherUserApps({ udid: 'U1', keep: 'com.example.keep' }, { list: () => [] })).toEqual({
       listed: true,
+      kept: false,
       removed: [],
       failed: [],
     });
@@ -219,7 +220,7 @@ describe('ios', () => {
           },
         },
       ),
-    ).toEqual({ listed: false, removed: [], failed: [] });
+    ).toEqual({ listed: false, kept: false, removed: [], failed: [] });
   });
 
   test('clearOtherUserApps reports each uninstall that must be retried', () => {
@@ -233,7 +234,7 @@ describe('ios', () => {
           },
         },
       ),
-    ).toEqual({ listed: true, removed: ['com.example.one'], failed: ['com.example.two'] });
+    ).toEqual({ listed: true, kept: false, removed: ['com.example.one'], failed: ['com.example.two'] });
   });
 
   test('installIosApp passes the .app path as one literal argv element', () => {

@@ -325,6 +325,9 @@ function harness(
     },
     resolveAvdSerial: () => ({ serial: 'emulator-5584' }),
     waitForDeviceBoot: never('an unchanged serial readiness wait'),
+    dataFreeBytes: () => null,
+    trimCaches: never('a cache trim'),
+    wipeDevice: never('an emulator wipe'),
     resolveMetro: async (port: number, path: string) => {
       calls.metro.push([port, path]);
       return { metro: { pid: 41233, leader: 41233, cwd: root } };
@@ -555,12 +558,13 @@ describe('adopted Android installs', () => {
               return mode === 'cleanup-failed' ? 'Failed' : 'Success';
             }
             if (args.includes('uninstall')) return 'Success';
+            if (args.includes('df')) return DF_ROOMY;
             if (args.includes('path')) return 'package:/data/app/base.apk';
             if (args.includes('sha256sum'))
               return `${mode === 'same' ? hashFile(apkPath) : '0'.repeat(64)}  /data/app/base.apk`;
             if (args.includes('install')) {
               installs++;
-              if (mode === 'install-failed') throw new Error('INSTALL_FAILED_INSUFFICIENT_STORAGE');
+              if (mode === 'install-failed') throw new Error('INSTALL_FAILED_INVALID_APK');
               if (installs === 1 && mode === 'signature') throw new Error('INSTALL_FAILED_UPDATE_INCOMPATIBLE');
               if (installs === 1 && mode === 'downgrade') throw new Error('INSTALL_FAILED_VERSION_DOWNGRADE');
               return 'Success';
@@ -590,6 +594,101 @@ describe('adopted Android installs', () => {
       expect(commands.includes('adb -s emulator-5584 uninstall com.example.app')).toBe(conflict);
       expect(h.stderr.some((line) => line.includes('already has this build'))).toBe(mode === 'same');
       expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(failed ? true : undefined);
+    },
+  );
+});
+
+const DF_ROOMY =
+  'Filesystem     1K-blocks    Used Available Use% Mounted on\n/dev/block/dm-5  5980136 2170152   3793600  37% /data';
+
+describe('adopted Android storage', () => {
+  afterEach(() => resetExecutor());
+
+  function storageRun({ free, insufficientInstalls = 0 }: { free: number[]; insufficientInstalls?: number }) {
+    const apkPath = fakeApk();
+    const device = { avdName: 'stim-adopted', consolePort: 5584, owned: true, adoptionPending: true, adopted: true };
+    upsertProject(root, { platforms: { android: device } });
+    const installs: string[] = [];
+    const trims: string[] = [];
+    const wipes: unknown[] = [];
+    let boots = 0;
+    setExecutor(
+      makeExecutor({
+        run(cmd) {
+          if (cmd.includes('-list-avds')) return 'stim-adopted';
+          if (cmd.endsWith('adb devices') || cmd.endsWith('adb" devices'))
+            return 'List of devices attached\nemulator-5584\tdevice';
+          if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
+          throw new Error(`Unexpected run: ${cmd}`);
+        },
+        runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
+        runFile(file, args = []) {
+          if (args.includes('list')) return 'package:com.example.app';
+          if (args.includes('clear')) return 'Success';
+          if (args.includes('path')) return '';
+          if (args.includes('install')) {
+            installs.push(args[1]!);
+            if (installs.length <= insufficientInstalls) {
+              throw new Error(
+                'Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: Failed to override installation location]',
+              );
+            }
+            return 'Success';
+          }
+          throw new Error(`Unexpected runFile: ${[file, ...args].join(' ')}`);
+        },
+      }),
+    );
+    const h = harness({
+      ensureDevice: async () => device,
+      resolveCached: () => apkPath,
+      install: installAndroidApp,
+      ensureDeviceBooted: async () => ({ ok: true, serial: boots++ === 0 ? 'emulator-5584' : 'emulator-5586' }),
+      dataFreeBytes: () => free.shift() ?? null,
+      trimCaches: (serial: string) => {
+        trims.push(serial);
+      },
+      wipeDevice: (avdName: string, options: unknown) => {
+        wipes.push([avdName, options]);
+        return { status: 'torn-down' };
+      },
+    });
+    return { h, installs, trims, wipes };
+  }
+
+  const GB = 1024 ** 3;
+
+  test.each([
+    ['enough room', [8 * GB], 0, 0, ['emulator-5584']],
+    ['room after trimming caches', [GB / 10, 8 * GB], 1, 0, ['emulator-5584']],
+    ['a full emulator', [GB / 10, GB / 10], 1, 1, ['emulator-5586']],
+  ] as const)('%s', async (_label, free, trimCount, wipeCount, installedOn) => {
+    const { h, installs, trims, wipes } = storageRun({ free: [...free] });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(trims.length).toBe(trimCount);
+    expect(wipes.length).toBe(wipeCount);
+    for (const [avdName, options] of wipes as [string, unknown][]) {
+      expect(avdName).toBe('stim-adopted');
+      expect(options).toMatchObject({ wipe: true, owner: { projectPath: root } });
+    }
+    expect(installs).toEqual(installedOn);
+    expect(h.stderr.some((line) => line.includes('wiping its user data'))).toBe(wipeCount > 0);
+    expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBeUndefined();
+  });
+
+  test.each([
+    ['trimming caches frees enough', 1, 0, ['emulator-5584', 'emulator-5584']],
+    ['only a wipe frees enough', 2, 1, ['emulator-5584', 'emulator-5584', 'emulator-5586']],
+  ] as const)(
+    'an insufficient-storage install retries after cleanup: %s',
+    async (_label, failures, wipeCount, installs) => {
+      const run = storageRun({ free: [8 * GB, GB / 10], insufficientInstalls: failures });
+      const result = await run.h.run();
+      expect(result.ok).toBe(true);
+      expect(run.trims).toEqual(['emulator-5584']);
+      expect(run.wipes.length).toBe(wipeCount);
+      expect(run.installs).toEqual(installs);
     },
   );
 });

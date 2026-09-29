@@ -1,10 +1,10 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
+import { ensureConfig, getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { eraseParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 
 function seedCreatedDevices(): void {
@@ -255,24 +255,24 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
     });
     const result = teardownOwnedIosSim('U1', {
       del: true,
-      park: { projectPath, max: 1, simslimManaged: true },
+      park: { projectPath, max: 1, simslimManaged: true, appId: 'com.example.app', cacheKey: 'abc-debug-sim' },
     });
     expect(result.status).toBe('torn-down');
     expect(result.parked?.name).toBe('stim-parked (iPhone 17 26.5) u1');
-    const erase = calls.findIndex((call) => call.join(' ') === 'xcrun simctl erase U1');
-    expect(erase).toBeGreaterThan(calls.findIndex((call) => call.join(' ') === 'xcrun simctl shutdown U1'));
-    expect(calls.slice(erase + 1)).toContainEqual([
-      'xcrun',
-      'simctl',
-      'rename',
-      'U1',
-      'stim-parked (iPhone 17 26.5) u1',
-    ]);
+    expect(calls.some((call) => call[1] === 'erase')).toBe(false);
+    const rename = calls.findIndex(
+      (call) => call.join(' ') === 'xcrun simctl rename U1 stim-parked (iPhone 17 26.5) u1',
+    );
+    expect(rename).toBeGreaterThan(calls.findIndex((call) => call.join(' ') === 'xcrun simctl shutdown U1'));
     expect(getProject(projectPath)?.platforms?.ios).toBeUndefined();
-    const [parked] = readParked('ios');
-    expect(parked).toMatchObject({ udid: 'U1', simslimManaged: true });
-    expect(parked).not.toHaveProperty('cacheKey');
-    expect(parked).not.toHaveProperty('bundleId');
+    expect(readParked('ios')).toEqual([
+      expect.objectContaining({
+        udid: 'U1',
+        simslimManaged: true,
+        bundleId: 'com.example.app',
+        cacheKey: 'abc-debug-sim',
+      }),
+    ]);
   } finally {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });
@@ -409,7 +409,7 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
   }
 });
 
-test('teardownOwnedIosSim deletes instead of parking when the erase fails', () => {
+test('teardownOwnedIosSim deletes instead of parking when the rename fails', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -418,14 +418,13 @@ test('teardownOwnedIosSim deletes instead of parking when the erase fails', () =
     upsertProject(projectPath, {
       platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
     });
-    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }], throwOn: 'simctl erase' });
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }], throwOn: 'simctl rename' });
     setExecutor(exec);
 
     const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
 
     expect(result.status).toBe('torn-down');
     expect(result.parkFallback).toMatch(/boom/);
-    expect(exec.calls.some((call) => call.includes('simctl rename'))).toBe(false);
     expect(exec.calls).toContain('xcrun simctl delete U1');
     expect(readParked('ios')).toEqual([]);
   } finally {
@@ -549,7 +548,7 @@ test('teardownOwnedIosSim does not park a simulator that remains booted', () => 
   }
 });
 
-test('teardownOwnedIosSim waits for a lagging shutdown before erasing and parks the simulator', () => {
+test('teardownOwnedIosSim waits for a lagging shutdown before parking the simulator', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -581,8 +580,8 @@ test('teardownOwnedIosSim waits for a lagging shutdown before erasing and parks 
       runFile(file, args = []) {
         if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
         calls.push([file, ...args].join(' '));
-        if (args[1] === 'erase' && bootedReportsLeft > 0) {
-          throw new Error('Unable to erase contents and settings in current state: Booted');
+        if (args[1] === 'rename' && bootedReportsLeft > 0) {
+          throw new Error('Unable to rename device in current state: Booted');
         }
         return '';
       },
@@ -602,13 +601,62 @@ test('teardownOwnedIosSim waits for a lagging shutdown before erasing and parks 
 
     expect(result.parkFallback).toBeUndefined();
     expect(result).toMatchObject({ status: 'torn-down', parked: { udid: 'U1' } });
-    expect(calls).toContain('xcrun simctl erase U1');
+    expect(calls.some((call) => call.startsWith('xcrun simctl rename U1 stim-parked'))).toBe(true);
     expect(calls).not.toContain('xcrun simctl delete U1');
     expect(readParked('ios')).toMatchObject([{ udid: 'U1' }]);
   } finally {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+function seedParkedSim(): void {
+  const config = ensureConfig();
+  config.parked = {
+    ios: [
+      {
+        udid: 'U1',
+        name: 'stim-parked (iPhone 17 26.5) u1',
+        deviceTypeIdentifier: 'iphone-17',
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        parkedAt: '2026-09-01T00:00:00.000Z',
+        simslimManaged: false,
+        bundleId: 'com.example.app',
+        cacheKey: 'abc-debug-sim',
+      },
+    ],
+  };
+  saveConfig(config);
+}
+
+test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked without its app', () => {
+  seedParkedSim();
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
+  });
+  setExecutor(exec);
+
+  expect(eraseParkedIosSim('U1').status).toBe('torn-down');
+
+  expect(exec.calls).toContain('xcrun simctl erase U1');
+  const [record] = readParked('ios');
+  expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
+  expect(record).not.toHaveProperty('bundleId');
+  expect(record).not.toHaveProperty('cacheKey');
+});
+
+test('eraseParkedIosSim leaves a booted parked simulator and its record alone', () => {
+  seedParkedSim();
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Booted', isAvailable: true }],
+  });
+  setExecutor(exec);
+
+  const result = eraseParkedIosSim('U1');
+
+  expect(result).toMatchObject({ status: 'failed', reason: expect.stringMatching(/Booted, not Shutdown/) });
+  expect(exec.calls).not.toContain('xcrun simctl erase U1');
+  expect(readParked('ios')).toEqual([expect.objectContaining({ bundleId: 'com.example.app' })]);
 });
 
 interface AndroidExecutorOptions {

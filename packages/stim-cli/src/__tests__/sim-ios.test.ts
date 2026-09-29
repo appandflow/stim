@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -14,6 +14,7 @@ import {
   deleteIosSim,
   occupyingApps,
   bootIosSim,
+  clearIosAppData,
   deleteParkedIosSim,
   listUserApps,
   parkedSimName,
@@ -647,6 +648,63 @@ test('listUserApps passes the udid as one argv element and converts the property
   expect(listUserApps('UDID WITH SPACES')).toEqual(['com.example.app']);
   expect(calls[0]).toEqual(['xcrun', 'simctl', 'listapps', 'UDID WITH SPACES']);
   expect(calls[1]?.slice(0, 5)).toEqual(['plutil', '-convert', 'json', '-o', '-']);
+});
+
+describe('clearIosAppData', () => {
+  let container: string;
+  beforeEach(() => {
+    container = mkdtempSync(join(tmpdir(), 'stim-app-data-'));
+    for (const dir of ['Documents', 'Library/Preferences', 'tmp', 'SystemData']) {
+      mkdirSync(join(container, dir), { recursive: true });
+    }
+    writeFileSync(join(container, 'Documents', 'db.sqlite'), 'rows');
+    writeFileSync(join(container, 'Library', 'Preferences', 'com.example.app.plist'), 'prefs');
+    writeFileSync(join(container, 'tmp', 'scratch'), 'tmp');
+    writeFileSync(join(container, '.com.apple.mobile_container_manager.metadata.plist'), 'metadata');
+  });
+  afterEach(() => rmSync(container, { recursive: true, force: true }));
+
+  function exec(deleteError: string | null) {
+    const calls: string[][] = [];
+    setExecutor({
+      run: () => {
+        throw new Error('must not invoke a shell');
+      },
+      runFile(file, args = []) {
+        calls.push([file, ...args]);
+        if (args.includes('defaults') && deleteError) throw new Error(`Command failed\n${deleteError}`);
+        if (args[1] === 'get_app_container') return `${container}\n`;
+        return '';
+      },
+      runQuiet: () => null,
+      spawn: () => null,
+    });
+    return calls;
+  }
+
+  test('deletes the defaults domain, then empties the data directories and keeps the container', () => {
+    const calls = exec(null);
+    clearIosAppData('U1', 'com.example.app');
+    expect(calls).toEqual([
+      ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'delete', 'com.example.app'],
+      ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app', 'data'],
+    ]);
+    for (const dir of ['Documents', 'Library', 'tmp', 'SystemData'])
+      expect(readdirSync(join(container, dir))).toEqual([]);
+    expect(readdirSync(container)).toContain('.com.apple.mobile_container_manager.metadata.plist');
+  });
+
+  test('treats a missing defaults domain as nothing to delete', () => {
+    exec('Domain com.example.app does not exist');
+    clearIosAppData('U1', 'com.example.app');
+    expect(readdirSync(join(container, 'Documents'))).toEqual([]);
+  });
+
+  test('stops before touching files when the defaults delete fails for another reason', () => {
+    exec('Invalid device state');
+    expect(() => clearIosAppData('U1', 'com.example.app')).toThrow(/Invalid device state/);
+    expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
+  });
 });
 
 test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {

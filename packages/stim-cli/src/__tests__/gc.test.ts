@@ -197,6 +197,63 @@ test('reports parked simulators with model, runtime, age, size, and delete effec
   expect(lines).not.toMatch(/Nothing to reclaim/);
 });
 
+test('gc --cache parked reports parked devices with their app and erases them only with --delete', async () => {
+  recordCreatedDevice('ios', 'P1');
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  const name = 'stim-parked (iPhone 17 26.5) p1';
+  parkSim({
+    platform: 'ios',
+    projectPath: '/tmp/source',
+    max: 3,
+    record: {
+      udid: 'P1',
+      name,
+      deviceTypeIdentifier: 'iphone-17',
+      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+      parkedAt: '2026-09-01T00:00:00.000Z',
+      simslimManaged: false,
+      bundleId: 'com.example.app',
+      cacheKey: 'abc-debug-sim',
+    },
+  });
+  const calls: string[] = [];
+  const answer = (cmd: string) => {
+    calls.push(cmd);
+    if (cmd.includes('simctl list devices')) {
+      return JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            { udid: 'P1', name, state: 'Shutdown', isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
+          ],
+        },
+      });
+    }
+    if (cmd.includes('simctl list devicetypes')) {
+      return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+    }
+    return '';
+  };
+  setExecutor({
+    run: answer,
+    runFile: (file, args = []) => answer([file, ...args].join(' ')),
+    runQuiet: answer,
+    spawn: () => null,
+  });
+
+  const report = await captureLog(() => runGc({ cache: 'parked' }));
+  expect(report).toMatch(/stim-parked \(iPhone 17 26\.5\) p1 .*com\.example\.app/);
+  expect(report).toMatch(/--delete erases each verified device/);
+  expect(calls).not.toContain('xcrun simctl erase P1');
+
+  const erased = await captureLog(() => runGc({ cache: 'parked', delete: true }));
+  expect(erased).toMatch(/Erased parked ios sim .* it stays parked/);
+  expect(calls).toContain('xcrun simctl erase P1');
+  expect(calls.some((call) => call.includes('simctl delete'))).toBe(false);
+  const [record] = readParked('ios');
+  expect(record).toMatchObject({ udid: 'P1', name });
+  expect(record).not.toHaveProperty('bundleId');
+});
+
 test('parked deletion skips a simulator adopted after report collection', async () => {
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
   upsertProject('/tmp/adopter', { platforms: {} });
