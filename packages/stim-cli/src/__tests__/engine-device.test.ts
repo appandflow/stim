@@ -14,7 +14,13 @@ import {
   unknownIosRuntimeRefusal,
 } from '../engine/device-capacity.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
-import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../workspace/config.ts';
+import {
+  allConsolePortsAndSerials,
+  getProject,
+  recordIosSchemeApprovals,
+  setDevice,
+  upsertProject,
+} from '../workspace/config.ts';
 import type { DeviceRecord } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -1326,6 +1332,30 @@ describe('ensureOwnedDevice: ios', () => {
         owned: true,
         deviceName: 'stim-app (iPhone 17 Pro 26.2)',
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('recorded scheme approvals stay with their simulator through a reboot and never move to another one', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
+      expect(getProject(root)?.platforms?.ios?.schemeApprovals).toBeUndefined();
+      recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
+
+      setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]).exec);
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      await device.booting?.done;
+      expect(device.schemeApprovals).toEqual(['bridge-->app']);
+      expect(getProject(root)?.platforms?.ios?.schemeApprovals).toEqual(['bridge-->app']);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

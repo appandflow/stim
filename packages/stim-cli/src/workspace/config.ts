@@ -193,6 +193,21 @@ export function releaseAndroidConsolePort(projectPath: string, consolePort: numb
   });
 }
 
+export function recordIosSchemeApprovals(
+  projectPath: string,
+  deviceUdid: string,
+  schemeApprovals: string[],
+  slot = 'default',
+): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
+    if (!cfg || !ios?.owned || ios.deviceUdid !== deviceUdid) return;
+    ios.schemeApprovals = schemeApprovals;
+    saveConfig(cfg);
+  });
+}
+
 export function clearAndroidBootPending(projectPath: string, avdName: string, slot = 'default'): void {
   withConfigLock(() => {
     const cfg = loadConfig();

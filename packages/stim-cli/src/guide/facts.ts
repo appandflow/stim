@@ -555,12 +555,31 @@ RULES
   preapproves CoreSimulatorBridge for exactly the installed
   bundle id and discovered scheme on its owned simulator. That
   suppresses iOS's first-launch confirmation;
-  unrelated schemes remain unapproved. It also writes
+  unrelated schemes remain unapproved. The approvals persist
+  until the simulator is erased, so Stim records the ones it
+  wrote on the workspace's device record and writes only the
+  ones missing from it. Parking drops the record, so an
+  adopted simulator gets them again once.
+  THE DEV MENU AND ITS BUTTON stay off a simulator through
   EXDevMenuShowsAtLaunch=false and
-  EXDevMenuShowFloatingActionButton=false, which the flag does
-  NOT cover, and those together are what keep the menu and its
-  button off a simulator entirely, so device automation opens
-  on the app. The
+  EXDevMenuShowFloatingActionButton=false in the app's
+  defaults, which the onboarding flag does NOT cover. Stim
+  writes them whenever it actually installs the app; an
+  install skipped as byte-identical keeps the app's data and
+  so the values already written. They cover every later
+  launch, including a home-screen tap or an agent relaunch.
+  When the project's installed expo-dev-launcher (found
+  through expo-dev-client, no network) is 58.0.0 or later
+  (expo/expo#49651), Stim's own deep link also carries
+  \`disableFab=1&disableAutoLaunch=1\` on the outer link and
+  on the project url, plus
+  \`__expo_disable_fab=1&__expo_disable_auto_launch=1\` on the
+  project url, which is the only url \`simctl launch
+  --initialUrl\` hands the launcher and the one 58.0.7 reads
+  the \`__expo_\` spellings from, for that launch only. So
+  device automation opens on the app.
+  The \`install     dev client prepared (...)\` line appears
+  only when one of those simulator writes ran. The
   unverified warning therefore leads with the picker, then
   prints the openurl
   retry. ON LOCAL ANDROID the same deep link also carries the
@@ -572,8 +591,8 @@ RULES
   Remote Android opens only the URL, so that intent-extra
   suppression does not apply there.
   Every Stim deep link also carries an outer \`disableFab=1\`
-  query parameter. Versions with expo/expo#49651 use that as a
-  session-only override; earlier versions ignore it. Stim does
+  query parameter. Versions with expo/expo#49651 read it and
+  hide the button; earlier versions ignore it. Stim does
   not rewrite expo-dev-menu's private SharedPreferences XML:
   that internal file is not a supported API, and changing it
   would persist over the user's own Tools-button setting. The
@@ -620,7 +639,7 @@ RULES
   writes and the Local Network grant both survive an
   UPGRADE install. Android's intent extra prevents the menu's
   automatic launch; versions with expo/expo#49651 also honor
-  the session-only FAB flag in Stim's deep link.
+  the outer FAB flag in Stim's deep link.
   The phone's unverified remedy is also ROUTED, not a fixed
   list. When this launch's device records carry the Local
   Network path reason, the remedy leads with that evidence and

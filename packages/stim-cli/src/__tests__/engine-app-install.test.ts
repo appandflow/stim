@@ -163,6 +163,21 @@ describe('the two pure port-wiring shapes', () => {
     );
   });
 
+  test('with dev-menu params the project url and the outer link each carry what the launcher reads there', () => {
+    const link = new URL(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
+    expect(link.searchParams.get('disableFab')).toBe('1');
+    expect(link.searchParams.get('disableAutoLaunch')).toBe('1');
+    const projectUrl = new URL(link.searchParams.get('url') as string);
+    expect(projectUrl.origin).toBe('http://localhost:8082');
+    expect(Object.fromEntries(projectUrl.searchParams)).toEqual({
+      disableOnboarding: '1',
+      disableFab: '1',
+      disableAutoLaunch: '1',
+      __expo_disable_fab: '1',
+      __expo_disable_auto_launch: '1',
+    });
+  });
+
   test('iOS scheme approvals cover the bundle id and dev-client scheme without duplicates', () => {
     expect(iosSchemeApprovalKeys('com.example.app', 'myapp')).toEqual([
       'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
@@ -248,7 +263,14 @@ describe('ios', () => {
         },
         { exec },
       ),
-    ).toEqual({ ok: true, appPath });
+    ).toEqual({
+      ok: true,
+      appPath,
+      schemeApprovals: [
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+      ],
+    });
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'install', 'U1', appPath],
@@ -329,7 +351,47 @@ describe('ios', () => {
       appPath,
       artifactDurationMs: 500,
       devClientPreparationDurationMs: 800,
+      schemeApprovals: [
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+      ],
     });
+  });
+
+  test('only the approvals missing from the record are written, and the record grows by them', () => {
+    const exec = recordingExec();
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath: '/tmp/My App.app',
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+        schemeApprovals: [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.other',
+        ],
+      },
+      { exec, now: () => 0 },
+    );
+    expect(exec.calls.filter((call) => call.includes('com.apple.launchservices.schemeapproval'))).toEqual([
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
+        'com.apple.launchservices.schemeapproval',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        '-string',
+        'com.example.app',
+      ],
+    ]);
+    expect(result.schemeApprovals).toEqual([
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.other',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+    ]);
   });
 
   test.each([undefined, 'ETIMEDOUT'])(
@@ -526,6 +588,26 @@ describe('ios', () => {
       'http://localhost:8082/?disableOnboarding=1',
     ]);
     expect(exec.calls).toHaveLength(3);
+  });
+
+  test('a cold launch of a launcher that reads the dev-menu params passes them on its project URL', () => {
+    const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
+    const result = launchIosApp(
+      {
+        udid: 'U1',
+        bundleId: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'myapp',
+        devMenuParams: true,
+        consolePaths: { stdout: '/container/trace.out', stderr: '/container/trace.err' },
+      },
+      { exec },
+    );
+    expect(exec.calls[2]?.slice(-2)).toEqual([
+      '--initialUrl',
+      'http://localhost:8082/?disableOnboarding=1&disableFab=1&disableAutoLaunch=1&__expo_disable_fab=1&__expo_disable_auto_launch=1',
+    ]);
+    expect(result.url).toBe(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
   });
 
   test('a cold Expo launch recovers a no-process-handle error when its app started', () => {
@@ -2894,19 +2976,40 @@ describe('skipping an install the device already holds', () => {
     expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', apkPath]);
   });
 
-  test('an identical .app is not installed again, but the dev client is still prepared', () => {
+  test('an identical .app keeps its dev-menu preferences, and recorded approvals leave nothing to prepare', () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('built.app', 'macho');
-    const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-    const result = installIosApp(
-      { udid: 'U1', appPath, bundleId: 'com.example.app', devClientScheme: 'myapp' },
-      { exec },
-    );
-    expect(result).toEqual({ ok: true, appPath, skipped: true });
-    expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
-    expect(exec.calls.some((c) => c.includes('EXDevMenuShowsAtLaunch'))).toBe(true);
-    expect(exec.calls.some((c) => c.includes('EXDevMenuShowFloatingActionButton'))).toBe(true);
-    expect(exec.calls.some((c) => c.includes('com.apple.CoreSimulator.CoreSimulatorBridge-->myapp'))).toBe(true);
+    for (const [schemeApprovals, writes] of [
+      [
+        [],
+        [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
+        ],
+      ],
+      [
+        [
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
+        ],
+        [],
+      ],
+    ] as const) {
+      const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
+      const result = installIosApp(
+        {
+          udid: 'U1',
+          appPath,
+          bundleId: 'com.example.app',
+          devClientScheme: 'myapp',
+          schemeApprovals: [...schemeApprovals],
+        },
+        { exec, now: () => 0 },
+      );
+      expect(result.skipped).toBe(true);
+      expect(exec.calls.filter((c) => c.includes('write')).map((c) => c[7])).toEqual(writes);
+      expect(result.devClientPreparationDurationMs === undefined).toBe(writes.length === 0);
+    }
   });
 
   test('a .app whose JS was swapped is installed: the container holds the other one', () => {

@@ -4879,6 +4879,41 @@ describe('an app the simulator already holds', () => {
     expect(parseFirst(logs).installSkipped).toBe(true);
   });
 
+  test('approvals the install wrote are recorded for that simulator, and recorded ones are passed on', async () => {
+    const keys = ['bridge-->com.example.app', 'bridge-->fixture'];
+    for (const [recorded, expected] of [
+      [[], [[UDID, keys, 'default']]],
+      [keys, []],
+    ] as const) {
+      reserve();
+      const recordedCalls: unknown[] = [];
+      let installArgs: unknown;
+      const { calls } = await run(
+        { json: true },
+        {
+          devClientScheme: () => 'fixture',
+          devClientTakesDevMenuParams: () => true,
+          ensureOwnedDevice: async () => ({
+            deviceUdid: UDID,
+            deviceName: 'stim-fixture',
+            owned: true,
+            schemeApprovals: recorded,
+          }),
+          installIosApp: (args) => {
+            installArgs = args;
+            return { ok: true, appPath: args.appPath, ...(recorded.length ? {} : { schemeApprovals: keys }) };
+          },
+          recordIosSchemeApprovals: (_root, udid, approvals, slot) => {
+            recordedCalls.push([udid, approvals, slot]);
+          },
+        },
+      );
+      expect(installArgs).toMatchObject({ schemeApprovals: recorded });
+      expect(calls.args.launchIosApp).toMatchObject({ devMenuParams: true });
+      expect(recordedCalls).toEqual(expected);
+    }
+  });
+
   test('an install that really ran reports installSkipped false', async () => {
     reserve();
     const { logs, stderr } = await run({ json: true });

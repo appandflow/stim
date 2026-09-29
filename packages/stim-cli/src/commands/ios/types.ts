@@ -12,6 +12,7 @@ export interface DeviceLike {
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
+  schemeApprovals?: string[];
 }
 
 export interface IosBootLike {

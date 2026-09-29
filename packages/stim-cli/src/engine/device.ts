@@ -29,6 +29,7 @@ export interface OwnedDeviceRecord {
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
+  schemeApprovals?: string[];
   poolConfiguration?: string;
   /**
    * The boot this call started, and the promise that finishes it: the wait on

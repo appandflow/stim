@@ -12,6 +12,8 @@ const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge'
 const IOS_DEV_MENU_OFF_KEYS = ['EXDevMenuShowsAtLaunch', 'EXDevMenuShowFloatingActionButton'];
 const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
 const DEV_CLIENT_DISABLE_FAB_QUERY = 'disableFab=1';
+const DEV_CLIENT_DEV_MENU_OFF_QUERY = 'disableFab=1&disableAutoLaunch=1';
+const DEV_CLIENT_RESERVED_DEV_MENU_OFF_QUERY = '__expo_disable_fab=1&__expo_disable_auto_launch=1';
 export const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
 
 function describeIosSimulatorFailure(error: unknown, exec: Executor): string {
@@ -32,6 +34,7 @@ export type IosInstallResult = {
   skipped?: boolean;
   artifactDurationMs?: number;
   devClientPreparationDurationMs?: number;
+  schemeApprovals?: string[];
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -81,12 +84,14 @@ export function installIosApp(
     appPath,
     bundleId = null,
     devClientScheme = null,
+    schemeApprovals = [],
     proveInstalled = true,
   }: {
     udid: string;
     appPath: string;
     bundleId?: string | null;
     devClientScheme?: string | null;
+    schemeApprovals?: string[];
     proveInstalled?: boolean;
   },
   { exec = null, now = null }: ExecOpt = {},
@@ -110,15 +115,19 @@ export function installIosApp(
     artifactStartedAt !== undefined && artifactFinishedAt !== undefined
       ? artifactFinishedAt - artifactStartedAt
       : undefined;
-  const preparationStartedAt = bundleId && devClientScheme ? artifactFinishedAt : undefined;
-  if (bundleId && devClientScheme) {
+  const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
+  const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
+  const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
+  const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
+  const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
+  if (bundleId && preparing) {
     try {
-      for (const key of IOS_DEV_MENU_OFF_KEYS) {
+      for (const key of devMenuKeys) {
         e.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
           timeoutMs: 60000,
         });
       }
-      for (const key of iosSchemeApprovalKeys(bundleId, devClientScheme)) {
+      for (const key of missingApprovals) {
         e.runFile(
           'xcrun',
           ['simctl', 'spawn', udid, 'defaults', 'write', IOS_SCHEME_APPROVAL_DOMAIN, key, '-string', bundleId],
@@ -138,6 +147,9 @@ export function installIosApp(
   const timing = {
     ...(artifactDurationMs === undefined ? {} : { artifactDurationMs }),
     ...(devClientPreparationDurationMs === undefined ? {} : { devClientPreparationDurationMs }),
+    ...(missingApprovals.length > 0
+      ? { schemeApprovals: [...schemeApprovals, ...missingApprovals.map((key) => `${key}=${bundleId}`)] }
+      : {}),
   };
   return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
 }
@@ -173,20 +185,34 @@ export function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
-// On iOS expo-dev-launcher reads disableOnboarding off the PROJECT url only,
-// not the outer deep link: EXDevLauncherController.m hands `devLauncherUrl.url`
-// to EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. It sets
-// EXDevMenuIsOnboardingFinished alone; EXDevMenuShowsAtLaunch is a separate
-// preference. Android reads the flag on either url. DevLauncherController.kt's
-// EXDevMenuDisableAutoLaunch extra does not disable the FAB; expo/expo#49651
-// adds the outer disableFab query parameter for that.
-export function devClientDeepLink(scheme: string, projectOrigin: string): string {
-  const projectUrl = `${projectOrigin.replace(/\/+$/, '')}/?${DEV_CLIENT_ONBOARDING_QUERY}`;
-  return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}&${DEV_CLIENT_DISABLE_FAB_QUERY}`;
+// Before expo-dev-launcher 58.0.0, iOS reads disableOnboarding off the PROJECT
+// url only: EXDevLauncherController.m hands `devLauncherUrl.url` to
+// EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. Android reads it on
+// either url. From 58.0.0 (expo/expo#49651) iOS `loadApp:` reads disableFab and
+// disableAutoLaunch off the url it is handed, which is the project url alone
+// under `simctl launch --initialUrl`. From 58.0.7 (expo/expo#50287) `loadApp:`
+// reads only the `__expo_` spellings there, so the project url carries both.
+// Android and `simctl openurl` read the legacy names on the outer link.
+export function devClientDeepLink(
+  scheme: string,
+  projectOrigin: string,
+  { devMenuParams = false }: { devMenuParams?: boolean } = {},
+): string {
+  const projectQuery = devMenuParams
+    ? `${DEV_CLIENT_ONBOARDING_QUERY}&${DEV_CLIENT_DEV_MENU_OFF_QUERY}&${DEV_CLIENT_RESERVED_DEV_MENU_OFF_QUERY}`
+    : DEV_CLIENT_ONBOARDING_QUERY;
+  const projectUrl = `${projectOrigin.replace(/\/+$/, '')}/?${projectQuery}`;
+  const outerQuery = devMenuParams ? DEV_CLIENT_DEV_MENU_OFF_QUERY : DEV_CLIENT_DISABLE_FAB_QUERY;
+  return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}&${outerQuery}`;
 }
 
-export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost'): string {
-  return devClientDeepLink(scheme, `http://${host}:${metroPort}`);
+export function devClientUrl(
+  scheme: string,
+  metroPort: number | string,
+  host = 'localhost',
+  options: { devMenuParams?: boolean } = {},
+): string {
+  return devClientDeepLink(scheme, `http://${host}:${metroPort}`, options);
 }
 
 export function iosSchemeApprovalKeys(bundleId: string, devClientScheme: string): string[] {
@@ -242,12 +268,14 @@ export function launchIosApp(
     bundleId,
     metroPort,
     devClientScheme = null,
+    devMenuParams = false,
     consolePaths,
   }: {
     udid: string;
     bundleId: string;
     metroPort: number | string | null;
     devClientScheme?: string | null;
+    devMenuParams?: boolean;
     consolePaths?: { stdout: string; stderr: string };
   },
   { exec = null }: ExecOpt = {},
@@ -291,7 +319,7 @@ export function launchIosApp(
     }
 
     if (devClientScheme) {
-      const url = devClientUrl(devClientScheme, metroPort);
+      const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });
       let launchedWithInitialUrl = false;
       try {
         if (consolePaths && runningPid === null) {
