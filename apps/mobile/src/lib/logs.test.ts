@@ -1,3 +1,4 @@
+import agentFixture from '../../../desktop/Tests/StimKitTests/Fixtures/agent-actions-vectors.json';
 import captured from '@/lib/fixtures/metro-errors.json';
 import {
   actionsAt,
@@ -19,9 +20,20 @@ import {
   stackLines,
   stackPreview,
   viewEntry,
+  type AgentAction,
   type LogChip,
 } from '@/lib/logs';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
+
+const agentVectors = agentFixture as unknown as {
+  append: {
+    name: string;
+    deviceId: string;
+    max: number;
+    batches: { records: LogRecord[]; ts: number[]; keys: number[] }[];
+  }[];
+  filters: { name: string; records: LogRecord[]; options: { label: string; count: number; ts: number[] }[] }[];
+};
 
 describe('logFilter', () => {
   it('sends no sources when every source is on, so Errors keeps the CLI default scope', () => {
@@ -191,27 +203,13 @@ describe('agentActions', () => {
     deviceId,
   });
 
-  it('keeps only the device own actions, newest first, up to five', () => {
-    const sim = '2FA9C340-A259-4420-A617-316DC159FF84';
-    const first = agentActions([], [action(1, sim), action(2, 'emulator-5554'), action(3, sim)], sim, 5);
-    expect(first.map((a) => a.record.ts)).toEqual([3, 1]);
-    const next = agentActions(
-      first,
-      [4, 5, 6, 7].map((ts) => action(ts, sim)),
-      sim,
-      5,
-    );
-    expect(next.map((a) => a.record.ts)).toEqual([7, 6, 5, 4, 3]);
-  });
-
-  it('keeps two identical actions in the same millisecond as two rows with distinct, stable keys', () => {
-    const sim = 'sim';
-    const first = agentActions([], [action(1, sim), action(1, sim)], sim, 5);
-    expect(first.map((a) => a.record)).toEqual([action(1, sim), action(1, sim)]);
-    expect(new Set(first.map((a) => a.key)).size).toBe(2);
-    const next = agentActions(first, [action(1, sim)], sim, 5);
-    expect(next.slice(1)).toEqual(first);
-    expect(new Set(next.map((a) => a.key)).size).toBe(3);
+  it.each(agentVectors.append.map((c) => [c.name, c] as const))('%s', (_, { deviceId, max, batches }) => {
+    let actions: AgentAction[] = [];
+    for (const batch of batches) {
+      actions = agentActions(actions, batch.records, deviceId, max);
+      expect(actions.map((a) => a.record.ts)).toEqual(batch.ts);
+      expect(actions.map((a) => a.key)).toEqual(batch.keys);
+    }
   });
 
   it('shows in replay only the actions at or before the playhead, newest first', () => {
@@ -228,22 +226,15 @@ describe('agentActions', () => {
 });
 
 describe('agentFilterOptions', () => {
-  it('offers failed actions when any failed, then the most used commands, each with its count', () => {
-    const actions = [
-      ['tap', 'info'],
-      ['tap', 'info'],
-      ['find', 'error'],
-      ['snapshot', 'info'],
-      ['tap', 'info'],
-    ].map(([command, level], key) => ({
-      key,
-      record: { ts: key, src: 'agent' as const, level: level as LogRecord['level'], msg: command!, command },
-    }));
+  it.each(agentVectors.filters.map((c) => [c.name, c] as const))('%s', (_, { records, options: expected }) => {
+    const actions = records.map((record, key) => ({ key, record }));
     const options = agentFilterOptions(actions);
-    expect(options.map((o) => `${o.label} ${o.count}`)).toEqual(['All 5', 'Failed 1', 'tap 3', 'find 1']);
-    expect(actions.filter((a) => matchesAgentFilter(a, options[1]!.filter)).map((a) => a.record.command)).toEqual([
-      'find',
-    ]);
+    expect(options.map((o) => ({ label: o.label, count: o.count }))).toEqual(
+      expected.map((o) => ({ label: o.label, count: o.count })),
+    );
+    expect(options.map((o) => actions.filter((a) => matchesAgentFilter(a, o.filter)).map((a) => a.record.ts))).toEqual(
+      expected.map((o) => o.ts),
+    );
   });
 });
 

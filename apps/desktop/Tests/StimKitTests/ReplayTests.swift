@@ -203,6 +203,9 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let timeline = try #require(ReplayTimeline(spans: spans))
     #expect(timeline.seekTime(for: ReplayMarker(at: 2 * minute, kind: "action", label: "Tapped")) == 2 * minute - 1500)
     #expect(timeline.seekTime(for: ReplayMarker(at: 2 * hour + 500, kind: "error", label: "boom")) == 2 * hour)
+    #expect(timeline.seekTime(forActionAt: 2 * minute) == 2 * minute - 1500)
+    #expect(timeline.seekTime(forActionAt: 2 * hour + 500) == 2 * hour)
+    #expect(timeline.seekTime(forActionAt: hour) == nil)
     #expect([40_000, 14 * minute, 2 * hour, 72 * hour].map(ReplayTimeline.shortDuration) == ["40s", "14m", "2h", "3d"])
   }
 

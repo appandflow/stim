@@ -6,6 +6,8 @@ struct LogsView: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   @Binding var query: LogQuery
+  /// A moment to scroll to and select, taken and cleared once the logs follow `query`.
+  @Binding var moment: LogMoment?
   @StateObject private var model = LogsModel()
   @State private var search = ""
   @State private var selection = IndexSet()
@@ -44,6 +46,12 @@ struct LogsView: View {
     }
     .background(Palette.background)
     .onAppear { search = query.search }
+    .onChange(of: query.search) { _, text in search = text }
+    .onChange(of: moment?.id, initial: true) {
+      guard let moment else { return }
+      model.reveal(at: moment.at, in: effectiveQuery)
+      self.moment = nil
+    }
     .task(id: search) {
       guard search != query.search else { return }
       try? await Task.sleep(for: .milliseconds(350))
@@ -194,6 +202,12 @@ struct LogsView: View {
       return "agent: what agent-device did on this workspace's simulators and emulators, and agent input on its Chrome page"
     }
   }
+}
+
+struct LogMoment: Equatable {
+  let id = UUID()
+  /// Epoch milliseconds.
+  var at: Double
 }
 
 private struct ToggleChip<Content: View>: View {

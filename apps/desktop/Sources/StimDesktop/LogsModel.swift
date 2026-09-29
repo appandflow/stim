@@ -19,6 +19,7 @@ final class LogsModel: ObservableObject {
     /// This many rows were removed from the front.
     case trimmed(Int)
     case jumpToLatest
+    case reveal(Int)
   }
 
   private(set) var records: [LogRecord] = []
@@ -28,12 +29,16 @@ final class LogsModel: ObservableObject {
   var onChange: ((Change) -> Void)?
 
   private var session = 0
+  private var following: LogQuery?
+  private var pending: (at: Double, query: LogQuery)?
   private lazy var follower = LogFollower { [weak self] event in self?.handle(event) }
 
   /// Replaces the running query. Pass the returned session to `stop` so a
   /// stale stop cannot end a newer query.
   func start(_ query: LogQuery, cli: StimCLI, cwd: String) -> Int {
     session += 1
+    following = query
+    if let pending, pending.query != query { self.pending = nil }
     records = []
     count = 0
     phase = .following
@@ -54,6 +59,21 @@ final class LogsModel: ObservableObject {
     onChange?(.jumpToLatest)
   }
 
+  /// Scrolls to and selects the first record at or after `at`, epoch ms, once `query` is followed and that record
+  /// has arrived.
+  func reveal(at: Double, in query: LogQuery) {
+    pending = (at, query)
+    revealPending()
+  }
+
+  private func revealPending() {
+    guard let pending, pending.query == following, let row = records.firstIndex(where: { $0.ts >= pending.at })
+    else { return }
+    self.pending = nil
+    pinnedToLatest = false
+    onChange?(.reveal(row))
+  }
+
   private func handle(_ event: LogFollower.Event) {
     switch event {
     case .records(let batch):
@@ -67,6 +87,7 @@ final class LogsModel: ObservableObject {
         count = records.count
         onChange?(.appended)
       }
+      revealPending()
     case .exited(let status, let stderr):
       let detail = stderr.suffix(3).joined(separator: "\n")
       phase = .ended(detail.isEmpty ? "stim logs exited with status \(status)." : detail)

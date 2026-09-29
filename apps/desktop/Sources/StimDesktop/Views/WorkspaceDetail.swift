@@ -15,6 +15,7 @@ struct WorkspaceDetail: View {
   @State private var stats: ProjectStats?
   @State private var contentHeight: CGFloat = 0
   @State private var viewing: ViewedDevice?
+  @State private var logMoment: LogMoment?
   @EnvironmentObject private var actions: ActionCenter
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
@@ -60,8 +61,11 @@ struct WorkspaceDetail: View {
     }
     .navigationTitle(env.names.title)
     .sheet(item: $viewing) { viewed in
-      DeviceViewer(cli: cli, env: env, deviceID: viewed.id, machine: machine) { viewing = nil }
-        .environmentObject(actions)
+      DeviceViewer(
+        cli: cli, env: env, deviceID: viewed.id, machine: machine, revealInLogs: revealAgentActions,
+        close: { viewing = nil }, showsAgentLog: viewed.showsAgentLog
+      )
+      .environmentObject(actions)
     }
     .task(id: env.path) {
       let path = env.path
@@ -87,7 +91,7 @@ struct WorkspaceDetail: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         if showsLogs {
           Rectangle().fill(Palette.border).frame(height: 1).overlay { logsResizeHandle }
-          LogsView(cli: cli, env: env, query: $logQuery)
+          LogsView(cli: cli, env: env, query: $logQuery, moment: $logMoment)
             .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
         }
       }
@@ -230,11 +234,41 @@ struct WorkspaceDetail: View {
       .help("Open \(device.label) to take it over or replay what it recorded")
       .accessibilityLabel("Open \(device.label)")
     }
+    .overlayPreferenceValue(ActivityChipAnchor.self) { anchor in
+      if let anchor, device.isRunning, !device.isPhysical, device.activityKey != nil {
+        GeometryReader { proxy in
+          let chip = proxy[anchor]
+          Button {
+            focusedID = device.id
+            viewing = ViewedDevice(id: device.id, showsAgentLog: true)
+          } label: {
+            Color.clear.contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .frame(width: chip.width, height: chip.height)
+          .offset(x: chip.minX, y: chip.minY)
+          .help("Show what agents did on \(device.label)")
+          .accessibilityLabel("Agent actions on \(device.label)")
+        }
+      }
+    }
+  }
+
+  /// Shows the agent source of `slot` in the logs drawer, scrolled to `at` when given.
+  private func revealAgentActions(slot: String, at: Double?) {
+    logQuery.sources = [.agent]
+    logQuery.slot = slot
+    logQuery.minimumLevel = .debug
+    logQuery.errorsOnly = false
+    logQuery.search = ""
+    showsLogs = true
+    logMoment = at.map { LogMoment(at: $0) }
   }
 }
 
 struct ViewedDevice: Identifiable {
   var id: String
+  var showsAgentLog = false
 }
 
 extension DeviceRef {
