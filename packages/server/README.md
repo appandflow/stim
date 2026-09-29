@@ -184,7 +184,7 @@ closes its connections, which cancels its builds.
   `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
   average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
-  compile, plus the offloaded builds), `maxBuilds` (its
+  compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
   `offload.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
   build now, or null. It declines while it runs its limit of offloaded builds,

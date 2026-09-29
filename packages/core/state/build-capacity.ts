@@ -11,7 +11,7 @@ const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
 /**
  * How busy this Mac is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
  * rounded to one decimal. `builds` counts this Stim home's runs that hold a live native-run claim and are in
- * prebuild, pods or compile. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
+ * prebuild, pods or compile here, not on a build machine. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
  */
 export interface MachineCapacity {
   cpus: number;
@@ -45,8 +45,12 @@ function liveNativeBuilds(): number {
       continue;
     }
     if (!active || typeof active !== 'object') continue;
-    const { phase, claim } = active as { phase?: unknown; claim?: { root?: unknown; claimId?: unknown } };
-    if (typeof phase !== 'string' || !NATIVE_PHASES.has(phase)) continue;
+    const { phase, claim, placement } = active as {
+      phase?: unknown;
+      claim?: { root?: unknown; claimId?: unknown };
+      placement?: unknown;
+    };
+    if (typeof phase !== 'string' || !NATIVE_PHASES.has(phase) || placement) continue;
     if (typeof claim?.root !== 'string' || typeof claim.claimId !== 'string') continue;
     try {
       if (readClaimSet(claim.root).live.some((holder) => holder.claimId === claim.claimId)) count += 1;

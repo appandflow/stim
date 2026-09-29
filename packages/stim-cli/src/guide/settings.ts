@@ -535,7 +535,8 @@ emulator debug build compiles:
   off    always here
 
 Load per core is the 5-minute load average divided by the CPU count; a Mac's
-native builds are its Stim runs in prebuild, pods or compile.
+native builds are its Stim runs in prebuild, pods or compile on that Mac, not
+the ones it offloaded.
 \`offload.maxLoadPerCore\` (default 2) is the load per core at which a Mac
 counts as saturated, both here and on a build machine.
 

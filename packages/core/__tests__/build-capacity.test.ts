@@ -1,6 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { workspaceStateDir } from '../index.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { machineCapacity, saturation, type MachineCapacity } from '../state/build-capacity.ts';
 
 const IDLE: MachineCapacity = { cpus: 10, loadPerCore: 0.4, builds: 1, maxBuilds: 2, maxLoadPerCore: 2 };
@@ -36,5 +38,25 @@ describe('machineCapacity', () => {
       JSON.stringify({ concurrency: { maxBuilds: 3 }, offload: { maxLoadPerCore: 1.5 } }),
     );
     expect(machineCapacity()).toMatchObject({ maxBuilds: 3, maxLoadPerCore: 1.5 });
+  });
+
+  it('counts runs compiling here, not runs offloaded to a build machine', () => {
+    const claim = tryAcquireClaim({ root: join(home, 'native-run'), mode: 'exclusive', label: 'native run' }).acquired!;
+    const write = (project: string, activeBuild: Record<string, unknown>) => {
+      mkdirSync(workspaceStateDir(join(home, project)), { recursive: true });
+      writeFileSync(
+        join(workspaceStateDir(join(home, project)), 'state.json'),
+        JSON.stringify({ activeBuild: { ...activeBuild, claim: { root: claim.root, claimId: claim.claimId } } }),
+      );
+    };
+    write('here', { phase: 'compile' });
+    write('installing', { phase: 'install' });
+    write('offloaded', {
+      phase: 'compile',
+      placement: { host: 'mini', phase: 'build', startedAt: 'x', phaseStartedAt: 'x' },
+    });
+    expect(machineCapacity().builds).toBe(1);
+    releaseClaim(claim);
+    expect(machineCapacity().builds).toBe(0);
   });
 });

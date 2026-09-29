@@ -231,7 +231,6 @@ export class BuildHost {
     };
   }
 
-  /** How busy this Mac is, and why it would decline a build now. */
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;

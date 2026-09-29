@@ -281,7 +281,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'disk':
       return `Free space on ${entry}'s worker root (offload.workerRoot there).`;
     case 'busy':
-      return `Builds stay on this Mac until ${entry} has capacity; offload.maxLoadPerCore on ${entry} sets the load it accepts.`;
+      return `Builds stay on this Mac until ${entry} has capacity. On ${entry}, offload.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs; it takes one offloaded build at a time.`;
   }
 }
 

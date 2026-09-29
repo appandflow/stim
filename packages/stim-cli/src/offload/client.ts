@@ -44,7 +44,6 @@ export function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
 }
 
-/** A build machine's progress line without the phase name it repeats, attributed to the machine. */
 export function remotePhaseText(name: string, msg: string, machine: string): string {
   const text = msg.trim();
   return `${text.startsWith(`${name} `) ? text.slice(name.length).trimStart() : text} (on ${machine})`;
@@ -52,7 +51,6 @@ export function remotePhaseText(name: string, msg: string, machine: string): str
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-/** `load 0.4/core, 1 build`, with the slot count when the Mac caps its builds. */
 function capacityText(capacity: Pick<MachineCapacity, 'loadPerCore' | 'builds' | 'maxBuilds'>): string {
   const builds =
     capacity.maxBuilds > 0
@@ -61,7 +59,6 @@ function capacityText(capacity: Pick<MachineCapacity, 'loadPerCore' | 'builds' |
   return `load ${capacity.loadPerCore}/core, ${builds}`;
 }
 
-/** `; load 0.4/core, 0 builds there` for the chosen machine's placement line, or nothing from an older one. */
 export function placementLoad(choice: { offer: BuildOffer }): string {
   const { loadPerCore, builds, maxBuilds } = choice.offer.capacity;
   if (typeof loadPerCore !== 'number' || typeof builds !== 'number') return '';
@@ -539,7 +536,6 @@ export async function offloadBuild({
   request: BuildRequest;
   stagingDir: string;
   onPhase: (phase: string, msg: string) => void;
-  /** Called as the build enters each remote phase: sync, then the worker's own phases, then fetch. */
   onEnter: (phase: string) => void;
   onRecord: (record: Record<string, unknown>) => void;
 }): Promise<OffloadOutcome> {
