@@ -177,3 +177,156 @@ import Testing
     #expect(follower.runningProcess == nil)
   }
 }
+
+@Suite struct LogEntryTests {
+  struct Vectors: Decodable {
+    struct View: Decodable, Equatable {
+      var title: String
+      var location: String?
+      var codeFrame: [String]
+      var details: [String]
+    }
+
+    struct Entry: Decodable, Equatable {
+      var lead: Int
+      var related: [Int]
+      var context: [String]
+      var view: View
+    }
+
+    struct GroupCase: Decodable {
+      var name: String
+      var records: [LogRecord]
+      var entries: [Entry]
+    }
+
+    struct Frame: Decodable {
+      var fn: String
+      var `where`: String
+      var app: Bool
+    }
+
+    struct Preview: Decodable {
+      var frames: [Frame]
+      var hidden: Int
+      var hiddenFramework: Bool
+    }
+
+    struct PreviewCase: Decodable {
+      var name: String
+      var root: String
+      var home: String
+      var stack: [StackFrame]
+      var preview: Preview?
+    }
+
+    struct PathCase: Decodable {
+      var text: String
+      var root: String?
+      var home: String?
+      var shown: String
+    }
+
+    var root: String
+    var home: String
+    var groups: [GroupCase]
+    var previews: [PreviewCase]
+    var paths: [PathCase]
+  }
+
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(forResource: "log-entries-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
+
+  @Test(arguments: vectors.groups.map(\.name))
+  func groupsAndShowsWhatThePhoneShows(name: String) throws {
+    let c = try #require(Self.vectors.groups.first { $0.name == name })
+    let index = { (record: LogRecord) in c.records.firstIndex { $0.ts == record.ts && $0.msg == record.msg }! }
+    var list = LogEntryList()
+    list.append(c.records)
+    let entries = list.entries.map { entry in
+      let view = viewEntry(entry, root: Self.vectors.root, home: Self.vectors.home)
+      return Vectors.Entry(
+        lead: index(entry.lead), related: entry.related.map(index), context: entry.context,
+        view: .init(title: view.title, location: view.location, codeFrame: view.codeFrame, details: view.details))
+    }
+    #expect(entries == c.entries)
+    for (i, entry) in c.entries.enumerated() {
+      #expect(
+        ([entry.lead] + entry.related).map { list.entryIndex(ofRecord: $0) }
+          == Array(repeating: i, count: entry.related.count + 1))
+    }
+  }
+
+  static let stream: [LogRecord] = {
+    var out: [LogRecord] = []
+    for (i, c) in vectors.groups.enumerated() {
+      for (j, record) in c.records.enumerated() {
+        var record = record
+        record.ts += Double(i) * 10_000
+        out.append(record)
+        if j % 3 == 1 {
+          var device = record
+          device.src = "device"
+          device.raw = nil
+          device.marker = nil
+          device.event = nil
+          device.msg = "device \(i) \(j)"
+          out.append(device)
+        }
+      }
+    }
+    return out
+  }()
+
+  static func describe(_ entries: [LogEntry]) -> [String] {
+    entries.map { e in
+      ([e.lead.msg] + e.related.map(\.msg) + ["\(e.relatedBefore)"] + e.context).joined(separator: " | ")
+    }
+  }
+
+  @Test(arguments: [1, 2, 3, 7, 50])
+  func streamsTheSameEntriesInAnyBatchSize(size: Int) {
+    var whole = LogEntryList()
+    whole.append(Self.stream)
+    var list = LogEntryList()
+    for start in stride(from: 0, to: Self.stream.count, by: size) {
+      let before = Self.describe(list.entries)
+      let changed = list.append(Array(Self.stream[start..<min(start + size, Self.stream.count)]))
+      #expect(Array(Self.describe(list.entries).prefix(changed)) == Array(before.prefix(changed)))
+    }
+    #expect(Self.describe(list.entries) == Self.describe(whole.entries))
+  }
+
+  @Test(arguments: [1, 5, 12, 20, 40])
+  func dropsWholeEntriesAndKeepsTheRestAsGroupingThemAgainWould(count: Int) {
+    var list = LogEntryList()
+    list.append(Self.stream)
+    let before = list.entries.count
+    let dropped = list.dropOldest(count)
+    #expect(list.records.count <= Self.stream.count - count)
+    var again = LogEntryList()
+    again.append(list.records)
+    #expect(Self.describe(list.entries) == Self.describe(again.entries))
+    #expect(before - dropped == list.entries.count)
+  }
+
+  @Test(arguments: vectors.previews.map(\.name))
+  func previewsWhatThePhonePreviews(name: String) throws {
+    let c = try #require(Self.vectors.previews.first { $0.name == name })
+    let preview = stackPreview(c.stack, root: c.root, home: c.home)
+    #expect(preview?.frames.map(\.fn) == c.preview?.frames.map(\.fn))
+    #expect(preview?.frames.map(\.location) == c.preview?.frames.map(\.where))
+    #expect(preview?.frames.map(\.app) == c.preview?.frames.map(\.app))
+    #expect(preview?.hidden == c.preview?.hidden)
+    #expect(preview?.hiddenFramework == c.preview?.hiddenFramework)
+  }
+
+  @Test(arguments: vectors.paths.map(\.text))
+  func shortensPathsAsThePhoneDoes(text: String) throws {
+    for c in Self.vectors.paths where c.text == text {
+      #expect(tildeHome(relativeTo(c.text, root: c.root), home: c.home) == c.shown)
+    }
+  }
+}

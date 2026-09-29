@@ -36,9 +36,9 @@ struct LogsView: View {
         LogTable(model: model, selection: $selection)
         overlay
       }
-      if let record = selectedRecord {
+      if let row = selectedRow {
         Rectangle().fill(Palette.border).frame(height: 1)
-        RecordDetail(record: record)
+        EntryDetail(row: row)
           .frame(height: 170)
       }
       Rectangle().fill(Palette.border).frame(height: 1)
@@ -66,9 +66,9 @@ struct LogsView: View {
     }
   }
 
-  private var selectedRecord: LogRecord? {
-    guard selection.count == 1, let row = selection.first, row < model.records.count else { return nil }
-    return model.records[row]
+  private var selectedRow: LogsModel.Row? {
+    guard selection.count == 1, let row = selection.first, row < model.rows.count else { return nil }
+    return model.rows[row]
   }
 
   private var filterBar: some View {
@@ -176,8 +176,8 @@ struct LogsView: View {
   }
 
   private func copy() {
-    let rows = selection.isEmpty ? IndexSet(model.records.indices) : selection
-    let text = rows.filter { $0 < model.records.count }.map { model.records[$0].plainText }.joined(separator: "\n")
+    let rows = selection.isEmpty ? IndexSet(model.rows.indices) : selection
+    let text = rows.filter { $0 < model.rows.count }.map { model.rows[$0].entry.plainText }.joined(separator: "\n")
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
   }
@@ -221,30 +221,124 @@ private struct ToggleChip<Content: View>: View {
   }
 }
 
-private struct RecordDetail: View {
-  var record: LogRecord
+/// The selected entry in full: its message, location, code frame, other records and whole stack, selectable.
+private struct EntryDetail: NSViewRepresentable {
+  var row: LogsModel.Row
 
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: Space.sm) {
-        HStack(spacing: Space.md) {
-          Text(record.date.formatted(LogRecord.timeFormat)).foregroundStyle(Palette.tertiary)
-          Text(record.level.rawValue.uppercased()).foregroundStyle(LogRowText.color(record.level))
-          Text(LogRowText.sourceLabel(record.src)).foregroundStyle(Palette.primary)
-          if let slot = record.slot { Text(slot).foregroundStyle(Palette.accent) }
-          if let event = record.event { Text(event).foregroundStyle(Palette.tertiary) }
-          if let proc = record.proc { Text(proc).foregroundStyle(Palette.tertiary) }
-        }
-        Text(abbreviatingHome(record.msg)).foregroundStyle(Palette.text)
-        ForEach(Array((record.stack ?? []).enumerated()), id: \.offset) { _, frame in
-          Text("  at \(abbreviatingHome(frame.description))").foregroundStyle(Palette.secondary)
-        }
-      }
-      .font(.stim(.footnote, mono: true))
-      .textSelection(.enabled)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(Space.lg)
+  func makeNSView(context: Context) -> NSScrollView {
+    let text = CodeFrameTextView(usingTextLayoutManager: false)
+    text.isEditable = false
+    text.isSelectable = true
+    text.drawsBackground = false
+    text.textContainerInset = NSSize(width: Space.md, height: Space.lg)
+    text.isVerticallyResizable = true
+    text.autoresizingMask = [.width]
+    text.textContainer?.widthTracksTextView = true
+    let scroll = NSScrollView()
+    scroll.documentView = text
+    scroll.hasVerticalScroller = true
+    scroll.drawsBackground = true
+    scroll.backgroundColor = NSColor(Palette.sidebar)
+    return scroll
+  }
+
+  struct Shown: Equatable {
+    var ts: Double
+    var src: String
+    var related: Int
+    var view: LogEntryView
+  }
+
+  final class Coordinator {
+    var shown: Shown?
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
+  func updateNSView(_ scroll: NSScrollView, context: Context) {
+    let shown = Shown(ts: row.entry.lead.ts, src: row.entry.lead.src, related: row.entry.related.count, view: row.view)
+    guard shown != context.coordinator.shown, let text = scroll.documentView as? CodeFrameTextView else { return }
+    context.coordinator.shown = shown
+    let (string, codeFrame) = Self.text(row)
+    text.textStorage?.setAttributedString(string)
+    text.codeFrame = codeFrame
+    text.needsDisplay = true
+    text.scroll(.zero)
+  }
+
+  static func text(_ row: LogsModel.Row) -> (NSAttributedString, NSRange?) {
+    let record = row.entry.lead
+    let out = NSMutableAttributedString()
+    func add(_ string: String, _ color: Color, bold: Bool = false, paragraph: NSParagraphStyle? = nil) {
+      var attributes = LogRowText.attributes(color, bold: bold)
+      attributes[.paragraphStyle] = paragraph ?? Self.paragraph
+      out.append(NSAttributedString(string: string, attributes: attributes))
     }
-    .background(Palette.sidebar)
+    var meta = [record.date.formatted(LogRecord.timeFormat)]
+    meta += [record.slot, record.event, record.proc].compactMap { $0 }
+    if !row.entry.related.isEmpty { meta.append("\(row.entry.related.count + 1) records") }
+    add(record.level.rawValue.uppercased() + "  ", LogRowText.color(record.level))
+    add(LogRowText.sourceLabel(record.src) + "  ", Palette.primary)
+    add(meta.joined(separator: "  ") + "\n", Palette.tertiary)
+    add(row.view.title + "\n", Palette.text)
+    if let location = row.view.location { add(location + "\n", Palette.text, bold: true) }
+    var codeFrame: NSRange?
+    if !row.view.codeFrame.isEmpty {
+      let before = (out.string as NSString).paragraphRange(for: NSRange(location: out.length - 1, length: 0))
+      out.addAttribute(.paragraphStyle, value: Self.spaced(Self.paragraph), range: before)
+      let start = out.length
+      let lines = row.view.codeFrame
+      if lines.count > 1 {
+        add(lines.dropLast().joined(separator: "\n") + "\n", Palette.text, paragraph: Self.codeParagraph)
+      }
+      add(lines.last! + "\n", Palette.text, paragraph: Self.spaced(Self.codeParagraph))
+      codeFrame = NSRange(location: start, length: out.length - start)
+    }
+    for note in row.view.notes { add(note + "\n", Palette.secondary) }
+    for line in row.view.stack {
+      add("  " + line.text + "\n", line.app ? Palette.text : Palette.tertiary, bold: line.app)
+    }
+    return (out, codeFrame)
+  }
+
+  private static let paragraph: NSParagraphStyle = {
+    let style = NSMutableParagraphStyle()
+    style.paragraphSpacing = 2
+    return style
+  }()
+
+  private static func spaced(_ style: NSParagraphStyle) -> NSParagraphStyle {
+    let spaced = style.mutableCopy() as! NSMutableParagraphStyle
+    spaced.paragraphSpacing = Space.md + Space.xs
+    return spaced
+  }
+
+  private static let codeParagraph: NSParagraphStyle = {
+    let style = NSMutableParagraphStyle()
+    style.firstLineHeadIndent = Space.md
+    style.headIndent = Space.md
+    style.lineBreakMode = .byClipping
+    return style
+  }()
+}
+
+/// Draws one box behind the code frame lines.
+private final class CodeFrameTextView: NSTextView {
+  var codeFrame: NSRange?
+
+  override func drawBackground(in rect: NSRect) {
+    super.drawBackground(in: rect)
+    guard let codeFrame, let layoutManager, let textContainer else { return }
+    let glyphs = layoutManager.glyphRange(forCharacterRange: codeFrame, actualCharacterRange: nil)
+    var box = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+    box.origin.x = textContainerOrigin.x
+    box.origin.y += textContainerOrigin.y
+    box.size.width = textContainer.size.width
+    box = box.insetBy(dx: 0, dy: -Space.xs)
+    let path = NSBezierPath(roundedRect: box, xRadius: Radius.small, yRadius: Radius.small)
+    NSColor(Palette.surface).setFill()
+    path.fill()
+    NSColor(Palette.border).setStroke()
+    path.stroke()
   }
 }

@@ -25,7 +25,11 @@ public struct LogRecord: Decodable, Sendable {
   public var platform: String?
   public var proc: String?
   public var marker: Bool?
+  /// A line a child process printed, recorded as is.
+  public var raw: Bool?
   public var stack: [StackFrame]?
+  /// The code frame and stack lines `stim logs --errors --json` attaches to an Expo error.
+  public var context: [String]?
   /// The simulator UDID or emulator serial an `agent` record's action ran on.
   public var deviceId: String?
   /// The agent-device command an `agent` record ran, such as `tap`.
@@ -35,7 +39,7 @@ public struct LogRecord: Decodable, Sendable {
   public var date: Date { Date(timeIntervalSince1970: ts / 1000) }
 
   enum CodingKeys: String, CodingKey {
-    case ts, src, level, msg, slot, event, platform, proc, marker, stack, deviceId, command
+    case ts, src, level, msg, slot, event, platform, proc, marker, raw, stack, context, deviceId, command
   }
 
   public init(from decoder: Decoder) throws {
@@ -49,7 +53,9 @@ public struct LogRecord: Decodable, Sendable {
     platform = try? c.decodeIfPresent(String.self, forKey: .platform)
     proc = try? c.decodeIfPresent(String.self, forKey: .proc)
     marker = try? c.decodeIfPresent(Bool.self, forKey: .marker)
+    raw = try? c.decodeIfPresent(Bool.self, forKey: .raw)
     stack = try? c.decodeIfPresent([StackFrame].self, forKey: .stack)
+    context = try? c.decodeIfPresent([String].self, forKey: .context)
     deviceId = try? c.decodeIfPresent(String.self, forKey: .deviceId)
     command = try? c.decodeIfPresent(String.self, forKey: .command)
   }
