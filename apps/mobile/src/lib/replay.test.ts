@@ -60,6 +60,15 @@ describe('the replay timeline', () => {
     expect(scale(next)).toBeCloseTo(MINUTE / WINDOW_STEP_MS / 6, 9);
   });
 
+  it('keeps its length while footage hovers around a whole minute as the Mac prunes it', () => {
+    const atCap = buildTimeline([{ start: 0, end: 15 * MINUTE }], 15 * MINUTE + 20_000)!;
+    expect(atCap.length).toBe(16 * MINUTE);
+    const pruned = buildTimeline([{ start: 25_000, end: 15 * MINUTE + 25_000 }], undefined, atCap.length)!;
+    expect(pruned.length).toBe(16 * MINUTE);
+    expect(buildTimeline([{ start: 25_000, end: 15 * MINUTE + 25_000 }])!.length).toBe(15 * MINUTE);
+    expect(buildTimeline([{ start: 0, end: 5 * MINUTE }], undefined, atCap.length)!.length).toBe(5 * MINUTE);
+  });
+
   it('maps a time to its place and back, and a place in a gap to the recording after it', () => {
     const timeline = buildTimeline(spans)!;
     const at = 2 * HOUR + 3 * MINUTE;
@@ -96,21 +105,23 @@ describe('the replay timeline', () => {
     const width = 360;
     const labels = layoutGapLabels(timeline.pieces, width);
     expect(labels.map((label) => label.text)).toEqual(['stopped 46s']);
-    expect(layoutGapLabels(timeline.pieces, 2000).map((label) => label.text)).toEqual([
-      'stopped 11s',
-      'stopped 46s',
-      'stopped 24s',
-    ]);
+    const wide = layoutGapLabels(timeline.pieces, 2000);
+    expect(wide.map((label) => label.text)).toEqual(['stopped 11s', 'stopped 46s', 'stopped 24s']);
     const edge = buildTimeline([
       { start: 0, end: 1_000 },
       { start: 12_000, end: 4 * MINUTE },
     ])!;
     expect(layoutGapLabels(edge.pieces, width)[0]!.left).toBe(0);
-    for (const [index, label] of labels.entries()) {
-      expect(label.left).toBeGreaterThanOrEqual(0);
-      expect(label.left + label.width).toBeLessThanOrEqual(width);
-      const next = labels[index + 1];
-      if (next) expect(label.left + label.width).toBeLessThanOrEqual(next.left);
+    for (const [laid, trackWidth] of [
+      [labels, width],
+      [wide, 2000],
+    ] as const) {
+      for (const [index, label] of laid.entries()) {
+        expect(label.left).toBeGreaterThanOrEqual(0);
+        expect(label.left + label.width).toBeLessThanOrEqual(trackWidth);
+        const next = laid[index + 1];
+        if (next) expect(label.left + label.width).toBeLessThanOrEqual(next.left);
+      }
     }
   });
 

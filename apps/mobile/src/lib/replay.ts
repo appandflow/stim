@@ -2,7 +2,10 @@ import type { ReplayMarker, ReplaySpan } from '@/protocol/types';
 
 /** A stop longer than this takes only this much of the track, so hours stopped do not squeeze the footage flat. */
 export const LONG_GAP_MS = 60_000;
-/** The track's length is a whole number of these, so it rescales at most once per step as footage grows. */
+/**
+ * The track's length is a whole number of these, so it rescales at most once per step as footage grows. It shrinks
+ * only by two steps or more, so footage that hovers around a step as stim-server prunes it does not flip the scale.
+ */
 export const WINDOW_STEP_MS = 60_000;
 
 export type TimelinePiece =
@@ -19,14 +22,21 @@ export interface Timeline {
   start: number;
   end: number;
   spans: readonly ReplaySpan[];
+  /** The track's length in milliseconds of track time. */
+  length: number;
   pieces: TimelinePiece[];
 }
 
 /**
  * Every time on the timeline is a Mac capture time; a device still recorded ends at its newest footage, or at
- * `liveEnd` when that is later, the Mac's estimated time now.
+ * `liveEnd` when that is later, the Mac's estimated time now. `previousLength` is the length of the track shown
+ * before, which the new one keeps unless footage grew past it or shrank by two steps.
  */
-export function buildTimeline(spans: readonly ReplaySpan[], liveEnd?: number): Timeline | null {
+export function buildTimeline(
+  spans: readonly ReplaySpan[],
+  liveEnd?: number,
+  previousLength?: number,
+): Timeline | null {
   if (!spans.length) return null;
   const last = spans.at(-1)!;
   const shown =
@@ -36,7 +46,11 @@ export function buildTimeline(spans: readonly ReplaySpan[], liveEnd?: number): T
     return [Math.max(gap, 0), Math.max(span.end - span.start, 1)];
   });
   const total = weights.reduce((sum, weight) => sum + weight, 0);
-  const length = Math.max(1, Math.ceil(total / WINDOW_STEP_MS)) * WINDOW_STEP_MS;
+  const fitted = Math.max(1, Math.ceil(total / WINDOW_STEP_MS)) * WINDOW_STEP_MS;
+  const length =
+    previousLength !== undefined && fitted < previousLength && previousLength - fitted < 2 * WINDOW_STEP_MS
+      ? previousLength
+      : fitted;
   const pieces: TimelinePiece[] = [];
   let at = length - total;
   shown.forEach((span, index) => {
@@ -57,7 +71,7 @@ export function buildTimeline(spans: readonly ReplaySpan[], liveEnd?: number): T
     pieces.push({ kind: 'span', start: span.start, end: span.end, from: at / length, to: (at + weight) / length });
     at += weight;
   });
-  return { start: shown[0]!.start, end: shown.at(-1)!.end, spans, pieces };
+  return { start: shown[0]!.start, end: shown.at(-1)!.end, spans, length, pieces };
 }
 
 /** How much footage the timeline holds, gaps left out. */

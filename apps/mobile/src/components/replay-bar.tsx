@@ -65,6 +65,7 @@ export function ReplayBar({
   const [received, setReceived] = useState({ timeline, at: now });
   if (received.timeline !== timeline) setReceived({ timeline, at: now });
   const [held, setHeld] = useState<Timeline | null>(null);
+  const [trackLength, setTrackLength] = useState<number | undefined>(undefined);
   const at = replay?.at ?? null;
   if (at !== null && at !== lastAt) setLastAt(at);
   const isLive = replay === null && canGoLive;
@@ -93,7 +94,8 @@ export function ReplayBar({
     );
   }
   const liveEnd = canGoLive ? timeline.end + Math.max(0, now - received.at) : undefined;
-  const track = held ?? buildTimeline(timeline.spans, liveEnd) ?? timeline;
+  const track = held ?? buildTimeline(timeline.spans, liveEnd, trackLength) ?? timeline;
+  if (track.length !== trackLength) setTrackLength(track.length);
   const shownAt = at ?? lastAt;
   const position = dragging ?? (replay ? (shownAt === null ? 1 : positionOf(track, shownAt)) : 1);
   const playing = replay !== null && replay.rate > 0 && !replay.ended;

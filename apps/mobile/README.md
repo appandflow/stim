@@ -282,7 +282,9 @@ while a phone watches it, and keeps the last 15 minutes of footage (see
   takes a minute's width and is dashed. Each stop is labeled "stopped 24s"
   under it; a label that would overlap a longer stop's is left out. The
   track's length is rounded up to a whole minute, with the spare room before
-  the oldest footage, so it rescales at most once a minute. While the device
+  the oldest footage, so it grows at most once a minute; it shrinks only when
+  the footage is two minutes shorter, so pruning at the 15 minute cap does not
+  rescale it. While the device
   runs, its right edge is the Mac's time now and the footage slides left as
   time passes; a finger on the track holds it still.
 - **Markers.** Agent actions sit on the scrubber in the accent color, errors
