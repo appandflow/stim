@@ -113,25 +113,90 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   var hour: Double { 60 * minute }
   var spans: [ReplaySpan] { [ReplaySpan(start: 0, end: 4 * minute), ReplaySpan(start: 2 * hour, end: 2 * hour + 6 * minute)] }
 
-  @Test func laysSpansOutByRecordedLengthWithAFixedGap() throws {
-    let timeline = try #require(ReplayTimeline(spans: spans))
-    let (first, gap, second) = (timeline.pieces[0], timeline.pieces[1], timeline.pieces[2])
-    #expect(gap.isGap && gap.start == 4 * minute && gap.end == 2 * hour)
-    #expect(abs((gap.to - gap.from) - (0.8 * minute) / (10.8 * minute)) < 1e-9)
-    #expect(abs((second.to - second.from) / (first.to - first.from) - 1.5) < 1e-9)
-    #expect(abs(second.to - 1) < 1e-9)
+  struct Vectors: Decodable {
+    struct Case: Decodable {
+      struct Input: Decodable {
+        var spans: [ReplaySpan]
+        var liveEnd: Double?
+        var previousLength: Double?
+      }
+      struct Piece: Decodable {
+        var kind: String
+        var start, end, from, to: Double
+        var collapsed: Bool?
+      }
+      struct Timeline: Decodable {
+        var start, end, length: Double
+        var pieces: [Piece]
+      }
+      struct Label: Decodable {
+        var start: Double
+        var text: String
+        var left, width: Double
+      }
+      struct Labels: Decodable {
+        var width: Double
+        var labels: [Label]
+      }
+      var name: String
+      var input: Input
+      var timeline: Timeline
+      var positions: [[Double]]
+      var times: [[Double]]
+      var labels: [Labels]
+    }
+    var timelines: [Case]
+  }
+
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(
+      forResource: "replay-timeline-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
+
+  func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 * max(1, abs(b)) }
+
+  @Test(arguments: Self.vectors.timelines.map(\.name))
+  func laysTheTrackOutAsThePhoneDoes(_ name: String) throws {
+    let vector = try #require(Self.vectors.timelines.first { $0.name == name })
+    let timeline = try #require(
+      ReplayTimeline(
+        spans: vector.input.spans, liveEnd: vector.input.liveEnd, previousLength: vector.input.previousLength))
+    #expect(timeline.start == vector.timeline.start && timeline.end == vector.timeline.end)
+    #expect(timeline.length == vector.timeline.length)
+    #expect(timeline.pieces.count == vector.timeline.pieces.count)
+    for (piece, expected) in zip(timeline.pieces, vector.timeline.pieces) {
+      #expect(piece.isGap == (expected.kind == "gap"))
+      #expect(piece.start == expected.start && piece.end == expected.end)
+      #expect(close(piece.from, expected.from) && close(piece.to, expected.to))
+      #expect(piece.collapsed == (expected.collapsed ?? false))
+    }
+    for pair in vector.positions {
+      #expect(close(timeline.position(of: pair[0]), pair[1]), "position of \(pair[0])")
+    }
+    for pair in vector.times {
+      #expect(close(timeline.time(at: pair[0]), pair[1]), "time at \(pair[0])")
+    }
+    for layout in vector.labels {
+      let labels = timeline.gapLabels(width: layout.width)
+      #expect(labels.map(\.text) == layout.labels.map(\.text))
+      for (label, expected) in zip(labels, layout.labels) {
+        #expect(label.start == expected.start && close(label.left, expected.left) && label.width == expected.width)
+      }
+    }
+  }
+
+  @Test func countsOnlyRecordedFootageAndIsNilWithoutAny() throws {
+    let timeline = try #require(ReplayTimeline(spans: spans, liveEnd: 3 * hour))
     #expect(timeline.recordedLength == 10 * minute)
     #expect(ReplayTimeline(spans: []) == nil)
   }
 
-  @Test func mapsTimesToPlacesAndGapsToTheRecordingAfterThem() throws {
+  @Test func placesLabelsWithTheWidthsItIsGiven() throws {
     let timeline = try #require(ReplayTimeline(spans: spans))
-    let at = 2 * hour + 3 * minute
-    #expect(abs(timeline.time(at: timeline.position(of: at)) - at) < 1)
-    let gap = timeline.pieces[1]
-    #expect(timeline.time(at: (gap.from + gap.to) / 2) == 2 * hour)
-    #expect(timeline.position(of: hour) == gap.to)
-    #expect(timeline.time(at: -1) == 0 && timeline.time(at: 2) == 2 * hour + 6 * minute)
+    #expect(timeline.gapLabels(width: 600, measure: { _ in 601 }).isEmpty)
+    let label = try #require(timeline.gapLabels(width: 600, measure: { _ in 40.2 }).first)
+    #expect(label.width == 41)
   }
 
   @Test func landsALittleBeforeAMarkerButNotBeforeItsSpan() throws {
@@ -208,6 +273,27 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     first.reply.resume(returning: range(spans: [ReplaySpan(start: 0, end: 10_000)]))
     await settle()
     #expect(controller.range?.spans == [ReplaySpan(start: 0, end: 20_000)])
+  }
+
+  @Test func endsTheTrackAtTheMacsTimeNowOnlyWhileTheRunningDeviceIsRecorded() async throws {
+    let server = FakeServer()
+    var now = 100.0
+    let controller = ReplayController(target: target, scheduler: ManualScheduler().schedule, clock: { now })
+    controller.connect(server)
+    await settle()
+    try #require(server.take("replay.range")).reply.resume(returning: range(spans: [ReplaySpan(start: 0, end: 20_000)]))
+    await settle()
+    now = 103.5
+    #expect(controller.liveEnd(running: true) == 23_500)
+    #expect(controller.liveEnd(running: false) == nil)
+    controller.connect(nil)
+    #expect(controller.liveEnd(running: true) == nil)
+    controller.connect(server)
+    await settle()
+    try #require(server.take("replay.range")).reply.resume(
+      returning: range(spans: [ReplaySpan(start: 0, end: 20_000)], recording: false))
+    await settle()
+    #expect(controller.liveEnd(running: true) == nil)
   }
 
   @Test func stopsPollingAServerWithoutReplay() async throws {
