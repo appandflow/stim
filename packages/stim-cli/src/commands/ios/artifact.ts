@@ -44,13 +44,14 @@ import { claimFailure } from '../../ownership-claim.ts';
 import {
   chooseBuildMachine,
   liveBuildSlots,
-  offloadIosBuild,
+  offloadBuild,
   offloadMode,
   offloadPlacement,
   simulatorRuntime,
   type OffloadChoice,
 } from '../../offload/client.ts';
 import { pairedMachines } from '../../offload/build-machines.ts';
+import { iosToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
@@ -697,7 +698,7 @@ export async function acquireIosArtifact(
   }): Promise<OffloadChoice | null> {
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      runtime: placement.runtime,
+      target: { platform: 'ios', local: iosToolchain(), runtime: placement.runtime },
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: placement.machines,
     });
@@ -713,15 +714,11 @@ export async function acquireIosArtifact(
   /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
   async function compileElsewhere({ choice, runtime }: { choice: OffloadChoice; runtime: string }): Promise<boolean> {
     if (!storeKey || !storeHash) return false;
-    const stagingDir = join(workspaceDir(root), 'offload');
-    const outcome = await offloadIosBuild({
+    const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
+    const outcome = await offloadBuild({
       choice,
       expectedFingerprint: storeHash,
-      runtime,
-      configuration,
-      scheme: buildScheme ?? null,
-      isExpo,
-      optimizations,
+      request: { platform: 'ios', runtime, configuration, scheme: buildScheme ?? null, isExpo, optimizations },
       stagingDir,
       onPhase: (name, msg) => note(chalk.dim(phaseLine('build', `${choice.machine} ${name}: ${msg.trim()}`))),
       onRecord: (record) => logWriter().write({ ...record, offloadedTo: choice.machine }),
@@ -739,7 +736,7 @@ export async function acquireIosArtifact(
         reason = 'the checkout here changed while it built';
       } else {
         try {
-          stored = d.storeBuild(PLATFORM, storeKey, outcome.appPath, {
+          stored = d.storeBuild(PLATFORM, storeKey, outcome.artifactPath, {
             sources: storeSources,
             overwrite: !useBuildCache,
           });

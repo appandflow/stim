@@ -1,3 +1,5 @@
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
@@ -57,6 +59,16 @@ import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase } from '../../engine/build-progress.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
+import { pairedMachines } from '../../offload/build-machines.ts';
+import {
+  chooseBuildMachine,
+  liveBuildSlots,
+  offloadBuild,
+  offloadMode,
+  offloadPlacement,
+  type OffloadChoice,
+} from '../../offload/client.ts';
+import { androidRequirements, androidToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import { detectAndroidPackage } from '../../workspace/app-id.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
@@ -77,6 +89,8 @@ interface AndroidArtifactRequest {
   isExpo: boolean;
   device: OwnedDeviceRecord;
   physical: boolean;
+  /** Whether the app runs on a remote device backend rather than a local emulator. */
+  remote: boolean;
   buildPlan: AndroidRunPlan['build'];
   cacheProviderConfig: AndroidRunPlan['cacheProviderConfig'];
   requestedBuildCache: boolean;
@@ -164,6 +178,7 @@ export async function acquireAndroidArtifact(
     isExpo,
     device,
     physical,
+    remote: remoteTarget,
     buildPlan,
     cacheProviderConfig,
     requestedBuildCache,
@@ -533,24 +548,143 @@ export async function acquireAndroidArtifact(
     }
   }
 
+  async function takeBuildSlot(): Promise<boolean> {
+    if (!maxBuilds) return true;
+    try {
+      buildSlot = await acquireSlot({ max: maxBuilds, root, logFile: buildLog, out });
+    } catch (err) {
+      const refusal = claimFailure(err, 'stim android');
+      if (refusal) {
+        phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+        return false;
+      }
+      phase('build', chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`));
+    }
+    return true;
+  }
+
+  /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
+  function placeBuild(): { reason: string; machines: ReturnType<typeof pairedMachines> } | null {
+    const mode = offloadMode();
+    const machines = mode === 'off' ? [] : pairedMachines();
+    if (mode === 'off' || machines.length === 0) return null;
+    const unsupported = physical
+      ? 'device builds build here'
+      : remoteTarget
+        ? 'remote device builds build here'
+        : release
+          ? `${variant} builds build here`
+          : cas
+            ? 'Apple Clang CAS builds build here'
+            : !cachePolicy.write
+              ? 'the build cache is off'
+              : null;
+    const placement = offloadPlacement({
+      mode,
+      machines: machines.length,
+      liveSlots: maxBuilds ? liveBuildSlots() : 0,
+      maxBuilds: maxBuilds ?? 0,
+      unsupported,
+    });
+    if (!placement.offload) {
+      phase('build', `placement: here (${placement.reason})`);
+      return null;
+    }
+    return { reason: placement.reason, machines };
+  }
+
+  const openOffload: { choice: OffloadChoice | null } = { choice: null };
+
+  /** Asks the paired machines once the post-mutation key is known; null builds here. */
+  async function chooseMachine(placement: {
+    reason: string;
+    machines: ReturnType<typeof pairedMachines>;
+  }): Promise<OffloadChoice | null> {
+    const choice = await chooseBuildMachine({
+      projectRoot: root,
+      target: { platform: 'android', local: androidToolchain(), requires: androidRequirements(root) },
+      note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
+      machines: placement.machines,
+    });
+    if (typeof choice === 'string') {
+      phase('build', `offload failed: no machine can build it (${choice}) -> building here`);
+      return null;
+    }
+    openOffload.choice = choice;
+    phase('build', `placement: ${choice.machine} (${placement.reason})`);
+    return choice;
+  }
+
+  /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead. */
+  async function compileElsewhere(choice: OffloadChoice): Promise<boolean> {
+    const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: storeHash,
+      request: {
+        platform: 'android',
+        isExpo,
+        android: {
+          variant,
+          abi: buildAbi,
+          gradleBuildCache: buildPlan.gradleBuildCache,
+          pch: buildPlan.pch,
+          compilerCache: buildPlan.compilerCache === 'none' ? 'none' : 'ccache',
+        },
+      },
+      stagingDir,
+      onPhase: (name, msg) => phase('build', chalk.dim(`${choice.machine} ${name}: ${msg.trim()}`)),
+      onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice.machine }),
+    });
+    let stored: string | null = null;
+    let reason = outcome.ok ? null : outcome.reason;
+    if (outcome.ok) {
+      const settled = await refingerprintAfterMutation({
+        projectRoot: root,
+        platform: PLATFORM,
+        previousHash: storeHash,
+        fingerprint,
+      });
+      if (!settled || settled.moved) {
+        reason = 'the checkout here changed while it built';
+      } else {
+        try {
+          stored = storeCached(PLATFORM, storeKey, outcome.artifactPath, {
+            sources: storeSources,
+            overwrite: !useBuildCache,
+          });
+        } catch (err) {
+          reason = `could not store the APK: ${(err as Error)?.message || err}`;
+        }
+      }
+    }
+    try {
+      rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
+    if (!outcome.ok || !stored) {
+      phase('build', `offload failed: ${reason ?? 'the APK was not stored'} -> building here`);
+      writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
+      return false;
+    }
+    const { timings } = outcome;
+    apkPath = stored;
+    record.offloadedTo = outcome.machine;
+    ccacheActivity = outcome.ccache;
+    phase(
+      'build',
+      `built on ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
+        `sync ${formatDuration(timings.syncMs)}, build ${formatDuration(timings.workerMs)}, fetch ${formatDuration(timings.fetchMs)}`,
+    );
+    phase('cache', `compilation cache on ${outcome.machine} ${ccacheActivityLine(ccacheActivity)}`);
+    writer.write({ src: 'build', level: 'info', event: 'offload_done', msg: `built on ${outcome.machine}`, timings });
+    return true;
+  }
+
   async function buildArtifact(): Promise<boolean> {
     if (!apkPath) {
       try {
-        if (maxBuilds) {
-          try {
-            buildSlot = await acquireSlot({ max: maxBuilds, root, logFile: buildLog, out });
-          } catch (err) {
-            const refusal = claimFailure(err, 'stim android');
-            if (refusal) {
-              phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
-              return false;
-            }
-            phase(
-              'build',
-              chalk.yellow(`could not take a build slot: ${(err as Error)?.message || err}; building anyway`),
-            );
-          }
-        }
+        const offload = placeBuild();
+        if (!offload && !(await takeBuildSlot())) return false;
 
         const rekeyedBy: string[] = [];
         let editedConfig: string[] = [];
@@ -624,9 +758,27 @@ export async function acquireAndroidArtifact(
           }
         }
 
-        if (!apkPath) {
+        if (offload && !apkPath) {
           explainMiss(rekeyedBy);
           step('compile');
+          let built = false;
+          if (editedConfig.length) {
+            phase(
+              'build',
+              'offload failed: prebuild changed config inputs, so the APK cannot be cached -> building here',
+            );
+          } else {
+            const choice = await chooseMachine(offload);
+            if (choice) built = await compileElsewhere(choice);
+          }
+          if (!built && !(await takeBuildSlot())) return false;
+        }
+
+        if (!apkPath) {
+          if (!offload) {
+            explainMiss(rekeyedBy);
+            step('compile');
+          }
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(
             { root, logWriter: writer, variant, abi: buildAbi },
@@ -747,6 +899,7 @@ export async function acquireAndroidArtifact(
           }
         }
       } finally {
+        openOffload.choice?.connection.close();
         releaseHeldLock();
         releaseHeldSlot();
       }

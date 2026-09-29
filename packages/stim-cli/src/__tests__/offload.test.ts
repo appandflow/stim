@@ -1,5 +1,12 @@
 import { offloadPlacement, pickOffer, type BuildOffer } from '../offload/client.ts';
-import { iphoneRuntimes, type IosToolchain, type WorkerToolchain } from '../offload/toolchain.ts';
+import {
+  iphoneRuntimes,
+  jdkMajor,
+  parseAndroidRequirements,
+  type BuildTarget,
+  type IosToolchain,
+  type WorkerToolchain,
+} from '../offload/toolchain.ts';
 
 const RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
 
@@ -11,6 +18,16 @@ const LOCAL: IosToolchain = {
   cocoapods: '1.16.2',
 };
 
+const IOS: BuildTarget = { platform: 'ios', local: LOCAL, runtime: RUNTIME };
+
+const ANDROID: BuildTarget = {
+  platform: 'android',
+  local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+  requires: { ndk: '27.1.12297006', buildTools: '37.0.0', compileSdk: '37' },
+};
+
+const SDK = { ndk: ['27.1.12297006'], buildTools: ['37.0.0'], platforms: ['android-36', 'android-37.0'] };
+
 function offer(
   overrides: Omit<Partial<BuildOffer>, 'toolchain'> & { toolchain?: Partial<WorkerToolchain> } = {},
 ): BuildOffer {
@@ -18,7 +35,7 @@ function offer(
     capacity: { running: 0, max: 1, diskFreeBytes: 500 * 1024 ** 3, minDiskFreeBytes: 10 * 1024 ** 3 },
     warm: { checkout: false, dependencies: false, build: false },
     ...overrides,
-    toolchain: { ...LOCAL, runtimes: [RUNTIME], ...overrides.toolchain },
+    toolchain: { ...LOCAL, runtimes: [RUNTIME], jdk: '17', androidSdk: SDK, ...overrides.toolchain },
   };
 }
 
@@ -64,17 +81,45 @@ describe('pickOffer', () => {
       offer({ capacity: { running: 1, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } }),
       offer({ capacity: { running: 0, max: 1, diskFreeBytes: 1024 ** 3, minDiskFreeBytes: 10 * 1024 ** 3 } }),
     ]) {
-      expect(pickOffer([refused], LOCAL, RUNTIME)).toBeNull();
+      expect(pickOffer([refused], IOS)).toBeNull();
     }
-    expect(pickOffer([offer()], { ...LOCAL, stimBuild: null }, RUNTIME)).toBeNull();
+    expect(pickOffer([offer()], { ...IOS, local: { ...LOCAL, stimBuild: null } })).toBeNull();
   });
 
   it('prefers the warmest machine, then the least busy', () => {
     const cold = offer();
     const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });
-    expect(pickOffer([cold, null, warm], LOCAL, RUNTIME)).toBe(2);
+    expect(pickOffer([cold, null, warm], IOS)).toBe(2);
     const busy = offer({ capacity: { running: 1, max: 2, diskFreeBytes: null, minDiskFreeBytes: 0 } });
-    expect(pickOffer([busy, cold], LOCAL, RUNTIME)).toBe(1);
+    expect(pickOffer([busy, cold], IOS)).toBe(1);
+  });
+});
+
+describe('pickOffer for Android', () => {
+  it('takes a machine whose JDK major and SDK packages match, whatever its Xcode or JDK vendor', () => {
+    expect(pickOffer([offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } })], ANDROID)).toBe(0);
+    expect(jdkMajor('JAVA_VERSION="17.0.19"\nIMPLEMENTOR="Homebrew"')).toBe('17');
+  });
+
+  it('refuses another JDK major, no SDK, or a missing NDK, build-tools or compile platform', () => {
+    for (const refused of [
+      offer({ toolchain: { jdk: '21' } }),
+      offer({ toolchain: { jdk: null } }),
+      offer({ toolchain: { androidSdk: null } }),
+      offer({ toolchain: { androidSdk: { ...SDK, ndk: ['27.0.12077973'] } } }),
+      offer({ toolchain: { androidSdk: { ...SDK, buildTools: ['36.0.0'] } } }),
+      offer({ toolchain: { androidSdk: { ...SDK, platforms: ['android-36'] } } }),
+    ]) {
+      expect(pickOffer([refused], ANDROID)).toBeNull();
+    }
+  });
+
+  it("reads the SDK packages from React Native's version catalog", () => {
+    expect(
+      parseAndroidRequirements(
+        '[versions]\nminSdk = "24"\ncompileSdk = "37"\nbuildTools = "37.0.0"\nndkVersion = "27.1.12297006"\n',
+      ),
+    ).toEqual({ ndk: '27.1.12297006', buildTools: '37.0.0', compileSdk: '37' });
   });
 });
 

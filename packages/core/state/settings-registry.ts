@@ -401,7 +401,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_OFFLOAD_MODE',
     description:
-      'Where iOS simulator builds run: auto offloads to offload.machines only while every concurrency.maxBuilds slot is busy, force offloads whenever a machine can take the build, off always builds here',
+      'Where iOS simulator and Android emulator debug builds run: auto offloads to offload.machines only while every concurrency.maxBuilds slot is busy, force offloads whenever a machine can take the build, off always builds here',
   },
   {
     key: 'offload.workerRoot',

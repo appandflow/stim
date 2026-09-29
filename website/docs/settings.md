@@ -275,7 +275,8 @@ Mac's tailnet node. Approve the request on the build machine with
 Stim connects to a named Mac only while it is still the pinned node, and never
 sends its token to another. Doctor reports each machine's pairing state.
 
-`offload.mode` decides where `stim ios` compiles a simulator Debug build:
+`offload.mode` decides where `stim ios` compiles a simulator Debug build and
+where `stim android` compiles an emulator debug build:
 
 - `auto` (default) builds here while a `concurrency.maxBuilds` slot is free,
   and on a build machine only while every slot holds a live build. With no
@@ -284,35 +285,50 @@ sends its token to another. Doctor reports each machine's pairing state.
 - `off` always builds here.
 
 `STIM_OFFLOAD_MODE` overrides it for one command. Device, Release and
-`--remote` builds, and runs with the build cache off, always build here.
-Android builds do not offload yet.
+`--remote` builds, Android builds with the Apple Clang CAS compiler cache, and
+runs with the build cache off, always build here.
 
-An offloaded build runs prebuild and `pod install` here, then asks every paired
-machine what it can build. Stim picks one whose Stim build, CPU architecture,
-Xcode, simulator SDK and CocoaPods match this Mac exactly, that has an iPhone
-simulator on the target runtime, a free build slot and at least 10 GB free,
-preferring the one that already holds this repository. It sends the files
-`git ls-files -co --exclude-standard` lists, sending only those the machine
-lacks. That includes untracked files that are not ignored, such as an
-unignored `.env`. The machine builds with Stim's own code, refuses unless its
-fingerprint equals the one here, and sends back the `.app`. Stim checks the
-archive's sha256 and fingerprints the checkout again before it stores and
-installs the app. The build output shows `placement: <machine>` or
-`placement: here (<reason>)`, and any failure prints
+An offloaded build runs prebuild (and `pod install` for iOS) here, then asks
+every paired machine what it can build. Stim picks one whose Stim build and
+CPU architecture match this Mac exactly, with a free build slot and at least
+10 GB free, preferring the one that already holds this repository:
+
+- For iOS, its Xcode, simulator SDK and CocoaPods must match, and it needs an
+  iPhone simulator on the target runtime.
+- For Android, its JDK major version must match (the vendor may differ), and
+  its Android SDK must hold the NDK, build-tools and compile platform that the
+  project's React Native version names in `gradle/libs.versions.toml`. Gradle
+  and the Android Gradle plugin come from the synced project. It builds with
+  this Mac's variant, target ABI, Gradle build cache, PCH and compiler cache
+  choices, so the APK matches the ABI-narrowed cache key.
+
+Stim sends the files `git ls-files -co --exclude-standard` lists, sending only
+those the machine lacks. That includes untracked files that are not ignored,
+such as an unignored `.env`. The machine builds with Stim's own code, refuses
+unless its fingerprint equals the one here, and sends back the `.app` or APK.
+Stim checks the archive's sha256 and fingerprints the checkout again before it
+stores and installs the app the usual way; an APK is still compared with the
+installed one before Stim skips an install. The build output shows
+`placement: <machine>` or `placement: here (<reason>)`, and any failure prints
 `offload failed: <reason> -> building here` and compiles here instead. An
 offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there and builds here, so
-set `offload.mode` to `off` for it. The
-`--json` payload and `lastBuilds` carry `offloadedTo`, and `stim stats`
-counts offloaded runs apart from cold runs.
+set `offload.mode` to `off` for it. The `--json` payload and `lastBuilds` carry
+`offloadedTo`, and `stim stats` counts offloaded runs apart from cold runs.
 
 On the build machine, `offload.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,
-DerivedData and compilation cache, with a separate Stim home per client and
-repository. Put it on a large volume. It runs one offloaded build at a time
-and boots or installs nothing. Delete a client's directory there to reclaim
-its space.
+DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
+home per client and repository and one Gradle home per client. Put it on a
+large volume. It runs one offloaded build at a time and boots or installs
+nothing. Delete a client's directory there to reclaim its space.
+
+For Android builds, start stim-server on the build machine with `JAVA_HOME`
+pointing at a JDK of the same major version as the clients (otherwise it
+uses the macOS default JDK, which `java_home` may not find, for example with
+Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
+`~/Library/Android/sdk`). Each build stops the Gradle daemons it starts.
 
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest

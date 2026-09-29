@@ -525,6 +525,10 @@ export interface BuildToolchain {
   cocoapods: string | null;
   /** Simulator runtime identifiers that have an iPhone simulator to build for. */
   runtimes: string[];
+  /** The major version of the JDK Gradle runs on there. */
+  jdk: string | null;
+  /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
+  androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
 }
 
 export interface BuildOfferResult {
@@ -556,18 +560,31 @@ export interface BuildSyncResult {
   missing: string[];
 }
 
-/** Builds the synced manifest of `repo`. The machine refuses unless its fingerprint equals `fingerprint`. */
+/** The Gradle choices of an Android build: `assemble<variant>`, one ABI, and the caches it compiles with. */
+export interface BuildAndroidOptions {
+  variant: string | null;
+  abi: string | null;
+  gradleBuildCache: boolean;
+  pch: 'auto' | 'on' | 'off';
+  compilerCache: 'ccache' | 'none';
+}
+
+/**
+ * Builds the synced manifest of `repo`. The machine refuses unless its fingerprint equals `fingerprint`. iOS
+ * needs `runtime`; Android needs `android`.
+ */
 export interface BuildStartParams {
   repo: string;
   project: string;
-  platform: 'ios';
+  platform: 'ios' | 'android';
   configuration: string | null;
   scheme: string | null;
-  runtime: string;
+  runtime: string | null;
   fingerprint: string;
   packageName: string | null;
   isExpo: boolean;
   optimizations: Record<string, unknown> | null;
+  android?: BuildAndroidOptions | null;
   stimBuild: string;
 }
 
@@ -1543,14 +1560,26 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               repo: buildRepo,
               project: { type: 'string', description: 'The app directory relative to the repository root.' },
-              platform: { const: 'ios' },
+              platform: { enum: ['ios', 'android'] },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
-              runtime: { type: 'string', minLength: 1 },
+              runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: 'string', minLength: 1 },
               packageName: { type: ['string', 'null'] },
               isExpo: { type: 'boolean' },
               optimizations: { type: ['object', 'null'] },
+              android: {
+                type: ['object', 'null'],
+                required: ['variant', 'abi', 'gradleBuildCache', 'pch', 'compilerCache'],
+                additionalProperties: false,
+                properties: {
+                  variant: { type: ['string', 'null'] },
+                  abi: { type: ['string', 'null'] },
+                  gradleBuildCache: { type: 'boolean' },
+                  pch: { enum: ['auto', 'on', 'off'] },
+                  compilerCache: { enum: ['ccache', 'none'] },
+                },
+              },
               stimBuild: { type: 'string', minLength: 1 },
             },
           }),

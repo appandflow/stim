@@ -158,7 +158,7 @@ if (process.argv[2] === 'offer') {
   print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
 } else {
   const job = JSON.parse(readFileSync(0, 'utf8'));
-  writeFileSync(join(process.env.FAKE_STIM_PIDS, '..', 'job.json'), JSON.stringify({ job, home: process.env.STIM_HOME, pid: process.pid }));
+  writeFileSync(join(process.env.FAKE_STIM_PIDS, '..', 'job.json'), JSON.stringify({ job, home: process.env.STIM_HOME, gradle: process.env.GRADLE_USER_HOME, pid: process.pid }));
   print({ type: 'phase', phase: 'build', msg: 'compiling' });
   print({ type: 'log', record: { src: 'build', level: 'info', msg: 'CompileC' } });
   if (process.env.FAKE_WORKER_HANG) {
@@ -656,6 +656,29 @@ describe('offloaded builds', () => {
 
       const viewer = await authed(port);
       expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    "builds an Android job with its Gradle options in the client's own Gradle home",
+    async () => {
+      const port = await start();
+      const { client, id } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      const android = { variant: null, abi: 'arm64-v8a', gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' };
+      const base = { ...START, platform: 'android', runtime: null };
+      expect(await client.request('build.start', base)).toMatchObject({ error: { code: 'bad-request' } });
+      expect(await client.request('build.start', { ...base, android: { ...android, abi: '../x' } })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await client.request('build.start', { ...base, android })).toMatchObject({
+        result: { job: expect.any(String) },
+      });
+      await progress(client);
+      const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
+      expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android });
+      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
     },
   );
 

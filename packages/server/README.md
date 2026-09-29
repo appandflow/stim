@@ -165,7 +165,8 @@ tokens.
 
 ## Offloaded builds
 
-A client with `build` runs its iOS simulator builds here with these methods.
+A client with `build` runs its iOS simulator builds and Android emulator
+debug builds here with these methods.
 They need `build`, not `read`; a device without `build` gets `forbidden`.
 The server re-reads the build clients on every call, and revoking a client
 closes its connections, which cancels its builds.
@@ -173,8 +174,11 @@ closes its connections, which cancels its builds.
 - `build.offer` takes `repo` (the client's name for its repository: letters,
   digits, `.`, `_` and `-`, at most 80) and an optional `lockfile` sha256. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
-  `arch`; `xcode`; `simulatorSdk`; `cocoapods`; and `runtimes`, the simulator
-  runtimes with an iPhone simulator to build for), `capacity` (`running` and
+  `arch`; `xcode`; `simulatorSdk`; `cocoapods`; `runtimes`, the simulator
+  runtimes with an iPhone simulator to build for; `jdk`, the major version of
+  the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
+  `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME` or
+  `~/Library/Android/sdk`, null without one), `capacity` (`running` and
   `max` offloaded builds, `diskFreeBytes` of the worker root's volume and
   `minDiskFreeBytes`) and `warm` (`checkout`, `dependencies` when the last
   install used that lockfile, and `build` once a build ran there) for that
@@ -190,9 +194,11 @@ closes its connections, which cancels its builds.
   do not match the digest close the connection with 4400. Blobs are kept per
   client and shared by all its repositories.
 - `build.start` takes `repo`, `project` (the app directory in the repository),
-  `platform` (`ios`), `configuration`, `scheme`, `runtime` (a simulator
-  runtime identifier), `fingerprint`, `packageName`, `isExpo`,
-  `optimizations` and `stimBuild`, after the whole manifest of `repo` was
+  `platform` (`ios` or `android`), `configuration`, `scheme`, `runtime` (a
+  simulator runtime identifier, required for `ios`, null for `android`),
+  `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
+  `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
+  `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
   synced on this connection. It returns `{ "job" }`. It fails with
   `build-busy` while this Mac runs its limit of offloaded builds (one) or
   another build of the same client and repository, and with `build-refused`
@@ -204,10 +210,14 @@ closes its connections, which cancels its builds.
   projects stay), installs JavaScript dependencies when the lockfile changed,
   runs prebuild and `pod install` when needed, refuses unless the fingerprint
   equals `fingerprint`, and runs `xcodebuild` for one of this Mac's iPhone
-  simulators on `runtime`, which it never boots.
+  simulators on `runtime`, which it never boots, or Gradle's
+  `assemble<variant>` for `abi` with ccache under the area's Stim home. An
+  Android build stops the Gradle daemons of the client's Gradle home when it
+  ends or gets SIGTERM, because a daemon leaves the build's process group.
 - `build.progress` events `{ "event": "build.progress", "job", ... }` carry a
   `phase` and `msg`, a build-log `record`, and last the `outcome`: `ok`, and
-  on success `artifact` (`name`, `size`, `sha256` of a tar of the `.app`),
+  on success `artifact` (`name`, `size`, `sha256` of a tar of the `.app` or
+  `.apk`),
   `fingerprint`, `compilationCache` and `timings`, otherwise `code` and
   `message`.
 - `build.cancel` takes `job` and stops it. Closing the connection cancels its
@@ -221,9 +231,10 @@ closes its connections, which cancels its builds.
 
 The worker root is `offload.workerRoot` in this Mac's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
-blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR` and the pnpm store) and one area
+blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
+`GRADLE_USER_HOME`) and one area
 per repository under `repos/<repo>/`: the checkout, its own Stim home with
-DerivedData and the compilation cache, and the output. A build never reads or
+DerivedData, the compilation cache and ccache, and the output. A build never reads or
 writes this Mac's own Stim home. An ownership claim at
 `repos/<repo>.claims`, whose child is the build's process group, guards each
 area; it is released only once that group is gone, and a claim whose server
