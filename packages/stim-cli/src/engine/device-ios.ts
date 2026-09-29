@@ -345,11 +345,14 @@ function takeParkedIosSim({
       ...(parked.simslimManaged ? { simslimManaged: true } : {}),
       ...(parked.cacheKey ? { parkedCacheKey: parked.cacheKey } : {}),
     };
-    if (!adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device })) continue;
+    const adopted = adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
+    if (!adopted) continue;
     try {
       renameIosSim(parked.udid, name);
     } catch {}
-    return device;
+    return adopted.schemeApprovals && adopted.schemeApprovals.length > 0
+      ? { ...device, schemeApprovals: adopted.schemeApprovals }
+      : device;
   }
   return null;
 }

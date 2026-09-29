@@ -27,6 +27,7 @@ export interface ParkedSim extends ParkedRecord {
   simslimManaged: boolean;
   bundleId?: string;
   cacheKey?: string;
+  schemeApprovals?: string[];
 }
 
 export interface ParkedAvd extends ParkedRecord {
@@ -106,7 +107,9 @@ function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRe
         typeof record.runtimeIdentifier === 'string' &&
         typeof record.simslimManaged === 'boolean' &&
         (record.bundleId === undefined || typeof record.bundleId === 'string') &&
-        (record.cacheKey === undefined || typeof record.cacheKey === 'string'))
+        (record.cacheKey === undefined || typeof record.cacheKey === 'string') &&
+        (record.schemeApprovals === undefined ||
+          (Array.isArray(record.schemeApprovals) && record.schemeApprovals.every((v) => typeof v === 'string'))))
   );
 }
 
@@ -186,8 +189,12 @@ export function parkSim<P extends PoolPlatform>({
     const currentId = platform === 'ios' ? current?.deviceUdid : current?.avdName;
     if (!current?.owned || currentId !== record.udid)
       throw new Error(`The ${platform === 'ios' ? 'simulator' : 'emulator'} assignment changed before parking.`);
+    const schemeApprovals =
+      platform === 'ios' ? (current as { schemeApprovals?: string[] }).schemeApprovals : undefined;
+    const carried =
+      schemeApprovals && schemeApprovals.length > 0 ? ({ ...record, schemeApprovals } as PoolRecords[P]) : record;
     const kept = readParked(platform, { config: cfg }).filter((r) => r.udid !== record.udid);
-    const { keep, evicted } = evictOverflow([...kept, record], max);
+    const { keep, evicted } = evictOverflow([...kept, carried], max);
     writeParked(cfg, platform, [...keep, ...evicted]);
     const project = cfg.projects[projectPath];
     if (project) removeSlotDevice(project, platform, slot);
@@ -225,7 +232,10 @@ export function adoptParked<P extends PoolPlatform>({
       );
       const project = cfg.projects[projectPath];
       if (!project) throw new Error(`Project not registered: ${projectPath}`);
-      assignSlotDevice(project, platform, device, slot);
+      const takenApprovals = platform === 'ios' ? (taken as { schemeApprovals?: string[] }).schemeApprovals : undefined;
+      const assigned =
+        takenApprovals && takenApprovals.length > 0 ? { ...device, schemeApprovals: takenApprovals } : device;
+      assignSlotDevice(project, platform, assigned, slot);
       saveConfig(cfg);
       const adopted = { ...taken };
       delete adopted.deletionClaim;
@@ -264,6 +274,7 @@ export function eraseParkedAfter<P extends PoolPlatform>(
     delete (erased as { bundleId?: string }).bundleId;
     delete (erased as { packageName?: string }).packageName;
     delete erased.cacheKey;
+    delete (erased as { schemeApprovals?: string[] }).schemeApprovals;
     return erased;
   });
 }

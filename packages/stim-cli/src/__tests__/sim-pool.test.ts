@@ -111,6 +111,48 @@ test('parking moves a device claim into the pool in one persisted update', () =>
   expect(readParked('ios').map((record) => record.udid)).toEqual(['FIRST']);
 });
 
+test('parking carries the workspace scheme approvals into the pool record', () => {
+  const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
+  upsertProject('/tmp/project', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-project', owned: true, schemeApprovals } },
+  });
+  parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 3 });
+  expect(readParked('ios')).toEqual([expect.objectContaining({ udid: first.udid, schemeApprovals })]);
+});
+
+test('parking without recorded scheme approvals leaves the pool record without the field', () => {
+  upsertProject('/tmp/project', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-project', owned: true } },
+  });
+  parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 3 });
+  expect(readParked('ios')[0]).not.toHaveProperty('schemeApprovals');
+});
+
+test('adoption restores scheme approvals from the locked pool record, not a stale caller value', () => {
+  const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
+  upsertProject('/tmp/source', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true, schemeApprovals } },
+  });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  // The caller's device object (built before adoptParked takes the lock) carries no approvals of its own.
+  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
+  const adopted = adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
+  expect(adopted?.schemeApprovals).toEqual(schemeApprovals);
+  expect(getProject('/tmp/adopter')?.platforms?.ios).toMatchObject({ schemeApprovals });
+});
+
+test('adoption leaves the device record without scheme approvals when the pool record has none', () => {
+  upsertProject('/tmp/source', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true } },
+  });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
+  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
+  expect(getProject('/tmp/adopter')?.platforms?.ios).not.toHaveProperty('schemeApprovals');
+});
+
 test('overflow records stay claimed until deletion succeeds', () => {
   upsertProject('/tmp/project', {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-project', owned: true } },
