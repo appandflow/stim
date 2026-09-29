@@ -19,6 +19,12 @@ export type BuildPhase = (typeof BUILD_PHASES)[number];
 
 export type ActiveBuildState = 'running' | 'stale' | 'unknown';
 
+/**
+ * Where a running build compiles: `local`, or the build machine it was offloaded to, with the phase it is in there
+ * (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that phase started.
+ */
+export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
+
 export interface BuildReport {
   platform: StatsPlatform;
   slot: string;
@@ -34,6 +40,7 @@ export interface BuildReport {
   missReason?: BuildMissReason;
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
+  placement: BuildPlacement;
 }
 
 /** The native build tool's step inside a build's `compile` phase. */
@@ -82,6 +89,8 @@ export interface LastBuildReport {
   missReason?: BuildMissReason;
   /** The build machine that compiled the app when the build was offloaded. */
   offloadedTo?: string;
+  /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */
+  offloadFallback?: string;
   /** The first compiler diagnostics of a failed build, when the build tool reported any. */
   diagnostics?: BuildDiagnostic[];
 }

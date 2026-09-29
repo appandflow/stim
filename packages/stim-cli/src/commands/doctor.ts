@@ -2,7 +2,12 @@ import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { repoRoot } from '../workspace/worktree.ts';
+import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { getProject } from '../workspace/config.ts';
+import { resolveSettings } from '../workspace/settings.ts';
+import { listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
+import { iosOffloadCheck, simulatorRuntime } from '../offload/client.ts';
+import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
   applyClaudeAllowance,
@@ -34,6 +39,28 @@ interface DoctorOptions {
 export function parseDoctorPlatform(value: string): DoctorPlatform {
   if (value === 'ios' || value === 'android') return value;
   throw new InvalidArgumentError('expected one of: ios, android');
+}
+
+/**
+ * The simulator runtime `stim ios` would build for here: the workspace's own simulator's runtime, else the one
+ * it would create one on.
+ */
+function iosTargetRuntime(root: string): string | null {
+  const udid = getProject(root)?.platforms?.ios?.deviceUdid;
+  const own = typeof udid === 'string' ? simulatorRuntime(udid) : null;
+  if (own) return own;
+  try {
+    const settings = resolveSettings({
+      projectPath: root,
+      gitCommonDir: gitCommonDir(root),
+      repoRoot: repoRoot(root) ?? root,
+    });
+    const deviceType = resolveDeviceType(null, settings) ?? undefined;
+    const runtime = resolveRuntime(null, settings) ?? undefined;
+    return pickDefaultIosCreation([], listIosRuntimes(), { deviceType, runtime })?.runtimeId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function doctorTarget(platform?: DoctorPlatform): string {
@@ -237,7 +264,11 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
-      const buildMachines = await inspectBuildMachines({ fix: opts.fix === true });
+      const checksIos = opts.platform !== 'android' && host === 'darwin';
+      const buildMachines = await inspectBuildMachines({
+        fix: opts.fix === true,
+        check: checksIos ? iosOffloadCheck(root, () => iosTargetRuntime(root)) : null,
+      });
       findings.push(...buildMachines.findings);
 
       if (opts.json) {

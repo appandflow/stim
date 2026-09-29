@@ -14,15 +14,21 @@ import {
 import { basename, dirname, join, relative } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
-import { isJsonObject, OFFLOAD_MODES, type BuildMachineCredential, type OffloadMode } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  OFFLOAD_MODES,
+  saturation,
+  type BuildMachineCredential,
+  type MachineCapacity,
+  type OffloadMode,
+} from '@stim-cli/core/state';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
 import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
-import { toolchainMismatches, type BuildTarget, type WorkerToolchain } from './toolchain.ts';
+import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
@@ -38,66 +44,122 @@ export function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
 }
 
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/** `load 0.4/core, 1 build`, with the slot count when the Mac caps its builds. */
+export function capacityText(capacity: Pick<MachineCapacity, 'loadPerCore' | 'builds' | 'maxBuilds'>): string {
+  const builds =
+    capacity.maxBuilds > 0
+      ? `${capacity.builds} of ${capacity.maxBuilds} build slots busy`
+      : plural(capacity.builds, 'build');
+  return `load ${capacity.loadPerCore}/core, ${builds}`;
+}
+
 /**
- * Whether a build goes to a build machine at all, before any machine is asked. `auto` offloads only while every
- * `concurrency.maxBuilds` slot is held by a live build, so an unlimited Mac always builds here.
+ * Whether a build may go to a build machine at all, before any machine is asked. `auto` keeps the build here while
+ * this Mac has a free `concurrency.maxBuilds` slot and its load per core is under `offload.maxLoadPerCore`.
  */
 export function offloadPlacement({
   mode,
   machines,
-  liveSlots,
-  maxBuilds,
+  here,
   unsupported,
 }: {
   mode: OffloadMode;
   machines: number;
-  liveSlots: number;
-  maxBuilds: number;
+  here: MachineCapacity;
   unsupported: string | null;
 }): { offload: boolean; reason: string } {
   if (mode === 'off') return { offload: false, reason: 'offload.mode is off' };
   if (machines === 0) return { offload: false, reason: 'no build machine is paired' };
   if (unsupported) return { offload: false, reason: unsupported };
   if (mode === 'force') return { offload: true, reason: 'offload.mode is force' };
-  if (maxBuilds > 0 && liveSlots >= maxBuilds) {
-    return { offload: true, reason: `all ${maxBuilds} build slots here are busy` };
-  }
-  return {
-    offload: false,
-    reason: maxBuilds > 0 ? `${maxBuilds - liveSlots} of ${maxBuilds} build slots free here` : 'no build limit here',
-  };
+  const busy = saturation(here);
+  return busy
+    ? { offload: true, reason: `this Mac is busy: ${busy}` }
+    : { offload: false, reason: `${capacityText(here)} here` };
 }
 
 export interface BuildOffer {
   toolchain: WorkerToolchain;
-  capacity: { running: number; max: number; diskFreeBytes: number | null; minDiskFreeBytes: number };
+  capacity: {
+    running: number;
+    max: number;
+    diskFreeBytes: number | null;
+    minDiskFreeBytes: number;
+    cpus?: number;
+    loadPerCore?: number;
+    builds?: number;
+    maxBuilds?: number;
+    maxLoadPerCore?: number;
+    declined?: string | null;
+  };
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
 }
 
-/** Why a machine's offer cannot take this build; null when it can. */
-function offerRefusal(offer: BuildOffer, target: BuildTarget): string | null {
-  const mismatches = toolchainMismatches(target, offer.toolchain);
-  if (mismatches.length) return `toolchain differs: ${mismatches.join('; ')}`;
-  const { running, max, diskFreeBytes, minDiskFreeBytes } = offer.capacity;
-  if (running >= max) return `busy with ${running} offloaded build(s)`;
+const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+
+/** Every reason a machine's offer cannot take this build, in either mode; empty when it can. */
+export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadProblem[] {
+  const problems = toolchainMismatches(target, offer.toolchain);
+  const capacity = offer.capacity;
+  const { running, max, diskFreeBytes, minDiskFreeBytes, declined } = capacity;
   if (diskFreeBytes !== null && diskFreeBytes < minDiskFreeBytes) {
-    return `${(diskFreeBytes / 1024 ** 3).toFixed(1)} GB free, needs ${(minDiskFreeBytes / 1024 ** 3).toFixed(1)} GB`;
+    problems.push({ code: 'disk', reason: `${gb(diskFreeBytes)} GB free, needs ${gb(minDiskFreeBytes)} GB` });
+  } else if (declined || (declined === undefined && running >= max)) {
+    const why = declined ?? `already running ${running} offloaded build(s), its limit`;
+    const known = typeof capacity.loadPerCore === 'number' && typeof capacity.builds === 'number';
+    const load = known
+      ? `; ${capacityText({ loadPerCore: capacity.loadPerCore!, builds: capacity.builds!, maxBuilds: capacity.maxBuilds ?? 0 })}`
+      : '';
+    problems.push({ code: 'busy', reason: `busy (${why}${load})` });
   }
-  return null;
+  return problems;
 }
 
-/** The index of the warmest acceptable offer, the least busy among equals; null when none can build. */
-export function pickOffer(offers: Array<BuildOffer | null>, target: BuildTarget): number | null {
-  let best: { index: number; score: number; running: number } | null = null;
-  offers.forEach((offer, index) => {
-    if (!offer || offerRefusal(offer, target)) return;
+/**
+ * Which asked machine takes the build, or none, and one reason per machine that does not. A machine with any
+ * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this Mac: while
+ * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
+ * this Mac's. A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
+ * every local slot is busy. Among the rest, the warmest wins, then the least loaded.
+ */
+export function pickOffer({
+  mode,
+  here,
+  offers,
+  target,
+}: {
+  mode: OffloadMode;
+  here: MachineCapacity;
+  offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
+  target: BuildTarget;
+}): { index: number | null; reasons: string[] } {
+  const slotsFull = here.maxBuilds > 0 && here.builds >= here.maxBuilds;
+  const reasons: string[] = [];
+  let best: { index: number; score: number; load: number } | null = null;
+  offers.forEach(({ machine, offer, failure }, index) => {
+    if (!offer) return void reasons.push(`${machine}: ${failure ?? 'no offer'}`);
+    const problems = offerProblems(offer, target);
+    if (problems.length) {
+      return void reasons.push(`${machine}: ${problems.map((problem) => problem.reason).join('; ')}`);
+    }
+    const load = offer.capacity.loadPerCore;
+    if (mode === 'auto' && !slotsFull) {
+      if (typeof load !== 'number') {
+        return void reasons.push(`${machine}: capacity unknown (older stim-server) while this Mac has a free slot`);
+      }
+      if (load >= here.loadPerCore) {
+        return void reasons.push(`${machine}: no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
+      }
+    }
     const score = Number(offer.warm.checkout) + Number(offer.warm.dependencies) + Number(offer.warm.build);
-    const running = offer.capacity.running;
-    if (!best || score > best.score || (score === best.score && running < best.running)) {
-      best = { index, score, running };
+    const rank = typeof load === 'number' ? load : Number.POSITIVE_INFINITY;
+    if (!best || score > best.score || (score === best.score && rank < best.load)) {
+      best = { index, score, load: rank };
     }
   });
-  return (best as { index: number } | null)?.index ?? null;
+  return { index: (best as { index: number } | null)?.index ?? null, reasons };
 }
 
 type Reply = { result: unknown } | { error: { code: string; message: string } };
@@ -147,10 +209,10 @@ class BuildConnection {
     socket.on('error', () => {});
   }
 
-  static open(target: Endpoint, token: string): Promise<BuildConnection | string> {
+  static open(target: Endpoint, token: string, timeoutMs: number): Promise<BuildConnection | string> {
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
-        handshakeTimeout: CONNECT_TIMEOUT_MS,
+        handshakeTimeout: timeoutMs,
         servername: target.servername,
         headers: { Host: target.host },
       };
@@ -162,7 +224,7 @@ class BuildConnection {
         socket.terminate();
         resolve(reason);
       };
-      const timer = setTimeout(() => fail('no reply in time'), CONNECT_TIMEOUT_MS);
+      const timer = setTimeout(() => fail('no reply in time'), timeoutMs);
       socket.once('error', (error) =>
         fail(
           /Unexpected server response: 502/.test(error.message)
@@ -340,20 +402,52 @@ export interface OffloadChoice {
   connection: BuildConnection;
   offerMs: number;
   identity: RepoIdentity;
+  offer: BuildOffer;
+}
+
+type MachineProbe =
+  | { credential: BuildMachineCredential; failure: string }
+  | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
+
+/** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
+async function probeMachine(
+  credential: BuildMachineCredential,
+  identity: Pick<RepoIdentity, 'repo' | 'lockfile'>,
+  { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
+): Promise<MachineProbe> {
+  const target = pinnedEndpoint(credential);
+  if (typeof target === 'string') return { credential, failure: target };
+  const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
+  if (typeof connection === 'string') return { credential, failure: connection };
+  const reply = await connection.request(
+    'build.offer',
+    { repo: identity.repo, ...(identity.lockfile ? { lockfile: identity.lockfile } : {}) },
+    offerMs,
+  );
+  const failure = replyError(reply);
+  if (failure || !('result' in reply)) {
+    connection.close();
+    return { credential, failure: failure ?? 'no offer' };
+  }
+  return { credential, connection, offer: reply.result as BuildOffer };
 }
 
 /**
- * Asks every paired machine for an offer in parallel and keeps the connection to the one that takes the build,
- * or returns why none can.
+ * Asks every paired machine for an offer in parallel and keeps the connection to the one `pickOffer` chooses, or
+ * returns why none takes the build.
  */
 export async function chooseBuildMachine({
   projectRoot,
   target,
+  mode,
+  here,
   note,
   machines = pairedMachines(),
 }: {
   projectRoot: string;
   target: BuildTarget;
+  mode: OffloadMode;
+  here: MachineCapacity;
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
 }): Promise<OffloadChoice | string> {
@@ -364,45 +458,30 @@ export async function chooseBuildMachine({
   } catch (error) {
     return `this app is not in a git checkout (${(error as Error).message.split('\n')[0]})`;
   }
-  type Asked =
-    | { credential: BuildMachineCredential; failure: string }
-    | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
-  const asked: Asked[] = await Promise.all(
-    machines.map(async (credential): Promise<Asked> => {
-      const endpoint = pinnedEndpoint(credential);
-      if (typeof endpoint === 'string') return { credential, failure: endpoint };
-      const connection = await BuildConnection.open(endpoint, credential.deviceToken);
-      if (typeof connection === 'string') return { credential, failure: connection };
-      const reply = await connection.request(
-        'build.offer',
-        { repo: identity.repo, ...(identity.lockfile ? { lockfile: identity.lockfile } : {}) },
-        OFFER_TIMEOUT_MS,
-      );
-      const failure = replyError(reply);
-      if (failure || !('result' in reply)) {
-        connection.close();
-        return { credential, failure: failure ?? 'no offer' };
-      }
-      return { credential, connection, offer: reply.result as BuildOffer };
-    }),
-  );
-  const offers = asked.map((each) => ('offer' in each ? each.offer : null));
-  const chosen = pickOffer(offers, target);
-  const reasons: string[] = [];
-  asked.forEach((each, index) => {
-    if (index !== chosen && 'connection' in each) each.connection.close();
-    const why = 'failure' in each ? each.failure : offers[index] ? offerRefusal(offers[index]!, target) : null;
-    if (why) reasons.push(`${each.credential.machine}: ${why}`);
+  const asked = await Promise.all(machines.map((credential) => probeMachine(credential, identity)));
+  const { index, reasons } = pickOffer({
+    mode,
+    here,
+    target,
+    offers: asked.map((each) => ({
+      machine: each.credential.machine,
+      offer: 'offer' in each ? each.offer : null,
+      ...('failure' in each ? { failure: each.failure } : {}),
+    })),
   });
-  if (chosen === null) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
+  asked.forEach((each, at) => {
+    if (at !== index && 'connection' in each) each.connection.close();
+  });
+  if (index === null) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
   for (const reason of reasons) note(reason);
-  const pick = asked[chosen] as { credential: BuildMachineCredential; connection: BuildConnection };
+  const pick = asked[index] as { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
   return {
     machine: pick.credential.machine,
     target,
     connection: pick.connection,
     offerMs: Date.now() - started,
     identity,
+    offer: pick.offer,
   };
 }
 
@@ -439,6 +518,7 @@ export async function offloadBuild({
   request,
   stagingDir,
   onPhase,
+  onEnter,
   onRecord,
 }: {
   choice: OffloadChoice;
@@ -446,6 +526,8 @@ export async function offloadBuild({
   request: BuildRequest;
   stagingDir: string;
   onPhase: (phase: string, msg: string) => void;
+  /** Called as the build enters each remote phase: sync, then the worker's own phases, then fetch. */
+  onEnter: (phase: string) => void;
   onRecord: (record: Record<string, unknown>) => void;
 }): Promise<OffloadOutcome> {
   const { machine, connection, identity } = choice;
@@ -455,6 +537,7 @@ export async function offloadBuild({
     return { ok: false, machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
   try {
+    onEnter('sync');
     const syncStarted = Date.now();
     const manifest = sourceManifest(identity.repoRoot);
     const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -505,7 +588,10 @@ export async function offloadBuild({
       if (event.job && event.job !== job) return;
       if (event.outcome) return settle(event.outcome);
       if (event.record) onRecord(event.record);
-      if (event.phase && typeof event.msg === 'string') onPhase(event.phase, event.msg);
+      if (event.phase && typeof event.msg === 'string') {
+        onEnter(event.phase);
+        onPhase(event.phase, event.msg);
+      }
     };
     connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
     const reply = await connection.request('build.start', {
@@ -541,6 +627,7 @@ export async function offloadBuild({
       return fail(`the machine reported no .${request.platform === 'ios' ? 'app' : 'apk'} artifact`);
     }
 
+    onEnter('fetch');
     const fetchStarted = Date.now();
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
@@ -646,11 +733,6 @@ const mb = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
-/** Live build slots here, for `offloadPlacement`. */
-export function liveBuildSlots(): number {
-  return listBuildSlots().filter((slot) => slot.alive).length;
-}
-
 export function simulatorRuntime(udid: string): string | null {
   try {
     const listed = JSON.parse(
@@ -661,4 +743,52 @@ export function simulatorRuntime(udid: string): string | null {
     }
   } catch {}
   return null;
+}
+
+const DOCTOR_CONNECT_MS = 5000;
+const DOCTOR_OFFER_MS = 8000;
+const PLATFORM_LABEL = { ios: 'iOS', android: 'Android' } as const;
+const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-build', 'arch', 'disk', 'busy']);
+
+/**
+ * Doctor's offload check for `projectRoot`: one bounded offer per machine, judged for each build `targets` returns
+ * by `offerProblems` exactly as placement judges it. No build runs. With several targets, a problem that only
+ * one platform has names it.
+ */
+export function offloadCheck(
+  projectRoot: string,
+  targets: () => BuildTarget[],
+): (credential: BuildMachineCredential) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
+  let identity: RepoIdentity | string;
+  try {
+    identity = repoIdentity(projectRoot);
+  } catch (error) {
+    identity = (error as Error).message.split('\n')[0] ?? 'git failed';
+  }
+  let resolved: BuildTarget[] | null = null;
+  return async (credential) => {
+    if (typeof identity === 'string') {
+      return {
+        capacity: null,
+        problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${identity})` }],
+      };
+    }
+    const probe = await probeMachine(credential, identity, { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS });
+    if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
+    probe.connection.close();
+    resolved ??= targets();
+    const problems: OffloadProblem[] = [];
+    for (const target of resolved) {
+      for (const problem of offerProblems(probe.offer, target)) {
+        const labeled =
+          resolved.length > 1 && !SHARED_PROBLEMS.has(problem.code)
+            ? { ...problem, reason: `${PLATFORM_LABEL[target.platform]}: ${problem.reason}` }
+            : problem;
+        if (!problems.some((each) => each.code === labeled.code && each.reason === labeled.reason)) {
+          problems.push(labeled);
+        }
+      }
+    }
+    return { capacity: probe.offer.capacity, problems };
+  };
 }

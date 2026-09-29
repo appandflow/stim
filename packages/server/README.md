@@ -178,11 +178,20 @@ closes its connections, which cancels its builds.
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME` or
-  `~/Library/Android/sdk`, null without one), `capacity` (`running` and
-  `max` offloaded builds, `diskFreeBytes` of the worker root's volume and
-  `minDiskFreeBytes`) and `warm` (`checkout`, `dependencies` when the last
-  install used that lockfile, and `build` once a build ran there) for that
-  repository. The toolchain is read at most once a minute.
+  `~/Library/Android/sdk`, null without one), `capacity` and `warm`
+  (`checkout`, `dependencies` when the last install used that lockfile, and
+  `build` once a build ran there) for that repository. `capacity` holds
+  `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
+  volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
+  average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
+  compile, plus the offloaded builds), `maxBuilds` (its
+  `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
+  `offload.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
+  build now, or null. It declines while it runs its limit of offloaded builds,
+  while the worker root's volume has less than 10 GiB free, while `builds`
+  reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
+  `maxLoadPerCore`. The toolchain is read at most once a minute; capacity on
+  every offer.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next
@@ -200,10 +209,9 @@ closes its connections, which cancels its builds.
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
   `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
   synced on this connection. It returns `{ "job" }`. It fails with
-  `build-busy` while this Mac runs its limit of offloaded builds (one) or
-  another build of the same client and repository, and with `build-refused`
-  when the worker root's volume has less than 10 GiB free or `stimBuild`
-  differs. The build runs `offload-worker.mjs` of the bundled Stim with
+  `build-busy` while the offer would be declined, naming the reason, or while
+  another build of the same client and repository runs, and with
+  `build-refused` when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
   `STIM_HOME` set to the repository's area. It makes the area's checkout
   hold exactly the manifest (a file git lists as untracked and not ignored,
   and not in the manifest, is deleted; ignored dependencies and generated

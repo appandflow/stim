@@ -515,40 +515,58 @@ node in $STIM_HOME/build-machines.json. A person approves the request on that
 Mac with \`stim-server devices grant <id> --build\`; doctor prints the id.
 Stim connects to a named Mac only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
-machine's pairing state.
+machine's pairing state and, for an approved machine, asks it for one build
+offer and lists every reason it would not take this app's iOS build: no
+answer, another Stim build, CPU, Xcode, simulator SDK or CocoaPods, no iPhone
+simulator on the runtime \`stim ios\` builds for here, low disk, or busy.
 
 \`offload.mode\` decides where an iOS simulator Debug build or an Android
 emulator debug build compiles:
 
-  auto   (default) here while a \`concurrency.maxBuilds\` slot is free; on a
-         build machine only while every slot holds a live build. With no
-         build limit, always here.
-  force  on a build machine whenever one can take it
+  auto   (default) here while this Mac has capacity: a free
+         \`concurrency.maxBuilds\` slot (always, with no build limit) and a
+         load per core under \`offload.maxLoadPerCore\`. Otherwise on a
+         build machine that accepts the build and is expected to be faster:
+         while every slot here is busy, any machine that accepts; while only
+         the load is high, a machine whose load per core is lower than this
+         Mac's. A machine too old to report its load counts only while every
+         slot here is busy.
+  force  on a build machine whenever one accepts it
   off    always here
+
+Load per core is the 5-minute load average divided by the CPU count; a Mac's
+native builds are its Stim runs in prebuild, pods or compile.
+\`offload.maxLoadPerCore\` (default 2) is the load per core at which a Mac
+counts as saturated, both here and on a build machine.
 
 STIM_OFFLOAD_MODE overrides it for one command. Device, Release and
 \`--remote\` builds, Android builds with the Apple Clang CAS compiler cache,
 and runs with the build cache off, always build here.
 An offloaded build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
-build and CPU match this Mac exactly, with a free build slot and enough disk,
-preferring the one that already holds this repository. For iOS the machine's
-Xcode, simulator SDK and CocoaPods must match, and it needs an iPhone simulator
-on the target runtime. For Android its JDK major version must match, and its
-Android SDK must hold the NDK, build-tools and compile platform that the
-project's React Native version names in gradle/libs.versions.toml; Gradle and
-AGP come from the synced project. It sends the files \`git ls-files
--co --exclude-standard\` lists (the machine keeps only files it lacks, so an
-unignored secret such as \`.env\` is sent too), builds with Stim's own code
-there, refuses unless the fingerprint there equals this one, and brings the
-\`.app\` or APK back. An Android build there uses this Mac's variant, target
-ABI, Gradle build cache, PCH and compiler cache choices, so the APK matches
-the ABI-narrowed cache key. Stim checks the archive's sha256 and fingerprints this checkout
-again before it stores the app under the post-mutation key and installs it
-the usual way, so an APK is still compared with the installed one before an
-install is skipped.
-Any failure prints \`offload failed: <reason> -> building here\` and
-compiles here. Offloading holds no local build slot; that fallback takes one.
+build and CPU match this Mac exactly, with enough disk, that does not decline,
+preferring the one that already holds this repository, then the least loaded.
+For iOS the machine's Xcode, simulator SDK and CocoaPods must match, and it
+needs an iPhone simulator on the target runtime. For Android its JDK major
+version must match, and its Android SDK must hold the NDK, build-tools and
+compile platform that the project's React Native version names in
+gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
+no machine takes the build, the run prints one line with each machine's
+reason, such as \`janics-mac-mini: busy (load at or above 2/core; load
+8.2/core, 2 builds) -> building here\`, and compiles here. It sends the files
+\`git ls-files -co --exclude-standard\` lists (the machine keeps only files it
+lacks, so an unignored secret such as \`.env\` is sent too), builds with
+Stim's own code there, refuses unless the fingerprint there equals this one,
+and brings the \`.app\` or APK back. An Android build there uses this Mac's
+variant, target ABI, Gradle build cache, PCH and compiler cache choices, so
+the APK matches the ABI-narrowed cache key. Stim checks the archive's sha256
+and fingerprints this checkout again before it stores the app under the
+post-mutation key and installs it the usual way, so an APK is still compared
+with the installed one before an install is skipped.
+A failure after a machine took the build prints \`offload failed: <reason>
+-> building here\` and compiles here. The run's lastBuilds entry and
+\`--json\` facts record the reason as offloadFallback. Offloading holds no
+local build slot; that fallback takes one.
 An offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose xcodebuild changes its own fingerprinted inputs
 cannot offload: the fingerprint check fails and it builds here.
@@ -557,11 +575,13 @@ On the build machine, stim-server keeps each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home under
 \`offload.workerRoot\` (absolute; default $STIM_HOME/build-worker), one area
 and Stim home per client and repository, and one Gradle home per client. It
-runs one offloaded build at a time and refuses one while that volume has less
-than 10 GB free. It boots and installs nothing. Android builds there run on
-the JDK in stim-server's JAVA_HOME (else the macOS default JDK) with the SDK in
-its ANDROID_HOME (else ~/Library/Android/sdk), and stop the Gradle daemons they
-start when they end.
+runs one offloaded build at a time. It declines a build while that volume has
+less than 10 GB free, while its own native builds and the offloaded one fill
+its \`concurrency.maxBuilds\`, or while its load per core is at or above its
+\`offload.maxLoadPerCore\`, and reports the reason in its offer. It boots and
+installs nothing. Android builds there run on the JDK in stim-server's
+JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
+~/Library/Android/sdk), and stop the Gradle daemons they start when they end.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes

@@ -1,4 +1,5 @@
-import { offloadPlacement, pickOffer, type BuildOffer } from '../offload/client.ts';
+import type { MachineCapacity, OffloadMode } from '@stim-cli/core/state';
+import { offerProblems, offloadPlacement, pickOffer, type BuildOffer } from '../offload/client.ts';
 import {
   iphoneRuntimes,
   jdkMajor,
@@ -32,85 +33,212 @@ function offer(
   overrides: Omit<Partial<BuildOffer>, 'toolchain'> & { toolchain?: Partial<WorkerToolchain> } = {},
 ): BuildOffer {
   return {
-    capacity: { running: 0, max: 1, diskFreeBytes: 500 * 1024 ** 3, minDiskFreeBytes: 10 * 1024 ** 3 },
+    capacity: capacity(),
     warm: { checkout: false, dependencies: false, build: false },
     ...overrides,
     toolchain: { ...LOCAL, runtimes: [RUNTIME], jdk: '17', androidSdk: SDK, ...overrides.toolchain },
   };
 }
 
+const IDLE: MachineCapacity = { cpus: 10, loadPerCore: 0.3, builds: 0, maxBuilds: 3, maxLoadPerCore: 2 };
+
+function capacity(overrides: Partial<BuildOffer['capacity']> = {}): BuildOffer['capacity'] {
+  return {
+    running: 0,
+    max: 1,
+    diskFreeBytes: 500 * 1024 ** 3,
+    minDiskFreeBytes: 10 * 1024 ** 3,
+    cpus: 10,
+    loadPerCore: 0.2,
+    builds: 0,
+    maxBuilds: 0,
+    maxLoadPerCore: 2,
+    declined: null,
+    ...overrides,
+  };
+}
+
 describe('offloadPlacement', () => {
-  const base = { mode: 'auto' as const, machines: 1, liveSlots: 0, maxBuilds: 3, unsupported: null };
+  const base = { mode: 'auto' as const, machines: 1, here: IDLE, unsupported: null };
 
-  it('builds here in auto while a build slot is free, or when this Mac has no build limit', () => {
-    expect(offloadPlacement(base)).toEqual({ offload: false, reason: '3 of 3 build slots free here' });
-    expect(offloadPlacement({ ...base, liveSlots: 2 })).toMatchObject({ offload: false });
-    expect(offloadPlacement({ ...base, liveSlots: 9, maxBuilds: 0 })).toEqual({
-      offload: false,
-      reason: 'no build limit here',
-    });
-  });
-
-  it('offloads in auto only when every slot is busy, and in force whenever it can', () => {
-    expect(offloadPlacement({ ...base, liveSlots: 3 })).toEqual({
-      offload: true,
-      reason: 'all 3 build slots here are busy',
-    });
-    expect(offloadPlacement({ ...base, mode: 'force' })).toMatchObject({ offload: true });
-  });
-
-  it('never offloads when off, unpaired, or for a build a machine cannot take', () => {
-    expect(offloadPlacement({ ...base, mode: 'off', liveSlots: 3 })).toMatchObject({ offload: false });
-    expect(offloadPlacement({ ...base, mode: 'force', machines: 0 })).toMatchObject({ offload: false });
-    expect(offloadPlacement({ ...base, mode: 'force', unsupported: 'device builds build here' })).toEqual({
-      offload: false,
-      reason: 'device builds build here',
-    });
+  it.each([
+    ['auto, a free slot and low load', base, false, 'load 0.3/core, 0 of 3 build slots busy here'],
+    [
+      'auto, no build limit and low load',
+      { ...base, here: { ...IDLE, maxBuilds: 0, builds: 9 } },
+      false,
+      'load 0.3/core, 9 builds here',
+    ],
+    [
+      'auto, every slot busy',
+      { ...base, here: { ...IDLE, builds: 3 } },
+      true,
+      'this Mac is busy: all 3 build slots busy',
+    ],
+    [
+      'auto, no build limit but saturated',
+      { ...base, here: { ...IDLE, maxBuilds: 0, loadPerCore: 8.2 } },
+      true,
+      'this Mac is busy: load at or above 2/core',
+    ],
+    ['force on an idle Mac', { ...base, mode: 'force' as const }, true, 'offload.mode is force'],
+    [
+      'off on a saturated Mac',
+      { ...base, mode: 'off' as const, here: { ...IDLE, builds: 3 } },
+      false,
+      'offload.mode is off',
+    ],
+    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no build machine is paired'],
+    [
+      'force for a device build',
+      { ...base, mode: 'force' as const, unsupported: 'device builds build here' },
+      false,
+      'device builds build here',
+    ],
+  ])('%s', (_, input, offload, reason) => {
+    expect(offloadPlacement(input)).toEqual({ offload, reason });
   });
 });
 
 describe('pickOffer', () => {
-  it('refuses any toolchain difference, a missing runtime, a busy machine and a full disk', () => {
-    for (const refused of [
-      offer({ toolchain: { stimBuild: 'b2' } }),
-      offer({ toolchain: { cocoapods: '1.17.0' } }),
-      offer({ toolchain: { xcode: 'Xcode 26.4' } }),
-      offer({ toolchain: { simulatorSdk: '27.1' } }),
-      offer({ toolchain: { arch: 'x64' } }),
-      offer({ toolchain: { runtimes: ['com.apple.CoreSimulator.SimRuntime.iOS-26-5'] } }),
-      offer({ capacity: { running: 1, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } }),
-      offer({ capacity: { running: 0, max: 1, diskFreeBytes: 1024 ** 3, minDiskFreeBytes: 10 * 1024 ** 3 } }),
-    ]) {
-      expect(pickOffer([refused], IOS)).toBeNull();
+  const pick = (
+    offers: Array<BuildOffer | null>,
+    { mode = 'auto', here = { ...IDLE, builds: 3 } }: { mode?: OffloadMode; here?: MachineCapacity } = {},
+    target: BuildTarget = IOS,
+  ) =>
+    pickOffer({
+      mode,
+      here,
+      target,
+      offers: offers.map((each, index) => ({ machine: `mac${index}`, offer: each, failure: 'unreachable' })),
+    });
+
+  it('refuses any toolchain difference, a missing runtime, a busy machine and a full disk in either mode', () => {
+    for (const mode of ['auto', 'force'] as const) {
+      for (const refused of [
+        offer({ toolchain: { stimBuild: 'b2' } }),
+        offer({ toolchain: { cocoapods: '1.17.0' } }),
+        offer({ toolchain: { xcode: 'Xcode 26.4' } }),
+        offer({ toolchain: { simulatorSdk: '27.1' } }),
+        offer({ toolchain: { arch: 'x64' } }),
+        offer({ toolchain: { runtimes: ['com.apple.CoreSimulator.SimRuntime.iOS-26-5'] } }),
+        offer({ capacity: capacity({ running: 1, declined: 'already running 1 offloaded build(s), its limit' }) }),
+        offer({ capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }) }),
+        offer({ capacity: capacity({ diskFreeBytes: 1024 ** 3, declined: '1.0 GB free, builds need 10.0 GB' }) }),
+        offer({ capacity: { running: 1, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } }),
+      ]) {
+        expect(pick([refused], { mode }).index).toBeNull();
+      }
     }
-    expect(pickOffer([offer()], { ...IOS, local: { ...LOCAL, stimBuild: null } })).toBeNull();
+    expect(pick([offer()], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).index).toBeNull();
   });
 
-  it('prefers the warmest machine, then the least busy', () => {
+  it.each([
+    ['auto, slots full here, idle machine', 'auto', { ...IDLE, builds: 3 }, capacity(), 0, []],
+    [
+      'auto, slots full here, machine more loaded but accepting',
+      'auto',
+      { ...IDLE, builds: 3 },
+      capacity({ loadPerCore: 1.5 }),
+      0,
+      [],
+    ],
+    [
+      'auto, saturated by load here, machine less loaded',
+      'auto',
+      { ...IDLE, maxBuilds: 0, loadPerCore: 6 },
+      capacity({ loadPerCore: 1.1, builds: 1 }),
+      0,
+      [],
+    ],
+    [
+      'auto, saturated by load here, machine no less loaded',
+      'auto',
+      { ...IDLE, maxBuilds: 0, loadPerCore: 2.4 },
+      capacity({ loadPerCore: 2.4 }),
+      null,
+      ['mac0: no less loaded (load 2.4/core there, 2.4/core here)'],
+    ],
+    [
+      'auto, both saturated',
+      'auto',
+      { ...IDLE, builds: 3, loadPerCore: 9 },
+      capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }),
+      null,
+      ['mac0: busy (load at or above 2/core; load 8.2/core, 2 builds)'],
+    ],
+    [
+      'auto, older machine, slots full here',
+      'auto',
+      { ...IDLE, builds: 3 },
+      { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 },
+      0,
+      [],
+    ],
+    [
+      'auto, older machine, saturated by load only',
+      'auto',
+      { ...IDLE, maxBuilds: 0, loadPerCore: 6 },
+      { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 },
+      null,
+      ['mac0: capacity unknown (older stim-server) while this Mac has a free slot'],
+    ],
+    ['force, idle here, machine more loaded', 'force', IDLE, capacity({ loadPerCore: 1.9 }), 0, []],
+    ['force, older machine', 'force', IDLE, { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 }, 0, []],
+    [
+      'force, machine declines',
+      'force',
+      IDLE,
+      capacity({ builds: 2, maxBuilds: 2, declined: 'all 2 build slots busy' }),
+      null,
+      ['mac0: busy (all 2 build slots busy; load 0.2/core, 2 of 2 build slots busy)'],
+    ],
+  ] as const)('%s', (_, mode, here, offered, index, reasons) => {
+    expect(pick([offer({ capacity: offered })], { mode, here })).toEqual({ index, reasons });
+  });
+
+  it('names every problem of one machine, as doctor reports them', () => {
+    const offered = offer({
+      toolchain: { stimBuild: 'b2', runtimes: [] },
+      capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }),
+    });
+    expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual([
+      'stim-build',
+      'runtime',
+      'busy',
+    ]);
+  });
+
+  it('prefers the warmest machine, then the least loaded, and names the machines it passed over', () => {
     const cold = offer();
     const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });
-    expect(pickOffer([cold, null, warm], IOS)).toBe(2);
-    const busy = offer({ capacity: { running: 1, max: 2, diskFreeBytes: null, minDiskFreeBytes: 0 } });
-    expect(pickOffer([busy, cold], IOS)).toBe(1);
+    expect(pick([cold, null, warm])).toEqual({ index: 2, reasons: ['mac1: unreachable'] });
+    const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
+    const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
+    expect(pick([older, loaded, cold]).index).toBe(2);
   });
 });
 
 describe('pickOffer for Android', () => {
+  const pickAndroid = (each: BuildOffer) =>
+    pickOffer({ mode: 'force', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] }).index;
+
   it('takes a machine whose JDK major and SDK packages match, whatever its Xcode or JDK vendor', () => {
-    expect(pickOffer([offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } })], ANDROID)).toBe(0);
+    expect(pickAndroid(offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
     expect(jdkMajor('JAVA_VERSION="17.0.19"\nIMPLEMENTOR="Homebrew"')).toBe('17');
   });
 
   it('refuses another JDK major, no SDK, or a missing NDK, build-tools or compile platform', () => {
-    for (const refused of [
-      offer({ toolchain: { jdk: '21' } }),
-      offer({ toolchain: { jdk: null } }),
-      offer({ toolchain: { androidSdk: null } }),
-      offer({ toolchain: { androidSdk: { ...SDK, ndk: ['27.0.12077973'] } } }),
-      offer({ toolchain: { androidSdk: { ...SDK, buildTools: ['36.0.0'] } } }),
-      offer({ toolchain: { androidSdk: { ...SDK, platforms: ['android-36'] } } }),
-    ]) {
-      expect(pickOffer([refused], ANDROID)).toBeNull();
+    for (const [refused, code] of [
+      [offer({ toolchain: { jdk: '21' } }), 'jdk'],
+      [offer({ toolchain: { jdk: null } }), 'jdk'],
+      [offer({ toolchain: { androidSdk: null } }), 'android-sdk'],
+      [offer({ toolchain: { androidSdk: { ...SDK, ndk: ['27.0.12077973'] } } }), 'ndk'],
+      [offer({ toolchain: { androidSdk: { ...SDK, buildTools: ['36.0.0'] } } }), 'build-tools'],
+      [offer({ toolchain: { androidSdk: { ...SDK, platforms: ['android-36'] } } }), 'compile-sdk'],
+    ] as const) {
+      expect(pickAndroid(refused)).toBeNull();
+      expect(offerProblems(refused, ANDROID).map((problem) => problem.code)).toEqual([code]);
     }
   });
 

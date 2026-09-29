@@ -116,6 +116,54 @@ describe('inspectBuildMachines', () => {
     expect(readBuildMachines()[0]!.state).toBe('approved');
   });
 
+  it('reports every reason an approved machine would not take the build, with a remedy for each', async () => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
+    const asked: string[] = [];
+    const { findings, machines } = await inspectBuildMachines(
+      {
+        fix: false,
+        check: (credential) => {
+          asked.push(credential.deviceToken);
+          return Promise.resolve({
+            capacity: { running: 0, max: 1, loadPerCore: 8.2, builds: 2 },
+            problems: [
+              { code: 'stim-build', reason: 'Stim build 6bbe there, e774 here' },
+              { code: 'busy', reason: 'busy (load at or above 2/core; load 8.2/core, 2 builds)' },
+            ],
+          });
+        },
+      },
+      fakeIo('nMini', [approved]).io,
+      ['mini'],
+    );
+    expect(asked).toEqual(['secret']);
+    expect(machines).toEqual([
+      expect.objectContaining({
+        state: 'approved',
+        offloadable: false,
+        reasons: ['Stim build 6bbe there, e774 here', 'busy (load at or above 2/core; load 8.2/core, 2 builds)'],
+        capacity: { running: 0, max: 1, loadPerCore: 8.2, builds: 2 },
+      }),
+    ]);
+    expect(findings.map(({ code, level }) => ({ code, level }))).toEqual([
+      { code: 'build-machine-stim-build', level: 'cost' },
+      { code: 'build-machine-busy', level: 'note' },
+    ]);
+    expect(findings[0]!.detail).toContain('6bbe there, e774 here');
+    expect(findings[0]!.fix).toContain('Update Stim on mini');
+
+    const ready = await inspectBuildMachines(
+      { fix: false, check: () => Promise.resolve({ capacity: null, problems: [] }) },
+      fakeIo('nMini', [approved]).io,
+      ['mini'],
+    );
+    expect(ready).toEqual({
+      findings: [],
+      machines: [expect.objectContaining({ state: 'approved', offloadable: true, reasons: [] })],
+    });
+  });
+
   it('reports a revoked machine and one never asked without asking either', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
     const { io, calls } = fakeIo('nMini', [{ error: { code: 'unauthorized', message: 'Unknown device.' } }]);

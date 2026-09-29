@@ -51,6 +51,8 @@ export interface IosFacts {
   cacheSkipped: boolean;
   /** The build machine that compiled the app when the build was offloaded; absent otherwise. */
   offloadedTo?: string;
+  /** Why the app was built here after the run considered offloading it; absent otherwise. */
+  offloadFallback?: string;
   compilationCache: CompilationCacheActivity;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath?: string | null;

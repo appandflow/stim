@@ -299,11 +299,20 @@ sends its token to another. Doctor reports each machine's pairing state.
 `offload.mode` decides where `stim ios` compiles a simulator Debug build and
 where `stim android` compiles an emulator debug build:
 
-- `auto` (default) builds here while a `concurrency.maxBuilds` slot is free,
-  and on a build machine only while every slot holds a live build. With no
-  build limit it always builds here.
-- `force` builds on a build machine whenever one can take the build.
+- `auto` (default) builds here while this Mac has capacity: a free
+  `concurrency.maxBuilds` slot (always, with no build limit) and a load per
+  core under `offload.maxLoadPerCore`. Otherwise it builds on a machine that
+  accepts the build and is expected to be faster: any accepting machine while
+  every slot here is busy, or a machine less loaded than this Mac while only
+  the load here is high. A build machine too old to report its load is used
+  only while every slot here is busy.
+- `force` builds on a build machine whenever one accepts the build.
 - `off` always builds here.
+
+Load per core is the 5-minute load average divided by the CPU count.
+`offload.maxLoadPerCore` (default 2) is the load per core at which a Mac
+counts as saturated: this Mac stops preferring itself, and a build machine
+declines offloaded builds.
 
 `STIM_OFFLOAD_MODE` overrides it for one command. Device, Release and
 `--remote` builds, Android builds with the Apple Clang CAS compiler cache, and
@@ -311,8 +320,9 @@ runs with the build cache off, always build here.
 
 An offloaded build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build and
-CPU architecture match this Mac exactly, with a free build slot and at least
-10 GB free, preferring the one that already holds this repository:
+CPU architecture match this Mac exactly, with at least 10 GB free, that does
+not decline, preferring the one that already holds this repository, then the
+least loaded:
 
 - For iOS, its Xcode, simulator SDK and CocoaPods must match, and it needs an
   iPhone simulator on the target runtime.
@@ -330,20 +340,29 @@ unless its fingerprint equals the one here, and sends back the `.app` or APK.
 Stim checks the archive's sha256 and fingerprints the checkout again before it
 stores and installs the app the usual way; an APK is still compared with the
 installed one before Stim skips an install. The build output shows
-`placement: <machine>` or `placement: here (<reason>)`, and any failure prints
-`offload failed: <reason> -> building here` and compiles here instead. An
+`placement: <machine>` or `placement: here (<reason>)`. When no machine takes
+the build, one line gives each machine's reason, such as
+`janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds) -> building here`,
+and a failure after a machine took it prints
+`offload failed: <reason> -> building here`; either way it compiles here. An
 offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there and builds here, so
 set `offload.mode` to `off` for it. The `--json` payload and `lastBuilds` carry
-`offloadedTo`, and `stim stats` counts offloaded runs apart from cold runs.
+`offloadedTo`, or `offloadFallback` with the reason it built here,
+`stim status` shows the machine and its step while a build runs there, and
+`stim stats` counts offloaded runs apart from cold runs.
 
 On the build machine, `offload.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
 home per client and repository and one Gradle home per client. Put it on a
 large volume. It runs one offloaded build at a time and boots or installs
-nothing. Delete a client's directory there to reclaim its space.
+nothing. It declines a build while that volume has less than 10 GB free,
+while its own Stim builds and the offloaded one fill its
+`concurrency.maxBuilds`, or while its load per core is at or above its
+`offload.maxLoadPerCore`. Delete a client's directory there to reclaim its
+space.
 
 For Android builds, start stim-server on the build machine with `JAVA_HOME`
 pointing at a JDK of the same major version as the clients (otherwise it
