@@ -159,11 +159,13 @@ export function useDeviceStream(
       },
       (result) => {
         subscription.current = result.subscription;
+        queue.interrupt();
         size = '';
         replaying.current = startAt !== null ? { at: null, rate: 0, ended: false, timer: null } : null;
         update({
           replay: startAt !== null ? { at: null, rate: 0, ended: false } : null,
           replayable: result.video === 'h264',
+          seeking: !queue.settled,
         });
         pumpSeeks(connection);
       },

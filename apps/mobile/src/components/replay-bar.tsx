@@ -28,13 +28,13 @@ const NEWEST_FRAME = Number.MAX_SAFE_INTEGER;
 
 /**
  * Live pill, play and pause, speed, and a scrubber over the device's recorded footage with its agent actions
- * and errors as markers. Without a timeline, while replay shows footage that is gone, only the Live pill. Dragging pauses
- * and shows the frame under the finger, and lifting the finger plays on when the replay played before the drag; tapping
- * near a marker lands just before it, and tapping elsewhere shows the frame there, both keeping the replay playing or
- * paused. The thumb and time follow the finger and then the last seek, not the server's answers. The track takes
- * every touch itself, so a tap is one seek. While the
- * device runs, the track ends at the Mac's time now, estimated from the last `timeline` and the time since it came;
- * a finger on the track holds the track still until it lifts.
+ * and errors as markers. Without a timeline, while replay shows footage that is gone, only the Live pill. Dragging
+ * pauses and shows the frame under the finger, and lifting the finger plays on when the replay played before the drag;
+ * tapping near a marker lands just before it, and tapping elsewhere shows the frame there, both keeping the replay
+ * playing or paused. The thumb and time follow the finger and then the last seek, not the server's answers. The track
+ * takes every touch itself, so a tap is one seek. While the device runs, the track ends at the Mac's time now,
+ * estimated from the last `timeline` and the time since it came; a finger on the track holds the track still until it
+ * lifts.
  */
 export function ReplayBar({
   timeline,
@@ -188,14 +188,17 @@ export function ReplayBar({
   const togglePlay = () => {
     if (isLive) return seekTo(NEWEST_FRAME, 0);
     if (!replay) return seekTo(timeline.start, speed);
-    if (playing) return seekTo(at ?? timeline.start, 0);
-    const from = replay.ended || at === null ? timeline.start : at;
+    if (playing) return seekTo(labelAt ?? timeline.start, 0);
+    const from = replay.ended || labelAt === null ? timeline.start : labelAt;
     seekTo(from, speed);
   };
   const toggleSpeed = () => {
     const next = speed === 1 ? 2 : 1;
     setSpeed(next);
-    if (playing && at !== null) onSeek(at, next);
+    if (playing && labelAt !== null) {
+      setAsked(labelAt);
+      onSeek(labelAt, next);
+    }
   };
 
   return (

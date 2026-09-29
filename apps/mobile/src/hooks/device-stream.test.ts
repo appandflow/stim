@@ -62,3 +62,18 @@ test('sends one seek at a time, only the latest waiting, and ignores the answer 
     jest.useRealTimers();
   }
 });
+
+test('resends a seek that was out when the connection resubscribed, and keeps seeking after the late answer', async () => {
+  const { result } = await renderHook(() => useDeviceStream(TARGET, OPTIONS));
+  await act(async () => mockAnswers[0]!({ subscription: 's1', video: 'h264' }));
+  await act(async () => result.current.seek(1000, 0));
+  await act(async () => mockAnswers[0]!({ subscription: 's2', video: 'h264' }));
+  await act(async () => mockRequests[0]!.resolve({ at: 1000 }));
+  expect(mockRequests.map((request) => request.params)).toEqual([
+    { subscription: 's1', at: 1000, rate: 0 },
+    { subscription: 's2', at: 1000, rate: 0 },
+  ]);
+  await act(async () => mockRequests[1]!.resolve({ at: 990 }));
+  expect(result.current.replay).toEqual({ at: 990, rate: 0, ended: false });
+  expect(result.current.seeking).toBe(false);
+});

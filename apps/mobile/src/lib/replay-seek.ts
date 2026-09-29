@@ -14,8 +14,8 @@ export const SEEK_INTERVAL_MS = 50;
  * sends the finger's latest time at most every `SEEK_INTERVAL_MS` instead of one seek per touch event.
  */
 export class SeekQueue {
-  sending: Seek | null = null;
-  waiting: Seek | null = null;
+  private sending: Seek | null = null;
+  private waiting: Seek | null = null;
   private sentAt = -Infinity;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -54,6 +54,13 @@ export class SeekQueue {
     if (this.sending !== seek) return false;
     this.sending = null;
     return this.waiting === null;
+  }
+
+  /** The subscription was replaced with a seek out: it goes to the new one unless a newer seek waits. */
+  interrupt(): void {
+    if (this.waiting === null) this.waiting = this.sending;
+    this.sending = null;
+    this.sentAt = -Infinity;
   }
 
   /**

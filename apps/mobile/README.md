@@ -301,7 +301,8 @@ of footage (see `packages/server/README.md`, Recording).
 - **Moving through it.**
   - Dragging pauses a playing replay and shows the frame under the finger;
     lifting the finger plays on from there when the replay played before the
-    drag. The thumb and time follow the finger. One seek is out at a time, the
+    drag; a drag that starts live lands paused. The thumb and time follow the
+    finger. One seek is out at a time, the
     finger's latest time waits, and seeks go out at most every 50 ms. Dragging
     holds off the viewer's swipe to close.
   - Tapping within 14 points of a marker lands 1.5 seconds before it; tapping
