@@ -6,7 +6,6 @@ import { ActivityIndicator, Alert, Platform as OS, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActionToast, type Toast } from '@/components/action-toast';
-import { AgentSessions } from '@/components/agent-sessions';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile, WarmingPlaceholder } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
@@ -18,10 +17,11 @@ import { Text } from '@/components/text';
 import {
   BuildCard,
   BuildInProgressCard,
-  CardRow,
+  CardGrid,
   LogsCard,
   ResourcesCard,
   StageLine,
+  WorkCard,
 } from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
 import {
@@ -236,7 +236,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const build = runningBuild(env);
   const stage = workspaceStage(env, all, now);
   const devices = stage.label === 'Stopped' ? [] : all;
-  const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/git', platform?: Platform) =>
+  const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
   const lines = platforms.map((platform) => buildLine(platform, env.lastBuilds?.[platform], plan(platform)));
   const failed = lines.find((line) => line.tone === 'error')?.platform;
@@ -253,20 +253,27 @@ export function WorkspaceDetail({ path }: { path: string }) {
         contentContainerStyle={[styles.container, { paddingTop: theme.space.md + bannerHeight }]}
       >
         {header}
-        <StageLine stage={stage} git={gitChip(env.worktree)} onGitPress={() => open('/mac/[id]/git')} />
-        <AgentSessions agents={env.agents} now={now} />
-        <CardRow>
+        <StageLine stage={stage} />
+        <CardGrid>
           <ResourcesCard usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
-          {build ? null : (
-            <BuildCard lines={lines} onPress={() => open('/mac/[id]/build', failed ?? lines[0]?.platform)} />
-          )}
+          <BuildCard
+            lines={lines}
+            building={build}
+            onPress={() => open('/mac/[id]/build', build?.platform ?? failed ?? lines[0]?.platform)}
+          />
           <LogsCard
             errors={env.logs ? env.logs.errorsSinceMarker : null}
-            metro={env.metro && health ? { port: env.metro.port, health } : null}
+            metro={health}
             bundle={bundleLine(env, now, reportsBundles)}
             onPress={() => openLogs((env.logs?.errorsSinceMarker ?? 0) > 0)}
           />
-        </CardRow>
+          <WorkCard
+            agents={env.agents ?? []}
+            git={gitChip(env.worktree)}
+            now={now}
+            onPress={() => open('/mac/[id]/work')}
+          />
+        </CardGrid>
         {build ? (
           <BuildInProgressCard
             env={env}

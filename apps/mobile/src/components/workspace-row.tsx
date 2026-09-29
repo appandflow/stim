@@ -3,6 +3,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivityChip } from '@/components/activity-chip';
+import { AgentSessionLine } from '@/components/agent-sessions';
 import { BuildProgressBar } from '@/components/build-progress';
 import { GitIndicator } from '@/components/git-indicator';
 import { Icon } from '@/components/icon';
@@ -101,10 +102,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             {item.macName}
           </Text>
         </View>
-        {agents ? (
-          <Text variant="callout" tone="secondary" numberOfLines={1}>
-            {agents}
-          </Text>
+        {env.agents?.length ? (
+          <AgentSessionLine agents={env.agents} now={activityAt} variant="callout" tone="secondary" />
         ) : null}
         {lastSeen || active || errors > 0 || env.warnings.length > 0 ? (
           <View style={styles.chips}>
