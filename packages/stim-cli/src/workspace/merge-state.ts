@@ -5,6 +5,10 @@ const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_FRESH_MS = 10 * 60_000;
 const GIT_TIMEOUT_MS = 60_000;
 const REMOTE_PREFIX = 'refs/remotes/origin/';
+// Beyond this many commits since the merge base, the patch-id comparison below is both too slow
+// to be worth it and, on the far side, liable to pass more commit SHAs as argv than the OS allows
+// (stim#1815 saw spawnSync git E2BIG at ~8,400 commits).
+const MAX_MERGE_STATE_COMMITS = 2000;
 
 export interface DefaultBranch {
   ref: string;
@@ -117,7 +121,10 @@ function committedOn(path: string, branch: string | null, head: string): boolean
 export function mergeState(
   path: string,
   { ref, name }: DefaultBranch,
-  { timeoutMs = GIT_TIMEOUT_MS }: { timeoutMs?: number } = {},
+  {
+    timeoutMs = GIT_TIMEOUT_MS,
+    maxCommits = MAX_MERGE_STATE_COMMITS,
+  }: { timeoutMs?: number; maxCommits?: number } = {},
 ): MergeState {
   const git = (args: string[], input?: string): string =>
     getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
@@ -135,11 +142,10 @@ export function mergeState(
         : [],
     );
   const patchIds = (text: string): string[] => [...patchIdCommits(text).keys()];
+  // Commits go through stdin, not argv: a branch can carry thousands of them (stim#1815).
   const committedAt = (commits: string[]): number => {
     const times = commits.length
-      ? git(['show', '-s', '--format=%ct', ...commits])
-          .split('\n')
-          .map(Number)
+      ? git(['log', '--no-walk', '--stdin', '--format=%ct'], commits.join('\n')).split('\n').map(Number)
       : [];
     if (!times.length || !times.every(Number.isFinite)) throw new Error(`no committer date for ${commits.join(' ')}`);
     return Math.max(...times) * 1000;
@@ -163,6 +169,18 @@ export function mergeState(
         .find((commit) => descendants.has(commit));
       if (!landed) throw new Error(`no commit on ${name} merges ${head}`);
       return { merged: true, into: name, head, coversUnpushed: false, mergedAt: committedAt([landed]) };
+    }
+    // A branch this far past the merge base makes the patch-id comparison below too slow, and its
+    // commit or pathspec lists too big for argv (stim#1815); keep it, unknown, without attempting.
+    const aheadCount = Number(git(['rev-list', '--count', `${base}..${head}`]));
+    const behindCount = Number(git(['rev-list', '--count', `${base}..${ref}`]));
+    const commitsSinceBase = Math.max(aheadCount, behindCount);
+    if (commitsSinceBase > maxCommits) {
+      return {
+        merged: false,
+        unknown: true,
+        detail: `merge state unknown: ${commitsSinceBase} commits since the merge base with ${name} exceeds the ${maxCommits}-commit limit`,
+      };
     }
     const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);
