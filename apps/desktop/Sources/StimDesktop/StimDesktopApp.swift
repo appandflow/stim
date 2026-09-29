@@ -18,12 +18,10 @@ final class OpenRequests: ObservableObject {
 }
 
 extension Notification.Name {
-  /// Posted when a quit is waiting on the sheets attached to a window.
   static let stimQuitRequested = Notification.Name("stimQuitRequested")
 }
 
 extension View {
-  /// Runs `dismiss` when a quit is requested, for the state that presents a sheet.
   func onQuitRequested(_ dismiss: @escaping () -> Void) -> some View {
     onReceive(NotificationCenter.default.publisher(for: .stimQuitRequested)) { _ in dismiss() }
   }
