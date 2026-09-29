@@ -11,6 +11,9 @@
     ".": {
       "entry": ["apps/desktop/scripts/*.mjs"]
     },
+    "packages/server": {
+      "ignoreBinaries": ["plutil"]
+    },
     "apps/mobile": {
       "entry": ["plugins/*.js", "scripts/*.mjs", "mock-server/*.mjs", "fingerprint.config.js"],
       "ignoreBinaries": ["stim-server"],

@@ -219,7 +219,10 @@ outside it moves to its own issue and pull request.
   area and Stim home under `offload.workerRoot`, guarded by an ownership
   claim whose child is the build's process group. A Gradle daemon leaves
   that group, so the worker stops the daemons of the client's Gradle home
-  when an Android build ends or is cancelled.
+  when an Android build ends or is cancelled. `stim-server service` installs,
+  reports and removes the worker's per-user LaunchAgent and, only when asked, a
+  tailnet-only serve route; it never enables Funnel and never touches
+  pairings, `$STIM_HOME/server` or settings.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, and logs. The CLI owns every write to that state and imports

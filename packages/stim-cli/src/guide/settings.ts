@@ -597,6 +597,10 @@ and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
 ~/Library/Android/sdk), and stop the Gradle daemons they start when they end.
+\`stim-server service install [--serve]\` on the build machine keeps stim-server
+running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
+pin a PATH entry or variable such as a private CocoaPods that stim-server's
+login-shell environment would otherwise replace.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
