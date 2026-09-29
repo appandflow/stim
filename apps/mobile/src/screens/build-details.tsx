@@ -55,7 +55,7 @@ const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', rem
 const PLATFORMS: Platform[] = ['ios', 'android'];
 
 const SWITCH_INSET = 3;
-const PILL_SPRING: Transition = { type: 'spring', damping: 22, stiffness: 260, mass: 1 };
+const PILL_SPRING: Transition = { type: 'spring', damping: 33, stiffness: 260, mass: 1 };
 const LABEL_FADE: Transition = { type: 'timing', duration: 180, easing: 'easeInOut' };
 
 /**
