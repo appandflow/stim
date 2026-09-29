@@ -6,7 +6,7 @@ struct SidebarPreferences: DynamicProperty {
   @AppStorage(AppPreferences.Key.sidebarStatus) var status = StatusFilter.all
   @AppStorage(AppPreferences.Key.hiddenProjects) var hiddenProjects = ""
   @AppStorage(AppPreferences.Key.sidebarGrouping) var grouping = SidebarGrouping.project
-  @AppStorage(AppPreferences.Key.sidebarSort) var sort = SidebarSort.lastActivity
+  @AppStorage(AppPreferences.Key.sidebarSort) var sort = SidebarSort.name
   @AppStorage(AppPreferences.Key.hidesUnprovisionedWorktrees) var hidesNoEnvironment = false
   @AppStorage(AppPreferences.Key.showsGitStatus) var showsGitStatus = true
   @AppStorage(AppPreferences.Key.showsEmptyProjects) var showsEmptyProjects = false

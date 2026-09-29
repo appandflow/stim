@@ -29,7 +29,7 @@ public struct SidebarOptions: Equatable, Sendable {
   public var status = StatusFilter.all
   public var hiddenProjects: Set<String> = []
   public var grouping = SidebarGrouping.project
-  public var sort = SidebarSort.lastActivity
+  public var sort = SidebarSort.name
   public var showsNoEnvironment = true
   public var showsGitStatus = true
   public var showsEmptyProjects = false
@@ -118,7 +118,7 @@ public func sidebarTrees(
   }
   let trees = projectSummaries(environments: environments, unprovisioned: unprovisioned, project: project)
     .filter { !options.hiddenProjects.contains($0.project.root) }
-    .map { ProjectTree(summary: $0, entries: sorted(grouped[$0.project] ?? [], by: options.sort)) }
+    .map { ProjectTree(summary: $0, entries: sorted(grouped[$0.project] ?? [], by: options.sort, project: project)) }
     .filter { options.showsEmptyProjects || !$0.entries.isEmpty }
   func key(_ tree: ProjectTree) -> (activity: Date?, memory: Int) {
     (tree.entries.compactMap(\.lastActivityAt).max(), tree.entries.reduce(0) { $0 + $1.memoryMb })
@@ -138,7 +138,7 @@ public func sidebarList(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
   options: SidebarOptions
 ) -> [SidebarEntry] {
-  sorted(visibleEntries(environments, unprovisioned, project, options), by: options.sort)
+  sorted(visibleEntries(environments, unprovisioned, project, options), by: options.sort, project: project)
 }
 
 private func visibleEntries(
@@ -156,8 +156,14 @@ private func visibleEntries(
   }
 }
 
-private func sorted(_ entries: [SidebarEntry], by sort: SidebarSort) -> [SidebarEntry] {
+private func sorted(
+  _ entries: [SidebarEntry], by sort: SidebarSort, project: (String) -> Project
+) -> [SidebarEntry] {
   entries.sorted { a, b in
+    if sort == .name {
+      let (x, y) = (project(a.path).name.lowercased(), project(b.path).name.lowercased())
+      if x != y { return x < y }
+    }
     switch sort {
     case .lastActivity where a.lastActivityAt != b.lastActivityAt: return newer(a.lastActivityAt, b.lastActivityAt)
     case .memory where a.memoryMb != b.memoryMb: return a.memoryMb > b.memoryMb

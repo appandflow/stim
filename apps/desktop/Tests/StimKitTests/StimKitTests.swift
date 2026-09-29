@@ -285,13 +285,18 @@ import Testing
     }
     #expect(
       tree() == [
+        "app 1/3: /r/app/.worktrees/b,/r/app/.worktrees/idle,/r/app/.worktrees/live",
+        "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
+      ])
+    #expect(
+      tree { $0.sort = .lastActivity } == [
         "app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live,/r/app/.worktrees/b",
         "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
       ])
     #expect(tree { $0.status = .live } == ["app 1/3: /r/app/.worktrees/live"])
     #expect(
       tree { $0.status = .idle } == [
-        "app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/b", "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
+        "app 1/3: /r/app/.worktrees/b,/r/app/.worktrees/idle", "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
       ])
     #expect(
       tree {
@@ -311,6 +316,35 @@ import Testing
     #expect(list { $0.hiddenProjects = ["/r/app"] } == ["/r/new/.worktrees/c", "/r/zed"])
   }
 
+  @Test func keepsTheDefaultSidebarOrderWhenActivityChanges() throws {
+    func envs(_ appStarted: String, _ zedStarted: String) throws -> [Workspace] {
+      let json = """
+        [{"path":"/r/zed/.worktrees/a","live":true,"warnings":[],"supervisor":{"startedAt":"\(zedStarted)"}},
+         {"path":"/r/app/.worktrees/b","live":true,"warnings":[],"supervisor":{"startedAt":"\(appStarted)"}},
+         {"path":"/r/app/.worktrees/a","live":false,"warnings":[]}]
+        """
+      return try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    }
+    func order(_ envs: [Workspace], _ change: (inout SidebarOptions) -> Void = { _ in }) -> [String] {
+      var options = SidebarOptions()
+      change(&options)
+      return sidebarTrees(
+        environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options
+      ).flatMap { $0.entries.map(\.path) }
+    }
+    let before = try envs("2026-09-25T09:00:00Z", "2026-09-25T10:00:00Z")
+    let after = try envs("2026-09-25T11:00:00Z", "2026-09-25T10:00:00Z")
+    let stable = ["/r/app/.worktrees/a", "/r/app/.worktrees/b", "/r/zed/.worktrees/a"]
+    #expect(order(before) == stable)
+    #expect(order(after) == stable)
+    #expect(order(before) { $0.sort = .lastActivity } != order(after) { $0.sort = .lastActivity })
+    var flat = SidebarOptions()
+    flat.grouping = .none
+    #expect(
+      sidebarList(environments: after, unprovisioned: [], project: Project.init(fallbackFor:), options: flat)
+        .map(\.path) == stable)
+  }
+
   @Test func showsWarmingAndReadyWorkspacesAsLiveAndNewestFirst() throws {
     let json = #"""
       [{"path":"/r/app/.worktrees/live","live":true,"phase":"live","phaseSince":null,"warnings":[],
@@ -324,6 +358,7 @@ import Testing
     let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
     var options = SidebarOptions()
     options.status = .live
+    options.sort = .lastActivity
     #expect(
       sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
         .map(\.path) == ["/r/new/.worktrees/warming", "/r/app/.worktrees/ready", "/r/app/.worktrees/live"])
