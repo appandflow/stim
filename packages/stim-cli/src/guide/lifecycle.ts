@@ -724,7 +724,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   shuts the emulator down, wipes its user data through centralized teardown,
   boots it again and installs:
 
-    device      stim-app has 97 MB free on /data after removing other apps and trimming caches; wiping its user data
+    device      stim-app has 97M free on /data after removing other apps and trimming caches; wiping its user data
     device      stim-app (emulator-5556) booted with wiped user data
 
   An install that fails with INSTALL_FAILED_INSUFFICIENT_STORAGE gets the
@@ -1326,7 +1326,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                   set <key> <value> --scope <layer> --json; unset <key> --scope <layer> --json
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
-  gc              --delete --older-than <days> --cache <name|all|workspaces> --worktrees --json
+  gc              --delete --older-than <days> --cache <name|all|workspaces|recordings|parked> --worktrees --json
   worktree warm    --refresh; remove [path] --force
 
   DEVICE SLOTS

@@ -984,9 +984,8 @@ export function parseDfAvailableBytes(text: unknown): number | null {
 }
 
 export function androidDataFreeBytes(serial: string): number | null {
-  const output = getExecutor().runFile('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
+  const output = getExecutor().runFileQuiet('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
     timeoutMs: 30000,
-    killSignal: 'SIGKILL',
   });
   return parseDfAvailableBytes(output);
 }

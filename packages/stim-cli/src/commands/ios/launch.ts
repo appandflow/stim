@@ -458,16 +458,12 @@ interface FinishIosRunArgs {
 
 function cleanAdoptedIosApps({
   d,
-  root,
-  slot,
   udid,
   bundleId,
   phase,
   note,
 }: {
   d: IosDeps;
-  root: string;
-  slot?: string;
   udid: string;
   bundleId: string | null;
   phase: (name: unknown, text: string) => void;
@@ -486,7 +482,6 @@ function cleanAdoptedIosApps({
       }
       phase('install', `cleared ${bundleId} data left by the previous workspace`);
     }
-    d.clearIosAdoptionPending(root, slot);
     return null;
   }
   if (!swept.listed) return 'Could not list apps left by the previous workspace.';
@@ -496,8 +491,8 @@ function cleanAdoptedIosApps({
   return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
 }
 
-function parkedBuildMayMatch(parkedCacheKey: string | undefined, storeKey: string | null): boolean {
-  return !parkedCacheKey || parkedCacheKey === storeKey;
+function installMayBeProven(adopting: boolean, parkedCacheKey: string | undefined, storeKey: string | null): boolean {
+  return !adopting || !parkedCacheKey || parkedCacheKey === storeKey;
 }
 
 function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
@@ -767,7 +762,7 @@ export async function finishIosRun({
   } else {
     const adopting = Boolean(device?.adoptionPending);
     if (adopting) {
-      const cleanupFailure = cleanAdoptedIosApps({ d, root, udid, bundleId, phase, note });
+      const cleanupFailure = cleanAdoptedIosApps({ d, udid, bundleId, phase, note });
       if (cleanupFailure) {
         return fail({
           code: 'STIM_INSTALL_FAILED',
@@ -786,7 +781,7 @@ export async function finishIosRun({
         devClientScheme: scheme,
         schemeApprovals: device.schemeApprovals,
         dataCleared: adopting,
-        proveInstalled: !adopting || parkedBuildMayMatch(device?.parkedCacheKey, storeKey),
+        proveInstalled: installMayBeProven(adopting, device?.parkedCacheKey, storeKey),
       },
       { now: d.now },
     );
@@ -798,6 +793,7 @@ export async function finishIosRun({
         build: { ...buildFailure, appPath, bundleId },
       });
     }
+    if (adopting) d.clearIosAdoptionPending(root, slot);
     installSkipped = Boolean(installed?.skipped);
     const artifactDuration =
       installed?.artifactDurationMs === undefined

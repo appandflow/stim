@@ -577,26 +577,30 @@ test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', ()
   ).not.toThrow();
 });
 
-test.each([
-  ['Z', false],
-  ['S', true],
-])('assertOwnedAvdStopped treats a %s lock holder as live: %s', (stat, live) => {
-  setExecutor(
-    makeExecutor({
-      runFileQuiet: (file, args = []) => (file === 'ps' && args.includes(String(process.pid)) ? `${stat}\n` : null),
-    }),
-  );
-  let refused = false;
-  try {
-    assertOwnedAvdStopped('stim-app', {
-      listProcesses: () => [],
-      resolveDirectory: () => '/avds/stim-app.avd',
-      readProcessId: () => process.pid,
-    });
-  } catch (error) {
-    refused = /still has a live emulator process/.test(String(error));
-  }
-  expect(refused).toBe(live);
+describe.skipIf(process.platform === 'win32')('zombie emulator processes (ps stat is POSIX; skipped on win32)', () => {
+  test.each([
+    ['Z', false],
+    ['S', true],
+    [null, true],
+  ])('assertOwnedAvdStopped treats a %s lock holder as live: %s', (stat, live) => {
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file, args = []) =>
+          file === 'ps' && args.includes(String(process.pid)) && stat ? `${stat}\n` : null,
+      }),
+    );
+    let refused = false;
+    try {
+      assertOwnedAvdStopped('stim-app', {
+        listProcesses: () => [],
+        resolveDirectory: () => '/avds/stim-app.avd',
+        readProcessId: () => process.pid,
+      });
+    } catch (error) {
+      refused = /still has a live emulator process/.test(String(error));
+    }
+    expect(refused).toBe(live);
+  });
 });
 
 test.each([

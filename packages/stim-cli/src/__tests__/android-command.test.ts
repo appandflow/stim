@@ -604,7 +604,17 @@ const DF_ROOMY =
 describe('adopted Android storage', () => {
   afterEach(() => resetExecutor());
 
-  function storageRun({ free, insufficientInstalls = 0 }: { free: number[]; insufficientInstalls?: number }) {
+  function storageRun({
+    free,
+    insufficientInstalls = 0,
+    wipeStatus = 'torn-down',
+    rebootedAvd = 'emulator-5586',
+  }: {
+    free: number[];
+    insufficientInstalls?: number;
+    wipeStatus?: string;
+    rebootedAvd?: string;
+  }) {
     const apkPath = fakeApk();
     const device = { avdName: 'stim-adopted', consolePort: 5584, owned: true, adoptionPending: true, adopted: true };
     upsertProject(root, { platforms: { android: device } });
@@ -644,13 +654,14 @@ describe('adopted Android storage', () => {
       resolveCached: () => apkPath,
       install: installAndroidApp,
       ensureDeviceBooted: async () => ({ ok: true, serial: boots++ === 0 ? 'emulator-5584' : 'emulator-5586' }),
+      resolveAvdSerial: () => ({ serial: boots > 1 ? rebootedAvd : 'emulator-5584' }),
       dataFreeBytes: () => free.shift() ?? null,
       trimCaches: (serial: string) => {
         trims.push(serial);
       },
       wipeDevice: (avdName: string, options: unknown) => {
         wipes.push([avdName, options]);
-        return { status: 'torn-down' };
+        return { status: wipeStatus, reason: 'emulator busy' };
       },
     });
     return { h, installs, trims, wipes };
@@ -675,6 +686,33 @@ describe('adopted Android storage', () => {
     expect(installs).toEqual(installedOn);
     expect(h.stderr.some((line) => line.includes('wiping its user data'))).toBe(wipeCount > 0);
     expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBeUndefined();
+  });
+
+  test('a wipe that fails refuses the install and keeps adoption pending', async () => {
+    const run = storageRun({ free: [GB / 10, GB / 10], wipeStatus: 'failed' });
+    const result = await run.h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_INSTALL_FAILED');
+    expect(result.error?.message).toMatch(/could not wipe it: emulator busy/);
+    expect(run.installs).toEqual([]);
+    expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(true);
+  });
+
+  test('a reboot that lands on another emulator refuses the install', async () => {
+    const run = storageRun({ free: [GB / 10, GB / 10], rebootedAvd: 'emulator-5590' });
+    const result = await run.h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toMatch(/emulator-5586 is not running stim-adopted after the wipe/);
+    expect(run.installs).toEqual([]);
+    expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(true);
+  });
+
+  test('a storage failure after the wipe is final and does not wipe again', async () => {
+    const run = storageRun({ free: [GB / 10, GB / 10], insufficientInstalls: 1 });
+    const result = await run.h.run();
+    expect(result.ok).toBe(false);
+    expect(run.wipes.length).toBe(1);
+    expect(run.installs).toEqual(['emulator-5586']);
   });
 
   test.each([

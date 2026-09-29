@@ -246,6 +246,10 @@ test('gc --cache parked reports parked devices with their app and erases them on
   expect(report).toMatch(/Re-run with --delete to erase the parked devices above/);
   expect(calls).not.toContain('xcrun simctl erase P1');
 
+  await captureLog(() => runGc({ cache: 'all', delete: true }));
+  expect(calls).not.toContain('xcrun simctl erase P1');
+  expect(readParked('ios')).toEqual([expect.objectContaining({ bundleId: 'com.example.app' })]);
+
   const erased = await captureLog(() => runGc({ cache: 'parked', delete: true }));
   expect(erased).toMatch(/Erased parked ios sim .* it stays parked/);
   expect(calls).toContain('xcrun simctl erase P1');

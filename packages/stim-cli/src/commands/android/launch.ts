@@ -399,6 +399,7 @@ interface AdoptedRoom {
   dataFreeBytes: typeof androidDataFreeBytes;
   trimCaches: typeof trimAndroidCaches;
   wipeDevice: typeof teardownOwnedAvd;
+  resolveAvdSerial: typeof resolveOwnedAvdSerial;
 }
 
 async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<string> {
@@ -408,15 +409,22 @@ async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<s
       `${room.avdName} has ${free === null ? 'too little space' : `${formatBytes(free)} free`} on /data after removing other apps and trimming caches; wiping its user data`,
     ),
   );
+  const expectedRecord = deviceSlotPlatforms(loadConfig()?.projects?.[room.root], room.slot)?.android;
+  if (!expectedRecord?.adoptionPending || expectedRecord.avdName !== room.avdName) {
+    throw new Error('the emulator assignment changed before the wipe; its data was kept');
+  }
   const wiped = room.wipeDevice(room.avdName, {
     wipe: true,
-    owner: { projectPath: room.root, slot: room.slot },
+    owner: { projectPath: room.root, slot: room.slot, expectedRecord },
     workspace: room.root,
   });
   if (wiped.status !== 'torn-down') throw new Error(`could not wipe it: ${wiped.reason ?? wiped.status}`);
   const rebooted = await room.rebootDevice();
   if (!rebooted.ok || !rebooted.serial) {
     throw new Error(`it did not boot after its user data was wiped: ${rebooted.reason ?? 'no serial'}`);
+  }
+  if (room.resolveAvdSerial(room.avdName).serial !== rebooted.serial) {
+    throw new Error(`${rebooted.serial} is not running ${room.avdName} after the wipe`);
   }
   room.phase('device', `${room.avdName} (${rebooted.serial}) booted with wiped user data`);
   return rebooted.serial;
@@ -432,14 +440,18 @@ async function installOnAdoptedAvd(
   const outOfSpace = (result: InstallResultLike) =>
     Boolean(result.failed) && INSUFFICIENT_STORAGE.test(result.reason ?? '');
   let target = serial;
+  let wiped = false;
   if (!roomy(room.dataFreeBytes(target))) {
     room.trimCaches(target, neededBytes);
     const free = room.dataFreeBytes(target);
     if (roomy(free)) room.phase('install', `trimmed app caches on ${room.avdName} to make room for the APK`);
-    else target = await wipeAdoptedAvd(room, free);
+    else {
+      target = await wipeAdoptedAvd(room, free);
+      wiped = true;
+    }
   }
   let installed = installApk(target);
-  if (!outOfSpace(installed)) return { serial: target, installed };
+  if (wiped || !outOfSpace(installed)) return { serial: target, installed };
   room.trimCaches(target, neededBytes);
   installed = installApk(target);
   if (!outOfSpace(installed)) return { serial: target, installed };
@@ -654,6 +666,7 @@ export async function finishAndroidRun({
       dataFreeBytes,
       trimCaches,
       wipeDevice,
+      resolveAvdSerial,
     };
     try {
       ({ serial, installed } = await installOnAdoptedAvd(room, serial, installApk));

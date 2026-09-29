@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -692,6 +692,21 @@ describe('clearIosAppData', () => {
     for (const dir of ['Documents', 'Library', 'tmp', 'SystemData'])
       expect(readdirSync(join(container, dir))).toEqual([]);
     expect(readdirSync(container)).toContain('.com.apple.mobile_container_manager.metadata.plist');
+  });
+
+  test('removes a symlinked data directory without touching its target', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'stim-app-group-'));
+    try {
+      writeFileSync(join(outside, 'shared.db'), 'group data');
+      rmSync(join(container, 'Documents'), { recursive: true });
+      symlinkSync(outside, join(container, 'Documents'));
+      exec(null);
+      clearIosAppData('U1', 'com.example.app');
+      expect(readdirSync(outside)).toEqual(['shared.db']);
+      expect(readdirSync(container)).not.toContain('Documents');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   test('treats a missing defaults domain as nothing to delete', () => {

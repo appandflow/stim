@@ -750,7 +750,7 @@ describe('parked simulator adoption', () => {
       },
     );
     expect(exitCode).toBe(null);
-    expect(events).toEqual(['sweep', 'data', 'clear', 'install']);
+    expect(events).toEqual(['sweep', 'data', 'install', 'clear']);
     expect(installArgs.proveInstalled).toBe(true);
     expect(errs.join('\n')).toMatch(/device\s+stim-fixture .* adopted/);
     expect(errs.join('\n')).toMatch(/removed com\.example\.old/);
@@ -784,6 +784,35 @@ describe('parked simulator adoption', () => {
     );
     expect(exitCode).toBe(null);
     expect(proveInstalled).toBe(proves);
+  });
+
+  test('a failed dev-client preparation after the data clear leaves adoption pending', async () => {
+    reserve();
+    let cleared = false;
+    const { exitCode } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+        }),
+        clearOtherUserApps: () => ({ listed: true, kept: true, removed: [], failed: [] }),
+        clearIosAppData: () => {},
+        clearIosAdoptionPending: () => {
+          cleared = true;
+        },
+        installIosApp: () => ({
+          failed: true,
+          code: 'STIM_INSTALL_FAILED',
+          reason: 'could not prepare the dev client',
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(cleared).toBe(false);
   });
 
   test('a failed data clear refuses before install and leaves adoption pending', async () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
@@ -529,15 +529,18 @@ export function clearIosAppData(udid: string, bundleId: string): void {
   }
   for (const name of CLEARED_CONTAINER_DIRS) {
     const dir = join(container, name);
-    let children: string[];
+    let stat;
     try {
-      if (!statSync(dir).isDirectory()) throw new Error(`Expected app data path ${dir} to be a directory.`);
-      children = readdirSync(dir);
+      stat = lstatSync(dir);
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
       throw error;
     }
-    for (const child of children) rmSync(join(dir, child), { recursive: true, force: true });
+    if (!stat.isDirectory()) {
+      rmSync(dir, { force: true });
+      continue;
+    }
+    for (const child of readdirSync(dir)) rmSync(join(dir, child), { recursive: true, force: true });
   }
 }
 
