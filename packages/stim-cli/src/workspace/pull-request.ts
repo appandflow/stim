@@ -200,11 +200,12 @@ export function parseRemoteRepo(url: string): string | null {
   return owner && name ? `${owner.toLowerCase()}/${name.toLowerCase()}` : null;
 }
 
+// `git remote -v`, not `git config --get-regexp`, so a pushurl and an `insteadOf` rewrite both count.
 function localRemoteRepos(cwd: string): ReadonlySet<string> {
-  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'config', '--get-regexp', String.raw`^remote\..*\.url$`]);
+  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'remote', '-v']);
   const repos = new Set<string>();
   for (const line of out ? out.split('\n') : []) {
-    const url = /^\S+\s+(.*)$/.exec(line)?.[1];
+    const url = /^\S+\s+(\S+)\s+\((?:fetch|push)\)$/.exec(line)?.[1];
     const repo = url ? parseRemoteRepo(url) : null;
     if (repo) repos.add(repo);
   }
