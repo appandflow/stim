@@ -93,7 +93,7 @@ import Testing
 }
 
 @MainActor
-@Suite struct LogFollowerTests {
+@Suite(.serialized) struct LogFollowerTests {
   private final class Events {
     var records: [LogRecord] = []
     var exits: [(Int32, [String])] = []
@@ -146,6 +146,18 @@ import Testing
     try await Task.sleep(for: .milliseconds(300))
     #expect(!second.isRunning)
     #expect(events.exits.isEmpty)
+  }
+
+  @Test func stopAllTerminatesEveryRunningFollower() async throws {
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let followers = [LogFollower { _ in }, LogFollower { _ in }]
+    for follower in followers { follower.start(LogQuery(), cli: cli, cwd: dir.path) }
+    let processes = try followers.map { try #require($0.runningProcess) }
+    #expect(processes.allSatisfy { $0.isRunning })
+
+    LogFollower.stopAll()
+    await waitUntil { processes.allSatisfy { !$0.isRunning } }
+    #expect(processes.allSatisfy { !$0.isRunning })
   }
 
   @Test func reportsTheRefusalOnStderr() async throws {

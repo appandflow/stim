@@ -582,7 +582,11 @@ result.
   simulators and emulators: taps, typing, app opens, screenshots, and failed
   commands. A plain `logs` includes it; `--errors` includes it only when
   selected with `--source agent` or `--source all`.
-- `--follow` streams new matching records.
+- `--follow` streams new matching records. It exits with status 0 on Ctrl+C,
+  SIGTERM, or when its stdout closes. On Linux it also exits when the process
+  that started it exits while its stdout is a pipe. It notices within a few
+  seconds, even when no record arrives, except a closed stdout pipe on Linux
+  whose starter is still running, which it notices at the next record.
 - `--json` writes NDJSON. Zero matches writes zero bytes. With `--errors`, an
   Expo error record also carries a `context` array: the code frame and stack
   lines Expo printed after it.

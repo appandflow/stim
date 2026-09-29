@@ -1,4 +1,4 @@
-import AppKit
+import Combine
 import StimKit
 
 /// The records of one running `stim logs --follow` query, capped at `limit`
@@ -28,20 +28,7 @@ final class LogsModel: ObservableObject {
   var onChange: ((Change) -> Void)?
 
   private var session = 0
-  private var terminationObserver: NSObjectProtocol?
   private lazy var follower = LogFollower { [weak self] event in self?.handle(event) }
-
-  init() {
-    terminationObserver = NotificationCenter.default.addObserver(
-      forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.follower.stop() }
-    }
-  }
-
-  deinit {
-    if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
-  }
 
   /// Replaces the running query. Pass the returned session to `stop` so a
   /// stale stop cannot end a newer query.

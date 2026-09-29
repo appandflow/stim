@@ -7,6 +7,7 @@ import { relative, sep } from 'node:path';
 import { isPathPrefix, loadConfig } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { refuseNoProject } from '../command-output.ts';
+import { watchStdoutReader } from '../stdout-reader.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -331,9 +332,11 @@ export default function logsCommand(program: Command): void {
         : null;
       const finish = () => {
         stop();
+        stopReader();
         if (agentTimer) clearInterval(agentTimer);
         process.exit(0);
       };
+      const stopReader = watchStdoutReader(finish);
       process.on('SIGINT', finish);
       process.on('SIGTERM', finish);
     });
