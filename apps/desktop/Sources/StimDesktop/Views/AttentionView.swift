@@ -29,8 +29,10 @@ struct AttentionView: View {
           VStack(spacing: Space.md) {
             Image(systemName: "checkmark.circle").font(.system(size: 28)).foregroundStyle(Palette.success)
             Text("Nothing needs you right now").font(.stim(.headline))
-            Text("Agents handle log errors and failed runs themselves. Setup problems, signing failures, expired leases and stuck agents show up here.")
-              .foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+            Text(
+              "Agents handle log errors and failed runs themselves. Setup problems, signing failures, expired leases and stuck agents show up here."
+            )
+            .foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
           }
           .frame(maxWidth: .infinity)
           .padding(.vertical, Space.xxxl)

@@ -251,7 +251,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func decodesAReplayRangeStimServerAnswered() throws {
     let range = try JSONDecoder().decode(ReplayRange.self, from: fixture("replay-range.json"))
     #expect(range.enabled && !range.recording && range.spans.count == 1)
-    #expect(range.markers.first == ReplayMarker(at: 1_790_608_621_703, kind: "action", command: "press", label: "Tapped (38, 84)"))
+    #expect(
+      range.markers.first == ReplayMarker(at: 1_790_608_621_703, kind: "action", command: "press", label: "Tapped (38, 84)"))
     #expect(range.markers.contains { $0.kind == "error" && $0.title == "Error" })
   }
 }

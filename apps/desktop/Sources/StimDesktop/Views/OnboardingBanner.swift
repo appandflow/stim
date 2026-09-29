@@ -79,8 +79,10 @@ struct OnboardingBanner: View {
       popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tone: .warning) {
         Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
           .font(.stim(.headline))
-        Text("stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later.")
-          .foregroundStyle(Palette.secondary)
+        Text(
+          "stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later."
+        )
+        .foregroundStyle(Palette.secondary)
         disclosure { Text(detail(server, name: "stim-server", path: report.serverPath)) }
       } buttons: {
         runButton(

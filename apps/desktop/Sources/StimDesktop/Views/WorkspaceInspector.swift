@@ -193,7 +193,8 @@ struct MetroLogsSection: View {
         if let bundle = env.bundleLine(now: context.date, reportsBundles: reportsBundles) {
           Text(bundle.text)
             .foregroundStyle(
-              bundle.tone == .error ? Palette.error : bundle.tone == .tertiary ? Palette.tertiary : Palette.secondary)
+              bundle.tone == .error ? Palette.error : bundle.tone == .tertiary ? Palette.tertiary : Palette.secondary
+            )
             .lineLimit(2)
         }
       }

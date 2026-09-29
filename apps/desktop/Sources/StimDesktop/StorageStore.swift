@@ -163,7 +163,11 @@ private final class RunningProcesses: @unchecked Sendable {
 
   func insert(_ process: Process) { lock.withLock { _ = processes.insert(process) } }
   func remove(_ process: Process) { lock.withLock { _ = processes.remove(process) } }
-  func terminateAll() { lock.withLock { processes.forEach { $0.terminate() } } }
+  func terminateAll() {
+    lock.withLock {
+      for process in processes { process.terminate() }
+    }
+  }
 }
 
 private final class DataBox: @unchecked Sendable {

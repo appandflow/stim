@@ -1,5 +1,5 @@
-import CryptoKit
 import CoreVideo
+import CryptoKit
 import Foundation
 
 /// Streams a physical Android device's screen and injects input through the scrcpy server, over adb only:
@@ -113,7 +113,8 @@ final class AndroidDeviceStream {
     let jar = try Data(contentsOf: serverJar)
     let digest = SHA256.hash(data: jar).map { String(format: "%02x", $0) }.joined()
     guard digest == Scrcpy.serverSha256 else {
-      throw Failure(description: "\(serverJar.path) is not scrcpy-server \(Scrcpy.version) (sha256 \(digest)); it was not pushed.")
+      throw Failure(
+        description: "\(serverJar.path) is not scrcpy-server \(Scrcpy.version) (sha256 \(digest)); it was not pushed.")
     }
     let pushing = lock.withLock { () -> Bool in
       if !stopped { pushed = true }
@@ -183,7 +184,8 @@ final class AndroidDeviceStream {
       usleep(100_000)
     }
     let output = lock.withLock { shellOutput }.trimmingCharacters(in: .whitespacesAndNewlines)
-    throw Failure(description: "The scrcpy server on \(serial) did not accept a connection\(output.isEmpty ? "." : ": \(output)")")
+    throw Failure(
+      description: "The scrcpy server on \(serial) did not accept a connection\(output.isEmpty ? "." : ": \(output)")")
   }
 
   /// The reader threads close the sockets, the control one after any pending write: `stop` only shuts them
@@ -272,7 +274,10 @@ final class AndroidDeviceStream {
     read.wait()
     let text = String(decoding: data, as: UTF8.self)
     guard process.terminationStatus == 0 else {
-      throw Failure(description: "adb \(arguments.prefix(2).joined(separator: " ")) on \(serial) failed: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+      throw Failure(
+        description:
+          "adb \(arguments.prefix(2).joined(separator: " ")) on \(serial) failed: \(text.trimmingCharacters(in: .whitespacesAndNewlines))"
+      )
     }
     return text
   }

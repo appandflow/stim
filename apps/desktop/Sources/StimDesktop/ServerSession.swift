@@ -1,6 +1,6 @@
 import Combine
-import Foundation
 import CryptoKit
+import Foundation
 import StimKit
 
 /// The device token Stim Desktop holds for the stim-server of one Stim home, in a file only the user can read under

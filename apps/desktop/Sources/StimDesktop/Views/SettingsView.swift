@@ -50,9 +50,10 @@ struct SettingsView: View {
   private func scopeTab(_ scope: SettingScope, title: String, icon: String) -> some View {
     ScopeSettingsView(
       scope: scope, model: model, workspace: $workspace, workspaces: workspacePaths,
-      title: { store.names(ofPath: $0).title })
-      .tabItem { Label(title, systemImage: icon) }
-      .tag(scope.rawValue)
+      title: { store.names(ofPath: $0).title }
+    )
+    .tabItem { Label(title, systemImage: icon) }
+    .tag(scope.rawValue)
   }
 
   private var workspacePaths: [String] {
@@ -144,7 +145,9 @@ private struct ScopeSettingsView: View {
         ForEach(entries, id: \.self) { entry in
           HStack(alignment: .firstTextBaseline) {
             Text(entry.key).font(.stim(.callout, mono: true))
-            Text(abbreviatingHome(entry.value?.display ?? "")).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary).lineLimit(1)
+            Text(abbreviatingHome(entry.value?.display ?? "")).font(.stim(.caption, mono: true)).foregroundStyle(
+              Palette.secondary
+            ).lineLimit(1)
             Spacer()
             Text(abbreviatingHome(entry.file))
               .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.head)
@@ -211,8 +214,11 @@ private struct SettingRow: View {
           Text("Not set")
         }
         if let lower = entry.overridden(by: scope, field: field) {
-          Text(abbreviatingHome(layerValue == nil ? "Setting it here overrides \(lower.source): \(lower.value.display)"
-            : "Overrides \(lower.source): \(lower.value.display)"))
+          Text(
+            abbreviatingHome(
+              layerValue == nil
+                ? "Setting it here overrides \(lower.source): \(lower.value.display)"
+                : "Overrides \(lower.source): \(lower.value.display)"))
         }
         if let env = entry.env {
           Text(abbreviatingHome("\(env.name)=\(env.value) in the environment wins")).foregroundStyle(Palette.warning)

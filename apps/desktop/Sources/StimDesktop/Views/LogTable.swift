@@ -160,7 +160,8 @@ final class CopyingTableView: NSTableView {
 }
 
 enum LogRowText {
-  static let font = NSFont(name: "JetBrainsMono-Regular", size: 11.5)
+  static let font =
+    NSFont(name: "JetBrainsMono-Regular", size: 11.5)
     ?? .monospacedSystemFont(ofSize: 11.5, weight: .regular)
 
   static func color(_ level: LogLevel) -> Color {

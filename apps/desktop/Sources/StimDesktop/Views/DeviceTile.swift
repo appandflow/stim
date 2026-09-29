@@ -256,7 +256,8 @@ struct DeviceTile: View {
           .help(
             replaying
               ? "Go live to take over this device."
-              : "Take over: send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it.")
+              : "Take over: send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it."
+          )
           .accessibilityLabel("Take over")
       }
     }
@@ -672,7 +673,8 @@ private struct EmulatorScreen: View {
     EmulatorDisplayView(
       serial: serial, interactive: interactive,
       onStatus: { status in DispatchQueue.main.async { self.status = status } },
-      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons)
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons
+    )
     .overlay {
       switch status {
       case .connecting: ScreenMessage(text: "Connecting to the emulator")
@@ -695,7 +697,8 @@ private struct WebScreen: View {
     WebDisplayView(
       endpoint: endpoint, chromePid: chromePid, targetId: targetId, interactive: interactive,
       onStatus: { status in DispatchQueue.main.async { self.status = status } },
-      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } })
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }
+    )
     .overlay {
       switch status {
       case .connecting: ScreenMessage(text: "Connecting to Chrome")

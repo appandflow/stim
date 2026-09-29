@@ -3,15 +3,18 @@ import ObjectiveC
 import XPC
 
 private typealias AllocFn = @convention(c) (AnyClass, Selector) -> Unmanaged<AnyObject>
-private typealias InitFn = @convention(c) (
-  Unmanaged<AnyObject>, Selector, AnyObject, UnsafeMutablePointer<Unmanaged<NSError>?>?
-) -> Unmanaged<AnyObject>?
-private typealias SendFn = @convention(c) (
-  AnyObject, Selector, UnsafeMutableRawPointer, Bool, DispatchQueue?, (@convention(block) (NSError?) -> Void)?
-) -> Void
-typealias MouseMessageFn = @convention(c) (
-  UnsafePointer<CGPoint>, UnsafePointer<CGPoint>?, UInt32, UInt, CGSize, UInt32
-) -> UnsafeMutableRawPointer?
+private typealias InitFn =
+  @convention(c) (
+    Unmanaged<AnyObject>, Selector, AnyObject, UnsafeMutablePointer<Unmanaged<NSError>?>?
+  ) -> Unmanaged<AnyObject>?
+private typealias SendFn =
+  @convention(c) (
+    AnyObject, Selector, UnsafeMutableRawPointer, Bool, DispatchQueue?, (@convention(block) (NSError?) -> Void)?
+  ) -> Void
+typealias MouseMessageFn =
+  @convention(c) (
+    UnsafePointer<CGPoint>, UnsafePointer<CGPoint>?, UInt32, UInt, CGSize, UInt32
+  ) -> UnsafeMutableRawPointer?
 typealias UsageForKeyCodeFn = @convention(c) (UInt32) -> UInt32
 typealias ButtonMessageFn = @convention(c) (UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
 typealias HIDMessageFn = @convention(c) (UInt32, UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
@@ -126,9 +129,10 @@ private final class CoreDeviceHID {
   private static let feature = "com.apple.coredevice.feature.remote.hid.digitizer"
   private static let lookupSelector = NSSelectorFromString("lookup:error:")
 
-  private typealias LookupFn = @convention(c) (
-    AnyObject, Selector, NSString, UnsafeMutablePointer<Unmanaged<NSError>?>?
-  ) -> mach_port_t
+  private typealias LookupFn =
+    @convention(c) (
+      AnyObject, Selector, NSString, UnsafeMutablePointer<Unmanaged<NSError>?>?
+    ) -> mach_port_t
   private typealias EndpointFn = @convention(c) (mach_port_t, UInt64, UInt64) -> xpc_object_t?
   private typealias EnableFn = @convention(c) (xpc_connection_t) -> Void
 
@@ -283,14 +287,16 @@ private final class LegacyHID {
     let target = screenID == 1 ? Self.mainScreenTarget : 0x4000_0000 | screenID
     var point = point
     // The builder returns nil for a drag that arrives within 16 ms of the previous message.
-    guard let message = SimulatorKit.mouseMessage?(
-      &point, nil, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
+    guard
+      let message = SimulatorKit.mouseMessage?(
+        &point, nil, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
     else { return }
     deliver(message)
   }
 
   func key(usage: UInt32, down: Bool) {
-    guard let message = SimulatorKit.hidMessage?(Self.mainScreenTarget, Self.keyboardPage, usage, down ? Self.keyDown : Self.keyUp)
+    guard
+      let message = SimulatorKit.hidMessage?(Self.mainScreenTarget, Self.keyboardPage, usage, down ? Self.keyDown : Self.keyUp)
     else { return }
     deliver(message)
   }

@@ -63,7 +63,11 @@ struct RootView: View {
       Sidebar(store: store, autopilot: autopilot, onboarding: onboarding, selection: $selection, openLogs: showLogs)
         .frame(minWidth: 220, idealWidth: 272, maxWidth: 360)
         .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sidebarWidth = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+          $0.size.width
+        } action: {
+          sidebarWidth = $0
+        }
     } detail: {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -71,7 +75,11 @@ struct RootView: View {
         .toolbarBackdrop(showsWorkspace ? .clear : Palette.background)
         .overlay(alignment: .bottom) { onboardingPopup }
         .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+        .onGeometryChange(for: CGFloat.self) {
+          $0.size.width
+        } action: {
+          detailWidth = $0
+        }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
           ToolbarItem(placement: .navigation) { ActivityToolbarIndicator(actions: actions) }
@@ -93,9 +101,14 @@ struct RootView: View {
     }
     .focusedSceneValue(
       \.inspectorToggle,
-      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil)
+      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
+    )
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
-    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
+    .onGeometryChange(for: CGFloat.self) {
+      $0.size.width
+    } action: {
+      windowWidth = $0
+    }
     .toolbarBackground(.hidden, for: .windowToolbar)
     .tint(Palette.brand)
     .font(.stim(.body))
@@ -391,9 +404,13 @@ struct MachineSummary: View {
         }
       }
       if let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes }) {
-        Button { showsDisk.toggle() } label: {
+        Button {
+          showsDisk.toggle()
+        } label: {
           HStack(spacing: Space.sm) {
-            statItem(icon: "internaldrive", value: "\(formatDisk(lowest.freeBytes)) free", tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
+            statItem(
+              icon: "internaldrive", value: "\(formatDisk(lowest.freeBytes)) free",
+              tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
             if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
               Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
             }
@@ -511,7 +528,9 @@ struct ActivityToolbarIndicator: View {
   var body: some View {
     let active = actions.activeRuns
     if let latest = active.last {
-      Button { actions.presented = latest } label: {
+      Button {
+        actions.presented = latest
+      } label: {
         HStack(spacing: Space.xs) {
           ProgressView().controlSize(.mini)
           if active.count > 1 { Text("\(active.count)").font(.stim(.caption, mono: true)) }
@@ -519,7 +538,8 @@ struct ActivityToolbarIndicator: View {
       }
       .help(
         (active.count == 1 ? "Running: \(latest.title)" : "\(active.count) commands running")
-          + " \u{2014} click to show the latest output")
+          + " \u{2014} click to show the latest output"
+      )
       .accessibilityLabel(active.count == 1 ? "Running: \(latest.title)" : "\(active.count) commands running")
     }
   }
@@ -563,7 +583,8 @@ struct LogsToggleButton: View {
     .help(
       isShown
         ? "Hide the logs"
-        : errors > 0 ? "Show the logs: \(countLabel(errors, "error")) since the last marker" : "Show the logs")
+        : errors > 0 ? "Show the logs: \(countLabel(errors, "error")) since the last marker" : "Show the logs"
+    )
     .accessibilityLabel(isShown ? "Hide logs" : errors > 0 ? "Show logs, \(countLabel(errors, "error"))" : "Show logs")
   }
 }

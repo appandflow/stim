@@ -63,7 +63,8 @@ struct MachineView: View {
       titleVisibility: .visible, presenting: removing
     ) { workspace in
       Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(status.names(ofPath: workspace.path).title)", StimCommand(["worktree", "remove"], cwd: workspace.path))
+        actions.run(
+          "Remove \(status.names(ofPath: workspace.path).title)", StimCommand(["worktree", "remove"], cwd: workspace.path))
       }
     } message: { workspace in
       Text(
@@ -209,7 +210,8 @@ struct MachineView: View {
       }
     } content: { shown in
       if metrics.gcReport == nil {
-        Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
+        Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(
+          Palette.tertiary)
       } else if report.free.isEmpty {
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
@@ -407,7 +409,9 @@ struct MachineView: View {
               Image(systemName: workspace.buildOutputsKept == nil ? "trash" : "lock")
                 .font(.system(size: 9))
                 .foregroundStyle(workspace.buildOutputsKept == nil ? Palette.warning : Palette.tertiary)
-                .help(workspace.buildOutputsKept.map { "Kept by stim gc --delete: \(abbreviatingHome($0))" } ?? "stim gc --delete clears these")
+                .help(
+                  workspace.buildOutputsKept.map { "Kept by stim gc --delete: \(abbreviatingHome($0))" }
+                    ?? "stim gc --delete clears these")
             }
           }
         size(workspace.logs)
@@ -443,10 +447,12 @@ struct MachineView: View {
   }
 
   private func breakdown(_ workspace: WorkspaceStorage) -> String {
-    [("node_modules", workspace.nodeModules), ("devices", workspace.devices), ("outputs", workspace.buildOutputs),
-     ("logs", workspace.logs)]
-      .compactMap { name, size in size.bytes.flatMap { $0 > 0 ? "\(name) \(formatDisk($0))" : nil } }
-      .joined(separator: " \u{00B7} ")
+    [
+      ("node_modules", workspace.nodeModules), ("devices", workspace.devices), ("outputs", workspace.buildOutputs),
+      ("logs", workspace.logs),
+    ]
+    .compactMap { name, size in size.bytes.flatMap { $0 > 0 ? "\(name) \(formatDisk($0))" : nil } }
+    .joined(separator: " \u{00B7} ")
   }
 
   @ViewBuilder
@@ -459,7 +465,9 @@ struct MachineView: View {
       case .merged:
         Pill(tone: .success) { Text(lifecycle!.title) }.help(abbreviatingHome(workspace.worktree?.detail ?? ""))
       case .pullRequest(_, let url):
-        Button { URL(string: url).map { _ = NSWorkspace.shared.open($0) } } label: {
+        Button {
+          URL(string: url).map { _ = NSWorkspace.shared.open($0) }
+        } label: {
           Pill(tone: .info) { Text(lifecycle!.title) }
         }
         .buttonStyle(.plain)
@@ -471,7 +479,9 @@ struct MachineView: View {
       case nil:
         Text(workspace.unprovisioned ? "Not warmed" : metrics.gcReport == nil ? "\u{2014}" : "Checkout")
           .foregroundStyle(Palette.tertiary)
-          .help(workspace.unprovisioned ? "A linked worktree stim worktree warm has not set up" : "A source checkout; stim gc never removes it")
+          .help(
+            workspace.unprovisioned
+              ? "A linked worktree stim worktree warm has not set up" : "A source checkout; stim gc never removes it")
       }
     }
   }
@@ -480,9 +490,11 @@ struct MachineView: View {
 
   private func devices(_ report: StorageReport) -> some View {
     CollapsibleSection("machine.devices", title: "Simulators and emulators", items: report.devices) { shown in
-      Text("Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.")
-        .font(.stim(.footnote))
-        .foregroundStyle(Palette.tertiary)
+      Text(
+        "Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio."
+      )
+      .font(.stim(.footnote))
+      .foregroundStyle(Palette.tertiary)
       ForEach(report.inventoryNotices, id: \.self) { notice in
         Label(notice, systemImage: "exclamationmark.triangle").font(.stim(.footnote)).foregroundStyle(Palette.warning)
       }
@@ -511,8 +523,11 @@ struct MachineView: View {
 
   private func deviceRow(_ entry: DeviceStorage) -> some View {
     let device = entry.device
-    let subtitle = [entry.isStim || device.owner == .otherStimHome ? device.model : nil, entry.runtimeTitle, compact ? entry.lastUsed.map { "used \(lastUsed($0))" } : nil]
-      .compactMap { $0 }.joined(separator: " \u{00B7} ")
+    let subtitle = [
+      entry.isStim || device.owner == .otherStimHome ? device.model : nil, entry.runtimeTitle,
+      compact ? entry.lastUsed.map { "used \(lastUsed($0))" } : nil,
+    ]
+    .compactMap { $0 }.joined(separator: " \u{00B7} ")
     return HStack(spacing: Space.lg) {
       Image(systemName: device.kind == "ios" ? "iphone" : "smartphone")
         .foregroundStyle(entry.isStim ? Palette.accent : Palette.tertiary)

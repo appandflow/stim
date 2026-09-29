@@ -235,8 +235,11 @@ private struct RouteSection: View {
             .foregroundStyle(Palette.secondary)
           command
         case "missing":
-          Label("No tailscale serve route reaches port \(String(port)), so phones cannot connect yet.", systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(Palette.warning)
+          Label(
+            "No tailscale serve route reaches port \(String(port)), so phones cannot connect yet.",
+            systemImage: "exclamationmark.triangle.fill"
+          )
+          .foregroundStyle(Palette.warning)
           Text("Once, serve it on a dedicated tailnet-only port. Phones then connect to \(route.endpoint(dnsName: dnsName)).")
             .foregroundStyle(Palette.secondary)
           command
@@ -472,10 +475,14 @@ struct PairSheet: View {
       }
       Spacer()
       if secret {
-        Button { showsToken.toggle() } label: { Image(systemName: showsToken ? "eye.slash" : "eye") }
-          .buttonStyle(.borderless)
-          .accessibilityLabel(showsToken ? "Hide token" : "Show token")
-          .help(showsToken ? "Hide token" : "Show token")
+        Button {
+          showsToken.toggle()
+        } label: {
+          Image(systemName: showsToken ? "eye.slash" : "eye")
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(showsToken ? "Hide token" : "Show token")
+        .help(showsToken ? "Hide token" : "Show token")
       }
       Button("Copy") { copy(value) }.controlSize(.small)
     }
@@ -544,7 +551,15 @@ private struct RecordingSection: View {
     Section {
       Toggle(
         "Record device screens for replay",
-        isOn: Binding(get: { enabled }, set: { on in on ? write(true) : (confirmingOff = true) })
+        isOn: Binding(
+          get: { enabled },
+          set: { on in
+            if on {
+              write(true)
+            } else {
+              confirmingOff = true
+            }
+          })
       )
       .disabled(entry == nil || writing || entry?.env != nil)
       if let override = entry?.env {
@@ -585,7 +600,9 @@ private struct RecordingSection: View {
     Task {
       let cli = await cli.value
       let result = await Task.detached {
-        Result { try cli.writeSetting("recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory()) }
+        Result {
+          try cli.writeSetting("recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory())
+        }
       }.value
       switch result {
       case .success(.written): failure = nil

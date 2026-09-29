@@ -85,7 +85,10 @@ public final class H264Decoder {
         allocator: nil, memoryBlock: nil, blockLength: sample.count, blockAllocator: nil, customBlockSource: nil,
         offsetToData: 0, dataLength: sample.count, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
         == noErr, let block,
-      sample.withUnsafeBytes({ CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: sample.count) }) == noErr
+      sample.withUnsafeBytes({
+        CMBlockBufferReplaceDataBytes(
+          with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: sample.count)
+      }) == noErr
     else { return true }
     var buffer: CMSampleBuffer?
     var size = sample.count

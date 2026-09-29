@@ -245,7 +245,7 @@ struct Sparkline: View {
         ZStack {
           Path { path in
             path.move(to: CGPoint(x: 0, y: geo.size.height))
-            points.forEach { path.addLine(to: $0) }
+            for point in points { path.addLine(to: point) }
             path.addLine(to: CGPoint(x: points[points.count - 1].x, y: geo.size.height))
             path.closeSubpath()
           }
@@ -301,12 +301,14 @@ struct BuildProgressBar: View {
       VStack(alignment: .leading, spacing: Space.xs) {
         HStack(spacing: Space.md) {
           let remote = build.remote(at: context.date)
-          (Text("Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")\(remote.map { " on \($0.host)" } ?? "")  ")
-            .foregroundStyle(Palette.text)
+          (Text(
+            "Building \(build.platform)\(build.slot == "default" ? "" : " \u{00B7} \(build.slot)")\(remote.map { " on \($0.host)" } ?? "")  "
+          )
+          .foregroundStyle(Palette.text)
             + Text(remote.map { $0.phase.lowercased() } ?? build.phase).font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.primary))
-          .lineLimit(1)
-          .truncationMode(.tail)
+            .lineLimit(1)
+            .truncationMode(.tail)
           BuildOutcomeBadge(build: build)
           Spacer(minLength: 4)
           Text(timing(progress))
@@ -355,7 +357,11 @@ private struct ToolbarBackdrop: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { toolbarHeight = $0 }
+      .onGeometryChange(for: CGFloat.self) {
+        $0.safeAreaInsets.top
+      } action: {
+        toolbarHeight = $0
+      }
       .overlay(alignment: .top) {
         VStack(spacing: 0) {
           color.frame(height: toolbarHeight)

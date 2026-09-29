@@ -97,7 +97,8 @@ final class AutopilotRunner: ObservableObject {
       guard trigger == .pressure else { return }
       Notifier.postPressure(
         id: "pressure-ran-\(run.id)", title: "Free disk is under the Stim budget",
-        body: "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
+        body:
+          "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
         offersPlan: false)
     }
   }
@@ -126,7 +127,9 @@ final class AutopilotRunner: ObservableObject {
       AutopilotSchedule.idleShutdownDue(bootedDevices, minutes: minutes, now: now)
     {
       lastIdleRun = now
-      run(.idle, "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"], present: false)
+      run(
+        .idle, "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"],
+        present: false)
       return
     }
     checkPressure()
@@ -290,7 +293,9 @@ final class AutopilotRunner: ObservableObject {
       let removed = worktrees.filter { !FileManager.default.fileExists(atPath: $0.path) }
       let kept = worktrees.count - removed.count
       var note = removed.isEmpty ? nil : PullRequestCleanup.summary(removed)
-      if kept > 0 { note = [note, "kept \(kept); \(run.summary ?? "see the activity log")"].compactMap { $0 }.joined(separator: "; ") }
+      if kept > 0 {
+        note = [note, "kept \(kept); \(run.summary ?? "see the activity log")"].compactMap { $0 }.joined(separator: "; ")
+      }
       self.record(
         AutopilotLogEntry(
           date: Date(), trigger: .pullRequests,

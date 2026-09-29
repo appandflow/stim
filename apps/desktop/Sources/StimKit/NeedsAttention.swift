@@ -117,7 +117,8 @@ private func overseenDevices(_ env: Workspace) -> [OverseenDevice] {
       let range = NSRange(ios.name.startIndex..., in: ios.name)
       let model = simulatorModel.firstMatch(in: ios.name, range: range).flatMap { Range($0.range(at: 1), in: ios.name) }
         .map { String(ios.name[$0]) }
-      out.append(OverseenDevice(model: model ?? "iOS Simulator", running: ios.state == "Booted", activity: ios.activity, web: false))
+      out.append(
+        OverseenDevice(model: model ?? "iOS Simulator", running: ios.state == "Booted", activity: ios.activity, web: false))
     }
     if let android {
       out.append(

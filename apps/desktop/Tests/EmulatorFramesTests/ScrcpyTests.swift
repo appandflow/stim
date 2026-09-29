@@ -42,7 +42,10 @@ import Testing
     stream += Data([0x80, 0, 0, 0, 0, 0, 0x04, 0x38, 0, 0, 0x09, 0x60])
     stream += packet(config: true, keyframe: false, [0, 0, 0, 1, 0x67, 1, 0, 0, 0, 1, 0x68, 2])
     stream += packet(config: false, keyframe: true, [0, 0, 0, 1, 0x65, 9])
-    let whole = try { var demuxer = ScrcpyVideoDemuxer(); return try demuxer.push(stream) }()
+    let whole = try {
+      var demuxer = ScrcpyVideoDemuxer()
+      return try demuxer.push(stream)
+    }()
     #expect(
       whole == [
         .codec(ScrcpyVideoDemuxer.h264), .session(width: 1080, height: 2400),

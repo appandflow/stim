@@ -66,7 +66,6 @@ import Testing
     #expect(devices.map { $0.label(among: devices) } == ["iPhone 18 Pro \u{00B7} 27.0", "iPhone 18 Pro \u{00B7} 18.6"])
   }
 
-
   @Test func decodesARemoteSessionWithItsPreviewURL() {
     guard case .remote(let remote) = workspace.devices.last else {
       Issue.record("expected a remote device last")
@@ -378,8 +377,9 @@ import Testing
     #expect(!options.differsFromDefaults(projects: [Project(root: "/r/app")]))
     options.hiddenProjects.insert("/r/app")
     #expect(options.differsFromDefaults(projects: [Project(root: "/r/app")]))
-    #expect(SidebarOptions.decode(hiddenProjects: SidebarOptions.encode(hiddenProjects: options.hiddenProjects))
-      == options.hiddenProjects)
+    #expect(
+      SidebarOptions.decode(hiddenProjects: SidebarOptions.encode(hiddenProjects: options.hiddenProjects))
+        == options.hiddenProjects)
   }
 
   @Test func migratesTheIdleWorkspacesSwitchToTheStatusOption() throws {
@@ -566,7 +566,9 @@ import Testing
     let second = activity("driven", since: "2026-09-25T01:48:00.000Z")
     var other = activity("driven", since: "2026-09-25T01:30:00.000Z")
     other.driver?.tool = "agent-device"
-    #expect(ActivityBadge.driversSummary([first, nil, activity("idle"), second, other], now: now) == "maestro, agent-device \u{00B7} 12m")
+    #expect(
+      ActivityBadge.driversSummary([first, nil, activity("idle"), second, other], now: now)
+        == "maestro, agent-device \u{00B7} 12m")
     #expect(ActivityBadge.driversSummary([activity("driven")], now: now) == "an unknown tool")
     #expect(ActivityBadge.driversSummary([activity("idle"), nil], now: now) == nil)
   }
@@ -593,7 +595,6 @@ import Testing
     #expect(report.idleShutdownCount(atLeast: GcPreview.idleSeconds("1h")!) == 1)
     #expect(report.idleShutdownCount(atLeast: GcPreview.idleSeconds("4h")!) == 0)
   }
-
 
   @Test func marksWhatDeleteLeavesAlone() throws {
     let json = """
@@ -729,16 +730,16 @@ import Testing
 
 @Suite struct ResourceTests {
   let ps = """
-      1     0  20176 14:27.71 /sbin/launchd
-    500     1  10240   0:01.00 stim-supervisor
-    501   500  20480 229:34.42 node metro
-    502   501   1024   0:00.50 node worker
-    600     1   2048   0:00.10 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A/data/var/run/launchd_bootstrap.plist
-    601   600   4096 1-02:03:04.50 SpringBoard
-    700     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app -port 5604
-    701     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app-duo -port 5606
-    800     1   1024   0:00.00 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/00000000-0000-0000-0000-000000000000/data/var/run/launchd_bootstrap.plist
-  """
+        1     0  20176 14:27.71 /sbin/launchd
+      500     1  10240   0:01.00 stim-supervisor
+      501   500  20480 229:34.42 node metro
+      502   501   1024   0:00.50 node worker
+      600     1   2048   0:00.10 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A/data/var/run/launchd_bootstrap.plist
+      601   600   4096 1-02:03:04.50 SpringBoard
+      700     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app -port 5604
+      701     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app-duo -port 5606
+      800     1   1024   0:00.00 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/00000000-0000-0000-0000-000000000000/data/var/run/launchd_bootstrap.plist
+    """
 
   func workspace(supervisor: Int? = 500, metro: Int? = 501, live: Bool = true) throws -> Workspace {
     let json = """

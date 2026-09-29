@@ -20,7 +20,8 @@ public struct StoragePaths: Sendable {
     derivedData = "\(home)/Library/Developer/Xcode/DerivedData"
     gradleCaches = "\(home)/.gradle/caches"
     libraryCaches = "\(home)/Library/Caches"
-    let sdk = [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"]].compactMap { $0 }.first { !$0.isEmpty }
+    let sdk =
+      [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"]].compactMap { $0 }.first { !$0.isEmpty }
       ?? "\(home)/Library/Android/sdk"
     systemImages = "\(sdk.hasSuffix("/") ? String(sdk.dropLast()) : sdk)/system-images"
   }
@@ -147,7 +148,8 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// while no category has anything measured on disk.
   public var total: Int64? {
     let parts = [buildOutputs, nodeModules, logs, devices]
-    guard totalComplete || parts.contains(where: { if case .size(let bytes) = $0 { return bytes > 0 } else { return false } }) else {
+    guard totalComplete || parts.contains(where: { if case .size(let bytes) = $0 { return bytes > 0 } else { return false } })
+    else {
       return nil
     }
     return parts.compactMap(\.bytes).reduce(0, +)
@@ -291,7 +293,7 @@ public enum FreePlan {
   public static func commands(_ selected: Set<FreeAction>, home: String) -> [StimCommand] {
     var commands: [StimCommand] = []
     if !selected.contains(.gc) {
-      for case let .removeWorktree(path, repository) in selected.sorted(by: { "\($0)" < "\($1)" }) {
+      for case .removeWorktree(let path, let repository) in selected.sorted(by: { "\($0)" < "\($1)" }) {
         commands.append(StimCommand(["worktree", "remove", path], cwd: repository ?? home))
       }
       if selected.contains(.workspaceOutputs) {
@@ -300,7 +302,7 @@ public enum FreePlan {
     } else {
       commands.append(StimCommand(["gc", "--json", "--delete"], cwd: home))
     }
-    for case let .cache(selector) in selected.sorted(by: { "\($0)" < "\($1)" }) {
+    for case .cache(let selector) in selected.sorted(by: { "\($0)" < "\($1)" }) {
       commands.append(StimCommand(["gc", "--json", "--delete", "--cache", selector], cwd: home))
     }
     return commands
@@ -496,7 +498,8 @@ public struct StorageReport: Sendable {
         StorageLocation(
           title: location.title, path: location.path,
           size: measured.bytes.map { .size(max(0, $0 - stimBytes)) } ?? measured,
-          detail: inside.isEmpty ? nil : "Excludes \(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), counted under Stim"))
+          detail: inside.isEmpty
+            ? nil : "Excludes \(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), counted under Stim"))
     }
     unmanaged.sort { ($0.size.bytes ?? -1) > ($1.size.bytes ?? -1) }
 
@@ -520,13 +523,14 @@ public struct StorageReport: Sendable {
 
     return StorageReport(
       workspaces: workspaces, repositories: repositories, allCaches: allCaches, free: free, devices: devices,
-      runtimes: runtimes, hasInventory: inventory != nil, inventoryNotices: inventory?.notices ?? [], unmanaged: unmanaged, categories: categories)
+      runtimes: runtimes, hasInventory: inventory != nil, inventoryNotices: inventory?.notices ?? [], unmanaged: unmanaged,
+      categories: categories)
   }
 
   private static func largestFirst<T>(_ size: KeyPath<T, Int64?>, _ name: KeyPath<T, String>) -> (T, T) -> Bool {
     { a, b in
       switch (a[keyPath: size], b[keyPath: size]) {
-      case let (x?, y?) where x != y: return x > y
+      case (let x?, let y?) where x != y: return x > y
       case (.some, nil): return true
       case (nil, .some): return false
       default: return a[keyPath: name] < b[keyPath: name]

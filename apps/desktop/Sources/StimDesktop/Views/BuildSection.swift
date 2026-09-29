@@ -73,7 +73,8 @@ struct BuildSection: View {
     }
     .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
+    .background(
+      RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
   }
 
   @ViewBuilder private func buttons(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
@@ -251,8 +252,11 @@ struct BuildHistoryRow: View {
               .lineLimit(1)
             Spacer(minLength: 4)
             Text(
-              [entry.build.durationMs.map { formatDuration(ms: $0) }, entry.build.endedAt.map { formatAgo(now.timeIntervalSince($0)) }]
-                .compactMap { $0 }.joined(separator: " \u{00B7} ")
+              [
+                entry.build.durationMs.map { formatDuration(ms: $0) },
+                entry.build.endedAt.map { formatAgo(now.timeIntervalSince($0)) },
+              ]
+              .compactMap { $0 }.joined(separator: " \u{00B7} ")
             )
             .foregroundStyle(Palette.tertiary)
             .fixedSize()

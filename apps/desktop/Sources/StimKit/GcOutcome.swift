@@ -102,8 +102,10 @@ public struct GcOutcome: Hashable, Sendable {
 
   private static func phrases(_ items: [Item]) -> [((Int) -> String, Int)] {
     let groups: [(kinds: Set<String>, phrase: (Int) -> String)] = [
-      (["device", "parkedDevice", "orphanedDevices", "staleDevices", "parkedSimulators", "parkedEmulators"],
-       { "Deleted \(count($0, "device"))" }),
+      (
+        ["device", "parkedDevice", "orphanedDevices", "staleDevices", "parkedSimulators", "parkedEmulators"],
+        { "Deleted \(count($0, "device"))" }
+      ),
       (["idleDevice"], { "Shut down \(count($0, "idle device"))" }),
       (["worktree", "linkedWorktrees"], { "Removed \(count($0, "worktree"))" }),
       (["workspaceOutputs", "workspaceBuildOutputs"], { "Cleared build outputs of \(count($0, "workspace"))" }),

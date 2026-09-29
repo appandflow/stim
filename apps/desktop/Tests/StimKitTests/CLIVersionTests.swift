@@ -14,8 +14,10 @@ private let minimum = SemanticVersion("1.11.0")!
 }
 
 @Test func ordersVersionsBySemverPrecedence() {
-  let ordered = ["1.9.9", "1.10.0", "1.11.0-alpha", "1.11.0-alpha.1", "1.11.0-beta", "1.11.0-rc.2", "1.11.0-rc.10", "1.11.0", "2.0.0"]
-    .map { SemanticVersion($0)! }
+  let ordered = [
+    "1.9.9", "1.10.0", "1.11.0-alpha", "1.11.0-alpha.1", "1.11.0-beta", "1.11.0-rc.2", "1.11.0-rc.10", "1.11.0", "2.0.0",
+  ]
+  .map { SemanticVersion($0)! }
   #expect(ordered == ordered.sorted())
   #expect(zip(ordered, ordered.dropFirst()).allSatisfy { $0 < $1 })
 }
