@@ -1,0 +1,248 @@
+{
+  "append": [
+    {
+      "name": "keeps only the device's own actions, newest first, up to the maximum",
+      "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84",
+      "max": 5,
+      "batches": [
+        {
+          "records": [
+            {
+              "ts": 1,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 1",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            },
+            {
+              "ts": 2,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 2",
+              "deviceId": "emulator-5554"
+            },
+            {
+              "ts": 3,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 3",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            },
+            {
+              "ts": 4,
+              "src": "metro",
+              "level": "info",
+              "msg": "Tapped 4",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            }
+          ],
+          "ts": [3, 1],
+          "keys": [2, 1]
+        },
+        {
+          "records": [
+            {
+              "ts": 4,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 4",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            },
+            {
+              "ts": 5,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 5",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            },
+            {
+              "ts": 6,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 6",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            },
+            {
+              "ts": 7,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 7",
+              "deviceId": "2FA9C340-A259-4420-A617-316DC159FF84"
+            }
+          ],
+          "ts": [7, 6, 5, 4, 3],
+          "keys": [6, 5, 4, 3, 2]
+        }
+      ]
+    },
+    {
+      "name": "keeps two identical actions in the same millisecond as two rows with distinct, stable keys",
+      "deviceId": "sim",
+      "max": 5,
+      "batches": [
+        {
+          "records": [
+            {
+              "ts": 1,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 1",
+              "deviceId": "sim"
+            },
+            {
+              "ts": 1,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 1",
+              "deviceId": "sim"
+            }
+          ],
+          "ts": [1, 1],
+          "keys": [2, 1]
+        },
+        {
+          "records": [
+            {
+              "ts": 1,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 1",
+              "deviceId": "sim"
+            }
+          ],
+          "ts": [1, 1, 1],
+          "keys": [3, 2, 1]
+        },
+        {
+          "records": [
+            {
+              "ts": 2,
+              "src": "agent",
+              "level": "info",
+              "msg": "Tapped 2",
+              "deviceId": "other"
+            }
+          ],
+          "ts": [1, 1, 1],
+          "keys": [3, 2, 1]
+        }
+      ]
+    }
+  ],
+  "filters": [
+    {
+      "name": "offers failed actions when any failed, then the most used commands, each with its count",
+      "records": [
+        {
+          "ts": 0,
+          "src": "agent",
+          "level": "info",
+          "msg": "tap",
+          "deviceId": "sim",
+          "command": "tap"
+        },
+        {
+          "ts": 1,
+          "src": "agent",
+          "level": "info",
+          "msg": "tap",
+          "deviceId": "sim",
+          "command": "tap"
+        },
+        {
+          "ts": 2,
+          "src": "agent",
+          "level": "error",
+          "msg": "find",
+          "deviceId": "sim",
+          "command": "find"
+        },
+        {
+          "ts": 3,
+          "src": "agent",
+          "level": "info",
+          "msg": "snapshot",
+          "deviceId": "sim",
+          "command": "snapshot"
+        },
+        {
+          "ts": 4,
+          "src": "agent",
+          "level": "info",
+          "msg": "tap",
+          "deviceId": "sim",
+          "command": "tap"
+        }
+      ],
+      "options": [
+        {
+          "label": "All",
+          "count": 5,
+          "ts": [0, 1, 2, 3, 4]
+        },
+        {
+          "label": "Failed",
+          "count": 1,
+          "ts": [2]
+        },
+        {
+          "label": "tap",
+          "count": 3,
+          "ts": [0, 1, 4]
+        },
+        {
+          "label": "find",
+          "count": 1,
+          "ts": [2]
+        }
+      ]
+    },
+    {
+      "name": "offers no Failed chip when nothing failed, and no command chip for actions without a command or with an empty one",
+      "records": [
+        {
+          "ts": 0,
+          "src": "agent",
+          "level": "info",
+          "msg": "Tapped 0",
+          "deviceId": "sim"
+        },
+        {
+          "ts": 1,
+          "src": "agent",
+          "level": "info",
+          "msg": "Tapped 1",
+          "deviceId": "sim",
+          "command": "fill"
+        },
+        {
+          "ts": 2,
+          "src": "agent",
+          "level": "info",
+          "msg": "Tapped 2",
+          "deviceId": "sim"
+        },
+        {
+          "ts": 3,
+          "src": "agent",
+          "level": "info",
+          "msg": "Tapped 3",
+          "deviceId": "sim",
+          "command": ""
+        }
+      ],
+      "options": [
+        {
+          "label": "All",
+          "count": 4,
+          "ts": [0, 1, 2, 3]
+        },
+        {
+          "label": "fill",
+          "count": 1,
+          "ts": [1]
+        }
+      ]
+    }
+  ]
+}

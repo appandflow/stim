@@ -139,6 +139,13 @@ public struct ReplayTimeline: Equatable, Sendable {
     return max(before, piece?.start ?? start)
   }
 
+  /// Where to land for an agent action at `at`, as `seekTime(for:)` does for a marker, or nil when no recorded span
+  /// covers it.
+  public func seekTime(forActionAt at: Double, leadMs: Double = 1500) -> Double? {
+    guard let span = spans.first(where: { $0.start <= at && at <= $0.end }) else { return nil }
+    return max(at - leadMs, span.start)
+  }
+
   /// Where to step from to the next or previous agent action: the action last stepped to, until playback carries the
   /// playhead past it. `seekTime(for:)` lands before the action, or after it when clamped to the start of its footage,
   /// so while paused the playhead alone would step to the same action again.

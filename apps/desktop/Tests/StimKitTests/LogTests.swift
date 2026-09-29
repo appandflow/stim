@@ -62,6 +62,7 @@ import Testing
       ))
     #expect(record.source == .agent)
     #expect(record.deviceId == "2FA9C340-A259-4420-A617-316DC159FF84")
+    #expect(record.command == "press")
   }
 
   @Test func skipsLinesThatAreNotRecords() {

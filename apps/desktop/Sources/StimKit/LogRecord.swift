@@ -28,12 +28,14 @@ public struct LogRecord: Decodable, Sendable {
   public var stack: [StackFrame]?
   /// The simulator UDID or emulator serial an `agent` record's action ran on.
   public var deviceId: String?
+  /// The agent-device command an `agent` record ran, such as `tap`.
+  public var command: String?
 
   public var source: LogSource? { LogSource(rawValue: src) }
   public var date: Date { Date(timeIntervalSince1970: ts / 1000) }
 
   enum CodingKeys: String, CodingKey {
-    case ts, src, level, msg, slot, event, platform, proc, marker, stack, deviceId
+    case ts, src, level, msg, slot, event, platform, proc, marker, stack, deviceId, command
   }
 
   public init(from decoder: Decoder) throws {
@@ -49,6 +51,7 @@ public struct LogRecord: Decodable, Sendable {
     marker = try? c.decodeIfPresent(Bool.self, forKey: .marker)
     stack = try? c.decodeIfPresent([StackFrame].self, forKey: .stack)
     deviceId = try? c.decodeIfPresent(String.self, forKey: .deviceId)
+    command = try? c.decodeIfPresent(String.self, forKey: .command)
   }
 
   /// Decodes one NDJSON line, or nil for a line that is not a record.
