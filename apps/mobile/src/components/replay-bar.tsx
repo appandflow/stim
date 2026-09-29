@@ -38,6 +38,7 @@ export function ReplayBar({
   markers,
   replay,
   canGoLive,
+  recording,
   onSeek,
   onLive,
   onScrubbing,
@@ -47,6 +48,8 @@ export function ReplayBar({
   replay: Replay | null;
   /** False while the device is not running, so only its recording can be shown. */
   canGoLive: boolean;
+  /** stim-server records the device now, so its newest span grows until the next `timeline`. */
+  recording: boolean;
   onSeek: (at: number, rate: ReplayRate) => void;
   onLive: () => void;
   /** A finger is on the track, so gestures around the bar should wait. */
@@ -96,7 +99,7 @@ export function ReplayBar({
       </View>
     );
   }
-  const liveEnd = canGoLive ? timeline.end + Math.max(0, now - received.at) : undefined;
+  const liveEnd = canGoLive && recording ? timeline.end + Math.max(0, now - received.at) : undefined;
   const track = held ?? buildTimeline(timeline.spans, liveEnd, trackLength) ?? timeline;
   if (track.length !== trackLength) setTrackLength(track.length);
   const shownAt = at ?? lastAt;
@@ -185,8 +188,12 @@ export function ReplayBar({
         </Touch>
         <Touch
           onPress={toggleSpeed}
+          disabled={isLive}
           accessibilityRole="button"
           accessibilityLabel={`Playback speed ${speed}x`}
+          accessibilityElementsHidden={isLive}
+          importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
+          defaultOpacity={isLive ? 0 : 1}
           style={styles.round}
           hitSlop={6}
         >
@@ -221,6 +228,7 @@ export function ReplayBar({
           <Text
             key={`label-${label.start}`}
             variant="caption2"
+            maxFontSizeMultiplier={1}
             pointerEvents="none"
             style={[styles.gapText, { left: label.left, width: label.width }]}
             numberOfLines={1}
