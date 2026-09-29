@@ -1,8 +1,9 @@
 import Combine
+import Foundation
 import StimKit
 
-/// The records of one running `stim logs --follow` query, capped at `limit`
-/// with the oldest dropped first.
+/// The entries of one running `stim logs --follow` query, capped at `limit`
+/// records with the oldest dropped first.
 @MainActor
 final class LogsModel: ObservableObject {
   static let limit = 50_000
@@ -15,19 +16,41 @@ final class LogsModel: ObservableObject {
 
   enum Change {
     case reset
-    case appended
-    /// This many rows were removed from the front.
-    case trimmed(Int)
+    /// Rows from `from` on were replaced; `replaced` are their leads.
+    case updated(from: Int, replaced: [Row.Lead])
+    /// These rows were removed from the front, together `lines` lines tall.
+    case trimmed(rows: Int, lines: Int)
     case jumpToLatest
     case reveal(Int)
   }
 
-  private(set) var records: [LogRecord] = []
+  struct Row {
+    struct Lead: Equatable {
+      var ts: Double
+      var src: String
+      var msg: String
+    }
+
+    var entry: LogEntry
+    var view: LogEntryView
+    var preview: StackPreview?
+
+    var lead: Lead { Lead(ts: entry.lead.ts, src: entry.lead.src, msg: entry.lead.msg) }
+
+    var lines: Int {
+      1 + (view.location == nil ? 0 : 1) + (preview.map { $0.frames.count + ($0.hidden > 0 ? 1 : 0) } ?? 0)
+    }
+  }
+
+  private(set) var rows: [Row] = []
   @Published private(set) var count = 0
   @Published private(set) var phase = Phase.idle
   @Published var pinnedToLatest = true
   var onChange: ((Change) -> Void)?
 
+  private var list = LogEntryList()
+  private var root = ""
+  private let home = NSHomeDirectory()
   private var session = 0
   private var following: LogQuery?
   private var pending: (at: Double, query: LogQuery)?
@@ -39,7 +62,9 @@ final class LogsModel: ObservableObject {
     session += 1
     following = query
     if let pending, pending.query != query { self.pending = nil }
-    records = []
+    list = LogEntryList()
+    rows = []
+    root = cwd
     count = 0
     phase = .following
     pinnedToLatest = true
@@ -67,26 +92,35 @@ final class LogsModel: ObservableObject {
   }
 
   private func revealPending() {
-    guard let pending, pending.query == following, let row = records.firstIndex(where: { $0.ts >= pending.at })
+    guard let pending, pending.query == following, let record = list.records.firstIndex(where: { $0.ts >= pending.at }),
+      let row = list.entryIndex(ofRecord: record)
     else { return }
     self.pending = nil
     pinnedToLatest = false
     onChange?(.reveal(row))
   }
 
+  private func row(_ entry: LogEntry) -> Row {
+    Row(
+      entry: entry, view: viewEntry(entry, root: root, home: home),
+      preview: stackPreview(entry.lead.stack, root: root, home: home))
+  }
+
   private func handle(_ event: LogFollower.Event) {
     switch event {
     case .records(let batch):
-      records.append(contentsOf: batch)
-      if records.count > Self.limit {
-        let removed = records.count - Self.limit + Self.limit / 10
-        records.removeFirst(removed)
-        count = records.count
-        onChange?(.trimmed(removed))
-      } else {
-        count = records.count
-        onChange?(.appended)
+      let from = list.append(batch)
+      let replaced = rows[from...].map(\.lead)
+      rows.removeSubrange(from...)
+      rows += list.entries[from...].map(row)
+      onChange?(.updated(from: from, replaced: replaced))
+      if list.records.count > Self.limit {
+        let dropped = list.dropOldest(list.records.count - Self.limit + Self.limit / 10)
+        let lines = rows[..<dropped].reduce(0) { $0 + $1.lines }
+        rows.removeFirst(dropped)
+        onChange?(.trimmed(rows: dropped, lines: lines))
       }
+      count = list.records.count
       revealPending()
     case .exited(let status, let stderr):
       let detail = stderr.suffix(3).joined(separator: "\n")

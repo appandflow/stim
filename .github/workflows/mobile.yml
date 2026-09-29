@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'apps/mobile/**'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json'
       - '.github/workflows/mobile.yml'
       - 'knip.json'
       - 'package.json'
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - 'apps/mobile/**'
+      - 'apps/desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json'
       - '.github/workflows/mobile.yml'
       - 'knip.json'
       - 'package.json'

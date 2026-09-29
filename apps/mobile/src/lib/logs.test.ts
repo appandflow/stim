@@ -1,4 +1,5 @@
 import agentFixture from '../../../desktop/Tests/StimKitTests/Fixtures/agent-actions-vectors.json';
+import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json';
 import captured from '@/lib/fixtures/metro-errors.json';
 import {
   actionsAt,
@@ -23,6 +24,7 @@ import {
   type AgentAction,
   type LogChip,
 } from '@/lib/logs';
+import { relativeTo, tildeHome } from '@/lib/paths';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
 
 const agentVectors = agentFixture as unknown as {
@@ -352,5 +354,31 @@ describe('groupRecords and viewEntry, on records captured from an Expo app', () 
     expect(view.title).toBe("TypeError: Cannot read property 'total' of null");
     expect(view.location).toBeNull();
     expect(copyText(view)).toBe(view.title);
+  });
+});
+
+describe('the log entry vectors Stim Desktop replays', () => {
+  const { root, home } = vectors;
+
+  it.each(vectors.groups.map((c) => [c.name, c] as const))('groups and shows %s', (_, c) => {
+    const records = c.records as LogRecord[];
+    const entries = groupRecords(records).map((entry) => {
+      const { title, location, codeFrame, details } = viewEntry(entry, root, home);
+      return {
+        lead: records.indexOf(entry.lead),
+        related: entry.related.map((r) => records.indexOf(r)),
+        context: entry.context,
+        view: { title, location, codeFrame, details },
+      };
+    });
+    expect(entries).toEqual(c.entries);
+  });
+
+  it.each(vectors.previews.map((c) => [c.name, c] as const))('previews %s', (_, c) => {
+    expect(stackPreview(c.stack, c.root, c.home)).toEqual(c.preview);
+  });
+
+  it.each(vectors.paths.map((c) => [c.text, c] as const))('shortens %s', (_, c) => {
+    expect(tildeHome(relativeTo(c.text, c.root), c.home)).toBe(c.shown);
   });
 });

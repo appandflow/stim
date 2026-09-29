@@ -12,7 +12,7 @@ struct LogTable: NSViewRepresentable {
     let table = CopyingTableView()
     table.addTableColumn(NSTableColumn(identifier: .init("record")))
     table.headerView = nil
-    table.rowHeight = Coordinator.rowHeight
+    table.rowHeight = LogRowView.height(lines: 1)
     table.intercellSpacing = .zero
     table.allowsMultipleSelection = true
     table.usesAlternatingRowBackgroundColors = false
@@ -42,8 +42,6 @@ struct LogTable: NSViewRepresentable {
 
   @MainActor
   final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    static let rowHeight: CGFloat = 19
-
     private let model: LogsModel
     private let selection: Binding<IndexSet>
     private weak var table: NSTableView?
@@ -78,10 +76,21 @@ struct LogTable: NSViewRepresentable {
       case .reset:
         table.reloadData()
         selection.wrappedValue = []
-      case .appended:
-        table.noteNumberOfRowsChanged()
+      case .updated(let from, let replaced):
+        let count = model.rows.count
+        let selected = table.selectedRowIndexes
+        let kept = selected.filter { $0 < from }
+        let moved = selected.filter { $0 >= from && $0 - from < replaced.count }.compactMap { row in
+          (from..<count).first { model.rows[$0].lead == replaced[row - from] }
+        }
+        table.beginUpdates()
+        table.removeRows(at: IndexSet(from..<(from + replaced.count)), withAnimation: [])
+        table.insertRows(at: IndexSet(from..<count), withAnimation: [])
+        table.endUpdates()
+        let reselected = IndexSet(kept).union(IndexSet(moved))
+        if reselected != table.selectedRowIndexes { table.selectRowIndexes(reselected, byExtendingSelection: false) }
         if model.pinnedToLatest { scrollToLatest() }
-      case .trimmed(let removed):
+      case .trimmed(let removed, let lines):
         let origin = table.enclosingScrollView?.contentView.bounds.origin ?? .zero
         let kept = table.selectedRowIndexes.compactMap { $0 >= removed ? $0 - removed : nil }
         table.reloadData()
@@ -89,7 +98,8 @@ struct LogTable: NSViewRepresentable {
         if model.pinnedToLatest {
           scrollToLatest()
         } else {
-          scrollProgrammatically(to: NSPoint(x: origin.x, y: max(0, origin.y - CGFloat(removed) * Self.rowHeight)))
+          let height = CGFloat(removed) * LogRowView.height(lines: 1) + CGFloat(lines - removed) * LogRowView.lineHeight
+          scrollProgrammatically(to: NSPoint(x: origin.x, y: max(0, origin.y - height)))
         }
       case .jumpToLatest:
         scrollToLatest()
@@ -122,34 +132,30 @@ struct LogTable: NSViewRepresentable {
 
     private func userScrolled() {
       guard !scrollingProgrammatically, let table, let clip = table.enclosingScrollView?.contentView else { return }
-      let atBottom = clip.bounds.maxY >= table.frame.height - Self.rowHeight
+      let atBottom = clip.bounds.maxY >= table.frame.height - LogRowView.height(lines: 1)
       if model.pinnedToLatest != atBottom { model.pinnedToLatest = atBottom }
     }
 
     func selectedText() -> String? {
       guard let table else { return nil }
-      let rows = table.selectedRowIndexes.filter { $0 < model.records.count }
+      let rows = table.selectedRowIndexes.filter { $0 < model.rows.count }
       guard !rows.isEmpty else { return nil }
-      return rows.map { model.records[$0].plainText }.joined(separator: "\n")
+      return rows.map { model.rows[$0].entry.plainText }.joined(separator: "\n")
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { model.records.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { model.rows.count }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+      LogRowView.height(lines: row < model.rows.count ? model.rows[row].lines : 1)
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
       let id = NSUserInterfaceItemIdentifier("logRow")
-      let field: NSTextField
-      if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField {
-        field = reused
-      } else {
-        field = NSTextField(labelWithString: "")
-        field.identifier = id
-        field.lineBreakMode = .byTruncatingTail
-        field.maximumNumberOfLines = 1
-        field.cell?.truncatesLastVisibleLine = true
-      }
-      guard row < model.records.count else { return field }
-      field.attributedStringValue = LogRowText.attributed(model.records[row])
-      return field
+      let view = tableView.makeView(withIdentifier: id, owner: nil) as? LogRowView ?? LogRowView()
+      view.identifier = id
+      view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row]) : []
+      view.indent = row < model.rows.count ? LogRowText.messageColumn(model.rows[row].entry.lead) : 0
+      return view
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -169,10 +175,46 @@ final class CopyingTableView: NSTableView {
   }
 }
 
+final class LogRowView: NSView {
+  static let lineHeight: CGFloat = 15
+  static let inset: CGFloat = 2
+
+  static func height(lines: Int) -> CGFloat { CGFloat(lines) * lineHeight + 2 * inset }
+
+  var lines: [NSAttributedString] = [] {
+    didSet { needsDisplay = true }
+  }
+  var indent: CGFloat = 0
+
+  override var isFlipped: Bool { true }
+
+  override func draw(_ dirtyRect: NSRect) {
+    for (i, line) in lines.enumerated() {
+      let x = i == 0 ? Self.inset : indent
+      let rect = NSRect(
+        x: x, y: Self.inset + CGFloat(i) * Self.lineHeight, width: max(0, bounds.width - x - Self.inset),
+        height: Self.lineHeight)
+      line.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+  }
+}
+
 enum LogRowText {
   static let font =
     NSFont(name: "JetBrainsMono-Regular", size: 11.5)
     ?? .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+
+  private static let characterWidth = NSAttributedString(string: "0", attributes: [.font: font]).size().width
+
+  static func messageColumn(_ record: LogRecord) -> CGFloat {
+    LogRowView.inset + CGFloat(27 + (record.slot.map { $0.count + 3 } ?? 0)) * characterWidth
+  }
+
+  private static let paragraph: NSParagraphStyle = {
+    let style = NSMutableParagraphStyle()
+    style.lineBreakMode = .byTruncatingTail
+    return style
+  }()
 
   static func color(_ level: LogLevel) -> Color {
     switch level {
@@ -194,20 +236,46 @@ enum LogRowText {
     }
   }
 
-  static func attributed(_ record: LogRecord) -> NSAttributedString {
-    let text = NSMutableAttributedString()
+  /// JetBrains Mono ships only its regular weight here, so bold is drawn as a stroke around each glyph.
+  static func attributes(_ color: Color, bold: Bool = false) -> [NSAttributedString.Key: Any] {
+    var attributes: [NSAttributedString.Key: Any] = [
+      .font: font, .foregroundColor: NSColor(color), .paragraphStyle: paragraph,
+    ]
+    if bold { attributes[.strokeWidth] = -6.0 }
+    return attributes
+  }
+
+  static func lines(_ row: LogsModel.Row) -> [NSAttributedString] {
+    let record = row.entry.lead
+    let head = NSMutableAttributedString()
     func add(_ string: String, _ color: Color) {
-      text.append(NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: NSColor(color)]))
+      head.append(NSAttributedString(string: string, attributes: attributes(color)))
     }
     add(record.date.formatted(LogRecord.timeFormat) + "  ", Palette.tertiary)
     add(record.level.rawValue.uppercased().padding(toLength: 6, withPad: " ", startingAt: 0), color(record.level))
     add(sourceLabel(record.src).padding(toLength: 7, withPad: " ", startingAt: 0), Palette.primary)
     if let slot = record.slot { add("[\(slot)] ", Palette.accent) }
-    let lines = record.msg.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-    let first = lines.first.map(String.init) ?? ""
-    add(abbreviatingHome(first).replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Palette.error : Palette.text)
-    let extra = record.msg.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } + (record.stack?.count ?? 0)
+    add(row.view.title.replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Palette.error : Palette.text)
+    if !row.entry.related.isEmpty { add("  \(row.entry.related.count + 1) records", Palette.tertiary) }
+    let extra = row.view.codeFrame.count + row.view.notes.count - row.entry.related.count
     if extra > 0 { add("  +" + countLabel(extra, "line"), Palette.tertiary) }
-    return text
+
+    var lines: [NSAttributedString] = [head]
+    if let location = row.view.location {
+      lines.append(NSAttributedString(string: location, attributes: attributes(Palette.text, bold: true)))
+    }
+    if let preview = row.preview {
+      for frame in preview.frames {
+        let text = [frame.fn, frame.location].filter { !$0.isEmpty }.joined(separator: "  ")
+        lines.append(
+          NSAttributedString(
+            string: text, attributes: attributes(frame.app ? Palette.text : Palette.tertiary, bold: frame.app)))
+      }
+      if preview.hidden > 0 {
+        let what = preview.hiddenFramework ? "framework frame" : "more frame"
+        lines.append(NSAttributedString(string: "+" + countLabel(preview.hidden, what), attributes: attributes(Palette.tertiary)))
+      }
+    }
+    return lines
   }
 }

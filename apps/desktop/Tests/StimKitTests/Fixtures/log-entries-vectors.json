@@ -1,0 +1,900 @@
+{
+  "root": "/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway",
+  "home": "/Users/janicduplessis",
+  "groups": [
+    {
+      "name": "an Expo syntax error with every record",
+      "records": [
+        {
+          "ts": 1790402301996,
+          "src": "metro",
+          "level": "debug",
+          "event": "bundle_response_started",
+          "platform": "ios",
+          "requestId": "3ffec5f3-b4de-4eb6-8f3e-69c5854ab469",
+          "msg": "ios bundle response started"
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "iOS Bundling failed 128ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "  10 |     <View style={styles.container}>",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "     |                                ^",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "  13 |       <StatusBar style=\"auto\" />",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "  14 |     </View>",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "  15 |   );",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "    at constructor (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:369:19)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "    at FlowParserMixin.raise (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6622:19)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "    at FlowParserMixin.unexpected (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6642:16)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "    at FlowParserMixin.expect (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6922:12)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "ts": 1790402302131,
+          "src": "metro",
+          "level": "debug",
+          "event": "bundle_response_finished",
+          "platform": "ios",
+          "requestId": "3ffec5f3-b4de-4eb6-8f3e-69c5854ab469",
+          "statusCode": 200,
+          "msg": "ios bundle response finished"
+        },
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "    at FlowParserMixin.jsxParseExpressionContainer (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:4655:10)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302132
+        }
+      ],
+      "entries": [
+        {
+          "lead": 0,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "ios bundle response started",
+            "location": null,
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 2,
+          "related": [1],
+          "context": [
+            "  10 |     <View style={styles.container}>",
+            "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+            "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+            "     |                                ^",
+            "  13 |       <StatusBar style=\"auto\" />",
+            "  14 |     </View>",
+            "  15 |   );",
+            "    at constructor (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:369:19)",
+            "    at FlowParserMixin.raise (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6622:19)",
+            "    at FlowParserMixin.unexpected (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6642:16)",
+            "    at FlowParserMixin.expect (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6922:12)",
+            "    at FlowParserMixin.jsxParseExpressionContainer (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:4655:10)"
+          ],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [
+              "  10 |     <View style={styles.container}>",
+              "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+              "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+              "     |                                ^",
+              "  13 |       <StatusBar style=\"auto\" />",
+              "  14 |     </View>",
+              "  15 |   );"
+            ],
+            "details": [
+              "iOS Bundling failed 128ms index.js (1 module)",
+              "    at constructor (node_modules/@babel/parser/lib/index.js:369:19)",
+              "    at FlowParserMixin.raise (node_modules/@babel/parser/lib/index.js:6622:19)",
+              "    at FlowParserMixin.unexpected (node_modules/@babel/parser/lib/index.js:6642:16)",
+              "    at FlowParserMixin.expect (node_modules/@babel/parser/lib/index.js:6922:12)",
+              "    at FlowParserMixin.jsxParseExpressionContainer (node_modules/@babel/parser/lib/index.js:4655:10)"
+            ]
+          }
+        },
+        {
+          "lead": 14,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "ios bundle response finished",
+            "location": null,
+            "codeFrame": [],
+            "details": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "an Expo syntax error under errors only, without the context",
+      "records": [
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "iOS Bundling failed 128ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        }
+      ],
+      "entries": [
+        {
+          "lead": 1,
+          "related": [0],
+          "context": [],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [],
+            "details": ["iOS Bundling failed 128ms index.js (1 module)"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "an Expo syntax error under errors only, with the context the CLI attached",
+      "records": [
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "iOS Bundling failed 128ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131,
+          "context": [
+            "  10 |     <View style={styles.container}>",
+            "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+            "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+            "     |                                ^",
+            "  13 |       <StatusBar style=\"auto\" />",
+            "  14 |     </View>",
+            "  15 |   );",
+            "    at constructor (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:369:19)",
+            "    at FlowParserMixin.raise (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6622:19)",
+            "    at FlowParserMixin.unexpected (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6642:16)",
+            "    at FlowParserMixin.expect (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6922:12)",
+            "    at FlowParserMixin.jsxParseExpressionContainer (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:4655:10)"
+          ]
+        }
+      ],
+      "entries": [
+        {
+          "lead": 1,
+          "related": [0],
+          "context": [
+            "  10 |     <View style={styles.container}>",
+            "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+            "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+            "     |                                ^",
+            "  13 |       <StatusBar style=\"auto\" />",
+            "  14 |     </View>",
+            "  15 |   );",
+            "    at constructor (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:369:19)",
+            "    at FlowParserMixin.raise (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6622:19)",
+            "    at FlowParserMixin.unexpected (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6642:16)",
+            "    at FlowParserMixin.expect (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6922:12)",
+            "    at FlowParserMixin.jsxParseExpressionContainer (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:4655:10)"
+          ],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [
+              "  10 |     <View style={styles.container}>",
+              "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+              "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+              "     |                                ^",
+              "  13 |       <StatusBar style=\"auto\" />",
+              "  14 |     </View>",
+              "  15 |   );"
+            ],
+            "details": [
+              "iOS Bundling failed 128ms index.js (1 module)",
+              "    at constructor (node_modules/@babel/parser/lib/index.js:369:19)",
+              "    at FlowParserMixin.raise (node_modules/@babel/parser/lib/index.js:6622:19)",
+              "    at FlowParserMixin.unexpected (node_modules/@babel/parser/lib/index.js:6642:16)",
+              "    at FlowParserMixin.expect (node_modules/@babel/parser/lib/index.js:6922:12)",
+              "    at FlowParserMixin.jsxParseExpressionContainer (node_modules/@babel/parser/lib/index.js:4655:10)"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a failed bundle response joins its failure",
+      "records": [
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "iOS Bundling failed 128ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302131
+        },
+        {
+          "ts": 1790402302131,
+          "src": "metro",
+          "level": "error",
+          "event": "bundle_response_failed",
+          "platform": "ios",
+          "requestId": "r",
+          "statusCode": 500,
+          "msg": "ios bundle response failed"
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        }
+      ],
+      "entries": [
+        {
+          "lead": 2,
+          "related": [0, 1],
+          "context": [],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [],
+            "details": ["iOS Bundling failed 128ms index.js (1 module)", "ios bundle response failed"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "iOS and Android fail together",
+      "records": [
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "iOS Bundling failed 128ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302131
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302131
+        },
+        {
+          "ts": 1790402302131,
+          "src": "metro",
+          "level": "error",
+          "event": "bundle_response_failed",
+          "platform": "android",
+          "requestId": "android",
+          "statusCode": 500,
+          "msg": "android bundle response failed"
+        },
+        {
+          "ts": 1790402302131,
+          "src": "metro",
+          "level": "error",
+          "event": "bundle_response_failed",
+          "platform": "ios",
+          "requestId": "ios",
+          "statusCode": 500,
+          "msg": "ios bundle response failed"
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "Android Bundling failed 131ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302136
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302136
+        }
+      ],
+      "entries": [
+        {
+          "lead": 1,
+          "related": [0, 3],
+          "context": [],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [],
+            "details": ["iOS Bundling failed 128ms index.js (1 module)", "ios bundle response failed"]
+          }
+        },
+        {
+          "lead": 5,
+          "related": [2, 4],
+          "context": [],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [],
+            "details": ["android bundle response failed", "Android Bundling failed 131ms index.js (1 module)"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "an Expo runtime error",
+      "records": [
+        {
+          "src": "metro",
+          "level": "info",
+          "msg": "iOS Bundled 80ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790401969753
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  [TypeError: Cannot read property 'total' of null]",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790401969977
+        }
+      ],
+      "entries": [
+        {
+          "lead": 0,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "iOS Bundled 80ms index.js (1 module)",
+            "location": null,
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 1,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "TypeError: Cannot read property 'total' of null",
+            "location": null,
+            "codeFrame": [],
+            "details": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "an app error with a stack",
+      "records": [
+        {
+          "ts": 1790402302231,
+          "src": "client",
+          "level": "error",
+          "msg": "TypeError: Cannot read property 'total' of null\n\nThis error is located at:\n    in App",
+          "stack": [
+            {
+              "fn": "formatTotal",
+              "file": "/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/src/total.ts",
+              "line": 4,
+              "column": 18
+            },
+            {
+              "fn": "App",
+              "file": "/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js",
+              "line": 12,
+              "column": 31
+            },
+            {
+              "fn": "renderWithHooks",
+              "file": "/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/react-native/Libraries/Renderer/x.js",
+              "line": 9,
+              "column": 2
+            },
+            {
+              "fn": "beginWork",
+              "file": "/Users/janicduplessis/elsewhere/lib.js"
+            }
+          ]
+        }
+      ],
+      "entries": [
+        {
+          "lead": 0,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "TypeError: Cannot read property 'total' of null",
+            "location": null,
+            "codeFrame": [],
+            "details": [
+              "This error is located at:",
+              "    in App",
+              "at formatTotal (src/total.ts:4:18)",
+              "at App (App.js:12:31)",
+              "at renderWithHooks (node_modules/react-native/Libraries/Renderer/x.js:9:2)",
+              "at beginWork (~/elsewhere/lib.js)"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a failed bundle response logged before its marker, with a device record between",
+      "records": [
+        {
+          "ts": 1790402302131,
+          "src": "metro",
+          "level": "error",
+          "event": "bundle_response_failed",
+          "platform": "android",
+          "statusCode": 500,
+          "msg": "android bundle response failed"
+        },
+        {
+          "ts": 1790402302132,
+          "src": "device",
+          "level": "info",
+          "platform": "android",
+          "msg": "ReactNativeJS: reloading"
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "Android Bundling failed 131ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302136
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302136
+        }
+      ],
+      "entries": [
+        {
+          "lead": 1,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "ReactNativeJS: reloading",
+            "location": null,
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 3,
+          "related": [0, 2],
+          "context": [],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [],
+            "details": ["android bundle response failed", "Android Bundling failed 131ms index.js (1 module)"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "error headers whose first part reads as a file",
+      "records": [
+        {
+          "ts": 1790402302131,
+          "src": "client",
+          "level": "error",
+          "msg": "Foo.Error: x: y"
+        },
+        {
+          "ts": 1790402302132,
+          "src": "client",
+          "level": "error",
+          "msg": "React.Error: failed: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/a.js"
+        },
+        {
+          "ts": 1790402302133,
+          "src": "client",
+          "level": "error",
+          "msg": "TypeError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/src/a.js: boom (3:4)"
+        }
+      ],
+      "entries": [
+        {
+          "lead": 0,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "x: y",
+            "location": "Foo.Error",
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 1,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "failed: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/a.js",
+            "location": "React.Error",
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 2,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "TypeError: boom",
+            "location": "src/a.js:3:4",
+            "codeFrame": [],
+            "details": []
+          }
+        }
+      ]
+    }
+  ],
+  "previews": [
+    {
+      "name": "workspace frames and one framework frame as its package",
+      "root": "/Users/me/app",
+      "home": "/Users/me",
+      "stack": [
+        {
+          "fn": "PairScreen",
+          "file": "/Users/me/app/src/screens/pair.tsx",
+          "line": 88,
+          "column": 3
+        },
+        {
+          "fn": "renderWithHooks",
+          "file": "/Users/me/app/node_modules/react-native/Libraries/Renderer/x.js",
+          "line": 1
+        },
+        {
+          "fn": "usePairing",
+          "file": "/Users/me/app/src/hooks/pairing.ts",
+          "line": 41
+        },
+        {
+          "fn": "beginWork",
+          "file": "/Users/me/app/node_modules/react-native/Libraries/Renderer/x.js",
+          "line": 2
+        },
+        {
+          "fn": "performWork",
+          "file": "/Users/me/app/node_modules/@babel/runtime/y.js",
+          "line": 3
+        }
+      ],
+      "preview": {
+        "frames": [
+          {
+            "fn": "PairScreen",
+            "where": "src/screens/pair.tsx:88",
+            "app": true
+          },
+          {
+            "fn": "renderWithHooks",
+            "where": "react-native",
+            "app": false
+          },
+          {
+            "fn": "usePairing",
+            "where": "src/hooks/pairing.ts:41",
+            "app": true
+          }
+        ],
+        "hidden": 2,
+        "hiddenFramework": true
+      }
+    },
+    {
+      "name": "a web frame by its script",
+      "root": "/Users/me/app",
+      "home": "/Users/me",
+      "stack": [
+        {
+          "fn": "ChannelList",
+          "file": "http://localhost:8094/index.ts.bundle?platform=web&dev=true",
+          "line": 48213
+        }
+      ],
+      "preview": {
+        "frames": [
+          {
+            "fn": "ChannelList",
+            "where": "index.ts.bundle",
+            "app": false
+          }
+        ],
+        "hidden": 0,
+        "hiddenFramework": true
+      }
+    },
+    {
+      "name": "more workspace frames than fit",
+      "root": "/Users/me/app",
+      "home": "/Users/me",
+      "stack": [
+        {
+          "fn": "f1",
+          "file": "/Users/me/app/src/f1.ts",
+          "line": 1
+        },
+        {
+          "fn": "f2",
+          "file": "/Users/me/app/src/f2.ts",
+          "line": 2
+        },
+        {
+          "fn": "f3",
+          "file": "/Users/me/app/src/f3.ts",
+          "line": 3
+        },
+        {
+          "fn": "f4",
+          "file": "/Users/me/app/src/f4.ts",
+          "line": 4
+        },
+        {
+          "fn": "f5",
+          "file": "/Users/me/app/src/f5.ts",
+          "line": 5
+        }
+      ],
+      "preview": {
+        "frames": [
+          {
+            "fn": "f1",
+            "where": "src/f1.ts:1",
+            "app": true
+          },
+          {
+            "fn": "f2",
+            "where": "src/f2.ts:2",
+            "app": true
+          },
+          {
+            "fn": "f3",
+            "where": "src/f3.ts:3",
+            "app": true
+          }
+        ],
+        "hidden": 2,
+        "hiddenFramework": false
+      }
+    },
+    {
+      "name": "frames outside the workspace and without a file",
+      "root": "/Users/me/app",
+      "home": "/Users/me",
+      "stack": [
+        {
+          "fn": "main",
+          "file": "/Users/me/lib/x.js",
+          "line": 7
+        },
+        {
+          "fn": "_dispatch_client_callout"
+        },
+        {}
+      ],
+      "preview": {
+        "frames": [
+          {
+            "fn": "main",
+            "where": "~/lib/x.js",
+            "app": false
+          }
+        ],
+        "hidden": 1,
+        "hiddenFramework": true
+      }
+    }
+  ],
+  "paths": [
+    {
+      "text": "/Users/janic/Developer/app",
+      "root": null,
+      "home": "/Users/janic",
+      "shown": "~/Developer/app"
+    },
+    {
+      "text": "/Users/janic",
+      "root": null,
+      "home": "/Users/janic",
+      "shown": "~"
+    },
+    {
+      "text": "/Users/janic/a",
+      "root": null,
+      "home": "/Users/janic/",
+      "shown": "~/a"
+    },
+    {
+      "text": "/Users/janicduplessis/app",
+      "root": null,
+      "home": "/Users/janic",
+      "shown": "/Users/janicduplessis/app"
+    },
+    {
+      "text": "/Users/janic/app",
+      "root": null,
+      "home": "/Users/jan",
+      "shown": "/Users/janic/app"
+    },
+    {
+      "text": "/tmp/Users/janic/app",
+      "root": null,
+      "home": "/Users/janic",
+      "shown": "/tmp/Users/janic/app"
+    },
+    {
+      "text": "Worktree /Users/janic/a is missing; see /Users/janicd/b and \"/Users/janic/c\".",
+      "root": null,
+      "home": "/Users/janic",
+      "shown": "Worktree ~/a is missing; see /Users/janicd/b and \"~/c\"."
+    },
+    {
+      "text": "/Users/janic/a",
+      "root": null,
+      "home": null,
+      "shown": "/Users/janic/a"
+    },
+    {
+      "text": "SyntaxError: /tmp/app/App.js: Unexpected token",
+      "root": "/tmp/app/",
+      "home": null,
+      "shown": "SyntaxError: App.js: Unexpected token"
+    },
+    {
+      "text": "at x (/tmp/app/node_modules/a.js:1:2) in /tmp/app",
+      "root": "/tmp/app",
+      "home": null,
+      "shown": "at x (node_modules/a.js:1:2) in /tmp/app"
+    },
+    {
+      "text": "/tmp/apple/App.js",
+      "root": "/tmp/app",
+      "home": null,
+      "shown": "/tmp/apple/App.js"
+    },
+    {
+      "text": "/tmp/app/a /tmp/app/b",
+      "root": "/tmp/app",
+      "home": "/tmp",
+      "shown": "a b"
+    }
+  ]
+}
