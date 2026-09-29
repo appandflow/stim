@@ -73,6 +73,7 @@ export function MacStatus({ id }: { id: string }) {
   const builds = details.kind === 'ready' ? buildStats(details.details.stats) : [];
   const machines = details.kind === 'ready' ? (details.details.buildMachines ?? []).map(machineReadiness) : [];
   const machinesError = details.kind === 'ready' ? details.details.buildMachinesError : undefined;
+  const machinesPending = details.kind === 'ready' ? (details.details.buildMachinesPending ?? false) : false;
 
   useEffect(() => {
     if (!connection || !open) return;
@@ -340,9 +341,17 @@ export function MacStatus({ id }: { id: string }) {
         </View>
       ) : null}
 
-      {machines.length > 0 || machinesError ? (
+      {machines.length > 0 || machinesError || machinesPending ? (
         <View style={styles.block}>
           <Text variant="headline">Build machines</Text>
+          {machinesPending && machines.length === 0 && !machinesError ? (
+            <View style={styles.legendRow}>
+              <ActivityIndicator size="small" color={theme.colors.secondary} />
+              <Text variant="footnote" tone="secondary">
+                {'Checking build machines…'}
+              </Text>
+            </View>
+          ) : null}
           {machinesError ? (
             <Text variant="footnote" tone="secondary">{`Cannot check build machines: ${machinesError}`}</Text>
           ) : null}

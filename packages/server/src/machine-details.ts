@@ -45,16 +45,14 @@ export function doctorWorkspace(
 /** Where to run doctor, why it cannot run, or null when no build machine is named. */
 export type DoctorTarget = { cwd: string | null } | { error: string } | null;
 
-async function buildMachinesPart(
+/** The build-machines part of a `machine.details` reply, without the pending flag a stale-cache read adds. */
+type BuildMachinesResult = { buildMachines: BuildMachineReport[] | null; buildMachinesError?: string };
+
+async function runDoctor(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
-  doctor: DoctorTarget,
-): Promise<{ buildMachines: BuildMachineReport[] | null; buildMachinesError?: string }> {
-  if (doctor === null) return { buildMachines: [] };
-  if ('error' in doctor) return { buildMachines: null, buildMachinesError: doctor.error };
-  if (doctor.cwd === null) {
-    return { buildMachines: null, buildMachinesError: 'no Stim workspace is registered to check them from' };
-  }
-  const { payload, error } = part(await run(DOCTOR, doctor.cwd), 'stim doctor');
+  cwd: string,
+): Promise<BuildMachinesResult> {
+  const { payload, error } = part(await run(DOCTOR, cwd), 'stim doctor');
   if (!payload) return { buildMachines: null, buildMachinesError: error! };
   const machines = payload.buildMachines;
   if (!Array.isArray(machines)) {
@@ -71,12 +69,58 @@ async function buildMachinesPart(
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/**
+ * The build-machines part of `machine.details`, refreshed with `stim doctor --json --platform ios` in the
+ * background instead of blocking the reply: doctor's offer to an unreachable machine can take about 13 seconds,
+ * and the rest of `machine.details` has nothing to do with it. `snapshot` never awaits doctor. It returns the last
+ * settled result immediately (with `buildMachinesPending: true` alongside it once that result is `ttlMs` old or
+ * older), starting at most one background run to refresh it; while no result has ever settled, it returns
+ * `buildMachines: null` with `buildMachinesPending: true`. `offload.machines` naming no machine, or `doctor` being
+ * an error or an unresolved workspace, answers synchronously and never starts a run.
+ */
+export class BuildMachinesCache {
+  private settled: { result: BuildMachinesResult; at: number } | null = null;
+  private inflight: Promise<void> | null = null;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+
+  constructor(ttlMs: number = MACHINE_DETAILS_TTL_MS, now: () => number = Date.now) {
+    this.ttlMs = ttlMs;
+    this.now = now;
+  }
+
+  snapshot(
+    run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
+    doctor: DoctorTarget,
+  ): BuildMachinesResult & { buildMachinesPending?: boolean; buildMachinesAt?: string } {
+    if (doctor === null) return { buildMachines: [] };
+    if ('error' in doctor) return { buildMachines: null, buildMachinesError: doctor.error };
+    if (doctor.cwd === null) {
+      return { buildMachines: null, buildMachinesError: 'no Stim workspace is registered to check them from' };
+    }
+    const cwd = doctor.cwd;
+    const fresh = this.settled !== null && this.now() - this.settled.at < this.ttlMs;
+    if (!fresh && !this.inflight) {
+      this.inflight = runDoctor(run, cwd).then((result) => {
+        this.settled = { result, at: this.now() };
+        this.inflight = null;
+        return undefined;
+      });
+    }
+    if (!this.settled) return { buildMachines: null, buildMachinesPending: true };
+    return {
+      ...this.settled.result,
+      buildMachinesAt: new Date(this.settled.at).toISOString(),
+      ...(fresh ? {} : { buildMachinesPending: true }),
+    };
+  }
+}
+
 export async function loadMachineDetails(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
-  doctor: DoctorTarget = null,
-): Promise<MachineDetails> {
+): Promise<Omit<MachineDetails, 'buildMachines'>> {
   const measuredAt = new Date().toISOString();
-  const [gc, stats, machines] = await Promise.all([run(GC_DRY_RUN), run(STATS), buildMachinesPart(run, doctor)]);
+  const [gc, stats] = await Promise.all([run(GC_DRY_RUN), run(STATS)]);
   const gcPart = part(gc, 'stim gc');
   const statsPart = part(stats, 'stim stats');
   return {
@@ -84,23 +128,24 @@ export async function loadMachineDetails(
     ...(gcPart.error ? { gcError: gcPart.error } : {}),
     stats: statsPart.payload,
     ...(statsPart.error ? { statsError: statsPart.error } : {}),
-    ...machines,
     measuredAt,
   };
 }
 
 /**
- * One `machine.details` result shared by every connection: a request while a load runs joins it, and a finished
- * load answers for `ttlMs` after it settled, so phones cannot make the Mac run `stim gc` back to back.
+ * The gc/stats part of one `machine.details` result shared by every connection: a request while a load runs joins
+ * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the Mac run `stim gc` back
+ * to back. Build machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
+ * promise, so a re-poll observes its progress instead of the gc/stats snapshot from whenever this last loaded.
  */
 export class MachineDetailsCache {
-  private entry: { value: Promise<MachineDetails>; settledAt: number | null } | null = null;
-  private readonly load: () => Promise<MachineDetails>;
+  private entry: { value: Promise<Omit<MachineDetails, 'buildMachines'>>; settledAt: number | null } | null = null;
+  private readonly load: () => Promise<Omit<MachineDetails, 'buildMachines'>>;
   private readonly ttlMs: number;
   private readonly now: () => number;
 
   constructor(
-    load: () => Promise<MachineDetails>,
+    load: () => Promise<Omit<MachineDetails, 'buildMachines'>>,
     ttlMs: number = MACHINE_DETAILS_TTL_MS,
     now: () => number = Date.now,
   ) {
@@ -109,10 +154,13 @@ export class MachineDetailsCache {
     this.now = now;
   }
 
-  get(): Promise<MachineDetails> {
+  get(): Promise<Omit<MachineDetails, 'buildMachines'>> {
     const current = this.entry;
     if (current && (current.settledAt === null || this.now() - current.settledAt < this.ttlMs)) return current.value;
-    const next: { value: Promise<MachineDetails>; settledAt: number | null } = { value: this.load(), settledAt: null };
+    const next: { value: Promise<Omit<MachineDetails, 'buildMachines'>>; settledAt: number | null } = {
+      value: this.load(),
+      settledAt: null,
+    };
     const settle = () => {
       next.settledAt = this.now();
     };

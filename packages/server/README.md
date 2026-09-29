@@ -559,8 +559,13 @@ Events are `{ "event", "subscription", ... }`.
   doctor judges a machine against an app. Like a doctor run from a terminal,
   that records the run for the workspace. `buildMachines` is null with
   `buildMachinesError` when doctor failed, the config could not be read, or no
-  registered workspace exists. The reply waits for doctor, whose offer to an
-  unreachable machine can take about 13 seconds.
+  registered workspace exists. The reply never waits for doctor, whose offer
+  to an unreachable machine can take about 13 seconds: it carries the last
+  settled `buildMachines`/`buildMachinesError` (with `buildMachinesAt`, when
+  they settled) while doctor refreshes them in the background, at most one run
+  at a time, and sets `buildMachinesPending` while that background run has not
+  settled a result yet, or the settled one is 60 seconds old or older. A client
+  that wants the refreshed result asks `machine.details` again.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
   [push notifications](#push-notifications) the phone wants (`started`,

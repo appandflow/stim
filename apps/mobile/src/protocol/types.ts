@@ -610,9 +610,16 @@ export interface MachineDetails {
   gcError?: string;
   stats: Record<string, unknown> | null;
   statsError?: string;
-  /** Absent from a server older than it; empty when `offload.machines` names no machine. */
+  /**
+   * Absent from a server older than it; empty when `offload.machines` names no machine. The server never waits for
+   * `stim doctor` to build this: `buildMachines`/`buildMachinesError` are the last result a background doctor run
+   * settled, `buildMachinesAt` is when, and `buildMachinesPending` is true while that result is stale or missing
+   * and a refresh is running. Ask `machine.details` again to see the refreshed result.
+   */
   buildMachines?: BuildMachineReport[] | null;
   buildMachinesError?: string;
+  buildMachinesAt?: string;
+  buildMachinesPending?: boolean;
   measuredAt: string;
 }
 
