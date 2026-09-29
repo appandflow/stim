@@ -349,6 +349,7 @@ export function DeviceView({
         timeline={canReplay ? timeline : null}
         markers={range?.markers ?? []}
         replay={stream.replay}
+        seeking={stream.seeking}
         canGoLive={running}
         recording={range?.recording ?? false}
         onSeek={seek}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { useMacConnection } from '@/hooks/mac-connection';
+import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
 import type { DevicePlatform, FrameEvent, ReplayRate } from '@/protocol/types';
 import { pushAccessUnit } from '../../modules/stim-video/src';
@@ -27,6 +28,8 @@ export interface DeviceStream {
   live: () => void;
   /** Whether the server sends this subscription H.264 and so can `seek`; null until it answers. */
   replayable: boolean | null;
+  /** A seek is out or waiting, so `replay.at` is not yet the frame last asked for. */
+  seeking: boolean;
 }
 
 export interface Replay {
@@ -46,6 +49,7 @@ interface StreamState {
   replay: Replay | null;
   replayable: boolean | null;
   delayedReason: string | null;
+  seeking: boolean;
 }
 
 const EMPTY: Omit<StreamState, 'key'> = {
@@ -56,6 +60,7 @@ const EMPTY: Omit<StreamState, 'key'> = {
   replay: null,
   replayable: null,
   delayedReason: null,
+  seeking: false,
 };
 const POSITION_MS = 200;
 
@@ -79,38 +84,49 @@ export function useDeviceStream(
   const subscription = useRef<string | null>(null);
   const replaying = useRef<(Replay & { timer: ReturnType<typeof setTimeout> | null }) | null>(null);
   const updateRef = useRef<((patch: Partial<StreamState>) => void) | null>(null);
-  const pendingSeek = useRef<{ at: number; rate: ReplayRate } | null>(null);
+  const seeks = useRef(new SeekQueue());
   const key =
     connection && options.enabled
       ? `${workspace}\n${platform}\n${slot}\n${physical ? 'physical' : ''}\n${fps}\n${maxEdge}\n${video.join(',')}\n${startAt ?? ''}`
       : null;
   const [meter] = useState(() => new VideoMeter());
   /**
-   * Shows the frame at `at` and plays on at `rate`. A seek made before the subscription opens waits for it. A seek
-   * the server refuses leaves the stream as it was, and an answer for a subscription that has since been replaced
-   * is dropped.
+   * Sends the waiting seek when `seeks` lets it go out, or schedules it. Only the answer to the latest seek moves
+   * `replay.at`; a refused latest seek leaves the stream as it was before it, and an answer for a subscription that
+   * has since been replaced is dropped.
    */
-  const sendSeek = (on: NonNullable<typeof connection>, current: string, at: number, rate: ReplayRate) => {
+  const pumpSeeks = (on: NonNullable<typeof connection>) =>
+    seeks.current.pump(
+      () => subscription.current,
+      (current, seek) => sendSeek(on, current, seek),
+    );
+  const sendSeek = (on: NonNullable<typeof connection>, current: string, seek: Seek) => {
+    const { at, rate } = seek;
     const previous = replaying.current;
     const before = previous ? { at: previous.at, rate: previous.rate, ended: previous.ended } : null;
     if (!replaying.current) replaying.current = { at: null, rate, ended: false, timer: null };
     updateRef.current?.({ replay: { at: replaying.current.at, rate, ended: false } });
+    const answered = (replay: Replay | null) => {
+      if (subscription.current !== current) return;
+      if (seeks.current.finish(seek)) {
+        if (replay) {
+          if (replaying.current) Object.assign(replaying.current, replay);
+        } else {
+          replaying.current = null;
+        }
+        updateRef.current?.({ replay, seeking: false });
+      }
+      pumpSeeks(on);
+    };
     on.request('frames.seek', { subscription: current, at, rate }).then(
-      (result) => {
-        if (subscription.current !== current) return;
-        if (replaying.current) Object.assign(replaying.current, { at: result.at, rate, ended: false });
-        updateRef.current?.({ replay: { at: result.at, rate, ended: false } });
-      },
-      () => {
-        if (subscription.current !== current) return;
-        if (!before) replaying.current = null;
-        updateRef.current?.({ replay: before });
-      },
+      (result) => answered({ at: result.at, rate, ended: false }),
+      () => answered(before),
     );
   };
   useEffect(() => {
     if (!connection || key === null) return;
     let size = '';
+    const queue = seeks.current;
     subscription.current = null;
     const update = (patch: Partial<StreamState>) =>
       setLatest((prev) => ({ ...(prev && prev.key === key ? prev : { key, ...EMPTY }), ...patch, key }));
@@ -143,21 +159,21 @@ export function useDeviceStream(
       },
       (result) => {
         subscription.current = result.subscription;
+        queue.interrupt();
         size = '';
         replaying.current = startAt !== null ? { at: null, rate: 0, ended: false, timer: null } : null;
         update({
           replay: startAt !== null ? { at: null, rate: 0, ended: false } : null,
           replayable: result.video === 'h264',
+          seeking: !queue.settled,
         });
-        const pending = pendingSeek.current;
-        pendingSeek.current = null;
-        if (pending) sendSeek(connection, result.subscription, pending.at, pending.rate);
+        pumpSeeks(connection);
       },
       (packet) => {
         pushAccessUnit(streamId, packet.accessUnit, packet.width, packet.height);
         meter.add(packet, Date.now());
         const position = replaying.current;
-        if (position) {
+        if (position && queue.settled) {
           position.at = packet.capturedAt;
           if (!position.timer) {
             position.timer = setTimeout(() => {
@@ -185,7 +201,7 @@ export function useDeviceStream(
       if (replaying.current?.timer) clearTimeout(replaying.current.timer);
       replaying.current = null;
       updateRef.current = null;
-      pendingSeek.current = null;
+      queue.clear();
       unsubscribe();
     };
   }, [connection, key, streamId, workspace, platform, slot, physical, fps, maxEdge, video, meter, startAt]);
@@ -194,17 +210,16 @@ export function useDeviceStream(
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});
   }, [connection]);
   const seek = (at: number, rate: ReplayRate) => {
-    const current = subscription.current;
     if (!connection) return;
-    if (!current) {
-      pendingSeek.current = { at, rate };
-      return;
-    }
-    sendSeek(connection, current, at, rate);
+    seeks.current.ask({ at, rate });
+    updateRef.current?.({ seeking: true });
+    pumpSeeks(connection);
   };
   const live = useCallback(() => {
     const current = subscription.current;
     if (!connection || !current) return;
+    seeks.current.clear();
+    updateRef.current?.({ seeking: false });
     connection.request('frames.live', { subscription: current }).then(
       () => {
         if (replaying.current?.timer) clearTimeout(replaying.current.timer);

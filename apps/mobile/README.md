@@ -299,11 +299,15 @@ of footage (see `packages/server/README.md`, Recording).
 - **Markers.** Agent actions sit on the scrubber in the accent color, errors
   in orange and crashes in red.
 - **Moving through it.**
-  - Dragging shows the frame under the finger, seeking at most every 120 ms,
-    and holds off the viewer's swipe to close.
-  - Tapping within 14 points of a marker lands 1.5 seconds before it, paused;
-    tapping elsewhere shows the frame there. Past the newest frame, the newest
-    frame shows.
+  - Dragging pauses a playing replay and shows the frame under the finger;
+    lifting the finger plays on from there when the replay played before the
+    drag; a drag that starts live lands paused. The thumb and time follow the
+    finger. One seek is out at a time, the
+    finger's latest time waits, and seeks go out at most every 50 ms. Dragging
+    holds off the viewer's swipe to close.
+  - Tapping within 14 points of a marker lands 1.5 seconds before it; tapping
+    elsewhere shows the frame there. Either keeps the replay playing or
+    paused. Past the newest frame, the newest frame shows.
   - A device that stops while you scrub stays on its recording, and one that
     starts stays on the recording until **Live**.
   - While live, the button shows pause: pressing it freezes on the newest
