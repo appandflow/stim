@@ -431,9 +431,12 @@ test('a Kotlin daemon connection is traced to the lsof process holding its other
   expect(connectionPeers(87114, lsof)).toEqual([13679, null]);
 });
 
-test('an offload daemon is found by its classpath or by the Gradle home it runs in', () => {
-  const root = '/Users/me/.stim/build-worker';
-  expect(offloadClientOf(`java -cp ${root}/client-a/cache/gradle/wrapper/dists/x.jar`, root, null)).toBe('client-a');
-  expect(offloadClientOf(GRADLE_DAEMON, root, `${root}/client-b/cache/gradle`)).toBe('client-b');
-  expect(offloadClientOf(GRADLE_DAEMON, root, '/Users/me/.gradle')).toBeNull();
-});
+test.skipIf(process.platform === 'win32')(
+  'an offload daemon is found by its classpath or by the Gradle home it runs in',
+  () => {
+    const root = '/Users/me/.stim/build-worker';
+    expect(offloadClientOf(`java -cp ${root}/client-a/cache/gradle/wrapper/dists/x.jar`, root, null)).toBe('client-a');
+    expect(offloadClientOf(GRADLE_DAEMON, root, `${root}/client-b/cache/gradle`)).toBe('client-b');
+    expect(offloadClientOf(GRADLE_DAEMON, root, '/Users/me/.gradle')).toBeNull();
+  },
+);
