@@ -149,13 +149,22 @@ struct StimDesktopApp: App {
       SettingsView(cli: cli, store: store).environmentObject(autopilot)
     }
 
-    MenuBarExtra(isInserted: $showsMenuBarExtra) {
+    MenuBarExtra(isInserted: menuBarExtraInserted) {
       MenuBarContent(store: store)
     } label: {
       let live = store.payload?.environments.filter(\.live).count ?? 0
       Label("\(live)", systemImage: "iphone.gen3")
         .labelStyle(.titleAndIcon)
     }
+  }
+
+  // SwiftUI's MenuBarExtra writes its status item's visibility back to `isInserted` on every app graph update, and
+  // an @AppStorage write posts UserDefaults.didChangeNotification even when the value is unchanged, which updates
+  // every @AppStorage view and so the app graph again.
+  private var menuBarExtraInserted: Binding<Bool> {
+    Binding(
+      get: { showsMenuBarExtra },
+      set: { if $0 != showsMenuBarExtra { showsMenuBarExtra = $0 } })
   }
 }
 
