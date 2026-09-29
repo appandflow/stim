@@ -53,7 +53,10 @@ FLAGS
                    owned Chrome's device errors (platform web: failed
                    requests, browser errors).
                    Capped at 20 printed records.
-  --follow         keep streaming until interrupted (Ctrl+C is exit 0)
+  --follow         keep streaming until interrupted (Ctrl+C is exit 0). Closing
+                   its stdout also ends it with exit 0, within a few seconds
+                   even when nothing new arrives; on Linux, so does the exit
+                   of the process that started it when stdout is a pipe.
   --json           the raw records, one per line, so stdout is valid NDJSON.
                    ZERO matches is ZERO bytes on stdout (an empty NDJSON
                    stream), exit 0 -- parse stdout line by line, never as one

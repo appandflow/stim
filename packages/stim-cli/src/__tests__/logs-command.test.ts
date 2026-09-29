@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { type ChildProcess, spawn } from 'node:child_process';
 import {
   appendFileSync,
   cpSync,
@@ -831,3 +832,96 @@ describe('logs command', () => {
     });
   });
 });
+
+describe.skipIf(process.platform === 'win32')(
+  'logs --follow when its reader is gone; skipped on win32, where a zero-length pipe write is not known to report a closed reader',
+  () => {
+    const cli = join(import.meta.dirname, '..', '..', 'bin', 'cli.ts');
+    let root: string;
+    let project: string;
+    let child: ChildProcess | null = null;
+
+    beforeEach(() => {
+      root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-follow-')));
+      process.env.STIM_HOME = join(root, 'home');
+      project = join(root, 'app');
+      mkdirSync(project);
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'demo' }));
+      const logsDir = workspaceLogsDir(project);
+      mkdirSync(logsDir, { recursive: true });
+      writeFileSync(
+        join(logsDir, 'metro.ndjson'),
+        `${JSON.stringify({ ts: Date.now(), src: 'metro', level: 'info', msg: 'ready' })}\n`,
+      );
+    });
+
+    afterEach(async () => {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise((resolve) => child!.once('exit', resolve));
+        child.kill('SIGKILL');
+        await exited;
+      }
+      child = null;
+      rmSync(root, { recursive: true, force: true });
+      delete process.env.STIM_HOME;
+    });
+
+    const args = [cli, 'logs', '--json', '--follow', '--tail', '1'];
+    const env = () => ({ STIM_HOME: process.env.STIM_HOME, HOME: root, PATH: join(root, 'bin') });
+
+    async function until(check: () => boolean, ms: number) {
+      const deadline = Date.now() + ms;
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error('timed out');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    function alive(pid: number): boolean {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    test('exits when stdout closes and no record arrives', async () => {
+      const proc = spawn(process.execPath, args, { cwd: project, env: env(), stdio: ['ignore', 'pipe', 'ignore'] });
+      child = proc;
+      const exited = new Promise<number | null>((resolve) => proc.on('exit', (code) => resolve(code)));
+      let out = '';
+      proc.stdout!.on('data', (chunk: Buffer) => (out += chunk.toString()));
+      await until(() => out.includes('\n'), 20_000);
+      const closedAt = Date.now();
+      proc.stdout!.destroy();
+      expect(await exited).toBe(0);
+      expect(Date.now() - closedAt).toBeLessThan(6000);
+    }, 30_000);
+
+    test('exits when the process reading it is killed', async () => {
+      const middleman = spawn(
+        process.execPath,
+        [
+          '-e',
+          `const w = require('node:child_process').spawn(process.execPath, ${JSON.stringify(args)}, { cwd: ${JSON.stringify(project)}, env: ${JSON.stringify(env())}, stdio: ['ignore', 'pipe', 'ignore'] });
+          w.stdout.once('data', () => console.log(w.pid));
+          setInterval(() => {}, 1000);`,
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      child = middleman;
+      let out = '';
+      middleman.stdout!.on('data', (chunk: Buffer) => (out += chunk.toString()));
+      await until(() => out.includes('\n'), 20_000);
+      const follower = Number(out.trim());
+      middleman.kill('SIGKILL');
+      try {
+        await until(() => !alive(follower), 6000);
+        expect(alive(follower)).toBe(false);
+      } finally {
+        if (alive(follower)) process.kill(follower, 'SIGKILL');
+      }
+    }, 30_000);
+  },
+);
