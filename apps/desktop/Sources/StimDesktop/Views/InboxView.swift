@@ -16,7 +16,8 @@ struct InboxView: View {
             title: filter == InboxFilter() ? "No notifications" : "Nothing matches",
             message: filter == InboxFilter()
               ? "What Stim notifies about in the last 7 days appears here, including Silent and Off categories."
-              : "No notification matches these filters.")
+              : "No notification matches these filters."
+          )
           .frame(maxWidth: .infinity)
           .padding(.top, Space.huge)
         }
@@ -138,7 +139,8 @@ private struct InboxRow: View {
     .onHover { hovering = $0 }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "\(entry.read ? "" : "Unread, ")\(entry.category.label), \(entry.title), \(entry.body), \(detail)")
+      "\(entry.read ? "" : "Unread, ")\(entry.category.label), \(entry.title), \(entry.body), \(detail)"
+    )
     .accessibilityAddTraits(.isButton)
     .accessibilityAction(named: entry.target.actionTitle, open)
   }

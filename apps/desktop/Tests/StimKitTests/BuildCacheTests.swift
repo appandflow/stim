@@ -143,7 +143,9 @@ import Testing
     let result = try await StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
       .plan(platform: "android", workspace: dir.path)
 
-    #expect(result == .refused(CommandRefusal(code: "STIM_NO_DEVICE", message: "No system image is installed.", remedy: "Install one.")))
+    #expect(
+      result == .refused(CommandRefusal(code: "STIM_NO_DEVICE", message: "No system image is installed.", remedy: "Install one."))
+    )
     let args = try String(contentsOf: dir.appendingPathComponent("args"), encoding: .utf8)
     #expect(args == "android --plan --json\n")
   }
@@ -164,7 +166,8 @@ import Testing
 
     let task = Task { try await cli.plan(platform: "ios", workspace: dir.path) }
     while !FileManager.default.fileExists(atPath: pidFile) { try await Task.sleep(for: .milliseconds(20)) }
-    let pid = try #require(Int32(String(contentsOfFile: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+    let pid = try #require(
+      Int32(String(contentsOfFile: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
     task.cancel()
 
     await #expect(throws: CancellationError.self) { try await task.value }

@@ -96,7 +96,10 @@ import Testing
     #expect(report.total(.nodeModules).bytes == 4096)
     #expect(report.free.first { $0.id == "worktree:/r/.worktrees/a" }?.bytes == 4096)
 
-    #expect(report.runtimes.map(\.title) == ["iOS 18.3.1", "Android 30 \u{00B7} google_apis", "iOS 27.0", "Android 36 \u{00B7} google_apis"])
+    #expect(
+      report.runtimes.map(\.title) == [
+        "iOS 18.3.1", "Android 30 \u{00B7} google_apis", "iOS 27.0", "Android 36 \u{00B7} google_apis",
+      ])
     #expect(report.runtimes[1].size == .size(Int64(3 * 1024)) && report.runtimes[1].unused)
     #expect(report.runtimes[3].size == .notMeasured)
 
@@ -133,7 +136,9 @@ import Testing
     }
     let disk = DiskMeasurements(sizes: ["/t/.w/a/node_modules": 5, "/t/.w/b/node_modules": 6, "/solo/node_modules": 9])
     let report = StorageReport.make(
-      environments: [try env("/t/.w/a", repository: "/t"), try env("/solo", repository: nil), try env("/t/.w/b", repository: "/t")],
+      environments: [
+        try env("/t/.w/a", repository: "/t"), try env("/solo", repository: nil), try env("/t/.w/b", repository: "/t"),
+      ],
       gc: nil, disk: disk, paths: paths)
     #expect(report.repositories.map(\.name) == ["t", "solo"])
     #expect(report.repositories[0].total == 11 && report.repositories[0].worktrees.map(\.path) == ["/t/.w/b", "/t/.w/a"])
@@ -145,7 +150,8 @@ import Testing
 
     let nested = try JSONDecoder().decode(
       Workspace.self,
-      from: Data(#"{"path":"/t/.w/a/app","live":false,"warnings":[],"worktree":{"path":"/t/.w/a","branch":"b","repository":"/t"}}"#.utf8))
+      from: Data(
+        #"{"path":"/t/.w/a/app","live":false,"warnings":[],"worktree":{"path":"/t/.w/a","branch":"b","repository":"/t"}}"#.utf8))
     let shared = StorageReport.make(
       environments: [try env("/t/.w/a", repository: "/t"), nested], gc: nil, disk: disk, paths: paths)
     #expect(shared.repositories.first?.total == 5 && shared.total(.nodeModules).bytes == 5)

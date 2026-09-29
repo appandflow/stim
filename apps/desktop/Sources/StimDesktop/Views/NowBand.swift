@@ -29,7 +29,9 @@ struct NowBand: View {
           .foregroundStyle(Palette.tertiary)
           VStack(alignment: .leading, spacing: Space.xs) {
             header(actionWidth: actionWidth)
-            ListSection(data: shown, id: \.key) { EmptyView() } row: { owner in
+            ListSection(data: shown, id: \.key) {
+              EmptyView()
+            } row: { owner in
               row(owner, actionWidth: actionWidth)
             }
           }
@@ -116,7 +118,8 @@ struct NowBand: View {
       .help(
         owner.kind == .metro
           ? "stim stop: stops this workspace's dev server and its devices"
-          : "stim stop --slot \(owner.slot ?? "default"): stops every device in this slot, keeping the shared server and other slots running")
+          : "stim stop --slot \(owner.slot ?? "default"): stops every device in this slot, keeping the shared server and other slots running"
+      )
     } else {
       Color.clear.frame(height: 1)
     }

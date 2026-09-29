@@ -822,6 +822,12 @@ swift run
 swift test
 ```
 
+`scripts/format.sh` formats the Swift sources with `swift-format` from the
+Xcode toolchain, tuned by `.swift-format`; `scripts/format.sh --check` runs
+the same rules as a lint, which is what desktop CI runs. CI also builds and
+tests with `-Xswiftc -warnings-as-errors`, so fix a warning instead of
+introducing one.
+
 `Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
 the text styles with their macOS sizes from `macosText`, and the light and dark

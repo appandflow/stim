@@ -27,7 +27,7 @@ struct ReplayScreen: NSViewRepresentable {
 }
 
 final class ReplayScreenView: NSView {
-  private final class Decoding {
+  private final class Decoding: @unchecked Sendable {
     var configured = false
     var decoder: H264Decoder?
   }
@@ -390,7 +390,11 @@ struct ReplayTrack: View {
         text: { x, marker in tooltipText(x: x, marker: marker) },
         previewTime: { x, marker in previewTime(x: x, marker: marker) })
     }
-    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    .onGeometryChange(for: CGFloat.self) {
+      $0.size.width
+    } action: {
+      width = $0
+    }
     .onChange(of: track.length, initial: true) { _, length in trackLength = length }
     .onContinuousHover { phase in
       switch phase {
@@ -426,7 +430,8 @@ struct ReplayTrack: View {
           } else {
             seek(track.time(at: fraction(x)), 0)
           }
-        })
+        }
+    )
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Replay timeline")
     .accessibilityValue(accessibilityValue)
@@ -459,7 +464,8 @@ struct ReplayTrack: View {
 
   private func nearestMarker(x: CGFloat) -> ReplayMarker? {
     let track = self.track
-    return markers
+    return
+      markers
       .map { ($0, abs(track.position(of: $0.at) * width - x)) }
       .filter { $0.1 <= Self.markerReach }
       .min { $0.1 < $1.1 }?.0

@@ -14,7 +14,8 @@ struct NoEnvironmentDetail: View {
             Text(names.title).font(.stim(.title))
             Pill(tone: .neutral) { Text("no environment") }
           }
-          Text(abbreviatingHome(worktree.path)).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+          Text(abbreviatingHome(worktree.path)).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
+            .textSelection(.enabled)
           if let branch = worktree.branch {
             Label(branch, systemImage: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
           }

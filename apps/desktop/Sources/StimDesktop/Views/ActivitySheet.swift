@@ -216,31 +216,35 @@ struct ActivitySheet: View {
 
   /// A present-tense header for common action verbs, falling back to the plain title.
   private static func gerund(_ title: String) -> String {
-    rewrite(title, [
-      ("Shut down idle devices", "Shutting down idle devices"),
-      ("Preview cleanup", "Previewing cleanup"),
-      ("Reclaim disk space", "Reclaiming disk space"),
-      ("Nightly cleanup", "Cleaning up"),
-      ("Clean up", "Cleaning up"),
-      ("Stop ", "Stopping "),
-      ("Reload ", "Reloading "),
-      ("Start ", "Starting "),
-      ("Remove ", "Removing "),
-      ("Warm ", "Warming "),
-    ])
+    rewrite(
+      title,
+      [
+        ("Shut down idle devices", "Shutting down idle devices"),
+        ("Preview cleanup", "Previewing cleanup"),
+        ("Reclaim disk space", "Reclaiming disk space"),
+        ("Nightly cleanup", "Cleaning up"),
+        ("Clean up", "Cleaning up"),
+        ("Stop ", "Stopping "),
+        ("Reload ", "Reloading "),
+        ("Start ", "Starting "),
+        ("Remove ", "Removing "),
+        ("Warm ", "Warming "),
+      ])
   }
 
   /// The sentence a finished action confirms itself with.
   private static func pastTense(_ title: String) -> String {
-    rewrite(title, [
-      ("Shut down idle devices", "Shut down idle devices"),
-      ("Clean up", "Cleaned up"),
-      ("Stop ", "Stopped "),
-      ("Reload ", "Reloaded "),
-      ("Start ", "Started "),
-      ("Remove ", "Removed "),
-      ("Warm ", "Warmed "),
-    ], fallback: "Done")
+    rewrite(
+      title,
+      [
+        ("Shut down idle devices", "Shut down idle devices"),
+        ("Clean up", "Cleaned up"),
+        ("Stop ", "Stopped "),
+        ("Reload ", "Reloaded "),
+        ("Start ", "Started "),
+        ("Remove ", "Removed "),
+        ("Warm ", "Warmed "),
+      ], fallback: "Done")
   }
 
   private static func rewrite(_ title: String, _ mapping: [(String, String)], fallback: String? = nil) -> String {

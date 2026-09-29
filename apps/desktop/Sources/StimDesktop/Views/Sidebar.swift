@@ -164,7 +164,8 @@ private struct PinnedRow<Content: View>: View {
         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .background(
           RoundedRectangle(cornerRadius: Radius.chip)
-            .fill(selection == item ? Palette.selection : hovering ? Palette.raised.opacity(0.5) : Color.clear))
+            .fill(selection == item ? Palette.selection : hovering ? Palette.raised.opacity(0.5) : Color.clear)
+        )
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -248,9 +249,10 @@ struct WorkspaceRow: View {
     HStack(spacing: Space.md) {
       StatusDot(
         color: env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary,
-        filled: env.live || env.isSettingUp)
-        .contentShape(Circle())
-        .help(env.live ? "Live" : env.isWarming ? "Warming" : env.isSettingUp ? "Warmed, not started" : "Idle")
+        filled: env.live || env.isSettingUp
+      )
+      .contentShape(Circle())
+      .help(env.live ? "Live" : env.isWarming ? "Warming" : env.isSettingUp ? "Warmed, not started" : "Idle")
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: Space.sm) {
           Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
@@ -456,7 +458,9 @@ struct SidebarFooter: View {
           ? "Stim Desktop cannot find stim \u{2014} click to install it with npm"
           : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with npm")
     case .diskCritical(let freeBytes):
-      Button { selection = .machine } label: {
+      Button {
+        selection = .machine
+      } label: {
         statusLabel(dot: Palette.error, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
@@ -468,14 +472,18 @@ struct SidebarFooter: View {
       .buttonStyle(.plain)
       .help("A new version of Stim Desktop is available \u{2014} click to install it")
     case .diskWarning(let freeBytes):
-      Button { selection = .machine } label: {
+      Button {
+        selection = .machine
+      } label: {
         statusLabel(dot: Palette.warning, text: "Low disk: \(formatDisk(freeBytes)) free")
       }
       .buttonStyle(.plain)
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
+      let help: String =
+        version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim"
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
-        .help(version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim")
+        .help(help)
     }
   }
 
@@ -496,7 +504,8 @@ struct SidebarFooter: View {
 
   private var agentsTooltip: String {
     let count = drivenDevices.count
-    return (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show all devices"]
+    return
+      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show all devices"]
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 

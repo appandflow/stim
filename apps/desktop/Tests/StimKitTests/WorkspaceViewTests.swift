@@ -16,9 +16,10 @@ private func workspace(_ fields: String) throws -> Workspace {
   return try JSONDecoder().decode(Workspace.self, from: JSONSerialization.data(withJSONObject: object))
 }
 
-private func lastBuild(_ platform: String = "ios", status: String = "ok", cacheHit: String = "\"local\"",
-  durationMs: Int = 33_000, startedAgo: TimeInterval = 27 * 60, finishedAgo: TimeInterval = 26 * 60) -> String
-{
+private func lastBuild(
+  _ platform: String = "ios", status: String = "ok", cacheHit: String = "\"local\"",
+  durationMs: Int = 33_000, startedAgo: TimeInterval = 27 * 60, finishedAgo: TimeInterval = 26 * 60
+) -> String {
   #"{"platform":"\#(platform)","status":"\#(status)","cacheHit":\#(cacheHit),"durationMs":\#(durationMs),"startedAt":"\#(iso(startedAgo))","finishedAt":"\#(iso(finishedAgo))"}"#
 }
 
@@ -190,7 +191,10 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     var early = try build()
     early.phase = "cache-lookup"
     early.phaseStartedAt = iso(0)
-    #expect(barSteps(early.phaseSteps(history: history, now: now)).map(\.phase) == ["prepare", "prebuild", "pods", "compile", "install"])
+    #expect(
+      barSteps(early.phaseSteps(history: history, now: now)).map(\.phase) == [
+        "prepare", "prebuild", "pods", "compile", "install",
+      ])
     #expect(barSteps(early.phaseSteps(history: history, now: now)).first?.state == .current)
     var lookup = try build()
     lookup.phase = "cache-lookup"
@@ -227,7 +231,8 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 
   @Test func showsBundlingTheLastBundleOrThatNoneRanYet() throws {
-    #expect(try env(#"{"bundling":true,"percent":62.4}"#).bundleLine(now: now, reportsBundles: true)?.text == "Bundling \u{00B7} 62%")
+    #expect(
+      try env(#"{"bundling":true,"percent":62.4}"#).bundleLine(now: now, reportsBundles: true)?.text == "Bundling \u{00B7} 62%")
     #expect(
       try env(#"{"bundling":false,"last":{"platform":"ios","status":"ok","durationMs":1800,"finishedAt":"\#(iso(12))"}}"#)
         .bundleLine(now: now, reportsBundles: true)?.text == "Bundled in 1.8s \u{00B7} 12s ago")
@@ -258,7 +263,9 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     let patch = try JSONSerialization.jsonObject(with: Data("{\(git.drop { $0 == "," })}".utf8)) as! [String: Any]
     fields.merge(patch) { _, new in new }
     var object: [String: Any] = ["path": "/w", "git": fields]
-    if let pullRequest { object["pullRequest"] = try JSONSerialization.jsonObject(with: Data(pullRequest.utf8), options: .fragmentsAllowed) }
+    if let pullRequest {
+      object["pullRequest"] = try JSONSerialization.jsonObject(with: Data(pullRequest.utf8), options: .fragmentsAllowed)
+    }
     return try JSONDecoder().decode(WorktreeInfo.self, from: JSONSerialization.data(withJSONObject: object))
   }
 
@@ -271,7 +278,8 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 
   @Test func coloursThePullRequestByStateWithOneCIMarkForTheWorstCheck() throws {
-    let pr = #"{"number":1695,"url":"https://github.com/o/r/pull/1695","title":"t","state":"open","checks":{"passing":12,"failing":1,"pending":2}}"#
+    let pr =
+      #"{"number":1695,"url":"https://github.com/o/r/pull/1695","title":"t","state":"open","checks":{"passing":12,"failing":1,"pending":2}}"#
     let open = try GitChip(worktree(pullRequest: pr))
     #expect(open?.pullRequest?.text == "PR #1695")
     #expect(open?.pullRequest?.tone == .success)
@@ -288,7 +296,8 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 
 @Suite struct OffloadedBuildTests {
   @Test func namesTheBuildMachineWithoutItsPortAndTheStepItRunsThere() throws {
-    let placement = #","placement":{"host":"janics-mac-mini:7869","phase":"pods","startedAt":"\#(iso(90))","phaseStartedAt":"\#(iso(56))"}"#
+    let placement =
+      #","placement":{"host":"janics-mac-mini:7869","phase":"pods","startedAt":"\#(iso(90))","phaseStartedAt":"\#(iso(56))"}"#
     let build = try #require(try workspace(#""build":\#(runningBuild(placement))"#).build)
     #expect(build.remote(at: now) == RemoteBuild(host: "janics-mac-mini", phase: "Pods", phaseElapsedMs: 56_000))
     #expect(build.currentPhaseLabel.phase == "Pods")
@@ -299,12 +308,17 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 
   @Test func marksOffloadedRunsAndShortensTheFallbackReasonsStimRecords() throws {
     let offloaded = try #require(
-      try workspace(#""lastBuilds":{"ios":\#(lastBuild(cacheHit: "false", durationMs: 71_000).dropLast()),"offloadedTo":"janics-mac-mini:7869"}}"#)
-        .lastBuilds?.ios)
+      try workspace(
+        #""lastBuilds":{"ios":\#(lastBuild(cacheHit: "false", durationMs: 71_000).dropLast()),"offloadedTo":"janics-mac-mini:7869"}}"#
+      )
+      .lastBuilds?.ios)
     #expect(offloaded.summary == "Built on janics-mac-mini in 1m 11s")
     let cases: [(String, String)] = [
       ("janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)", "janics-mac-mini busy \u{2192} built here"),
-      ("mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)", "mini on another Stim build \u{2192} built here"),
+      (
+        "mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)",
+        "mini on another Stim build \u{2192} built here"
+      ),
       ("mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer", "mini no less loaded \u{2192} built here"),
       ("mini: capacity unknown (older stim-server) while this Mac has a free slot", "mini too old \u{2192} built here"),
       ("mini: no iPhone simulator on 27.0 there", "mini missing SDK \u{2192} built here"),

@@ -42,7 +42,8 @@ public enum StatusEvents {
           let added = errors - oldErrors
           events.append(
             StatusEvent(
-              kind: .errors, id: "errors:\(env.path):\(errors)", title: "\(name): \(added == 1 ? "1 new error" : "\(added) new errors")",
+              kind: .errors, id: "errors:\(env.path):\(errors)",
+              title: "\(name): \(added == 1 ? "1 new error" : "\(added) new errors")",
               body: "\(errors) since the last marker in \(env.path)"))
         }
         let running = Set(env.devices.filter(\.isRunning).map(\.id))
@@ -74,7 +75,9 @@ public enum StatusEvents {
       events.append(
         StatusEvent(
           kind: .memory, id: "memory:\(now.timeIntervalSince1970)", title: "Over memory capacity",
-          body: "\(cap.liveCount) live workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."))
+          body:
+            "\(cap.liveCount) live workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."
+        ))
     }
     return events
   }

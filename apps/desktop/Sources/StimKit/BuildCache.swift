@@ -164,7 +164,6 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
   }
 
-
   /// The phases the run entered, in build order, as `compile 1m 58s · install 0m 3s`.
   public var phaseLine: String? {
     let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "install", "launch"]

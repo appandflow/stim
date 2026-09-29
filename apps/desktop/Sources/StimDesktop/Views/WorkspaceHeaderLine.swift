@@ -62,7 +62,8 @@ struct BuildInlineProgress: View {
       .help([phase, counts, host.map { "on \($0)" }].compactMap { $0 }.joined(separator: " \u{00B7} "))
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(
-        "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")")
+        "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")"
+      )
     }
   }
 

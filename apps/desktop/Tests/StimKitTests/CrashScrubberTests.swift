@@ -50,7 +50,8 @@ final class CrashScrubberTests: XCTestCase {
     XCTAssertEqual(scrubber.scrub("Authorization: Bearer eyJhbGciOi.abc"), "Authorization: <redacted> <redacted>")
     XCTAssertEqual(scrubber.scrub("pairingToken=s3cr3t other"), "pairingToken=<redacted> other")
     XCTAssertEqual(scrubber.scrub(#"{"pushToken":"abc123"}"#), #"{"pushToken":"<redacted>"}"#)
-    XCTAssertEqual(scrubber.scrub("privateKey=abc sk_live_51Hx npm_abcdefghij0123456789"), "privateKey=<redacted> <redacted> <redacted>")
+    XCTAssertEqual(
+      scrubber.scrub("privateKey=abc sk_live_51Hx npm_abcdefghij0123456789"), "privateKey=<redacted> <redacted> <redacted>")
     XCTAssertEqual(
       scrubber.scrub("key 9f8e7d6c5b4a39281706f5e4d3c2b1a0ZYXWVUTSRQ ok"), "key <redacted> ok")
   }

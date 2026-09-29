@@ -231,7 +231,8 @@ private let schema = Data(
   @Test func saysNothingWhenALeasedPhoneDisconnectsOrItsLeaseEnds() {
     let leased = { (connection: String) in
       workspace(
-        remote: #"[],"physicalDevices":[{"platform":"ios","slot":"default","id":"P1","name":"Old iPhone","connection":"\#(connection)","lease":{"holder":"/w/app","kind":"declared","expiresAt":"2026-09-24T21:00:00Z"}}]"#
+        remote:
+          #"[],"physicalDevices":[{"platform":"ios","slot":"default","id":"P1","name":"Old iPhone","connection":"\#(connection)","lease":{"holder":"/w/app","kind":"declared","expiresAt":"2026-09-24T21:00:00Z"}}]"#
       )
     }
     #expect(events(leased("connected"), leased("disconnected")).isEmpty)

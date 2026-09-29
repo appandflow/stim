@@ -43,7 +43,11 @@ struct WorkspaceDetail: View {
           .toolbarBackdrop(Palette.sidebar)
       }
     }
-    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    .onGeometryChange(for: CGFloat.self) {
+      $0.size.width
+    } action: {
+      width = $0
+    }
     .overlay(alignment: .trailing) {
       if inspector == .overlay {
         inspectorPanel
@@ -73,9 +77,10 @@ struct WorkspaceDetail: View {
         openLogs: {
           logQuery.errorsOnly = false
           showsLogs = true
-        })
-        .padding(.horizontal, Space.xxl)
-        .padding(.vertical, Space.md)
+        }
+      )
+      .padding(.horizontal, Space.xxl)
+      .padding(.vertical, Space.md)
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
         canvas(devices: devices, focused: focused)
@@ -86,7 +91,11 @@ struct WorkspaceDetail: View {
             .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
         }
       }
-      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.height
+      } action: {
+        contentHeight = $0
+      }
     }
   }
 
@@ -112,7 +121,8 @@ struct WorkspaceDetail: View {
             logsResizeStart = start
             logsHeight = Self.clampedLogsHeight(start - drag.translation.height, contentHeight: contentHeight)
           }
-          .onEnded { _ in logsResizeStart = nil })
+          .onEnded { _ in logsResizeStart = nil }
+      )
       .help("Drag to resize the logs")
   }
 
@@ -185,7 +195,8 @@ struct WorkspaceDetail: View {
       }
       .frame(maxWidth: 420, minHeight: 140)
       .frame(maxWidth: .infinity)
-      .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+      .overlay(
+        RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     } else {
       EmptyState(
         title: "No devices",

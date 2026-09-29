@@ -136,7 +136,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     var depth = 0
     var index = open
     while index < name.endIndex {
-      if name[index] == "(" { depth += 1 } else if name[index] == ")" {
+      if name[index] == "(" {
+        depth += 1
+      } else if name[index] == ")" {
         depth -= 1
         if depth == 0 { return String(name[name.index(after: open)..<index]) }
       }
@@ -172,7 +174,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     let own = label
     let others = devices.filter { $0.id != id && $0.label == own }
     guard !others.isEmpty else { return own }
-    if case .ios = self, let runtime = iosModel.runtime, others.allSatisfy({ if case .ios = $0 { return true } else { return false } }) {
+    if case .ios = self, let runtime = iosModel.runtime,
+      others.allSatisfy({ if case .ios = $0 { return true } else { return false } })
+    {
       return "\(own) \u{00B7} \(runtime)"
     }
     switch self {

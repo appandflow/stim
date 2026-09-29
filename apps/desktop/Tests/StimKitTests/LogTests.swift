@@ -12,9 +12,10 @@ import Testing
 
   @Test func decodesEveryCapturedRecordAndIgnoresFieldsItDoesNotModel() {
     #expect(records.count == 10)
-    #expect(records.map(\.src) == [
-      "metro", "metro", "metro", "build", "build", "device", "device", "device", "device", "build",
-    ])
+    #expect(
+      records.map(\.src) == [
+        "metro", "metro", "metro", "build", "build", "device", "device", "device", "device", "build",
+      ])
     #expect(records[1].marker == true)
     #expect(records[3].platform == "ios")
   }
@@ -107,11 +108,11 @@ import Testing
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let script = dir.appendingPathComponent("stim")
     try """
-      #!/bin/sh
-      case "$*" in *--errors*) echo "STIM_NO_PROJECT: no timeline" >&2; exit 1;; esac
-      printf '{"ts":1,"src":"metro","level":"info","msg":"%s"}\\n' "$*"
-      exec sleep 30
-      """.write(to: script, atomically: true, encoding: .utf8)
+    #!/bin/sh
+    case "$*" in *--errors*) echo "STIM_NO_PROJECT: no timeline" >&2; exit 1;; esac
+    printf '{"ts":1,"src":"metro","level":"info","msg":"%s"}\\n' "$*"
+    exec sleep 30
+    """.write(to: script, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
     cli = StimCLI(environment: ["STIM_BIN": script.path, "PATH": "/usr/bin:/bin"])
   }

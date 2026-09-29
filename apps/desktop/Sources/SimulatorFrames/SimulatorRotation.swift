@@ -8,8 +8,11 @@ public enum SimulatorRotation {
 
   public static func rotate(udid: String, clockwise: Bool) -> Bool {
     guard let device = CoreSimulator.device(udid: udid) else { return false }
-    let current = sent[udid] ?? deviceOrientation(interface: CoreSimulator.displays(udid: udid).first?
-      .screenProperties?.uiOrientation ?? 1)
+    let current =
+      sent[udid]
+      ?? deviceOrientation(
+        interface: CoreSimulator.displays(udid: udid).first?
+          .screenProperties?.uiOrientation ?? 1)
     let next = quarterTurn(from: current, clockwise: clockwise)
     guard send(orientation: next, to: device) else { return false }
     sent[udid] = next

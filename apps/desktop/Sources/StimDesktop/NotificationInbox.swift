@@ -13,7 +13,8 @@ final class NotificationInbox: ObservableObject {
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
     file = support?.appendingPathComponent(Bundle.main.bundleIdentifier ?? "StimDesktop", isDirectory: true)
       .appendingPathComponent("notifications.json")
-    var stored = file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(Inbox.self, from: $0) }
+    var stored =
+      file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(Inbox.self, from: $0) }
       ?? Inbox()
     stored.prune(now: Date())
     inbox = stored

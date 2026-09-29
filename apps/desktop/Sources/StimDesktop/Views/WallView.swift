@@ -40,7 +40,9 @@ struct WallView: View {
               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: Space.xl) {
                   ForEach(env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }) { device in
-                    Button { selection = .environment(env.path) } label: {
+                    Button {
+                      selection = .environment(env.path)
+                    } label: {
                       DeviceTile(
                         device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
                         workspaceTitle: env.names.title, build: env.runningBuild(for: device), namesDriver: false)

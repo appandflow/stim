@@ -71,7 +71,10 @@
             HStack(spacing: Space.md) {
               IconButton(systemImage: "gearshape", help: "Settings") {}
               IconButton(systemImage: "cursorarrow.rays", tint: Palette.accent, badge: "2", help: "Agents") {}
-              Button {} label: { Image(systemName: "line.3.horizontal.decrease") }.buttonStyle(.icon(active: true))
+              Button {
+              } label: {
+                Image(systemName: "line.3.horizontal.decrease")
+              }.buttonStyle(.icon(active: true))
             }
           }
           section("Pills") {

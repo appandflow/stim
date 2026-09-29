@@ -201,7 +201,8 @@ final class StatusStore: ObservableObject {
 
   private func checkDoctor() {
     let now = Date()
-    guard doctorStartedAt.map({ now.timeIntervalSince($0) > Self.doctorTimeout }) ?? true, doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
+    guard doctorStartedAt.map({ now.timeIntervalSince($0) > Self.doctorTimeout }) ?? true,
+      doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
       let payload
     else { return }
     doctorStartedAt = now

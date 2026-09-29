@@ -561,8 +561,7 @@ public enum Oversight {
     }
   }
 
-  static func overseeMachine(_ run: Run, _ previous: OversightState?, _ state: inout OversightState, awakeSince: Double)
-  {
+  static func overseeMachine(_ run: Run, _ previous: OversightState?, _ state: inout OversightState, awakeSince: Double) {
     let now = run.now
     if let kind = run.input.link, kind != .open {
       var held =

@@ -81,8 +81,9 @@ import Testing
 
 @Suite struct InputMessageTests {
   @Test func encodesAPressedMouseEventWithVarintCoordinates() {
-    #expect([UInt8](InputMessages.mouse(x: 378, y: 2208, pressed: true))
-      == [0x08, 0xfa, 0x02, 0x10, 0xa0, 0x11, 0x18, 0x01])
+    #expect(
+      [UInt8](InputMessages.mouse(x: 378, y: 2208, pressed: true))
+        == [0x08, 0xfa, 0x02, 0x10, 0xa0, 0x11, 0x18, 0x01])
   }
 
   @Test func releasesTheMouseByOmittingButtons() {
@@ -147,7 +148,8 @@ import Testing
 
 @Suite struct FramingTests {
   @Test func drainsCompleteFramesWithTheirStreamAndKeepsAPartialOne() {
-    var inbox = GrpcFraming.frame(type: 1, flags: 0x5, stream: 3, payload: [0xaa])
+    var inbox =
+      GrpcFraming.frame(type: 1, flags: 0x5, stream: 3, payload: [0xaa])
       + GrpcFraming.frame(type: 0, flags: 0x1, stream: 5, payload: [1, 2, 3])
     let partial = Array(inbox.suffix(2))
     inbox.removeLast(2)

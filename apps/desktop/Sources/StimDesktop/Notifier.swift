@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 import StimKit
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Posts a macOS notification for each enabled `StatusEvent` between two status refreshes.
 @MainActor
