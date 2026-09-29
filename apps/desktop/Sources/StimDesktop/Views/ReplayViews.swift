@@ -159,6 +159,8 @@ struct ReplayBar: View {
   var onSeek: () -> Void = {}
 
   @State private var speed = 1
+  /// The agent action the last step went to, so the next step counts from it; nil after any other seek.
+  @State private var stepped: Double?
 
   var body: some View {
     let timeline = replayOff || controller.replayable == false ? nil : controller.timeline
@@ -166,7 +168,9 @@ struct ReplayBar: View {
       HStack(spacing: Space.md) {
         liveButton
         if let timeline {
+          stepButton(timeline, forward: false)
           playButton(timeline)
+          stepButton(timeline, forward: true)
           Button("\(speed)x") { toggleSpeed() }
             .buttonStyle(.stim())
             .fixedSize()
@@ -193,7 +197,7 @@ struct ReplayBar: View {
       if let timeline {
         ReplayTrack(
           timeline: timeline, markers: controller.range?.markers ?? [], shownAt: controller.replay?.at,
-          isLive: controller.replay == nil, previews: controller.previews, seek: seek)
+          isLive: controller.replay == nil, previews: controller.previews, seek: { seek($0, rate: $1) })
       }
       if let error = controller.error {
         Text(error).font(.stim(.caption)).foregroundStyle(Palette.warning).lineLimit(2)
@@ -215,6 +219,30 @@ struct ReplayBar: View {
     .fixedSize()
     .disabled(isLive)
     .help(running ? "Show the live screen" : "Leave the replay; the device is not running")
+  }
+
+  /// Steps to the previous or next agent action, as the phone's replay bar does; next with none left goes live while
+  /// the device runs.
+  private func stepButton(_ timeline: ReplayTimeline, forward: Bool) -> some View {
+    let replay = controller.replay
+    let playing = replay.map { $0.rate > 0 && !$0.ended } ?? false
+    let from = ReplayTimeline.stepFrom(replay?.at ?? timeline.end, stepped: stepped, playing: playing)
+    let target = ReplayTimeline.adjacentAction(controller.range?.markers ?? [], from: from, forward: forward)
+    let goesLive = forward && target == nil && running
+    return Button {
+      if let target {
+        seek(timeline.seekTime(for: target), rate: playing ? speed : 0, action: target.at)
+      } else if goesLive {
+        controller.live()
+      }
+    } label: {
+      Image(systemName: forward ? "forward.end.fill" : "backward.end.fill")
+    }
+    .buttonStyle(.stim())
+    .fixedSize()
+    .disabled(replay == nil || (target == nil && !goesLive))
+    .help(forward ? (goesLive ? "No later agent action; go live" : "Next agent action") : "Previous agent action")
+    .accessibilityLabel(forward ? "Next agent action" : "Previous agent action")
   }
 
   private func playButton(_ timeline: ReplayTimeline) -> some View {
@@ -252,7 +280,8 @@ struct ReplayBar: View {
     return "\(date.formatted(date: .omitted, time: .standard)) \u{00B7} \(ago) ago\(replay.ended ? " \u{00B7} end" : "")"
   }
 
-  private func seek(_ at: Double, rate: Int) {
+  private func seek(_ at: Double, rate: Int, action: Double? = nil) {
+    stepped = action
     onSeek()
     controller.seek(at: at, rate: rate)
   }

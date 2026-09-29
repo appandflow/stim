@@ -73,6 +73,22 @@ public struct ReplayTimeline: Equatable, Sendable {
     return max(before, piece?.start ?? start)
   }
 
+  /// Where to step from to the next or previous agent action: the action last stepped to, until playback carries the
+  /// playhead past it. `seekTime(for:)` lands before the action, and the playhead updates only when the seek answers,
+  /// so while paused the playhead alone would step to the same action again. The phone's `stepFrom` does the same.
+  public static func stepFrom(_ at: Double, stepped: Double?, playing: Bool) -> Double {
+    if let stepped, !playing || at <= stepped { return stepped }
+    return at
+  }
+
+  /// The first agent action after `from`, or with `forward` false the last one before it; nil when there is none.
+  public static func adjacentAction(_ markers: [ReplayMarker], from: Double, forward: Bool) -> ReplayMarker? {
+    let actions = markers.filter { $0.kind == "action" }
+    return forward
+      ? actions.filter { $0.at > from }.min { $0.at < $1.at }
+      : actions.filter { $0.at < from }.max { $0.at < $1.at }
+  }
+
   private func nonZero(_ value: Double) -> Double { value == 0 ? 1 : value }
 
   /// "2h", "14m", "40s": how long a gap or an age is, in its largest unit.
