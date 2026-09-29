@@ -550,6 +550,10 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
   return deleteFailures;
 }
 
+function scopedDryRunAction(cache: string | null): string {
+  return includesParkedDevices(cache) ? 'erase the parked devices' : 'empty the caches';
+}
+
 function reclaimParkedDevices(report: GcReport, deps: GcDependencies): number {
   return report.cacheScope
     ? eraseParkedDevices(report.parkedSims, report.parkedAvds)
@@ -649,7 +653,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   });
 
   if (!opts.delete) {
-    if (all) console.log(chalk.dim('\nDry run. Re-run with --delete to empty the caches above.'));
+    if (all) console.log(chalk.dim(`\nDry run. Re-run with --delete to ${scopedDryRunAction(cache)} above.`));
     else if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
     else if (caches.length) {
       console.log(

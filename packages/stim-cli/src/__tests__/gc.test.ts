@@ -243,6 +243,7 @@ test('gc --cache parked reports parked devices with their app and erases them on
   const report = await captureLog(() => runGc({ cache: 'parked' }));
   expect(report).toMatch(/stim-parked \(iPhone 17 26\.5\) p1 .*com\.example\.app/);
   expect(report).toMatch(/--delete erases each verified device/);
+  expect(report).toMatch(/Re-run with --delete to erase the parked devices above/);
   expect(calls).not.toContain('xcrun simctl erase P1');
 
   const erased = await captureLog(() => runGc({ cache: 'parked', delete: true }));
