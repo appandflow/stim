@@ -478,6 +478,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ...(error ? { error } : {}),
         durationMs,
       }),
+    allowed: (client) => readBuildClients().some((each) => each.id === client && each.capabilities.includes('build')),
   });
   const control = new ControlHub({
     env: options.env,
@@ -532,6 +533,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
       }
       builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
+      void builds.sweepDaemons();
       for (const [socket, controller] of controllers) {
         if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
           control.endFor(controller, 'forbidden', 'This device can no longer control devices.');

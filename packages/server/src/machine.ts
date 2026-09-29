@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, statfsSync, statSync } from 'node:fs';
-import { availableParallelism, cpus, homedir, loadavg, totalmem } from 'node:os';
+import { availableParallelism, cpus, freemem, homedir, loadavg, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { loadConfig } from '@stim-cli/core/state';
@@ -95,6 +95,13 @@ function readMemoryUsed(): Promise<number | null> {
       resolve(error ? null : parseVmStatUsedBytes(stdout));
     });
   });
+}
+
+/** Total memory minus Activity Monitor's "Memory Used" on macOS; the kernel's available memory elsewhere. */
+export async function readAvailableMemory(): Promise<number | null> {
+  if (process.platform !== 'darwin') return freemem();
+  const used = await readMemoryUsed();
+  return used === null ? null : totalmem() - used;
 }
 
 export interface CpuTicks {

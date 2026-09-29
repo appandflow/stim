@@ -419,6 +419,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Directory where stim-server keeps the checkouts, dependencies and build state of Macs that build here; default $STIM_HOME/build-worker',
   },
   {
+    key: 'offload.gradleDaemonIdleMinutes',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 30,
+    description:
+      'Minutes the Gradle daemon of an offloaded Android build stays warm on this build machine after the build; 0 stops it when the build ends',
+  },
+  {
     key: 'caches.buildCache',
     type: ABSOLUTE_PATH,
     scopes: MACHINE,

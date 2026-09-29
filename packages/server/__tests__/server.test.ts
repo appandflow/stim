@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash } from 'node:crypto';
@@ -923,6 +924,91 @@ describe('offloaded builds', () => {
       await eventually(() => readClaimSet(`${area}.claims`).live.length === 0);
     },
   );
+
+  describe('warm Gradle daemons', () => {
+    const daemons: ChildProcess[] = [];
+    const gradleHome = (client: string) => join(process.env.STIM_HOME!, 'build-worker', client, 'cache', 'gradle');
+    const daemonOf = (client: string) => {
+      const jar = join(gradleHome(client), 'wrapper', 'dists', 'gradle-9.4.1', 'lib', 'gradle-daemon-main-9.4.1.jar');
+      mkdirSync(gradleHome(client), { recursive: true });
+      const daemon = spawn(
+        process.execPath,
+        ['-e', 'setInterval(() => {}, 1000)', jar, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
+        { stdio: 'ignore' },
+      );
+      daemons.push(daemon);
+      return daemon;
+    };
+    const running = (daemon: ChildProcess) => daemon.exitCode === null && daemon.signalCode === null;
+    const android = { variant: null, abi: 'arm64-v8a', gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' };
+    const ANDROID_START = { ...START, platform: 'android', runtime: null, android };
+    const launch = async (client: Client) => {
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      const started = await client.request('build.start', ANDROID_START);
+      return (started as { result: { job: string } }).result.job;
+    };
+
+    afterEach(() => {
+      for (const daemon of daemons.splice(0)) daemon.kill('SIGKILL');
+    });
+
+    test.skipIf(!fakeTailscale)(
+      'tells the worker how long to keep the daemon, and stops an idle one once its client is revoked',
+      async () => {
+        configure({ offload: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
+        const port = await start({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
+        const { client, id } = await buildClient(port);
+        await launch(client);
+        await progress(client);
+        const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
+        expect(ran.job.gradleDaemonIdleMs).toBe(45 * 60_000);
+
+        const other = await buildClient(port, '100.64.0.3');
+        const kept = daemonOf(other.id);
+        const revoked = daemonOf(id);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(running(kept) && running(revoked)).toBe(true);
+        expect(revokeDevice(id)).toBe(true);
+        await eventually(() => !running(revoked));
+        expect(running(kept)).toBe(true);
+      },
+    );
+
+    test.skipIf(!fakeTailscale)(
+      'stops idle daemons under low memory, but not one whose client is building',
+      async () => {
+        const gate = join(root, 'gate');
+        const port = await start({
+          env: { FAKE_WORKER_GATE: gate },
+          buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
+        });
+        const { client, id } = await buildClient(port);
+        const other = await buildClient(port, '100.64.0.3');
+        await launch(client);
+        const building = daemonOf(id);
+        const idle = daemonOf(other.id);
+        await eventually(() => !running(idle));
+        expect(running(building)).toBe(true);
+        writeFileSync(gate, '');
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
+        await eventually(() => !running(building));
+      },
+    );
+
+    test.skipIf(!fakeTailscale)("stops the client's daemon when its build is cancelled", async () => {
+      const port = await start({
+        env: { FAKE_WORKER_HANG: '1' },
+        buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
+      });
+      const { client, id } = await buildClient(port);
+      const job = await launch(client);
+      const daemon = daemonOf(id);
+      expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
+      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
+      await eventually(() => !running(daemon));
+    });
+  });
 });
 
 describe('health', () => {

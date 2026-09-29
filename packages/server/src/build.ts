@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import {
   appendFileSync,
@@ -27,7 +27,15 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { isJsonObject, loadConfig, machineCapacity, saturation, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  loadConfig,
+  machineCapacity,
+  saturation,
+  settingDefinition,
+  tryAcquireBuildSlotClaim,
+} from '@stim-cli/core/state';
+import { readAvailableMemory } from './machine.ts';
 import {
   BUILD_REPO_PATTERN,
   type BuildAndroidOptions,
@@ -55,6 +63,10 @@ export interface BuildLimits {
   detachGraceMs: number;
   /** How long a toolchain report is reused before `build.offer` asks the toolchain again. */
   toolchainTtlMs: number;
+  /** Available memory below which the idle Gradle daemons of offloaded builds are stopped. */
+  minFreeMemoryBytes: number;
+  /** How often the idle Gradle daemons of offloaded builds are checked. */
+  daemonSweepMs: number;
 }
 
 const DEFAULT_BUILD_LIMITS: BuildLimits = {
@@ -64,6 +76,8 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   killGraceMs: 5000,
   detachGraceMs: 5 * 60_000,
   toolchainTtlMs: 60_000,
+  minFreeMemoryBytes: 2 * 1024 ** 3,
+  daemonSweepMs: 60_000,
 };
 
 const DIGEST_BYTES = 32;
@@ -131,6 +145,45 @@ function nonEmptyDir(path: string): boolean {
   }
 }
 
+/** `offload.gradleDaemonIdleMinutes` in milliseconds. */
+function gradleDaemonIdleMs(): number {
+  const value = loadConfig()?.offload?.gradleDaemonIdleMinutes;
+  const minutes =
+    typeof value === 'number' && Number.isInteger(value) && value >= 0
+      ? value
+      : (settingDefinition('offload.gradleDaemonIdleMinutes')!.default as number);
+  return minutes * 60_000;
+}
+
+const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
+
+/**
+ * The Gradle daemons in `ps -A -ww -o pid=,command=` output that run from a client's Gradle home under `root`,
+ * which the wrapper distribution on their classpath names.
+ */
+function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; client: string }> {
+  const home = new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+  const daemons: Array<{ pid: number; client: string }> = [];
+  for (const line of ps.split('\n')) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!match || !match[2]!.includes(GRADLE_DAEMON)) continue;
+    const client = home.exec(match[2]!)?.[1];
+    if (client) daemons.push({ pid: Number(match[1]), client });
+  }
+  return daemons;
+}
+
+function listProcesses(): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(
+      'ps',
+      ['-A', '-ww', '-o', 'pid=,command='],
+      { timeout: 10_000, maxBuffer: 64 * 1024 ** 2 },
+      (error, stdout) => resolve(error ? '' : stdout),
+    );
+  });
+}
+
 /** The worker root from `offload.workerRoot`, or `$STIM_HOME/build-worker`. */
 function workerRoot(): string {
   const configured = loadConfig()?.offload?.workerRoot;
@@ -162,6 +215,8 @@ export interface BuildHostOptions {
   limits?: Partial<BuildLimits>;
   /** Called once a job ends, for the action log. */
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
+  /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
+  allowed?: (client: string) => boolean;
 }
 
 /** Runs other Macs' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
@@ -173,10 +228,44 @@ export class BuildHost {
   private toolchainAt = 0;
   private toolchainValue: Promise<BuildToolchain | null> | null = null;
   private readonly options: BuildHostOptions;
+  private sweeping: Promise<void> = Promise.resolve();
+  private readonly sweeper: NodeJS.Timeout;
 
   constructor(options: BuildHostOptions) {
     this.options = options;
     this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
+    this.sweeper = setInterval(() => void this.sweepDaemons(), this.limits.daemonSweepMs);
+    this.sweeper.unref();
+  }
+
+  /**
+   * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
+   * every one while available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
+   * is `client`. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
+   * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
+   */
+  sweepDaemons(client: string | null = null): Promise<void> {
+    this.sweeping = this.sweeping
+      .then(() => this.sweep(client))
+      .catch((error: unknown) =>
+        console.error(`stim-server: could not check the Gradle daemons of offloaded builds: ${String(error)}`),
+      );
+    return this.sweeping;
+  }
+
+  private async sweep(client: string | null): Promise<void> {
+    const daemons = workerGradleDaemons(await listProcesses(), this.root());
+    if (daemons.length === 0) return;
+    const available = await readAvailableMemory();
+    const low = available !== null && available < this.limits.minFreeMemoryBytes;
+    const busy = new Set([...this.jobs].map((job) => job.client));
+    for (const daemon of daemons) {
+      if (busy.has(daemon.client)) continue;
+      if (!low && daemon.client !== client && (this.options.allowed?.(daemon.client) ?? true)) continue;
+      try {
+        process.kill(daemon.pid, 'SIGTERM');
+      } catch {}
+    }
   }
 
   root(): string {
@@ -380,7 +469,15 @@ export class BuildHost {
       cancel();
     }
     child.stdin?.on('error', () => {});
-    child.stdin?.end(JSON.stringify({ ...job, job: id, area, blobs: join(clientDir, 'blobs') }));
+    child.stdin?.end(
+      JSON.stringify({
+        ...job,
+        job: id,
+        area,
+        blobs: join(clientDir, 'blobs'),
+        gradleDaemonIdleMs: gradleDaemonIdleMs(),
+      }),
+    );
     const timeout = setTimeout(cancel, this.limits.timeoutMs);
     const entry: Job = {
       id,
@@ -437,6 +534,7 @@ export class BuildHost {
           releaseClaims();
           entry.settled = true;
           this.jobs.delete(entry);
+          if (entry.outcome!.ok === false && entry.outcome!.code === 'cancelled') void this.sweepDaemons(client);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
             client,
@@ -499,6 +597,7 @@ export class BuildHost {
 
   async close(): Promise<void> {
     this.closed = true;
+    clearInterval(this.sweeper);
     for (const job of this.owned.values()) this.abandon(job);
     await Promise.all([...this.jobs].map((job) => job.done));
   }

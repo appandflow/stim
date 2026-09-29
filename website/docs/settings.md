@@ -380,7 +380,14 @@ For Android builds, start stim-server on the build machine with `JAVA_HOME`
 pointing at a JDK of the same major version as the clients (otherwise it
 uses the macOS default JDK, which `java_home` may not find, for example with
 Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
-`~/Library/Android/sdk`). Each build stops the Gradle daemons it starts.
+`~/Library/Android/sdk`). After an Android build, the client's Gradle daemon
+stays warm for `offload.gradleDaemonIdleMinutes` (default 30; `0` stops it
+when each build ends), so the client's next build skips a JVM start of about
+15 seconds. A new value applies from the next daemon. The daemon never holds
+a build slot. stim-server stops it sooner when the client cancels a build,
+when the client is revoked, and when the build machine has less than 2 GB of
+memory available. Deleting the client's directory under the worker root stops
+it too.
 
 To keep stim-server running on the build machine across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent

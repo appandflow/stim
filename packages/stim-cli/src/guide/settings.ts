@@ -596,7 +596,12 @@ Mac's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
 and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
-~/Library/Android/sdk), and stop the Gradle daemons they start when they end.
+~/Library/Android/sdk). The client's Gradle daemon stays warm there for
+\`offload.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
+ends; a new value applies from the next daemon) and never holds a build
+slot. stim-server stops it sooner when a build is cancelled, the client is
+revoked, or the machine has less than 2 GB of memory available, and deleting
+the client's directory under the worker root stops it too.
 \`stim-server service install [--serve]\` on the build machine keeps stim-server
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable such as a private CocoaPods that stim-server's
