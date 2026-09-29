@@ -4,7 +4,6 @@ import {
   LONG_GAP_MS,
   markerSeek,
   positionOf,
-  recordedLength,
   shortDuration,
   timeAt,
   WINDOW_STEP_MS,
@@ -42,7 +41,6 @@ describe('the replay timeline', () => {
     expect((gap!.to - gap!.from) / (first!.to - first!.from)).toBeCloseTo(LONG_GAP_MS / (4 * MINUTE), 6);
     expect((second!.to - second!.from) / (first!.to - first!.from)).toBeCloseTo(1.5, 6);
     expect(second!.to).toBe(1);
-    expect(recordedLength(timeline)).toBe(10 * MINUTE);
   });
 
   it('keeps its scale while footage grows within a minute, and pads the room before the oldest footage', () => {

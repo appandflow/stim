@@ -74,11 +74,6 @@ export function buildTimeline(
   return { start: shown[0]!.start, end: shown.at(-1)!.end, spans, length, pieces };
 }
 
-/** How much footage the timeline holds, gaps left out. */
-export function recordedLength(timeline: Timeline): number {
-  return timeline.pieces.reduce((sum, piece) => sum + (piece.kind === 'span' ? piece.end - piece.start : 0), 0);
-}
-
 /** Where `at` sits on the track, 0 to 1; a time before the oldest footage sits where the footage starts. */
 export function positionOf(timeline: Timeline, at: number): number {
   for (const piece of timeline.pieces) {

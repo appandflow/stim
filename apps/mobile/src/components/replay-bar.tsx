@@ -11,9 +11,7 @@ import {
   MARKER_TITLES,
   markerSeek,
   positionOf,
-  recordedLength,
   replayLabel,
-  shortDuration,
   timeAt,
   type Timeline,
 } from '@/lib/replay';
@@ -201,13 +199,11 @@ export function ReplayBar({
             {`${speed}x`}
           </Text>
         </Touch>
-        <Text variant="caption" style={styles.time} numberOfLines={1}>
-          {replay
-            ? at === null
-              ? 'Loading...'
-              : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`
-            : `Replay ${shortDuration(recordedLength(timeline))} recorded`}
-        </Text>
+        {replay ? (
+          <Text variant="caption" style={styles.time} numberOfLines={1}>
+            {at === null ? 'Loading...' : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`}
+          </Text>
+        ) : null}
       </View>
       <View
         style={styles.track}
