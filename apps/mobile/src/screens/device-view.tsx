@@ -12,10 +12,16 @@ import {
   type TextInputInstance,
   type ViewInstance,
 } from 'react-native';
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import {
+  GestureDetector,
+  GestureHandlerRootView,
+  useExclusiveGestures,
+  useTapGesture,
+} from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedReaction,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withTiming,
   type SharedValue,
@@ -36,6 +42,7 @@ import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { withAlpha } from '@/design/color';
+import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
 import { useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
@@ -60,6 +67,8 @@ const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const NOTE_INSET = 64;
 const SIDE_WIDTH = 208;
+const CONTROLS_FADE_MS = 200;
+const CONTROLS_MIN_WIDTH = 320;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -142,6 +151,24 @@ export function DeviceView({
   const root = useRef<ViewInstance>(null);
   const stage = useRef<ViewInstance>(null);
   const screenZoom = useScreenZoom(!controlling && streams);
+  const replayPlaying = stream.replay !== null && stream.replay.rate > 0 && !stream.replay.ended;
+  const controls = useAutoHide(scrubbing || (stream.replay !== null && !replayPlaying), !controlling);
+  const hideControls = controls.hide;
+  useEffect(() => {
+    if (controlling) hideControls();
+  }, [controlling, hideControls]);
+  const reduceMotion = useReducedMotion();
+  const controlsFade = useAnimatedStyle(() => ({
+    opacity: withTiming(controls.shown ? 1 : 0, { duration: reduceMotion ? 0 : CONTROLS_FADE_MS }),
+  }));
+  const revealTap = useTapGesture({
+    enabled: !controlling && streams,
+    onActivate: () => {
+      'worklet';
+      scheduleOnRN(controls.toggle);
+    },
+  });
+  const screenGesture = useExclusiveGestures(screenZoom.gesture, revealTap);
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
@@ -313,9 +340,26 @@ export function DeviceView({
       </View>
     </View>
   ) : null;
+  const replayBar =
+    (timeline && canReplay) || replaying ? (
+      <ReplayBar
+        timeline={canReplay ? timeline : null}
+        markers={range?.markers ?? []}
+        replay={stream.replay}
+        canGoLive={running}
+        recording={range?.recording ?? false}
+        onSeek={seek}
+        onLive={goLive}
+        onScrubbing={setScrubbing}
+      />
+    ) : null;
+  const overlayControls = replayBar !== null && streams && rest !== null && rootHeight > 0;
   const buttons =
     controlling || readOnly ? (
       <>
+        {controlling && overlayControls && !controls.shown ? (
+          <ToolButton label="Replay" onPress={controls.reveal} />
+        ) : null}
         <ToolButton
           label={typing ? 'Hide keyboard' : 'Keyboard'}
           disabled={readOnly}
@@ -429,23 +473,12 @@ export function DeviceView({
                     toolbars
                   )}
                 </View>
-                {(timeline && canReplay) || replaying ? (
-                  <ReplayBar
-                    timeline={canReplay ? timeline : null}
-                    markers={range?.markers ?? []}
-                    replay={stream.replay}
-                    canGoLive={running}
-                    recording={range?.recording ?? false}
-                    onSeek={seek}
-                    onLive={goLive}
-                    onScrubbing={setScrubbing}
-                  />
-                ) : null}
+                {overlayControls ? null : replayBar}
               </View>
             </View>
           </Animated.View>
           {streams ? (
-            <GestureDetector gesture={screenZoom.gesture}>
+            <GestureDetector gesture={screenGesture}>
               <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
                 <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
                   <DeviceScreen
@@ -548,6 +581,28 @@ export function DeviceView({
               </View>
             </View>
           </Animated.View>
+          {overlayControls && rest ? (
+            <Animated.View
+              pointerEvents={controls.shown ? 'box-none' : 'none'}
+              accessibilityElementsHidden={!controls.shown}
+              importantForAccessibility={controls.shown ? 'auto' : 'no-hide-descendants'}
+              style={[
+                styles.controlsLayer,
+                landscape
+                  ? {
+                      ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
+                      bottom: rootHeight - rest[1] - rest[3],
+                    }
+                  : { left: insets.left, right: insets.right, bottom: rootHeight - rest[1] - rest[3] },
+                zoom.fadeStyle,
+                lift,
+              ]}
+            >
+              <Animated.View style={[styles.controlsPanel, controlsFade]} onTouchStart={controls.reveal}>
+                {replayBar}
+              </Animated.View>
+            </Animated.View>
+          ) : null}
           {rotateNote && rest ? (
             <Animated.View
               pointerEvents="none"
@@ -688,6 +743,13 @@ function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boole
   );
 }
 
+/** The landscape controls' place: the screen's width, widened about its center to fit the buttons, inside the insets. */
+function controlsSpan(left: number, width: number, windowWidth: number, insetLeft: number, insetRight: number) {
+  const span = Math.min(Math.max(width, CONTROLS_MIN_WIDTH), windowWidth - insetLeft - insetRight);
+  const from = Math.min(Math.max(left + width / 2 - span / 2, insetLeft), windowWidth - insetRight - span);
+  return { left: from, width: span };
+}
+
 function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
     <Touch
@@ -741,6 +803,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.xl,
     paddingBottom: theme.space.sm,
   },
+  controlsLayer: { position: 'absolute', padding: theme.space.sm },
+  controlsPanel: { borderRadius: theme.radius.control, backgroundColor: theme.media.note },
   noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
   note: {
     overflow: 'hidden',

@@ -241,12 +241,12 @@ export function ReplayBar({
             {`${speed}x`}
           </Text>
         </Touch>
-        {replay ? (
-          <Text variant="caption" style={styles.time} numberOfLines={1}>
-            {at === null ? 'Loading...' : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`}
-          </Text>
-        ) : null}
       </View>
+      {replay ? (
+        <Text variant="caption" style={styles.time} numberOfLines={1}>
+          {at === null ? 'Loading...' : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`}
+        </Text>
+      ) : null}
       <View
         style={styles.track}
         onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)}
@@ -351,7 +351,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.round,
     backgroundColor: theme.media.fill,
   },
-  time: { flex: 1, color: theme.media.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums'] },
+  time: { color: theme.media.textSecondary, fontVariant: ['tabular-nums'] },
   track: { height: TRACK_HEIGHT, justifyContent: 'center' },
   span: {
     position: 'absolute',
