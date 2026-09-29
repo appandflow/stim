@@ -161,10 +161,6 @@ struct ReplayBar: View {
   var replayOff: Bool
   var onSeek: () -> Void = {}
 
-  @State private var speed = 1
-  /// The agent action the last step went to, so the next step counts from it; nil after any other seek.
-  @State private var stepped: Double?
-
   var body: some View {
     let timeline = replayOff || controller.replayable == false ? nil : controller.timeline
     VStack(alignment: .leading, spacing: Space.sm) {
@@ -174,7 +170,7 @@ struct ReplayBar: View {
           stepButton(timeline, forward: false)
           playButton(timeline)
           stepButton(timeline, forward: true)
-          Button("\(speed)x") { toggleSpeed() }
+          Button("\(controller.speed)x") { toggleSpeed() }
             .buttonStyle(.stim())
             .fixedSize()
             .help("Playback speed")
@@ -239,12 +235,12 @@ struct ReplayBar: View {
     let isLive = replay == nil && running
     let playing = replay.map { $0.rate > 0 && !$0.ended } ?? false
     let from = ReplayTimeline.stepFrom(
-      replay?.at ?? timeline.end, stepped: replay == nil ? nil : stepped, playing: playing)
+      replay?.at ?? timeline.end, stepped: replay == nil ? nil : controller.stepped, playing: playing)
     let target = ReplayTimeline.adjacentAction(controller.range?.markers ?? [], from: from, forward: forward)
     let goesLive = forward && target == nil && running
     return Button {
       if let target {
-        seek(timeline.seekTime(for: target), rate: playing ? speed : 0, action: target.at)
+        seek(timeline.seekTime(for: target), rate: playing ? controller.speed : 0, action: target.at)
       } else if goesLive {
         controller.live()
       }
@@ -269,9 +265,9 @@ struct ReplayBar: View {
       } else if let replay, playing {
         seek(replay.at ?? timeline.start, rate: 0)
       } else if let replay, !replay.ended, let at = replay.at {
-        seek(at, rate: speed)
+        seek(at, rate: controller.speed)
       } else {
-        seek(timeline.start, rate: speed)
+        seek(timeline.start, rate: controller.speed)
       }
     } label: {
       Image(systemName: showsPause ? "pause.fill" : "play.fill")
@@ -283,9 +279,9 @@ struct ReplayBar: View {
   }
 
   private func toggleSpeed() {
-    speed = speed == 1 ? 2 : 1
+    controller.speed = controller.speed == 1 ? 2 : 1
     if let replay = controller.replay, replay.rate > 0, !replay.ended, let at = replay.at {
-      seek(at, rate: speed, action: stepped)
+      seek(at, rate: controller.speed, action: controller.stepped)
     }
   }
 
@@ -300,7 +296,7 @@ struct ReplayBar: View {
   }
 
   private func seek(_ at: Double, rate: Int, action: Double? = nil) {
-    stepped = action
+    controller.stepped = action
     onSeek()
     controller.seek(at: at, rate: rate)
   }

@@ -157,7 +157,8 @@ remote session; a physical device has none), and **Run** when the app is not
 running. Below the screen come the device's buttons while it is taken over,
 the agent row (the driving tool and its last action, "agent-device · Tapped
 "Allow camera" · 12s ago", or "No agent" with how long it has been idle;
-clicking it lists the latest agent actions) and the replay bar (see
+clicking it lists the latest agent actions, with **All actions** for the full
+log) and the replay bar (see
 [Replay](#replay)). Escape releases a device that is taken over, and
 otherwise closes the viewer; closing it releases the device too. While the
 viewer is open, the device's tile stops streaming and says "Open in the
@@ -446,10 +447,22 @@ directory from `stim status`.
 A device's agent row and its popover list the latest agent-device actions on
 that simulator or emulator, newest first: taps, typing, app opens, screenshots,
 and failed commands in red. On the Web device they list the clicks, typing and
-scrolls an attached tool such as Playwright sent to the page. Each runs `stim
-logs --json --follow --tail 200 --source agent --slot <slot>` in the workspace
-and keeps the records whose `deviceId` is the device's UDID or serial, or the
-page's DevTools target; leaving the page terminates the command.
+scrolls an attached tool such as Playwright sent to the page. The viewer runs
+`stim logs --json --follow --tail 200 --source agent --slot <slot>` in the
+workspace and keeps the records whose `deviceId` is the device's UDID or
+serial, or the page's DevTools target; closing the viewer terminates the
+command.
+
+**All actions** in the popover, or clicking the "Driven by" chip on the
+device's tile, opens the agent action log beside the viewer's screen, as on
+the phone: up to 200 of the newest actions with their clock time and command,
+and chips with counts for All, Failed (when any failed) and the two most used
+commands. Clicking an action switches the Logs tab to the Agent source of the
+device's slot, clears the level, search and **Errors only** filters, and
+scrolls to and selects that action's record. When stim-server's replay
+recorded that moment, the viewer stays open and the replay plays from 1.5
+seconds before the action; otherwise the viewer closes so the logs show.
+**Open in logs** shows the same logs without a moment.
 
 ## Build progress
 

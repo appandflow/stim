@@ -24,7 +24,6 @@ struct DeviceTile: View {
   var onReplaySeek: () -> Void = {}
   var usage: WorkspaceUsage? = nil
   var presence: AppPresence? = nil
-  var cli: Task<StimCLI, Never>? = nil
   var showsCovers = false
   var focused = false
   /// The device viewer: take over, hardware buttons, rotation, replay, the agent row and Stop. A tile without it is
@@ -34,6 +33,9 @@ struct DeviceTile: View {
   var maxWidth: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
+  /// The device's agent actions for the viewer's agent row, newest first.
+  var agentActions: [AgentAction] = []
+  var showAgentLog: () -> Void = {}
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -83,9 +85,9 @@ struct DeviceTile: View {
             .padding(.horizontal, Space.lg)
             .padding(.vertical, Space.md)
         }
-        if viewer, let cli, let workspace, device.isRunning, !isPhysical, device.activityKey != nil {
+        if viewer, device.isRunning, !isPhysical, device.activityKey != nil {
           Rectangle().fill(Palette.border).frame(height: 1)
-          DeviceAgentRow(cli: cli, workspace: workspace, device: device)
+          DeviceAgentRow(device: device, actions: agentActions, showAll: showAgentLog)
         }
         if viewer, let replay, replaying || replayOff || replay.timeline != nil {
           Rectangle().fill(Palette.border).frame(height: 1)
@@ -139,6 +141,7 @@ struct DeviceTile: View {
             now: context.date)
           {
             activityChip(badge)
+              .anchorPreference(key: ActivityChipAnchor.self, value: .bounds) { $0 }
           }
         }
         if device.appStopped {
@@ -763,45 +766,55 @@ private struct ScreenMessage: View {
   }
 }
 
+/// Where a tile draws its activity chip, so the canvas can put a button over it that opens the agent actions.
+struct ActivityChipAnchor: PreferenceKey {
+  static let defaultValue: Anchor<CGRect>? = nil
+
+  static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+    value = value ?? nextValue()
+  }
+}
+
 private struct DeviceAgentRow: View {
-  var cli: Task<StimCLI, Never>
-  var workspace: String
   var device: DeviceRef
+  var actions: [AgentAction]
+  var showAll: () -> Void
   @State private var shown = false
   @State private var hovering = false
 
   var body: some View {
-    AgentFeed(cli: cli, workspace: workspace, device: device) { actions in
-      Button {
-        shown = true
-      } label: {
-        TimelineView(.periodic(from: .now, by: 15)) { context in
-          let latest = actions.last.map { (date: $0.date, message: $0.msg) }
-          let row = AgentRow(activity: device.activity, last: latest, now: context.date)
-          HStack(spacing: Space.md) {
-            Text(row.tool ?? "No agent")
-              .font(.stim(.footnote, weight: .semibold))
-              .foregroundStyle(row.tool == nil ? Palette.tertiary : Palette.primary)
-            Text(row.text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-            Spacer(minLength: Space.sm)
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.tertiary)
-          }
-          .accessibilityElement(children: .ignore)
-          .accessibilityLabel("\(row.tool ?? "No agent"), \(row.text)")
+    Button {
+      shown = true
+    } label: {
+      TimelineView(.periodic(from: .now, by: 15)) { context in
+        let latest = actions.first.map { (date: $0.record.date, message: $0.record.msg) }
+        let row = AgentRow(activity: device.activity, last: latest, now: context.date)
+        HStack(spacing: Space.md) {
+          Text(row.tool ?? "No agent")
+            .font(.stim(.footnote, weight: .semibold))
+            .foregroundStyle(row.tool == nil ? Palette.tertiary : Palette.primary)
+          Text(row.text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
+          Spacer(minLength: Space.sm)
+          Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.tertiary)
         }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.md)
-        .background(hovering ? Palette.raised : .clear)
-        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(row.tool ?? "No agent"), \(row.text)")
       }
-      .buttonStyle(.plain)
-      .onHover { hovering = $0 }
-      .help("stim logs --source agent: what an agent did on this device. Click for the recent actions.")
-      .popover(isPresented: $shown, arrowEdge: .bottom) {
-        AgentActionsList(actions: actions, driver: device.activity?.driver?.tool)
-          .padding(Space.lg)
-          .frame(width: 380, alignment: .leading)
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.md)
+      .background(hovering ? Palette.raised : .clear)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .help("stim logs --source agent: what an agent did on this device. Click for the recent actions.")
+    .popover(isPresented: $shown, arrowEdge: .bottom) {
+      AgentActionsList(actions: actions, driver: device.activity?.driver?.tool) {
+        shown = false
+        showAll()
       }
+      .padding(Space.lg)
+      .frame(width: 380, alignment: .leading)
     }
   }
 }

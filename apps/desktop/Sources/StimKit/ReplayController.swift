@@ -26,6 +26,11 @@ import Foundation
   /// Whether the server sends this device H.264 and so can replay; nil until a replay subscription is answered.
   @Published public private(set) var replayable: Bool?
   @Published public private(set) var error: String?
+  /// The playback rate the replay bar plays at, 1 or 2.
+  @Published public var speed = 1
+  /// The agent action the last step or action click went to, so the next step counts from it; nil after any other
+  /// seek.
+  @Published public var stepped: Double?
   /// The access units of the replay, in order; a keyframe carries its SPS and PPS.
   public var onVideo: (@MainActor (VideoPacket) -> Void)?
   /// Still frames for hovering the track, from the same server.

@@ -79,6 +79,13 @@ have it (Home and Lock on a simulator; Home, Back, Apps and Lock on an
 emulator), the agent's last actions and the replay
 bar. Escape gives the device back, and a second Escape closes the viewer.
 
+**All actions** in the agent row's popover, or a click on a tile's "Driven by"
+chip, opens the device's agent action log beside the screen: up to 200 actions,
+newest first, with filters for failed actions and the most used commands.
+Click an action to show it in the logs. When the replay recorded that moment,
+the replay plays it from just before the action; otherwise the viewer closes
+so the logs show.
+
 The inspector, toggled from the toolbar, holds the details: **Build** (the
 running build's phases and output, or each platform's last build, the next
 build's estimate, **Check** and **Run**), **Resources** (CPU and memory over

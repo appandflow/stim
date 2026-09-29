@@ -93,7 +93,17 @@ struct LogTable: NSViewRepresentable {
         }
       case .jumpToLatest:
         scrollToLatest()
+      case .reveal(let row):
+        guard row < table.numberOfRows else { return }
+        table.selectRowIndexes([row], byExtendingSelection: false)
+        DispatchQueue.main.async { [weak self] in self?.center(row) }
       }
+    }
+
+    private func center(_ row: Int) {
+      guard let table, row < table.numberOfRows, let clip = table.enclosingScrollView?.contentView else { return }
+      let y = table.rect(ofRow: row).midY - clip.bounds.height / 2
+      scrollProgrammatically(to: NSPoint(x: 0, y: max(0, min(y, table.frame.height - clip.bounds.height))))
     }
 
     private func scrollToLatest() {
