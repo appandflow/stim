@@ -301,22 +301,21 @@ CPU architecture match this Mac exactly, with a free build slot and at least
   and the Android Gradle plugin come from the synced project. It builds with
   this Mac's variant, target ABI, Gradle build cache, PCH and compiler cache
   choices, so the APK matches the ABI-narrowed cache key.
-  It sends the files
-  `git ls-files -co --exclude-standard` lists, sending only those the machine
-  lacks. That includes untracked files that are not ignored, such as an
-  unignored `.env`. The machine builds with Stim's own code, refuses unless its
-  fingerprint equals the one here, and sends back the `.app` or APK. Stim
-  checks the archive's sha256 and fingerprints the checkout again before it
-  stores and installs the app the usual way; an APK is still compared with the
-  installed one before Stim skips an install. The build output shows `placement: <machine>` or
-  `placement: here (<reason>)`, and any failure prints
-  `offload failed: <reason> -> building here` and compiles here instead. An
-  offloaded app lands only in this Mac's build cache, not in a remote cache
-  provider. A project whose `xcodebuild` changes its own fingerprinted inputs
-  builds on the machine, fails the fingerprint check there and builds here, so
-  set `offload.mode` to `off` for it. The
-  `--json` payload and `lastBuilds` carry `offloadedTo`, and `stim stats`
-  counts offloaded runs apart from cold runs.
+
+Stim sends the files `git ls-files -co --exclude-standard` lists, sending only
+those the machine lacks. That includes untracked files that are not ignored,
+such as an unignored `.env`. The machine builds with Stim's own code, refuses
+unless its fingerprint equals the one here, and sends back the `.app` or APK.
+Stim checks the archive's sha256 and fingerprints the checkout again before it
+stores and installs the app the usual way; an APK is still compared with the
+installed one before Stim skips an install. The build output shows
+`placement: <machine>` or `placement: here (<reason>)`, and any failure prints
+`offload failed: <reason> -> building here` and compiles here instead. An
+offloaded app lands only in this Mac's build cache, not in a remote cache
+provider. A project whose `xcodebuild` changes its own fingerprinted inputs
+builds on the machine, fails the fingerprint check there and builds here, so
+set `offload.mode` to `off` for it. The `--json` payload and `lastBuilds` carry
+`offloadedTo`, and `stim stats` counts offloaded runs apart from cold runs.
 
 On the build machine, `offload.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,

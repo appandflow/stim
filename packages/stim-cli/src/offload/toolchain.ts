@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,15 +82,29 @@ export function jdkMajor(release: string): string | null {
   return /^JAVA_VERSION="(\d+)/m.exec(release)?.[1] ?? null;
 }
 
-/** The JDK Gradle's wrapper picks: `JAVA_HOME`, or the macOS default `java_home` reports. */
-function localJdk(env: NodeJS.ProcessEnv = process.env): string | null {
-  const home = env.JAVA_HOME || quiet('/usr/libexec/java_home', [])?.trim();
-  if (!home) return null;
+function releaseMajor(home: string): string | null {
   try {
     return jdkMajor(readFileSync(join(home, 'release'), 'utf8'));
   } catch {
     return null;
   }
+}
+
+/**
+ * The JDK Gradle's wrapper picks: `JAVA_HOME`, else the `java` on PATH, which is the macOS `/usr/bin/java`
+ * stub (resolved through `java_home`) unless a real JDK comes first.
+ */
+function localJdk(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.JAVA_HOME) return releaseMajor(env.JAVA_HOME);
+  const java = getExecutor().findExecutable('java');
+  if (java) {
+    try {
+      const fromPath = releaseMajor(dirname(dirname(realpathSync(java))));
+      if (fromPath) return fromPath;
+    } catch {}
+  }
+  const home = quiet('/usr/libexec/java_home', [])?.trim();
+  return home ? releaseMajor(home) : null;
 }
 
 export function androidToolchain(): AndroidToolchain {

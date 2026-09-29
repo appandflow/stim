@@ -407,7 +407,7 @@ export async function chooseBuildMachine({
 }
 
 /** The Gradle choices that shape the APK, so the machine builds what this Mac's cache key describes. */
-interface AndroidBuildOptions {
+export interface AndroidBuildOptions {
   variant: string | null;
   abi: string | null;
   gradleBuildCache: boolean;

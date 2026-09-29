@@ -617,7 +617,7 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead. */
   async function compileElsewhere(choice: OffloadChoice): Promise<boolean> {
-    const stagingDir = join(workspaceDir(root), 'offload');
+    const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,
       expectedFingerprint: storeHash,
@@ -775,8 +775,10 @@ export async function acquireAndroidArtifact(
         }
 
         if (!apkPath) {
-          if (!offload) explainMiss(rekeyedBy);
-          step('compile');
+          if (!offload) {
+            explainMiss(rekeyedBy);
+            step('compile');
+          }
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(
             { root, logWriter: writer, variant, abi: buildAbi },

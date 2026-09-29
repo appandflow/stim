@@ -714,7 +714,7 @@ export async function acquireIosArtifact(
   /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
   async function compileElsewhere({ choice, runtime }: { choice: OffloadChoice; runtime: string }): Promise<boolean> {
     if (!storeKey || !storeHash) return false;
-    const stagingDir = join(workspaceDir(root), 'offload');
+    const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,
       expectedFingerprint: storeHash,

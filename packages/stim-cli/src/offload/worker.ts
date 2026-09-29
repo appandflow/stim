@@ -27,6 +27,7 @@ import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
+import type { AndroidBuildOptions } from './client.ts';
 import { workerToolchain } from './toolchain.ts';
 
 /** One file of the client's checkout, as `git ls-files -co --exclude-standard` lists it. */
@@ -50,13 +51,7 @@ export interface WorkerJob {
   configuration: string | null;
   scheme: string | null;
   runtime: string | null;
-  android: {
-    variant: string | null;
-    abi: string | null;
-    gradleBuildCache: boolean;
-    pch: 'auto' | 'on' | 'off';
-    compilerCache: 'ccache' | 'none';
-  } | null;
+  android: AndroidBuildOptions | null;
   expectedFingerprint: string;
   optimizations: Optimizations['ios'] | null;
 }
@@ -446,10 +441,10 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
  * Stops the Gradle daemons of this client's Gradle home. A daemon calls setsid, so it leaves the build's
  * process group and would outlive the job and its claim.
  */
-function stopGradleDaemons(root: string): void {
+function stopGradleDaemons(root: string, timeoutMs: number): void {
   const gradlew = gradlewPath(root);
   if (!existsSync(gradlew)) return;
-  getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs: 4000 });
+  getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs });
 }
 
 async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
@@ -457,7 +452,7 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
   const onNote = (line: string) => note('build', line);
   const stop = () => {
-    stopGradleDaemons(root);
+    stopGradleDaemons(root, 4000);
     process.exit(143);
   };
   process.once('SIGTERM', stop);
@@ -483,7 +478,7 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
     return { ok: true, path: built.apkPath, cache: built.ccache ?? CCACHE_UNAVAILABLE };
   } finally {
     process.off('SIGTERM', stop);
-    stopGradleDaemons(root);
+    stopGradleDaemons(root, 60_000);
   }
 }
 
