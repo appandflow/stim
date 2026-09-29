@@ -71,6 +71,8 @@ const NOTE_INSET = 64;
 const SIDE_WIDTH = 208;
 const CONTROLS_FADE_MS = 200;
 const CONTROLS_MIN_WIDTH = 320;
+/** Matches the flying screen's landed corner radius in `useDeviceZoom`'s `screenStyle`: `(6 + 2 * 1) * 1`. */
+const SCREEN_RADIUS = 8;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
@@ -613,12 +615,22 @@ export function DeviceView({
                       ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
                       bottom: rootHeight - rest[1] - rest[3],
                     }
-                  : { left: insets.left, right: insets.right, bottom: rootHeight - rest[1] - rest[3] },
+                  : { left: rest[0], width: rest[2], bottom: rootHeight - rest[1] - rest[3] },
                 zoom.fadeStyle,
                 lift,
               ]}
             >
-              <Animated.View style={[styles.controlsPanel, controlsFade]} onTouchStart={controls.reveal}>
+              <Animated.View
+                style={[
+                  styles.controlsPanel,
+                  // A narrow landscape screen (e.g. a portrait sim in a wide window) widens the panel past the
+                  // screen so the controls row still fits; its bottom corners then no longer sit on the screen's
+                  // own rounded edge, so it skips the corner match in that case only.
+                  !(landscape && rest[2] < CONTROLS_MIN_WIDTH) && styles.controlsPanelRounded,
+                  controlsFade,
+                ]}
+                onTouchStart={controls.reveal}
+              >
                 {replayBar}
               </Animated.View>
             </Animated.View>
@@ -823,8 +835,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.xl,
     paddingBottom: theme.space.sm,
   },
-  controlsLayer: { position: 'absolute', padding: theme.space.sm },
-  controlsPanel: { borderRadius: theme.radius.control, backgroundColor: theme.media.note },
+  controlsLayer: { position: 'absolute' },
+  controlsPanel: {
+    overflow: 'hidden',
+    backgroundImage: 'linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7) 65%, rgba(0, 0, 0, 0.78))',
+  },
+  controlsPanelRounded: { borderBottomLeftRadius: SCREEN_RADIUS, borderBottomRightRadius: SCREEN_RADIUS },
   noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
   note: {
     overflow: 'hidden',
