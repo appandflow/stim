@@ -54,17 +54,15 @@ test('keeps a branch far past the merge base as unknown, naming the commit count
   );
 });
 
-test('resolves a rebase merge of several commits landed under different SHAs, dated by the last one', () => {
+test('resolves a rebase merge of several commits landed under different SHAs, dated by the latest one', () => {
   const repo = initRepo('rebase-merge');
   git(repo, 'checkout -q -b feature');
   commit(repo, 'a.txt', 'a');
   commit(repo, 'b.txt', 'b');
   const featureHead = git(repo, 'rev-parse HEAD');
-  // Same file contents as the feature commits give them the same patch-ids, so this stands in for
-  // a rebase merge landing both commits on main under different SHAs, messages, and dates.
   git(repo, 'checkout -q main');
-  commit(repo, 'a.txt', 'a', 'landed a', { GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
-  commit(repo, 'b.txt', 'b', 'landed b', { GIT_COMMITTER_DATE: '2026-01-02T00:00:00Z' });
+  commit(repo, 'a.txt', 'a', 'landed a', { GIT_COMMITTER_DATE: '2026-01-02T00:00:00Z' });
+  commit(repo, 'b.txt', 'b', 'landed b', { GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' });
   git(repo, `checkout -q -B feature ${featureHead}`);
 
   const result = mergeState(repo, { ref: 'refs/heads/main', name: 'main' }, { maxCommits: 5 });

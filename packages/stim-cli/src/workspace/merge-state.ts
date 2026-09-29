@@ -178,8 +178,7 @@ export function mergeState(
     }
     const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);
-    // Both the commit range and the pathspec go through stdin: `ref` can be thousands of commits
-    // past `base`, and `files` can be arbitrarily long, either of which argv can't hold (stim#1815).
+    // The pathspec goes through stdin, not argv: `files` can be arbitrarily long (stim#1815).
     const log = (range: string, pathspec: string[] = []) =>
       patch(
         ['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', '--stdin'],
