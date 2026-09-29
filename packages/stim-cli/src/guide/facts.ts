@@ -222,8 +222,9 @@ leased until <time>" for each one.`,
                   offload.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
   offloadFallback only on an app compiled here after the run considered
-                  offloading it: why no build machine built it, one reason
-                  per machine. The Android payload carries it too
+                  offloading it: why it built here -- one reason per
+                  machine when none took the build, or why the offload
+                  stopped. The Android payload carries it too
   compilationCache
                   Xcode compilation-cache activity for a compiled iOS app:
                     { status: "reported", hits, cacheableTasks, hitRatePercent }
@@ -1119,8 +1120,9 @@ RULES
                gave no position.
   offloadedTo  only on a run a build machine compiled: its name
   offloadFallback
-               only on a run that considered offloading and built here: the
-               reason, one per machine asked
+               only on a run that considered offloading and built here: one
+               reason per machine when none took the build, or why the
+               offload stopped
 
   Plain status prints "last build: ios local cache in 12s, android compiled
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.
