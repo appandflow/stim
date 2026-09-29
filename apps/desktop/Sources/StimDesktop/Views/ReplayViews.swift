@@ -330,7 +330,6 @@ struct ReplayTrack: View {
   @State private var dragging: CGFloat?
   @State private var hover = ReplayHover()
   @State private var width: CGFloat = 0
-  /// The track shown when the pointer entered or the drag began, so the pointer keeps mapping to the same time.
   @State private var held: ReplayTimeline?
   @State private var trackLength: Double?
 
@@ -392,7 +391,7 @@ struct ReplayTrack: View {
         previewTime: { x, marker in previewTime(x: x, marker: marker) })
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-    .onChange(of: track.length) { _, length in trackLength = length }
+    .onChange(of: track.length, initial: true) { _, length in trackLength = length }
     .onContinuousHover { phase in
       switch phase {
       case .active(let point):
@@ -501,7 +500,6 @@ struct ReplayTrack: View {
 
   private(set) var x: CGFloat?
   private(set) var marker: ReplayMarker?
-  /// The pointer is over the track, whether or not a drag hid the tooltip.
   var inside = false
   var onChange: () -> Void = {}
   private var shownAt: TimeInterval = 0

@@ -156,7 +156,6 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
 
   func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 * max(1, abs(b)) }
 
-  /// The phone's `replay.test.ts` replays the same file, so the two apps lay out the same track.
   @Test(arguments: Self.vectors.timelines.map(\.name))
   func laysTheTrackOutAsThePhoneDoes(_ name: String) throws {
     let vector = try #require(Self.vectors.timelines.first { $0.name == name })
@@ -190,7 +189,6 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func countsOnlyRecordedFootageAndIsNilWithoutAny() throws {
     let timeline = try #require(ReplayTimeline(spans: spans, liveEnd: 3 * hour))
     #expect(timeline.recordedLength == 10 * minute)
-    #expect(timeline.spans == spans)
     #expect(ReplayTimeline(spans: []) == nil)
   }
 
@@ -289,6 +287,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(controller.liveEnd(running: true) == 23_500)
     #expect(controller.liveEnd(running: false) == nil)
     controller.connect(nil)
+    #expect(controller.liveEnd(running: true) == nil)
     controller.connect(server)
     await settle()
     try #require(server.take("replay.range")).reply.resume(

@@ -61,10 +61,11 @@ import Foundation
 
   public var timeline: ReplayTimeline? { range.flatMap { ReplayTimeline(spans: $0.spans) } }
 
-  /// The Mac's time now, estimated as the newest span's end plus the time since `range` came, while stim-server
-  /// records the device and it runs; nil otherwise. The elapsed time avoids depending on the two clocks agreeing.
+  /// The Mac's time now, estimated as the newest span's end plus the time since `range` came, while connected to a
+  /// stim-server that records the running device; nil otherwise. The elapsed time avoids depending on the two clocks
+  /// agreeing.
   public func liveEnd(running: Bool) -> Double? {
-    guard running, let range, range.recording, let last = range.spans.last else { return nil }
+    guard running, server != nil, let range, range.recording, let last = range.spans.last else { return nil }
     return last.end + max(0, clock() - rangeReceivedAt) * 1000
   }
 
