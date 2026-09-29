@@ -2,6 +2,7 @@ import * as Linking from 'expo-linking';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { AgentSessionRow } from '@/components/agent-sessions';
 import { Button } from '@/components/button';
 import { ListRow, ListSection } from '@/components/list';
 import { ScrollView } from '@/components/lists';
@@ -31,7 +32,7 @@ const REVIEW_NAME: Record<NonNullable<PullRequestFacts['reviewDecision']>, strin
   'review-required': 'Review required',
 };
 
-export function WorkspaceGit({ path }: { path: string }) {
+export function WorkspaceWork({ path }: { path: string }) {
   const { theme } = useUnistyles();
   const status = useStatus();
   const now = useNow(30_000);
@@ -48,11 +49,18 @@ export function WorkspaceGit({ path }: { path: string }) {
           {worktree?.branch ?? workspaceTitleAt(path, status)}
         </Text>
         <Text variant="footnote" tone="secondary">
-          Git
+          Work
         </Text>
       </View>
+      {env?.agents?.length ? (
+        <ListSection title={env.agents.length === 1 ? 'Agent session' : 'Agent sessions'}>
+          {env.agents.map((agent) => (
+            <AgentSessionRow key={`${agent.tool}:${agent.sessionId}`} agent={agent} now={now} />
+          ))}
+        </ListSection>
+      ) : null}
       {git ? (
-        <ListSection>
+        <ListSection title="Git">
           <ListRow title="Upstream" value={git.upstream ?? 'None'} valueTone={git.upstream ? 'default' : 'tertiary'} />
           <ListRow title="Ahead" value={git.ahead === null ? '\u2014' : commits(git.ahead)} />
           <ListRow title="Behind" value={git.behind === null ? '\u2014' : commits(git.behind)} />

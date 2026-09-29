@@ -1,18 +1,20 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { AgentSessionLine } from '@/components/agent-sessions';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
 import { STAT_ICON } from '@/components/machine-stats';
 import { StatusDot } from '@/components/pill';
 import { PlatformGlyph } from '@/components/platform-glyph';
 import { Text, type TextTone } from '@/components/text';
-import { Touch } from '@/components/touch';
+import type { TextVariant } from '@/design/tokens';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
+import { agentLabel } from '@/lib/agents';
 import { buildProgress, clockDuration } from '@/lib/format';
 import { formatBytes } from '@/lib/home';
 import {
@@ -36,7 +38,7 @@ import {
   type WorkspaceStage,
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
-import type { BuildReport, EnvironmentState } from '@/protocol/types';
+import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
 
 function stageColor(tone: StageTone, colors: Theme['colors']): string {
   return tone === 'brand' ? colors.primary : colors[tone];
@@ -57,67 +59,18 @@ export function chipColor(tone: ChipTone, colors: Theme['colors']): string {
   return tone === 'brand' ? colors.primary : colors[tone];
 }
 
-export function StageLine({
-  stage,
-  git,
-  onGitPress,
-}: {
-  stage: WorkspaceStage;
-  git: GitChip | null;
-  onGitPress: () => void;
-}) {
+export function StageLine({ stage }: { stage: WorkspaceStage }) {
   const { theme } = useUnistyles();
-  const [stageY, setStageY] = useState(0);
-  const [chipY, setChipY] = useState(0);
-  const wrapped = chipY > stageY;
   return (
-    <View style={styles.stage}>
-      <View
-        testID="stage-group"
-        style={styles.stageGroup}
-        accessible
-        accessibilityLabel={[stage.label, stage.subtitle].filter(Boolean).join(', ')}
-        onLayout={(event) => setStageY(event.nativeEvent.layout.y)}
-      >
-        <StatusDot color={stageColor(stage.tone, theme.colors)} />
-        <Text variant="footnote" weight="semibold">
-          {stage.label}
+    <View style={styles.stage} accessible accessibilityLabel={[stage.label, stage.subtitle].filter(Boolean).join(', ')}>
+      <StatusDot color={stageColor(stage.tone, theme.colors)} />
+      <Text variant="footnote" weight="semibold">
+        {stage.label}
+      </Text>
+      {stage.subtitle ? (
+        <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
+          {stage.subtitle}
         </Text>
-        {stage.subtitle ? (
-          <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
-            {stage.subtitle}
-          </Text>
-        ) : null}
-      </View>
-      {git ? (
-        <View testID="chip-group" style={styles.stageGroup} onLayout={(event) => setChipY(event.nativeEvent.layout.y)}>
-          <View testID="stage-divider" style={[styles.divider, wrapped && styles.dividerHidden]} />
-          <Touch
-            feedback="card"
-            onPress={onGitPress}
-            accessibilityLabel={git.label}
-            accessibilityHint="Shows the branch"
-            hitSlop={6}
-            style={styles.gitChip}
-          >
-            {git.pr ? (
-              <>
-                <Text variant="caption" weight="semibold" tone={CHIP_TONE[git.pr.tone]}>
-                  {git.pr.text}
-                </Text>
-                {git.pr.ci ? <CiMark state={git.pr.ci} /> : null}
-              </>
-            ) : (
-              <Icon name="arrow.triangle.branch" size={12} color={theme.colors.secondary} />
-            )}
-            {git.parts.map((part) => (
-              <Text key={part.text} variant="caption" tone={CHIP_TONE[part.tone]} style={styles.tabular}>
-                {part.text}
-              </Text>
-            ))}
-            <Icon name="chevron.right" size={10} color={theme.colors.tertiary} />
-          </Touch>
-        </View>
       ) : null}
     </View>
   );
@@ -132,6 +85,9 @@ function CiMark({ state }: { state: CiState }) {
     <Icon name="xmark" size={10} color={theme.colors.error} />
   );
 }
+
+const VALUE: TextVariant = 'caption';
+const VALUE_WEIGHT = 'medium';
 
 function SmallCard({
   title,
@@ -181,9 +137,27 @@ export const usageLabel = (usage: Usage) =>
     .map((part) => `${part.label} ${part.value}`)
     .join(', ');
 
-export function ResourcesCard({ usage, onPress }: { usage: Usage; onPress: () => void }) {
+function UsagePart({ kind, value, unit }: { kind: keyof typeof STAT_ICON; value: string; unit?: string }) {
   const { theme } = useUnistyles();
+  return (
+    <View style={styles.stat}>
+      <Icon name={STAT_ICON[kind]} size={12} color={theme.colors.secondary} />
+      <Text variant={VALUE} weight={VALUE_WEIGHT} style={styles.tabular} numberOfLines={1}>
+        {value}
+        {unit ? (
+          <Text variant={VALUE} weight="regular" tone="secondary">
+            {` ${unit}`}
+          </Text>
+        ) : null}
+      </Text>
+    </View>
+  );
+}
+
+export function ResourcesCard({ usage, onPress }: { usage: Usage; onPress: () => void }) {
   const parts = usageParts(usage);
+  const live = parts.filter((part) => part.kind !== 'disk');
+  const disk = parts.find((part) => part.kind === 'disk');
   return (
     <SmallCard
       title="Resources"
@@ -192,25 +166,34 @@ export function ResourcesCard({ usage, onPress }: { usage: Usage; onPress: () =>
       accessibilityHint="Shows what this workspace uses"
     >
       {parts.length === 0 ? (
-        <Text variant="footnote" tone="tertiary">
+        <Text variant={VALUE} tone="tertiary">
           Not measured
         </Text>
       ) : null}
-      {parts.map((part) => (
-        <View key={part.kind} style={styles.stat}>
-          <Icon name={STAT_ICON[part.kind]} size={12} color={theme.colors.secondary} />
-          <Text variant="callout" weight="semibold" tone="default" style={styles.tabular} numberOfLines={1}>
-            {part.value}
-          </Text>
+      {live.length ? (
+        <View style={styles.line}>
+          {live.map((part) => (
+            <UsagePart key={part.kind} kind={part.kind} value={part.value} />
+          ))}
         </View>
-      ))}
+      ) : null}
+      {disk ? <UsagePart kind="disk" value={disk.value} unit="disk" /> : null}
     </SmallCard>
   );
 }
 
 const LINE_TONE: Record<BuildLine['tone'], TextTone> = { default: 'default', error: 'error', secondary: 'secondary' };
 
-export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () => void }) {
+export function BuildCard({
+  lines,
+  building,
+  onPress,
+}: {
+  lines: BuildLine[];
+  building: BuildReport | null;
+  onPress: () => void;
+}) {
+  if (building) return <BuildingCard build={building} onPress={onPress} />;
   return (
     <SmallCard
       title="Build"
@@ -225,8 +208,8 @@ export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () 
             <PlatformGlyph platform={line.platform} size={line.platform === 'ios' ? 14 : 12} />
           </View>
           <Text
-            variant="footnote"
-            weight="semibold"
+            variant={VALUE}
+            weight={VALUE_WEIGHT}
             tone={LINE_TONE[line.tone]}
             numberOfLines={1}
             style={[styles.tabular, styles.shrink]}
@@ -244,6 +227,37 @@ export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () 
   );
 }
 
+function BuildingCard({ build, onPress }: { build: BuildReport; onPress: () => void }) {
+  const now = useNow(1000);
+  const { elapsed, estimate } = buildTiming(build, now);
+  const { phase } = currentPhaseLabel(build);
+  return (
+    <SmallCard
+      title="Build"
+      onPress={onPress}
+      accessibilityLabel={`Build: building ${platformName(build.platform)}, ${phase}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
+      accessibilityHint="Shows the build"
+    >
+      <View style={styles.stat}>
+        <View style={styles.glyphBox}>
+          <PlatformGlyph platform={build.platform} size={build.platform === 'ios' ? 14 : 12} />
+        </View>
+        <Text variant={VALUE} weight={VALUE_WEIGHT} tone="brand" numberOfLines={1} style={styles.shrink}>
+          {phase}
+        </Text>
+      </View>
+      <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.tabular}>
+        {elapsed}
+        {estimate ? (
+          <Text variant={VALUE} weight="regular" tone="tertiary">
+            {` / ${estimate}`}
+          </Text>
+        ) : null}
+      </Text>
+    </SmallCard>
+  );
+}
+
 function healthColor(health: MetroHealth, colors: Theme['colors']): string {
   return health === 'healthy' ? colors.success : health === 'unhealthy' ? colors.error : colors.tertiary;
 }
@@ -255,7 +269,7 @@ export function LogsCard({
   onPress,
 }: {
   errors: number | null;
-  metro: { port: number; health: MetroHealth } | null;
+  metro: MetroHealth | null;
   bundle: BundleLine | null;
   onPress: () => void;
 }) {
@@ -268,51 +282,119 @@ export function LogsCard({
       accessibilityLabel={[
         'Logs',
         errors === null ? null : errors === 1 ? '1 error' : `${errors} errors`,
-        metro ? `Metro port ${metro.port}, ${metro.health}` : null,
+        metro ? `Metro ${metro}` : null,
         bundle?.text,
       ]
         .filter(Boolean)
         .join(', ')}
       accessibilityHint="Opens the logs"
     >
-      {errors === null && !metro && !bundle ? (
-        <Text variant="footnote" tone="tertiary">
+      {errors === null && !metro ? (
+        <Text variant={VALUE} tone="tertiary">
           No logs yet
         </Text>
       ) : null}
       {errors !== null ? (
-        <View style={styles.stat}>
-          <StatusDot color={errors > 0 ? theme.colors.error : theme.colors.border} />
-          <Text variant="footnote" weight="semibold" style={styles.tabular}>
-            {String(errors)}
+        <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.tabular}>
+          {String(errors)}
+          <Text variant={VALUE} weight="regular" tone="secondary">
+            {errors === 1 ? ' error' : ' errors'}
           </Text>
-          <Text variant="footnote" tone="secondary">
-            {errors === 1 ? 'error' : 'errors'}
-          </Text>
-        </View>
+        </Text>
       ) : null}
       {metro ? (
         <View style={styles.stat}>
-          <StatusDot color={healthColor(metro.health, theme.colors)} filled={metro.health !== 'stopped'} />
-          <Text variant="footnote" weight="semibold">
+          <StatusDot color={healthColor(metro, theme.colors)} filled={metro !== 'stopped'} />
+          <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.shrink}>
             Metro
-          </Text>
-          <Text variant="footnote" tone="secondary" style={styles.tabular}>
-            {`:${metro.port}`}
+            {bundle ? (
+              <Text
+                variant={VALUE}
+                weight="regular"
+                tone={bundle.tone === 'error' ? 'error' : 'secondary'}
+              >{` \u00B7 ${bundle.text}`}</Text>
+            ) : null}
           </Text>
         </View>
-      ) : null}
-      {bundle ? (
-        <Text variant="caption2" tone={bundle.tone === 'default' ? 'secondary' : bundle.tone} numberOfLines={2}>
-          {bundle.text}
-        </Text>
       ) : null}
     </SmallCard>
   );
 }
 
-export function CardRow({ children }: { children: ReactNode }) {
-  return <View style={styles.row}>{children}</View>;
+export function WorkCard({
+  agents,
+  git,
+  now,
+  onPress,
+}: {
+  agents: AgentSession[];
+  git: GitChip | null;
+  now: number;
+  onPress: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const agent = agents[0];
+  return (
+    <SmallCard
+      title="Work"
+      onPress={onPress}
+      accessibilityLabel={[
+        'Work',
+        agent ? agentLabel(agent, now) : 'No agent session',
+        agents.length > 1 ? `and ${agents.length - 1} more` : null,
+        git?.label ?? 'no git state',
+      ]
+        .filter(Boolean)
+        .join(', ')}
+      accessibilityHint="Shows the agent sessions and the branch"
+    >
+      {agents.length ? (
+        <AgentSessionLine agents={agents} now={now} variant={VALUE} weight={VALUE_WEIGHT} />
+      ) : (
+        <Text variant={VALUE} tone="tertiary" numberOfLines={1}>
+          No agent session
+        </Text>
+      )}
+      {git ? (
+        <View style={styles.gitLine}>
+          {git.pr ? (
+            <>
+              <Text variant={VALUE} weight={VALUE_WEIGHT} tone={CHIP_TONE[git.pr.tone]}>
+                {git.pr.text}
+              </Text>
+              {git.pr.ci ? <CiMark state={git.pr.ci} /> : null}
+            </>
+          ) : (
+            <Icon name="arrow.triangle.branch" size={12} color={theme.colors.secondary} />
+          )}
+          {git.parts.map((part) => (
+            <Text
+              key={part.text}
+              variant={VALUE}
+              tone={CHIP_TONE[part.tone]}
+              numberOfLines={1}
+              style={[styles.tabular, part.tone === 'default' ? null : styles.shrink]}
+            >
+              {part.text}
+            </Text>
+          ))}
+          {!git.pr && git.parts.length === 0 ? (
+            <Text variant={VALUE} tone="secondary">
+              Up to date
+            </Text>
+          ) : null}
+        </View>
+      ) : (
+        <Text variant={VALUE} tone="tertiary" numberOfLines={1}>
+          No git state
+        </Text>
+      )}
+    </SmallCard>
+  );
+}
+
+export function CardGrid({ children }: { children: ReactNode }) {
+  return <View style={styles.grid}>{children}</View>;
 }
 
 function segmentWeights(steps: PhaseStep[]): number[] {
@@ -452,33 +534,15 @@ export function BuildInProgressCard({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  stage: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'center',
-    columnGap: theme.space.md,
-    rowGap: theme.space.sm,
-  },
-  stageGroup: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, flexShrink: 1 },
-  divider: { width: StyleSheet.hairlineWidth * 2, height: 14, backgroundColor: theme.colors.border },
-  dividerHidden: { backgroundColor: 'transparent' },
-  gitChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.xs + 1,
-    paddingHorizontal: theme.space.md,
-    paddingVertical: 3,
-    borderRadius: theme.radius.control,
-    borderCurve: 'continuous',
-    backgroundColor: theme.colors.grouped,
-  },
+  stage: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: theme.space.sm },
   shrink: { flexShrink: 1 },
   spacer: { flex: 1 },
   tabular: { fontVariant: ['tabular-nums'] },
   caps: { textTransform: 'uppercase', letterSpacing: 0.4, flexShrink: 1 },
-  row: { flexDirection: 'row', gap: theme.space.md },
-  small: { flex: 1, flexBasis: 0, minHeight: 92, padding: theme.space.md + 2, gap: theme.space.xs },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.md },
+  small: { flexGrow: 1, flexBasis: '40%', padding: theme.space.md + 2, gap: theme.space.xs },
+  line: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, overflow: 'hidden' },
+  gitLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs + 1, overflow: 'hidden' },
   alert: {
     borderColor: withAlpha(theme.colors.error, 0.45),
     backgroundColor: withAlpha(theme.colors.error, 0.06),
