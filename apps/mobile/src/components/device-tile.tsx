@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
 import { STAT_ICON } from '@/components/machine-stats';
-import { Pill, StatusDot } from '@/components/pill';
+import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
@@ -67,15 +67,6 @@ export function DeviceTile({
   const appClosed = app === 'closed';
   const noApp = app === 'none';
   const title = deviceTitle(device);
-  const dot = !device.running
-    ? theme.colors.tertiary
-    : build
-      ? theme.colors.primary
-      : appClosed
-        ? theme.colors.error
-        : noApp
-          ? theme.colors.tertiary
-          : theme.colors.success;
   const notes = warnings.map((warning) => (
     <Text key={warning} variant="caption" tone="warning" style={styles.note}>
       {tildeHome(warning, home)}
@@ -91,7 +82,6 @@ export function DeviceTile({
     : [];
   const header = (
     <View style={styles.header}>
-      <StatusDot color={dot} filled={device.running} />
       <Text variant="callout" weight="semibold" numberOfLines={1} style={styles.name}>
         {title.name}
       </Text>
@@ -116,6 +106,11 @@ export function DeviceTile({
   }
   const pills = [
     ...leasePills,
+    appClosed && !frame ? (
+      <Pill key="closed" tone="error">
+        App closed
+      </Pill>
+    ) : null,
     device.page?.error ? (
       <Pill key="page" tone="warning">
         Page failed to load

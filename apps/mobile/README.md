@@ -163,12 +163,13 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   targets") and the elapsed time against the estimate, a bar of the phases
   sized by the last comparable run, the cache-miss reason, the other
   platform's last build, and the latest compiler line. Then **Devices**, one
-  card per device: a dot, the model and runtime, and the device's CPU,
+  card per device: the model and runtime, and the device's CPU,
   memory and disk; the latest frame the server sends, fitted to the card, with
   **Folded** or **Unfolded** for an iPhone Duo or an Android foldable emulator.
   Tapping the frame opens the [device view](#device-view). A device waiting on
   a build shows the build's step, a device with a failed build and no app shows
-  **No app installed**, and a closed app dims the frame under **App closed**. A
+  **No app installed**, and a closed app dims the frame under **App closed**, or
+  shows an **App closed** pill while there is no frame. A
   warming workspace shows one card while it warms, and a stopped one says that
   nothing is running. Under a running simulator, emulator or Web device that
   Stim owns, the agent row names the driving tool with its latest action and
