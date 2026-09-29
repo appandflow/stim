@@ -18,10 +18,9 @@ import {
   timeAt,
   type Timeline,
 } from '@/lib/replay';
+import { scrubEndRate, scrubMove, scrubStart, type Scrub } from '@/lib/replay-seek';
 import type { ReplayMarker, ReplayRate } from '@/protocol/types';
 
-const DRAG_SEEK_MS = 120;
-const DRAG_SLOP = 6;
 const MARKER_REACH = 14;
 const TRACK_HEIGHT = 44;
 /** stim-server's `frames.seek` shows the newest frame for a time past every recording. */
@@ -29,8 +28,11 @@ const NEWEST_FRAME = Number.MAX_SAFE_INTEGER;
 
 /**
  * Live pill, play and pause, speed, and a scrubber over the device's recorded footage with its agent actions
- * and errors as markers. Without a timeline, while replay shows footage that is gone, only the Live pill. Dragging shows the frame under the finger; tapping near a marker lands just before it,
- * and tapping elsewhere shows the frame there. The track takes every touch itself, so a tap is one seek. While the
+ * and errors as markers. Without a timeline, while replay shows footage that is gone, only the Live pill. Dragging pauses
+ * and shows the frame under the finger, and lifting the finger plays on when the replay played before the drag; tapping
+ * near a marker lands just before it, and tapping elsewhere shows the frame there, both keeping the replay playing or
+ * paused. The thumb and time follow the finger and then the last seek, not the server's answers. The track takes
+ * every touch itself, so a tap is one seek. While the
  * device runs, the track ends at the Mac's time now, estimated from the last `timeline` and the time since it came;
  * a finger on the track holds the track still until it lifts.
  */
@@ -38,6 +40,7 @@ export function ReplayBar({
   timeline,
   markers,
   replay,
+  seeking,
   canGoLive,
   recording,
   onSeek,
@@ -47,6 +50,8 @@ export function ReplayBar({
   timeline: Timeline | null;
   markers: ReplayMarker[];
   replay: Replay | null;
+  /** A seek is out or waiting, so `replay.at` is not yet the frame last asked for. */
+  seeking: boolean;
   /** False while the device is not running, so only its recording can be shown. */
   canGoLive: boolean;
   /** stim-server records the device now, so its newest span grows until the next `timeline`. */
@@ -60,8 +65,8 @@ export function ReplayBar({
   const [width, setWidth] = useState(0);
   const [dragging, setDragging] = useState<number | null>(null);
   const [speed, setSpeed] = useState<1 | 2>(1);
-  const lastSeek = useRef(0);
-  const touch = useRef<{ x: number; dragged: boolean } | null>(null);
+  const touch = useRef<Scrub | null>(null);
+  const [asked, setAsked] = useState<number | null>(null);
   const [lastAt, setLastAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -105,26 +110,26 @@ export function ReplayBar({
   const liveEnd = canGoLive && recording ? timeline.end + Math.max(0, now - received.at) : undefined;
   const track = held ?? buildTimeline(timeline.spans, liveEnd, trackLength) ?? timeline;
   if (track.length !== trackLength) setTrackLength(track.length);
-  const shownAt = at ?? lastAt;
+  const target = dragging !== null ? timeAt(track, dragging) : seeking ? asked : null;
+  const shownAt = target ?? at ?? lastAt;
   const position = dragging ?? (replay ? (shownAt === null ? 1 : positionOf(track, shownAt)) : 1);
+  const labelAt = target ?? at;
   const playing = replay !== null && replay.rate > 0 && !replay.ended;
   const showsPause = playing || isLive;
   const footageFrom = track.pieces[0]?.from ?? 0;
 
   const seekTo = (to: number, rate: ReplayRate, action: number | null = null) => {
     setStepped(action);
+    setAsked(Math.min(to, track.end));
     onSeek(to, rate);
   };
   const fractionAt = (x: number) => Math.min(1, Math.max(0, x / (width || 1)));
-  const drag = (x: number, final: boolean) => {
+  const drag = (x: number, rate: ReplayRate | null) => {
     const fraction = fractionAt(x);
-    setDragging(final ? null : fraction);
-    const stamp = Date.now();
-    if (!final && stamp - lastSeek.current < DRAG_SEEK_MS) return;
-    lastSeek.current = stamp;
-    seekTo(timeAt(track, fraction), 0);
+    setDragging(rate === null ? fraction : null);
+    seekTo(timeAt(track, fraction), rate ?? 0);
   };
-  const tap = (x: number) => {
+  const tap = (x: number, rate: ReplayRate) => {
     let near: ReplayMarker | null = null;
     let nearest = MARKER_REACH;
     for (const marker of markers) {
@@ -134,7 +139,14 @@ export function ReplayBar({
         nearest = distance;
       }
     }
-    seekTo(near ? markerSeek(track, near) : timeAt(track, fractionAt(x)), 0);
+    seekTo(near ? markerSeek(track, near) : timeAt(track, fractionAt(x)), rate);
+  };
+  const release = (x: number) => {
+    const current = touch.current;
+    if (!current) return;
+    const rate = scrubEndRate(current, playing, speed);
+    if (current.drag) drag(x, rate);
+    else tap(current.x, rate);
   };
   const end = () => {
     touch.current = null;
@@ -147,23 +159,24 @@ export function ReplayBar({
     onMoveShouldSetResponder: () => true,
     onResponderTerminationRequest: () => false,
     onResponderGrant: (event: GestureResponderEvent) => {
-      touch.current = { x: event.nativeEvent.locationX, dragged: false };
+      touch.current = scrubStart(event.nativeEvent.locationX);
       setHeld(track);
       onScrubbing(true);
     },
     onResponderMove: (event: GestureResponderEvent) => {
-      const current = touch.current;
-      if (!current) return;
-      if (!current.dragged && Math.abs(event.nativeEvent.locationX - current.x) < DRAG_SLOP) return;
-      current.dragged = true;
-      drag(event.nativeEvent.locationX, false);
+      if (!touch.current) return;
+      touch.current = scrubMove(touch.current, event.nativeEvent.locationX, playing);
+      if (touch.current.drag) drag(event.nativeEvent.locationX, null);
     },
     onResponderRelease: (event: GestureResponderEvent) => {
-      if (touch.current?.dragged) drag(event.nativeEvent.locationX, true);
-      else if (touch.current) tap(touch.current.x);
+      release(event.nativeEvent.locationX);
       end();
     },
-    onResponderTerminate: end,
+    onResponderTerminate: () => {
+      const current = touch.current;
+      if (current?.drag && dragging !== null) seekTo(timeAt(track, dragging), scrubEndRate(current, playing, speed));
+      end();
+    },
   };
   const from = stepFrom(shownAt ?? track.end, stepped, playing);
   const previousAction = adjacentAction(markers, from, -1);
@@ -244,7 +257,9 @@ export function ReplayBar({
       </View>
       {replay ? (
         <Text variant="caption" style={styles.time} numberOfLines={1}>
-          {at === null ? 'Loading...' : `${replayLabel(at, now)}${replay.ended ? ' · end' : ''}`}
+          {labelAt === null
+            ? 'Loading...'
+            : `${replayLabel(labelAt, now)}${replay.ended && target === null ? ' · end' : ''}`}
         </Text>
       ) : null}
       <View
