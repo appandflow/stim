@@ -42,6 +42,7 @@ import {
   parseAvdSystemImage,
   deleteAvd,
   resolveOwnedAvdSerial,
+  ownedAvdSerialResolver,
   shutdownAndroidEmulator,
   physicalDeviceModel,
   resolvePhysicalDevice,
@@ -64,7 +65,9 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   for (const name of [
+    'stim-a',
     'stim-app',
+    'stim-b',
     'stim-gone',
     'stim-linked',
     'stim-mine',
@@ -555,6 +558,61 @@ test('resolveOwnedAvdSerial asks healthy emulators first and bounds every consol
     expect(query.timeoutMs).toBeGreaterThan(0);
     expect(query.timeoutMs).toBeLessThanOrEqual(10_000);
   }
+});
+
+test('resolveOwnedAvdSerial floors each console query so a slow earlier call does not starve a later one to an unusable timeout', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const queried: { cmd: string; at: number; timeoutMs?: number }[] = [];
+  setExecutor({
+    run: (cmd: string, opts?: { timeoutMs?: number }) => {
+      const at = Date.now();
+      queried.push({ cmd, at, timeoutMs: opts?.timeoutMs });
+      if (cmd === 'emulator -list-avds') {
+        vi.setSystemTime(at + 4990);
+        return 'stim-mine\n';
+      }
+      if (cmd === 'adb devices') {
+        vi.setSystemTime(at + 9);
+        return 'List of devices attached\nemulator-5554\tdevice\n';
+      }
+      return '';
+    },
+    runQuiet: (cmd: string, opts?: { timeoutMs?: number }) => {
+      const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
+      if (!serial) return null;
+      queried.push({ cmd, at: Date.now(), timeoutMs: opts?.timeoutMs });
+      return 'stim-mine\nOK';
+    },
+  });
+  try {
+    expect(resolveOwnedAvdSerial('stim-mine', { timeoutMs: 5000 })).toEqual({ serial: 'emulator-5554' });
+    const nameQuery = queried.find((q) => q.cmd.includes('emu avd name'));
+    expect(nameQuery?.timeoutMs).toBeGreaterThanOrEqual(1000);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('resolveOwnedAvdSerial caches a failed console query per serial so one resolver does not retry a wedged emulator for every requested AVD', () => {
+  const queried: string[] = [];
+  setExecutor({
+    run: (cmd: string) => {
+      if (cmd === 'emulator -list-avds') return 'stim-a\nstim-b\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n';
+      return '';
+    },
+    runQuiet: (cmd: string) => {
+      const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
+      if (!serial) return null;
+      queried.push(serial);
+      return serial === 'emulator-5556' ? 'stim-b\nOK' : null;
+    },
+  });
+  const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
+  expect(resolve('stim-a')).toEqual({ notRunning: true });
+  expect(resolve('stim-b')).toEqual({ serial: 'emulator-5556' });
+  expect(queried.filter((serial) => serial === 'emulator-5554')).toHaveLength(1);
 });
 
 test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', () => {

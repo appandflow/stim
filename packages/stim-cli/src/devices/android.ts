@@ -1540,6 +1540,9 @@ function once<T>(read: () => T): () => T {
   };
 }
 
+/** Floor for a single `listAvds`, `adb devices`, or `emu avd name` call in {@link ownedAvdSerialResolver}. */
+const MIN_LOOKUP_TIMEOUT_MS = 1000;
+
 /**
  * `resolveOwnedAvdSerial` for several AVDs against one reading of the AVD list, `adb devices`, and
  * each emulator's AVD name. The timeout budget starts when the resolver is created.
@@ -1549,15 +1552,16 @@ export function ownedAvdSerialResolver({ timeoutMs }: { timeoutMs?: number } = {
 ) => ResolvedAvdSerial {
   const started = Date.now();
   const remaining = () => ({
-    timeoutMs: timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - started)),
+    timeoutMs:
+      timeoutMs === undefined ? undefined : Math.max(MIN_LOOKUP_TIMEOUT_MS, timeoutMs - (Date.now() - started)),
   });
   const avds = once(() => listAvds(remaining()));
   const adb = once(() => listAdbDevices(remaining()));
-  const names = new Map<string, string>();
+  const names = new Map<string, string | null>();
   const avdNameOf = (serial: string) => {
-    if (names.has(serial)) return names.get(serial);
+    if (names.has(serial)) return names.get(serial) ?? null;
     const name = getAvdNameForSerial(serial, remaining());
-    if (name !== null) names.set(serial, name);
+    names.set(serial, name);
     return name;
   };
   return (avdName) => {
