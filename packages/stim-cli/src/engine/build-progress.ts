@@ -411,10 +411,6 @@ export function estimateBuild(
   };
 }
 
-/**
- * The samples whose device situation matches the run's. Samples without the tag predate it and are mostly reruns,
- * so they stand in only for a run that reused its device.
- */
 function matchDeviceSetup(samples: RunSample[], deviceSetup: boolean | undefined): RunSample[] {
   if (deviceSetup === undefined) return samples;
   const tagged = samples.filter((sample) => sample.deviceSetup === deviceSetup);

@@ -1062,7 +1062,8 @@ recorded, how many hit the build cache, the mean cold run and hit run, and an
 estimate of the time the cache saved. The aggregates are kept in
 `$STIM_HOME/stats.json`, and every worktree of a repository counts into the
 same project bucket. The same file keeps the last 10 successful runs per
-project, platform and cache outcome, with their phase durations, for the
+project, platform and cache outcome (and the last 10 that created, adopted or
+cold-booted their device), with their phase durations, for the
 estimates `stim status` shows; `stats` does not print them. Outside a project only the
 machine section prints. There is no reset flag: delete that file to start over.
 

@@ -1344,7 +1344,9 @@ RULES
   outcome       "hit" or "cold"; null when the run would refuse
   expectedMs    the median wall time of this project's last successful runs
                 with that outcome on that platform, or null with none
-  basis         how many runs expectedMs comes from (at most 10)
+  basis         how many runs expectedMs comes from (at most 20: runs that
+                set up their device and runs that did not are not told apart
+                before the run)
   missReason    on a predicted cold build with cache reads on, why the
                 cache has no app, in the shape of lastBuilds.<platform>
                 .missReason (\`guide facts status\`), compared with the same
@@ -1401,7 +1403,8 @@ HOW A RUN IS COUNTED (\`stats\`)
   is therefore an ESTIMATE and is printed as one. The file is
   $STIM_HOME/stats.json (see \`guide lifecycle builds\`). Beside the
   aggregates it keeps the last 10 successful runs per project, platform and
-  outcome (hit or cold) that did not wait for another workspace's build: each
+  outcome (hit or cold), plus the last 10 that created, adopted or cold-booted
+  their device, that did not wait for another workspace's build: each
   one's duration and per-phase durations. \`stim status\` estimates a running
   build from them (see \`guide facts status\`); \`stats --json\` does not
   print them.

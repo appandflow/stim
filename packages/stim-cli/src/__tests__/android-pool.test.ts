@@ -165,7 +165,12 @@ test('adopting an AVD parked before the hardware keyboard default turns its keyb
     label: 'adopter',
     settings: {},
   });
-  expect(adopted).toMatchObject({ avdName: 'stim-source', adopted: true, poolConfiguration: configuration });
+  expect(adopted).toMatchObject({
+    avdName: 'stim-source',
+    adopted: true,
+    setup: true,
+    poolConfiguration: configuration,
+  });
   const config = readFileSync(join(home, 'avd', 'stim-source.avd', 'config.ini'), 'utf8');
   expect(config.split('\n')).toContain('hw.keyboard=yes');
   expect(config).not.toContain('hw.keyboard=no');
@@ -185,7 +190,7 @@ test.each([
     label: 'source',
     settings: {},
   });
-  expect(result.created).toBe(true);
+  expect(result).toMatchObject({ created: true, setup: true });
   expect(result.avdName).not.toBe('stim-source');
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
 });

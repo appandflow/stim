@@ -155,7 +155,6 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
   return { version: STATS_VERSION, machine, projects, ...(Object.keys(history).length ? { history } : {}) };
 }
 
-/** Keeps the newest HISTORY_LIMIT samples of each kind, so reruns never push out the rarer device-setup runs. */
 function trimSamples(samples: RunSample[]): RunSample[] {
   const kept = { setup: 0, other: 0 };
   const out: RunSample[] = [];
