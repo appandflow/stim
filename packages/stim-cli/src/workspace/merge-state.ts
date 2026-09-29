@@ -5,6 +5,9 @@ const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_FRESH_MS = 10 * 60_000;
 const GIT_TIMEOUT_MS = 60_000;
 const REMOTE_PREFIX = 'refs/remotes/origin/';
+// Beyond this many commits of its own ahead of the merge base, the patch-id comparison below is
+// too slow to be worth attempting (stim#1815 saw one at ~20,800).
+const MAX_MERGE_STATE_COMMITS = 2000;
 
 export interface DefaultBranch {
   ref: string;
@@ -117,12 +120,15 @@ function committedOn(path: string, branch: string | null, head: string): boolean
 export function mergeState(
   path: string,
   { ref, name }: DefaultBranch,
-  { timeoutMs = GIT_TIMEOUT_MS }: { timeoutMs?: number } = {},
+  {
+    timeoutMs = GIT_TIMEOUT_MS,
+    maxCommits = MAX_MERGE_STATE_COMMITS,
+  }: { timeoutMs?: number; maxCommits?: number } = {},
 ): MergeState {
   const git = (args: string[], input?: string): string =>
     getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
-  const patch = (args: string[]): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, untrimmed: true });
+  const patch = (args: string[], input?: string): string =>
+    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input, untrimmed: true });
   const patchIdCommits = (text: string): Map<string, string> =>
     new Map(
       text
@@ -137,9 +143,7 @@ export function mergeState(
   const patchIds = (text: string): string[] => [...patchIdCommits(text).keys()];
   const committedAt = (commits: string[]): number => {
     const times = commits.length
-      ? git(['show', '-s', '--format=%ct', ...commits])
-          .split('\n')
-          .map(Number)
+      ? git(['log', '--no-walk', '--stdin', '--format=%ct'], commits.join('\n')).split('\n').map(Number)
       : [];
     if (!times.length || !times.every(Number.isFinite)) throw new Error(`no committer date for ${commits.join(' ')}`);
     return Math.max(...times) * 1000;
@@ -164,10 +168,22 @@ export function mergeState(
       if (!landed) throw new Error(`no commit on ${name} merges ${head}`);
       return { merged: true, into: name, head, coversUnpushed: false, mergedAt: committedAt([landed]) };
     }
+    const aheadCount = Number(git(['rev-list', '--count', `${base}..${head}`]));
+    if (aheadCount > maxCommits) {
+      return {
+        merged: false,
+        unknown: true,
+        detail: `merge state unknown: ${aheadCount} commits of its own ahead of the merge base with ${name} exceeds the ${maxCommits}-commit limit`,
+      };
+    }
     const files = git(['diff', '--name-only', '--no-renames', '-z', base, head]).split('\0').filter(Boolean);
     if (!files.length) return notMerged(`no net change beyond ${name}`);
+    // The pathspec goes through stdin, not argv: `files` can be arbitrarily long (stim#1815).
     const log = (range: string, pathspec: string[] = []) =>
-      patch(['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', range, '--', ...pathspec]);
+      patch(
+        ['log', '-p', '--no-merges', ...diffOptions, '--format=commit %H', '--stdin'],
+        pathspec.length ? `${range}\n--\n${pathspec.join('\n')}\n` : `${range}\n`,
+      );
     const upstream = patchIdCommits(log(`${base}..${ref}`, files));
     const patchEquivalent = (ids: string[]): MergeState => ({
       merged: true,
