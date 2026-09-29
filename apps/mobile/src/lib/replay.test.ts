@@ -1,10 +1,12 @@
 import {
+  adjacentAction,
   buildTimeline,
   layoutGapLabels,
   LONG_GAP_MS,
   markerSeek,
   positionOf,
   shortDuration,
+  stepFrom,
   timeAt,
   WINDOW_STEP_MS,
   type Timeline,
@@ -131,5 +133,28 @@ describe('the replay timeline', () => {
     const [label] = layoutGapLabels(timeline.pieces, 300);
     expect(label!.left + label!.width).toBeLessThanOrEqual(300);
     expect(layoutGapLabels(timeline.pieces, 40)).toEqual([]);
+  });
+
+  it('steps to the next or previous agent action, skipping errors and the action it stands on', () => {
+    const markers = [
+      { at: 30_000, kind: 'action', label: 'tap "Settings"' },
+      { at: 10_000, kind: 'action', label: 'open app' },
+      { at: 20_000, kind: 'error', label: 'boom' },
+      { at: 50_000, kind: 'action', label: 'type "hi"' },
+    ] as const;
+    expect(adjacentAction(markers, 12_000, 1)?.at).toBe(30_000);
+    expect(adjacentAction(markers, 30_000, 1)?.at).toBe(50_000);
+    expect(adjacentAction(markers, 50_000, 1)).toBeNull();
+    expect(adjacentAction(markers, 40_000, -1)?.at).toBe(30_000);
+    expect(adjacentAction(markers, 30_000, -1)?.at).toBe(10_000);
+    expect(adjacentAction(markers, 10_000, -1)).toBeNull();
+    expect(adjacentAction([], 0, 1)).toBeNull();
+  });
+
+  it('steps from the action it landed before, until the playhead passes it', () => {
+    expect(stepFrom(26_500, 30_000, true)).toBe(30_000);
+    expect(stepFrom(31_000, 30_000, true)).toBe(31_000);
+    expect(stepFrom(40_000, 30_000, false)).toBe(30_000);
+    expect(stepFrom(12_000, null, false)).toBe(12_000);
   });
 });

@@ -106,6 +106,30 @@ export function markerSeek(timeline: Timeline, marker: ReplayMarker, leadMs = 15
   return piece ? Math.max(before, piece.start) : Math.max(before, timeline.start);
 }
 
+/**
+ * Where to step from to the next or previous agent action: the action last stepped to, until playback carries the
+ * playhead past it. `markerSeek` lands before the action, or after it when clamped to footage, and the playhead
+ * updates only when the seek answers, so while paused the playhead alone would step to the same action again.
+ */
+export function stepFrom(at: number, stepped: number | null, playing: boolean): number {
+  return stepped !== null && (!playing || at <= stepped) ? stepped : at;
+}
+
+/** The first agent action after `from`, or with `direction` -1 the last one before it; null when there is none. */
+export function adjacentAction(markers: readonly ReplayMarker[], from: number, direction: 1 | -1): ReplayMarker | null {
+  const actions = markers.filter((marker) => marker.kind === 'action');
+  if (direction > 0) {
+    return actions.reduce<ReplayMarker | null>(
+      (best, marker) => (marker.at > from && (!best || marker.at < best.at) ? marker : best),
+      null,
+    );
+  }
+  return actions.reduce<ReplayMarker | null>(
+    (best, marker) => (marker.at < from && (!best || marker.at > best.at) ? marker : best),
+    null,
+  );
+}
+
 /** "2h", "14m", "40s": how long a gap or an age is, in its largest unit. */
 export function shortDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
