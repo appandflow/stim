@@ -46,7 +46,6 @@ private let expoContextLine =
 
 private func isCodeFrameLine(_ line: String) -> Bool { codeFrameLine.contains { matches($0, line) } }
 
-/// The lines `stim logs --errors` attaches to an Expo error (`isExpoErrorContext` in `@stim-cli/core`).
 private func isExpoContext(_ record: LogRecord) -> Bool {
   isExpoLine(record) && expoContextLine.contains { matches($0, record.msg) }
 }
@@ -60,9 +59,7 @@ public struct LogEntryList: Sendable {
   public private(set) var entries: [LogEntry] = []
 
   private enum State: Sendable {
-    /// A `Bundling failed` marker waiting for the next Expo line, which can be its error line.
     case lookahead
-    /// An Expo error taking the code frame and stack lines Expo prints after it.
     case scanning
     case settled
   }
@@ -76,14 +73,11 @@ public struct LogEntryList: Sendable {
   }
 
   private var groups: [Group] = []
-  /// Groups still taking records, in the order they started.
   private var open: [Int] = []
   private var failures: [Int] = []
   private var responses: [Int] = []
-  /// The failed bundle response joined to each failure.
   private var responseOf: [Int: Int] = [:]
   private var merged = Set<Int>()
-  /// The group of each entry.
   private var visible: [Int] = []
 
   public init() {}
@@ -165,9 +159,6 @@ public struct LogEntryList: Sendable {
     return visible.firstIndex(of: g)
   }
 
-  /// Offers a new record to the open groups in the order they started, as the phone's `groupRecords` scans ahead
-  /// from each one in turn, and returns the group that took it. An Expo line that an open group does not take ends
-  /// its scan.
   private mutating func offer(_ n: Int) -> Int? {
     let record = records[n]
     guard isExpoLine(record) else { return nil }
@@ -190,25 +181,30 @@ public struct LogEntryList: Sendable {
     return nil
   }
 
-  /// Joins each failed bundle response to the nearest unanswered failure of its platform, and returns the first
-  /// group whose pairing changed.
   private mutating func pairResponses() -> Int {
     let records = records
     let groups = groups
     let first = { (g: Int) in records[groups[g].first] }
+    let byTime = failures.map { (ts: first($0).ts, group: $0) }.sorted { ($0.ts, $0.group) < ($1.ts, $1.group) }
     var pairs: [Int: Int] = [:]
     for response in responses {
       let record = records[groups[response].lead]
-      let distance = { (g: Int) in abs(first(g).ts - record.ts) }
       let prefix = record.platform.map { $0.lowercased() + " " }
-      let target =
-        failures
-        .filter { g in
-          pairs[g] == nil && distance(g) <= bundleResponseWindowMs
-            && (prefix.map { first(g).msg.lowercased().hasPrefix($0) } ?? true)
-        }
-        .min { distance($0) < distance($1) }
-      if let target { pairs[target] = response }
+      var low = 0
+      var high = byTime.count
+      while low < high {
+        let mid = (low + high) / 2
+        if byTime[mid].ts < record.ts - bundleResponseWindowMs { low = mid + 1 } else { high = mid }
+      }
+      var target: (distance: Double, group: Int)?
+      for failure in byTime[low...].prefix(while: { $0.ts <= record.ts + bundleResponseWindowMs })
+      where pairs[failure.group] == nil
+        && (prefix.map { first(failure.group).msg.lowercased().hasPrefix($0) } ?? true)
+      {
+        let candidate = (distance: abs(failure.ts - record.ts), group: failure.group)
+        if target.map({ candidate < $0 }) ?? true { target = candidate }
+      }
+      if let target { pairs[target.group] = response }
     }
     let changed = Set(pairs.keys).union(responseOf.keys).filter { pairs[$0] != responseOf[$0] }
     let moved = Set(pairs.values).symmetricDifference(merged)
@@ -291,7 +287,6 @@ public func tildeHome(_ text: String, home: String?) -> String {
   return replaceRoot(text, root: base, under: "~/", bare: "~")
 }
 
-/// The same `at fn (file:line:column)` line `stim logs` prints for a frame; nil for a frame with nothing to print.
 func stackLine(_ frame: StackFrame) -> String? {
   let parts: [String?] = [frame.file, frame.line.map(String.init), frame.column.map(String.init)]
   let location = parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ":")
@@ -300,7 +295,6 @@ func stackLine(_ frame: StackFrame) -> String? {
   return location.isEmpty ? nil : "at \(location)"
 }
 
-/// Whether `file` is the workspace's own code: under `root` and outside `node_modules`.
 private func isAppFile(_ file: String, relative: String) -> Bool {
   relative != file && !relative.contains("node_modules/")
 }
@@ -399,12 +393,13 @@ private func group(_ match: NSTextCheckingResult, _ name: String, in text: Strin
   Range(match.range(withName: name), in: text).map { String(text[$0]) }
 }
 
-/// Whether `head` can match `babelError`: its first `: ` follows a path, or an error type and then a path.
 private func mayNameFile(_ head: String) -> Bool {
   let parts = head.split(separator: ": ", maxSplits: 2, omittingEmptySubsequences: false)
+  let isFile = { (part: Substring) in
+    !part.contains(where: \.isWhitespace) && (part.contains("/") || part.contains("."))
+  }
   guard parts.count > 1 else { return false }
-  let file = parts[0].hasSuffix("Error") && !parts[0].contains(" ") && parts.count > 2 ? parts[1] : parts[0]
-  return !file.contains(where: \.isWhitespace) && (file.contains("/") || file.contains("."))
+  return isFile(parts[0]) || (parts.count > 2 && parts[0].hasSuffix("Error") && isFile(parts[1]))
 }
 
 public func viewEntry(_ entry: LogEntry, root: String, home: String?) -> LogEntryView {

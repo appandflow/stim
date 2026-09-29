@@ -221,7 +221,6 @@ private struct ToggleChip<Content: View>: View {
   }
 }
 
-/// The selected entry in full: its message, location, code frame, other records and whole stack, selectable.
 private struct EntryDetail: NSViewRepresentable {
   var row: LogsModel.Row
 
@@ -322,7 +321,6 @@ private struct EntryDetail: NSViewRepresentable {
   }()
 }
 
-/// Draws one box behind the code frame lines.
 private final class CodeFrameTextView: NSTextView {
   var codeFrame: NSRange?
 

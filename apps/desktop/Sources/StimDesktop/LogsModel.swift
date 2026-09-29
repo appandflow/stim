@@ -16,19 +16,26 @@ final class LogsModel: ObservableObject {
 
   enum Change {
     case reset
-    /// Rows from `from` on were replaced; the table had `oldCount` rows.
-    case updated(from: Int, oldCount: Int)
+    /// Rows from `from` on were replaced; `replaced` are their leads.
+    case updated(from: Int, replaced: [Row.Lead])
     /// These rows were removed from the front, together `lines` lines tall.
     case trimmed(rows: Int, lines: Int)
     case jumpToLatest
     case reveal(Int)
   }
 
-  /// An entry with what its row and detail show, built once when the entry forms.
   struct Row {
+    struct Lead: Equatable {
+      var ts: Double
+      var src: String
+      var msg: String
+    }
+
     var entry: LogEntry
     var view: LogEntryView
     var preview: StackPreview?
+
+    var lead: Lead { Lead(ts: entry.lead.ts, src: entry.lead.src, msg: entry.lead.msg) }
 
     var lines: Int {
       1 + (view.location == nil ? 0 : 1) + (preview.map { $0.frames.count + ($0.hidden > 0 ? 1 : 0) } ?? 0)
@@ -102,11 +109,11 @@ final class LogsModel: ObservableObject {
   private func handle(_ event: LogFollower.Event) {
     switch event {
     case .records(let batch):
-      let oldCount = rows.count
       let from = list.append(batch)
+      let replaced = rows[from...].map(\.lead)
       rows.removeSubrange(from...)
       rows += list.entries[from...].map(row)
-      onChange?(.updated(from: from, oldCount: oldCount))
+      onChange?(.updated(from: from, replaced: replaced))
       if list.records.count > Self.limit {
         let dropped = list.dropOldest(list.records.count - Self.limit + Self.limit / 10)
         let lines = rows[..<dropped].reduce(0) { $0 + $1.lines }

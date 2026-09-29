@@ -76,17 +76,19 @@ struct LogTable: NSViewRepresentable {
       case .reset:
         table.reloadData()
         selection.wrappedValue = []
-      case .updated(let from, let oldCount):
+      case .updated(let from, let replaced):
         let count = model.rows.count
-        let kept = from..<min(oldCount, count)
-        table.beginUpdates()
-        if !kept.isEmpty {
-          table.reloadData(forRowIndexes: IndexSet(kept), columnIndexes: [0])
-          table.noteHeightOfRows(withIndexesChanged: IndexSet(kept))
+        let selected = table.selectedRowIndexes
+        let kept = selected.filter { $0 < from }
+        let moved = selected.filter { $0 >= from && $0 - from < replaced.count }.compactMap { row in
+          (from..<count).first { model.rows[$0].lead == replaced[row - from] }
         }
-        if count > oldCount { table.insertRows(at: IndexSet(oldCount..<count)) }
-        if count < oldCount { table.removeRows(at: IndexSet(count..<oldCount)) }
+        table.beginUpdates()
+        table.removeRows(at: IndexSet(from..<(from + replaced.count)), withAnimation: [])
+        table.insertRows(at: IndexSet(from..<count), withAnimation: [])
         table.endUpdates()
+        let reselected = IndexSet(kept).union(IndexSet(moved))
+        if reselected != table.selectedRowIndexes { table.selectRowIndexes(reselected, byExtendingSelection: false) }
         if model.pinnedToLatest { scrollToLatest() }
       case .trimmed(let removed, let lines):
         let origin = table.enclosingScrollView?.contentView.bounds.origin ?? .zero
@@ -173,7 +175,6 @@ final class CopyingTableView: NSTableView {
   }
 }
 
-/// Draws a log row's lines: the first from the left edge, the rest under the message column.
 final class LogRowView: NSView {
   static let lineHeight: CGFloat = 15
   static let inset: CGFloat = 2
@@ -183,7 +184,6 @@ final class LogRowView: NSView {
   var lines: [NSAttributedString] = [] {
     didSet { needsDisplay = true }
   }
-  /// Where the lines after the first start: under the message.
   var indent: CGFloat = 0
 
   override var isFlipped: Bool { true }
@@ -206,7 +206,6 @@ enum LogRowText {
 
   private static let characterWidth = NSAttributedString(string: "0", attributes: [.font: font]).size().width
 
-  /// Where the message starts after the time, level, source and slot columns.
   static func messageColumn(_ record: LogRecord) -> CGFloat {
     LogRowView.inset + CGFloat(27 + (record.slot.map { $0.count + 3 } ?? 0)) * characterWidth
   }

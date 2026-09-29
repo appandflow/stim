@@ -542,6 +542,126 @@
           }
         }
       ]
+    },
+    {
+      "name": "a failed bundle response logged before its marker, with a device record between",
+      "records": [
+        {
+          "ts": 1790402302131,
+          "src": "metro",
+          "level": "error",
+          "event": "bundle_response_failed",
+          "platform": "android",
+          "statusCode": 500,
+          "msg": "android bundle response failed"
+        },
+        {
+          "ts": 1790402302132,
+          "src": "device",
+          "level": "info",
+          "platform": "android",
+          "msg": "ReactNativeJS: reloading"
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": "Android Bundling failed 131ms index.js (1 module)",
+          "raw": true,
+          "event": "expo_stdout",
+          "marker": true,
+          "ts": 1790402302136
+        },
+        {
+          "src": "metro",
+          "level": "error",
+          "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+          "raw": true,
+          "event": "expo_stdout",
+          "ts": 1790402302136
+        }
+      ],
+      "entries": [
+        {
+          "lead": 1,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "ReactNativeJS: reloading",
+            "location": null,
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 3,
+          "related": [0, 2],
+          "context": [],
+          "view": {
+            "title": "SyntaxError: Unexpected token, expected \"}\"",
+            "location": "App.js:12:31",
+            "codeFrame": [],
+            "details": ["android bundle response failed", "Android Bundling failed 131ms index.js (1 module)"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "error headers whose first part reads as a file",
+      "records": [
+        {
+          "ts": 1790402302131,
+          "src": "client",
+          "level": "error",
+          "msg": "Foo.Error: x: y"
+        },
+        {
+          "ts": 1790402302132,
+          "src": "client",
+          "level": "error",
+          "msg": "React.Error: failed: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/a.js"
+        },
+        {
+          "ts": 1790402302133,
+          "src": "client",
+          "level": "error",
+          "msg": "TypeError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/src/a.js: boom (3:4)"
+        }
+      ],
+      "entries": [
+        {
+          "lead": 0,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "x: y",
+            "location": "Foo.Error",
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 1,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "failed: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/a.js",
+            "location": "React.Error",
+            "codeFrame": [],
+            "details": []
+          }
+        },
+        {
+          "lead": 2,
+          "related": [],
+          "context": [],
+          "view": {
+            "title": "TypeError: boom",
+            "location": "src/a.js:3:4",
+            "codeFrame": [],
+            "details": []
+          }
+        }
+      ]
     }
   ],
   "previews": [
