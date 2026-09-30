@@ -207,6 +207,37 @@ test('a session that stops running stays listed as ended with its links for 3 da
   expect(resumed.endedAgents).toBeUndefined();
 });
 
+test('a failed ended-session write keeps the cache, so the next discovery records the session', async () => {
+  clock = Date.now();
+  const sessions = join(home, '.claude', 'sessions');
+  mkdirSync(sessions, { recursive: true });
+  const claude = join(sessions, `${process.pid}.json`);
+  writeFileSync(claude, JSON.stringify({ pid: process.pid, sessionId: 'live', cwd: app, startedAt: clock }));
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const discover = () => {
+    const state = environment();
+    measurer.schedule([state], [state.worktree!]);
+  };
+  discover();
+  await vi.waitFor(() => expect(readAgentSessionsCache()?.sessions).toHaveLength(1));
+
+  rmSync(claude);
+  const blocked = join(workspaceDir(app), 'ended-agents.json');
+  mkdirSync(join(blocked, 'keep'), { recursive: true });
+  clock += 20_000;
+  discover();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(readAgentSessionsCache()?.sessions).toHaveLength(1);
+
+  rmSync(blocked, { recursive: true });
+  clock += 20_000;
+  discover();
+  await vi.waitFor(() =>
+    expect(readEndedAgentSessions(app, clock).map((session) => session.sessionId)).toEqual(['live']),
+  );
+  expect(readAgentSessionsCache()?.sessions).toEqual([]);
+});
+
 test('a missing gh leaves the pull request unknown', async () => {
   const real = getExecutor();
   setExecutor({ ...real, findExecutable: (name) => (name === 'gh' ? null : real.findExecutable(name)) });

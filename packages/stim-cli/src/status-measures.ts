@@ -154,9 +154,25 @@ function applyAgentSessions(states: EnvironmentState[], now: number): void {
   });
 }
 
-function recordEndedAgents(states: EnvironmentState[], gone: AgentSession[], endedAt: string, now: number): boolean {
+function writeFileAtomic(file: string, entry: object): void {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(entry));
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function recordEndedAgents(
+  states: EnvironmentState[],
+  gone: AgentSession[],
+  endedAt: string,
+  now: number,
+): { changed: boolean; failed: boolean } {
   const goneKeys = new Set(gone.map(agentKey));
-  let changed = false;
+  const result = { changed: false, failed: false };
   attributeAgentSessions(agentWorkspaces(states), gone, now).forEach((sessions, i) => {
     const root = states[i]!.path;
     const ended = sessions.filter((session) => goneKeys.has(agentKey(session)));
@@ -167,12 +183,14 @@ function recordEndedAgents(states: EnvironmentState[], gone: AgentSession[], end
           readEndedAgentSessions(root, now).map((session) => [agentKey(session), session]),
         );
         for (const { pid: _pid, ...session } of ended) kept.set(agentKey(session), { ...session, endedAt });
-        writeCacheFile(workspaceEndedAgentsFile(root), { sessions: [...kept.values()] });
+        writeFileAtomic(workspaceEndedAgentsFile(root), { sessions: [...kept.values()] });
       });
-      changed = true;
-    } catch {}
+      result.changed = true;
+    } catch {
+      result.failed = true;
+    }
   });
-  return changed;
+  return result;
 }
 
 /**
@@ -326,10 +344,13 @@ export function createStatusMeasurer({
       at - lastFound <= ENDED_AGENT_RETENTION_MS
         ? previous!.sessions.filter((session) => !running.has(agentKey(session)))
         : [];
-    const ended = gone.length > 0 && recordEndedAgents(states, gone, previous!.discoveredAt, at);
+    const ended = gone.length
+      ? recordEndedAgents(states, gone, previous!.discoveredAt, at)
+      : { changed: false, failed: false };
+    if (ended.failed) return;
     writeCacheFile(agentSessionsCacheFile(), { discoveredAt: new Date(at).toISOString(), sessions });
     const shown = previous && at - Date.parse(previous.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS;
-    if (ended || !shown || JSON.stringify(previous.sessions) !== JSON.stringify(sessions)) updated();
+    if (ended.changed || !shown || JSON.stringify(previous.sessions) !== JSON.stringify(sessions)) updated();
   }
 
   return {
