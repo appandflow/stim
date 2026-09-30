@@ -48,20 +48,26 @@ public enum ActivityProgress {
   /// Once a row is done or failed, a later line with the same label starts a new row, since the
   /// CLI reports distinct facts (e.g. two `stop` lines: the supervisor, then the collector).
   public static func parse(_ lines: [String]) -> [ProgressStep] {
-    var order: [Int] = []
-    var steps: [ProgressStep] = []
-    for line in lines {
-      guard let step = parseLine(line) else { continue }
-      if let last = order.last, steps[last].label == step.label,
-        steps[last].state == .running || steps[last].state == .waiting
-      {
-        steps[last] = step
+    var accumulator = Accumulator()
+    for line in lines { accumulator.append(line) }
+    return accumulator.steps
+  }
+
+  /// Builds the same rows as `parse` one line at a time, so a running command's rows update
+  /// without re-reading the lines already seen.
+  public struct Accumulator: Sendable {
+    public private(set) var steps: [ProgressStep] = []
+
+    public init() {}
+
+    public mutating func append(_ line: String) {
+      guard let step = ActivityProgress.parseLine(line) else { return }
+      if let last = steps.last, last.label == step.label, last.state == .running || last.state == .waiting {
+        steps[steps.count - 1] = step
       } else {
-        order.append(steps.count)
         steps.append(step)
       }
     }
-    return order.map { steps[$0] }
   }
 
   /// The first step still waiting on something else, if any -- the CLI's "waiting for ..."

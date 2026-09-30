@@ -12,7 +12,7 @@ struct ActivitySheet: View {
   @State private var showsDetails = false
   @State private var showsKept = false
 
-  private var steps: [ProgressStep] { ActivityProgress.parse(run.lines.map(\.text)) }
+  private var steps: [ProgressStep] { run.progress }
 
   private var deleteArguments: [String]? {
     run.steps.count == 1 ? GcPreview.deleteArguments(after: run.command.arguments) : nil
@@ -342,6 +342,9 @@ struct ActivitySheet: View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 1) {
+          if run.output.droppedCount > 0 {
+            Text("\(run.output.droppedCount) earlier lines not shown").foregroundStyle(Palette.tertiary)
+          }
           ForEach(Array(run.logLines.enumerated()), id: \.offset) { index, line in
             Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
               .foregroundStyle(line.channel == .stderr ? Palette.secondary : Palette.text)
