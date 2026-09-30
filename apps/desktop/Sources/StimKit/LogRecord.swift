@@ -34,12 +34,14 @@ public struct LogRecord: Decodable, Sendable {
   public var deviceId: String?
   /// The agent-device command an `agent` record ran, such as `tap`.
   public var command: String?
+  /// When an `agent` record's action started, epoch milliseconds, when agent-device reported it.
+  public var startedAt: Double?
 
   public var source: LogSource? { LogSource(rawValue: src) }
   public var date: Date { Date(timeIntervalSince1970: ts / 1000) }
 
   enum CodingKeys: String, CodingKey {
-    case ts, src, level, msg, slot, event, platform, proc, marker, raw, stack, context, deviceId, command
+    case ts, src, level, msg, slot, event, platform, proc, marker, raw, stack, context, deviceId, command, startedAt
   }
 
   public init(from decoder: Decoder) throws {
@@ -58,6 +60,7 @@ public struct LogRecord: Decodable, Sendable {
     context = try? c.decodeIfPresent([String].self, forKey: .context)
     deviceId = try? c.decodeIfPresent(String.self, forKey: .deviceId)
     command = try? c.decodeIfPresent(String.self, forKey: .command)
+    startedAt = try? c.decodeIfPresent(Double.self, forKey: .startedAt)
   }
 
   /// Decodes one NDJSON line, or nil for a line that is not a record.

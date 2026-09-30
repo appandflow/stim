@@ -18,6 +18,7 @@ struct WorkspaceDetail: View {
   @State private var viewing: ViewedDevice?
   @State private var logMoment: LogMoment?
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.windowSize) private var windowSize
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -63,8 +64,8 @@ struct WorkspaceDetail: View {
     .navigationTitle(env.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
-        cli: cli, env: env, deviceID: viewed.id, machine: machine, revealInLogs: revealAgentActions,
-        close: { viewing = nil }, showsAgentLog: viewed.showsAgentLog
+        cli: cli, env: env, deviceID: viewed.id, machine: machine, windowSize: windowSize,
+        revealInLogs: revealAgentActions, close: { viewing = nil }
       )
       .environmentObject(actions)
     }
@@ -242,24 +243,6 @@ struct WorkspaceDetail: View {
       .help("Open \(device.label) to take it over or replay what it recorded")
       .accessibilityLabel("Open \(device.label)")
     }
-    .overlayPreferenceValue(ActivityChipAnchor.self) { anchor in
-      if let anchor, device.isRunning, !device.isPhysical, device.activityKey != nil {
-        GeometryReader { proxy in
-          let chip = proxy[anchor]
-          Button {
-            focusedID = device.id
-            viewing = ViewedDevice(id: device.id, showsAgentLog: true)
-          } label: {
-            Color.clear.contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .frame(width: chip.width, height: chip.height)
-          .offset(x: chip.minX, y: chip.minY)
-          .help("Show what agents did on \(device.label)")
-          .accessibilityLabel("Agent actions on \(device.label)")
-        }
-      }
-    }
   }
 
   /// Shows the agent source of `slot` in the logs drawer, scrolled to `at` when given.
@@ -276,7 +259,6 @@ struct WorkspaceDetail: View {
 
 struct ViewedDevice: Identifiable {
   var id: String
-  var showsAgentLog = false
 }
 
 extension DeviceRef {

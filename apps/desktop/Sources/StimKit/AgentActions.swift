@@ -13,6 +13,10 @@ public struct AgentAction: Sendable {
 
   public var failed: Bool { record.level == .error }
 
+  /// When the action started, which is where stim-server puts its replay marker: agent-device's `startedAt` when the
+  /// record has it, else the record's time.
+  public var at: Double { record.startedAt ?? record.ts }
+
   /// The device's own agent actions of `incoming` added to `existing`, newest first, keeping at most `max`.
   public static func appending(
     _ incoming: [LogRecord], to existing: [AgentAction], deviceID: String, max: Int
@@ -59,5 +63,55 @@ public enum AgentFilter: Hashable, Sendable {
     return [Option(filter: .all, label: "All", count: actions.count)]
       + (failed > 0 ? [Option(filter: .failed, label: "Failed", count: failed)] : [])
       + commands.map { Option(filter: .command($0.key), label: $0.key, count: $0.value) }
+  }
+}
+
+/// The device viewer's agent actions, oldest first as a session replay lists its events, with a gap row before an
+/// action that came more than `gapMs` after the one above it.
+public struct AgentActionList: Sendable {
+  public enum Row: Sendable {
+    case gap(ms: Double, before: Int)
+    case action(AgentAction)
+  }
+
+  public static let gapMs = 5 * 60_000.0
+
+  /// The actions `filter` keeps, oldest first.
+  public let actions: [AgentAction]
+
+  /// `actions` newest first, as `AgentAction.appending` keeps them.
+  public init(_ actions: [AgentAction], filter: AgentFilter = .all) {
+    self.actions = actions.filter(filter.matches).reversed()
+  }
+
+  public var rows: [Row] {
+    var rows: [Row] = []
+    for (index, action) in actions.enumerated() {
+      if index > 0, action.at - actions[index - 1].at > Self.gapMs {
+        rows.append(.gap(ms: action.at - actions[index - 1].at, before: action.key))
+      }
+      rows.append(.action(action))
+    }
+    return rows
+  }
+
+  /// The action on screen: the newest while live. While replaying, the last action at or before the frame shown at
+  /// `at`, or at or before `stepped`, the action last stepped or clicked to, while the playhead has not reached it,
+  /// since a seek lands just before the action. Nil before the first action, or before the first frame arrives with
+  /// nothing stepped to.
+  public func current(live: Bool, at: Double?, stepped: Double?) -> Int? {
+    if live { return actions.last?.key }
+    guard let anchor = [at, stepped].compactMap({ $0 }).max() else { return nil }
+    return actions.last { $0.at <= anchor }?.key
+  }
+
+  /// The action after or before the one keyed `key`, for moving through the list with the arrow keys; from no action,
+  /// or one the list does not show, the first or the last. Nil past either end.
+  public func adjacent(to key: Int?, forward: Bool) -> AgentAction? {
+    guard let key, let index = actions.firstIndex(where: { $0.key == key }) else {
+      return forward ? actions.first : actions.last
+    }
+    let next = index + (forward ? 1 : -1)
+    return actions.indices.contains(next) ? actions[next] : nil
   }
 }

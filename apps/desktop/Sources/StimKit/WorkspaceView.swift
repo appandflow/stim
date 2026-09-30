@@ -281,24 +281,6 @@ extension Workspace {
   }
 }
 
-/// The row under a device: the driving tool and its last action, or how long the device has been idle.
-public struct AgentRow: Equatable, Sendable {
-  public var tool: String?
-  public var text: String
-
-  public init(activity: DeviceActivity?, last: (date: Date, message: String)?, now: Date) {
-    let lastText = last.map { "\($0.message) \u{00B7} \(Format.since(now.timeIntervalSince($0.date))) ago" }
-    if activity?.state == "driven" {
-      tool = activity?.driver?.tool ?? "Agent"
-      text = lastText ?? "no action yet"
-      return
-    }
-    tool = nil
-    let idleSince = last?.date ?? activity?.lastActivityAt.flatMap(parseTimestamp)
-    text = idleSince.map { "idle \(Format.duration(now.timeIntervalSince($0)))" } ?? "nothing yet"
-  }
-}
-
 /// The git and pull request chip beside the stage: the pull request coloured by its state with one CI mark, and
 /// git details only when there are some.
 public struct GitChip: Equatable, Sendable {

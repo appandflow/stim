@@ -13,28 +13,23 @@ struct DeviceTile: View {
   var workspace: String?
   var workspaceTitle: String?
   var build: Build? = nil
-  var takenOver = false
-  var onToggleTakeOver: (() -> Void)? = nil
   /// The device's replay through stim-server, where the tile offers one.
   var replay: ReplayController? = nil
   /// Whether `replay` shows recorded footage instead of the live screen.
   var replaying = false
-  var replayOff = false
-  var onReplaySeek: () -> Void = {}
   var usage: WorkspaceUsage? = nil
   var presence: AppPresence? = nil
   var showsCovers = false
   var focused = false
-  /// The device viewer: take over, hardware buttons, rotation, replay, the agent row and Stop. A tile without it is
-  /// a preview with no controls.
+  /// The device viewer's canvas: only the screen, with the device's buttons beside it, and Run on a stopped device.
+  /// A tile without it is a preview card with no controls.
   var viewer = false
-  /// The widest the viewer can draw the tile; the screen shrinks below `screenHeight` to fit it.
+  /// The widest the viewer can draw the screen; it shrinks below `screenHeight` to fit.
   var maxWidth: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
-  /// The device's agent actions for the viewer's agent row, newest first.
-  var agentActions: [AgentAction] = []
-  var showAgentLog: () -> Void = {}
+  /// A physical device's stream stopped taking input.
+  var onControlLost: () -> Void = {}
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
@@ -43,17 +38,64 @@ struct DeviceTile: View {
   @State private var foldError: String?
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
-  @State private var confirmingStop = false
   @State private var replaySize: CGSize?
   @State private var simulatorButtons = SimulatorButtons()
   @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
-  @ObservedObject private var server = ServerSession.shared
 
   private let screenPadding: CGFloat = 12
   static let minimumWidth: CGFloat = 240
+  static let buttonStripWidth: CGFloat = 44
 
   var body: some View {
+    if viewer { canvas } else { card }
+  }
+
+  private var canvas: some View {
+    HStack(alignment: .center, spacing: Space.lg) {
+      if let workspace, showsStoppedBar, !replaying {
+        stoppedBar(runCommand(for: device, cwd: workspace))
+          .frame(maxWidth: 420)
+          .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+          .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+      } else {
+        Group {
+          if replaying, let replay {
+            ReplayScreen(controller: replay) { replaySize = $0 }
+              .frame(width: replayWidth)
+              .padding(screenPadding)
+              .frame(height: fittedHeight)
+          } else {
+            screen
+              .frame(width: width, height: fittedHeight)
+              .overlay { screenCover }
+          }
+        }
+        .background(Media.screen)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+        .overlay { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
+        if hasButtons {
+          buttonStrip
+        }
+      }
+    }
+  }
+
+  private var frameColor: Color {
+    if case .remote = device { return Palette.info }
+    return interactive ? Palette.accent : Palette.border
+  }
+
+  private var frameWidth: CGFloat {
+    if case .remote = device { return 2 }
+    return interactive ? 2 : 1
+  }
+
+  private var hasButtons: Bool {
+    device.isRunning && !isPhysical && ["ios", "android"].contains(device.platform)
+  }
+
+  private var card: some View {
     Card {
       VStack(spacing: 0) {
         header
@@ -78,21 +120,6 @@ struct DeviceTile: View {
             .frame(height: fittedHeight)
             .background(Media.screen)
             .overlay { screenCover }
-        }
-        if viewer, interactive, !isPhysical, device.platform != "web" {
-          hardwareButtons
-            .padding(.horizontal, Space.lg)
-            .padding(.vertical, Space.md)
-        }
-        if viewer, device.isRunning, !isPhysical, device.activityKey != nil {
-          Rectangle().fill(Palette.border).frame(height: 1)
-          DeviceAgentRow(device: device, actions: agentActions, showAll: showAgentLog)
-        }
-        if viewer, let replay, replaying || replayOff || replay.timeline != nil {
-          Rectangle().fill(Palette.border).frame(height: 1)
-          ReplayBar(controller: replay, running: device.isRunning, replayOff: replayOff, onSeek: onReplaySeek)
-            .padding(.horizontal, Space.lg)
-            .padding(.vertical, Space.md)
         }
       }
     }
@@ -129,11 +156,10 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
-        if case .remote = device, !viewer {
+        if case .remote = device {
           Pill(tone: .warning) { Text("billable") }
             .help("This remote session is billed while it runs.")
         }
-        if viewer { controls }
       }
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -142,22 +168,12 @@ struct DeviceTile: View {
             now: context.date), badge.driverTool == nil
           {
             activityChip(badge)
-              .anchorPreference(key: ActivityChipAnchor.self, value: .bounds) { $0 }
           }
         }
         if device.appStopped {
           if presence != AppPresence.none {
             Pill(tone: .warning) { Text("App not running") }
               .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
-          }
-          if viewer, let workspace, let run = runCommand(for: device, cwd: workspace) {
-            Button("Run", systemImage: "play.fill") {
-              actions.run("Run on \(platformName(device.platform))", run)
-            }
-            .buttonStyle(.stim(.primary))
-            .fixedSize()
-            .disabled(actions.active(for: workspace) != nil || build != nil)
-            .help((["stim"] + run.arguments).joined(separator: " "))
           }
         }
         if case .web(let browser) = device, browser.pageFailed {
@@ -189,21 +205,12 @@ struct DeviceTile: View {
     }
   }
 
-  @ViewBuilder private var controls: some View {
-    takeOverButton
-    if case .remote = device {
-      remoteControls
-    } else if case .web(let browser) = device, let workspace {
-      webControls(browser, workspace: workspace)
-    } else if device.isRunning, !isPhysical, let workspace {
-      stopButton(workspace: workspace)
-    }
-  }
-
-  /// Home, Back, Apps and Lock as the device has them, then rotation and fold or posture. A physical Android phone's
-  /// buttons come from its own screen view.
-  @ViewBuilder private var hardwareButtons: some View {
-    HStack(spacing: Space.sm) {
+  /// Home, Back, Apps and Lock as the device has them, then rotation and fold or posture, in a column beside the
+  /// screen. The buttons go through the screen's own input and press only while the device is taken over; rotation,
+  /// fold and posture use simctl or adb and work at any time. A physical Android phone's buttons come from its own
+  /// screen view.
+  private var buttonStrip: some View {
+    VStack(spacing: Space.sm) {
       switch device {
       case .ios:
         hardwareButton("Home", systemImage: "circle") { simulatorButtons.press(.home) }
@@ -216,11 +223,9 @@ struct DeviceTile: View {
       case .web, .remote:
         EmptyView()
       }
-      if device.platform != "web" {
-        Rectangle().fill(Palette.border).frame(width: 1, height: 16)
-        rotateButton(clockwise: false)
-        rotateButton(clockwise: true)
-      }
+      Rectangle().fill(Palette.border).frame(width: 16, height: 1)
+      rotateButton(clockwise: false)
+      rotateButton(clockwise: true)
       if device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable, case .ios(_, let sim) = device {
         foldButton(udid: sim.udid)
       }
@@ -228,42 +233,19 @@ struct DeviceTile: View {
         postureMenu(serial: serial, current: emulatorPosture)
       }
     }
-    .frame(maxWidth: .infinity)
+    .padding(Space.sm)
+    .frame(width: Self.buttonStripWidth)
+    .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
   private func hardwareButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
     Button(title, systemImage: systemImage, action: action)
       .labelStyle(.iconOnly)
       .buttonStyle(.stim())
-      .help("Press the device's \(title) button")
+      .disabled(!interactive)
+      .help(interactive ? "Press the device's \(title) button" : "Take over the device to press its \(title) button")
       .accessibilityLabel("Press \(title)")
-  }
-
-  @ViewBuilder private var takeOverButton: some View {
-    if let onToggleTakeOver,
-      !isPhysical || takenOver || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
-    {
-      if takenOver {
-        Button("Release", systemImage: "hand.raised.fill", action: onToggleTakeOver)
-          .labelStyle(.iconOnly)
-          .buttonStyle(.stim(.primary))
-          .fixedSize()
-          .help("Release control so an agent can drive this device again.")
-          .accessibilityLabel("Release control")
-      } else {
-        Button("Take over", systemImage: "hand.raised", action: onToggleTakeOver)
-          .labelStyle(.iconOnly)
-          .buttonStyle(.stim())
-          .fixedSize()
-          .disabled(replaying)
-          .help(
-            replaying
-              ? "Go live to take over this device."
-              : "Take over: send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it."
-          )
-          .accessibilityLabel("Take over")
-      }
-    }
   }
 
   private var isPhysical: Bool { device.isPhysical }
@@ -319,62 +301,6 @@ struct DeviceTile: View {
     .padding(Space.lg)
   }
 
-  private func stopButton(workspace: String) -> some View {
-    Button("Stop") {
-      actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: workspace))
-    }
-    .buttonStyle(.stim(.destructive))
-    .fixedSize()
-    .disabled(actions.active(for: workspace) != nil)
-    .help("stim stop --slot \(device.slot): stops every device in this slot, keeping the shared server and other slots running")
-  }
-
-  @ViewBuilder private var remoteControls: some View {
-    Pill(tone: .warning) { Text("billable") }
-      .help("This remote session is billed while it runs.")
-    if let workspace {
-      Button("Stop") { confirmingStop = true }
-        .buttonStyle(.stim(.destructive))
-        .fixedSize()
-        .disabled(actions.active(for: workspace) != nil)
-        .help("stim stop: ends the remote session with the rest of the workspace")
-        .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
-          Button("Run stim stop", role: .destructive) {
-            actions.run(
-              "Stop \(workspaceTitle ?? workspace)", StimCommand(["stop"], cwd: workspace))
-          }
-        } message: {
-          Text(
-            "stim stop ends the billable remote session and halts the workspace's dev server and devices. The session cannot be resumed."
-          )
-        }
-    }
-  }
-
-  @ViewBuilder private func webControls(_ browser: WebBrowser, workspace: String) -> some View {
-    let busy = actions.active(for: workspace) != nil
-    if let url = URL(string: browser.currentURL), ["http", "https"].contains(url.scheme) {
-      Button("Open in browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.stim())
-        .help("Open \(browser.currentURL) in your default browser. Stim's Chrome and its profile are not involved.")
-    }
-    if browser.running {
-      Button("Reload", systemImage: "arrow.clockwise") {
-        actions.run("Reload web", StimCommand(["reload", "web"], cwd: workspace))
-      }
-      .labelStyle(.iconOnly)
-      .buttonStyle(.stim())
-      .disabled(busy)
-      .help("stim reload web: reloads the page in Stim's Chrome")
-      Button("Close") { actions.run("Close web", stopCommand(for: device, cwd: workspace)) }
-        .buttonStyle(.stim(.destructive))
-        .fixedSize()
-        .disabled(busy)
-        .help("stim stop --slot web: closes Stim's Chrome and keeps its profile, Metro and every device")
-    }
-  }
-
   @ViewBuilder private func activityChip(_ badge: ActivityBadge) -> some View {
     let basis = device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? ""
     switch badge {
@@ -408,21 +334,23 @@ struct DeviceTile: View {
 
   private func foldButton(udid: String) -> some View {
     let action = posture == "Folded" ? "Unfold" : posture == "Unfolded" ? "Fold" : "Fold / Unfold"
-    return Button(folding ? "Folding" : foldError == nil ? action : "\(action) failed, retry") {
+    let title = folding ? "Folding" : foldError == nil ? action : "\(action) failed, retry"
+    return Button(title, systemImage: foldError == nil ? "rectangle.split.2x1" : "exclamationmark.triangle") {
       folding = true
       Task {
         foldError = await SimulatorFold.toggle(udid: udid)
         folding = false
       }
     }
+    .labelStyle(.iconOnly)
     .buttonStyle(.stim())
-    .fixedSize()
     .disabled(folding)
-    .help(foldError ?? "Sweeps the hinge to the other posture, which lights the other screen.")
+    .help(
+      foldError.map { "\(title): \($0)" } ?? "\(title): sweeps the hinge to the other posture, which lights the other screen.")
   }
 
   private func postureMenu(serial: String, current: EmulatorPosture) -> some View {
-    Menu(postureFailed ? "Posture failed, retry" : "Posture") {
+    Menu {
       ForEach([EmulatorPosture.closed, .halfOpened, .opened], id: \.self) { posture in
         Toggle(
           posture.label,
@@ -435,11 +363,15 @@ struct DeviceTile: View {
               }
             }))
       }
+    } label: {
+      Image(systemName: postureFailed ? "exclamationmark.triangle" : "rectangle.split.2x1")
     }
     .menuStyle(.button)
+    .menuIndicator(.hidden)
     .buttonStyle(.stim())
     .fixedSize()
-    .help(postureFailed ? "The last posture change did not reach the emulator." : "Moves the emulator's hinge.")
+    .help(postureFailed ? "The last posture change did not reach the emulator." : "Posture: moves the emulator's hinge.")
+    .accessibilityLabel(postureFailed ? "Posture failed, retry" : "Posture")
   }
 
   /// The panel an iPhone Duo's posture lit: the only lit one, else the first.
@@ -585,7 +517,7 @@ struct DeviceTile: View {
         PhysicalDeviceScreen(
           device: device, workspace: workspace, interactive: interactive,
           onPixelSizeChange: { pixelSizes[1] = $0 },
-          onControlLost: { if takenOver { onToggleTakeOver?() } }
+          onControlLost: onControlLost
         )
         .id(device.id)
         .frame(width: screenWidth(1))
@@ -763,56 +695,6 @@ private struct ScreenMessage: View {
       .multilineTextAlignment(.center)
       .padding()
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-}
-
-/// Where a tile draws its activity chip, so the canvas can put a button over it that opens the agent actions.
-struct ActivityChipAnchor: PreferenceKey {
-  static let defaultValue: Anchor<CGRect>? = nil
-
-  static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-    value = value ?? nextValue()
-  }
-}
-
-private struct DeviceAgentRow: View {
-  var device: DeviceRef
-  var actions: [AgentAction]
-  var showAll: () -> Void
-  @State private var shown = false
-
-  var body: some View {
-    Button {
-      shown = true
-    } label: {
-      TimelineView(.periodic(from: .now, by: 15)) { context in
-        let latest = actions.first.map { (date: $0.record.date, message: $0.record.msg) }
-        let row = AgentRow(activity: device.activity, last: latest, now: context.date)
-        HStack(spacing: Space.md) {
-          Text(row.tool ?? "No agent")
-            .font(.stim(.footnote, weight: .semibold))
-            .foregroundStyle(row.tool == nil ? Palette.tertiary : Palette.primary)
-          Text(row.text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-          Spacer(minLength: Space.sm)
-          Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.tertiary)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(row.tool ?? "No agent"), \(row.text)")
-      }
-      .padding(.horizontal, Space.lg)
-      .padding(.vertical, Space.md)
-    }
-    .buttonStyle(.hoverRow(radius: 0))
-    .help("stim logs --source agent: what an agent did on this device. Click for the recent actions.")
-    .popover(isPresented: $shown, arrowEdge: .bottom) {
-      AgentActionsList(actions: actions, driver: device.activity?.driver?.tool) {
-        shown = false
-        showAll()
-      }
-      .padding(Space.lg)
-      .frame(width: 380, alignment: .leading)
-      .presentationBackground(Palette.surface)
-    }
   }
 }
 

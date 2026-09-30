@@ -3,56 +3,77 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// One device of a workspace, large: its live screen, Take over and Release with the device's buttons, replay, the
-/// agent row, the full agent action log beside it, and Stop. Escape releases a device that is taken over, and
-/// otherwise closes the viewer. A command it starts shows its activity sheet over the viewer, since the window under
-/// the viewer cannot present another sheet.
+/// One device of a workspace, large, as a session replay lays it out: one toolbar, the device on a plain canvas with
+/// its buttons beside it, the replay bar across the bottom, and the agent's actions on the right. Escape releases a
+/// device that is taken over, and otherwise closes the viewer. A command it starts shows its activity sheet over the
+/// viewer, since the window under the viewer cannot present another sheet.
 struct DeviceViewer: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var deviceID: String
   var machine: MachineUsage?
+  /// The main window's size, which caps the sheet's.
+  var windowSize: CGSize
   /// Shows the workspace's agent logs for `slot`, scrolled to `at` when given.
   var revealInLogs: (_ slot: String, _ at: Double?) -> Void
   var close: () -> Void
-  @State var showsAgentLog = false
   @State private var takenOver = false
   @State private var escapeMonitor: Any?
   @State private var window = WindowRef()
+  @FocusState private var actionsFocused: Bool
+  @AppStorage(AppPreferences.Key.viewerShowsActions) private var showsActions = true
   @EnvironmentObject private var actions: ActionCenter
 
+  static let minimumSize = CGSize(width: 560, height: 480)
+  static let actionsWidth: CGFloat = 360
+  private static let minimumCanvasWidth: CGFloat = 420
+  /// Room left around the sheet, so the window under it still shows.
+  private static let windowMargin = CGSize(width: 64, height: 40)
+
+  static func size(in window: CGSize) -> CGSize {
+    CGSize(
+      width: max(minimumSize.width, window.width - windowMargin.width),
+      height: max(minimumSize.height, window.height - windowMargin.height))
+  }
+
   var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: Space.md) {
-        Text(env.names.title).font(.stim(.callout, weight: .semibold)).lineLimit(1)
-        if let device {
-          Text(device.label).font(.stim(.callout)).foregroundStyle(Palette.secondary).lineLimit(1)
-        }
-        Spacer(minLength: Space.md)
-        Button("Close", systemImage: "xmark", action: close)
-          .labelStyle(.iconOnly)
-          .buttonStyle(.stim(.plain))
-          .help(takenOver ? "Close the viewer and release the device (Escape releases first)" : "Close (Escape)")
-      }
-      .padding(.horizontal, Space.xl)
-      .padding(.vertical, Space.md)
-      Rectangle().fill(Palette.border).frame(height: 1)
-      GeometryReader { geo in
-        Group {
-          if let device {
-            viewer(device, size: geo.size)
+    let size = Self.size(in: windowSize)
+    Group {
+      if let device {
+        AgentFeed(cli: cli, workspace: env.path, device: device) { agentActions in
+          if let target = replayTarget(device) {
+            ReplayHost(target: target) { replay in
+              ReplayingContent(replay: replay) { replaying in
+                content(device, size: size, agentActions: agentActions, replay: replay, replaying: replaying)
+              }
+            }
           } else {
-            EmptyState(title: "Device gone", message: "stim status no longer reports this device.")
+            content(device, size: size, agentActions: agentActions, replay: nil, replaying: false)
           }
         }
-        .frame(width: geo.size.width, height: geo.size.height)
+      } else {
+        VStack(spacing: 0) {
+          HStack {
+            Spacer()
+            Button("Close", systemImage: "xmark", action: close)
+              .labelStyle(.iconOnly)
+              .buttonStyle(.stim(.plain))
+              .help("Close (Escape)")
+          }
+          .padding(.horizontal, Space.xl)
+          .padding(.vertical, Space.md)
+          EmptyState(title: "Device gone", message: "stim status no longer reports this device.")
+            .frame(maxHeight: .infinity)
+        }
       }
-      .padding(Space.xl)
     }
+    .frame(width: size.width, height: size.height)
     .background(Palette.background)
-    .frame(minWidth: 480, idealWidth: 760, maxWidth: .infinity, minHeight: 600, idealHeight: 920, maxHeight: .infinity)
     .background(WindowReader(found: window))
-    .onAppear(perform: watchEscape)
+    .onAppear {
+      watchEscape()
+      actionsFocused = true
+    }
     .onDisappear(perform: unwatchEscape)
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)
@@ -60,94 +81,102 @@ struct DeviceViewer: View {
     .onChange(of: device?.isInteractive) { _, interactive in
       if interactive != true { takenOver = false }
     }
+    .onChange(of: takenOver) { _, takenOver in
+      if !takenOver { actionsFocused = true }
+    }
   }
 
   private var device: DeviceRef? { env.orderedDevices.first { $0.id == deviceID } }
 
-  static let agentLogWidth: CGFloat = 340
-
-  private func viewer(_ device: DeviceRef, size: CGSize) -> some View {
-    AgentFeed(cli: cli, workspace: env.path, device: device) { actions in
-      if let target = replayTarget(device) {
-        ReplayHost(target: target) { replay in
-          layout(device, size: size, actions: actions, replay: replay)
-        }
-      } else {
-        layout(device, size: size, actions: actions, replay: nil)
-      }
-    }
-  }
-
-  private func layout(_ device: DeviceRef, size: CGSize, actions: [AgentAction], replay: ReplayController?)
-    -> some View
-  {
-    let log = showsAgentLog && hasAgentRow(device)
-    let width = log ? max(0, size.width - Self.agentLogWidth - Space.xl) : size.width
-    let screen = CGSize(width: width, height: size.height)
-    return HStack(spacing: Space.xl) {
-      screenTile(device, size: screen, actions: actions, replay: replay)
-        .frame(width: screen.width, height: screen.height)
-      if log {
-        AgentActionLog(
-          device: device, actions: actions,
-          select: { reveal($0, device: device, replay: replay) },
-          openLogs: {
-            revealInLogs(device.slot, nil)
-            close()
-          },
-          close: { showsAgentLog = false }
-        )
-        .frame(width: Self.agentLogWidth, height: size.height)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
-      }
-    }
-  }
-
-  @ViewBuilder private func screenTile(
-    _ device: DeviceRef, size: CGSize, actions: [AgentAction], replay: ReplayController?
+  private func content(
+    _ device: DeviceRef, size: CGSize, agentActions: [AgentAction], replay: ReplayController?, replaying: Bool
   ) -> some View {
-    if let replay {
-      ReplayingTile(replay: replay) { replaying in
-        let bar = replaying || env.replayOff || replay.timeline != nil
-        tile(
-          device, screenHeight: screenHeight(device, height: size.height, replayBar: bar), maxWidth: size.width,
-          actions: actions, replay: replay, replaying: replaying
-        )
-        .onChange(of: replaying) { _, replaying in
-          if replaying { takenOver = false }
+    let hasActions = Self.hasActions(device)
+    let fits = size.width - Self.actionsWidth - 1 >= Self.minimumCanvasWidth
+    let listed = hasActions && fits && showsActions
+    return VStack(spacing: 0) {
+      DeviceViewerToolbar(
+        device: device, env: env, usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
+        takenOver: $takenOver, replaying: replaying, showsActions: hasActions && fits ? $showsActions : nil,
+        close: close)
+      Rectangle().fill(Palette.border).frame(height: 1)
+      HStack(spacing: 0) {
+        VStack(spacing: 0) {
+          canvas(device, replay: replay, replaying: replaying)
+          if let replay, replaying || env.replayOff || replay.timeline != nil {
+            Rectangle().fill(Palette.border).frame(height: 1)
+            ReplayBar(
+              controller: replay, running: device.isRunning, replayOff: env.replayOff,
+              onSeek: { takenOver = false }
+            )
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.md)
+            .background(Palette.surface)
+          }
+        }
+        if listed {
+          Rectangle().fill(Palette.border).frame(width: 1)
+          AgentActionsPanel(
+            actions: agentActions, replay: replay,
+            canReplay: replay != nil && !env.replayOff && replay?.replayable != false,
+            focused: $actionsFocused,
+            seek: { action in
+              if let replay { seek(action, replay: replay) }
+            },
+            playOrPause: replay.map { replay in
+              {
+                guard !env.replayOff, replay.replayable != false, let timeline = replay.timeline else { return }
+                ReplayBar.playOrPause(
+                  replay, timeline: timeline, running: device.isRunning, onSeek: { takenOver = false })
+              }
+            },
+            openLogs: { action in
+              revealInLogs(device.slot, action?.record.ts)
+              close()
+            }
+          )
+          .frame(width: Self.actionsWidth)
+          .background(Palette.sidebar)
         }
       }
-    } else {
-      tile(
-        device, screenHeight: screenHeight(device, height: size.height, replayBar: false), maxWidth: size.width,
-        actions: actions, replay: nil, replaying: false)
     }
   }
 
-  /// Shows the action in the logs and, when the replay recorded that moment, plays it from just before the action
-  /// with the viewer open; otherwise closes the viewer so the logs show.
-  private func reveal(_ action: AgentAction, device: DeviceRef, replay: ReplayController?) {
-    revealInLogs(device.slot, action.record.ts)
-    if let replay, let at = replay.timeline?.seekTime(forActionAt: action.record.ts) {
-      takenOver = false
-      replay.stepped = action.record.ts
-      replay.seek(at: at, rate: replay.speed)
-    } else {
-      close()
+  private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {
+    GeometryReader { geo in
+      let padding = Space.xxl
+      let strip = device.isRunning && !device.isPhysical ? DeviceTile.buttonStripWidth + Space.lg : 0
+      DeviceTile(
+        device: device, screenHeight: max(160, geo.size.height - padding * 2),
+        interactive: device.isRunning && takenOver && !replaying, workspace: env.path,
+        workspaceTitle: env.names.title,
+        build: env.runningBuild(for: device),
+        replay: replay, replaying: replaying,
+        presence: env.appPresence(device),
+        showsCovers: true,
+        viewer: true,
+        maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2 - strip),
+        onControlLost: { takenOver = false }
+      )
+      .frame(width: geo.size.width, height: geo.size.height)
+      .onChange(of: replaying) { _, replaying in
+        if replaying { takenOver = false }
+      }
     }
+    .background(Palette.grouped)
   }
 
-  private func hasAgentRow(_ device: DeviceRef) -> Bool {
-    device.isRunning && !device.isPhysical && device.activityKey != nil
+  /// Plays from just before the action, counting it as the action shown while the seek lands before it.
+  private func seek(_ action: AgentAction, replay: ReplayController) {
+    guard let at = replay.timeline?.seekTime(forActionAt: action.at) else { return }
+    takenOver = false
+    replay.stepped = action.at
+    replay.seek(at: at, rate: replay.speed)
   }
 
-  /// What the tile leaves for the screen: its header, the agent row, and the button row and replay bar when shown.
-  private func screenHeight(_ device: DeviceRef, height: CGFloat, replayBar: Bool) -> CGFloat {
-    let local = device.isRunning && !device.isPhysical
-    let agentRow: CGFloat = hasAgentRow(device) ? 40 : 0
-    let buttonRow: CGFloat = takenOver && local && ["ios", "android"].contains(device.platform) ? 50 : 0
-    return max(240, height - 110 - agentRow - buttonRow - (replayBar ? 60 : 0))
+  /// Physical and remote devices report no agent actions.
+  private static func hasActions(_ device: DeviceRef) -> Bool {
+    !device.isPhysical && device.activityKey != nil
   }
 
   /// Physical and remote devices have no replay, as on the phone.
@@ -157,28 +186,6 @@ struct DeviceViewer: View {
     case _ where device.isPhysical: return nil
     default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
     }
-  }
-
-  private func tile(
-    _ device: DeviceRef, screenHeight: CGFloat, maxWidth: CGFloat, actions: [AgentAction], replay: ReplayController?,
-    replaying: Bool
-  ) -> some View {
-    DeviceTile(
-      device: device, screenHeight: screenHeight,
-      interactive: device.isRunning && takenOver && !replaying, workspace: env.path,
-      workspaceTitle: env.names.title,
-      build: env.runningBuild(for: device),
-      takenOver: takenOver && !replaying,
-      onToggleTakeOver: device.isInteractive ? { takenOver.toggle() } : nil,
-      replay: replay, replaying: replaying, replayOff: env.replayOff,
-      onReplaySeek: { takenOver = false },
-      usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
-      presence: env.appPresence(device),
-      showsCovers: true,
-      viewer: true,
-      maxWidth: maxWidth,
-      agentActions: actions,
-      showAgentLog: { showsAgentLog = true })
   }
 
   /// The device's own view takes Escape while it has the keyboard, so the key is caught before any view sees it,
@@ -207,11 +214,12 @@ struct DeviceViewer: View {
 }
 
 /// Re-renders its content as the replay starts or stops, or its footage appears or goes, and not as the replay
-/// moves, so playing and scrubbing redraw only the replay bar and screen.
-private struct ReplayingTile<Content: View>: View {
+/// moves, so playing and scrubbing redraw only the replay bar, the screen and the action highlighted.
+private struct ReplayingContent<Content: View>: View {
   private struct Shown: Equatable {
     var replaying: Bool
     var hasFootage: Bool
+    var replayable: Bool?
   }
 
   var replay: ReplayController
@@ -221,8 +229,8 @@ private struct ReplayingTile<Content: View>: View {
   var body: some View {
     content(shown.replaying)
       .onReceive(
-        replay.$replay.combineLatest(replay.$range)
-          .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true)) }
+        replay.$replay.combineLatest(replay.$range, replay.$replayable)
+          .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true), replayable: $2) }
           .removeDuplicates()
       ) { shown = $0 }
   }
