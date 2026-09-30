@@ -223,6 +223,7 @@ struct ActivitySheet: View {
         ("Preview cleanup", "Previewing cleanup"),
         ("Reclaim disk space", "Reclaiming disk space"),
         ("Nightly cleanup", "Cleaning up"),
+        ("Reclaim ", "Reclaiming "),
         ("Clean up", "Cleaning up"),
         ("Stop ", "Stopping "),
         ("Reload ", "Reloading "),

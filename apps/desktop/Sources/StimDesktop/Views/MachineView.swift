@@ -29,7 +29,7 @@ struct MachineView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
-        NowBand(status: status, metrics: metrics)
+        NowBand(status: status, metrics: metrics, gc: gc)
         if let plan = autopilot.pressure { pressureBanner(plan) }
         headline(report)
         safeToFree(report)

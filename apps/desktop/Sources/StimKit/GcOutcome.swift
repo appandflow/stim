@@ -24,12 +24,23 @@ public struct GcOutcome: Hashable, Sendable {
   /// Entries the CLI counted as failed. It can exceed `failed.count` on a CLI that predates `results`.
   public var failures: Int
 
-  public var freedBytes: Int64 { done.compactMap(\.bytes).filter { $0 > 0 }.reduce(0, +) }
+  static let memoryKinds: Set<String> = ["watchman", "gradleDaemon", "kotlinDaemon"]
+
+  /// Disk the run freed.
+  public var freedBytes: Int64 {
+    done.filter { !Self.memoryKinds.contains($0.kind) }.compactMap(\.bytes).filter { $0 > 0 }.reduce(0, +)
+  }
+
+  /// Footprint of the processes the run stopped.
+  public var reclaimedMemoryBytes: Int64 {
+    done.filter { Self.memoryKinds.contains($0.kind) }.compactMap(\.bytes).filter { $0 > 0 }.reduce(0, +)
+  }
 
   /// One line such as "Freed 20.2 GB \u{00B7} Deleted 3 devices".
   public var headline: String {
     var parts: [String] = []
     if freedBytes > 0 { parts.append("Freed \(Format.fileSize(freedBytes))") }
+    if reclaimedMemoryBytes > 0 { parts.append("Reclaimed \(Format.memory(reclaimedMemoryBytes)) of memory") }
     for (phrase, count) in Self.phrases(done) { parts.append(phrase(count)) }
     if parts.isEmpty { return failures > 0 ? "Nothing was cleaned up" : "Nothing to clean up" }
     return parts.joined(separator: " \u{00B7} ")
@@ -113,6 +124,8 @@ public struct GcOutcome: Hashable, Sendable {
       (["cache", "caches"], { "Cleaned \(count($0, "cache"))" }),
       (["recording", "recordings"], { "Deleted the device recordings of \(count($0, "workspace"))" }),
       (["easSession", "orphanedEasSessions"], { "Stopped \(count($0, "EAS session"))" }),
+      (["watchman", "gradleDaemon", "kotlinDaemon"], { "Stopped \(count($0, "helper process", "helper processes"))" }),
+      (["watchmanRoot"], { "Removed \(count($0, "stale watchman root"))" }),
       (["project", "deadProjects", "invalidProjects"], { "Pruned \(count($0, "project entry", "project entries"))" }),
     ]
     let known = groups.reduce(Set<String>()) { $0.union($1.kinds) }
