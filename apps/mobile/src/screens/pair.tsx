@@ -18,6 +18,8 @@ import { renameMac, saveMac } from '@/lib/macs';
 import { manualPairing, parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
 
+const FALLBACK_DEVICE_NAME = 'Phone';
+
 type Step =
   | { kind: 'scan' }
   | { kind: 'manual' }
@@ -25,7 +27,12 @@ type Step =
   | { kind: 'name'; id: string; name: string };
 
 async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name: string }> {
-  const paired = await pair(payload.endpoint, payload.pairingToken, Constants.deviceName ?? t`Phone`, CLIENT);
+  const paired = await pair(
+    payload.endpoint,
+    payload.pairingToken,
+    Constants.deviceName ?? FALLBACK_DEVICE_NAME,
+    CLIENT,
+  );
   const name = payload.name || paired.serverName;
   const mac = await saveMac({ name, endpoint: payload.endpoint }, paired.deviceToken);
   return { id: mac.id, name };

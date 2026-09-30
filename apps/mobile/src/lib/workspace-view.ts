@@ -272,7 +272,7 @@ export function deviceTitle(device: DeviceRef): DeviceTitle {
     const version = runtime[2]!;
     return { name: runtime[1]!, detail: join(t`iOS ${version}`, slot) };
   }
-  return device.model === 'iOS Simulator'
+  return device.model === t`iOS Simulator`
     ? { name: device.name, detail: join(t`Simulator`, slot) }
     : { name: device.model, detail: join(t`Simulator`, slot) };
 }

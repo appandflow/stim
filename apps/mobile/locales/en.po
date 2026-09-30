@@ -1730,10 +1730,6 @@ msgstr "Interrupted"
 msgid "Invalid search: {message}"
 msgstr "Invalid search: {message}"
 
-#: src/screens/mac-status.tsx
-msgid "iOS"
-msgstr "iOS"
-
 #: src/lib/machine-report.ts
 #: src/lib/workspace-view.ts
 msgid "iOS {version}"
@@ -1745,6 +1741,7 @@ msgid "iOS device"
 msgstr "iOS device"
 
 #: src/lib/needs-attention.ts
+#: src/lib/workspace-view.ts
 #: src/lib/workspaces.ts
 #: src/lib/workspaces.ts
 #: src/screens/device-view.tsx
@@ -2533,10 +2530,6 @@ msgstr "Pause"
 #: src/screens/workspace-resources.tsx
 msgid "peak {peakCpu}"
 msgstr "peak {peakCpu}"
-
-#: src/screens/pair.tsx
-msgid "Phone"
-msgstr "Phone"
 
 #: src/components/device-grid-tile.tsx
 #: src/components/device-tile.tsx

@@ -322,7 +322,7 @@ export function MacStatus({ id }: { id: string }) {
               <View key={row.platform} style={[styles.row, index > 0 && styles.separated]}>
                 <PlatformGlyph platform={row.platform} size={16} color={theme.colors.secondary} />
                 <View style={styles.grow}>
-                  <Text variant="callout">{row.platform === 'ios' ? t`iOS` : t`Android`}</Text>
+                  <Text variant="callout">{row.platform === 'ios' ? 'iOS' : t`Android`}</Text>
                   <Text variant="footnote" tone="secondary">
                     {buildLine(row)}
                   </Text>

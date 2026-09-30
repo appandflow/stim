@@ -127,7 +127,7 @@
                   "pattern": "^(variant|tone|weight|feedback|placement|iconRenderingMode|ellipsizeMode|returnKeyType|keyExtractor|name|icon|key|size|testID)$"
                 }
               },
-              { "regex": { "pattern": "([Ss]tyle|Color|[Ss]hadow|Image|^command|^remedy)$" } }
+              { "regex": { "pattern": "([Ss]tyle|Color|[Ss]hadow|Image|^command|^remedy|^[A-Z][A-Z0-9_]*)$" } }
             ],
             "ignoreFunctions": [
               "require",
