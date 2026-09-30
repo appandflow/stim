@@ -274,8 +274,8 @@ the default branch, or when its pull request was merged or closed, and plain
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
 worktree that is the source checkout, bare, locked, in use, dirty (untracked
-files count, except watchman's `.watchman-cookie-*` files), unpushed, or has initialized submodules. In use includes a
-running dev server, a Stim run or live build, a booted owned simulator or
+files count, except watchman's `.watchman-cookie-*` files), unpushed, or has
+initialized submodules. In use includes a running dev server, a Stim run or live build, a booted owned simulator or
 emulator, and a held device lease; a device left booted keeps the worktree
 until `stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
 `stim worktree remove` without `--force` on each removable worktree. That
