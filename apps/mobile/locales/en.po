@@ -489,10 +489,6 @@ msgstr "{platform} · {since} ago"
 msgid "{platform} · started {since} ago"
 msgstr "{platform} · started {since} ago"
 
-#: src/lib/spoken-status.ts
-msgid "{platform} {slot}"
-msgstr "{platform} {slot}"
-
 #: src/lib/workspace-view.ts
 msgid "{platform} app closed"
 msgstr "{platform} app closed"
@@ -500,6 +496,10 @@ msgstr "{platform} app closed"
 #: src/lib/workspace-view.ts
 msgid "{platform} build"
 msgstr "{platform} build"
+
+#: src/lib/spoken-status.ts
+msgid "{platform} slot {slot}"
+msgstr "{platform} slot {slot}"
 
 #: src/components/connection-banner.tsx
 msgid "{reason} Pair this machine again from Stim Desktop."

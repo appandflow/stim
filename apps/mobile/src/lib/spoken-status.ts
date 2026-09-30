@@ -52,7 +52,7 @@ export function workspaceStatusLabels(env: EnvironmentState, now: number): strin
   for (const d of devicesOf(env).filter((device) => device.running)) {
     const platform = platformName(d.platform);
     const { slot } = d;
-    const name = slot === 'default' ? platform : t`${platform} ${slot}`;
+    const name = slot === 'default' ? platform : t`${platform} slot ${slot}`;
     const activity = activityLabel(d.activity, now);
     parts.push(activity ? t`${name}, ${activity}` : t`${name} running`);
   }
