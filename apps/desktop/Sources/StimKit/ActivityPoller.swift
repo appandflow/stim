@@ -36,9 +36,8 @@ public final class ActivityPoller {
   }
 
   private func loop() -> Task<Void, Never> {
-    Task { [weak self] in
+    Task {
       while !Task.isCancelled {
-        guard let self else { return }
         let interval = isActive() ? active : inactive
         await sleep(interval)
         guard !Task.isCancelled else { return }

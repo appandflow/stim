@@ -8,20 +8,25 @@ private final class Clock {
   var isActive = true
   var ticks = 0
   var slept: [Duration] = []
-  private var waiting: [CheckedContinuation<Void, Never>] = []
+  private var waiting: [Int: CheckedContinuation<Void, Never>] = [:]
+  private var nextID = 0
 
   func sleep(_ duration: Duration) async {
     slept.append(duration)
+    let id = nextID
+    nextID += 1
     await withTaskCancellationHandler {
-      await withCheckedContinuation { waiting.append($0) }
+      await withCheckedContinuation { continuation in
+        if Task.isCancelled { continuation.resume() } else { waiting[id] = continuation }
+      }
     } onCancel: {
-      Task { @MainActor in self.wake() }
+      Task { @MainActor in self.waiting.removeValue(forKey: id)?.resume() }
     }
   }
 
   func wake() {
-    let all = waiting
-    waiting = []
+    let all = waiting.values
+    waiting = [:]
     for continuation in all { continuation.resume() }
   }
 

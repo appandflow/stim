@@ -31,7 +31,7 @@ final class ServerController: ObservableObject {
   static let inactiveDevicesInterval: Duration = .seconds(60)
 
   private lazy var devicesPoller = ActivityPoller(
-    active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApp.isActive },
+    active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
       guard let self, isRunning else { return }
       reloadDevices()
