@@ -99,11 +99,14 @@ struct ProcessRequestTests {
   }
 
   @Test func terminatesRegisteredProcesses() async throws {
+    let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: marker) }
     let registry = ProcessRegistry()
-    var request = sh("sleep 30")
+    var request = sh("touch \(marker.path); exec sleep 30")
     request.registry = registry
     let task = Task { try await request.run() }
-    try await Task.sleep(for: .milliseconds(300))
+    while !FileManager.default.fileExists(atPath: marker.path) { try await Task.sleep(for: .milliseconds(20)) }
+    try await Task.sleep(for: .milliseconds(200))
     registry.terminateAll()
     let result = try await task.value
     #expect(!result.exited && !result.succeeded)
