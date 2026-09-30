@@ -62,10 +62,7 @@ final class GcReportStore: ObservableObject {
     let cli = cli
     let next = Task { [weak self] () -> GcReport? in
       _ = await previous?.value
-      let result = await Task.detached(priority: .utility) { () -> Result<GcReport, any Error> in
-        let cli = await cli.value
-        return Result { try cli.gcReport() }
-      }.value
+      let result = await Result.awaiting { try await cli.value.gcReport() }
       self?.finish(result, startedAt: startedAt)
       return try? result.get()
     }

@@ -53,20 +53,23 @@ final class Onboarding: ObservableObject {
       let report = await Task.detached {
         let stim = StimCLI(environment: environment, override: stimOverride)
         let compatibility = CLICompatibility.check(
-          executable: stim.executable, versionOutput: stim.versionOutput(), minimum: StimCLI.minimumVersion)
+          executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
         let server = serverOverride.map { StimServerCLI(environment: environment, override: $0) }
         let viewerKeys =
           compatibility.isCompatible && offersViewer
-          ? (try? stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
+          ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
           : []
+        var serverCompatibility: CLICompatibility?
+        if let server {
+          serverCompatibility = CLICompatibility.check(
+            executable: server.executable, versionOutput: await server.versionOutput(),
+            minimum: StimServerCLI.minimumVersion)
+        }
         return Report(
           stim: compatibility,
           stimPath: stim.executable,
           needsRelaunch: compatibility.isCompatible && stim.executable != launched,
-          server: server.map {
-            CLICompatibility.check(
-              executable: $0.executable, versionOutput: $0.versionOutput(), minimum: StimServerCLI.minimumVersion)
-          },
+          server: serverCompatibility,
           serverPath: server?.executable,
           viewerKeys: viewerKeys)
       }.value

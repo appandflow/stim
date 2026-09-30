@@ -809,15 +809,15 @@ private struct MachineBuildMachines: View {
   private func load() async {
     guard let checkout else { return }
     let cli = await cli.value
-    let named = await Task.detached {
-      (try? cli.settings(cwd: NSHomeDirectory()))?.entry("offload.machines")?.value.strings ?? []
-    }.value
+    let named = (try? await cli.settings(cwd: NSHomeDirectory()))?.entry("offload.machines")?.value.strings ?? []
+    guard !Task.isCancelled else { return }
     guard !named.isEmpty else {
       machines = []
       failure = nil
       return
     }
-    let result = await Task.detached { Result { try cli.buildMachines(cwd: checkout, ask: false) } }.value
+    let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: false) }
+    guard !Task.isCancelled else { return }
     switch result {
     case .success(let reported):
       machines = reported ?? []

@@ -158,9 +158,10 @@ final class AutopilotRunner: ObservableObject {
       let volumes = DiskUsage.volumes(for: locations)
       let lowest = volumes.min { $0.freeBytes < $1.freeBytes }
       let free = lowest?.freeBytes
+      let settings = budget == nil ? try? await cli.settings(cwd: NSHomeDirectory()) : nil
       let limits =
         budget
-        ?? (try? cli.settings(cwd: NSHomeDirectory())).map { settings in
+        ?? settings.map { settings in
           (
             minFree: settings.entry("budget.minFreeDiskGb")?.number ?? 0,
             hardFloor: settings.entry("budget.hardFloorDiskGb")?.number ?? 0

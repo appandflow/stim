@@ -115,7 +115,7 @@ struct LocalServerCredential: Codable, Equatable {
         }
         let cli = await controller.cli()
         let port = controller.port
-        let code = try await Task.detached { try cli.pair(port: port, control: true) }.value
+        let code = try await cli.pair(port: port, control: true)
         pairing = true
         return .pairing(token: code.qr.pairingToken, deviceName: Self.deviceName)
       })
@@ -133,7 +133,7 @@ struct LocalServerCredential: Codable, Equatable {
           self.granted = true
           Task {
             let cli = await self.controller.cli()
-            guard (try? await Task.detached(operation: { try cli.grant(id, control: true) }).value) != nil,
+            guard (try? await cli.grant(id, control: true)) != nil,
               client === self.client
             else { return }
             client.stop()

@@ -40,7 +40,7 @@ final class SettingsModel: ObservableObject {
           }
           return try SettingsSchema.fields(from: Data(contentsOf: url))
         } : nil
-      let payload = Result { try cli.settings(cwd: cwd) }
+      let payload = await Result.awaiting { try await cli.settings(cwd: cwd) }
       await MainActor.run {
         guard self.directory == directory else { return }
         switch schema {
@@ -70,20 +70,19 @@ final class SettingsModel: ObservableObject {
     let cli = cli
     let cwd = directory ?? NSHomeDirectory()
     let argument = value.map(field.argument(for:))
-    Task.detached {
-      let cli = await cli.value
-      let result = Result { try cli.writeSetting(field.key, value: argument, scope: scope, cwd: cwd) }
-      await MainActor.run {
-        self.writing.remove(id)
-        switch result {
-        case .success(.written): break
-        case .success(.refused(let refusal)):
-          self.refusals[id] = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
-        case .failure(let error):
-          self.refusals[id] = error.localizedDescription
-        }
-        self.load(directory: self.directory)
+    Task {
+      let result = await Result.awaiting {
+        try await cli.value.writeSetting(field.key, value: argument, scope: scope, cwd: cwd)
       }
+      writing.remove(id)
+      switch result {
+      case .success(.written): break
+      case .success(.refused(let refusal)):
+        refusals[id] = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+      case .failure(let error):
+        refusals[id] = error.localizedDescription
+      }
+      load(directory: directory)
     }
   }
 

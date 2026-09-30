@@ -151,7 +151,7 @@ final class ServerController: ObservableObject {
     let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
-      let result = await Task.detached { Result { try cli.devices() } }.value
+      let result = await Result.awaiting { try await cli.devices() }
       guard epoch == devicesEpoch else { return }
       switch result {
       case .success(let devices):
@@ -178,7 +178,7 @@ final class ServerController: ObservableObject {
     }
     Task {
       let cli = await cli()
-      let result = await Task.detached(operation: { Result { try cli.grant(device.id, control: control) } }).value
+      let result = await Result.awaiting { try await cli.grant(device.id, control: control) }
       pendingGrants[device.id] = nil
       devicesEpoch += 1
       if case .failure(let error) = result { changeError = error.localizedDescription } else { changeError = nil }
@@ -194,7 +194,7 @@ final class ServerController: ObservableObject {
   func allowBuild(_ device: PairedDevice) {
     Task {
       let cli = await cli()
-      switch await Task.detached(operation: { Result { try cli.grantBuild(device.id) } }).value {
+      switch await Result.awaiting({ try await cli.grantBuild(device.id) }) {
       case .success: changeError = nil
       case .failure(let error): changeError = error.localizedDescription
       }
@@ -206,7 +206,7 @@ final class ServerController: ObservableObject {
   func revoke(_ device: PairedDevice) {
     Task {
       let cli = await cli()
-      switch await Task.detached(operation: { Result { try cli.revoke(device.id) } }).value {
+      switch await Result.awaiting({ try await cli.revoke(device.id) }) {
       case .success:
         changeError = nil
         devicesEpoch += 1
