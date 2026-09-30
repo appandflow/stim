@@ -19,6 +19,12 @@ public enum UsageThresholds {
   /// `lowDiskBytes` bites.
   public static let diskCriticalBytes: Int64 = lowDiskBytes / 4
 
+  /// The share of the Mac's CPU that `percentOfOneCore` (`ps` %CPU summed over processes, where 100 is one core) uses,
+  /// from 0 to 1, so a whole-machine figure never reads above 100%.
+  public static func cpuFraction(percentOfOneCore: Double, cores: Int) -> Double {
+    min(1, max(0, percentOfOneCore / (100 * Double(max(1, cores)))))
+  }
+
   public static func cpu(fraction: Double) -> UsageTone {
     fraction >= cpuCriticalFraction ? .critical : fraction >= cpuWarnFraction ? .warn : .normal
   }

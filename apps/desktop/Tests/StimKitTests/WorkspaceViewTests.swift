@@ -120,6 +120,14 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(try env().usage(machine: machine) == WorkspaceUsage(cpuPercent: 273, memoryMb: 6554))
   }
 
+  @Test func fillsFromASampleOnlyWhatStatusLeftEmptyAndIgnoresSampledResidentSize() {
+    let empty = WorkspaceUsage()
+    #expect(empty.filling(cpuPercent: 12, footprintMb: nil) == WorkspaceUsage(cpuPercent: 12))
+    #expect(empty.filling(cpuPercent: nil, footprintMb: 2100) == WorkspaceUsage(memoryMb: 2100))
+    let reported = WorkspaceUsage(cpuPercent: 3, memoryMb: 2200)
+    #expect(reported.filling(cpuPercent: 40, footprintMb: 32_000) == reported)
+  }
+
   @Test func matchesAnEmulatorBySlotAndKindSinceItsOwnerIDIsTheAVDName() throws {
     let env = try env()
     let android = env.devices.first { $0.platform == "android" }!

@@ -58,8 +58,8 @@ struct NowBand: View {
       metrics.memory.map { "\(formatMemory($0.usedBytes)) of \(formatMemory($0.totalBytes))" } ?? "\u{2014}",
       values: metrics.memoryUsed, peak: Double(metrics.memory?.totalBytes ?? 1))
     tile(
-      "cpu", "CPU of the rows below",
-      status.payload?.machine.map { formatPercent($0.cpuPercent) } ?? "\u{2014}",
+      "cpu", "Mac CPU used by the rows below",
+      metrics.ownersCpu.last.map(formatPercent) ?? "\u{2014}",
       values: metrics.ownersCpu, peak: 100)
   }
 

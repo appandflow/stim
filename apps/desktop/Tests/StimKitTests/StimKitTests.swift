@@ -821,6 +821,11 @@ import Testing
 }
 
 @Suite struct UsageThresholdsTests {
+  @Test func normalizesWholeMachineCpuByCoresAndCapsAtOne() {
+    #expect(UsageThresholds.cpuFraction(percentOfOneCore: 668, cores: 10) == 0.668)
+    #expect(UsageThresholds.cpuFraction(percentOfOneCore: 1040, cores: 10) == 1)
+  }
+
   @Test func toneStepsAtTheCpuWarnAndCriticalFractions() {
     #expect(UsageThresholds.cpu(fraction: 0.79) == .normal)
     #expect(UsageThresholds.cpu(fraction: 0.8) == .warn)
