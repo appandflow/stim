@@ -15,6 +15,7 @@ struct RootView: View {
   @ObservedObject private var store: StatusStore
   @State private var metrics: MetricsStore
   private let gc: GcReportStore
+  private let buildMachines: BuildMachinesModel
   @ObservedObject private var actions: ActionCenter
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
@@ -44,8 +45,9 @@ struct RootView: View {
 
   init(
     cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
-    onboarding: Onboarding, gc: GcReportStore
+    onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel
   ) {
+    self.buildMachines = buildMachines
     self.cli = cli
     self.onboarding = onboarding
     self.store = store
@@ -341,7 +343,7 @@ struct RootView: View {
     case .attention:
       AttentionView(store: store, autopilot: autopilot, openLogs: openErrors)
     case .machine:
-      MachineView(cli: cli, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot)
+      MachineView(buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot)
     default:
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }

@@ -5,21 +5,11 @@ import SwiftUI
 /// and the other Macs on the tailnet that run stim-server. It changes the setting with `stim settings` and asks for
 /// access with `stim doctor --fix`; approving happens on the other Mac.
 struct BuildMachinesView: View {
-  var cli: Task<StimCLI, Never>
+  var model: BuildMachinesModel
   @ObservedObject var store: StatusStore
   var workspace: String?
-  var onSettingChanged: () -> Void
 
-  @State private var entries: [String]?
-  @State private var statuses: [BuildMachineStatus]?
-  @State private var macs: [TailnetMac]?
-  @State private var stimMacs: Set<String> = []
-  @State private var probing = false
-  @State private var working: String?
-  @State private var failure: String?
   @State private var removing: String?
-  @State private var runs = 0
-  @State private var latestRun = 0
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
@@ -31,16 +21,16 @@ struct BuildMachinesView: View {
         if let failure {
           Text(failure).foregroundStyle(Palette.error).textSelection(.enabled)
         }
-        if let entries {
+        if let entries = model.entries {
           if entries.isEmpty {
             Text("This Mac builds only on itself.").foregroundStyle(Palette.secondary)
           }
           ForEach(entries, id: \.self) { entry in
             MachineRow(
               entry: entry, status: statuses?.first { $0.machine == entry }, checking: statuses == nil,
-              working: working == entry, canAsk: checkout != nil
+              working: model.working == entry, canAsk: checkout != nil
             ) {
-              ask(entry)
+              Task { await model.ask(entry, checkout: checkout) }
             } remove: {
               removing = entry
             }
@@ -52,8 +42,8 @@ struct BuildMachinesView: View {
         HStack {
           Text("This Mac builds on")
           Spacer()
-          Button("Refresh") { Task { await load() } }
-            .disabled(working != nil || runs > 0 || probing)
+          Button("Refresh") { Task { await model.load(checkout: checkout) } }
+            .disabled(model.isBusy || model.probing)
         }
       } footer: {
         Text(footer)
@@ -78,18 +68,18 @@ struct BuildMachinesView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(Palette.background)
-    .task { await load() }
+    .task { await model.load(checkout: checkout) }
     .task(id: waiting) {
       while waiting, !Task.isCancelled {
         try? await Task.sleep(for: .seconds(15))
-        if working == nil, runs == 0, !Task.isCancelled { await refreshStatuses(ask: false) }
+        if !model.isBusy, !Task.isCancelled { await model.refreshStatuses(checkout: checkout, ask: false) }
       }
     }
     .confirmationDialog(
       "Stop building on \(removing ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } }),
       presenting: removing
     ) { entry in
-      Button("Remove", role: .destructive) { remove(entry) }
+      Button("Remove", role: .destructive) { Task { await model.remove(entry, checkout: checkout) } }
     } message: { entry in
       Text(removalMessage(entry))
     }
@@ -101,6 +91,20 @@ struct BuildMachinesView: View {
     }
     return
       "Removes it from offload.machines and runs stim doctor --fix, which forgets the old node and asks again any listed Mac that has not approved this one."
+  }
+
+  private var statuses: [BuildMachineStatus]? {
+    guard let check = model.check(in: checkout) else { return nil }
+    return check.problem == nil ? check.statuses : []
+  }
+
+  private var failure: String? {
+    if let failure = model.writeFailure ?? model.settingsFailure { return failure }
+    guard let checkout, let problem = model.check(in: checkout)?.problem else { return nil }
+    switch problem {
+    case .unsupported: return "This stim does not report build machines; update it."
+    case .failed(let message): return "stim doctor failed in \(abbreviatingHome(checkout)): \(message)"
+    }
   }
 
   private var waiting: Bool { statuses?.contains { $0.state == .pending } == true }
@@ -115,14 +119,15 @@ struct BuildMachinesView: View {
   }
 
   @ViewBuilder private var discovered: some View {
-    let listed = entries ?? []
-    if let macs {
-      let candidates = macs.filter { mac in stimMacs.contains(mac.id) && !listed.contains { OffloadMachines.names($0, mac) } }
+    let listed = model.entries ?? []
+    if let macs = model.macs {
+      let candidates = macs.filter { mac in model.stimMacs.contains(mac.id) && !listed.contains { OffloadMachines.names($0, mac) }
+      }
       if candidates.isEmpty {
         HStack(spacing: Space.md) {
-          if probing { ProgressView().controlSize(.small) }
+          if model.probing { ProgressView().controlSize(.small) }
           Text(
-            probing
+            model.probing
               ? "Looking for stim-server on \(macs.count) \(macs.count == 1 ? "Mac" : "Macs")\u{2026}"
               : macs.isEmpty ? "No other Mac on your tailnet is online." : "No other Mac on your tailnet runs stim-server."
           )
@@ -138,103 +143,16 @@ struct BuildMachinesView: View {
               .lineLimit(1).truncationMode(.middle)
           }
           Spacer()
-          if working == mac.machine { ProgressView().controlSize(.small) }
-          Button("Use for Builds") { use(mac) }
-            .disabled(working != nil || checkout == nil)
+          if model.working == mac.machine { ProgressView().controlSize(.small) }
+          Button("Use for Builds") { Task { await model.use(mac, checkout: checkout) } }
+            .disabled(model.working != nil || checkout == nil)
         }
         .padding(.vertical, Space.xxs)
       }
-    } else if probing {
+    } else if model.probing {
       ProgressView().frame(maxWidth: .infinity)
     } else {
       Text("Tailscale is not running, so Stim cannot find other Macs.").foregroundStyle(Palette.secondary)
-    }
-  }
-
-  private func load() async {
-    let cli = await cli.value
-    async let settings = Result.awaiting { try await cli.settings(cwd: NSHomeDirectory()) }
-    probing = true
-    let environment = cli.environment
-    let found = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
-    macs = found
-    switch await settings {
-    case .success(let payload):
-      entries = payload.entry("offload.machines")?.value.strings ?? []
-      failure = payload.entry("offload.machines") == nil ? "This stim has no offload.machines setting; update it." : nil
-    case .failure(let error) where !Task.isCancelled: failure = error.localizedDescription
-    case .failure: break
-    }
-    await refreshStatuses(ask: false)
-    var serving: Set<String> = []
-    await withTaskGroup(of: (String, Bool).self) { group in
-      for mac in found ?? [] { group.addTask { (mac.id, await Tailnet.servesStim(dnsName: mac.dnsName)) } }
-      for await (id, serves) in group where serves { serving.insert(id) }
-    }
-    stimMacs = serving
-    probing = false
-  }
-
-  private func refreshStatuses(ask: Bool) async {
-    guard let checkout, ask || !(entries ?? []).isEmpty else {
-      statuses = []
-      return
-    }
-    runs += 1
-    latestRun += 1
-    let run = latestRun
-    defer { runs -= 1 }
-    let cli = await cli.value
-    let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: ask) }
-    guard run == latestRun, !Task.isCancelled else { return }
-    switch result {
-    case .success(let reported):
-      statuses = reported ?? []
-      if reported == nil { failure = "This stim does not report build machines; update it." }
-    case .failure(let error):
-      statuses = []
-      failure = "stim doctor failed in \(abbreviatingHome(checkout)): \(error.localizedDescription)"
-    }
-  }
-
-  private func use(_ mac: TailnetMac) {
-    write(mac.machine, value: OffloadMachines.adding(mac.machine, to: entries ?? []), ask: true)
-  }
-
-  private func ask(_ entry: String) {
-    working = entry
-    Task {
-      await refreshStatuses(ask: true)
-      working = nil
-    }
-  }
-
-  /// Removing a machine pinned to a node that changed runs `doctor --fix`, which forgets the old pin, so the Mac
-  /// can be used for builds again.
-  private func remove(_ entry: String) {
-    let repins = statuses?.first { $0.machine == entry }?.state == .nodeChanged
-    write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins)
-  }
-
-  private func write(_ entry: String, value: String?, ask: Bool) {
-    working = entry
-    Task {
-      let cli = await cli.value
-      let result = await Result.awaiting {
-        try await cli.writeSetting("offload.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
-      }
-      switch result {
-      case .success(.written(let setting)):
-        failure = nil
-        entries = setting.value.strings ?? []
-        onSettingChanged()
-        statuses = nil
-        await refreshStatuses(ask: ask)
-      case .success(.refused(let refusal)):
-        failure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
-      case .failure(let error): failure = error.localizedDescription
-      }
-      working = nil
     }
   }
 }

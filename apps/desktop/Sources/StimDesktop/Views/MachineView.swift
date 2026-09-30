@@ -3,7 +3,7 @@ import StimKit
 import SwiftUI
 
 struct MachineView: View {
-  var cli: Task<StimCLI, Never>
+  var buildMachines: BuildMachinesModel
   @ObservedObject var status: StatusStore
   var metrics: MetricsStore
   var gc: GcReportStore
@@ -37,7 +37,7 @@ struct MachineView: View {
         devices(report)
         runtimes(report)
         otherTools(report)
-        MachineBuildMachines(cli: cli, status: status)
+        MachineBuildMachines(model: buildMachines, status: status)
       }
       .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -774,13 +774,21 @@ private final class StorageReportCache {
 /// Settings > Build Machines uses, checked each minute while the page is open; hidden when none is named. Read-only:
 /// that tab changes them.
 private struct MachineBuildMachines: View {
-  var cli: Task<StimCLI, Never>
+  var model: BuildMachinesModel
   @ObservedObject var status: StatusStore
-  @State private var machines: [BuildMachineStatus] = []
-  @State private var failure: String?
 
   private var checkout: String? {
     doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
+  }
+
+  private var machines: [BuildMachineStatus] { model.check(in: checkout)?.statuses ?? [] }
+
+  private var failure: String? {
+    guard let problem = model.check(in: checkout)?.problem else { return nil }
+    switch problem {
+    case .unsupported: return "This stim does not report build machines; update it."
+    case .failed(let message): return "Cannot check build machines: \(message)"
+    }
   }
 
   var body: some View {
@@ -805,7 +813,7 @@ private struct MachineBuildMachines: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .task(id: checkout) {
       while !Task.isCancelled {
-        await load()
+        if checkout != nil { await model.refresh(checkout: checkout) }
         try? await Task.sleep(for: .seconds(60))
       }
     }
@@ -824,26 +832,5 @@ private struct MachineBuildMachines: View {
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
     .help(ready.reasons ?? "")
-  }
-
-  private func load() async {
-    guard let checkout else { return }
-    let cli = await cli.value
-    let named = (try? await cli.settings(cwd: NSHomeDirectory()))?.entry("offload.machines")?.value.strings ?? []
-    guard !Task.isCancelled else { return }
-    guard !named.isEmpty else {
-      machines = []
-      failure = nil
-      return
-    }
-    let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: false) }
-    guard !Task.isCancelled else { return }
-    switch result {
-    case .success(let reported):
-      machines = reported ?? []
-      failure = reported == nil ? "This stim does not report build machines; update it." : nil
-    case .failure(let error):
-      failure = "Cannot check build machines: \(error.localizedDescription)"
-    }
   }
 }
