@@ -68,9 +68,10 @@ struct WorkspaceDetail: View {
       .environmentObject(actions)
     }
     .onQuitRequested { viewing = nil }
-    .task(id: env.path) {
+    .task(id: "\(env.path)|\(env.finishedRunsStamp)") {
       let path = env.path
       let cli = await cli.value
+      if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
       let result = await Task.detached { Result { try cli.stats(workspace: path) } }.value
       guard !Task.isCancelled else { return }
       var fetched = Fetched<ProjectStats>()

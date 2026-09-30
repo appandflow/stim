@@ -78,7 +78,7 @@ struct Inspector: View {
       if let cold = platform.lastColdBuildMs {
         Text("Last cold \(formatDuration(ms: cold))").foregroundStyle(Palette.secondary)
       }
-      if let saved = platform.timeSavedMs {
+      if let saved = platform.timeSavedMs, saved >= 1000 {
         Text("Saved \(formatDuration(ms: saved))").foregroundStyle(Palette.primary)
       }
     }
