@@ -36,7 +36,7 @@ struct WorkspaceDetail: View {
       content(devices: devices, focused: focused)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if inspector == .column {
-        Rectangle().fill(Palette.border).frame(width: 1)
+        Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           .overlay { resizeHandle }
         inspectorPanel
           .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
