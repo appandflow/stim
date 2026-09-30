@@ -8,6 +8,7 @@ import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import { resolveSettings } from '../workspace/settings.ts';
 import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
+import { bundlerPin } from '../engine/bundler.ts';
 import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
 import { androidRequirements, androidToolchain, iosToolchain, type BuildTarget } from '../offload/toolchain.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
@@ -277,7 +278,16 @@ export default function doctorCommand(
         opts.platform === 'android' ||
         (opts.platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
       const offloadTargets = (): BuildTarget[] => [
-        ...(checksIos ? [{ platform: 'ios' as const, local: iosToolchain(), runtime: iosTargetRuntime(root) }] : []),
+        ...(checksIos
+          ? [
+              {
+                platform: 'ios' as const,
+                local: iosToolchain(),
+                runtime: iosTargetRuntime(root),
+                cocoapodsPinned: bundlerPin(root) !== null,
+              },
+            ]
+          : []),
         ...(checksAndroid
           ? [{ platform: 'android' as const, local: androidToolchain(), requires: androidRequirements(root) }]
           : []),

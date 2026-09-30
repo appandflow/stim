@@ -477,8 +477,8 @@ leased until <time>" for each one.`,
                   "Android: " when only one platform has it, with a finding
                   per reason (code build-machine-<reason>: unreachable,
                   checkout, stim-build, arch, xcode, simulator-sdk,
-                  cocoapods, runtime, jdk, android-sdk, ndk, build-tools,
-                  compile-sdk, disk or busy). problems lists the same
+                  cocoapods, bundler, runtime, jdk, android-sdk, ndk,
+                  build-tools, compile-sdk, disk or busy). problems lists the same
                   reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,

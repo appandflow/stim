@@ -246,6 +246,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   xcode: 'has another Xcode',
   'simulator-sdk': 'has another simulator SDK',
   cocoapods: 'has another CocoaPods',
+  bundler: 'has no Bundler',
   runtime: "has no simulator for this project's iOS runtime",
   jdk: 'runs another JDK major version',
   'android-sdk': 'has no Android SDK',
@@ -271,6 +272,8 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
       return `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`;
     case 'cocoapods':
       return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
+    case 'bundler':
+      return `Install Bundler (\`gem install bundler\`) on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':
       return `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`;
     case 'jdk':

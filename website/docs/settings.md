@@ -326,8 +326,11 @@ least loaded. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
-- For iOS, its Xcode, simulator SDK and CocoaPods must match, and it needs an
-  iPhone simulator on the target runtime.
+- For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
+  simulator on the target runtime. Its CocoaPods must match too, unless the
+  project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
+  through Bundler, so the machine needs only Bundler on its stim-server `PATH`
+  and installs the pinned gems itself on the first build.
 - For Android, its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
   project's React Native version names in `gradle/libs.versions.toml`. Gradle

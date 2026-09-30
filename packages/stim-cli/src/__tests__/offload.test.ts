@@ -19,7 +19,7 @@ const LOCAL: IosToolchain = {
   cocoapods: '1.16.2',
 };
 
-const IOS: BuildTarget = { platform: 'ios', local: LOCAL, runtime: RUNTIME };
+const IOS: BuildTarget = { platform: 'ios', local: LOCAL, runtime: RUNTIME, cocoapodsPinned: false };
 
 const ANDROID: BuildTarget = {
   platform: 'android',
@@ -36,7 +36,14 @@ function offer(
     capacity: capacity(),
     warm: { checkout: false, dependencies: false, build: false },
     ...overrides,
-    toolchain: { ...LOCAL, runtimes: [RUNTIME], jdk: '17', androidSdk: SDK, ...overrides.toolchain },
+    toolchain: {
+      ...LOCAL,
+      bundler: 'Bundler version 4.0.8',
+      runtimes: [RUNTIME],
+      jdk: '17',
+      androidSdk: SDK,
+      ...overrides.toolchain,
+    },
   };
 }
 
@@ -206,6 +213,15 @@ describe('pickOffer', () => {
       capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }),
     });
     expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual(['stim-build', 'runtime', 'busy']);
+  });
+
+  it('compares global CocoaPods only when the Gemfile.lock pins none, and then needs Bundler there', () => {
+    const PINNED: BuildTarget = { ...IOS, cocoapodsPinned: true };
+    const codes = (offered: BuildOffer, target: BuildTarget) =>
+      offerProblems(offered, target).map((problem) => problem.code);
+    expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), PINNED)).toEqual([]);
+    expect(codes(offer({ toolchain: { cocoapods: '1.17.0', bundler: null } }), PINNED)).toEqual(['bundler']);
+    expect(codes(offer({ toolchain: { bundler: null } }), IOS)).toEqual([]);
   });
 
   it('ranks the warmest machine first, then the least loaded, and names the machines it passed over', () => {

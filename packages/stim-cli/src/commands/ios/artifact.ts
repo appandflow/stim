@@ -53,6 +53,7 @@ import {
   type OffloadChoice,
 } from '../../offload/client.ts';
 import { pairedMachines } from '../../offload/build-machines.ts';
+import { bundlerPin } from '../../engine/bundler.ts';
 import { iosToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
@@ -708,7 +709,12 @@ export async function acquireIosArtifact(
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: { platform: 'ios', local: iosToolchain(), runtime: candidate.runtime },
+      target: {
+        platform: 'ios',
+        local: iosToolchain(),
+        runtime: candidate.runtime,
+        cocoapodsPinned: bundlerPin(root) !== null,
+      },
       mode: candidate.mode,
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),

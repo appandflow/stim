@@ -25,6 +25,7 @@ const TOOLCHAIN = {
   xcode: 'Xcode 27.0',
   simulatorSdk: '27.0',
   cocoapods: '1.16.2',
+  bundler: null,
   runtimes: ['iOS-27-0'],
   jdk: null,
   androidSdk: null,
@@ -34,6 +35,7 @@ const TARGET: BuildTarget = {
   platform: 'ios',
   local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2' },
   runtime: 'iOS-27-0',
+  cocoapodsPinned: false,
 };
 
 const HERE: MachineCapacity = { cpus: 10, loadPerCore: 0.1, builds: 1, maxBuilds: 1, maxLoadPerCore: 2 };
