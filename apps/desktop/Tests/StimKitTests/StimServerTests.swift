@@ -78,4 +78,20 @@ import Testing
     #expect(devices[0].lastSeenAt == nil && devices[1].lastSeenAt != nil)
     #expect(devices.map(\.canControl) == [false, true])
   }
+
+  @Test func leavesStimDesktopOutOfThePairedPhones() throws {
+    let devices = try StimServerCLI.decoder.decode(
+      PairedDeviceList.self,
+      from: Data(
+        #"""
+        {"devices":[
+          {"id":"a1","name":"Stim Desktop","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read","control"]},
+          {"id":"a2","name":"Stim Desktop","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
+          {"id":"a3","name":"Janic's iPhone","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
+          {"id":"a4","name":"Mini","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["build"]}
+        ]}
+        """#.utf8)
+    ).devices
+    #expect(devices.filter(\.isPhone).map(\.id) == ["a2", "a3"])
+  }
 }

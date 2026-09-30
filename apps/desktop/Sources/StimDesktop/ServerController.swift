@@ -36,7 +36,7 @@ final class ServerController: ObservableObject {
   /// Build clients, and Macs waiting for approval to build here, newest first.
   var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
 
-  var phones: [PairedDevice] { devices.filter { !$0.isBuildClient } }
+  var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
   var isRunning: Bool {
     if case .running = state { return true }

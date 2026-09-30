@@ -45,7 +45,7 @@ struct LocalServerCredential: Codable, Equatable {
 /// `stim-server devices grant`, once per server.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
-  static let deviceName = "Stim Desktop"
+  static let deviceName = PairedDevice.desktopName
 
   @Published private(set) var client: ServerClient?
   @Published private(set) var state = ServerClient.State.idle
