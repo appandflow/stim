@@ -112,10 +112,10 @@ struct Sidebar: View {
     HStack(spacing: Space.xs) {
       if options.status != .all {
         Text("No \(options.status.rawValue) workspaces \u{00B7}").foregroundStyle(Palette.tertiary)
-        Button("Show all") { prefs.status = .all }.buttonStyle(.plain).foregroundStyle(Palette.primary)
+        Button("Show all") { prefs.status = .all }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
         Text("Nothing matches \u{00B7}").foregroundStyle(Palette.tertiary)
-        Button("Reset") { prefs.reset() }.buttonStyle(.plain).foregroundStyle(Palette.primary)
+        Button("Reset") { prefs.reset() }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else {
         Text("No workspaces").foregroundStyle(Palette.tertiary)
       }
@@ -154,7 +154,6 @@ private struct PinnedRow<Content: View>: View {
   var item: SidebarItem
   @Binding var selection: SidebarItem?
   @ViewBuilder var content: Content
-  @State private var hovering = false
 
   var body: some View {
     Button {
@@ -163,14 +162,8 @@ private struct PinnedRow<Content: View>: View {
       HStack { content }
         .padding(.horizontal, Space.md)
         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-        .background(
-          RoundedRectangle(cornerRadius: Radius.chip)
-            .fill(selection == item ? Palette.selection : hovering ? Palette.raised.opacity(0.5) : Color.clear)
-        )
-        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
+    .buttonStyle(.hoverRow(selected: selection == item))
   }
 }
 
@@ -425,10 +418,26 @@ private struct PlainSelectionHighlight: NSViewRepresentable {
 
 extension View {
   fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
-    tag(item).listRowBackground(
-      item == selection
-        ? RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.selection).padding(.horizontal, Space.md)
-        : nil)
+    modifier(SidebarRowBackground(item: item, selection: selection))
+  }
+}
+
+private struct SidebarRowBackground: ViewModifier {
+  var item: SidebarItem
+  var selection: SidebarItem?
+  @State private var hovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .contentShape(Rectangle())
+      .onHover { hovering = $0 }
+      .tag(item)
+      .listRowBackground(
+        item == selection || hovering
+          ? RoundedRectangle(cornerRadius: Radius.chip)
+            .fill(item == selection ? Palette.selection : Palette.accent.opacity(Opacity.subtle))
+            .padding(.horizontal, Space.md)
+          : nil)
   }
 }
 
@@ -473,7 +482,7 @@ struct SidebarFooter: View {
       Button(action: onboarding.installStim) {
         statusLabel(dot: Palette.warning, text: compatibility == .missing ? "Install stim" : "stim update available")
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.hoverRow(outset: Space.sm))
       .help(
         compatibility == .missing
           ? "Stim Desktop cannot find stim \u{2014} click to install it with npm"
@@ -484,13 +493,13 @@ struct SidebarFooter: View {
       } label: {
         statusLabel(dot: Palette.error, text: "Low disk: \(Format.fileSize(freeBytes)) free")
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.hoverRow(outset: Space.sm))
       .help("Free disk is below Stim's hard floor, so start, ios and android refuse \u{2014} click to open Machine")
     case .desktopUpdateAvailable:
       Button(action: updater.checkForUpdates) {
         statusLabel(dot: Palette.primary, text: "Update available")
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.hoverRow(outset: Space.sm))
       .help("A new version of Stim Desktop is available \u{2014} click to install it")
     case .diskWarning(let freeBytes):
       Button {
@@ -498,7 +507,7 @@ struct SidebarFooter: View {
       } label: {
         statusLabel(dot: Palette.warning, text: "Low disk: \(Format.fileSize(freeBytes)) free")
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.hoverRow(outset: Space.sm))
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
       let help: String =
