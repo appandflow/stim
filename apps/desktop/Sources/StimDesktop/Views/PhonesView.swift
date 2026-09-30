@@ -425,7 +425,7 @@ struct PairSheet: View {
       while !Task.isCancelled, paired == nil {
         try? await Task.sleep(for: .seconds(2))
         server.reloadDevices()
-        paired = server.devices.first { $0.pairedAt >= openedAt }
+        paired = server.devices.first { $0.isPhone && $0.pairedAt >= openedAt }
       }
     }
   }
