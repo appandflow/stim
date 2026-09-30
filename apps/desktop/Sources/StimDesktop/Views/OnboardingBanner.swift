@@ -23,6 +23,7 @@ struct OnboardingBanner: View {
   }
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
+    if onboarding.showsGuide { return nil }
     if !report.stim.isCompatible, !onboarding.dismissedPopups.contains(.stim) { return .stim }
     if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
     if let server = report.server, !server.isCompatible, !onboarding.dismissedPopups.contains(.server) {

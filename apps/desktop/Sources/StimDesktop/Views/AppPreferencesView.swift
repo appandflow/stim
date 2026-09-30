@@ -170,6 +170,9 @@ struct AppPreferencesView: View {
       }
 
       Section("System") {
+        LabeledContent("Setup guide") {
+          Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
+        }
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
@@ -250,7 +253,7 @@ private struct NotificationToggle: View {
   }
 }
 
-private struct OversightLevelPicker: View {
+struct OversightLevelPicker: View {
   var category: OversightCategory
   @AppStorage private var level: String
 

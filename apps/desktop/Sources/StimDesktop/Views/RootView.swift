@@ -131,6 +131,7 @@ struct RootView: View {
       ActivitySheet(run: run).environmentObject(actions)
     }
     .onQuitRequested { actions.presented = nil }
+    .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
     .onAppear {
       store.start()
       metrics.start()
@@ -605,4 +606,24 @@ extension FocusedValues {
 extension EnvironmentValues {
   /// The main window's content size, which caps the size of a sheet over it.
   @Entry var windowSize = CGSize.zero
+}
+
+/// Presents the setup guide over the main window, and opens it when the Help menu or Settings asks.
+private struct SetupGuidePresenter: ViewModifier {
+  @ObservedObject var onboarding: Onboarding
+  let actions: ActionCenter
+  @ObservedObject private var openRequests = OpenRequests.shared
+
+  func body(content: Content) -> some View {
+    content
+      .sheet(isPresented: $onboarding.showsGuide) {
+        SetupGuideView(onboarding: onboarding).environmentObject(actions)
+      }
+      .onQuitRequested { onboarding.showsGuide = false }
+      .onChange(of: openRequests.showsSetupGuide, initial: true) { _, shows in
+        guard shows else { return }
+        openRequests.showsSetupGuide = false
+        onboarding.openGuide()
+      }
+  }
 }
