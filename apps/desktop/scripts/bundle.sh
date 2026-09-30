@@ -30,6 +30,8 @@ cp Support/Info.plist "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${SPARKLE_PUBLIC_ED_KEY:-}" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :StimSentryDSN ${STIM_DESKTOP_SENTRY_DSN:-}" "$app/Contents/Info.plist"
 cp Support/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+xcrun actool Support/Assets.xcassets --compile "$app/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 14.0 --output-partial-info-plist /dev/null >/dev/null
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \
   "$website/static/img/branding/stim-jar-dark.json" "$website/static/img/branding/stim-jar-light.json" \
