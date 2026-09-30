@@ -575,13 +575,13 @@ RULES
   is not skipped as byte-identical -- or when its own launch
   falls back to \`simctl openurl\` (no console capture in flight),
   which carries no launch arguments at all and so writes them
-  itself before opening the URL. Those persisted values cover
-  launches Stim did not make: a home-screen tap, an agent
-  relaunch, or a crash restart. An install skipped because
-  adoption reused a parked simulator (and cleared the app's
-  data first), launched with console capture, does NOT rewrite
-  them, so a non-Stim relaunch after that adoption can show the
-  menu and button, until the next real install.
+  itself before opening the URL. Adoption clears the app's
+  data by replacing its defaults with those two keys (one
+  \`defaults import\`), so an install that adoption then skips
+  as byte-identical keeps them too. Those persisted values
+  cover launches Stim did not make: a home-screen tap, an
+  agent relaunch, or a crash restart. The \`__expo_\` deep-link
+  params below last one process and do not persist.
   When the project's installed expo-dev-launcher (found
   through expo-dev-client, no network) is 58.0.0 or later
   (expo/expo#49651), Stim's own deep link also carries

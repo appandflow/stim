@@ -17,6 +17,17 @@ const DEV_CLIENT_DEV_MENU_OFF_QUERY = 'disableFab=1&disableAutoLaunch=1';
 const DEV_CLIENT_RESERVED_DEV_MENU_OFF_QUERY = '__expo_disable_fab=1&__expo_disable_auto_launch=1';
 export const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
 
+export const IOS_DEV_MENU_OFF_DEFAULTS_PLIST: string = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+  '<plist version="1.0">',
+  '<dict>',
+  ...IOS_DEV_MENU_OFF_KEYS.flatMap((key) => [`  <key>${key}</key>`, '  <false/>']),
+  '</dict>',
+  '</plist>',
+  '',
+].join('\n');
+
 function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): void {
   for (const key of IOS_DEV_MENU_OFF_KEYS) {
     exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
@@ -126,9 +137,8 @@ export function installIosApp(
       : undefined;
   // expo-dev-launcher reads these only from the persisted domain on a launch
   // Stim did not make (agent-device relaunches, crash restarts, home-screen
-  // taps); launchIosApp's own simctl launch carries them as argv instead, and
-  // writes them itself when it has to fall back to simctl openurl, which
-  // can't carry launch arguments at all.
+  // taps). A skipped install keeps the domain the last install wrote, or the
+  // one adoption imported when it cleared the app's data.
   const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
   const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
   const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
