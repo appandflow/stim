@@ -252,7 +252,7 @@ that considered offloading and built here shows a short line such as
 **janics-mac-mini busy → built here**; hover it for the full reason.
 
 On the other Mac, with **Serve to phones** on and its `tailscale serve` route
-set up, Stim Desktop notifies "<Mac> wants to build on this Mac". **Review**
+set up, Stim Desktop notifies `<Mac> wants to build on this Mac`. **Review**
 shows the Mac's name and tailnet node; **Allow** lets it build there, and
 **Deny** refuses. The Macs that build there are listed under **Macs that build
 here** in **Stim > Settings > Phones**, each with **Revoke**. See
