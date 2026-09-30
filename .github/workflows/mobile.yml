@@ -46,6 +46,7 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm test --ci
+      - run: pnpm run licenses:check
 
   knip:
     runs-on: ubuntu-latest

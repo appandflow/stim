@@ -200,6 +200,12 @@ export function Settings() {
         ) : null}
         <Section colors={colors} title="More">
           <Row colors={colors} title="About Stim" icon={ICONS.about} onPress={() => router.push('/about')} />
+          <Row
+            colors={colors}
+            title="Open source licenses"
+            icon={ICONS.about}
+            onPress={() => router.push('/licenses')}
+          />
         </Section>
       </LazyColumn>
     </Host>

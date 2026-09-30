@@ -149,6 +149,13 @@ export function Settings() {
             onPress={() => router.push('/about')}
             modifiers={rowModifiers}
           />
+          <LinkRow
+            colors={colors}
+            title="Open source licenses"
+            symbol="doc.text"
+            onPress={() => router.push('/licenses')}
+            modifiers={rowModifiers}
+          />
         </Section>
       </Form>
     </Host>

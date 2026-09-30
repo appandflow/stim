@@ -973,6 +973,25 @@ The Sentry organization is `stim-rn` and the project `stim-mobile`.
 3. Build and submit a new TestFlight build. The DSN reaches only builds and
    updates bundled after step 1.
 
+## Open source licenses
+
+Settings > More > **Open source licenses** lists Stim's own license and every
+npm package compiled into the app or linked natively, each with its version,
+license and repository link. Tapping one shows the license text. The list comes
+from `src/generated/licenses.json`, which `pnpm run licenses` writes: it runs
+`expo export` for iOS and Android with source maps, takes the packages the
+Metro bundles pull in, adds the direct dependencies of `package.json`, and reads
+each package's `package.json` and license file. A package that ships no license
+file uses the text of another bundled package from the same repository under the
+same license, and otherwise shows none. Identical texts are stored once. The
+list does not include native libraries that no npm package vendors, such as the
+Hermes engine and CocoaPods or Gradle transitive dependencies.
+
+Run `pnpm run licenses` and commit the file after a dependency change.
+`pnpm run licenses:check` regenerates the list and fails when the committed file
+differs; the Mobile workflow runs it. The page is JavaScript and JSON only, so
+it changes no native fingerprint and ships over the air.
+
 ## Checks
 
 ```bash
@@ -980,6 +999,7 @@ pnpm run format:check
 pnpm run lint
 pnpm run typecheck
 pnpm test
+pnpm run licenses:check
 ```
 
 Run `pnpm run knip` from the repository root instead of from `apps/mobile`: it
