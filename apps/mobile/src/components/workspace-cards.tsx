@@ -38,7 +38,7 @@ import {
   type WorkspaceStage,
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
-import type { AgentSession, BuildReport, EndedAgentSession, EnvironmentState } from '@/protocol/types';
+import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
 
 const CHIP_TONE: Record<ChipTone, TextTone> = {
   default: 'default',
@@ -296,39 +296,32 @@ export function LogsCard({
 }
 
 export function WorkCard({
-  agents,
-  endedAgents,
+  sessions,
   git,
-  now,
   onPress,
 }: {
-  agents: AgentSession[];
-  endedAgents: EndedAgentSession[];
+  sessions: AgentSession[];
   git: GitChip | null;
-  now: number;
   onPress: () => void;
 }) {
   const { theme } = useUnistyles();
-  const agent = agents[0];
-  const ended = agent ? undefined : endedAgents[0];
+  const agent = sessions[0];
   return (
     <SmallCard
       title="Work"
       onPress={onPress}
       accessibilityLabel={[
         'Work',
-        agent ? agentLabel(agent, now) : ended ? agentLabel(ended, now) : 'No agent session',
-        agents.length > 1 ? `and ${agents.length - 1} more` : null,
+        agent ? agentLabel(agent) : 'No agent session',
+        sessions.length > 1 ? `and ${sessions.length - 1} more` : null,
         git?.label ?? 'no git state',
       ]
         .filter(Boolean)
         .join(', ')}
       accessibilityHint="Shows the agent sessions and the branch"
     >
-      {agents.length ? (
-        <AgentSessionLine agents={agents} now={now} variant={VALUE} weight={VALUE_WEIGHT} />
-      ) : ended ? (
-        <AgentSessionLine agents={[ended]} now={now} variant={VALUE} tone="tertiary" />
+      {agent ? (
+        <AgentSessionLine sessions={sessions} variant={VALUE} weight={VALUE_WEIGHT} />
       ) : (
         <Text variant={VALUE} tone="tertiary" numberOfLines={1}>
           No agent session

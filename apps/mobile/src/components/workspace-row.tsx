@@ -11,7 +11,7 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
-import { agentsSummary } from '@/lib/agents';
+import { agentsSummary, workspaceAgentSessions } from '@/lib/agents';
 import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { deviceKey, devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
@@ -45,7 +45,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     running.map((d) => d.activity),
     activityAt,
   );
-  const agents = agentsSummary(env.agents, activityAt);
+  const sessions = workspaceAgentSessions(env);
+  const agents = agentsSummary(sessions);
   const where = [item.project, item.inCheckout].filter(Boolean).join(' \u00B7 ');
   const tint = offline
     ? theme.colors.tertiary
@@ -102,9 +103,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             {item.macName}
           </Text>
         </View>
-        {env.agents?.length ? (
-          <AgentSessionLine agents={env.agents} now={activityAt} variant="callout" tone="secondary" />
-        ) : null}
+        {sessions.length ? <AgentSessionLine sessions={sessions} variant="callout" tone="secondary" /> : null}
         {lastSeen || active || errors > 0 || env.warnings.length > 0 ? (
           <View style={styles.chips}>
             {lastSeen ? <Pill>{lastSeen}</Pill> : null}

@@ -1010,20 +1010,39 @@ import Testing
     return try! JSONDecoder().decode([AgentSession].self, from: Data(json.utf8))
   }()
 
-  @Test func labelsTheToolTitleAndActivityAge() {
-    let now = ISO8601DateFormatter().date(from: "2026-09-28T12:00:00Z")!
-    #expect(agents.map { $0.label(now: now) } == ["Claude Code \u{00B7} Fix the login bug \u{00B7} 5m ago", "Codex"])
+  struct Vectors: Decodable {
+    struct Label: Decodable {
+      var name: String
+      var session: AgentSession
+      var label: String
+    }
+
+    struct Order: Decodable {
+      var name: String
+      var agents: [AgentSession]?
+      var endedAgents: [AgentSession]?
+      var ids: [String]
+    }
+
+    var labels: [Label]
+    var order: [Order]
   }
 
-  @Test func labelsAnEndedSessionByWhenItEnded() throws {
-    let json = """
-      {"tool":"claude-code","sessionId":"c","cwd":"/w","title":"Fix the login bug","lastActiveAt":"2026-09-28T09:00:00.000Z",
-       "endedAt":"2026-09-28T10:00:00.000Z","openUrl":"claude://code/continue?session=local_2"}
-      """
-    let ended = try JSONDecoder().decode(AgentSession.self, from: Data(json.utf8))
-    let now = ISO8601DateFormatter().date(from: "2026-09-28T12:00:00Z")!
-    #expect(ended.label(now: now) == "Claude Code \u{00B7} Fix the login bug \u{00B7} ended 2h ago")
-    #expect(ended.openURL?.absoluteString == "claude://code/continue?session=local_2")
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(forResource: "agent-sessions-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
+
+  @Test(arguments: vectors.labels.map(\.name))
+  func labelsLikeThePhone(name: String) throws {
+    let c = try #require(Self.vectors.labels.first { $0.name == name })
+    #expect(c.session.label == c.label)
+  }
+
+  @Test(arguments: vectors.order.map(\.name))
+  func ordersLikeThePhone(name: String) throws {
+    let c = try #require(Self.vectors.order.first { $0.name == name })
+    #expect(AgentSession.associated(agents: c.agents, endedAgents: c.endedAgents).map(\.id) == c.ids)
   }
 
   @Test func opensOnlyClaudeAndCodexLinks() {

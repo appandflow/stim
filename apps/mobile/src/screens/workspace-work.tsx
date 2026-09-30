@@ -11,7 +11,7 @@ import { Text } from '@/components/text';
 import { chipColor } from '@/components/workspace-cards';
 import { useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
-import { agentWebUrl } from '@/lib/agents';
+import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
 import { shortDuration } from '@/lib/format';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
 import { workspaceTitleAt } from '@/lib/workspaces';
@@ -41,7 +41,7 @@ export function WorkspaceWork({ path }: { path: string }) {
   const worktree = env?.worktree;
   const git = worktree?.git;
   const pr = worktree?.pullRequest;
-  const sessions = [...(env?.agents ?? []), ...(env?.endedAgents ?? [])];
+  const sessions = env ? workspaceAgentSessions(env) : [];
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const checks = pr ? checksTone(pr.checks) : null;
   const checkedAt = pr ? Date.parse(pr.checkedAt) : NaN;
@@ -58,7 +58,7 @@ export function WorkspaceWork({ path }: { path: string }) {
       {sessions.length ? (
         <ListSection title={sessions.length === 1 ? 'Agent session' : 'Agent sessions'} bare={onlyAgentHasLink}>
           {sessions.map((agent) => (
-            <AgentSessionRow key={`${agent.tool}:${agent.sessionId}`} agent={agent} now={now} card={onlyAgentHasLink} />
+            <AgentSessionRow key={`${agent.tool}:${agent.sessionId}`} agent={agent} card={onlyAgentHasLink} />
           ))}
         </ListSection>
       ) : null}

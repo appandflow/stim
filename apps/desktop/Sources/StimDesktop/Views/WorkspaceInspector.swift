@@ -13,7 +13,7 @@ struct Inspector: View {
   var showsLogs: Bool
   var toggleLogs: () -> Void
 
-  private var agentSessions: [AgentSession] { (env.agents ?? []) + (env.endedAgents ?? []) }
+  private var agentSessions: [AgentSession] { AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents) }
 
   var body: some View {
     ScrollView {
