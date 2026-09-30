@@ -46,6 +46,9 @@ struct PhonesView: View {
         if server.phones.isEmpty {
           Text("No paired phones.").foregroundStyle(Palette.secondary)
         }
+        if let reason = pairingUnavailable {
+          Text(reason).foregroundStyle(Palette.tertiary)
+        }
         ForEach(server.phones) { device in
           DeviceRow(
             device: device, changing: server.pendingGrants[device.id] != nil,
@@ -58,6 +61,7 @@ struct PhonesView: View {
           Spacer()
           Button("Pair a Phone\u{2026}") { pairing = true }
             .disabled(!server.isRunning)
+            .help(pairingUnavailable ?? "Show a code to pair a phone")
         }
       }
 
@@ -118,6 +122,15 @@ struct PhonesView: View {
           : device.isBuildClient
             ? "That Mac can no longer build here and must ask again."
             : "The phone disconnects and must pair again to reconnect.")
+    }
+  }
+
+  private var pairingUnavailable: String? {
+    switch server.state {
+    case .running: return nil
+    case .off: return "Pairing needs stim-server. Turn on Serve to phones to pair a phone."
+    case .starting: return "Pairing is available once stim-server has started."
+    case .failed: return "Pairing is unavailable because stim-server failed to start."
     }
   }
 
@@ -412,7 +425,7 @@ struct PairSheet: View {
       while !Task.isCancelled, paired == nil {
         try? await Task.sleep(for: .seconds(2))
         server.reloadDevices()
-        paired = server.devices.first { $0.pairedAt >= openedAt }
+        paired = server.devices.first { $0.isPhone && $0.pairedAt >= openedAt }
       }
     }
   }
