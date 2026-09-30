@@ -171,8 +171,9 @@ Failed and the two most used commands) and a divider for a pause of more than
 while live, and while replaying the last one at or before the frame shown, or
 the one just stepped or clicked to. An action the replay recorded shows a play
 icon. Clicking an action shows its level, command, device and whether the
-replay recorded it, and a recorded one plays from 1.5 seconds before it; an
-action the replay did not record only shows its details. While the list has
+replay recorded it until another action comes on screen, and a recorded one
+plays from 1.5 seconds before it; an action the replay did not record only
+shows its details. While the list has
 the keyboard, Up and Down move through the actions the same way and Space
 plays and pauses. **Open in logs** closes the viewer and shows the device's
 agent actions in the logs, at the selected action. The toolbar button hides

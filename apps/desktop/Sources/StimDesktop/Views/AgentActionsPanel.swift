@@ -3,9 +3,9 @@ import StimKit
 import SwiftUI
 
 /// The device viewer's agent actions, oldest first beside the screen, as a session replay lists its events: filter
-/// chips with counts, the action on screen highlighted and kept in view, and a click on an action shows its details
-/// and, when the replay recorded it, plays from just before it. Up and down move through the actions and space plays
-/// and pauses while the list has the keyboard.
+/// chips with counts, the action on screen highlighted and kept in view, and a click on an action shows its details,
+/// until another action comes on screen, and, when the replay recorded it, plays from just before it. Up and down move
+/// through the actions and space plays and pauses while the list has the keyboard.
 struct AgentActionsPanel: View {
   /// Newest first, as `AgentFeedModel` keeps them.
   var actions: [AgentAction]
@@ -140,6 +140,7 @@ struct AgentActionsPanel: View {
           .padding(.vertical, Space.xs)
         }
         .onChange(of: shown.current) { _, key in
+          if selected != key { selected = nil }
           guard let key else { return }
           if reduceMotion {
             proxy.scrollTo(key, anchor: .center)
