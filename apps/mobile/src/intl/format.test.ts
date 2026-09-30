@@ -1,4 +1,8 @@
+import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/format-vectors.json';
+
 import { formatBytes, formatDuration, formatMemoryMb, formatSize } from '@/intl/format';
+import { clockDuration } from '@/lib/format';
+import { replayDuration } from '@/lib/replay';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -35,5 +39,23 @@ describe('sizes', () => {
 
   it('shows memory in binary units', () => {
     expect([512.4, 1023.6, 1536].map(formatMemoryMb)).toEqual(['512 MB', '1024 MB', '1.5 GB']);
+  });
+});
+
+describe('format vectors', () => {
+  it('words durations', () => {
+    expect(vectors.duration.map(({ ms }) => formatDuration(ms))).toEqual(vectors.duration.map((c) => c.text));
+    expect(vectors.since.map(({ ms }) => formatDuration(ms, { seconds: true }))).toEqual(
+      vectors.since.map((c) => c.text),
+    );
+    expect(vectors.roundedDuration.map(({ ms }) => replayDuration(ms))).toEqual(
+      vectors.roundedDuration.map((c) => c.text),
+    );
+    expect(vectors.clock.map(({ ms }) => clockDuration(ms))).toEqual(vectors.clock.map((c) => c.text));
+  });
+
+  it('words sizes', () => {
+    expect(vectors.memoryMb.map(({ mb }) => formatMemoryMb(mb))).toEqual(vectors.memoryMb.map((c) => c.text));
+    expect(vectors.bytes.map(({ bytes }) => formatBytes(bytes))).toEqual(vectors.bytes.map((c) => c.text));
   });
 });

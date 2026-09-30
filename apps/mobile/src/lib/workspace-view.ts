@@ -58,6 +58,10 @@ function closedApps(env: EnvironmentState, devices: DeviceRef[]): DeviceRef[] {
   return devices.filter((d) => appPresence(env, d) === 'closed');
 }
 
+/**
+ * The stage line, git chip, phase steps and bundle and agent lines here have Stim Desktop twins in
+ * `WorkspaceView.swift`; both replay apps/desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json.
+ */
 export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now: number): WorkspaceStage {
   const build = runningBuild(env);
   if (build) {
@@ -643,7 +647,9 @@ export function bundleLine(env: EnvironmentState, now: number, reportsBundles: b
     return { text: since ? t`Bundle failed \u00B7 ${since} ago` : t`Bundle failed`, tone: 'error' };
   }
   const seconds = (last.durationMs / 1000).toFixed(1);
-  return { text: t`Bundled in ${seconds}s`, tone: 'tertiary' };
+  const finished = Date.parse(last.finishedAt);
+  const since = Number.isFinite(finished) ? formatDuration(now - finished, { seconds: true }) : null;
+  return { text: since ? t`Bundled in ${seconds}s \u00B7 ${since} ago` : t`Bundled in ${seconds}s`, tone: 'tertiary' };
 }
 
 export type MetroHealth = 'healthy' | 'unhealthy' | 'stopped';

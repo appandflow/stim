@@ -18,9 +18,16 @@ public enum Format {
     ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
   }
 
+  /// `value` with one decimal, a tie rounded up the way the phone app's `toFixed(1)` does.
+  public static func tenths(_ value: Double) -> String {
+    let scaled = value * 10
+    let tie = scaled - scaled.rounded(.down) == 0.5 && (-scaled).addingProduct(value, 10) == 0
+    return String(format: "%.1f", tie ? scaled.rounded(.up) / 10 : value)
+  }
+
   /// "512 MB" or "1.5 GB" from a megabyte count.
   public static func memoryMb(_ mb: Double) -> String {
-    mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : "\(Int(mb.rounded())) MB"
+    mb >= 1024 ? "\(tenths(mb / 1024)) GB" : "\(Int(mb.rounded())) MB"
   }
 
   /// "1.5 GB" from a megabyte count, always in gigabytes with one decimal.
@@ -39,11 +46,6 @@ public enum Format {
   /// "412 GB" or "1.2 TB" for free disk space, decimal units, with a tie rounded up the way the phone app's
   /// `toFixed(1)` does, so both apps word the same volume the same way.
   public static func freeSpace(_ bytes: Double) -> String {
-    let tenths = { (value: Double) -> String in
-      let scaled = value * 10
-      let tie = scaled - scaled.rounded(.down) == 0.5 && (-scaled).addingProduct(value, 10) == 0
-      return String(format: "%.1f", tie ? scaled.rounded(.up) / 10 : value)
-    }
     if bytes >= 1e12 { return "\(tenths(bytes / 1e12)) TB" }
     let gb = bytes / 1e9
     return gb >= 100 ? "\(Int(gb.rounded())) GB" : "\(tenths(gb)) GB"

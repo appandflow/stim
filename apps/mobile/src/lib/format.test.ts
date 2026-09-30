@@ -224,7 +224,7 @@ describe('gitBadges', () => {
       behind: 1,
       arrows: '\u21913 \u21931',
       merged: false,
-      label: '3 uncommitted changes, 3 commits not pushed, 1 commit behind the upstream',
+      label: '3 uncommitted changes, 3 commits not pushed to origin/x, 1 commit behind origin/x',
     });
   });
 

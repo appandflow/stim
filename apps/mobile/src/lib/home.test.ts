@@ -1,4 +1,5 @@
 import fixture from '../../mock-server/fixtures/status.json';
+import tones from '../../../desktop/Tests/StimKitTests/Fixtures/usage-tone-vectors.json';
 
 import {
   budgetRows,
@@ -281,6 +282,20 @@ describe('machineStats', () => {
     expect(machineStats(usage({}, 0.34, 14e9)).find((s) => s.kind === 'disk')?.tone).toBe('warn');
     expect(machineStats(usage({}, 0.34, 2e9)).find((s) => s.kind === 'disk')?.tone).toBe('critical');
     expect(machineStats(null)).toEqual([]);
+  });
+
+  it('steps tones where Stim Desktop steps them', () => {
+    const toneOf = (kind: 'cpu' | 'disk' | 'memory', stats: MachineUsage) => {
+      const tone = machineStats(stats).find((s) => s.kind === kind)?.tone;
+      return tone === 'warn' ? 'caution' : tone === 'critical' ? 'error' : tone;
+    };
+    expect(tones.cpu.map((c) => toneOf('cpu', usage({}, c.fraction, 500e9)))).toEqual(tones.cpu.map((c) => c.tone));
+    expect(tones.disk.map((c) => toneOf('disk', usage({}, 0.1, c.freeBytes)))).toEqual(tones.disk.map((c) => c.tone));
+    expect(
+      tones.memory.map((c) =>
+        toneOf('memory', usage({ pressure: c.pressure as MachineUsage['memory']['pressure'] }, 0.1, 500e9)),
+      ),
+    ).toEqual(tones.memory.map((c) => c.tone));
   });
 
   it('colors by memory pressure, and leaves a stat out when the server does not report it', () => {

@@ -118,8 +118,11 @@ msgstr "{0, plural, one {Median of # {outcome} run} other {Median of # {outcome}
 msgid "{age} ago"
 msgstr "{age} ago"
 
-#: src/components/git-indicator.tsx
 #: src/lib/format.ts
+msgid "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits not pushed to {upstream}}}"
+msgstr "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits not pushed to {upstream}}}"
+
+#: src/components/git-indicator.tsx
 msgid "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
 msgstr "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
 
@@ -127,8 +130,11 @@ msgstr "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
 msgid "{basis, plural, one {{remaining} · median of # {kind} run} other {{remaining} · median of # {kind} runs}}"
 msgstr "{basis, plural, one {{remaining} · median of # {kind} run} other {{remaining} · median of # {kind} runs}}"
 
-#: src/components/git-indicator.tsx
 #: src/lib/format.ts
+msgid "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
+msgstr "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
+
+#: src/components/git-indicator.tsx
 msgid "{behind, plural, one {# commit behind the upstream} other {# commits behind the upstream}}"
 msgstr "{behind, plural, one {# commit behind the upstream} other {# commits behind the upstream}}"
 
@@ -974,6 +980,10 @@ msgstr "Bundle failed · {since} ago"
 #: src/lib/workspace-view.ts
 msgid "Bundled in {seconds}s"
 msgstr "Bundled in {seconds}s"
+
+#: src/lib/workspace-view.ts
+msgid "Bundled in {seconds}s · {since} ago"
+msgstr "Bundled in {seconds}s · {since} ago"
 
 #: src/lib/workspace-view.ts
 msgid "Bundling"
@@ -3290,6 +3300,10 @@ msgstr "The screen stayed in {name}. The app in front may not support rotating."
 #: src/lib/connection.ts
 msgid "The server did not issue a device token."
 msgstr "The server did not issue a device token."
+
+#: src/lib/format.ts
+msgid "the upstream"
+msgstr "the upstream"
 
 #: src/screens/device-view.tsx
 msgid "This device is not running."
