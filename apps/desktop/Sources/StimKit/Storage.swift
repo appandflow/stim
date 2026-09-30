@@ -194,7 +194,7 @@ public struct DeviceStorage: Identifiable, Hashable, Sendable {
   public var isStim: Bool { [.workspace, .parked, .orphaned].contains(device.owner) }
   public var lastUsed: Date? { device.lastUsedAt.flatMap(StorageReport.parseDate) }
 
-  /// The runtime as people name it: "iOS 27.0", or "Android 36 · google_apis_playstore".
+  /// The runtime as people name it: "iOS 27.0", or "Android 36 \u{00B7} google_apis_playstore".
   public var runtimeTitle: String? {
     guard let runtime = device.runtime else { return nil }
     return device.kind == "ios" ? StorageReport.iosRuntimeTitle(runtime) : StorageReport.systemImageTitle(runtime)
@@ -383,7 +383,7 @@ public struct StorageReport: Sendable {
     return "\(platform) \(parts.dropFirst().joined(separator: "."))"
   }
 
-  /// "system-images;android-36;google_apis;arm64-v8a" reads "Android 36 · google_apis".
+  /// "system-images;android-36;google_apis;arm64-v8a" reads "Android 36 \u{00B7} google_apis".
   static func systemImageTitle(_ package: String) -> String {
     let parts = package.split(separator: ";").map(String.init)
     guard parts.count >= 3, parts[1].hasPrefix("android-") else { return package }

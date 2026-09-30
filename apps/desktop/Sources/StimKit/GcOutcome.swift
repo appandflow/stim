@@ -26,7 +26,7 @@ public struct GcOutcome: Hashable, Sendable {
 
   public var freedBytes: Int64 { done.compactMap(\.bytes).filter { $0 > 0 }.reduce(0, +) }
 
-  /// One line such as "Freed 20.2 GB · Deleted 3 devices".
+  /// One line such as "Freed 20.2 GB \u{00B7} Deleted 3 devices".
   public var headline: String {
     var parts: [String] = []
     if freedBytes > 0 { parts.append("Freed \(Format.fileSize(freedBytes))") }

@@ -64,7 +64,8 @@ stim-server only over loopback, with the device token it gets by spending a
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
 `apps/mobile/src/design/tokens.ts` and `apps/mobile/src/lib/agent-prompts.ts`; run
-`node apps/desktop/scripts/generate-tokens.mjs` after changing either file.
+`node apps/desktop/scripts/generate-tokens.mjs` after changing either file. Keep
+its `Sources` ASCII-only, with `\u{XXXX}` escapes; `node apps/desktop/scripts/check-ascii.mjs` checks it.
 
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
 workspace named `stim-mobile`; see its README. Of the root checks above, only

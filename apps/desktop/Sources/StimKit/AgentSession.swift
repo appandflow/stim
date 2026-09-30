@@ -25,7 +25,7 @@ public struct AgentSession: Decodable, Hashable, Sendable, Identifiable {
     }
   }
 
-  /// "Claude Code · Fix the login bug": the tool and the title when there is one.
+  /// "Claude Code \u{00B7} Fix the login bug": the tool and the title when there is one.
   public var label: String {
     [toolName, title].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
   }

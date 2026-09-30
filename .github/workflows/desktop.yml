@@ -46,6 +46,8 @@ jobs:
           package-manager-cache: false
       - name: Check the generated design tokens and agent prompts
         run: node scripts/generate-tokens.mjs --check
+      - name: Check Sources stay ASCII
+        run: node scripts/check-ascii.mjs
       - name: Lint Swift formatting
         run: scripts/format.sh --check
       - run: swift build -Xswiftc -warnings-as-errors

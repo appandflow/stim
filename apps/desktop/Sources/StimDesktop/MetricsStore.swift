@@ -119,10 +119,9 @@ final class MetricsStore {
 @MainActor
 func stimDiskLocations(_ workspaces: [Workspace], status: StatusStore) -> [(label: String, path: String)] {
   let home = NSHomeDirectory()
-  let stimHome = ProcessInfo.processInfo.environment["STIM_HOME"] ?? "\(home)/.stim"
   let repositories = Set(workspaces.map { status.project(of: $0).root }).sorted()
   return repositories.map { (label: "Repositories", path: $0) } + [
-    (label: "Stim home", path: stimHome),
+    (label: "Stim home", path: status.stimHome),
     (label: "Simulators", path: "\(home)/Library/Developer/CoreSimulator"),
   ]
 }

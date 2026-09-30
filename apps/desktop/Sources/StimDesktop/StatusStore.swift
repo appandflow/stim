@@ -13,6 +13,7 @@ final class StatusStore: ObservableObject {
   }
   private var projectTitleMap: [String: String] = [:]
   @Published private(set) var watching = false
+  private(set) var stimHome = "\(NSHomeDirectory())/.stim"
   @Published private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
 
   private let cli: Task<StimCLI, Never>
@@ -23,6 +24,7 @@ final class StatusStore: ObservableObject {
   private var backoff = RestartBackoff()
   private var pollTimer: Timer?
   private var inFlight = false
+  private var refreshPending = false
   private var issued = 0
   private var shown = 0
   private var doctorRuns: [String: DoctorRun] = [:]
@@ -33,6 +35,7 @@ final class StatusStore: ObservableObject {
 
   init(cli: Task<StimCLI, Never>) {
     self.cli = cli
+    Task { stimHome = await cli.value.stimHome }
   }
 
   func start() {
@@ -50,7 +53,10 @@ final class StatusStore: ObservableObject {
   }
 
   func refresh() {
-    guard !inFlight else { return }
+    guard !inFlight else {
+      refreshPending = true
+      return
+    }
     inFlight = true
     let sequence = nextSequence()
     let cli = cli
@@ -58,6 +64,10 @@ final class StatusStore: ObservableObject {
       let result = await Result.awaiting { try await cli.value.status() }
       inFlight = false
       show(result, sequence: sequence)
+      if refreshPending {
+        refreshPending = false
+        refresh()
+      }
     }
   }
 
