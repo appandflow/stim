@@ -1,6 +1,6 @@
 /// Thresholds for the compact usage stats (CPU, memory, disk), shared by every surface that shows one so they
-/// agree on when a value reads as normal, a caution, or an error. These mirror `apps/mobile/src/lib/home.ts`'s `machineStats`
-/// constants, so the phone and desktop color the same stat the same way at the same value.
+/// agree on when a value reads as normal, a caution, or an error. `apps/mobile/src/lib/home.ts`'s `machineStats` holds
+/// the same thresholds; both replay `Tests/StimKitTests/Fixtures/usage-tone-vectors.json`.
 public enum UsageThresholds {
   public static let cpuWarnFraction = 0.8
   public static let cpuCriticalFraction = 0.95

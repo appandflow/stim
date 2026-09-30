@@ -257,10 +257,13 @@ export function gitBadges(git: WorktreeGit | null | undefined): GitBadges | null
   if (!uncommitted && !ahead && !behind && !merged) return null;
   const arrows = [ahead ? `\u2191${ahead}` : '', behind ? `\u2193${behind}` : ''].filter(Boolean).join(' ');
   const mergedInto = git.mergedInto ?? '';
+  const upstream = git.upstream ?? t`the upstream`;
   const label = [
     uncommitted ? plural(uncommitted, { one: '# uncommitted change', other: '# uncommitted changes' }) : '',
-    ahead ? plural(ahead, { one: '# commit not pushed', other: '# commits not pushed' }) : '',
-    behind ? plural(behind, { one: '# commit behind the upstream', other: '# commits behind the upstream' }) : '',
+    ahead
+      ? plural(ahead, { one: `# commit not pushed to ${upstream}`, other: `# commits not pushed to ${upstream}` })
+      : '',
+    behind ? plural(behind, { one: `# commit behind ${upstream}`, other: `# commits behind ${upstream}` }) : '',
     merged ? t`merged into ${mergedInto}` : '',
   ]
     .filter(Boolean)

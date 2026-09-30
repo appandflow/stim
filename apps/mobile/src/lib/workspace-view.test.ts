@@ -1,8 +1,13 @@
+import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json';
+
+import { activityBadge, driversSummary } from '@/lib/format';
 import { devicesOf } from '@/lib/workspaces';
 import {
   agentRow,
   appPresence,
   barFills,
+  checksSummary,
+  phaseName,
   barSteps,
   buildLine,
   bundleLine,
@@ -22,6 +27,7 @@ import {
 } from '@/lib/workspace-view';
 import type {
   BuildHistoryEntry,
+  DeviceActivity,
   BuildReport,
   EnvironmentState,
   LastBuild,
@@ -528,7 +534,7 @@ describe('bundleLine', () => {
         NOW,
         true,
       )?.text,
-    ).toBe('Bundled in 1.8s');
+    ).toBe('Bundled in 1.8s \u00B7 12s ago');
     expect(bundleLine(metro(), NOW, true)?.text).toBe('Not bundled yet');
   });
 
@@ -619,7 +625,7 @@ describe('gitChip', () => {
         { text: '1 changed', tone: 'secondary' },
       ],
       pr: { text: 'PR #1695', tone: 'error', ci: 'failing' },
-      label: 'Pull request 1695, closed, checks failing, 1 uncommitted change, 2 commits not pushed',
+      label: 'Pull request 1695, closed, checks failing, 1 uncommitted change, 2 commits not pushed to origin/x',
     });
   });
 });
@@ -634,5 +640,70 @@ describe('workspaceSeries', () => {
     };
     expect(workspaceSeries(usage, '/w')).toMatchObject({ minutes: 1, peakCpuPercent: 188, memoryChangeMb: 500 });
     expect(workspaceSeries(usage, '/other')).toBeNull();
+  });
+});
+
+type VectorStep = PhaseStep & { name: string };
+
+const vectorNow = Date.parse(vectors.now);
+const steady = (steps: readonly PhaseStep[]) =>
+  steps.map((step) => ({
+    phase: step.phase,
+    name: phaseName(step.phase),
+    state: step.state,
+    elapsedMs: step.elapsedMs,
+    expectedMs: step.expectedMs,
+    fraction: step.fraction === null ? null : Number(step.fraction.toFixed(9)),
+  }));
+const expectedSteps = (steps: VectorStep[]) =>
+  steps.map((step) => ({ ...step, fraction: step.fraction === null ? null : Number(step.fraction.toFixed(9)) }));
+
+describe('workspace view vectors', () => {
+  it.each(vectors.stage.map((c) => [c.name, c] as const))('stage: %s', (_, c) => {
+    const e = c.workspace as unknown as EnvironmentState;
+    const stage = workspaceStage(e, devicesOf(e), vectorNow);
+    expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
+  });
+
+  it.each(vectors.gitChip.map((c) => [c.name, c] as const))('git chip: %s', (_, c) => {
+    const chip = gitChip(c.worktree as unknown as WorktreeFacts);
+    const pr = chip?.pr ? { text: chip.pr.text, tone: chip.pr.tone, checks: chip.pr.ci } : null;
+    const toneOf = (tone: string) => (tone === 'default' ? 'normal' : tone === 'secondary' ? 'neutral' : tone);
+    expect({
+      parts: chip?.parts.map((p) => ({ text: p.text, tone: toneOf(p.tone) })),
+      pullRequest: pr,
+      label: chip?.label,
+    }).toEqual(c.chip);
+  });
+
+  it.each(vectors.checksSummary.map((c) => [c.name, c] as const))('checks summary: %s', (_, c) => {
+    expect(checksSummary(c.checks)).toBe(c.summary);
+  });
+
+  it.each(vectors.phases.map((c) => [c.name, c] as const))('phases: %s', (_, c) => {
+    const steps = phaseSteps(c.build as unknown as BuildReport, c.history as unknown as BuildHistoryEntry[], vectorNow);
+    expect(steady(steps)).toEqual(expectedSteps(c.steps as VectorStep[]));
+    expect(steady(barSteps(steps)).map((s) => ({ ...s, elapsedMs: null }))).toEqual(
+      expectedSteps(c.bars as VectorStep[]),
+    );
+    expect(namesPhases(steps)).toBe(c.namesPhases);
+  });
+
+  it.each(vectors.activity.badge.map((c) => [c.name, c] as const))('activity badge: %s', (_, c) => {
+    expect(activityBadge(c.activity as unknown as DeviceActivity, vectorNow)?.text ?? null).toBe(c.text);
+  });
+
+  it.each(vectors.activity.drivers.map((c) => [c.name, c] as const))('drivers summary: %s', (_, c) => {
+    expect(driversSummary(c.activities as unknown as (DeviceActivity | undefined)[], vectorNow)).toBe(c.summary);
+  });
+
+  it.each(vectors.bundleLine.map((c) => [c.name, c] as const))('bundle line: %s', (_, c) => {
+    const line = bundleLine(c.workspace as unknown as EnvironmentState, vectorNow, c.reportsBundles);
+    expect(line && { text: line.text, tone: line.tone === 'default' ? 'normal' : line.tone }).toEqual(c.line);
+  });
+
+  it.each(vectors.agentRow.map((c) => [c.name, c] as const))('agent row: %s', (_, c) => {
+    const last = c.last && { ts: vectorNow - c.last.agoMs, msg: c.last.message };
+    expect(agentRow(c.activity as unknown as DeviceActivity, last, vectorNow)).toEqual(c.row);
   });
 });

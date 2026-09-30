@@ -199,6 +199,7 @@ export interface MachineStat {
   tone: UsageTone;
 }
 
+// Stim Desktop's UsageThresholds holds the same thresholds; both replay desktop/Tests/StimKitTests/Fixtures/usage-tone-vectors.json.
 const CPU_WARN_FRACTION = 0.8;
 const CPU_CRITICAL_FRACTION = 0.95;
 // A quarter of the low-disk warning, so the compact stat also has a red tier before Stim's own hard floor bites.

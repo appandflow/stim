@@ -243,7 +243,7 @@ extension Workspace {
     guard let last = bundle.last else { return nil }
     let when = parseTimestamp(last.finishedAt).map { " \u{00B7} \(Format.since(now.timeIntervalSince($0))) ago" } ?? ""
     if last.status == "failed" { return BundleLine(text: "Bundle failed\(when)", tone: .error) }
-    return BundleLine(text: "Bundled in \(String(format: "%.1f", last.durationMs / 1000))s\(when)", tone: .tertiary)
+    return BundleLine(text: "Bundled in \(Format.tenths(last.durationMs / 1000))s\(when)", tone: .tertiary)
   }
 
   public var metroHealth: MetroHealth? {

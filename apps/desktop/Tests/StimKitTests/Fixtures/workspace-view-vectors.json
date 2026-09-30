@@ -1,0 +1,3090 @@
+{
+  "now": "2026-09-27T12:00:00.000Z",
+  "stage": [
+    {
+      "name": "running shows how long the supervisor has been up",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "supervisor": {
+          "startedAt": "2026-09-27T11:18:00.000Z",
+          "healthy": true
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up 42m"
+      }
+    },
+    {
+      "name": "running without a supervisor start has no subtitle",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": []
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "running counts a supervisor under a minute as under a minute",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "supervisor": {
+          "startedAt": "2026-09-27T11:59:40.000Z"
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up <1m"
+      }
+    },
+    {
+      "name": "running shows hours and minutes",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "supervisor": {
+          "startedAt": "2026-09-27T10:57:00.000Z"
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up 1h03m"
+      }
+    },
+    {
+      "name": "running shows days",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "supervisor": {
+          "startedAt": "2026-09-25T10:00:00.000Z"
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up 2d"
+      }
+    },
+    {
+      "name": "log errors turn a running workspace red",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "logs": {
+          "dir": "",
+          "errorsSinceMarker": 3
+        },
+        "supervisor": {
+          "startedAt": "2026-09-27T11:55:00.000Z"
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "error",
+        "subtitle": "up 5m · 3 errors"
+      }
+    },
+    {
+      "name": "one error is singular",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "logs": {
+          "dir": "",
+          "errorsSinceMarker": 1
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "error",
+        "subtitle": "1 error"
+      }
+    },
+    {
+      "name": "a closed iOS app turns a running workspace red",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "a",
+            "state": "stopped"
+          }
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "error",
+        "subtitle": "iOS app closed"
+      }
+    },
+    {
+      "name": "a closed Android app is named",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5554",
+          "state": "detected",
+          "app": {
+            "id": "a",
+            "state": "stopped"
+          }
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "error",
+        "subtitle": "Android app closed"
+      }
+    },
+    {
+      "name": "errors come before closed apps",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "logs": {
+          "dir": "",
+          "errorsSinceMarker": 3
+        },
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "a",
+            "state": "stopped"
+          }
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "error",
+        "subtitle": "3 errors · iOS app closed"
+      }
+    },
+    {
+      "name": "a running app is not a problem",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "a",
+            "state": "running"
+          }
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "a running build shows its platform and age",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-27T11:58:48.000Z",
+          "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3
+        }
+      },
+      "stage": {
+        "label": "Building",
+        "tone": "brand",
+        "subtitle": "iOS · started 1m ago"
+      }
+    },
+    {
+      "name": "a running Android build",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "android",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-27T11:59:40.000Z",
+          "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3
+        }
+      },
+      "stage": {
+        "label": "Building",
+        "tone": "brand",
+        "subtitle": "Android · started <1m ago"
+      }
+    },
+    {
+      "name": "a build outranks warming",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "warming",
+        "memoryMb": 0,
+        "warnings": [],
+        "warmStep": "copy",
+        "phaseSince": "2026-09-27T11:58:00.000Z",
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-27T11:58:48.000Z",
+          "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3
+        }
+      },
+      "stage": {
+        "label": "Building",
+        "tone": "brand",
+        "subtitle": "iOS · started 1m ago"
+      }
+    },
+    {
+      "name": "a finished build is not a running one",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "ok",
+          "phase": "compile",
+          "startedAt": "2026-09-27T11:58:48.000Z",
+          "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "a failed build shows its platform and age",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:33:00.000Z",
+            "finishedAt": "2026-09-27T11:57:00.000Z"
+          }
+        }
+      },
+      "stage": {
+        "label": "Build failed",
+        "tone": "error",
+        "subtitle": "iOS · 3m ago"
+      }
+    },
+    {
+      "name": "a failed build without a finish time counts from its start",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "android": {
+            "platform": "android",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T10:00:00.000Z",
+            "finishedAt": null
+          }
+        }
+      },
+      "stage": {
+        "label": "Build failed",
+        "tone": "error",
+        "subtitle": "Android · 2h ago"
+      }
+    },
+    {
+      "name": "a failed build outranks a running workspace",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "supervisor": {
+          "startedAt": "2026-09-27T11:18:00.000Z"
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:33:00.000Z",
+            "finishedAt": "2026-09-27T11:57:00.000Z"
+          }
+        }
+      },
+      "stage": {
+        "label": "Build failed",
+        "tone": "error",
+        "subtitle": "iOS · 3m ago"
+      }
+    },
+    {
+      "name": "the newest build decides, so an older failure does not mask a newer success",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:00:00.000Z",
+            "finishedAt": "2026-09-27T11:01:00.000Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:55:00.000Z",
+            "finishedAt": "2026-09-27T11:56:00.000Z"
+          }
+        }
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "the newest build decides, so a newer failure shows",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:00:00.000Z",
+            "finishedAt": "2026-09-27T11:01:00.000Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:55:00.000Z",
+            "finishedAt": "2026-09-27T11:56:00.000Z"
+          }
+        }
+      },
+      "stage": {
+        "label": "Build failed",
+        "tone": "error",
+        "subtitle": "Android · 4m ago"
+      }
+    },
+    {
+      "name": "warming installs dependencies",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "warming",
+        "memoryMb": 0,
+        "warnings": [],
+        "warmStep": "refresh",
+        "phaseSince": "2026-09-27T11:58:00.000Z"
+      },
+      "stage": {
+        "label": "Warming",
+        "tone": "warning",
+        "subtitle": "installing dependencies · 2m"
+      }
+    },
+    {
+      "name": "warming copies ignored files",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "warming",
+        "memoryMb": 0,
+        "warnings": [],
+        "warmStep": "copy",
+        "phaseSince": "2026-09-27T11:59:10.000Z"
+      },
+      "stage": {
+        "label": "Warming",
+        "tone": "warning",
+        "subtitle": "copying ignored files · <1m"
+      }
+    },
+    {
+      "name": "warming without a start time shows only the step",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "warming",
+        "memoryMb": 0,
+        "warnings": [],
+        "warmStep": "copy"
+      },
+      "stage": {
+        "label": "Warming",
+        "tone": "warning",
+        "subtitle": "copying ignored files"
+      }
+    },
+    {
+      "name": "warming outranks a failed build",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "warming",
+        "memoryMb": 0,
+        "warnings": [],
+        "phaseSince": "2026-09-27T11:59:00.000Z",
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:33:00.000Z",
+            "finishedAt": "2026-09-27T11:34:00.000Z"
+          }
+        }
+      },
+      "stage": {
+        "label": "Warming",
+        "tone": "warning",
+        "subtitle": "installing dependencies · 1m"
+      }
+    },
+    {
+      "name": "ready shows when it was warmed",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "ready",
+        "memoryMb": 0,
+        "warnings": [],
+        "phaseSince": "2026-09-27T11:12:00.000Z"
+      },
+      "stage": {
+        "label": "Ready",
+        "tone": "success",
+        "subtitle": "warmed 48m ago"
+      }
+    },
+    {
+      "name": "ready without a time has no subtitle",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "ready",
+        "memoryMb": 0,
+        "warnings": []
+      },
+      "stage": {
+        "label": "Ready",
+        "tone": "success",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "a live workspace is running, not warming",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "warming",
+        "memoryMb": 0,
+        "warnings": [],
+        "phaseSince": "2026-09-27T11:59:00.000Z"
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "stopped shows how long ago Metro stopped",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "idle",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": false,
+          "lastStop": {
+            "reason": "idle",
+            "at": "2026-09-27T10:00:00.000Z"
+          }
+        }
+      },
+      "stage": {
+        "label": "Stopped",
+        "tone": "tertiary",
+        "subtitle": "2h ago"
+      }
+    },
+    {
+      "name": "stopped without a stop time has no subtitle",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "idle",
+        "memoryMb": 0,
+        "warnings": []
+      },
+      "stage": {
+        "label": "Stopped",
+        "tone": "tertiary",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "a remote device keeps a stopped workspace running",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "idle",
+        "memoryMb": 0,
+        "warnings": [],
+        "remoteDevices": [
+          {
+            "platform": "ios",
+            "backend": "x",
+            "sessionId": "s",
+            "state": "running"
+          }
+        ]
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": null
+      }
+    }
+  ],
+  "gitChip": [
+    {
+      "name": "a clean branch level with its upstream",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": null,
+        "label": "Branch, up to date"
+      }
+    },
+    {
+      "name": "a clean branch without an upstream",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": null,
+          "ahead": null,
+          "behind": null,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "no upstream",
+            "tone": "tertiary"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, no upstream"
+      }
+    },
+    {
+      "name": "changed and untracked files count together",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 1,
+          "untracked": 1,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "2 changed",
+            "tone": "neutral"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 2 uncommitted changes"
+      }
+    },
+    {
+      "name": "one uncommitted change is singular",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 1,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "1 changed",
+            "tone": "neutral"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 1 uncommitted change"
+      }
+    },
+    {
+      "name": "commits ahead and behind",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 2,
+          "behind": 1,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "↑2 ↓1",
+            "tone": "normal"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 2 commits not pushed to origin/b, 1 commit behind origin/b"
+      }
+    },
+    {
+      "name": "one commit ahead is singular",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 1,
+          "behind": 0,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "↑1",
+            "tone": "normal"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 1 commit not pushed to origin/b"
+      }
+    },
+    {
+      "name": "commits ahead without an upstream name it generically",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": null,
+          "ahead": 2,
+          "behind": null,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "↑2",
+            "tone": "normal"
+          },
+          {
+            "text": "no upstream",
+            "tone": "tertiary"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 2 commits not pushed to the upstream, no upstream"
+      }
+    },
+    {
+      "name": "commits behind only",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 3,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "↓3",
+            "tone": "normal"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 3 commits behind origin/b"
+      }
+    },
+    {
+      "name": "changes with commits ahead, in one label",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 3,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 1,
+          "behind": 0,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "↑1",
+            "tone": "normal"
+          },
+          {
+            "text": "3 changed",
+            "tone": "neutral"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 3 uncommitted changes, 1 commit not pushed to origin/b"
+      }
+    },
+    {
+      "name": "merged into the base branch",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": "main"
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "merged into main",
+            "tone": "brand"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, merged into main"
+      }
+    },
+    {
+      "name": "merged and uncommitted work",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 2,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": "main"
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "2 changed",
+            "tone": "neutral"
+          },
+          {
+            "text": "merged into main",
+            "tone": "brand"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 2 uncommitted changes, merged into main"
+      }
+    },
+    {
+      "name": "merged without an upstream is not also flagged for it",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": null,
+          "ahead": null,
+          "behind": null,
+          "mergedInto": "main"
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "merged into main",
+            "tone": "brand"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, merged into main"
+      }
+    },
+    {
+      "name": "an open pull request with passing checks",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "open",
+          "checks": {
+            "passing": 5,
+            "failing": 0,
+            "pending": 0
+          }
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "success",
+          "checks": "passing"
+        },
+        "label": "Pull request 12, open, checks passing"
+      }
+    },
+    {
+      "name": "failing checks outrank pending and passing",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "open",
+          "checks": {
+            "passing": 5,
+            "failing": 1,
+            "pending": 2
+          }
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "success",
+          "checks": "failing"
+        },
+        "label": "Pull request 12, open, checks failing"
+      }
+    },
+    {
+      "name": "pending checks outrank passing",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "open",
+          "checks": {
+            "passing": 5,
+            "failing": 0,
+            "pending": 1
+          }
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "success",
+          "checks": "pending"
+        },
+        "label": "Pull request 12, open, checks pending"
+      }
+    },
+    {
+      "name": "a pull request with no checks shows no mark",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "open",
+          "checks": {
+            "passing": 0,
+            "failing": 0,
+            "pending": 0
+          }
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "success",
+          "checks": null
+        },
+        "label": "Pull request 12, open"
+      }
+    },
+    {
+      "name": "a pull request whose checks are unknown shows no mark",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "open"
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "success",
+          "checks": null
+        },
+        "label": "Pull request 12, open"
+      }
+    },
+    {
+      "name": "a draft pull request",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "draft"
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "tertiary",
+          "checks": null
+        },
+        "label": "Pull request 12, draft"
+      }
+    },
+    {
+      "name": "a closed pull request",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "closed"
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "error",
+          "checks": null
+        },
+        "label": "Pull request 12, closed"
+      }
+    },
+    {
+      "name": "a merged pull request hides the merged chip",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": "main"
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "merged"
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "brand",
+          "checks": null
+        },
+        "label": "Pull request 12, merged, merged into main"
+      }
+    },
+    {
+      "name": "a merged pull request over the base branch keeps other chips",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 1,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": "main"
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "merged",
+          "checks": {
+            "passing": 3,
+            "failing": 0,
+            "pending": 0
+          }
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "1 changed",
+            "tone": "neutral"
+          }
+        ],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "brand",
+          "checks": "passing"
+        },
+        "label": "Pull request 12, merged, checks passing, 1 uncommitted change, merged into main"
+      }
+    },
+    {
+      "name": "a pull request on a branch without an upstream",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": null,
+          "ahead": null,
+          "behind": null,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 12,
+          "url": "https://github.com/o/r/pull/12",
+          "title": "t",
+          "state": "open",
+          "checks": {
+            "passing": 1,
+            "failing": 0,
+            "pending": 0
+          }
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "no upstream",
+            "tone": "tertiary"
+          }
+        ],
+        "pullRequest": {
+          "text": "PR #12",
+          "tone": "success",
+          "checks": "passing"
+        },
+        "label": "Pull request 12, open, checks passing, no upstream"
+      }
+    },
+    {
+      "name": "a pull request on a level branch",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/b",
+          "ahead": 0,
+          "behind": 0,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 7,
+          "url": "https://github.com/o/r/pull/7",
+          "title": "t",
+          "state": "open"
+        }
+      },
+      "chip": {
+        "parts": [],
+        "pullRequest": {
+          "text": "PR #7",
+          "tone": "success",
+          "checks": null
+        },
+        "label": "Pull request 7, open"
+      }
+    }
+  ],
+  "checksSummary": [
+    {
+      "name": "no checks reported",
+      "checks": null,
+      "summary": null
+    },
+    {
+      "name": "every count zero",
+      "checks": {
+        "passing": 0,
+        "failing": 0,
+        "pending": 0
+      },
+      "summary": "No checks"
+    },
+    {
+      "name": "failing, pending and passing in that order",
+      "checks": {
+        "passing": 12,
+        "failing": 1,
+        "pending": 2
+      },
+      "summary": "1 failing, 2 pending, 12 passing"
+    },
+    {
+      "name": "only passing",
+      "checks": {
+        "passing": 4,
+        "failing": 0,
+        "pending": 0
+      },
+      "summary": "4 passing"
+    },
+    {
+      "name": "only pending",
+      "checks": {
+        "passing": 0,
+        "failing": 0,
+        "pending": 1
+      },
+      "summary": "1 pending"
+    },
+    {
+      "name": "failing and passing",
+      "checks": {
+        "passing": 3,
+        "failing": 2,
+        "pending": 0
+      },
+      "summary": "2 failing, 3 passing"
+    }
+  ],
+  "phases": [
+    {
+      "name": "the CLI plan lists the phases, done before the current one and pending after",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3,
+        "plannedPhases": [
+          {
+            "phase": "prepare",
+            "expectedMs": 3000
+          },
+          {
+            "phase": "prebuild",
+            "expectedMs": 20000
+          },
+          {
+            "phase": "pods",
+            "expectedMs": 30000
+          },
+          {
+            "phase": "compile",
+            "expectedMs": 94000
+          },
+          {
+            "phase": "install",
+            "expectedMs": 5000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 1
+        },
+        {
+          "phase": "prebuild",
+          "name": "Prebuild",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 20000,
+          "fraction": 1
+        },
+        {
+          "phase": "pods",
+          "name": "Pods",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 30000,
+          "fraction": 1
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 47000,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 5000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 1
+        },
+        {
+          "phase": "prebuild",
+          "name": "Prebuild",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 20000,
+          "fraction": 1
+        },
+        {
+          "phase": "pods",
+          "name": "Pods",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 30000,
+          "fraction": 1
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 5000,
+          "fraction": 0
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "the bar folds cache lookup and wait into prepare and launch into install",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "wait",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:58.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 4000,
+        "basis": 3,
+        "plannedPhases": [
+          {
+            "phase": "prepare",
+            "expectedMs": 1000
+          },
+          {
+            "phase": "cache-lookup",
+            "expectedMs": 2000
+          },
+          {
+            "phase": "wait",
+            "expectedMs": 4000
+          },
+          {
+            "phase": "compile",
+            "expectedMs": 90000
+          },
+          {
+            "phase": "install",
+            "expectedMs": 3000
+          },
+          {
+            "phase": "launch",
+            "expectedMs": 2000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 1000,
+          "fraction": 1
+        },
+        {
+          "phase": "cache-lookup",
+          "name": "Cache lookup",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 2000,
+          "fraction": 1
+        },
+        {
+          "phase": "wait",
+          "name": "Wait",
+          "state": "current",
+          "elapsedMs": 2000,
+          "expectedMs": 4000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 90000,
+          "fraction": 0
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 0
+        },
+        {
+          "phase": "launch",
+          "name": "Launch",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 2000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 7000,
+          "fraction": 0.7142857142857143
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 90000,
+          "fraction": 0
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 5000,
+          "fraction": 0
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "a merged bar segment is done only when both phases are done",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "install",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:59.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 4000,
+        "basis": 3,
+        "plannedPhases": [
+          {
+            "phase": "compile",
+            "expectedMs": 90000
+          },
+          {
+            "phase": "install",
+            "expectedMs": 4000
+          },
+          {
+            "phase": "launch",
+            "expectedMs": 4000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 90000,
+          "fraction": 1
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "current",
+          "elapsedMs": 1000,
+          "expectedMs": 4000,
+          "fraction": 0.25
+        },
+        {
+          "phase": "launch",
+          "name": "Launch",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 4000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 90000,
+          "fraction": 1
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 8000,
+          "fraction": 0.125
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "an older stim without a plan takes the phases of the newest comparable run",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3
+      },
+      "history": [
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "failed",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 1,
+            "compile": 1
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": "local",
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 1,
+            "compile": 1
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "other",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 1,
+            "compile": 1
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T10:00:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 2000,
+            "compile": 100000,
+            "install": 6000
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T09:00:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 9,
+            "compile": 9
+          }
+        }
+      ],
+      "steps": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 2000,
+          "fraction": 1
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 47000,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 6000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 2000,
+          "fraction": 1
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 6000,
+          "fraction": 0
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "a hit takes the newest cache-hit run",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "install",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:58.000Z",
+        "outcome": "hit",
+        "expectedMs": 160000,
+        "expectedPhaseMs": null,
+        "basis": 3
+      },
+      "history": [
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 1,
+            "compile": 50000,
+            "install": 1
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": "remote",
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 500,
+            "install": 4000
+          }
+        }
+      ],
+      "steps": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 500,
+          "fraction": 1
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "current",
+          "elapsedMs": 2000,
+          "expectedMs": 4000,
+          "fraction": 0.5
+        }
+      ],
+      "bars": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "done",
+          "elapsedMs": null,
+          "expectedMs": 500,
+          "fraction": 1
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 4000,
+          "fraction": 0.5
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "a build with no known outcome takes the newest successful run of its slot",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "prepare",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:59.000Z",
+        "outcome": null,
+        "expectedMs": 160000,
+        "expectedPhaseMs": null,
+        "basis": 3
+      },
+      "history": [
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "cancelled",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 1
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": "local",
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 2000,
+            "install": 3000
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 9
+          }
+        }
+      ],
+      "steps": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "current",
+          "elapsedMs": 1000,
+          "expectedMs": 2000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "prepare",
+          "name": "Prepare",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 2000,
+          "fraction": 0.5
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 0
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "an empty plan leaves only the current phase, not the history",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3,
+        "plannedPhases": []
+      },
+      "history": [
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 33000,
+          "fingerprint": null,
+          "startedAt": "2026-09-27T11:33:00.000Z",
+          "finishedAt": "2026-09-27T11:34:00.000Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": null,
+          "phases": {
+            "prepare": 1000,
+            "compile": 5,
+            "install": 2000
+          }
+        }
+      ],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 47000,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        }
+      ],
+      "namesPhases": false
+    },
+    {
+      "name": "without a plan or history only the current phase shows, with no fraction when nothing is expected",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+        "outcome": null,
+        "expectedMs": 160000,
+        "expectedPhaseMs": null,
+        "basis": 3
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 47000,
+          "expectedMs": null,
+          "fraction": null
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": null,
+          "fraction": null
+        }
+      ],
+      "namesPhases": false
+    },
+    {
+      "name": "the current phase missing from the plan still shows, using its own estimate",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "pods",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:50.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 40000,
+        "basis": 3,
+        "plannedPhases": [
+          {
+            "phase": "compile",
+            "expectedMs": 90000
+          },
+          {
+            "phase": "install",
+            "expectedMs": 3000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "pods",
+          "name": "Pods",
+          "state": "current",
+          "elapsedMs": 10000,
+          "expectedMs": 40000,
+          "fraction": 0.25
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 90000,
+          "fraction": 0
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "pods",
+          "name": "Pods",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 40000,
+          "fraction": 0.25
+        },
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 90000,
+          "fraction": 0
+        },
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "pending",
+          "elapsedMs": null,
+          "expectedMs": 3000,
+          "fraction": 0
+        }
+      ],
+      "namesPhases": true
+    },
+    {
+      "name": "the build tool's target count wins over elapsed time when it is further along",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3,
+        "detail": {
+          "step": "compile",
+          "unit": "targets",
+          "done": 45,
+          "total": 60
+        },
+        "plannedPhases": [
+          {
+            "phase": "compile",
+            "expectedMs": 94000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 47000,
+          "expectedMs": 94000,
+          "fraction": 0.75
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0.75
+        }
+      ],
+      "namesPhases": false
+    },
+    {
+      "name": "a count with no total is ignored",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3,
+        "detail": {
+          "step": "compile",
+          "unit": "tasks",
+          "done": 45
+        },
+        "plannedPhases": [
+          {
+            "phase": "compile",
+            "expectedMs": 94000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 47000,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0.5
+        }
+      ],
+      "namesPhases": false
+    },
+    {
+      "name": "counts reported outside compile are ignored",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "install",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:59:59.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 4000,
+        "basis": 3,
+        "detail": {
+          "step": "compile",
+          "unit": "targets",
+          "done": 59,
+          "total": 60
+        },
+        "plannedPhases": [
+          {
+            "phase": "install",
+            "expectedMs": 4000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "current",
+          "elapsedMs": 1000,
+          "expectedMs": 4000,
+          "fraction": 0.25
+        }
+      ],
+      "bars": [
+        {
+          "phase": "install",
+          "name": "Install",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 4000,
+          "fraction": 0.25
+        }
+      ],
+      "namesPhases": false
+    },
+    {
+      "name": "a phase that runs past its estimate stops at 95%",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T11:56:40.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3,
+        "plannedPhases": [
+          {
+            "phase": "compile",
+            "expectedMs": 94000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 200000,
+          "expectedMs": 94000,
+          "fraction": 0.95
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0.95
+        }
+      ],
+      "namesPhases": false
+    },
+    {
+      "name": "a phase that starts in the future counts no elapsed time",
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-27T11:58:48.000Z",
+        "phaseStartedAt": "2026-09-27T12:00:05.000Z",
+        "outcome": "cold",
+        "expectedMs": 160000,
+        "expectedPhaseMs": 94000,
+        "basis": 3,
+        "plannedPhases": [
+          {
+            "phase": "compile",
+            "expectedMs": 94000
+          }
+        ]
+      },
+      "history": [],
+      "steps": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": 0,
+          "expectedMs": 94000,
+          "fraction": 0
+        }
+      ],
+      "bars": [
+        {
+          "phase": "compile",
+          "name": "Compile",
+          "state": "current",
+          "elapsedMs": null,
+          "expectedMs": 94000,
+          "fraction": 0
+        }
+      ],
+      "namesPhases": false
+    }
+  ],
+  "activity": {
+    "badge": [
+      {
+        "name": "driven shows the tool and how long it has driven",
+        "activity": {
+          "state": "driven",
+          "driver": {
+            "tool": "agent-device",
+            "pid": 1,
+            "since": "2026-09-27T11:13:00.000Z"
+          },
+          "basis": []
+        },
+        "text": "Driven by agent-device · 47m"
+      },
+      {
+        "name": "driven without a start shows only the tool",
+        "activity": {
+          "state": "driven",
+          "driver": {
+            "tool": "agent-device",
+            "pid": 1
+          },
+          "basis": []
+        },
+        "text": "Driven by agent-device"
+      },
+      {
+        "name": "driven by an unknown tool",
+        "activity": {
+          "state": "driven",
+          "basis": []
+        },
+        "text": "Driven by an unknown tool"
+      },
+      {
+        "name": "idle for hours",
+        "activity": {
+          "state": "idle",
+          "lastActivityAt": "2026-09-27T09:00:00.000Z",
+          "basis": []
+        },
+        "text": "Idle 3h"
+      },
+      {
+        "name": "idle for under ten minutes shows nothing",
+        "activity": {
+          "state": "idle",
+          "lastActivityAt": "2026-09-27T11:51:00.000Z",
+          "basis": []
+        },
+        "text": null
+      },
+      {
+        "name": "idle for exactly ten minutes shows",
+        "activity": {
+          "state": "idle",
+          "lastActivityAt": "2026-09-27T11:50:00.000Z",
+          "basis": []
+        },
+        "text": "Idle 10m"
+      },
+      {
+        "name": "idle with no activity time",
+        "activity": {
+          "state": "idle",
+          "basis": []
+        },
+        "text": "Idle"
+      },
+      {
+        "name": "unknown activity",
+        "activity": {
+          "state": "unknown",
+          "basis": []
+        },
+        "text": "Activity unknown"
+      },
+      {
+        "name": "any other state shows nothing",
+        "activity": {
+          "state": "other",
+          "basis": []
+        },
+        "text": null
+      }
+    ],
+    "drivers": [
+      {
+        "name": "nothing driven",
+        "activities": [
+          {
+            "state": "idle",
+            "basis": []
+          },
+          null
+        ],
+        "summary": null
+      },
+      {
+        "name": "one tool and how long it has driven",
+        "activities": [
+          {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-27T11:48:00.000Z"
+            },
+            "lastActivityAt": null,
+            "basis": []
+          }
+        ],
+        "summary": "agent-device · 12m"
+      },
+      {
+        "name": "each tool once, timed from the most recent start",
+        "activities": [
+          {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-27T11:10:00.000Z"
+            },
+            "lastActivityAt": null,
+            "basis": []
+          },
+          {
+            "state": "driven",
+            "driver": {
+              "tool": "maestro",
+              "pid": 2,
+              "since": "2026-09-27T11:55:00.000Z"
+            },
+            "basis": []
+          },
+          {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-27T11:40:00.000Z"
+            },
+            "lastActivityAt": null,
+            "basis": []
+          }
+        ],
+        "summary": "agent-device, maestro · 5m"
+      },
+      {
+        "name": "a tool without a start time shows only names",
+        "activities": [
+          {
+            "state": "driven",
+            "driver": {
+              "tool": "maestro",
+              "pid": 2
+            },
+            "basis": []
+          }
+        ],
+        "summary": "maestro"
+      },
+      {
+        "name": "an unknown tool",
+        "activities": [
+          {
+            "state": "driven",
+            "basis": []
+          }
+        ],
+        "summary": "unknown tool"
+      }
+    ]
+  },
+  "bundleLine": [
+    {
+      "name": "no Metro",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": []
+      },
+      "reportsBundles": true,
+      "line": null
+    },
+    {
+      "name": "no bundle yet on a stim that reports bundles",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Not bundled yet",
+        "tone": "tertiary"
+      }
+    },
+    {
+      "name": "no bundle yet on a stim that does not report bundles",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true
+        }
+      },
+      "reportsBundles": false,
+      "line": null
+    },
+    {
+      "name": "no bundle and Metro stopped",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": false
+        }
+      },
+      "reportsBundles": true,
+      "line": null
+    },
+    {
+      "name": "bundling without progress",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": true
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundling",
+        "tone": "normal"
+      }
+    },
+    {
+      "name": "bundling with progress",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": true,
+            "percent": 42.4
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundling · 42%",
+        "tone": "normal"
+      }
+    },
+    {
+      "name": "bundling rounds progress up",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": true,
+            "percent": 42.6
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundling · 43%",
+        "tone": "normal"
+      }
+    },
+    {
+      "name": "a failed bundle under a minute ago",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "status": "failed",
+              "durationMs": 900,
+              "finishedAt": "2026-09-27T11:59:20.000Z"
+            }
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundle failed · 40s ago",
+        "tone": "error"
+      }
+    },
+    {
+      "name": "a failed bundle minutes ago",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "status": "failed",
+              "durationMs": 900,
+              "finishedAt": "2026-09-27T11:55:00.000Z"
+            }
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundle failed · 5m ago",
+        "tone": "error"
+      }
+    },
+    {
+      "name": "a finished bundle",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "status": "ok",
+              "durationMs": 3240,
+              "finishedAt": "2026-09-27T11:55:00.000Z"
+            }
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundled in 3.2s · 5m ago",
+        "tone": "tertiary"
+      }
+    },
+    {
+      "name": "a finished bundle, tie rounded up",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "status": "ok",
+              "durationMs": 3250,
+              "finishedAt": "2026-09-27T11:59:20.000Z"
+            }
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": {
+        "text": "Bundled in 3.3s · 40s ago",
+        "tone": "tertiary"
+      }
+    },
+    {
+      "name": "a bundle that never finished",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "bundle": {
+            "bundling": false
+          }
+        }
+      },
+      "reportsBundles": true,
+      "line": null
+    }
+  ],
+  "agentRow": [
+    {
+      "name": "driven with a last action",
+      "activity": {
+        "state": "driven",
+        "driver": {
+          "tool": "agent-device",
+          "pid": 1
+        },
+        "basis": []
+      },
+      "last": {
+        "agoMs": 30000,
+        "message": "tap Login"
+      },
+      "row": {
+        "tool": "agent-device",
+        "text": "tap Login · 30s ago"
+      }
+    },
+    {
+      "name": "driven with a last action minutes ago",
+      "activity": {
+        "state": "driven",
+        "driver": {
+          "tool": "agent-device",
+          "pid": 1
+        },
+        "basis": []
+      },
+      "last": {
+        "agoMs": 300000,
+        "message": "tap Login"
+      },
+      "row": {
+        "tool": "agent-device",
+        "text": "tap Login · 5m ago"
+      }
+    },
+    {
+      "name": "driven with no action yet",
+      "activity": {
+        "state": "driven",
+        "driver": {
+          "tool": "agent-device",
+          "pid": 1
+        },
+        "basis": []
+      },
+      "last": null,
+      "row": {
+        "tool": "agent-device",
+        "text": "no action yet"
+      }
+    },
+    {
+      "name": "driven by an unnamed tool",
+      "activity": {
+        "state": "driven",
+        "basis": []
+      },
+      "last": null,
+      "row": {
+        "tool": "Agent",
+        "text": "no action yet"
+      }
+    },
+    {
+      "name": "idle since the last action",
+      "activity": {
+        "state": "idle",
+        "lastActivityAt": "2026-09-27T09:00:00.000Z",
+        "basis": []
+      },
+      "last": {
+        "agoMs": 300000,
+        "message": "tap Login"
+      },
+      "row": {
+        "tool": null,
+        "text": "idle 5m"
+      }
+    },
+    {
+      "name": "idle since the last recorded activity",
+      "activity": {
+        "state": "idle",
+        "lastActivityAt": "2026-09-27T09:00:00.000Z",
+        "basis": []
+      },
+      "last": null,
+      "row": {
+        "tool": null,
+        "text": "idle 3h"
+      }
+    },
+    {
+      "name": "idle with nothing recorded",
+      "activity": {
+        "state": "idle",
+        "basis": []
+      },
+      "last": null,
+      "row": {
+        "tool": null,
+        "text": "nothing yet"
+      }
+    },
+    {
+      "name": "unknown activity with an action",
+      "activity": {
+        "state": "unknown",
+        "basis": []
+      },
+      "last": {
+        "agoMs": 90000,
+        "message": "swipe"
+      },
+      "row": {
+        "tool": null,
+        "text": "idle 1m"
+      }
+    }
+  ]
+}

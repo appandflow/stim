@@ -581,7 +581,7 @@ import Testing
     #expect(
       ActivityBadge.driversSummary([first, nil, activity("idle"), second, other], now: now)
         == "maestro, agent-device \u{00B7} 12m")
-    #expect(ActivityBadge.driversSummary([activity("driven")], now: now) == "an unknown tool")
+    #expect(ActivityBadge.driversSummary([activity("driven")], now: now) == "unknown tool")
     #expect(ActivityBadge.driversSummary([activity("idle"), nil], now: now) == nil)
   }
 
@@ -838,23 +838,50 @@ import Testing
     #expect(UsageThresholds.cpuFraction(percentOfOneCore: 1040, cores: 10) == 1)
   }
 
-  @Test func toneStepsAtTheCpuWarnAndCriticalFractions() {
-    #expect(UsageThresholds.cpu(fraction: 0.79) == .normal)
-    #expect(UsageThresholds.cpu(fraction: 0.8) == .caution)
-    #expect(UsageThresholds.cpu(fraction: 0.95) == .error)
+  struct Vectors: Decodable {
+    struct Cpu: Decodable {
+      var fraction: Double
+      var tone: String
+    }
+
+    struct Disk: Decodable {
+      var freeBytes: Int64
+      var tone: String
+    }
+
+    struct Memory: Decodable {
+      var pressure: String?
+      var tone: String
+    }
+
+    var cpu: [Cpu]
+    var disk: [Disk]
+    var memory: [Memory]
   }
 
-  @Test func toneStepsAtTheDiskWarnAndCriticalFloors() {
-    #expect(UsageThresholds.disk(freeBytes: 20_000_000_000) == .normal)
-    #expect(UsageThresholds.disk(freeBytes: 19_999_999_999) == .caution)
-    #expect(UsageThresholds.disk(freeBytes: 4_999_999_999) == .error)
-  }
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(forResource: "usage-tone-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
 
-  @Test func mapsMemoryPressureToTone() {
-    #expect(UsageThresholds.memory(nil) == .normal)
-    #expect(UsageThresholds.memory(.normal) == .normal)
-    #expect(UsageThresholds.memory(.warning) == .caution)
-    #expect(UsageThresholds.memory(.critical) == .error)
+  /// Replays the cases `apps/mobile/src/lib/home.test.ts` also replays, so both apps color a stat the same.
+  @Test func toneStepsWhereThePhoneStepsIt() {
+    for c in Self.vectors.cpu {
+      #expect(String(describing: UsageThresholds.cpu(fraction: c.fraction)) == c.tone, "cpu \(c.fraction)")
+    }
+    for c in Self.vectors.disk {
+      #expect(String(describing: UsageThresholds.disk(freeBytes: c.freeBytes)) == c.tone, "disk \(c.freeBytes)")
+    }
+    for c in Self.vectors.memory {
+      let pressure: MachineMemory.Pressure? =
+        switch c.pressure {
+        case "normal": .normal
+        case "warning": .warning
+        case "critical": .critical
+        default: nil
+        }
+      #expect(String(describing: UsageThresholds.memory(pressure)) == c.tone, "memory \(c.pressure ?? "nil")")
+    }
   }
 }
 

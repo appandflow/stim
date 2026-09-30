@@ -69,7 +69,7 @@ extension ActivityBadge {
     let driven = activities.compactMap { $0 }.filter { $0.state == "driven" }
     guard !driven.isEmpty else { return nil }
     var tools: [String] = []
-    for tool in driven.map({ $0.driver?.tool ?? "an unknown tool" }) where !tools.contains(tool) {
+    for tool in driven.map({ $0.driver?.tool ?? "unknown tool" }) where !tools.contains(tool) {
       tools.append(tool)
     }
     let names = tools.joined(separator: ", ")

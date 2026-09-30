@@ -422,3 +422,209 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     }
   }
 }
+
+/// Replays the cases `apps/mobile/src/lib/workspace-view.test.ts` also replays, so both apps word a workspace the same.
+@Suite struct WorkspaceViewVectorTests {
+  struct Vectors: Decodable {
+    struct Stage: Decodable {
+      var label: String
+      var tone: String
+      var subtitle: String?
+    }
+
+    struct StageCase: Decodable {
+      var name: String
+      var workspace: Workspace
+      var stage: Stage
+    }
+
+    struct Part: Decodable, Equatable {
+      var text: String
+      var tone: String
+    }
+
+    struct ChipPullRequest: Decodable, Equatable {
+      var text: String
+      var tone: String
+      var checks: String?
+    }
+
+    struct Chip: Decodable {
+      var parts: [Part]
+      var pullRequest: ChipPullRequest?
+      var label: String
+    }
+
+    struct ChipCase: Decodable {
+      var name: String
+      var worktree: WorktreeInfo
+      var chip: Chip
+    }
+
+    struct ChecksCase: Decodable {
+      var name: String
+      var checks: PullRequestFacts.Checks?
+      var summary: String?
+    }
+
+    struct Step: Decodable, Equatable {
+      var phase: String
+      var name: String
+      var state: String
+      var elapsedMs: Double?
+      var expectedMs: Double?
+      var fraction: Double?
+    }
+
+    struct PhaseCase: Decodable {
+      var name: String
+      var build: Build
+      var history: [BuildHistoryEntry]
+      var steps: [Step]
+      var bars: [Step]
+      var namesPhases: Bool
+    }
+
+    struct BadgeCase: Decodable {
+      var name: String
+      var activity: DeviceActivity
+      var text: String?
+    }
+
+    struct DriversCase: Decodable {
+      var name: String
+      var activities: [DeviceActivity?]
+      var summary: String?
+    }
+
+    struct Activity: Decodable {
+      var badge: [BadgeCase]
+      var drivers: [DriversCase]
+    }
+
+    struct Line: Decodable, Equatable {
+      var text: String
+      var tone: String
+    }
+
+    struct BundleCase: Decodable {
+      var name: String
+      var workspace: Workspace
+      var reportsBundles: Bool
+      var line: Line?
+    }
+
+    struct LastAction: Decodable {
+      var agoMs: Double
+      var message: String
+    }
+
+    struct Row: Decodable, Equatable {
+      var tool: String?
+      var text: String
+    }
+
+    struct RowCase: Decodable {
+      var name: String
+      var activity: DeviceActivity
+      var last: LastAction?
+      var row: Row
+    }
+
+    var now: String
+    var stage: [StageCase]
+    var gitChip: [ChipCase]
+    var checksSummary: [ChecksCase]
+    var phases: [PhaseCase]
+    var activity: Activity
+    var bundleLine: [BundleCase]
+    var agentRow: [RowCase]
+  }
+
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(forResource: "workspace-view-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
+
+  static let now = parseTimestamp(vectors.now)!
+
+  @Test(arguments: vectors.stage.map(\.name))
+  func wordsTheStageAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.stage.first { $0.name == name })
+    let stage = c.workspace.stage(now: Self.now)
+    #expect(stage.label.rawValue == c.stage.label)
+    #expect(String(describing: stage.tone) == c.stage.tone)
+    #expect(stage.subtitle == c.stage.subtitle)
+  }
+
+  @Test(arguments: vectors.gitChip.map(\.name))
+  func wordsTheGitChipAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.gitChip.first { $0.name == name })
+    let chip = try #require(GitChip(c.worktree))
+    #expect(chip.parts.map { Vectors.Part(text: $0.text, tone: String(describing: $0.tone)) } == c.chip.parts)
+    #expect(
+      chip.pullRequest.map {
+        Vectors.ChipPullRequest(
+          text: $0.text, tone: String(describing: $0.tone), checks: $0.checks.map { String(describing: $0) })
+      } == c.chip.pullRequest)
+    #expect(chip.label == c.chip.label)
+  }
+
+  @Test(arguments: vectors.checksSummary.map(\.name))
+  func summarizesChecksAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.checksSummary.first { $0.name == name })
+    #expect(GitChip.checksSummary(c.checks) == c.summary)
+  }
+
+  @Test(arguments: vectors.phases.map(\.name))
+  func stepsThroughPhasesAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.phases.first { $0.name == name })
+    let steps = c.build.phaseSteps(history: c.history, now: Self.now)
+    func plain(_ steps: [PhaseStep], elapsed: Bool) -> [Vectors.Step] {
+      steps.map {
+        Vectors.Step(
+          phase: $0.phase, name: PhaseStep.name($0.phase), state: String(describing: $0.state),
+          elapsedMs: elapsed ? $0.elapsedMs : nil, expectedMs: $0.expectedMs, fraction: $0.fraction)
+      }
+    }
+    expectClose(plain(steps, elapsed: true), c.steps)
+    expectClose(plain(barSteps(steps), elapsed: false), c.bars)
+    #expect(namesPhases(steps) == c.namesPhases)
+  }
+
+  @Test(arguments: vectors.activity.badge.map(\.name))
+  func wordsTheActivityBadgeAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.activity.badge.first { $0.name == name })
+    #expect(ActivityBadge(c.activity, now: Self.now)?.text == c.text)
+  }
+
+  @Test(arguments: vectors.activity.drivers.map(\.name))
+  func summarizesDriversAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.activity.drivers.first { $0.name == name })
+    #expect(ActivityBadge.driversSummary(c.activities, now: Self.now) == c.summary)
+  }
+
+  @Test(arguments: vectors.bundleLine.map(\.name))
+  func wordsTheBundleLineAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.bundleLine.first { $0.name == name })
+    let line = c.workspace.bundleLine(now: Self.now, reportsBundles: c.reportsBundles)
+    #expect(line.map { Vectors.Line(text: $0.text, tone: String(describing: $0.tone)) } == c.line)
+  }
+
+  @Test(arguments: vectors.agentRow.map(\.name))
+  func wordsTheAgentRowAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.agentRow.first { $0.name == name })
+    let last = c.last.map { (date: Self.now.addingTimeInterval(-$0.agoMs / 1000), message: $0.message) }
+    let row = AgentRow(activity: c.activity, last: last, now: Self.now)
+    #expect(Vectors.Row(tool: row.tool, text: row.text) == c.row)
+  }
+}
+
+private func expectClose(_ actual: [WorkspaceViewVectorTests.Vectors.Step], _ expected: [WorkspaceViewVectorTests.Vectors.Step]) {
+  #expect(actual.count == expected.count)
+  for (a, e) in zip(actual, expected) {
+    #expect(a.phase == e.phase && a.name == e.name && a.state == e.state)
+    #expect(a.elapsedMs == e.elapsedMs && a.expectedMs == e.expectedMs)
+    #expect(a.fraction == nil ? e.fraction == nil : abs(a.fraction! - (e.fraction ?? .infinity)) < 1e-9)
+  }
+}

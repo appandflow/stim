@@ -2,7 +2,49 @@ import Foundation
 import StimKit
 import Testing
 
+/// Replays the cases `apps/mobile/src/intl/format.test.ts` also replays, so both apps word a figure the same.
 struct FormatTests {
+  struct Vectors: Decodable {
+    struct Milliseconds: Decodable {
+      var ms: Double
+      var text: String
+    }
+
+    struct Megabytes: Decodable {
+      var mb: Double
+      var text: String
+    }
+
+    struct Bytes: Decodable {
+      var bytes: Double
+      var text: String
+    }
+
+    var duration: [Milliseconds]
+    var since: [Milliseconds]
+    var roundedDuration: [Milliseconds]
+    var clock: [Milliseconds]
+    var memoryMb: [Megabytes]
+    var bytes: [Bytes]
+  }
+
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(forResource: "format-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
+
+  @Test func wordsDurationsAsThePhoneDoes() {
+    for c in Self.vectors.duration { #expect(Format.duration(c.ms / 1000) == c.text, "\(c.ms) ms") }
+    for c in Self.vectors.since { #expect(Format.since(c.ms / 1000) == c.text, "\(c.ms) ms") }
+    for c in Self.vectors.roundedDuration { #expect(Format.roundedDuration(ms: c.ms) == c.text, "\(c.ms) ms") }
+    for c in Self.vectors.clock { #expect(Format.clock(ms: c.ms) == c.text, "\(c.ms) ms") }
+  }
+
+  @Test func wordsSizesAsThePhoneDoes() {
+    for c in Self.vectors.memoryMb { #expect(Format.memoryMb(c.mb) == c.text, "\(c.mb) MB") }
+    for c in Self.vectors.bytes { #expect(Format.freeSpace(c.bytes) == c.text, "\(c.bytes) bytes") }
+  }
+
   @Test func fileSizeUsesDecimalUnitsAndSpellsZero() {
     #expect(Format.fileSize(0) == "0 bytes")
     #expect(Format.fileSize(1_500_000_000) == "1.5 GB")
@@ -11,9 +53,6 @@ struct FormatTests {
 
   @Test func memoryUsesBinaryUnits() {
     #expect(Format.memory(16 * 1_073_741_824) == "16 GB")
-    #expect(Format.memoryMb(512) == "512 MB")
-    #expect(Format.memoryMb(1024) == "1.0 GB")
-    #expect(Format.memoryMb(1536) == "1.5 GB")
   }
 
   @Test func gigabytesAlwaysShowOneDecimal() {
@@ -25,37 +64,6 @@ struct FormatTests {
   @Test func memoryPairShowsUsedOverTotal() {
     let gib: Int64 = 1_073_741_824
     #expect(Format.memoryPair(usedBytes: 7 * gib + gib / 2, totalBytes: 16 * gib) == "7.5/16 GB")
-  }
-
-  @Test func freeSpaceRoundsTiesUpAndDropsDecimalsFromOneHundredGb() {
-    #expect(Format.freeSpace(1.25e9) == "1.3 GB")
-    #expect(Format.freeSpace(1.24e9) == "1.2 GB")
-    #expect(Format.freeSpace(99.96e9) == "100.0 GB")
-    #expect(Format.freeSpace(100.4e9) == "100 GB")
-    #expect(Format.freeSpace(412.6e9) == "413 GB")
-    #expect(Format.freeSpace(1.25e12) == "1.3 TB")
-  }
-
-  @Test func durationTruncatesAndRollsOverAtHoursAndDays() {
-    #expect([0.0, 59, 60, 719, 3599].map(Format.duration) == ["<1m", "<1m", "1m", "11m", "59m"])
-    #expect([3600.0, 3660, 5400, 86_399].map(Format.duration) == ["1h", "1h01m", "1h30m", "23h59m"])
-    #expect([86_400.0, 176_400.0].map(Format.duration) == ["1d", "2d"])
-    #expect(Format.duration(-300) == "<1m")
-  }
-
-  @Test func sinceShowsSecondsUnderAMinute() {
-    #expect([-5.0, 0, 12.9, 59.9].map(Format.since) == ["0s", "0s", "12s", "59s"])
-    #expect([60.0, 3700].map(Format.since) == ["1m", "1h01m"])
-  }
-
-  @Test func roundedDurationRoundsAndKeepsHoursUntilTwoDays() {
-    #expect([-1000.0, 0, 40_000, 59_400].map(Format.roundedDuration(ms:)) == ["0s", "0s", "40s", "59s"])
-    #expect([60_000.0, 840_000.0, 3_570_000.0].map(Format.roundedDuration(ms:)) == ["1m", "14m", "1h"])
-    #expect([169_200_000.0, 172_800_000.0, 259_200_000.0].map(Format.roundedDuration(ms:)) == ["47h", "2d", "3d"])
-  }
-
-  @Test func clockPadsSeconds() {
-    #expect([-5000.0, 0, 5000, 158_000, 3_600_000].map(Format.clock(ms:)) == ["0:00", "0:00", "0:05", "2:38", "60:00"])
   }
 
   @Test func elapsedSpellsMinutesAndSecondsThenHours() {
