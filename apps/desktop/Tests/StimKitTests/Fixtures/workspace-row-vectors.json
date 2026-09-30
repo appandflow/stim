@@ -852,6 +852,191 @@
         "idle": null,
         "remote": 0
       }
+    },
+    {
+      "name": "a running Stim-owned Chrome counts as Web and can be driven",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "web": {
+          "running": true,
+          "pid": 1,
+          "url": "http://localhost:8081",
+          "headless": false,
+          "viewport": "desktop",
+          "profile": "/p",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "playwright",
+              "pid": 1,
+              "since": "2026-09-30T11:58:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        }
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven 2m",
+        "label": "Driven by an agent for 2 minutes",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "Web",
+        "drivers": "playwright",
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "each closed app is named, in device order",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "slots": [
+          {
+            "slot": "ipad",
+            "ios": {
+              "name": "stim-w (iPhone 18 27.0)",
+              "udid": "SIM-2",
+              "owned": true,
+              "state": "Booted",
+              "app": {
+                "id": "com.app",
+                "state": "stopped"
+              }
+            }
+          }
+        ],
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "state": "detected",
+          "app": {
+            "id": "com.app",
+            "state": "stopped"
+          }
+        },
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.app",
+            "state": "stopped"
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [
+        {
+          "kind": "app-closed",
+          "text": "iOS app closed",
+          "tone": "error"
+        },
+        {
+          "kind": "app-closed",
+          "text": "iOS app closed",
+          "tone": "error"
+        },
+        {
+          "kind": "app-closed",
+          "text": "Android app closed",
+          "tone": "error"
+        }
+      ],
+      "devices": {
+        "names": "2 iOS, Android",
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a driven device that is not running is left out",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Shutdown",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-30T11:57:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a driver start that does not parse reads Driven",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "maestro",
+              "since": "soon"
+            },
+            "basis": []
+          }
+        }
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven",
+        "label": "Driven by an agent",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS",
+        "drivers": "maestro",
+        "idle": null,
+        "remote": 0
+      }
     }
   ]
 }

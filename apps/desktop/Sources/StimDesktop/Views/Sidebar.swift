@@ -21,10 +21,11 @@ struct Sidebar: View {
         case .project:
           let trees = store.sidebarTrees(options)
           ForEach(trees, id: \.summary.project) { tree in
+            let folders = Set(store.environments(in: tree.summary.project).map { $0.names.inCheckout ?? "" })
             DisclosureGroup(isExpanded: isExpanded(tree.summary)) {
               ForEach(tree.entries) { entry in
                 EntryRow(
-                  entry: entry, subtitle: nil, showsFolder: tree.foldersDiffer, showsGit: options.showsGitStatus,
+                  entry: entry, subtitle: nil, showsFolder: folders.count > 1, showsGit: options.showsGitStatus,
                   selection: selection, openLogs: openLogs)
               }
             } label: {
@@ -239,20 +240,18 @@ struct EntryRow: View {
       WorkspaceRow(
         env: env, place: place(env.names), showsGit: showsGit, selection: selection, openLogs: openLogs)
     case .worktree(let worktree):
-      NoEnvironmentRow(worktree: worktree, place: subtitle, showsGit: showsGit, selection: selection)
+      NoEnvironmentRow(worktree: worktree, place: subtitle.map { [$0] } ?? [], showsGit: showsGit, selection: selection)
     }
   }
 
-  /// The project in an ungrouped list, and the folder in the checkout when it tells the rows apart.
-  private func place(_ names: PathNames) -> String? {
-    let parts = [subtitle, showsFolder ? names.inCheckout : nil].compactMap { $0 }.filter { $0 != names.title }
-    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  private func place(_ names: PathNames) -> [String] {
+    [subtitle, showsFolder ? names.inCheckout : nil].compactMap { $0 }.filter { $0 != names.title }
   }
 }
 
 struct WorkspaceRow: View {
   var env: Workspace
-  var place: String?
+  var place: [String]
   var showsGit: Bool
   var selection: SidebarItem?
   var openLogs: (String) -> Void
@@ -261,8 +260,8 @@ struct WorkspaceRow: View {
   @State private var removal: WorktreeRemoval?
 
   var body: some View {
-    TimelineView(.everyMinute) { context in
-      WorkspaceRowContent(env: env, now: context.date, place: place, showsGit: showsGit, openLogs: openLogs)
+    TimelineView(.everyMinute) { _ in
+      WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs)
     }
     .sidebarTag(.environment(env.path), selection: selection)
     .contextMenu {
@@ -311,12 +310,10 @@ struct WorkspaceRow: View {
   }
 }
 
-/// A workspace row, each line only when it has something: the branch and what the workspace is doing, the agent
-/// session, what is wrong, the running build or the warm step, then the devices and git.
 private struct WorkspaceRowContent: View {
   var env: Workspace
   var now: Date
-  var place: String?
+  var place: [String]
   var showsGit: Bool
   var openLogs: (String) -> Void
 
@@ -341,8 +338,8 @@ private struct WorkspaceRowContent: View {
         }
         if !problems.isEmpty {
           FlowLayout(spacing: Space.xs, lineSpacing: Space.xs) {
-            ForEach(problems, id: \.text) { problem in
-              ProblemPill(problem: problem, warnings: env.warnings) { openLogs(env.path) }
+            ForEach(problems.indices, id: \.self) { index in
+              ProblemPill(problem: problems[index], warnings: env.warnings) { openLogs(env.path) }
             }
           }
         }
@@ -360,7 +357,9 @@ private struct WorkspaceRowContent: View {
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(env.rowLabel(now: now, folder: place, showsGit: showsGit))
+    .accessibilityLabel(
+      env.rowLabel(now: now, folder: place.isEmpty ? nil : place.joined(separator: ", "), showsGit: showsGit)
+    )
     .accessibilityActions {
       if (env.logs?.errorsSinceMarker ?? 0) > 0 {
         Button("Show errors") { openLogs(env.path) }
@@ -370,7 +369,6 @@ private struct WorkspaceRowContent: View {
 
   private func context(_ devices: RowDevices) -> Text? {
     var parts: [Text] = []
-    if let place { parts.append(Text(place).foregroundStyle(Palette.tertiary)) }
     if let names = devices.names { parts.append(Text(names).foregroundStyle(Palette.secondary)) }
     if let drivers = devices.drivers {
       parts.append(Text("\(Image(systemName: "cursorarrow.rays")) \(drivers)").foregroundStyle(Palette.primary))
@@ -380,6 +378,7 @@ private struct WorkspaceRowContent: View {
       let text = devices.remote == 1 ? "EAS session" : "\(devices.remote) EAS sessions"
       parts.append(Text(text).foregroundStyle(Palette.info))
     }
+    parts += place.map { Text($0).foregroundStyle(Palette.tertiary) }
     return RowDetailLine.joined(parts)
   }
 }
@@ -399,7 +398,6 @@ private struct SessionLine: View {
   }
 }
 
-/// A problem as a small pill; the error count opens the logs.
 private struct ProblemPill: View {
   var problem: RowProblem
   var warnings: [String]
@@ -420,7 +418,6 @@ private struct ProblemPill: View {
   }
 }
 
-/// The running build's step and counts, elapsed over the estimate, and the phase bar without phase names.
 private struct RowBuild: View {
   var env: Workspace
   var build: Build
@@ -452,8 +449,6 @@ private struct RowBuild: View {
   }
 }
 
-/// The row's last line: where the workspace is and its devices, then git. When both do not fit on one line, git
-/// moves to a line of its own.
 private struct RowDetailLine: View {
   var context: Text?
   var git: GitChip?
@@ -494,7 +489,7 @@ private struct RowDetailLine: View {
 
 struct NoEnvironmentRow: View {
   var worktree: UnprovisionedWorktree
-  var place: String?
+  var place: [String]
   var showsGit: Bool
   var selection: SidebarItem?
   @EnvironmentObject private var actions: ActionCenter
@@ -512,11 +507,12 @@ struct NoEnvironmentRow: View {
           Spacer(minLength: 0)
           Text("No environment").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
         }
-        RowDetailLine(context: place.map { Text($0).foregroundStyle(Palette.tertiary) }, git: git)
+        RowDetailLine(
+          context: RowDetailLine.joined(place.map { Text($0).foregroundStyle(Palette.tertiary) }), git: git)
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel([names.title, "No environment", git?.label, place].compactMap { $0 }.joined(separator: ", "))
+    .accessibilityLabel(([names.title, "No environment", git?.label].compactMap { $0 } + place).joined(separator: ", "))
     .sidebarTag(.worktree(worktree.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(
