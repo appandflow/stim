@@ -30,8 +30,21 @@ struct AppPreferencesView: View {
   @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
+  @State private var scrolledToTop = false
 
   var body: some View {
+    ScrollViewReader { proxy in
+      form
+        .background(ResignFirstResponder())
+        .onAppear {
+          guard !scrolledToTop else { return }
+          scrolledToTop = true
+          DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) }
+        }
+    }
+  }
+
+  private var form: some View {
     Form {
       Section("Appearance") {
         Picker("Appearance", selection: $appearance) {
@@ -41,6 +54,7 @@ struct AppPreferencesView: View {
         .labelsHidden()
         .onChange(of: appearance) { _, value in Theme.apply(value) }
       }
+      .id("top")
 
       Section("Workspace list") {
         Picker("Status", selection: $status) {
@@ -275,5 +289,18 @@ private struct AutopilotLogRow: View {
       }
     }
     .textSelection(.enabled)
+  }
+}
+
+private struct ResignFirstResponder: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { WindowView() }
+
+  func updateNSView(_ view: NSView, context: Context) {}
+
+  private final class WindowView: NSView {
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(nil) }
+    }
   }
 }
