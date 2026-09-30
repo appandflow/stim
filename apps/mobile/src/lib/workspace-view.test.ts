@@ -2,6 +2,7 @@ import { devicesOf } from '@/lib/workspaces';
 import {
   agentRow,
   appPresence,
+  barFills,
   barSteps,
   buildLine,
   bundleLine,
@@ -12,6 +13,7 @@ import {
   gitChip,
   namesPhases,
   phaseSteps,
+  type PhaseStep,
   processRows,
   remoteBuild,
   workspaceSeries,
@@ -416,7 +418,7 @@ describe('phaseSteps', () => {
     expect(namesPhases(phaseSteps(build(), history, NOW))).toBe(true);
   });
 
-  it('takes the current phase progress from the build tool counts when it reports a total', () => {
+  it('moves the compile phase by the build tool counts only when they are ahead of the time estimate', () => {
     const detail = {
       step: 'compile' as const,
       unit: 'targets' as const,
@@ -425,9 +427,80 @@ describe('phaseSteps', () => {
       line: null,
       updatedAt: iso(0),
     };
-    expect(phaseSteps(build({ detail }), history, NOW)[3]!.fraction).toBe(0.25);
+    expect(phaseSteps(build({ detail }), history, NOW)[3]!.fraction).toBe(0.5);
+    expect(phaseSteps(build({ detail: { ...detail, done: 135 } }), history, NOW)[3]!.fraction).toBe(0.75);
+    expect(phaseSteps(build({ detail: { ...detail, done: 0 } }), history, NOW)[3]!.fraction).toBe(0.5);
     expect(currentPhaseLabel(build({ detail }))).toEqual({ phase: 'Compiling', counts: '45 of 180 targets' });
     expect(currentPhaseLabel(build({ detail: { ...detail, unit: 'tasks', total: null } })).counts).toBe('45 tasks');
+    expect(currentPhaseLabel(build({ phase: 'install', detail: { ...detail, step: 'sign' } }))).toEqual({
+      phase: 'Install',
+      counts: null,
+    });
+  });
+
+  it("draws the CLI's planned phases instead of the workspace history when the CLI sends them", () => {
+    const planned = build({
+      phase: 'cache-lookup',
+      phaseStartedAt: iso(1000),
+      outcome: 'hit',
+      expectedPhaseMs: 2000,
+      plannedPhases: [
+        { phase: 'prepare', expectedMs: 1500 },
+        { phase: 'cache-lookup', expectedMs: 2000 },
+        { phase: 'device', expectedMs: 800 },
+        { phase: 'install', expectedMs: 500 },
+        { phase: 'launch', expectedMs: 9000 },
+      ],
+    });
+    expect(barSteps(phaseSteps(planned, [], NOW)).map((s) => [s.phase, s.state])).toEqual([
+      ['prepare', 'current'],
+      ['device', 'pending'],
+      ['install', 'pending'],
+    ]);
+    expect(phaseSteps(planned, history, NOW).map((s) => s.phase)).toEqual([
+      'prepare',
+      'cache-lookup',
+      'device',
+      'install',
+      'launch',
+    ]);
+  });
+});
+
+describe('barFills', () => {
+  const step = (phase: PhaseStep['phase'], state: PhaseStep['state'], expectedMs: number, fraction: number) => ({
+    phase,
+    state,
+    elapsedMs: null,
+    expectedMs,
+    fraction,
+  });
+
+  it('fills done segments, part of the current one and none of the pending ones', () => {
+    const fills = barFills(
+      [step('prepare', 'done', 4000, 1), step('compile', 'current', 8000, 0.5), step('install', 'pending', 8000, 0)],
+      'fills-plain',
+    );
+    expect(fills).toEqual([1, 0.5, 0]);
+  });
+
+  it('keeps what it drew for the same build when the plan changes, up to the end of the current segment', () => {
+    const key = 'fills-replan';
+    const round = (fills: number[]) => fills.map((fill) => Math.round(fill * 100) / 100);
+    expect(barFills([step('prepare', 'current', 4000, 0.9), step('install', 'pending', 6000, 0)], key)).toEqual([
+      0.9, 0,
+    ]);
+    expect(round(barFills([step('prepare', 'current', 4000, 0.2), step('install', 'pending', 6000, 0)], key))).toEqual([
+      0.9, 0,
+    ]);
+    const coldPlan = [
+      step('prepare', 'done', 4000, 1),
+      step('pods', 'current', 10_000, 0.02),
+      step('compile', 'pending', 60_000, 0),
+      step('install', 'pending', 6000, 0),
+    ];
+    expect(round(barFills(coldPlan, key))).toEqual([1, 0.95, 0, 0]);
+    expect(barFills(coldPlan, 'fills-other-build')[1]).toBeCloseTo(0.02, 5);
   });
 });
 

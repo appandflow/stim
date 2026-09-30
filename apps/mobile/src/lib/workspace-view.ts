@@ -1,5 +1,5 @@
 import { formatBytes, formatDuration } from '@/intl/format';
-import { clockDuration, gitBadges, machineName } from '@/lib/format';
+import { clockDuration, gitBadges, machineName, steadyFraction } from '@/lib/format';
 import type { PlanState } from '@/lib/plan-checks';
 import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
 import type {
@@ -370,8 +370,25 @@ function referenceRun(build: BuildReport, history: readonly BuildHistoryEntry[])
   );
 }
 
+/**
+ * Each phase's expected duration: the CLI's plan when it sends one, else the workspace's latest comparable run, which
+ * is all an older stim offers.
+ */
+function plannedDurations(
+  build: BuildReport,
+  history: readonly BuildHistoryEntry[],
+): Partial<Record<BuildPhase, number>> {
+  if (build.plannedPhases) return Object.fromEntries(build.plannedPhases.map((p) => [p.phase, p.expectedMs]));
+  return referenceRun(build, history)?.phases ?? {};
+}
+
+/** The build tool's own counts, which only describe `compile`; an older stim also sends them in later phases. */
+function compileDetail(build: BuildReport): BuildReport['detail'] {
+  return build.phase === 'compile' ? build.detail : undefined;
+}
+
 export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEntry[], now: number): PhaseStep[] {
-  const reference = referenceRun(build, history)?.phases ?? {};
+  const reference = plannedDurations(build, history);
   const currentIndex = PHASE_ORDER.indexOf(build.phase);
   const phases = PHASE_ORDER.filter((phase, i) => i === currentIndex || reference[phase] !== undefined);
   const phaseStart = Date.parse(build.phaseStartedAt);
@@ -382,13 +399,10 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
       phase === build.phase ? (build.expectedPhaseMs ?? reference[phase] ?? null) : (reference[phase] ?? null);
     if (i < currentIndex) return { phase, state: 'done', elapsedMs: null, expectedMs, fraction: 1 };
     if (i > currentIndex) return { phase, state: 'pending', elapsedMs: null, expectedMs, fraction: 0 };
-    const { done, total } = build.detail ?? {};
-    const fraction =
-      typeof done === 'number' && typeof total === 'number' && total > 0
-        ? Math.min(1, done / total)
-        : expectedMs && inPhase !== null
-          ? Math.min(0.95, inPhase / expectedMs)
-          : null;
+    const { done, total } = compileDetail(build) ?? {};
+    const counted = typeof done === 'number' && typeof total === 'number' && total > 0 ? done / total : null;
+    const timed = expectedMs && inPhase !== null ? inPhase / expectedMs : null;
+    const fraction = counted === null && timed === null ? null : Math.min(0.95, Math.max(counted ?? 0, timed ?? 0));
     return { phase, state: 'current', elapsedMs: inPhase, expectedMs, fraction };
   });
 }
@@ -453,6 +467,36 @@ export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   return groups;
 }
 
+/** Each bar segment's share of the bar: its expected duration, at least 18% of the total so a short phase stays visible. */
+export function segmentWeights(steps: readonly PhaseStep[]): number[] {
+  const total = steps.reduce((sum, step) => sum + (step.expectedMs ?? 0), 0);
+  if (total <= 0) return steps.map(() => 1);
+  return steps.map((step) => Math.max(step.expectedMs ?? 0, total * 0.18));
+}
+
+/**
+ * How full each bar segment is drawn for the build `key` names. The bar as a whole never moves backwards, even when
+ * the CLI revises its plan once the run knows its outcome: segments fill left to right up to the most the bar
+ * showed, but the current segment stops short of full, and a pending one stays empty.
+ */
+export function barFills(steps: readonly PhaseStep[], key: string): number[] {
+  const weights = segmentWeights(steps);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const own = steps.map((step) => (step.state === 'current' ? (step.fraction ?? 0.1) : (step.fraction ?? 0)));
+  const reached = own.reduce((sum, fill, i) => sum + fill * weights[i]!, 0) / total;
+  const current = steps.findIndex((step) => step.state === 'current');
+  const ceiling =
+    current < 0
+      ? 1
+      : (weights.slice(0, current).reduce((sum, weight) => sum + weight, 0) + 0.95 * weights[current]!) / total;
+  let left = Math.min(steadyFraction(`${key}|bar`, reached), Math.max(reached, ceiling)) * total;
+  return weights.map((weight) => {
+    const fill = Math.min(1, Math.max(0, left / weight));
+    left -= fill * weight;
+    return fill;
+  });
+}
+
 /** Whether a phase bar or checklist names its phases: only with more than one, since the stage line names a lone phase. */
 export const namesPhases = (steps: readonly PhaseStep[]) => steps.length > 1;
 
@@ -484,7 +528,7 @@ export function remoteBuild(build: BuildReport, now: number): RemoteBuild | null
 }
 
 export function currentPhaseLabel(build: BuildReport): { phase: string; counts: string | null } {
-  const detail = build.detail;
+  const detail = compileDetail(build);
   const remote = remoteBuild(build, 0);
   const phase = detail?.step ? STEP_NAMES[detail.step] : (remote?.phase ?? phaseName(build.phase));
   if (!detail?.unit || typeof detail.done !== 'number') return { phase, counts: null };

@@ -102,6 +102,13 @@ describe('buildProgress', () => {
     expect(buildProgress(build(null), now)).toEqual({ elapsedMs: 90_000, fraction: null, remaining: null });
   });
 
+  it('does not move backwards when the run revises its estimate', () => {
+    const revised = (expectedMs: number) => ({ ...build(expectedMs), slot: 'revised' });
+    expect(buildProgress(revised(180_000), now).fraction).toBe(0.5);
+    expect(buildProgress(revised(900_000), now).fraction).toBe(0.5);
+    expect(buildProgress({ ...revised(900_000), slot: 'tablet' }, now).fraction).toBe(0.1);
+  });
+
   it('never reaches 100% while the build still runs', () => {
     expect(buildProgress(build(300_000), now)).toMatchObject({ fraction: 0.3, remaining: 'about 4 min left' });
     expect(buildProgress(build(60_000), now)).toMatchObject({ fraction: 0.99, remaining: 'longer than usual' });
@@ -114,6 +121,8 @@ describe('build cache outcome', () => {
     expect(outcomeLabel({ outcome: 'cold', phase: 'compile' })).toBe('Cold build');
     expect(outcomeLabel({ outcome: 'hit', phase: 'install' })).toBe('Cache hit');
     expect(outcomeLabel({ outcome: null, phase: 'prepare' })).toBeNull();
+    expect(outcomeLabel({ outcome: 'hit', phase: 'device', outcomeKnown: false })).toBe('Likely cache hit');
+    expect(outcomeLabel({ outcome: 'hit', phase: 'device', outcomeKnown: true })).toBe('Cache hit');
   });
 
   it('reads a last build whose cacheHit is false as compiled, and a failed one by its code', () => {

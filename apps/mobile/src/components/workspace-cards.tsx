@@ -16,8 +16,9 @@ import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
 import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
 import { agentLabel } from '@/lib/agents';
-import { buildProgress, clockDuration } from '@/lib/format';
+import { buildKey, buildProgress, clockDuration } from '@/lib/format';
 import {
+  barFills,
   barSteps,
   currentPhaseLabel,
   formatCpu,
@@ -26,6 +27,7 @@ import {
   phaseName,
   phaseSteps,
   remoteBuild,
+  segmentWeights,
   type BuildLine,
   type BundleLine,
   type ChipTone,
@@ -374,14 +376,9 @@ export function CardGrid({ children }: { children: ReactNode }) {
   return <View style={[styles.grid, fontScale > STACK_FONT_SCALE && styles.stacked]}>{children}</View>;
 }
 
-function segmentWeights(steps: PhaseStep[]): number[] {
-  const total = steps.reduce((sum, step) => sum + (step.expectedMs ?? 0), 0);
-  if (total <= 0) return steps.map(() => 1);
-  return steps.map((step) => Math.max(step.expectedMs ?? 0, total * 0.18));
-}
-
-function PhaseBar({ steps }: { steps: PhaseStep[] }) {
+function PhaseBar({ steps, buildId }: { steps: PhaseStep[]; buildId: string }) {
   const weights = segmentWeights(steps);
+  const fills = barFills(steps, buildId);
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.phases}>
       <View style={styles.segments}>
@@ -391,7 +388,7 @@ function PhaseBar({ steps }: { steps: PhaseStep[] }) {
               style={[
                 styles.segmentFill,
                 {
-                  width: `${Math.round((step.state === 'current' ? (step.fraction ?? 0.1) : (step.fraction ?? 0)) * 100)}%`,
+                  width: `${Math.round(fills[i]! * 100)}%`,
                 },
               ]}
             />
@@ -493,7 +490,7 @@ export function BuildInProgressCard({
           </Text>
         ) : null}
       </View>
-      <PhaseBar steps={barSteps(steps)} />
+      <PhaseBar steps={barSteps(steps)} buildId={buildKey(build)} />
       {miss ? (
         <Text variant="caption" tone="secondary">
           {`Cache miss: ${miss}`}
