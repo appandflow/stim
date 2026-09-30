@@ -6,7 +6,8 @@ import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { AttentionMachine } from '@/lib/attention';
-import { RequestError, StimConnection } from '@/lib/connection';
+import { usePolledRequest } from '@/hooks/polled-request';
+import { StimConnection } from '@/lib/connection';
 import type { HomeItem } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
@@ -109,23 +110,16 @@ function MacLink({ mac }: { mac: PairedMac }) {
     });
   }, [connection, mac.id]);
 
-  useEffect(() => {
-    if (!connection || !open) return;
-    let cancelled = false;
-    const poll = () =>
-      connection.request('machine.get', {}).then(
-        (usage) => !cancelled && machines.setUsage(mac.id, usage),
-        (error: Error) => {
-          if (error instanceof RequestError && error.error.code === 'unknown-method') clearInterval(timer);
-        },
-      );
-    const timer = setInterval(poll, USAGE_INTERVAL_MS);
-    void poll();
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [connection, open, mac.id]);
+  usePolledRequest(
+    connection,
+    'machine.get',
+    {},
+    {
+      intervalMs: USAGE_INTERVAL_MS,
+      active: open,
+      onData: (usage) => machines.setUsage(mac.id, usage),
+    },
+  );
 
   return null;
 }

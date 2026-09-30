@@ -5,6 +5,7 @@ import { AndroidImportance } from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
+import { create } from 'zustand';
 
 import { markNotificationRead } from '@/hooks/inbox';
 import { toAttentionMachine, useMacs } from '@/hooks/machines';
@@ -133,36 +134,40 @@ export function useNotificationPrefs(): NotificationsValue {
 const PUSHED_PREFIX = 'pushed:';
 const TOKEN_KEY = 'pushToken';
 
-/** Starts from the Macs that accepted a registration before, so a relaunch does not notify what they push. */
-const pushedMacs = new Set(
-  PUSH_ENABLED
+interface PushState {
+  /** The Macs that accepted a registration, starting from the ones that did before so a relaunch does not notify what they push. */
+  pushed: readonly string[];
+  /** Per Mac, the connection state and registration last sent, so each is sent once per connection. */
+  sent: Readonly<Record<string, { state: unknown; key: string }>>;
+  forgotten: readonly string[];
+}
+
+const pushStore = create<PushState>(() => ({
+  pushed: PUSH_ENABLED
     ? storage
         .getAllKeys()
         .filter((key) => key.startsWith(PUSHED_PREFIX))
         .map((key) => key.slice(PUSHED_PREFIX.length))
     : [],
-);
-/** Per Mac, the connection state and registration last sent, so each is sent once per connection. */
-const sentRegistrations = new Map<string, { state: unknown; key: string }>();
-const forgotten = new Set<string>();
-const pushListeners = new Set<() => void>();
-const setPushed = (id: string, pushed: boolean) => {
-  if (pushedMacs.has(id) === pushed) return;
-  if (pushed) pushedMacs.add(id);
-  else pushedMacs.delete(id);
-  for (const listener of pushListeners) listener();
-};
+  sent: {},
+  forgotten: [],
+}));
+
+const setPushed = (id: string, pushed: boolean) =>
+  pushStore.setState((state) =>
+    state.pushed.includes(id) === pushed
+      ? state
+      : { pushed: pushed ? [...state.pushed, id] : state.pushed.filter((other) => other !== id) },
+  );
+
+const setSent = (id: string, sent: { state: unknown; key: string } | undefined) =>
+  pushStore.setState((state) => {
+    const { [id]: _previous, ...rest } = state.sent;
+    return { sent: sent ? { ...rest, [id]: sent } : rest };
+  });
 
 /** The machines that push this phone's notifications, as a comma-joined list that changes with the set. */
-function usePushedMacs(): string {
-  const [pushed, setPushedList] = useState(() => [...pushedMacs].join(','));
-  useEffect(() => {
-    const listener = () => setPushedList([...pushedMacs].join(','));
-    pushListeners.add(listener);
-    return () => void pushListeners.delete(listener);
-  }, []);
-  return pushed;
-}
+const usePushedMacs = (): string => pushStore((state) => state.pushed.join(','));
 
 function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
   const { connections } = useMacs();
@@ -229,9 +234,9 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
 
 /** Asks the Mac to stop pushing to this phone, before this phone forgets it. */
 export function unregisterPush(connection: StimConnection | null, macId: string): void {
-  forgotten.add(macId);
+  pushStore.setState((state) => ({ forgotten: [...state.forgotten, macId] }));
   setPushed(macId, false);
-  sentRegistrations.delete(macId);
+  setSent(macId, undefined);
   storage.remove(`${PUSHED_PREFIX}${macId}`);
   connection?.request('push.unregister', {}).catch(() => {});
 }
@@ -284,13 +289,14 @@ function PushRegistration({ prefs }: { prefs: NotificationPrefs }) {
 
   useEffect(() => {
     for (const { mac, state, connection } of connections) {
-      if (state.kind !== 'open' || !connection || forgotten.has(mac.id)) continue;
+      if (state.kind !== 'open' || !connection || pushStore.getState().forgotten.includes(mac.id)) continue;
       if (pushWanted && wanted === null) continue;
       const key = `${wanted}`;
-      const last = sentRegistrations.get(mac.id);
+      const last = pushStore.getState().sent[mac.id];
       if (last && last.state === state && last.key === key) continue;
-      sentRegistrations.set(mac.id, { state, key });
-      const current = () => !forgotten.has(mac.id) && sentRegistrations.get(mac.id)?.key === key;
+      setSent(mac.id, { state, key });
+      const current = () =>
+        !pushStore.getState().forgotten.includes(mac.id) && pushStore.getState().sent[mac.id]?.key === key;
       if (wanted === null) {
         const registered = storage.contains(`${PUSHED_PREFIX}${mac.id}`);
         setPushed(mac.id, false);
