@@ -102,6 +102,16 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 }
 
+@Suite struct FinishedRunsStampTests {
+  @Test func changesWhenEitherPlatformFinishesARun() throws {
+    let none = try workspace("")
+    let first = try workspace(#""lastBuilds":{"ios":\#(lastBuild(finishedAgo: 60))}"#)
+    let second = try workspace(#""lastBuilds":{"ios":\#(lastBuild(finishedAgo: 10))}"#)
+    let android = try workspace(#""lastBuilds":{"ios":\#(lastBuild(finishedAgo: 10)),"android":\#(lastBuild("android"))}"#)
+    #expect(Set([none, first, second, android].map(\.finishedRunsStamp)).count == 4)
+  }
+}
+
 @Suite struct WorkspaceUsageTests {
   let machine = MachineUsage(owners: [
     MachineOwner(kind: .simulator, name: "s", workspace: "/w", id: "SIM-1", owned: true, cpuPercent: 9, memoryMb: 2150),

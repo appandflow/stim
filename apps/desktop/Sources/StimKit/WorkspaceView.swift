@@ -60,6 +60,11 @@ private func ago(_ now: Date, _ text: String?) -> String? {
 }
 
 extension Workspace {
+  /// Changes whenever a run of either platform finishes, so a view of `stim stats` knows to read it again.
+  public var finishedRunsStamp: String {
+    [lastBuilds?.ios, lastBuilds?.android].map { $0?.finishedAt ?? "" }.joined(separator: "|")
+  }
+
   var latestBuild: LastBuild? {
     [lastBuilds?.ios, lastBuilds?.android].compactMap { $0 }.max {
       (parseTimestamp($0.startedAt) ?? .distantPast) < (parseTimestamp($1.startedAt) ?? .distantPast)
