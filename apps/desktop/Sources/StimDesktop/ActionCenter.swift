@@ -23,7 +23,6 @@ final class ActionRun: ObservableObject, Identifiable {
 
   var lines: [OutputLine] { output.lines }
 
-  /// The progress rows parsed from the output so far.
   var progress: [ProgressStep] { output.steps }
 
   var command: StimCommand { steps[0] }

@@ -142,8 +142,9 @@ final class ActionOutputTests: XCTestCase {
     output.append((0..<total).map { OutputLine($0 % 2 == 0 ? .stdout : .stderr, "line \($0)") })
     XCTAssertLessThanOrEqual(output.lines.count, 2 * ActionOutput.retainedLines)
     XCTAssertGreaterThanOrEqual(output.lines.count, ActionOutput.retainedLines)
-    XCTAssertEqual(output.lines.last?.text, "line \(total - 1)")
-    XCTAssertEqual(output.droppedCount + output.lines.count, total)
+    XCTAssertEqual(output.lines.last?.text, "line \(total - 2)")
+    XCTAssertEqual(output.droppedCount + output.lines.count, total / 2)
+    XCTAssertTrue(output.lines.allSatisfy { $0.channel == .stderr })
     let expected = (0..<total).filter { $0 % 2 == 0 }.map { "line \($0)" }.joined(separator: "\n")
     XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), expected)
   }
