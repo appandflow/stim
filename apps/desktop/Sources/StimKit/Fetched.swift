@@ -7,7 +7,6 @@ public struct Fetched<Value: Sendable>: Sendable {
 
   public init() {}
 
-  /// A failure keeps the last value, so a failed run never reads as "no data".
   public mutating func record(_ result: Result<Value, any Error>) {
     switch result {
     case .success(let value):

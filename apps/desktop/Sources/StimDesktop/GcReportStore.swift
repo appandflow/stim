@@ -21,9 +21,7 @@ final class GcReportStore: ObservableObject {
     self.cli = cli
   }
 
-  /// The last report stim gc returned, kept when a later run fails.
   var report: GcReport? { latest.value }
-  /// Why the last run failed; nil once a run succeeds.
   var error: String? { latest.error }
 
   /// The last report while it is younger than `maxAge` and no action changed what it reports since it started;

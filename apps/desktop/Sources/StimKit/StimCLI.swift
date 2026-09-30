@@ -133,7 +133,7 @@ public struct StimCLI: Sendable {
     try started(process)
     let data = out.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    let stderr = (try? Data(contentsOf: errURL)).map { stderrTail(String(decoding: $0, as: UTF8.self)) } ?? ""
+    let stderr = (try? lastBytes(of: errURL, count: 4096)).map { stderrTail(String(decoding: $0, as: UTF8.self)) } ?? ""
     return (process.terminationStatus, data, stderr)
   }
 
@@ -173,6 +173,14 @@ public struct StimCLI: Sendable {
       executable: executable, arguments: command.arguments, cwd: command.cwd, environment: environment,
       onLine: onLine, onExit: onExit)
   }
+}
+
+func lastBytes(of url: URL, count: UInt64) throws -> Data {
+  let handle = try FileHandle(forReadingFrom: url)
+  defer { try? handle.close() }
+  let end = try handle.seekToEnd()
+  try handle.seek(toOffset: end > count ? end - count : 0)
+  return try handle.readToEnd() ?? Data()
 }
 
 /// The last three non-empty lines of `text`.

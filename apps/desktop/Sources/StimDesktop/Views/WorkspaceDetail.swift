@@ -73,7 +73,7 @@ struct WorkspaceDetail: View {
       let cli = await cli.value
       let result = await Task.detached { Result { try cli.stats(workspace: path) } }.value
       guard !Task.isCancelled else { return }
-      var fetched = stats?.path == path ? stats?.fetched ?? Fetched() : Fetched()
+      var fetched = Fetched<ProjectStats>()
       fetched.record(result)
       stats = (path, fetched)
     }
