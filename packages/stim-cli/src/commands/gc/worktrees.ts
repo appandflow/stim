@@ -30,7 +30,13 @@ import {
   sourceCheckoutOf,
   unpushedCommits,
 } from '../../workspace/worktree.ts';
-import { excludePodChurn, matchWorktreeEntry, reclaimKeys, removeWorktreeTarget } from '../worktree.ts';
+import {
+  excludePodChurn,
+  excludeWatchmanCookies,
+  matchWorktreeEntry,
+  reclaimKeys,
+  removeWorktreeTarget,
+} from '../worktree.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
@@ -169,7 +175,7 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   if (facts.locked) return skip('locked', 'locked with git worktree lock');
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
-  const dirty = excludePodChurn(facts.porcelain).lines.length;
+  const dirty = excludePodChurn(excludeWatchmanCookies(facts.porcelain).lines).lines.length;
   if (dirty) return skip('dirty', `dirty: ${plural(dirty, 'uncommitted or untracked file')}`);
   if (facts.unpushed === null) return skip('unpushed-unchecked', 'unpushed commits could not be checked');
   const merged = facts.merge?.merged ? facts.merge : null;

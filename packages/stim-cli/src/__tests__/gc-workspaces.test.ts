@@ -621,6 +621,21 @@ describe('linked worktree sweep classification', () => {
     ).toBe(null);
   });
 
+  test('watchman cookies alone do not keep a worktree', () => {
+    expect(
+      worktreeSkipReason(
+        linked({ porcelain: ['?? .watchman-cookie-host-1-2', '?? apps/m/.watchman-cookie-h-3-4'] }),
+        7,
+      ),
+    ).toBe(null);
+  });
+
+  test('a watchman cookie beside another untracked file still keeps the worktree', () => {
+    expect(worktreeSkipReason(linked({ porcelain: ['?? .watchman-cookie-host-1-2', '?? notes.txt'] }), 7)?.code).toBe(
+      'dirty',
+    );
+  });
+
   test.each([
     ['the source checkout', linked({ source: 'source' }), 'source-checkout', /^source checkout$/],
     [

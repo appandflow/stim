@@ -1,5 +1,5 @@
-import { existsSync, realpathSync } from 'fs';
-import { basename, dirname, isAbsolute, relative, resolve } from 'path';
+import { existsSync, realpathSync, rmSync } from 'fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
@@ -320,6 +320,19 @@ export function porcelainPath(line: string): string | null {
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
 
 const POD_CHURN_PATH = /(?:^|\/)ios\/(?:Podfile\.lock|[^/]+\.xcodeproj\/project\.pbxproj)$/;
+
+const WATCHMAN_COOKIE_PATH = /(?:^|\/)\.watchman-cookie-[A-Za-z0-9._-]+$/;
+
+export function excludeWatchmanCookies(lines: string[] | null | undefined): { lines: string[]; cookies: string[] } {
+  const kept: string[] = [];
+  const cookies: string[] = [];
+  for (const line of lines || []) {
+    const path = String(line).startsWith('?? ') ? porcelainPath(line) : null;
+    if (path && SAFE_DIFF_PATH.test(path) && WATCHMAN_COOKIE_PATH.test(path)) cookies.push(path);
+    else kept.push(line);
+  }
+  return { lines: kept, cookies };
+}
 
 interface PodChurnResult {
   lines: string[];
@@ -662,6 +675,7 @@ interface RemoveOptions {
 interface RemovalInspection {
   dirtyLines: string[];
   podChurn: string[];
+  cookies: string[];
   unpushed: string[] | null;
   blockers: string[];
 }
@@ -689,13 +703,14 @@ function canonicalExistingPath(target: string): string {
 function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
   const gitAnswered = hasUncommittedWork(path);
   const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(allDirty);
+  const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty);
+  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies);
   const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
   const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD') === mergedHead;
   const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
   if (hasPopulatedSubmodules(path)) blockers.push('initialized submodules, which git removes only with --force');
-  return { dirtyLines, podChurn, unpushed, blockers };
+  return { dirtyLines, podChurn, cookies, unpushed, blockers };
 }
 
 function printRemovalRefusal(path: string, inspection: RemovalInspection): void {
@@ -717,6 +732,10 @@ function printRemovalRefusal(path: string, inspection: RemovalInspection): void 
   console.error(chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'));
   console.error(chalk.dim('work stays on the branch.'));
   process.exitCode = 1;
+}
+
+function deleteWatchmanCookies(path: string, cookies: string[]): void {
+  for (const cookie of cookies) rmSync(join(path, cookie), { force: true });
 }
 
 function restorePodChurn(path: string, files: string[]): void {
@@ -950,6 +969,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         return;
       }
       restorePodChurn(path, current.podChurn);
+      deleteWatchmanCookies(path, current.cookies);
       try {
         removeWorktree(path, { from: source.path, force: opts.force });
       } catch (error) {

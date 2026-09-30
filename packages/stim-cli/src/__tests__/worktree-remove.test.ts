@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   excludePodChurn,
+  excludeWatchmanCookies,
   matchWorktreeEntry,
   porcelainPath,
   removalBlockers,
@@ -1730,6 +1731,90 @@ test('excludePodChurn leaves a path it could not safely name to the refusal', ()
 test('excludePodChurn on a clean listing restores nothing', () => {
   expect(excludePodChurn([])).toEqual({ lines: [], restore: [] });
 });
+
+test('excludeWatchmanCookies takes untracked cookies at any depth and keeps everything else', () => {
+  const cookies = ['?? .watchman-cookie-host.local-123-4', '?? apps/mobile/.watchman-cookie-host-99-1'];
+  const rest = ['?? notes.txt', ' M apps/mobile/App.tsx', '?? apps/mobile/.watchman-cookie-x/', '?? .watchman-config'];
+  const result = excludeWatchmanCookies([...cookies, ...rest]);
+  expect(result.cookies).toEqual(['.watchman-cookie-host.local-123-4', 'apps/mobile/.watchman-cookie-host-99-1']);
+  expect(result.lines).toEqual(rest);
+});
+
+test('excludeWatchmanCookies keeps a modified or staged cookie path and one it could not safely name', () => {
+  const dirty = [' M .watchman-cookie-a-1-1', 'A  .watchman-cookie-a-1-2', '?? my dir/.watchman-cookie-a-1-3'];
+  expect(excludeWatchmanCookies(dirty)).toEqual({ lines: dirty, cookies: [] });
+});
+
+function cookieRepo(base: string): string {
+  const repo = join(base, 'repo');
+  mkdirSync(join(repo, 'apps', 'mobile'), { recursive: true });
+  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  writeFileSync(join(repo, 'apps', 'mobile', 'App.tsx'), 'export default 1;\n');
+  git('git add -A');
+  git('git commit -q -m init');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-cookies`);
+  writeFileSync(join(wt, '.watchman-cookie-host.local-123-4'), '');
+  writeFileSync(join(wt, 'apps', 'mobile', '.watchman-cookie-host.local-123-5'), '');
+  return wt;
+}
+
+async function removeCapturingErrors(wt: string): Promise<string> {
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    await captureAction(registerRemove)(wt, {});
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+  }
+  return errs.join('\n');
+}
+
+test('against a real repo: a worktree dirty only with watchman cookies is removed without --force', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-cookies-')));
+  const originalCwd = process.cwd();
+  try {
+    const wt = cookieRepo(base);
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 })).toMatch(
+      /\?\? \.watchman-cookie-/,
+    );
+    await removeCapturingErrors(wt);
+    expect(process.exitCode).not.toBe(1);
+    expect(existsSync(wt)).toBe(false);
+  } finally {
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('against a real repo: an untracked file beside watchman cookies is still refused and nothing is deleted', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-cookies-real-')));
+  const originalCwd = process.cwd();
+  try {
+    const wt = cookieRepo(base);
+    writeFileSync(join(wt, 'notes.txt'), 'keep me\n');
+    const text = await removeCapturingErrors(wt);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(wt)).toBe(true);
+    expect(text).toMatch(/notes\.txt/);
+    expect(text).not.toMatch(/watchman-cookie/);
+    expect(existsSync(join(wt, '.watchman-cookie-host.local-123-4'))).toBe(true);
+  } finally {
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
 
 function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean } = {}) {
   const repo = join(base, 'repo');
