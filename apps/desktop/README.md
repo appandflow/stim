@@ -543,7 +543,9 @@ device token in a file only you can read under `~/Library/Application
 Support/Stim Desktop/stim-server/`, one per Stim home. A Stim Dev build (see
 [Build the app](#build-the-app)) pairs as "Stim Dev" and keeps its token under
 `~/Library/Application Support/Stim Dev/stim-server/`, so revoking one app's
-pairing leaves the other's. The server issued it to
+pairing leaves the other's. A source build or `swift run` from before Stim Dev
+paired as "Stim Desktop"; Stim Dev does not reuse that pairing, which stays in
+`stim-server devices` until you revoke it. The server issued it to
 a loopback connection, so it refuses the token from any other node. When the
 server no longer knows the token, the app pairs once more, so revoking it with
 `stim-server devices revoke` lasts only until the next connection; turn off
@@ -641,8 +643,10 @@ quits. `stim-server` is found on the login shell's `PATH`, or at the path you
 choose in the same tab. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, the tab re-checks it every 5
-seconds, and the pairing and device commands use the `STIM_HOME` its health
-reports, so they act on that server's pairing state. When that `STIM_HOME` is
+seconds and the app every 10 seconds while it is active, otherwise every 60
+seconds. When a server the app did not start stops answering, the app starts its
+own while **Serve to phones** is on. The pairing and device commands use the
+`STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
 not `~/.stim`, the tab names it and warns that phones paired now are stored
 there. This happens when Stim Desktop was launched with another `STIM_HOME`, or
 adopted a server started with one. Those phones stop working once Stim Desktop
@@ -872,8 +876,8 @@ Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
 item, notification permission and notification history, and pairs with
 stim-server under its own name (see [Replay](#replay)). Both apps use port
 7787, so the one that starts second uses the other's server instead of starting
-one; when that app quits, the remaining one starts its own while **Serve to
-phones** is on. Paired phones and the `tailscale serve` route keep working
+one; when that app quits, the remaining one starts its own within a minute while
+**Serve to phones** is on. Paired phones and the `tailscale serve` route keep working
 because they belong to the Stim home, not to either app. Both apps run their
 autopilot. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.

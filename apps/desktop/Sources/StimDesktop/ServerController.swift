@@ -34,7 +34,7 @@ final class ServerController: ObservableObject {
     active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
       guard let self, isRunning else { return }
-      reloadDevices()
+      refresh()
     })
 
   var port: Int {
