@@ -1,6 +1,6 @@
 import { Trans } from '@lingui/react/macro';
 import { t } from '@lingui/core/macro';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +8,7 @@ import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useReplayAt, type Replay, type ReplayPlayhead } from '@/hooks/device-stream';
+import { useNow } from '@/hooks/use-now';
 import {
   adjacentAction,
   buildTimeline,
@@ -77,11 +78,7 @@ export function ReplayBar({
   const fingerX = useRef(0);
   const [asked, setAsked] = useState<number | null>(null);
   const [lastAt, setLastAt] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const now = useNow(1000);
   const [received, setReceived] = useState({ timeline, at: now });
   if (received.timeline !== timeline) setReceived({ timeline, at: now });
   const [held, setHeld] = useState<Timeline | null>(null);
