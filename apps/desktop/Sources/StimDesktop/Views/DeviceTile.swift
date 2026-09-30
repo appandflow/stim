@@ -718,7 +718,7 @@ private struct BuildCover: View {
   var opaque: Bool
 
   var body: some View {
-    TimelineView(.periodic(from: .now, by: 1)) { context in
+    TimelineView(.buildSeconds(build)) { context in
       let progress = build.progress(at: context.date)
       let (phase, counts) = build.currentPhaseLabel
       let estimate = build.expectedMs.map { " / ~\(clockDuration(ms: $0))" } ?? ""

@@ -154,6 +154,18 @@ import Testing
     #expect(workspace.devices.map { workspace.runningBuild(for: $0) != nil } == [true, false, false, false])
   }
 
+  @Test func doesNotMoveBackwardsWhenTheRunRevisesItsEstimate() throws {
+    var build = try #require(workspace.build)
+    build.slot = "revised"
+    let started = ISO8601DateFormatter().date(from: "2026-09-24T19:50:00Z")!
+    build.expectedMs = 180_000
+    #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.5)
+    build.expectedMs = 900_000
+    #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.5)
+    build.slot = "tablet"
+    #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.1)
+  }
+
   @Test func leavesABuildWithoutHistoryIndeterminate() throws {
     var build = try #require(workspace.build)
     build.expectedMs = nil

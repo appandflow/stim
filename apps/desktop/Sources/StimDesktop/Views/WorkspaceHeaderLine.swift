@@ -10,7 +10,7 @@ struct WorkspaceHeaderLine: View {
 
   var body: some View {
     HStack(spacing: Space.md) {
-      TimelineView(.periodic(from: .now, by: 15)) { context in
+      TimelineView(env.build.flatMap { $0.isRunning ? .buildSeconds($0) : nil } ?? .periodic(from: .now, by: 15)) { context in
         StageLine(env: env, now: context.date)
       }
       Spacer(minLength: Space.md)
@@ -31,40 +31,47 @@ struct WorkspaceHeaderLine: View {
 /// The running build's phase, a short bar and elapsed over the estimate, on the header line.
 struct BuildInlineProgress: View {
   var build: Build
+  var now: Date
 
   var body: some View {
-    TimelineView(.periodic(from: .now, by: 1)) { context in
-      let progress = build.progress(at: context.date)
-      let (phase, counts) = build.currentPhaseLabel
-      let elapsed = clockDuration(ms: progress.elapsedMs)
-      let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
-      let time = (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
-        .font(.stim(.footnote))
-        .monospacedDigit()
-        .lineLimit(1)
+    let progress = build.progress(at: now)
+    let (phase, counts) = build.currentPhaseLabel
+    let elapsed = clockDuration(ms: progress.elapsedMs)
+    let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
+    let time = ZStack(alignment: .leading) {
+      Text("00:00 / ~00:00").hidden()
+      Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary)
+    }
+    .font(.stim(.footnote))
+    .monospacedDigit()
+    .lineLimit(1)
+    .fixedSize()
+    let host = build.remote(at: now)?.host
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: Space.sm) {
+        ZStack(alignment: .trailing) {
+          Text("Copying resources").hidden()
+          Text(phase).foregroundStyle(Palette.primary)
+        }
+        .font(.stim(.footnote, weight: .semibold))
         .fixedSize()
-      let host = build.remote(at: context.date)?.host
-      ViewThatFits(in: .horizontal) {
-        HStack(spacing: Space.sm) {
-          Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary).fixedSize()
-          if host != nil {
-            Image(systemName: "desktopcomputer").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          }
-          bar(progress).frame(width: 96)
-          time
+        if host != nil {
+          Image(systemName: "desktopcomputer").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
-        HStack(spacing: Space.sm) {
-          bar(progress).frame(width: 56)
-          time
-        }
+        bar(progress).frame(width: 96)
         time
       }
-      .help([phase, counts, host.map { "on \($0)" }].compactMap { $0 }.joined(separator: " \u{00B7} "))
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel(
-        "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")"
-      )
+      HStack(spacing: Space.sm) {
+        bar(progress).frame(width: 56)
+        time
+      }
+      time
     }
+    .help([phase, counts, host.map { "on \($0)" }].compactMap { $0 }.joined(separator: " \u{00B7} "))
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(
+      "\(phase)\(counts.map { " \($0)" } ?? "")\(host.map { " on \($0)" } ?? ""), \(elapsed)\(estimate.map { " of \($0)" } ?? "")"
+    )
   }
 
   private func bar(_ progress: BuildProgress) -> some View {
@@ -114,7 +121,7 @@ struct StageLine: View {
       .accessibilityLabel([stage.label.rawValue, stage.subtitle].compactMap { $0 }.joined(separator: ", "))
       .layoutPriority(-1)
       if let build = env.build, build.isRunning {
-        BuildInlineProgress(build: build)
+        BuildInlineProgress(build: build, now: now)
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)

@@ -70,23 +70,30 @@ extension ISO8601DateFormatter {
   }()
 }
 
+extension TimelineSchedule where Self == PeriodicTimelineSchedule {
+  /// Half way through each second of `build`'s elapsed time, so every view that shows it changes at the same moment.
+  static func buildSeconds(_ build: Build) -> PeriodicTimelineSchedule {
+    .periodic(from: build.startedDate.map { $0.addingTimeInterval(0.5) } ?? .now, by: 1)
+  }
+}
+
 struct PhaseBar: View {
   var steps: [PhaseStep]
+  var key: String
 
   var body: some View {
-    let total = steps.reduce(0) { $0 + ($1.expectedMs ?? 0) }
-    let weights = steps.map { total > 0 ? max($0.expectedMs ?? 0, total * 0.18) : 1 }
+    let weights = segmentWeights(steps)
+    let fills = barFills(steps, key: key)
     VStack(spacing: Space.xs) {
       GeometryReader { geo in
         let sum = weights.reduce(0, +)
         let gaps = CGFloat(max(0, steps.count - 1)) * 3
         HStack(spacing: 3) {
-          ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+          ForEach(Array(steps.enumerated()), id: \.offset) { i, _ in
             let width = (geo.size.width - gaps) * weights[i] / sum
-            let fraction = step.state == .current ? (step.fraction ?? 0.1) : (step.fraction ?? 0)
             ZStack(alignment: .leading) {
               Capsule().fill(Palette.primary.opacity(Opacity.tint))
-              Capsule().fill(Palette.primary).frame(width: width * fraction)
+              Capsule().fill(Palette.primary).frame(width: width * fills[i])
             }
             .frame(width: width)
           }

@@ -125,6 +125,12 @@ import Testing
     #expect(build.outcomeLabel == "Cache hit")
     build.outcome = nil
     #expect(build.outcomeLabel == nil)
+    build.outcome = "hit"
+    build.phase = "device"
+    build.outcomeKnown = false
+    #expect(build.outcomeLabel == "Likely cache hit")
+    build.outcomeKnown = true
+    #expect(build.outcomeLabel == "Cache hit")
   }
 
   @Test func returnsTheCLIRefusalWhenAPlanCannotBeComputed() async throws {
