@@ -574,14 +574,19 @@ export function useDeviceControl(
       setHeld({ kind: 'starting' });
       const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
       connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
-        (result) =>
+        (result) => {
+          if (!mounted.current) {
+            connection.request('control.end', { session: result.session }).catch(() => {});
+            return;
+          }
           setHeld({
             kind: 'on',
             session: result.session,
             leaseSince: result.lease?.grantedAt ?? null,
             postures: result.postures,
             link,
-          }),
+          });
+        },
         (cause: Error) => {
           const code = cause instanceof RequestError ? cause.error.code : null;
           if (code === 'device-busy') return setHeld({ kind: 'busy', message: cause.message });
