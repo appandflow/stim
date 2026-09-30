@@ -121,7 +121,8 @@ SWEEPING FINISHED WORKTREES
   one that is idle: no recorded use for --older-than days, 7 without it; a
   worktree whose last use is unknown is kept. Both need the same clean state;
   a worktree is kept when it is the source checkout, bare, locked, in use,
-  dirty (untracked files count; pod install churn alone does not), unpushed
+  dirty (untracked files count; pod install churn and
+  watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
   (commits no remote-tracking ref or other local branch reaches), or has
   initialized submodules. Without --worktrees, the report leaves out the
   source checkout and roots outside git.

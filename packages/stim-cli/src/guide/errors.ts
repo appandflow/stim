@@ -1225,6 +1225,10 @@ not on any remote"  (worktree remove)
   so per file -- those files die with the worktree either way, and a lockfile
   change anyone meant would have been committed. ONE other dirty path and the
   whole set is refused, churn included, so this never eats real work.
+  Untracked \`.watchman-cookie-*\` files, which watchman writes into the roots
+  it watches, are not work either: \`worktree remove\` deletes them itself and
+  ignores them when it counts dirty paths. Any other untracked file still
+  refuses.
   When it does refuse, the refusal PRINTS THE DIRTY PATHS, and the restore
   command under it carries those same paths: run it as printed rather than
   reaching for --force.
