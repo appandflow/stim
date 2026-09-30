@@ -20,6 +20,16 @@ import Testing
     #expect(records[3].platform == "ios")
   }
 
+  @Test func spellsOutLevelSourceSlotAndGroupSizeForVoiceOver() {
+    let time = { (record: LogRecord) in record.date.formatted(LogRecord.timeFormat) }
+    #expect(
+      records[4].accessibilityLabel(source: "build", title: "Bundling failed", recordCount: 3)
+        == "Warning, build, slot ipad, Bundling failed, \(time(records[4])), 3 records")
+    #expect(
+      records[7].accessibilityLabel(source: "native", title: "crash")
+        == "Fatal, native, slot duo, crash, \(time(records[7]))")
+  }
+
   @Test func leavesTheSlotEmptyOnUntaggedRecords() {
     #expect(records[0].slot == nil)
     #expect(records[4].slot == "ipad")

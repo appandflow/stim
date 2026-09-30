@@ -159,6 +159,7 @@ struct LogTable: NSViewRepresentable {
       view.identifier = id
       view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row]) : []
       view.indent = row < model.rows.count ? LogRowText.messageColumn(model.rows[row].entry.lead) : 0
+      view.row = row < model.rows.count ? model.rows[row] : nil
       return view
     }
 
@@ -201,8 +202,11 @@ final class LogRowView: NSView {
     didSet { needsDisplay = true }
   }
   var indent: CGFloat = 0
+  var row: LogsModel.Row?
 
   override var isFlipped: Bool { true }
+
+  override func accessibilityLabel() -> String? { row.map(LogRowText.accessibilityLabel) }
 
   override func draw(_ dirtyRect: NSRect) {
     for (i, line) in lines.enumerated() {
@@ -250,6 +254,13 @@ enum LogRowText {
     case .agent: return "agent"
     case nil: return src
     }
+  }
+
+  static func accessibilityLabel(_ row: LogsModel.Row) -> String {
+    let summary = row.entry.lead.accessibilityLabel(
+      source: sourceLabel(row.entry.lead.src), title: row.view.title.replacingOccurrences(of: "\t", with: "  "),
+      recordCount: row.entry.related.count + 1)
+    return ([summary] + lines(row).dropFirst().map(\.string)).joined(separator: ". ")
   }
 
   /// JetBrains Mono ships only its regular weight here, so bold is drawn as a stroke around each glyph.
