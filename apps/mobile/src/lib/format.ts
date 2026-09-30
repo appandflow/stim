@@ -49,22 +49,6 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
   }
 }
 
-/**
- * The tools driving any of `activities`, each named once, with how long the most recently started one has driven.
- * Null when nothing is driven.
- */
-export function driversSummary(activities: (DeviceActivity | undefined)[], now: number): string | null {
-  const driven = activities.filter((a): a is DeviceActivity => a?.state === 'driven');
-  if (driven.length === 0) return null;
-  const unknownTool = t`unknown tool`;
-  const tools = [...new Set(driven.map((a) => a.driver?.tool ?? unknownTool))];
-  const starts = driven.map((a) => (a.driver?.since ? Date.parse(a.driver.since) : NaN)).filter(Number.isFinite);
-  const latest = starts.length ? Math.max(...starts) : NaN;
-  const names = tools.join(', ');
-  const duration = formatDuration(Math.max(0, now - latest));
-  return Number.isFinite(latest) ? t`${names} \u00B7 ${duration}` : names;
-}
-
 export function spokenDuration(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return t`less than a minute`;

@@ -216,4 +216,25 @@ describe('rowLabel', () => {
     );
     expect(label(true)).toMatch(/, on Mac mini$/);
   });
+
+  it('speaks the warming step and remote EAS sessions', () => {
+    const e = env('/w', { remoteDevices: [{}, {}] } as Partial<EnvironmentState>);
+    const status = rowStatus(e, NOW, null);
+    const row = item('stim', 'feat/y', e);
+    expect(
+      rowLabel({ item: row, now: NOW, status, problems: [], sessions: [], folder: false, showsMachine: false }),
+    ).toBe('feat/y, Running, 2 EAS sessions');
+    const warming = env('/w', { phase: 'warming', warmStep: 'copy' });
+    expect(
+      rowLabel({
+        item: item('stim', 'feat/y', warming),
+        now: NOW,
+        status: rowStatus(warming, NOW, null),
+        problems: [],
+        sessions: [],
+        folder: false,
+        showsMachine: false,
+      }),
+    ).toBe('feat/y, Warming, Copying ignored files');
+  });
 });

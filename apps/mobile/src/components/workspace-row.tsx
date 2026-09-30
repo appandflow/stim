@@ -16,7 +16,7 @@ import { useNow } from '@/hooks/use-now';
 import { workspaceAgentSessions } from '@/lib/agents';
 import { buildKey, buildTiming, outcomeLabel } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
-import { rowDevices, rowLabel, rowProblems, rowStatus } from '@/lib/home-list';
+import { rowDevices, rowLabel, rowProblems, rowStatus, warmStepText } from '@/lib/home-list';
 import { barSteps, currentPhaseLabel, gitChip, phaseSteps } from '@/lib/workspace-view';
 import { isSettingUp, isShownLive, runningBuild } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
@@ -177,12 +177,13 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             ))}
           </View>
         ) : null}
-        {build ? <RowBuild env={env} build={build} frozenAt={offline ? at : null} /> : null}
+        {build && offline ? <RowBuild env={env} build={build} now={at} /> : null}
+        {build && !offline ? <TickingRowBuild env={env} build={build} /> : null}
         {isSettingUp(env) && env.phase === 'warming' ? (
           <View style={styles.inline}>
             {offline ? null : <ActivityIndicator size="small" color={theme.colors.accent} />}
             <Text variant="footnote" tone="secondary">
-              {env.warmStep === 'copy' ? t`Copying ignored files` : t`Installing dependencies`}
+              {warmStepText(env)}
             </Text>
           </View>
         ) : null}
@@ -210,10 +211,12 @@ function Line({ parts }: { parts: ReactNode[] }) {
   );
 }
 
-/** The running build's step, its time against the estimate and its phase bar, ticking every second. */
-function RowBuild({ env, build, frozenAt }: { env: EnvironmentState; build: BuildReport; frozenAt: number | null }) {
-  const ticking = useNow(1000);
-  const now = frozenAt ?? ticking;
+function TickingRowBuild({ env, build }: { env: EnvironmentState; build: BuildReport }) {
+  const now = useNow(1000);
+  return <RowBuild env={env} build={build} now={now} />;
+}
+
+function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildReport; now: number }) {
   const steps = barSteps(phaseSteps(build, env.builds?.[build.platform] ?? [], now));
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase, counts } = currentPhaseLabel(build);

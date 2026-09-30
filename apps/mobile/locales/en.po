@@ -447,10 +447,6 @@ msgstr "{name}, {worktrees}"
 msgid "{name}: low disk"
 msgstr "{name}: low disk"
 
-#: src/lib/format.ts
-msgid "{names} · {duration}"
-msgstr "{names} · {duration}"
-
 #: src/lib/workspace-view.ts
 msgid "{passing} passing"
 msgstr "{passing} passing"
@@ -1322,7 +1318,7 @@ msgstr "Copy versions"
 msgid "copying ignored files"
 msgstr "copying ignored files"
 
-#: src/components/workspace-row.tsx
+#: src/lib/home-list.ts
 msgid "Copying ignored files"
 msgstr "Copying ignored files"
 
@@ -1785,7 +1781,7 @@ msgstr "install the same CocoaPods there"
 msgid "installing dependencies"
 msgstr "installing dependencies"
 
-#: src/components/workspace-row.tsx
+#: src/lib/home-list.ts
 msgid "Installing dependencies"
 msgstr "Installing dependencies"
 
@@ -3469,7 +3465,6 @@ msgstr "unknown"
 msgid "Unknown"
 msgstr "Unknown"
 
-#: src/lib/format.ts
 #: src/lib/home-list.ts
 msgid "unknown tool"
 msgstr "unknown tool"

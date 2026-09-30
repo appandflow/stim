@@ -1,6 +1,6 @@
 import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json';
 
-import { activityBadge, driversSummary } from '@/lib/format';
+import { activityBadge } from '@/lib/format';
 import { devicesOf } from '@/lib/workspaces';
 import {
   agentRow,
@@ -696,10 +696,6 @@ describe('workspace view vectors', () => {
 
   it.each(vectors.activity.badge.map((c) => [c.name, c] as const))('activity badge: %s', (_, c) => {
     expect(activityBadge(c.activity as unknown as DeviceActivity, vectorNow)?.text ?? null).toBe(c.text);
-  });
-
-  it.each(vectors.activity.drivers.map((c) => [c.name, c] as const))('drivers summary: %s', (_, c) => {
-    expect(driversSummary(c.activities as unknown as (DeviceActivity | undefined)[], vectorNow)).toBe(c.summary);
   });
 
   it.each(vectors.bundleLine.map((c) => [c.name, c] as const))('bundle line: %s', (_, c) => {

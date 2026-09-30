@@ -40,15 +40,14 @@ reload and stop a workspace:
   one element for VoiceOver and TalkBack, whose label says all of this; a row
   with errors has a **Show errors** action. A machine that is not connected keeps its
   last status: its rows are dimmed with a hollow dot and read "Last seen 3m
-  ago", and their activity and build times stop at the moment it disconnected. Its
-  device chips turn grey. The phone keeps each machine's last status on disk,
+  ago", and their activity and build times stop at the moment it disconnected, and
+  their colors turn grey. The phone keeps each machine's last status on disk,
   written at most every 5 seconds and when the app leaves the foreground or the
   connection drops, so a cold launch shows those rows, dimmed with "Last seen",
   until the machine's live status replaces them. Forgetting a machine deletes
   its saved status. The first launch of a new app build, update or rollback
   deletes every saved status and the notification state first, so that code
   never reads what an older version wrote; pairings and settings stay.
-  "Activity unknown" is grey: it means Stim has no data, not a problem.
 - **Needs attention**: a strip between the machine chips and the list, hidden
   when nothing is wrong, lists the problems on every paired machine, whatever
   the filters, errors (red) before warnings (amber): a machine that is offline
@@ -66,7 +65,8 @@ reload and stop a workspace:
   machine, with its latest frame, model, workspace name and machine, by project
   and workspace name and, inside a workspace, iOS, Android, Web and then physical
   devices, by slot. A tile never moves because a tool starts or stops driving
-  it; its driven badge shows that instead.
+  it; its driven badge shows that instead. "Activity unknown" is grey: it
+  means Stim has no data, not a problem.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile's screen opens the [device view](#device-view); tapping the

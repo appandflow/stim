@@ -168,6 +168,11 @@ export function rowProblems(env: EnvironmentState, now: number): RowProblem[] {
   return problems;
 }
 
+/** The step of a workspace `stim worktree warm` is preparing. */
+export function warmStepText(env: EnvironmentState): string {
+  return env.warmStep === 'copy' ? t`Copying ignored files` : t`Installing dependencies`;
+}
+
 export interface RowDevices {
   /** Running devices by kind, such as "2 iOS, Android, iOS device". */
   names: string | null;
@@ -244,6 +249,7 @@ export function rowLabel({
     build && status.kind === 'building'
       ? [buildLabel(build, now), phase?.counts].filter(Boolean).join(', ')
       : status.label,
+    isSettingUp(env) && env.phase === 'warming' ? warmStepText(env) : null,
     agentsSummary(sessions),
     ...problems.map((p) => p.text),
     ...devices,
