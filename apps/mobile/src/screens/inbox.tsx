@@ -13,7 +13,7 @@ import type { Theme } from '@/design/theme';
 import { useInbox } from '@/hooks/inbox';
 import { usePairedMacs } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
-import { shortDuration } from '@/lib/format';
+import { coarseDuration } from '@/lib/format';
 import { byDay, itemData, type InboxFilters, type InboxItem } from '@/lib/inbox';
 import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
@@ -143,7 +143,7 @@ export function Inbox() {
 function InboxRow({ item, now, onPress }: { item: InboxItem; now: number; onPress: (item: InboxItem) => void }) {
   const { theme } = useUnistyles();
   const label = NOTIFY_CATEGORY_LABELS[item.category];
-  const ago = shortDuration(Math.max(0, now - Date.parse(item.at)));
+  const ago = coarseDuration(Math.max(0, now - Date.parse(item.at)));
   const machine = item.target.kind === 'machine';
   const detail = [label, machine ? null : item.macName].filter(Boolean).join(' \u00B7 ');
   return (

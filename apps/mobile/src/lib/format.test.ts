@@ -2,6 +2,7 @@ import {
   activityBadge,
   buildProgress,
   clockTime,
+  coarseDuration,
   drivenLabel,
   driversSummary,
   gitBadges,
@@ -284,5 +285,15 @@ describe('build history rows', () => {
       { fraction: 1, result: 'failed' },
       { fraction: 0.25, result: 'succeeded' },
     ]);
+  });
+});
+
+describe('coarseDuration', () => {
+  it('keeps only the largest unit so hours never carry padded minutes', () => {
+    expect(coarseDuration(30_000)).toBe('<1m');
+    expect(coarseDuration(42 * 60_000)).toBe('42m');
+    expect(coarseDuration((60 + 42) * 60_000)).toBe('1h');
+    expect(coarseDuration((20 * 60 + 7) * 60_000)).toBe('20h');
+    expect(coarseDuration(49 * 3_600_000)).toBe('2d');
   });
 });
