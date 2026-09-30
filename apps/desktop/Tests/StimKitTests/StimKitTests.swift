@@ -1015,6 +1015,17 @@ import Testing
     #expect(agents.map { $0.label(now: now) } == ["Claude Code \u{00B7} Fix the login bug \u{00B7} 5m ago", "Codex"])
   }
 
+  @Test func labelsAnEndedSessionByWhenItEnded() throws {
+    let json = """
+      {"tool":"claude-code","sessionId":"c","cwd":"/w","title":"Fix the login bug","lastActiveAt":"2026-09-28T09:00:00.000Z",
+       "endedAt":"2026-09-28T10:00:00.000Z","openUrl":"claude://code/continue?session=local_2"}
+      """
+    let ended = try JSONDecoder().decode(AgentSession.self, from: Data(json.utf8))
+    let now = ISO8601DateFormatter().date(from: "2026-09-28T12:00:00Z")!
+    #expect(ended.label(now: now) == "Claude Code \u{00B7} Fix the login bug \u{00B7} ended 2h ago")
+    #expect(ended.openURL?.absoluteString == "claude://code/continue?session=local_2")
+  }
+
   @Test func opensOnlyClaudeAndCodexLinks() {
     #expect(agents.map(\.openURL?.absoluteString) == ["claude://code/continue?session=local_1", nil])
   }

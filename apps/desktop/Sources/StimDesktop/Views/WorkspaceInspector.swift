@@ -13,6 +13,8 @@ struct Inspector: View {
   var showsLogs: Bool
   var toggleLogs: () -> Void
 
+  private var agentSessions: [AgentSession] { (env.agents ?? []) + (env.endedAgents ?? []) }
+
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
@@ -23,8 +25,8 @@ struct Inspector: View {
 
         MetroLogsSection(env: env, reportsBundles: reportsBundles, showsLogs: showsLogs, toggleLogs: toggleLogs)
 
-        if let agents = env.agents, !agents.isEmpty {
-          AgentSessionsSection(agents: agents)
+        if !agentSessions.isEmpty {
+          AgentSessionsSection(agents: agentSessions)
         }
 
         if let project = stats?.project, project.ios != nil || project.android != nil {

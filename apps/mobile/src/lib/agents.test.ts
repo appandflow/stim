@@ -1,5 +1,5 @@
 import { agentLabel, agentShortLabel, agentsSummary, agentWebUrl } from '@/lib/agents';
-import type { AgentSession } from '@/protocol/types';
+import type { AgentSession, EndedAgentSession } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-28T12:00:00.000Z');
 const claude: AgentSession = {
@@ -32,4 +32,10 @@ test('only an https web link opens a session from the phone', () => {
   expect(agentWebUrl({ ...claude, webUrl: url })).toBe(url);
   expect(agentWebUrl({ ...claude, openUrl: 'claude://code/continue?session=local_a' })).toBeNull();
   expect(agentWebUrl({ ...claude, webUrl: 'javascript:alert(1)' })).toBeNull();
+});
+
+test('an ended session is labelled by how long ago it ended', () => {
+  const ended: EndedAgentSession = { ...claude, endedAt: '2026-09-28T10:00:00.000Z' };
+  expect(agentLabel(ended, NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 ended 2h ago');
+  expect(agentShortLabel(ended, NOW)).toEqual({ name: 'Fix the login bug', age: '2h' });
 });

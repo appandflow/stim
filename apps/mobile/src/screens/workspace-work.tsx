@@ -41,7 +41,8 @@ export function WorkspaceWork({ path }: { path: string }) {
   const worktree = env?.worktree;
   const git = worktree?.git;
   const pr = worktree?.pullRequest;
-  const onlyAgentHasLink = env?.agents?.length === 1 && agentWebUrl(env.agents[0]!) !== null;
+  const sessions = [...(env?.agents ?? []), ...(env?.endedAgents ?? [])];
+  const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const checks = pr ? checksTone(pr.checks) : null;
   const checkedAt = pr ? Date.parse(pr.checkedAt) : NaN;
   return (
@@ -54,9 +55,9 @@ export function WorkspaceWork({ path }: { path: string }) {
           Work
         </Text>
       </View>
-      {env?.agents?.length ? (
-        <ListSection title={env.agents.length === 1 ? 'Agent session' : 'Agent sessions'} bare={onlyAgentHasLink}>
-          {env.agents.map((agent) => (
+      {sessions.length ? (
+        <ListSection title={sessions.length === 1 ? 'Agent session' : 'Agent sessions'} bare={onlyAgentHasLink}>
+          {sessions.map((agent) => (
             <AgentSessionRow key={`${agent.tool}:${agent.sessionId}`} agent={agent} now={now} card={onlyAgentHasLink} />
           ))}
         </ListSection>

@@ -131,7 +131,8 @@ this order:
 - **Metro & logs**: Metro's port with a health dot, the error count since the
   last marker, the bundle line from `metro.bundle` ("Bundling · 62%",
   "Bundled in 1.8s · 12s ago", "Bundle failed") and **Show logs**.
-- **Agents**: the coding-agent sessions working in the workspace.
+- **Agents**: the coding-agent sessions working in the workspace, then,
+  muted, those `endedAgents` lists as ended in the last 3 days.
 - **Build cache · project**: the project's hit rate and time saved per
   platform.
 - **Warnings**: the workspace's `warnings` from `stim status --json`, when

@@ -70,6 +70,9 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var worktree: WorktreeInfo?
   /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
   public var agents: [AgentSession]?
+  /// The sessions that stopped running in the workspace in the last 3 days, most recently ended first; absent when
+  /// none and from an older `stim`.
+  public var endedAgents: [AgentSession]?
   /// Whether stim-server may record this workspace's device screens; absent from a `stim` without replay.
   public var recording: Recording?
   /// Disk use as a status watcher last measured it; absent until one has, and from an older `stim`.
@@ -81,7 +84,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
-    case agents, disk
+    case agents, endedAgents, disk
   }
 
   public struct Recording: Decodable, Hashable, Sendable {

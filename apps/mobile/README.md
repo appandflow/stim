@@ -144,19 +144,21 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     (**Bundling** with Metro's percent, **Bundled in 1.8s** and when, or **Not
     bundled yet** once the server reports bundles). It opens the logs, on
     errors when there are some.
-  - **Work**: the Claude Code or Codex session working in the workspace, then
-    the git state. With a pull request `stim status` reports, the git line
+  - **Work**: the Claude Code or Codex session working in the workspace, or,
+    muted, the last one that ended, then the git state. With a pull request `stim status` reports, the git line
     starts with the number colored by its state (open, draft, merged, closed)
     and **CI failing** in red when a check fails; the sheet shows every check
     state. Without one, it starts with a branch icon. Then only what is not
     zero or unusual: commits ahead and behind, the count of changed files,
     **merged into** a branch (unless the pull request already reads merged),
     and **no upstream**. Its accessibility label spells out each part. It
-    opens the **Work** sheet: every agent session, where a Claude Code session
-    with Remote Control connected shows as a link that opens it in the Claude
-    app, or claude.ai/code without the app, and the upstream, ahead, behind,
-    changed and untracked files, merged into, and the pull request's title,
-    state, checks and review with **Open in GitHub**.
+    opens the **Work** sheet: every agent session, running ones first, then,
+    muted with when they ended, those that stopped in the last 3 days. A
+    Claude Code session with Remote Control connected, running or ended,
+    shows as a link that opens it in the Claude app, or claude.ai/code without
+    the app. Below come the upstream, ahead, behind, changed and untracked
+    files, merged into, and the pull request's title, state, checks and review
+    with **Open in GitHub**.
 
   A card with a problem turns red; there is no separate banner. While a build
   runs, the Build card gives its place to a full-width card: the platform and
@@ -664,7 +666,8 @@ the build carries a remote EAS session added by hand (listed under `edits` in
 `lastBuilds` added the same way; the compiled Android one also carries a `missReason`
 in the shape of a real miss. `chat-perf-demo` also leases a connected
 iPhone and a disconnected Android phone, added by hand in the
-`physicalDevices` shape. `build.plan` answers from
+`physicalDevices` shape. `a4-running` and `a4-ready` carry ended agent
+sessions added by hand in the `endedAgents` shape. `build.plan` answers from
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
 --json`, with a `missReason` added to the Android one by hand.
