@@ -12,7 +12,7 @@ struct WorkspaceDetail: View {
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
-  @State private var stats: ProjectStats?
+  @State private var stats: (path: String, value: ProjectStats?)?
   @State private var contentHeight: CGFloat = 0
   @State private var viewing: ViewedDevice?
   @State private var logMoment: LogMoment?
@@ -71,7 +71,9 @@ struct WorkspaceDetail: View {
     .task(id: env.path) {
       let path = env.path
       let cli = await cli.value
-      stats = await Task.detached { try? cli.stats(workspace: path) }.value
+      let value = await Task.detached { try? cli.stats(workspace: path) }.value
+      guard !Task.isCancelled else { return }
+      stats = (path, value)
     }
   }
 
@@ -155,7 +157,8 @@ struct WorkspaceDetail: View {
 
   private var inspectorPanel: some View {
     Inspector(
-      cli: cli, env: env, stats: stats, machine: machine, usage: usage, history: history,
+      cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.value : nil },
+      machine: machine, usage: usage, history: history,
       reportsBundles: reportsBundles, showsLogs: showsLogs, toggleLogs: { showsLogs.toggle() }
     )
     .frame(maxHeight: .infinity)
