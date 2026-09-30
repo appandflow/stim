@@ -2,11 +2,8 @@ import Foundation
 import Observation
 import StimKit
 
-/// This Mac's build offload state that the Machine page and Settings > Build Machines share: the `offload.machines`
-/// setting, each machine's state from `stim doctor`, and the Macs on the tailnet that run stim-server.
 @MainActor @Observable
 final class BuildMachinesModel {
-  /// What `stim doctor` last said about the named machines in one checkout.
   struct Check {
     enum Problem {
       case unsupported
@@ -20,9 +17,7 @@ final class BuildMachinesModel {
   private(set) var macs: [TailnetMac]?
   private(set) var stimMacs: Set<String> = []
   private(set) var probing = false
-  /// The entry a write or an ask is working on.
   private(set) var working: String?
-  /// Why the last write was refused or failed; nil after one succeeds.
   private(set) var writeFailure: String?
   private(set) var runs = 0
   private var checks: [String: Check] = [:]
@@ -36,7 +31,6 @@ final class BuildMachinesModel {
     self.settings = settings
   }
 
-  /// `offload.machines`, nil until the settings have been read once.
   var entries: [String]? {
     settings.payload.map { $0.entry("offload.machines")?.value.strings ?? [] }
   }
@@ -45,20 +39,17 @@ final class BuildMachinesModel {
 
   func check(in checkout: String?) -> Check? { checkout.flatMap { checks[$0] } }
 
-  /// Why the settings could not report `offload.machines`, nil when they did.
   var settingsFailure: String? {
     if let error = settings.error { return error }
     guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }
     return "This stim has no offload.machines setting; update it."
   }
 
-  /// Reads the setting and the machines' states, for the Machine page.
   func refresh(checkout: String?) async {
     await settings.refresh()
     await refreshStatuses(checkout: checkout, ask: false)
   }
 
-  /// Reads the setting, the tailnet and the machines' states, for the Build Machines tab.
   func load(checkout: String?) async {
     let cli = await cli.value
     probing = true
@@ -77,15 +68,15 @@ final class BuildMachinesModel {
     probing = false
   }
 
-  /// Runs `stim doctor` in `checkout`. With `ask`, `--fix` asks each machine that has not approved this Mac.
   func refreshStatuses(checkout: String?, ask: Bool) async {
-    guard let checkout, ask || !(entries ?? []).isEmpty else {
-      if let checkout { checks[checkout] = Check(statuses: [], problem: nil) }
+    guard let checkout else { return }
+    let run = (latestRun[checkout] ?? 0) + 1
+    latestRun[checkout] = run
+    guard ask || !(entries ?? []).isEmpty else {
+      checks[checkout] = Check(statuses: [], problem: nil)
       return
     }
     runs += 1
-    let run = (latestRun[checkout] ?? 0) + 1
-    latestRun[checkout] = run
     defer { runs -= 1 }
     let cli = await cli.value
     let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: ask) }
@@ -108,8 +99,6 @@ final class BuildMachinesModel {
     await write(mac.machine, value: OffloadMachines.adding(mac.machine, to: entries ?? []), ask: true, checkout: checkout)
   }
 
-  /// Removing a machine pinned to a node that changed runs `doctor --fix`, which forgets the old pin, so the Mac
-  /// can be used for builds again.
   func remove(_ entry: String, checkout: String?) async {
     let repins = check(in: checkout)?.statuses.first { $0.machine == entry }?.state == .nodeChanged
     await write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins, checkout: checkout)

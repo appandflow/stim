@@ -2,7 +2,6 @@ import Foundation
 import Observation
 
 extension SettingsPayload {
-  /// The payload with `entry` in place of the setting of the same key, as a write reports it before the next read.
   public func merging(_ entry: SettingEntry) -> SettingsPayload {
     var merged = self
     if let index = merged.settings.firstIndex(where: { $0.key == entry.key }) {
@@ -79,7 +78,7 @@ public final class MachineSettingsStore {
     guard scope == .machine else { return result }
     epoch += 1
     revision += 1
-    if case .success(.written(let entry)) = result, let payload = latest.value {
+    if cwd == NSHomeDirectory(), case .success(.written(let entry)) = result, let payload = latest.value {
       var merged = Fetched<SettingsPayload>()
       merged.record(.success(payload.merging(entry)))
       latest = merged

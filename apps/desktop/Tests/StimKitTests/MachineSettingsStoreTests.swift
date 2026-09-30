@@ -99,4 +99,47 @@ private actor Backend {
     bare.settings.removeAll { $0.key == "offload.machines" }
     #expect(bare.merging(entry("[\"c\"]")).entry("offload.machines")?.value.strings == ["c"])
   }
+
+  @Test func aReadStartedBeforeAWriteDoesNotOverwriteIt() async {
+    let backend = Backend()
+    let gate = Gate()
+    let store = MachineSettingsStore(
+      read: {
+        let first = await backend.reads == 0
+        let result = try await backend.read()
+        if first { await gate.wait() }
+        return result
+      },
+      write: { key, value, scope, _ in await backend.write(key, value, scope) })
+    let slow = Task { await store.refresh() }
+    await gate.entered()
+    _ = await store.write("offload.machines", value: "[\"b\"]", scope: .machine, cwd: NSHomeDirectory())
+    await gate.open()
+    await slow.value
+    #expect(store.entry("offload.machines")?.value.strings == ["b"])
+  }
+}
+
+private actor Gate {
+  private var waiting: CheckedContinuation<Void, Never>?
+  private var isOpen = false
+  private var hasEntered = false
+  private var enteredWaiter: CheckedContinuation<Void, Never>?
+
+  func wait() async {
+    hasEntered = true
+    enteredWaiter?.resume()
+    guard !isOpen else { return }
+    await withCheckedContinuation { waiting = $0 }
+  }
+
+  func entered() async {
+    guard !hasEntered else { return }
+    await withCheckedContinuation { enteredWaiter = $0 }
+  }
+
+  func open() {
+    isOpen = true
+    waiting?.resume()
+  }
 }

@@ -162,7 +162,7 @@ final class AutopilotRunner: ObservableObject {
       var settings: SettingsPayload?
       if budget == nil {
         await machineSettings.refresh()
-        settings = await machineSettings.payload
+        settings = await machineSettings.error == nil ? machineSettings.payload : nil
       }
       let limits =
         budget
