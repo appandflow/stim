@@ -35,7 +35,11 @@ export function AgentSessionLine({
   const tail = [age, rest.length ? `+${rest.length}` : null].filter(Boolean).join(' \u00B7 ');
   return (
     <View style={styles.row}>
-      <AgentIcon tool={agent.tool} size={theme.typography[variant].fontSize ?? 13} color={theme.colors.secondary} />
+      <AgentIcon
+        tool={agent.tool}
+        size={theme.typography[variant].fontSize ?? 13}
+        color={isEndedAgent(agent) ? theme.colors.tertiary : theme.colors.secondary}
+      />
       <Text variant={variant} weight={weight} tone={tone} numberOfLines={1} style={styles.shrink}>
         {short.name}
       </Text>

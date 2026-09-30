@@ -153,12 +153,12 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     **merged into** a branch (unless the pull request already reads merged),
     and **no upstream**. Its accessibility label spells out each part. It
     opens the **Work** sheet: every agent session, running ones first, then,
-    muted with when they ended, those that stopped in the last 3 days. A Claude
-    Code session with Remote Control connected, running or ended, shows as a
-    link that opens it in the Claude app, or claude.ai/code without the app,
-    and the upstream, ahead, behind,
-    changed and untracked files, merged into, and the pull request's title,
-    state, checks and review with **Open in GitHub**.
+    muted with when they ended, those that stopped in the last 3 days. A
+    Claude Code session with Remote Control connected, running or ended,
+    shows as a link that opens it in the Claude app, or claude.ai/code without
+    the app. Below come the upstream, ahead, behind, changed and untracked
+    files, merged into, and the pull request's title, state, checks and review
+    with **Open in GitHub**.
 
   A card with a problem turns red; there is no separate banner. While a build
   runs, the Build card gives its place to a full-width card: the platform and
