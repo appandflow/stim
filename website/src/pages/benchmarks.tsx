@@ -230,7 +230,7 @@ export default function Benchmarks(): ReactNode {
                 simulator recordings.
               </p>
             </div>
-            <Link className="button button--primary" to="/benchmarks/details">
+            <Link className="button button--primary stim-squish" to="/benchmarks/details">
               Explore detailed audits
             </Link>
           </section>

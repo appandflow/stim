@@ -164,7 +164,6 @@
   color: var(--home-background);
   font-size: 14px;
   font-weight: 500;
-  transform-origin: bottom center;
 }
 
 .primaryButton:hover {
@@ -386,15 +385,6 @@
   outline-offset: 4px;
 }
 
-@keyframes squish {
-  33% {
-    transform: scale(1.02, 0.98);
-  }
-  66% {
-    transform: scale(0.99, 1.01);
-  }
-}
-
 @media (prefers-reduced-motion: no-preference) {
   .page [data-reveal] {
     transition:
@@ -405,10 +395,6 @@
   .page [data-reveal='pending'] {
     opacity: 0;
     translate: 0 12px;
-  }
-
-  .primaryButton:hover {
-    animation: squish 300ms ease-out;
   }
 
   .feature a span,

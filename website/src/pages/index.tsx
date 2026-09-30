@@ -88,10 +88,10 @@ export default function Home(): ReactNode {
             </p>
             <div className={styles.actions}>
               <div className={styles.buttons}>
-                <Link className={styles.primaryButton} to="/docs/getting-started">
+                <Link className={`${styles.primaryButton} stim-squish`} to="/docs/getting-started">
                   Get started
                 </Link>
-                <a className={styles.secondaryButton} href={desktopDownloadUrl}>
+                <a className={`${styles.secondaryButton} stim-squish`} href={desktopDownloadUrl}>
                   Download for Mac
                 </a>
               </div>

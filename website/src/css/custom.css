@@ -157,6 +157,25 @@
   }
 }
 
+@keyframes stim-squish {
+  33% {
+    transform: scale(1.02, 0.98);
+  }
+  66% {
+    transform: scale(0.99, 1.01);
+  }
+}
+
+.stim-squish {
+  transform-origin: bottom center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stim-squish:hover {
+    animation: stim-squish 300ms ease-out;
+  }
+}
+
 .footer--dark {
   --ifm-footer-background-color: #20162e;
 }
