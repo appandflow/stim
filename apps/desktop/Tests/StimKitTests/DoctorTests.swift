@@ -23,6 +23,17 @@ struct DoctorTests {
     #expect(doctorRemedy(nil) == nil)
   }
 
+  @Test func listsAFailedDoctorRunWithItsMessageAndARunnableRetry() {
+    let items = doctorFailureItems(["/b": "stim exited with status 1: error: boom", "/a": "Could not find stim."])
+    #expect(items.map(\.workspace) == ["/a", "/b"])
+    #expect(
+      items.map(\.body) == [
+        "stim doctor failed: Could not find stim.", "stim doctor failed: stim exited with status 1: error: boom",
+      ])
+    #expect(items.map { $0.command?.arguments } == [["doctor"], ["doctor"]])
+    #expect(items.allSatisfy { $0.category == .attention && $0.severity == "warning" })
+  }
+
   @Test func runsInTheListedSourceCheckoutElseTheFirstWorktreeOfTheApp() throws {
     let envs = try JSONDecoder().decode(
       [Workspace].self,

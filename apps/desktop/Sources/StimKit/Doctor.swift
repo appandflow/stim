@@ -35,6 +35,15 @@ public func setupItems(_ reports: [DoctorReport]) -> [NeedsAttentionItem] {
   }
 }
 
+/// A needs-attention item for each checkout, by path, whose last `stim doctor` run failed, with the failure.
+public func doctorFailureItems(_ failures: [String: String]) -> [NeedsAttentionItem] {
+  failures.keys.sorted().map { path in
+    NeedsAttentionItem(
+      id: "doctor-failed:\(path)", category: .attention, severity: "warning", workspace: path,
+      body: "stim doctor failed: \(failures[path] ?? "")", remedy: "stim doctor")
+  }
+}
+
 /// A workspace to run `stim doctor` in, and the repository it belongs to.
 public struct DoctorCheckout: Hashable, Sendable {
   public var path: String

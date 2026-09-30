@@ -184,6 +184,22 @@ struct MachineView: View {
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
+  @ViewBuilder private var gcMissing: some View {
+    if metrics.gcRunning {
+      Text("Waiting for stim gc\u{2026}").foregroundStyle(Palette.tertiary)
+    } else if let error = metrics.gcError {
+      gcFailed(error)
+    } else {
+      Text("stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
+    }
+  }
+
+  private func gcFailed(_ error: String) -> some View {
+    Label("stim gc --json failed: \(error)", systemImage: "exclamationmark.triangle")
+      .foregroundStyle(Palette.warning)
+      .textSelection(.enabled)
+  }
+
   // MARK: Safe to free now
 
   private func safeToFree(_ report: StorageReport) -> some View {
@@ -210,11 +226,12 @@ struct MachineView: View {
       }
     } content: { shown in
       if metrics.gcReport == nil {
-        Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(
-          Palette.tertiary)
+        gcMissing
       } else if report.free.isEmpty {
+        if let error = metrics.gcError, !metrics.gcRunning { gcFailed(error) }
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
+        if let error = metrics.gcError, !metrics.gcRunning { gcFailed(error) }
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
@@ -518,7 +535,7 @@ struct MachineView: View {
 
   @ViewBuilder private func inventoryMissing(_ what: String) -> some View {
     if metrics.gcReport == nil {
-      Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
+      gcMissing
     } else {
       Text("Update stim to list every \(what) here.").foregroundStyle(Palette.tertiary)
     }
