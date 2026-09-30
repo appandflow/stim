@@ -63,14 +63,13 @@ final class MetricsStore: ObservableObject {
 
   var reclaimable: GcReport.Reclaimable? { gcReport?.reclaimable }
 
-  var totalCpu: Double? {
-    let values = usage.values.compactMap(\.latest.cpuPercent)
-    return values.isEmpty ? nil : values.reduce(0, +)
-  }
+  private static var cores: Int { ProcessInfo.processInfo.activeProcessorCount }
 
-  var totalCpuFraction: Double {
-    guard let cpu = totalCpu else { return 0 }
-    return cpu / (100 * Double(max(1, ProcessInfo.processInfo.activeProcessorCount)))
+  /// The share of the Mac's CPU that every live workspace's processes use, from 0 to 1.
+  var totalCpuFraction: Double? {
+    let values = usage.values.compactMap(\.latest.cpuPercent)
+    return values.isEmpty
+      ? nil : UsageThresholds.cpuFraction(percentOfOneCore: values.reduce(0, +), cores: Self.cores)
   }
 
   private var onScreen: Bool {
@@ -114,7 +113,8 @@ final class MetricsStore: ObservableObject {
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
         self.owners.append(self.status.payload?.machine, at: Date())
         if let machine = self.status.payload?.machine {
-          self.ownersCpu = Array((self.ownersCpu + [machine.cpuPercent]).suffix(UsageHistory.limit))
+          let share = 100 * UsageThresholds.cpuFraction(percentOfOneCore: machine.cpuPercent, cores: Self.cores)
+          self.ownersCpu = Array((self.ownersCpu + [share]).suffix(UsageHistory.limit))
         } else {
           self.ownersCpu = []
         }

@@ -125,6 +125,15 @@ public struct WorkspaceUsage: Equatable, Sendable {
   }
 
   public var isEmpty: Bool { cpuPercent == nil && memoryMb == nil && diskBytes == nil }
+
+  /// Sampled figures fill only what `stim status` left empty. Memory comes from a sample only when it is a footprint;
+  /// summed resident size counts shared pages once per process and can exceed the Mac's RAM.
+  public func filling(cpuPercent sampledCpu: Double?, footprintMb: Double?) -> WorkspaceUsage {
+    var usage = self
+    if usage.cpuPercent == nil { usage.cpuPercent = sampledCpu }
+    if usage.memoryMb == nil, let footprintMb, footprintMb > 0 { usage.memoryMb = footprintMb }
+    return usage
+  }
 }
 
 extension MachineUsage {

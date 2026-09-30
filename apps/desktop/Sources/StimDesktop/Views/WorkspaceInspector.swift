@@ -88,12 +88,9 @@ struct ResourcesSection: View {
   var sampled: UsageHistory?
 
   private var usage: WorkspaceUsage {
-    var usage = env.usage(machine: machine)
-    if usage.cpuPercent == nil, let sampled {
-      usage.cpuPercent = sampled.latest.cpuPercent
-      if sampled.memoryBytes > 0 { usage.memoryMb = Double(sampled.memoryBytes) / 1_048_576 }
-    }
-    return usage
+    env.usage(machine: machine).filling(
+      cpuPercent: sampled?.latest.cpuPercent,
+      footprintMb: sampled.flatMap { $0.isFootprint ? Double($0.memoryBytes) / 1_048_576 : nil })
   }
 
   var body: some View {
@@ -108,7 +105,8 @@ struct ResourcesSection: View {
         chart(
           "memorychip", "Memory", usage.memoryMb.map(formatMemoryMb) ?? "\u{2014}",
           values: history.memoryMb(env.path).isEmpty
-            ? sampled.map { $0.memory.map { $0 / 1_048_576 } } ?? [] : history.memoryMb(env.path),
+            ? sampled.flatMap { $0.isFootprint ? $0.memory.map { $0 / 1_048_576 } : nil } ?? []
+            : history.memoryMb(env.path),
           minimumPeak: 1024)
       }
       if let window {

@@ -121,26 +121,22 @@ struct WorkspaceHeader: View {
         Pill(tone: .warning) { Text("supervisor unhealthy") }
           .help("stim status reports this workspace's dev server supervisor as unhealthy")
       }
-      if let usage {
-        if let cpu = usage.latest.cpuPercent {
-          Pill {
-            Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
-            Text("CPU")
-            Text(formatPercent(cpu)).font(.stim(.caption, mono: true))
-          }
-          .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
+      if let cpu = usage?.latest.cpuPercent, let usage {
+        Pill {
+          Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
+          Text("CPU")
+          Text(formatPercent(cpu)).font(.stim(.caption, mono: true))
         }
+        .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
+      }
+      if let usage, usage.isFootprint {
         Pill {
           Sparkline(values: usage.memory, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
           Text("RAM")
           Text(formatMemory(usage.memoryBytes)).font(.stim(.caption, mono: true))
         }
-        .help(
-          usage.isFootprint
-            ? "Memory the workspace's processes, simulators and emulators use, as Activity Monitor counts it"
-            : "Resident memory of the workspace's processes, simulators and emulators")
-      }
-      if usage == nil, let mb = env.memoryMb, mb > 0 {
+        .help("Memory the workspace's processes, simulators and emulators use, as Activity Monitor counts it")
+      } else if let mb = env.memoryMb, mb > 0 {
         MemoryPill(mb: mb, source: env.memorySource)
       }
       if let errors = env.logs?.errorsSinceMarker {

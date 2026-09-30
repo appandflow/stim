@@ -386,9 +386,9 @@ struct MachineSummary: View {
           Text("\(cap.liveCount) live")
         }
         .help("\(countLabel(cap.liveCount, "live workspace")) on this Mac")
-        if let cpu = metrics.totalCpu {
-          statItem(icon: "cpu", value: formatPercent(cpu), tone: UsageThresholds.cpu(fraction: metrics.totalCpuFraction))
-            .help("CPU of every live workspace's processes, simulators and emulators, as a percent of one core")
+        if let cpu = metrics.totalCpuFraction {
+          statItem(icon: "cpu", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
+            .help("CPU of every live workspace's processes, simulators and emulators, as a percent of this Mac's cores")
         }
         if showsMemory, let memory = metrics.memory {
           HStack(spacing: Space.sm) {
