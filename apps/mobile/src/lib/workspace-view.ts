@@ -1,5 +1,6 @@
 import { plural, t } from '@lingui/core/macro';
 
+import type { Tone } from '@/design/tone';
 import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
 import { clockDuration, gitBadges, machineName, steadyFraction } from '@/lib/format';
 import type { PlanState } from '@/lib/plan-checks';
@@ -19,7 +20,7 @@ import type {
   WorktreeFacts,
 } from '@/protocol/types';
 
-export type StageTone = 'success' | 'brand' | 'error' | 'warning' | 'tertiary';
+export type StageTone = Extract<Tone, 'success' | 'brand' | 'error' | 'warning' | 'tertiary'>;
 
 export interface WorkspaceStage {
   kind: 'running' | 'building' | 'build-failed' | 'warming' | 'ready' | 'stopped';
@@ -727,7 +728,7 @@ export function workspaceSeries(usage: StatusUsage | null | undefined, path: str
   };
 }
 
-export type ChipTone = 'default' | 'secondary' | 'tertiary' | 'success' | 'warning' | 'error' | 'brand';
+export type ChipTone = Extract<Tone, 'default' | 'secondary' | 'tertiary' | 'success' | 'warning' | 'error' | 'brand'>;
 
 export type CiState = 'passing' | 'failing' | 'pending';
 

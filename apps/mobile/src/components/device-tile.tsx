@@ -8,7 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
-import { STAT_ICON } from '@/components/machine-stats';
+import { StatRow } from '@/components/stat-row';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
@@ -17,15 +17,15 @@ import { useNow } from '@/hooks/use-now';
 import { useFrame } from '@/hooks/frames';
 import { useMacConnection } from '@/hooks/machines';
 import { useAgentActions } from '@/hooks/workspace-logs';
-import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
+import { formatDuration } from '@/intl/format';
 import { tildeHome } from '@/lib/paths';
 import {
   agentRow,
   appPresence,
   currentPhaseLabel,
   deviceTitle,
-  formatCpu,
   usageLabel,
+  usageParts,
   type Usage,
 } from '@/lib/workspace-view';
 import { platformName, runningBuild, streamsFrames, unservedReason, type DeviceRef } from '@/lib/workspaces';
@@ -194,24 +194,7 @@ export function DeviceTile({
 }
 
 function UsageStats({ usage }: { usage: Usage }) {
-  const { theme } = useUnistyles();
-  const parts = [
-    usage.cpuPercent === null ? null : { kind: 'cpu' as const, value: formatCpu(usage.cpuPercent) },
-    usage.memoryMb === null ? null : { kind: 'memory' as const, value: formatMemoryMb(usage.memoryMb) },
-    usage.diskBytes === null ? null : { kind: 'disk' as const, value: formatBytes(usage.diskBytes) },
-  ].filter((part) => part !== null);
-  return (
-    <View style={styles.usage} accessible accessibilityLabel={usageLabel(usage)}>
-      {parts.map((part) => (
-        <View key={part.kind} style={styles.usageItem}>
-          <Icon name={STAT_ICON[part.kind]} size={11} color={theme.colors.secondary} />
-          <Text variant="caption" tone="secondary" style={styles.tabular} numberOfLines={1}>
-            {part.value}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
+  return <StatRow accessible accessibilityLabel={usageLabel(usage)} stats={usageParts(usage)} valueTone="secondary" />;
 }
 
 function Placeholder({ title, subtitle, children }: { title: string; subtitle?: string; children?: ReactNode }) {
@@ -291,9 +274,6 @@ const styles = StyleSheet.create((theme) => ({
   name: { flexShrink: 0, maxWidth: '45%' },
   shrink: { flexShrink: 1 },
   spacer: { flex: 1 },
-  tabular: { fontVariant: ['tabular-nums'] },
-  usage: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, flexShrink: 0 },
-  usageItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   stateLine: { paddingHorizontal: theme.space.lg, paddingBottom: theme.space.md },
   note: { paddingHorizontal: theme.space.lg },
   notes: { gap: theme.space.xs, paddingBottom: theme.space.md },

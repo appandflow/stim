@@ -7,9 +7,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
-import { STAT_ICON } from '@/components/machine-stats';
 import { StatusDot } from '@/components/pill';
 import { PlatformGlyph } from '@/components/platform-glyph';
+import { StatRow } from '@/components/stat-row';
 import { Text, type TextTone } from '@/components/text';
 import type { TextVariant } from '@/design/tokens';
 import { withAlpha } from '@/design/color';
@@ -31,7 +31,6 @@ import {
   segmentWeights,
   type BuildLine,
   type BundleLine,
-  type ChipTone,
   type GitChip,
   type MetroHealth,
   type PhaseStep,
@@ -42,21 +41,6 @@ import {
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
 import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
-
-const CHIP_TONE: Record<ChipTone, TextTone> = {
-  default: 'default',
-  secondary: 'secondary',
-  tertiary: 'tertiary',
-  success: 'success',
-  warning: 'warning',
-  error: 'error',
-  brand: 'brand',
-};
-
-export function chipColor(tone: ChipTone, colors: Theme['colors']): string {
-  if (tone === 'default') return colors.text;
-  return tone === 'brand' ? colors.primary : colors[tone];
-}
 
 const STACK_FONT_SCALE = 1.3;
 const VALUE: TextVariant = 'caption';
@@ -96,18 +80,6 @@ function SmallCard({
   );
 }
 
-function UsagePart({ kind, value }: { kind: keyof typeof STAT_ICON; value: string }) {
-  const { theme } = useUnistyles();
-  return (
-    <View style={[styles.usageItem, kind === 'disk' && styles.shrink]}>
-      <Icon name={STAT_ICON[kind]} size={11} color={theme.colors.secondary} />
-      <Text variant={VALUE} style={[styles.tabular, styles.shrink]} numberOfLines={1}>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
 export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; usage: Usage; onPress: () => void }) {
   const parts = usageParts(usage);
   const note = stage.kind === 'building' ? null : stage.subtitle;
@@ -130,11 +102,7 @@ export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; u
         ) : null}
       </Text>
       {parts.length ? (
-        <View style={styles.usage}>
-          {parts.map((part) => (
-            <UsagePart key={part.kind} kind={part.kind} value={part.value} />
-          ))}
-        </View>
+        <StatRow wrap gap="sm" stats={parts} />
       ) : (
         <Text variant={VALUE} tone="tertiary">
           <Trans>Not measured</Trans>
@@ -344,7 +312,7 @@ export function WorkCard({
         <View style={styles.gitLine}>
           {git.pr ? (
             <>
-              <Text variant={VALUE} weight={VALUE_WEIGHT} tone={CHIP_TONE[git.pr.tone]} numberOfLines={1}>
+              <Text variant={VALUE} weight={VALUE_WEIGHT} tone={git.pr.tone} numberOfLines={1}>
                 {git.pr.text}
               </Text>
               {git.pr.ci === 'failing' ? (
@@ -360,7 +328,7 @@ export function WorkCard({
             <Text
               key={part.text}
               variant={VALUE}
-              tone={CHIP_TONE[part.tone]}
+              tone={part.tone}
               numberOfLines={1}
               style={[styles.tabular, part.tone === 'default' ? null : styles.shrink]}
             >
@@ -526,8 +494,6 @@ const styles = StyleSheet.create((theme) => ({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.md },
   stacked: { flexDirection: 'column', flexWrap: 'nowrap' },
   small: { flexGrow: 1, flexBasis: '40%', padding: theme.space.md + 2, gap: theme.space.xs },
-  usage: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.sm, rowGap: 2 },
-  usageItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   gitLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.xs + 1, rowGap: 2 },
   alert: {
     borderColor: withAlpha(theme.colors.error, 0.45),
