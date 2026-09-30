@@ -16,7 +16,7 @@ enum Theme {
   static func toneColor(_ tone: UsageTone) -> Color {
     switch tone {
     case .critical: return Palette.error
-    case .warn: return Palette.warning
+    case .warn: return Color(light: 0x94600DFF, dark: 0xF5B454FF)
     case .normal: return Palette.text
     }
   }
