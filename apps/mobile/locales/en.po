@@ -1329,9 +1329,9 @@ msgstr "Copying resources"
 msgid "Could not restart"
 msgstr "Could not restart"
 
-#: src/components/workspace-cards.tsx
 #: src/lib/home.ts
 #: src/lib/home.ts
+#: src/lib/workspace-view.ts
 #: src/screens/workspace-resources.tsx
 #: src/screens/workspace-resources.tsx
 msgid "CPU"
@@ -1404,7 +1404,7 @@ msgstr "Disconnected"
 msgid "Disconnected from {name}"
 msgstr "Disconnected from {name}"
 
-#: src/components/workspace-cards.tsx
+#: src/lib/workspace-view.ts
 msgid "disk"
 msgstr "disk"
 
@@ -1978,7 +1978,7 @@ msgstr "Measured {measured}"
 msgid "Measuring…"
 msgstr "Measuring…"
 
-#: src/components/workspace-cards.tsx
+#: src/lib/workspace-view.ts
 msgid "memory"
 msgstr "memory"
 

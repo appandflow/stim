@@ -16,11 +16,18 @@ import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useNow } from '@/hooks/use-now';
 import { useFrame } from '@/hooks/frames';
 import { useMacConnection } from '@/hooks/machines';
-import { usageLabel } from '@/components/workspace-cards';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
 import { tildeHome } from '@/lib/paths';
-import { agentRow, appPresence, currentPhaseLabel, deviceTitle, formatCpu, type Usage } from '@/lib/workspace-view';
+import {
+  agentRow,
+  appPresence,
+  currentPhaseLabel,
+  deviceTitle,
+  formatCpu,
+  usageLabel,
+  type Usage,
+} from '@/lib/workspace-view';
 import { platformName, runningBuild, streamsFrames, unservedReason, type DeviceRef } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 

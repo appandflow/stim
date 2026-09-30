@@ -21,16 +21,17 @@ import { explainReadOnly, ScopeChip } from '@/components/read-only';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
+import { UsageCharts } from '@/components/usage-charts';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useMachineDetails } from '@/hooks/machine-details';
 import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
+import { useUsageHistory } from '@/hooks/usage-history';
 import { formatBytes, formatMemoryMb } from '@/intl/format';
 import { machineReadiness } from '@/lib/build-machines';
 import { pairingScope } from '@/lib/connection';
-import { budgetRows, usageCharts, type BudgetRow } from '@/lib/home';
+import { budgetRows, minFreeDiskGb, usageCharts, type BudgetRow } from '@/lib/home';
 import {
   agoLabel,
   buildStats,
@@ -80,11 +81,7 @@ export function MacStatus({ id }: { id: string }) {
       (settings) => {
         if (cancelled) return;
         setBudgets(budgetRows(settings));
-        const entry = (Array.isArray(settings.settings) ? settings.settings : []).find(
-          (item): item is { value: unknown } =>
-            typeof item === 'object' && item !== null && item.key === 'budget.minFreeDiskGb',
-        );
-        setMinFreeGb(typeof entry?.value === 'number' && entry.value > 0 ? entry.value : null);
+        setMinFreeGb(minFreeDiskGb(settings));
       },
       () => !cancelled && setBudgets([]),
     );

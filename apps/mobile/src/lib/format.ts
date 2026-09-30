@@ -129,6 +129,14 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
   return { elapsedMs, fraction, remaining };
 }
 
+export function buildTiming(build: BuildReport, now: number): { elapsed: string; estimate: string | null } {
+  const progress = buildProgress(build, now);
+  return {
+    elapsed: clockDuration(progress.elapsedMs),
+    estimate: build.expectedMs ? `~${clockDuration(build.expectedMs)}` : null,
+  };
+}
+
 /**
  * Until the run knows its outcome, `stim status` reports the outcome of the project's previous run. An older stim
  * sends no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.

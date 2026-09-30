@@ -8,6 +8,8 @@ import {
   filtersActive,
   gridRows,
   machineStats,
+  mergeUsageSamples,
+  minFreeDiskGb,
   usageCharts,
   mergeWorkspaces,
   parseFilters,
@@ -15,7 +17,7 @@ import {
   runningDevices,
   type DeviceTileItem,
 } from '@/lib/home';
-import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/types';
+import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
 const env = (path: string, extra: Partial<EnvironmentState> = {}): EnvironmentState => ({
@@ -335,6 +337,51 @@ describe('budgetRows', () => {
       { label: 'Live workspaces', value: '4' },
     ]);
     expect(budgetRows({ settings: 'nope' })).toEqual([]);
+  });
+});
+
+describe('minFreeDiskGb', () => {
+  const setting = (value: unknown) => ({ settings: [{ key: 'budget.minFreeDiskGb', value }] });
+
+  it('reads the positive floor the Mac reports', () => {
+    expect(minFreeDiskGb(setting(20))).toBe(20);
+  });
+
+  it('is null for no floor, a missing entry or a malformed payload', () => {
+    expect(minFreeDiskGb(setting(0))).toBeNull();
+    expect(minFreeDiskGb(setting(null))).toBeNull();
+    expect(minFreeDiskGb(setting('20'))).toBeNull();
+    expect(minFreeDiskGb({ settings: [{ key: 'ios.runtime', value: 18 }, null, 'x'] })).toBeNull();
+    expect(minFreeDiskGb({ settings: 'nope' })).toBeNull();
+    expect(minFreeDiskGb(null)).toBeNull();
+  });
+});
+
+describe('mergeUsageSamples', () => {
+  const sample = (at: number): UsageSample => ({
+    at,
+    cpu: 1,
+    memoryUsedBytes: null,
+    memoryPressure: null,
+    diskFreeBytes: null,
+  });
+  const ats = (samples: UsageSample[]) => samples.map((s) => s.at);
+  const HOUR = 60 * 60 * 1000;
+
+  it('keeps only the samples newer than the last one held when windows overlap', () => {
+    const merged = mergeUsageSamples([sample(1000), sample(2000)], [sample(1500), sample(2000), sample(3000)]);
+    expect(ats(merged)).toEqual([1000, 2000, 3000]);
+  });
+
+  it('starts from an empty history', () => {
+    expect(ats(mergeUsageSamples([], [sample(5), sample(6)]))).toEqual([5, 6]);
+    expect(mergeUsageSamples([], [])).toEqual([]);
+  });
+
+  it('drops samples that fall out of the history window', () => {
+    const start = 10 * HOUR;
+    const merged = mergeUsageSamples([sample(start), sample(start + 1000)], [sample(start + HOUR + 500)]);
+    expect(ats(merged)).toEqual([start + 1000, start + HOUR + 500]);
   });
 });
 

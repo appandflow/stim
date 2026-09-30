@@ -13,7 +13,6 @@ import { PlatformGlyph } from '@/components/platform-glyph';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { buildTiming } from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useBuildPlan } from '@/hooks/build-plans';
@@ -29,6 +28,7 @@ import {
   lastBuildSummary,
   nextBuild,
   planDetail,
+  buildTiming,
 } from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
