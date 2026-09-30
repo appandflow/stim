@@ -420,7 +420,7 @@ struct MachineSummary: View {
         .buttonStyle(.plain)
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
         .popover(isPresented: $showsDisk, arrowEdge: .bottom) {
-          DiskPopover(volumes: metrics.volumes, reclaimable: metrics.reclaimable)
+          DiskPopover(volumes: metrics.volumes, reclaimable: metrics.reclaimable).presentationBackground(Palette.surface)
         }
       }
       if store.watching {

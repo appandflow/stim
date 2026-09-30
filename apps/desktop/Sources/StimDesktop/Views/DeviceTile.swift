@@ -815,6 +815,7 @@ private struct DeviceAgentRow: View {
       }
       .padding(Space.lg)
       .frame(width: 380, alignment: .leading)
+      .presentationBackground(Palette.surface)
     }
   }
 }
