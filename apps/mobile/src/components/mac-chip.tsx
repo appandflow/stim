@@ -68,6 +68,7 @@ export function describeState(state: ConnectionState, missing: boolean): string 
 
 const styles = StyleSheet.create((theme) => ({
   chip: {
+    alignSelf: 'stretch',
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.md,
