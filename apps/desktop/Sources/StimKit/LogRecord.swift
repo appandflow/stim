@@ -75,8 +75,8 @@ public struct LogRecord: Decodable, Sendable {
     return text
   }
 
-  /// What VoiceOver reads for a log row: level, source, slot, time and message, then how many records the row
-  /// groups when it groups more than one. `source` and `title` are the row's displayed source name and message.
+  /// What VoiceOver reads for a log row: level, source, slot, message and time, then how many records the row
+  /// groups when it groups more than one.
   public func accessibilityLabel(source: String, title: String, recordCount: Int = 1) -> String {
     let level =
       switch level {
@@ -88,8 +88,8 @@ public struct LogRecord: Decodable, Sendable {
       }
     var parts = [level, source]
     if let slot { parts.append("slot \(slot)") }
-    parts.append(date.formatted(Self.timeFormat))
     parts.append(title)
+    parts.append(date.formatted(Self.timeFormat))
     if recordCount > 1 { parts.append(countLabel(recordCount, "record")) }
     return parts.joined(separator: ", ")
   }

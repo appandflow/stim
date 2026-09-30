@@ -256,7 +256,6 @@ enum LogRowText {
     }
   }
 
-  /// The row's summary, then the location and stack lines drawn under the message.
   static func accessibilityLabel(_ row: LogsModel.Row) -> String {
     let summary = row.entry.lead.accessibilityLabel(
       source: sourceLabel(row.entry.lead.src), title: row.view.title.replacingOccurrences(of: "\t", with: "  "),

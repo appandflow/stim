@@ -21,11 +21,13 @@ import Testing
   }
 
   @Test func spellsOutLevelSourceSlotAndGroupSizeForVoiceOver() {
-    let time = records[4].date.formatted(LogRecord.timeFormat)
-    let label = records[4].accessibilityLabel(source: "build", title: "Bundling failed", recordCount: 3)
-    #expect(label == "Warning, build, slot ipad, \(time), Bundling failed, 3 records")
-    #expect(records[0].accessibilityLabel(source: "metro", title: "ready").hasSuffix(", ready"))
-    #expect(records[7].accessibilityLabel(source: "native", title: "crash").hasPrefix("Fatal, native, "))
+    let time = { (record: LogRecord) in record.date.formatted(LogRecord.timeFormat) }
+    #expect(
+      records[4].accessibilityLabel(source: "build", title: "Bundling failed", recordCount: 3)
+        == "Warning, build, slot ipad, Bundling failed, \(time(records[4])), 3 records")
+    #expect(
+      records[7].accessibilityLabel(source: "native", title: "crash")
+        == "Fatal, native, slot duo, crash, \(time(records[7]))")
   }
 
   @Test func leavesTheSlotEmptyOnUntaggedRecords() {
