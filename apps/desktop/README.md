@@ -540,13 +540,16 @@ like the phone app's device viewer. Stim Desktop connects to that server at
 `ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json --control` for a
 token, spends it as a device named "Stim Desktop", and keeps the
 device token in a file only you can read under `~/Library/Application
-Support/Stim Desktop/stim-server/`, one per Stim home. The server issued it to
+Support/Stim Desktop/stim-server/`, one per Stim home. A Stim Dev build (see
+[Build the app](#build-the-app)) pairs as "Stim Dev" and keeps its token under
+`~/Library/Application Support/Stim Dev/stim-server/`, so revoking one app's
+pairing leaves the other's. The server issued it to
 a loopback connection, so it refuses the token from any other node. When the
 server no longer knows the token, the app pairs once more, so revoking it with
 `stim-server devices revoke` lasts only until the next connection; turn off
 **Serve to phones** to stop it. A read-only pairing from an earlier version gets
 control through `stim-server devices grant <id> --control` once, then the app
-reconnects. The Phones list leaves this device out.
+reconnects. The Phones list leaves both apps' devices out.
 
 The app polls `replay.range` every 10 seconds while the viewer shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
@@ -859,30 +862,46 @@ app's Appearance setting.
 
 ```bash
 apps/desktop/scripts/bundle.sh
-open apps/desktop/build/Stim.app
+open "apps/desktop/build/Stim Dev.app"
 ```
+
+`bundle.sh` builds **Stim Dev**, a variant that runs next to the installed
+release app: bundle id `dev.stim.desktop.dev`, `build/Stim Dev.app`, the phone
+app's orange Stim Dev icon (`Support/AppIcon-Dev.icns`), and no update feed,
+Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
+item, notification permission and notification history, and pairs with
+stim-server under its own name (see [Replay](#replay)). Both apps use port
+7787, so the one that starts second uses the other's server instead of starting
+one; when that app quits, the remaining one starts its own while **Serve to
+phones** is on. Paired phones and the `tailscale serve` route keep working
+because they belong to the Stim home, not to either app. Both apps run their
+autopilot. `stim ios` and `stim android` open device links with `open -a Stim`,
+which reaches the release app, never Stim Dev.
+
+`bundle.sh --release` builds the release variant, `build/Stim.app` with bundle
+id `dev.stim.desktop`, which `scripts/release.sh` and the release workflow use.
 
 The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package and `Sparkle.framework` from the `Sparkle` package in `Contents/Frameworks`. Sentry is linked into the executable. Resolving the `sentry-cocoa` package downloads every xcframework it declares, about 450 MB, and extracts about 3 GB into `.build/artifacts` ([getsentry/sentry-cocoa#9146](https://github.com/getsentry/sentry-cocoa/issues/9146)).
 
 ## Updates
 
-Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL` in `Support/Info.plist`, `https://github.com/appandflow/stim/releases/download/desktop-latest/appcast.xml`. **Check for Updates…** in the app menu checks now, and Sparkle checks in the background once the user accepts its prompt on the second launch; **Settings > App > Updates** turns the background checks on or off. `scripts/bundle.sh` writes `SPARKLE_PUBLIC_ED_KEY` from its environment into `SUPublicEDKey`. A build without that key, which includes `swift run` and every dev or test copy, never starts the updater: the menu item stays disabled and the toggle is off.
+Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL` in `Support/Info.plist`, `https://github.com/appandflow/stim/releases/download/desktop-latest/appcast.xml`. **Check for Updates…** in the app menu checks now, and Sparkle checks in the background once the user accepts its prompt on the second launch; **Settings > App > Updates** turns the background checks on or off. `scripts/bundle.sh --release` writes `SPARKLE_PUBLIC_ED_KEY` from its environment into `SUPublicEDKey`. A build without that key, which includes `swift run`, every Stim Dev build and every test copy, never starts the updater: the menu item stays disabled and the toggle is off.
 
 `scripts/release.sh <version>` builds the signed, notarized universal DMG and zip; see [RELEASING.md](./RELEASING.md).
 
 ## Crash reports
 
-Stim Desktop reports crashes and uncaught exceptions to Sentry with sentry-cocoa, linked statically from its `Sentry` product. It starts Sentry only when the bundle's Info.plist carries a DSN in `StimSentryDSN`. The DSN is not in the repository: `scripts/bundle.sh` writes it from the environment, so `swift run`, `swift test`, a bundle built without it, forks and CI report nothing and send nothing.
+Stim Desktop reports crashes and uncaught exceptions to Sentry with sentry-cocoa, linked statically from its `Sentry` product. It starts Sentry only when the bundle's Info.plist carries a DSN in `StimSentryDSN`. The DSN is not in the repository: `scripts/bundle.sh --release` writes it from the environment, so `swift run`, `swift test`, Stim Dev, a bundle built without it, forks and CI report nothing and send nothing.
 
-| Variable                  | Used by     | Effect                                                                                |
-| ------------------------- | ----------- | ------------------------------------------------------------------------------------- |
-| `STIM_DESKTOP_SENTRY_DSN` | `bundle.sh` | Written into `StimSentryDSN`. Empty or unset turns crash reporting off.               |
-| `SENTRY_AUTH_TOKEN`       | `bundle.sh` | With the two below and `sentry-cli` on `PATH`, uploads the app's dSYM after bundling. |
-| `SENTRY_ORG`              | `bundle.sh` | The Sentry organization slug for the dSYM upload.                                     |
-| `SENTRY_PROJECT`          | `bundle.sh` | The Sentry project slug for the dSYM upload.                                          |
-| `STIM_DESKTOP_CRASH_TEST` | the app     | `exception` raises an uncaught NSException and `crash` traps, 3 seconds after launch. |
+| Variable                  | Used by     | Effect                                                                                             |
+| ------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
+| `STIM_DESKTOP_SENTRY_DSN` | `bundle.sh` | With `--release`, written into `StimSentryDSN`. Empty or unset turns crash reporting off.          |
+| `SENTRY_AUTH_TOKEN`       | `bundle.sh` | With `--release`, the two below and `sentry-cli` on `PATH`, uploads the app's dSYM after bundling. |
+| `SENTRY_ORG`              | `bundle.sh` | The Sentry organization slug for the dSYM upload.                                                  |
+| `SENTRY_PROJECT`          | `bundle.sh` | The Sentry project slug for the dSYM upload.                                                       |
+| `STIM_DESKTOP_CRASH_TEST` | the app     | `exception` raises an uncaught NSException and `crash` traps, 3 seconds after launch.              |
 
-Without all three upload variables or `sentry-cli`, `bundle.sh` prints one line to stderr and skips the upload; a failed upload never fails the bundle. The dSYM is made with `dsymutil` from the bundled executable, so its UUIDs match the binary that `scripts/release.sh` later signs.
+Without all three upload variables or `sentry-cli`, `bundle.sh --release` prints one line to stderr and skips the upload; a failed upload never fails the bundle. The dSYM is made with `dsymutil` from the bundled executable, so its UUIDs match the binary that `scripts/release.sh` later signs.
 
 An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off, tracing, session tracking, app hang tracking, network breadcrumbs and failed-request capture off, so it sends nothing but crash and exception events; macOS has no screenshot or view hierarchy capture. Before it records a breadcrumb or sends an event, the app replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
 

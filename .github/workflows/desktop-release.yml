@@ -75,7 +75,7 @@ jobs:
 
       - name: Build before any secret is loaded
         working-directory: apps/desktop
-        run: scripts/bundle.sh --universal
+        run: scripts/bundle.sh --universal --release
 
       - name: Import the Developer ID certificate
         env:

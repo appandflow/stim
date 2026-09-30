@@ -14,7 +14,7 @@ app=build/Stim.app
 dmg=$out/Stim-$version.dmg
 zip=$out/Stim-$version.zip
 
-./scripts/bundle.sh --universal >/dev/null
+./scripts/bundle.sh --universal --release >/dev/null
 rm -rf "$out"
 mkdir -p "$out"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" -c "Set :CFBundleVersion $build_number" \

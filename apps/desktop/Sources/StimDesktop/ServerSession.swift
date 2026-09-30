@@ -9,10 +9,14 @@ struct LocalServerCredential: Codable, Equatable {
   var deviceID: String
   var deviceToken: String
 
+  /// The release app, as `scripts/release.sh` bundles it. Any other build pairs as Stim Dev with its own token, so it
+  /// can share this Mac's stim-server with the release app.
+  static let isRelease = Bundle.main.bundleIdentifier == "dev.stim.desktop"
+
   private static func file(home: String) -> URL {
     let digest = SHA256.hash(data: Data(home.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("Stim Desktop/stim-server/\(digest).json")
+      .appendingPathComponent("\(isRelease ? "Stim Desktop" : "Stim Dev")/stim-server/\(digest).json")
   }
 
   static func load(home: String) -> LocalServerCredential? {
@@ -45,7 +49,7 @@ struct LocalServerCredential: Codable, Equatable {
 /// `stim-server devices grant`, once per server.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
-  static let deviceName = PairedDevice.desktopName
+  static let deviceName = LocalServerCredential.isRelease ? PairedDevice.desktopName : PairedDevice.devDesktopName
 
   @Published private(set) var client: ServerClient?
   @Published private(set) var state = ServerClient.State.idle
