@@ -35,7 +35,7 @@ struct Sidebar: View {
           let entries = store.sidebarList(options)
           ForEach(entries) { entry in
             EntryRow(
-              entry: entry, subtitle: store.project(ofPath: entry.path).name, showsGit: options.showsGitStatus,
+              entry: entry, subtitle: store.title(of: store.project(ofPath: entry.path)), showsGit: options.showsGitStatus,
               selection: selection, openLogs: openLogs)
           }
           if entries.isEmpty { emptyText(options) }
@@ -100,7 +100,8 @@ struct Sidebar: View {
       StimWordmark()
       Spacer()
       ViewOptionsButton(
-        projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() })
+        projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() },
+        title: store.title(of:))
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
@@ -184,7 +185,7 @@ struct ProjectRow: View {
     HStack(spacing: Space.md) {
       Image(systemName: "folder")
         .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
-      Text(summary.project.name).lineLimit(1).truncationMode(.middle)
+      Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
         Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()

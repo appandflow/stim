@@ -365,7 +365,7 @@ struct MachineView: View {
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(Palette.tertiary)
           .frame(width: 12)
-        Text(repository.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
+        Text(status.title(of: Project(root: repository.path))).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text("\(repository.worktrees.count) worktrees").foregroundStyle(Palette.tertiary)
         Spacer()
         totalText(repository.total, complete: repository.totalComplete)
@@ -381,11 +381,14 @@ struct MachineView: View {
 
   private func workspaceRow(_ workspace: WorkspaceStorage, nested: Bool) -> some View {
     let names = status.names(ofPath: workspace.path)
+    let project = status.project(ofPath: workspace.path)
+    let title =
+      workspace.worktreePath == project.root && names.title == project.name ? status.title(of: project) : names.title
     let lifecycle = WorktreeLifecycle(
       worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
     return HStack(spacing: Space.lg) {
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(names.title).lineLimit(1).truncationMode(.middle)
+        Text(title).lineLimit(1).truncationMode(.middle)
         if compact {
           HStack(spacing: Space.sm) {
             lifecycleChip(lifecycle, workspace: workspace)
