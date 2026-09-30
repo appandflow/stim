@@ -1,9 +1,9 @@
 import { t } from '@lingui/core/macro';
 import { Fragment, type ReactNode } from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { Icon } from '@/components/icon';
+import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useSectionState } from '@/hooks/section-state';
@@ -34,7 +34,6 @@ export function CollapsibleSection<T>({
   empty?: string;
   footer?: ReactNode;
 }) {
-  const { theme } = useUnistyles();
   const [state, update] = useSectionState(id);
   const { shown, toggle } = sectionRows(rows, state.showAll);
   const open = !state.collapsed;
@@ -49,9 +48,7 @@ export function CollapsibleSection<T>({
         accessibilityState={{ expanded: open }}
         style={styles.header}
       >
-        <View style={styles.chevron(open)}>
-          <Icon name="chevron.right" size={12} color={theme.colors.tertiary} />
-        </View>
+        <DisclosureChevron open={open} size={12} />
         <Text variant="headline" numberOfLines={1} style={styles.title}>
           {title}
         </Text>
@@ -60,8 +57,8 @@ export function CollapsibleSection<T>({
         </Text>
         <View style={styles.trailing}>{trailing}</View>
       </Touch>
-      {open ? (
-        <>
+      <Collapsible open={open}>
+        <View style={styles.body}>
           {note}
           {rows.length === 0 ? (
             empty ? (
@@ -95,8 +92,8 @@ export function CollapsibleSection<T>({
             </View>
           )}
           {footer}
-        </>
-      ) : null}
+        </View>
+      </Collapsible>
     </View>
   );
 }
@@ -104,7 +101,7 @@ export function CollapsibleSection<T>({
 const styles = StyleSheet.create((theme) => ({
   section: { gap: theme.space.sm },
   header: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, paddingVertical: theme.space.xs },
-  chevron: (open: boolean) => ({ transform: [{ rotate: open ? '90deg' : '0deg' }] }),
+  body: { gap: theme.space.sm },
   title: { flexShrink: 1 },
   count: { fontVariant: ['tabular-nums'] },
   trailing: { flex: 1, alignItems: 'flex-end' },
