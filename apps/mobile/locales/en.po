@@ -868,6 +868,7 @@ msgstr "Apps"
 msgid "Auto"
 msgstr "Auto"
 
+#: src/components/route-error-boundary.tsx
 #: src/screens/device-view.tsx
 msgid "Back"
 msgstr "Back"
@@ -3290,6 +3291,10 @@ msgstr "This phone stops connecting to it. Pair again from Stim Desktop to undo.
 msgid "This QR code is not a Stim pairing code."
 msgstr "This QR code is not a Stim pairing code."
 
+#: src/components/route-error-boundary.tsx
+msgid "This screen could not be shown"
+msgstr "This screen could not be shown"
+
 #: src/screens/workspace-resources.tsx
 msgid "This workspace"
 msgstr "This workspace"
@@ -3307,6 +3312,7 @@ msgid "Today"
 msgstr "Today"
 
 #: src/app/_layout.tsx
+#: src/components/route-error-boundary.tsx
 msgid "Try again"
 msgstr "Try again"
 

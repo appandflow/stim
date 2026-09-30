@@ -12,3 +12,5 @@ export default function LogsRoute() {
   }>();
   return <Logs path={path} params={params} />;
 }
+
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/route-error-boundary';

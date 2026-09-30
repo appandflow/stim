@@ -6,3 +6,5 @@ export default function WorkspaceRoute() {
   const { path } = useLocalSearchParams<{ path: string }>();
   return <WorkspaceDetail path={path} />;
 }
+
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/route-error-boundary';

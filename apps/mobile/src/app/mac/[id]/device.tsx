@@ -13,3 +13,5 @@ export default function DeviceRoute() {
   const known = platform === 'android' || platform === 'web' ? platform : 'ios';
   return <DeviceView workspace={path} platform={known} slot={slot ?? 'default'} physical={physical === '1'} />;
 }
+
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/route-error-boundary';

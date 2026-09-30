@@ -13,3 +13,5 @@ export default function AgentRoute() {
   const known = platform === 'android' || platform === 'web' ? platform : 'ios';
   return <AgentActions path={path} platform={known} slot={slot ?? 'default'} deviceId={device} />;
 }
+
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/route-error-boundary';
