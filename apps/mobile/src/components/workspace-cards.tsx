@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { View } from 'react-native';
+import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
@@ -55,6 +55,7 @@ export function chipColor(tone: ChipTone, colors: Theme['colors']): string {
   return tone === 'brand' ? colors.primary : colors[tone];
 }
 
+const STACK_FONT_SCALE = 1.3;
 const VALUE: TextVariant = 'caption';
 const VALUE_WEIGHT = 'medium';
 
@@ -378,7 +379,8 @@ export function WorkCard({
 }
 
 export function CardGrid({ children }: { children: ReactNode }) {
-  return <View style={styles.grid}>{children}</View>;
+  const { fontScale } = useWindowDimensions();
+  return <View style={[styles.grid, fontScale > STACK_FONT_SCALE && styles.stacked]}>{children}</View>;
 }
 
 function segmentWeights(steps: PhaseStep[]): number[] {
@@ -526,10 +528,11 @@ const styles = StyleSheet.create((theme) => ({
   tabular: { fontVariant: ['tabular-nums'] },
   caps: { textTransform: 'uppercase', letterSpacing: 0.4, flexShrink: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.md },
+  stacked: { flexDirection: 'column', flexWrap: 'nowrap' },
   small: { flexGrow: 1, flexBasis: '40%', padding: theme.space.md + 2, gap: theme.space.xs },
-  usage: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, overflow: 'hidden' },
+  usage: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.sm, rowGap: 2 },
   usageItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  gitLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs + 1, overflow: 'hidden' },
+  gitLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.xs + 1, rowGap: 2 },
   alert: {
     borderColor: withAlpha(theme.colors.error, 0.45),
     backgroundColor: withAlpha(theme.colors.error, 0.06),
