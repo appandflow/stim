@@ -2,7 +2,8 @@ import 'react-native-unistyles/mocks';
 import 'react-native-gesture-handler/jestSetup';
 
 import { Text } from 'react-native';
-import { fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { router } from 'expo-router';
+import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
 import '@/design/unistyles';
 
@@ -33,21 +34,28 @@ const routes = {
   'mac/[id]/index': { default: Screen, ErrorBoundary: RouteErrorBoundary },
 };
 
-it('shows the error in place of the crashing screen, retries it, and goes back', async () => {
-  const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+afterEach(() => jest.restoreAllMocks());
+
+it('shows the error in place of the crashing screen and retries it', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
   payload = undefined;
   await renderRouter(routes, { initialUrl: '/mac/m1' });
-
   expect(screen.getByText('This screen could not be shown')).toBeTruthy();
-  expect(screen.getByText(/undefined/)).toBeTruthy();
+  expect(screen.getByText('Try again')).toBeTruthy();
 
   payload = { name: 'ok' };
   await fireEvent.press(screen.getByText('Try again'));
   expect(screen.getByText('OK')).toBeTruthy();
+});
 
+it('goes back to the previous route', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
   payload = undefined;
-  await renderRouter(routes, { initialUrl: '/mac/m1' });
+  await renderRouter(routes, { initialUrl: '/' });
+  await act(() => router.push('/mac/m1'));
+  expect(screen.getByText('This screen could not be shown')).toBeTruthy();
+
   await fireEvent.press(screen.getByText('Back'));
   expect(screen.getByText('home')).toBeTruthy();
-  consoleError.mockRestore();
+  expect(screen.queryByText('This screen could not be shown')).toBeNull();
 });

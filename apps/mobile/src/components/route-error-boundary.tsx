@@ -23,7 +23,6 @@ function RouteErrorFallback({ error, retry }: ErrorBoundaryProps) {
   );
 }
 
-/** Keeps a render error in one machine screen from replacing the whole app, so the drawer and the other screens stay usable. */
 export const RouteErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RouteErrorFallback);
 
 const styles = StyleSheet.create((theme) => ({
