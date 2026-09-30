@@ -148,7 +148,6 @@ struct ResourcesSection: View {
   }
 }
 
-/// The workspace's disk as a total, a bar split by what holds it, and one row per part.
 private struct DiskCard: View {
   var breakdown: DiskBreakdown
 

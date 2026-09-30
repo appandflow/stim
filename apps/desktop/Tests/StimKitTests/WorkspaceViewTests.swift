@@ -169,6 +169,16 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(try workspace(#""disk":{"measuredAt":"x"}"#).diskBreakdown == nil)
   }
 
+  @Test func keepsTheDiskPartsSummingToTheTotalWhenNodeModulesFillsOrExceedsTheWorktree() throws {
+    let whole = try #require(
+      try workspace(#""disk":{"worktreeBytes":900,"nodeModulesBytes":900,"buildBytes":0}"#).diskBreakdown)
+    #expect(whole.parts.map(\.kind) == [.nodeModules])
+    let over = try workspace(#""disk":{"worktreeBytes":900,"nodeModulesBytes":950,"buildBytes":100}"#)
+    let breakdown = try #require(over.diskBreakdown)
+    #expect(breakdown.parts.map(\.kind) == [.worktree, .build])
+    #expect(breakdown.total == over.diskBytes)
+  }
+
   @Test func keepsTenMinutesOfEachWorkspaceAndDropsOneThatStopped() {
     var history = OwnerHistory()
     for minute in 0...12 { history.append(machine, at: now.addingTimeInterval(Double(minute) * 60)) }

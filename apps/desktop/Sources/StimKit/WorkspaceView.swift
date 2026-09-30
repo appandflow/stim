@@ -186,7 +186,7 @@ extension Workspace {
         parts.append(.init(kind: .worktree, bytes: worktree))
       }
     }
-    if let build = disk.buildBytes { parts.append(.init(kind: .build, bytes: build)) }
+    if let build = disk.buildBytes, build > 0 { parts.append(.init(kind: .build, bytes: build)) }
     return parts.isEmpty ? nil : DiskBreakdown(parts: parts)
   }
 }
