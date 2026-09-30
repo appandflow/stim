@@ -480,6 +480,7 @@ export function segmentWeights(steps: readonly PhaseStep[]): number[] {
  * showed, but the current segment stops short of full, and a pending one stays empty.
  */
 export function barFills(steps: readonly PhaseStep[], key: string): number[] {
+  if (!steps.length) return [];
   const weights = segmentWeights(steps);
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   const own = steps.map((step) => (step.state === 'current' ? (step.fraction ?? 0.1) : (step.fraction ?? 0)));
@@ -487,7 +488,7 @@ export function barFills(steps: readonly PhaseStep[], key: string): number[] {
   const current = steps.findIndex((step) => step.state === 'current');
   const ceiling =
     current < 0
-      ? 1
+      ? steps.reduce((sum, step, i) => sum + (step.state === 'done' ? weights[i]! : 0), 0) / total
       : (weights.slice(0, current).reduce((sum, weight) => sum + weight, 0) + 0.95 * weights[current]!) / total;
   let left = Math.min(steadyFraction(`${key}|bar`, reached), Math.max(reached, ceiling)) * total;
   return weights.map((weight) => {

@@ -72,7 +72,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
   const building = env ? runningBuild(env) : null;
   const running = building?.platform === platform ? building : null;
   const { plan, checkedAt, recheck } = useBuildPlan(path, platform, planKey(last), building !== null);
-  const now = useNow(building ? 1000 : 30_000);
+  const now = useNow(building?.platform === platform ? 1000 : 30_000);
   const name = platformName(platform);
   const checking = plan?.kind === 'checking';
   const canCheck = recheck !== null && !checking;

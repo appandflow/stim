@@ -290,6 +290,13 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       [step("prepare", .done, 4000, 1), step("compile", .current, 8000, 0.5), step("install", .pending, 8000, 0)],
       key: "fills-plain")
     #expect(fills == [1, 0.5, 0])
+    #expect(barFills([], key: "fills-empty") == [])
+  }
+
+  @Test func neverFillsAPendingSegmentWhenNoPhaseIsCurrent() {
+    let key = "fills-no-current"
+    _ = barFills([step("prepare", .done, 4000, 1), step("install", .current, 6000, 0.9)], key: key)
+    #expect(barFills([step("prepare", .done, 4000, 1), step("install", .pending, 6000, 0)], key: key) == [1, 0])
   }
 
   @Test func keepsWhatItDrewForTheSameBuildWhenThePlanChangesUpToTheEndOfTheCurrentSegment() {

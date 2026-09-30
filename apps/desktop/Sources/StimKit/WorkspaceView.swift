@@ -418,7 +418,7 @@ extension Build {
   /// which is all an older stim offers.
   func plannedDurations(_ history: [BuildHistoryEntry]) -> [String: Double] {
     if let plannedPhases {
-      return Dictionary(plannedPhases.map { ($0.phase, $0.expectedMs) }, uniquingKeysWith: { first, _ in first })
+      return Dictionary(plannedPhases.map { ($0.phase, $0.expectedMs) }, uniquingKeysWith: { _, last in last })
     }
     return referenceRun(history)?.phases ?? [:]
   }
@@ -515,7 +515,7 @@ public func barFills(_ steps: [PhaseStep], key: String) -> [Double] {
   let ceiling =
     steps.firstIndex { $0.state == .current }.map { current in
       (weights[..<current].reduce(0, +) + 0.95 * weights[current]) / total
-    } ?? 1
+    } ?? zip(steps, weights).filter { $0.0.state == .done }.reduce(0) { $0 + $1.1 } / total
   var left = min(steadyFraction("\(key)|bar", reached), max(reached, ceiling)) * total
   return weights.map { weight in
     let fill = min(1, max(0, left / weight))

@@ -482,6 +482,13 @@ describe('barFills', () => {
       'fills-plain',
     );
     expect(fills).toEqual([1, 0.5, 0]);
+    expect(barFills([], 'fills-empty')).toEqual([]);
+  });
+
+  it('never fills a pending segment when no phase is current', () => {
+    const key = 'fills-no-current';
+    barFills([step('prepare', 'done', 4000, 1), step('install', 'current', 6000, 0.9)], key);
+    expect(barFills([step('prepare', 'done', 4000, 1), step('install', 'pending', 6000, 0)], key)).toEqual([1, 0]);
   });
 
   it('keeps what it drew for the same build when the plan changes, up to the end of the current segment', () => {
