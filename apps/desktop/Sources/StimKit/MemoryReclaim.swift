@@ -88,8 +88,8 @@ extension GcReport {
       if bytes > 0 {
         lines.append(
           watchman
-            ? "Shuts down the watchman daemon to free \(Format.fileSize(bytes)). Metro starts it again when it needs it."
-            : "Stops the idle Gradle and Kotlin daemons that hold \(Format.fileSize(bytes)). The next build starts a new daemon.")
+            ? "Shuts down the watchman daemon to free \(Format.memory(bytes)). Metro starts it again when it needs it."
+            : "Stops the idle Gradle and Kotlin daemons that hold \(Format.memory(bytes)). The next build starts a new daemon.")
       }
       if staleRoots > 0 {
         lines.append("Removes \(staleRoots == 1 ? "1 stale watchman root" : "\(staleRoots) stale watchman roots").")
