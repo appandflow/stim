@@ -33,7 +33,7 @@ struct RootView: View {
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
-  @State private var windowWidth: CGFloat = 0
+  @State private var windowSize = CGSize.zero
   @State private var sidebarWidth: CGFloat = 0
   @State private var detailWidth: CGFloat = 0
   @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -115,11 +115,12 @@ struct RootView: View {
       showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
     )
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
-    .onGeometryChange(for: CGFloat.self) {
-      $0.size.width
+    .onGeometryChange(for: CGSize.self) {
+      $0.size
     } action: {
-      windowWidth = $0
+      windowSize = $0
     }
+    .environment(\.windowSize, windowSize)
     .toolbarBackground(.hidden, for: .windowToolbar)
     .tint(Palette.brand)
     .font(.stim(.body))
@@ -191,7 +192,7 @@ struct RootView: View {
   }
 
   private var inspectorFits: Bool {
-    windowWidth - (columnVisibility == .detailOnly ? 0 : sidebarWidth) >= WorkspaceDetail.widthWithInspector
+    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth) >= WorkspaceDetail.widthWithInspector
   }
 
   private var inspector: InspectorPresentation {
@@ -599,4 +600,9 @@ struct InspectorToggle {
 
 extension FocusedValues {
   @Entry var inspectorToggle: InspectorToggle?
+}
+
+extension EnvironmentValues {
+  /// The main window's content size, which caps the size of a sheet over it.
+  @Entry var windowSize = CGSize.zero
 }

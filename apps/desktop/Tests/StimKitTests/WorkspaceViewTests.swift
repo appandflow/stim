@@ -354,22 +354,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 }
 
-@Suite struct AgentRowTests {
-  @Test func namesTheDrivingToolWithItsLastActionOrHowLongTheDeviceIsIdle() throws {
-    let driven = try JSONDecoder().decode(
-      DeviceActivity.self,
-      from: Data(#"{"state":"driven","driver":{"tool":"agent-device","since":"\#(iso(18 * 60))"},"basis":[]}"#.utf8))
-    let row = AgentRow(activity: driven, last: (now.addingTimeInterval(-12), "Tapped \"Allow camera\""), now: now)
-    #expect(row.tool == "agent-device")
-    #expect(row.text == "Tapped \"Allow camera\" \u{00B7} 12s ago")
-    let idle = try JSONDecoder().decode(
-      DeviceActivity.self, from: Data(#"{"state":"idle","lastActivityAt":"\#(iso(360))","basis":[]}"#.utf8))
-    let quiet = AgentRow(activity: idle, last: nil, now: now)
-    #expect(quiet.tool == nil)
-    #expect(quiet.text == "idle 6m")
-  }
-}
-
 @Suite struct GitChipTests {
   func worktree(_ git: String = "", pullRequest: String? = nil) throws -> WorktreeInfo {
     var fields: [String: Any] = ["changed": 0, "untracked": 0, "upstream": "origin/x", "ahead": 0, "behind": 0]
@@ -539,23 +523,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       var line: Line?
     }
 
-    struct LastAction: Decodable {
-      var agoMs: Double
-      var message: String
-    }
-
-    struct Row: Decodable, Equatable {
-      var tool: String?
-      var text: String
-    }
-
-    struct RowCase: Decodable {
-      var name: String
-      var activity: DeviceActivity
-      var last: LastAction?
-      var row: Row
-    }
-
     struct DiskPart: Decodable, Equatable {
       var kind: String
       var label: String
@@ -575,7 +542,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     var phases: [PhaseCase]
     var activity: Activity
     var bundleLine: [BundleCase]
-    var agentRow: [RowCase]
     var diskParts: [DiskCase]
   }
 
@@ -657,14 +623,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       b.parts.map { Vectors.DiskPart(kind: $0.kind.rawValue, label: b.label(of: $0), bytes: $0.bytes) }
     }
     #expect(parts == c.parts)
-  }
-
-  @Test(arguments: vectors.agentRow.map(\.name))
-  func wordsTheAgentRowAsThePhoneDoes(name: String) throws {
-    let c = try #require(Self.vectors.agentRow.first { $0.name == name })
-    let last = c.last.map { (date: Self.now.addingTimeInterval(-$0.agoMs / 1000), message: $0.message) }
-    let row = AgentRow(activity: c.activity, last: last, now: Self.now)
-    #expect(Vectors.Row(tool: row.tool, text: row.text) == c.row)
   }
 }
 

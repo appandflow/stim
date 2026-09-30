@@ -201,7 +201,8 @@ struct ReplayBar: View {
           ReplayTrack(
             timeline: timeline, liveEnd: controller.liveEnd(running: running),
             markers: controller.range?.markers ?? [], shownAt: controller.replay?.at,
-            isLive: controller.replay == nil, previews: controller.previews, seek: { seek($0, rate: $1) })
+            isLive: controller.replay == nil, previews: controller.previews,
+            seek: { at, rate, marker in seek(at, rate: rate, action: marker?.kind == "action" ? marker?.at : nil) })
         }
       }
       if let error = controller.error {
@@ -256,19 +257,10 @@ struct ReplayBar: View {
   }
 
   private func playButton(_ timeline: ReplayTimeline) -> some View {
-    let replay = controller.replay
-    let playing = replay.map { $0.rate > 0 && !$0.ended } ?? false
+    let playing = controller.replay.map { $0.rate > 0 && !$0.ended } ?? false
     let showsPause = playing || isLive
     return Button {
-      if isLive {
-        seek(Self.newestFrame, rate: 0)
-      } else if let replay, playing {
-        seek(replay.at ?? timeline.start, rate: 0)
-      } else if let replay, !replay.ended, let at = replay.at {
-        seek(at, rate: controller.speed)
-      } else {
-        seek(timeline.start, rate: controller.speed)
-      }
+      Self.playOrPause(controller, timeline: timeline, running: running, onSeek: onSeek)
     } label: {
       Image(systemName: showsPause ? "pause.fill" : "play.fill")
     }
@@ -276,6 +268,29 @@ struct ReplayBar: View {
     .fixedSize()
     .help(isLive ? "Pause on the current frame" : playing ? "Pause" : "Play the recording")
     .accessibilityLabel(showsPause ? "Pause" : "Play")
+  }
+
+  /// Play and pause: while live, pauses on the newest frame; while replaying, pauses or plays on from the frame
+  /// shown, or from the start once playback has ended.
+  static func playOrPause(
+    _ controller: ReplayController, timeline: ReplayTimeline, running: Bool, onSeek: () -> Void
+  ) {
+    let replay = controller.replay
+    let playing = replay.map { $0.rate > 0 && !$0.ended } ?? false
+    func seek(_ at: Double, _ rate: Int) {
+      controller.stepped = nil
+      onSeek()
+      controller.seek(at: at, rate: rate)
+    }
+    if replay == nil && running {
+      seek(newestFrame, 0)
+    } else if let replay, playing {
+      seek(replay.at ?? timeline.start, 0)
+    } else if let replay, !replay.ended, let at = replay.at {
+      seek(at, controller.speed)
+    } else {
+      seek(timeline.start, controller.speed)
+    }
   }
 
   private func toggleSpeed() {
@@ -315,7 +330,8 @@ struct ReplayTrack: View {
   var shownAt: Double?
   var isLive: Bool
   var previews: ReplayPreviews
-  var seek: (_ at: Double, _ rate: Int) -> Void
+  /// `marker` is the one a click landed near.
+  var seek: (_ at: Double, _ rate: Int, _ marker: ReplayMarker?) -> Void
 
   private static let markerReach: CGFloat = 6
   private static let dragThreshold: CGFloat = 3
@@ -412,7 +428,7 @@ struct ReplayTrack: View {
           let x = min(max(0, drag.location.x), width)
           guard x != dragging else { return }
           dragging = x
-          seek(self.track.time(at: fraction(x)), 0)
+          seek(self.track.time(at: fraction(x)), 0, nil)
         }
         .onEnded { drag in
           let x = min(max(0, drag.location.x), width)
@@ -422,9 +438,9 @@ struct ReplayTrack: View {
           if !hover.inside { held = nil }
           if dragged { hover.move(to: nil, marker: nil) }
           if !dragged, let marker = nearestMarker(x: x) {
-            seek(track.seekTime(for: marker), 0)
+            seek(track.seekTime(for: marker), 0, marker)
           } else {
-            seek(track.time(at: fraction(x)), 0)
+            seek(track.time(at: fraction(x)), 0, nil)
           }
         }
     )
@@ -435,11 +451,11 @@ struct ReplayTrack: View {
       let from = isLive ? timeline.end : shownAt ?? timeline.end
       switch direction {
       case .increment:
-        if !isLive { seek(min(timeline.end, from + Self.accessibilityStepMs), 0) }
+        if !isLive { seek(min(timeline.end, from + Self.accessibilityStepMs), 0, nil) }
       case .decrement:
         let back = max(timeline.start, from - Self.accessibilityStepMs)
         let gap = timeline.pieces.first { $0.isGap && back > $0.start && back < $0.end }
-        seek(gap?.start ?? back, 0)
+        seek(gap?.start ?? back, 0, nil)
       @unknown default: break
       }
     }

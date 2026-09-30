@@ -152,20 +152,38 @@ shows **App not running**, and one whose platform never built here and last
 failed shows **No app installed** over its frame instead. A workspace that is
 warming with no device yet shows a warming placeholder.
 
-Clicking a tile opens the **device viewer**, a sheet with the device's screen
-as large as the sheet allows. Its header has **Take over** (see [Take over a
-device](#take-over-a-device)) and **Stop** (a simulator, emulator, browser or
-remote session; a physical device has none), and **Run** when the app is not
-running. Below the screen come the device's buttons while it is taken over,
-the agent row (the driving tool and its last action, "agent-device · Tapped
-"Allow camera" · 12s ago", or "No agent" with how long it has been idle;
-clicking it lists the latest agent actions, with **All actions** for the full
-log) and the replay bar (see
-[Replay](#replay)). Escape releases a device that is taken over, and
-otherwise closes the viewer; closing it releases the device too. While the
-viewer is open, the device's tile stops streaming and says "Open in the
-viewer". Tiles on the All devices wall are previews too; clicking one opens its
-workspace.
+Clicking a tile opens the **device viewer**, a sheet as large as the main
+window allows, with a minimum of 560 by 480 points. One toolbar names the
+device, its model and its workspace, with the driver or idle badge, **App not
+running**, **Physical** and the lease, and the device's CPU and memory when
+they fit. On its right are **Run** when the app is not running, **Take over**
+(see [Take over a device](#take-over-a-device)), and **Stop** (a simulator,
+emulator or remote session; a web page has Open in browser, Reload and Close;
+a physical device has none), then the agent actions toggle and Close. The
+device sits on a plain canvas, as large as it fits, with its buttons in a
+column beside it, and the replay bar (see [Replay](#replay)) runs across the
+bottom.
+
+On the right, 360 points wide, the **agent actions** list what agents did on
+the device (`stim logs --source agent`), oldest first, with filter chips (All,
+Failed and the two most used commands) and a divider for a pause of more than
+5 minutes. The action on screen is highlighted and kept in view: the newest
+while live, and while replaying the last one at or before the frame shown, or
+the one just stepped or clicked to. An action the replay recorded shows a play
+icon. Clicking an action shows its level, command, device and whether the
+replay recorded it until another action comes on screen, and a recorded one
+plays from 1.5 seconds before it; an action the replay did not record only
+shows its details. While the list has
+the keyboard, Up and Down move through the actions the same way and Space
+plays and pauses. **Open in logs** closes the viewer and shows the device's
+agent actions in the logs, at the selected action or the one on screen. The toolbar button hides
+the list, and the app remembers it; a sheet too narrow for the list and a
+420-point canvas hides it too. Physical and remote devices have no list.
+
+Escape releases a device that is taken over, and otherwise closes the viewer;
+closing it releases the device too. While the viewer is open, the device's
+tile stops streaming and says "Open in the viewer". Tiles on the All devices
+wall are previews too; clicking one opens its workspace.
 
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens
@@ -452,25 +470,18 @@ stack. Command-C or **Copy** copies the selected records, or every loaded
 record when none is selected. **Reveal log folder** opens the workspace's log
 directory from `stim status`.
 
-A device's agent row and its popover list the latest agent-device actions on
-that simulator or emulator, newest first: taps, typing, app opens, screenshots,
-and failed commands in red. On the Web device they list the clicks, typing and
-scrolls an attached tool such as Playwright sent to the page. The viewer runs
+The viewer's agent actions are the agent-device actions on that simulator or
+emulator: taps, typing, app opens, screenshots, and failed commands in red. On
+the Web device they are the clicks, typing and scrolls an attached tool such as
+Playwright sent to the page. The viewer runs
 `stim logs --json --follow --tail 200 --source agent --slot <slot>` in the
 workspace and keeps the records whose `deviceId` is the device's UDID or
-serial, or the page's DevTools target; closing the viewer terminates the
-command.
-
-**All actions** in the popover, or clicking the "Driven by" chip on the
-device's tile, opens the agent action log beside the viewer's screen, as on
-the phone: up to 200 of the newest actions with their clock time and command,
-and chips with counts for All, Failed (when any failed) and the two most used
-commands. Clicking an action switches the Logs tab to the Agent source of the
-device's slot, clears the level, search and **Errors only** filters, and
-scrolls to and selects that action's record. When stim-server's replay
-recorded that moment, the viewer stays open and the replay plays from 1.5
-seconds before the action; otherwise the viewer closes so the logs show.
-**Open in logs** shows the same logs without a moment.
+serial, or the page's DevTools target, up to 200; closing the viewer
+terminates the command. An action sits on the replay where it started, at the
+record's `startedAt` when agent-device reported one, like its marker.
+**Open in logs** switches the Logs tab to the Agent source of the device's
+slot, clears the level, search and **Errors only** filters, and scrolls to and
+selects that action's record.
 
 ## Build progress
 
@@ -494,17 +505,18 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
-While a device is taken over, a row under its screen has its hardware buttons
-and rotation: **Home** and **Lock** on a simulator, sent through the
-simulator's HID service; **Home**, **Back**, **Apps** and **Lock** on an
-emulator, sent with gRPC `sendKey` (Lock, and every button on an emulator
+A column beside the screen of a running simulator or emulator has its
+hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
+through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
+on an emulator, sent with gRPC `sendKey` (Lock, and every button on an emulator
 without a hardware keyboard, with `adb shell input keyevent`); then **Rotate
-left** and **Rotate right**.
+left** and **Rotate right**. The hardware buttons press only while the device
+is taken over; rotation works at any time.
 
 A simulator with more than one display, such as the iPhone Duo, shows every
 display side by side, and touches go to the display you click. Only the
-display the posture lights shows content; the other stays black. While Take
-over is on, **Fold / Unfold** sweeps the simulated hinge to the other posture.
+display the posture lights shows content; the other stays black. **Fold /
+Unfold** in the column sweeps the simulated hinge to the other posture.
 It runs the bundled `sim-fold` helper inside the simulator with `xcrun simctl
 spawn`. The helper calls SpringBoard's private display tool service, so the
 button appears only in the bundled app, and an iOS release can break it.
@@ -512,7 +524,7 @@ button appears only in the bundled app, and an iOS release can break it.
 An Android emulator with a hinge, such as one Stim created with
 `--device-profile pixel_fold`, shows its posture as a chip: **Folded**,
 **Half open** or **Unfolded**, read from the emulator's gRPC POSTURE physical
-model. While Take over is on, the **Posture** menu in the button row moves the hinge with the
+model. The **Posture** menu in the button column moves the hinge with the
 gRPC `setPosture` call. Folded, the emulator streams only the outer display,
 so the viewer takes that display's shape and touches address its pixels.
 

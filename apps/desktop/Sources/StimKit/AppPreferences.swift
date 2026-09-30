@@ -41,6 +41,7 @@ public enum AppPreferences {
     public static let showsInspector = "showsInspector"
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
+    public static let viewerShowsActions = "viewer.showsActions"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
@@ -65,6 +66,7 @@ public enum AppPreferences {
       Key.notifiesDiskPressure: true,
       Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
+      Key.viewerShowsActions: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }
   }
 
