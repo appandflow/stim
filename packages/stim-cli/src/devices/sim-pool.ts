@@ -272,7 +272,7 @@ export function removeParkedAfter<P extends PoolPlatform>(
 export function eraseParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  erase: (record: PoolRecords[P]) => void,
+  erase: (record: PoolRecords[P], eraseStarted: () => void) => void,
 ): PoolRecords[P] | null {
   return settleParkedAfter(platform, udid, erase, erasedRecord);
 }
@@ -289,7 +289,7 @@ function erasedRecord<T extends PoolRecords[PoolPlatform]>(record: T): T {
 function settleParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  action: (record: PoolRecords[P]) => void,
+  action: (record: PoolRecords[P], destructiveStarted: () => void) => void,
   keep: ((record: PoolRecords[P]) => PoolRecords[P]) | null,
 ): PoolRecords[P] | null {
   const claim = claimParkedOperation(platform, udid);
@@ -322,11 +322,14 @@ function settleParkedAfter<P extends PoolPlatform>(
     });
     if (!claimed) return null;
     let completed = false;
+    let started = false;
     let settled: PoolRecords[P] | null = null;
     try {
       markClaimChildPending(claim);
       try {
-        action(claimed.record);
+        action(claimed.record, () => {
+          started = true;
+        });
       } finally {
         clearClaimChild(claim);
       }
@@ -338,7 +341,7 @@ function settleParkedAfter<P extends PoolPlatform>(
         const records = readParked(platform, { config: cfg });
         const current = records.find((candidate) => candidate.udid === udid);
         if (!isDeepStrictEqual(current, claimed.marked)) return;
-        const after = completed && keep ? keep(claimed.record) : claimed.record;
+        const after = (completed || started) && keep ? keep(claimed.record) : claimed.record;
         writeParked(
           cfg,
           platform,
