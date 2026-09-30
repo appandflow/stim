@@ -352,10 +352,14 @@ function readLogDerivedFacts(states: EnvironmentState[]): void {
     }
     if (state.build?.state === 'running') {
       const record = parseActiveBuild(readWorkspaceState(state.path)?.[ACTIVE_BUILD_KEY]);
-      if (record?.estimate && record.startedAt === state.build.startedAt) {
-        state.build = buildReport(record, { state: state.build.state, history: undefined });
+      if (!record) {
+        state.build = null;
+        continue;
       }
-      const detail = record?.phase === 'compile' ? readBuildDetail(state.path, record.claim.claimId) : null;
+      if (record.estimate) {
+        state.build = buildReport(record, { state: activeBuildState(record.claim), history: undefined });
+      }
+      const detail = record.phase === 'compile' ? readBuildDetail(state.path, record.claim.claimId) : null;
       if (detail) state.build.detail = detail;
       else delete state.build.detail;
     }
