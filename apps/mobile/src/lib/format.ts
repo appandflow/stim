@@ -10,7 +10,7 @@ import type {
   WorktreeGit,
 } from '@/protocol/types';
 
-const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
+export const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 
 export function clockDuration(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -47,22 +47,6 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
     default:
       return null;
   }
-}
-
-/**
- * The tools driving any of `activities`, each named once, with how long the most recently started one has driven.
- * Null when nothing is driven.
- */
-export function driversSummary(activities: (DeviceActivity | undefined)[], now: number): string | null {
-  const driven = activities.filter((a): a is DeviceActivity => a?.state === 'driven');
-  if (driven.length === 0) return null;
-  const unknownTool = t`unknown tool`;
-  const tools = [...new Set(driven.map((a) => a.driver?.tool ?? unknownTool))];
-  const starts = driven.map((a) => (a.driver?.since ? Date.parse(a.driver.since) : NaN)).filter(Number.isFinite);
-  const latest = starts.length ? Math.max(...starts) : NaN;
-  const names = tools.join(', ');
-  const duration = formatDuration(Math.max(0, now - latest));
-  return Number.isFinite(latest) ? t`${names} \u00B7 ${duration}` : names;
 }
 
 export function spokenDuration(ms: number): string {

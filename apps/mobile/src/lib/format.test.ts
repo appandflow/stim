@@ -4,7 +4,6 @@ import {
   buildProgress,
   buildTiming,
   clockTime,
-  driversSummary,
   gitBadges,
   durationBars,
   historyDetail,
@@ -59,24 +58,11 @@ describe('activityBadge', () => {
   });
 });
 
-describe('driversSummary', () => {
+describe('activityLabel', () => {
   const driven = (tool: string, minutesAgo: number): DeviceActivity => ({
     state: 'driven',
     driver: { tool, pid: 1, since: ago(minutesAgo * 60_000) },
     basis: [],
-  });
-
-  it('names a tool that drives two devices once, timed from the most recent start', () => {
-    expect(driversSummary([driven('agent-device', 47), driven('agent-device', 0)], now)).toBe(
-      'agent-device \u00B7 <1m',
-    );
-  });
-
-  it('lists each distinct tool and ignores devices that are not driven', () => {
-    expect(driversSummary([driven('agent-device', 12), { state: 'idle', basis: [] }, driven('claude', 30)], now)).toBe(
-      'agent-device, claude \u00B7 12m',
-    );
-    expect(driversSummary([{ state: 'idle', basis: [] }, undefined], now)).toBeNull();
   });
 
   it('spells the driving and idle time out for assistive technology', () => {

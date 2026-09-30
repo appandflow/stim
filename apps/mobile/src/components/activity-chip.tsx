@@ -3,9 +3,9 @@ import { useNow } from '@/hooks/use-now';
 import { activityBadge } from '@/lib/format';
 import type { DeviceActivity } from '@/protocol/types';
 
-export function ActivityChip({ activity, frozenAt }: { activity?: DeviceActivity; frozenAt?: number | null }) {
-  const ticking = useNow(30_000);
-  const badge = activityBadge(activity, frozenAt ?? ticking);
+export function ActivityChip({ activity }: { activity?: DeviceActivity }) {
+  const now = useNow(30_000);
+  const badge = activityBadge(activity, now);
   if (!badge) return null;
   return <Pill tone={badge.kind === 'driven' ? 'accent' : 'neutral'}>{badge.text}</Pill>;
 }

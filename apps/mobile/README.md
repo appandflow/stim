@@ -12,31 +12,42 @@ reload and stop a workspace:
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  in Live and Idle sections, each by project and name, so a workspace keeps its
-  place while builds run and agents attach. A workspace
-  `stim worktree warm` is preparing shows **Warming…** with its step and an
-  activity indicator, and one it has prepared shows **Ready** until its first
-  run; both count as live for the filters. Each is titled by its worktree's
-  branch, or the worktree's folder when it has no branch, or the project for a
-  main checkout,
-  truncated in the middle when long. Under the title are the project, the app's
-  folder in its checkout, the machine's name and the
-  git state (a dot with the count of uncommitted files, arrows for commits ahead
-  of and behind the upstream, and **merged** once gc would call the branch
-  merged), Metro, devices and
-  their activity (driven by a tool, or idle), the workspace's agent session
-  (the same one the Work card shows, running or ended) with how many others it
-  has, build progress, error and warning counts, and remote EAS sessions. A machine that is not connected keeps its
-  last status: its rows are dimmed with a hollow dot and "Last seen 3m ago",
-  and their activity and build times stop at the moment it disconnected. Its
-  device chips turn grey. The phone keeps each machine's last status on disk,
+  grouped by repo. Each repo is a heading with how many of its workspaces are
+  live and idle; repos with a live workspace come first, then by name. In a
+  repo, live workspaces come before idle ones, each by name and machine, so a
+  workspace moves only when it turns live or idle, not while builds run and
+  agents attach. A workspace `stim worktree warm` is preparing or has prepared
+  counts as live. Each row is titled by its worktree's branch, or the
+  worktree's folder when it has no branch, or the project for a main checkout,
+  truncated in the middle when long. At the trailing edge, a word says what the
+  workspace is doing: **Building iOS**, **Warming** with how long, **Ready**
+  until its first run, **Driven** with how long an agent has driven a device,
+  **Running**, or **Idle** with how long ago Metro stopped. Below the title, in
+  this order and only when there is something to show: the workspace's agent
+  session (the same one the Work card shows, running or ended) with how many
+  others it has; what is wrong (error count, which opens the logs, a failed
+  build while the workspace is live or for a day after, a closed app, **CI
+  failing**, and warning or issue counts); while building, the build step with
+  its counts, the cache outcome and the elapsed time against the estimate over
+  a bar of the planned phases; while warming, the step with an activity
+  indicator; the running devices by kind (`2 iOS, Android`) with the tools
+  driving them, or how long they have been idle once that is 10 minutes, and
+  remote EAS sessions; and the git state: the pull request number colored by
+  its state, commits ahead and behind, changed files, **merged into** and **no
+  upstream**. The machine's name shows only when more than one machine is
+  paired, and the app's folder in its checkout only when a repo's workspaces
+  sit in different folders. Metro's port is on the workspace screen. A row is
+  one element for VoiceOver and TalkBack, whose label says all of this; a row
+  with errors has a **Show errors** action. A machine that is not connected keeps its
+  last status: its rows are dimmed with a hollow dot and read "Last seen 3m
+  ago", and their activity and build times stop at the moment it disconnected, and
+  their colors turn grey. The phone keeps each machine's last status on disk,
   written at most every 5 seconds and when the app leaves the foreground or the
   connection drops, so a cold launch shows those rows, dimmed with "Last seen",
   until the machine's live status replaces them. Forgetting a machine deletes
   its saved status. The first launch of a new app build, update or rollback
   deletes every saved status and the notification state first, so that code
   never reads what an older version wrote; pairings and settings stay.
-  "Activity unknown" is grey: it means Stim has no data, not a problem.
 - **Needs attention**: a strip between the machine chips and the list, hidden
   when nothing is wrong, lists the problems on every paired machine, whatever
   the filters, errors (red) before warnings (amber): a machine that is offline
@@ -54,7 +65,8 @@ reload and stop a workspace:
   machine, with its latest frame, model, workspace name and machine, by project
   and workspace name and, inside a workspace, iOS, Android, Web and then physical
   devices, by slot. A tile never moves because a tool starts or stops driving
-  it; its driven badge shows that instead.
+  it; its driven badge shows that instead. "Activity unknown" is grey: it
+  means Stim has no data, not a problem.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile's screen opens the [device view](#device-view); tapping the
