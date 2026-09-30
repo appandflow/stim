@@ -123,12 +123,8 @@ struct ResourcesSection: View {
       if !rows.isEmpty {
         ProcessRowsTable(rows: rows)
       }
-      if let disk = env.diskBreakdown(format: { Format.fileSize(Int64($0)) }) {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Image(systemName: "internaldrive").foregroundStyle(Palette.secondary)
-          Text(disk).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.stim(.footnote))
+      if let disk = env.diskBreakdown {
+        DiskCard(breakdown: disk)
       }
     }
   }
@@ -149,6 +145,54 @@ struct ResourcesSection: View {
     .padding(Space.md)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+  }
+}
+
+/// The workspace's disk as a total, a bar split by what holds it, and one row per part.
+private struct DiskCard: View {
+  var breakdown: DiskBreakdown
+
+  private func color(_ part: DiskBreakdown.Part) -> Color {
+    switch part.kind {
+    case .nodeModules: Palette.accent
+    case .worktree: Palette.tertiary
+    case .build: Palette.info
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      Label("Disk", systemImage: "internaldrive").foregroundStyle(Palette.secondary)
+      Text(Format.fileSize(Int64(breakdown.total))).font(.stim(.headline)).monospacedDigit()
+      GeometryReader { geo in
+        HStack(spacing: 1) {
+          ForEach(breakdown.parts) { part in
+            Rectangle().fill(color(part))
+              .frame(width: max(2, geo.size.width * CGFloat(part.bytes / max(breakdown.total, 1))))
+          }
+        }
+        .frame(width: geo.size.width, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.small))
+      }
+      .frame(height: 6)
+      .accessibilityHidden(true)
+      VStack(spacing: Space.xs) {
+        ForEach(breakdown.parts) { part in
+          HStack(spacing: Space.sm) {
+            Circle().fill(color(part)).frame(width: 7, height: 7)
+            Text(breakdown.label(of: part))
+            Spacer(minLength: Space.sm)
+            Text(Format.fileSize(Int64(part.bytes))).monospacedDigit().foregroundStyle(Palette.secondary)
+          }
+          .accessibilityElement(children: .combine)
+        }
+      }
+      .font(.stim(.footnote))
+    }
+    .padding(Space.md)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+    .help("The worktree folder, with node_modules counted on its own, plus Stim's build folder for this workspace")
   }
 }
 
