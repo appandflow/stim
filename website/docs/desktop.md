@@ -300,4 +300,3 @@ worktrees for merged PRs". `stim worktree remove` cannot be undone, so the
 checks are the safeguard. The option needs the GitHub CLI, `gh`, signed in;
 without it the app removes nothing for this option, and `stim gc` reports why
 (see [removing finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk)).
-Temporary <Foo> break.
