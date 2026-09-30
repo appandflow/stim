@@ -9,6 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Banner } from '@/components/banner';
 import { Button } from '@/components/button';
 import { Card } from '@/components/card';
+import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { CollapsibleSection } from '@/components/collapsible-section';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
@@ -704,7 +705,6 @@ function WorktreeItem({ row, indent }: { row: WorktreeRow; indent: boolean }) {
 }
 
 function RepositoryRows({ repository, home }: { repository: RepositoryRow; home: string | null | undefined }) {
-  const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
   const { name } = repository;
   const count = repository.worktrees.length;
@@ -721,8 +721,8 @@ function RepositoryRows({ repository, home }: { repository: RepositoryRow; home:
         accessibilityState={{ expanded }}
         style={styles.row}
       >
-        <View style={styles.chevron(expanded)}>
-          <Icon name="chevron.right" size={11} color={theme.colors.tertiary} />
+        <View style={styles.chevron}>
+          <DisclosureChevron open={expanded} size={11} />
         </View>
         <View style={styles.grow}>
           <Text variant="callout" weight="semibold" numberOfLines={1}>
@@ -734,13 +734,13 @@ function RepositoryRows({ repository, home }: { repository: RepositoryRow; home:
         </View>
         <SizeText size={repository.total} strong />
       </Touch>
-      {expanded
-        ? repository.worktrees.map((row) => (
-            <View key={row.path} style={styles.separated}>
-              <WorktreeItem row={row} indent />
-            </View>
-          ))
-        : null}
+      <Collapsible open={expanded}>
+        {repository.worktrees.map((row) => (
+          <View key={row.path} style={styles.separated}>
+            <WorktreeItem row={row} indent />
+          </View>
+        ))}
+      </Collapsible>
     </View>
   );
 }
@@ -920,7 +920,7 @@ const styles = StyleSheet.create((theme) => ({
   chip: { flexDirection: 'row', marginTop: theme.space.xs },
   figures: { alignItems: 'flex-end' },
   tabular: { fontVariant: ['tabular-nums'] },
-  chevron: (open: boolean) => ({ width: 12, transform: [{ rotate: open ? '90deg' : '0deg' }] }),
+  chevron: { width: 12 },
   group: { flexDirection: 'column', alignItems: 'stretch', gap: theme.space.sm },
   groupHeader: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.lg },
   issue: (error: boolean) => ({

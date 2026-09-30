@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Collapsible } from '@/components/collapsible';
 import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
@@ -21,39 +22,44 @@ export function AttentionStrip({
   const [expandedState, setExpanded] = useState(false);
   if (items.length === 0) return null;
   const expanded = expandedState && items.length > COLLAPSED;
-  const shown = expanded ? items : items.slice(0, COLLAPSED);
-  const more = items.length - shown.length;
+  const more = items.length - COLLAPSED;
+  const renderItem = (item: HomeAttentionItem, index: number) => {
+    const tone = item.severity === 'error' ? 'error' : 'warning';
+    const { title, macName, detail } = item;
+    const label =
+      item.severity === 'error'
+        ? t`Error: ${title} on ${macName}, ${detail}`
+        : t`Warning: ${title} on ${macName}, ${detail}`;
+    return (
+      <Touch
+        key={item.key}
+        feedback="row"
+        onPress={() => onOpen(item)}
+        accessibilityLabel={label}
+        style={[styles.row, index > 0 && styles.divider]}
+      >
+        <View style={styles.dot(tone)} />
+        <View style={styles.text}>
+          <Text variant="callout" weight="semibold" numberOfLines={1} ellipsizeMode="middle">
+            {item.title}
+          </Text>
+          <Text variant="footnote" tone={tone} numberOfLines={2}>
+            {item.detail}
+          </Text>
+        </View>
+        <Icon name="chevron.right" size={13} color={theme.colors.tertiary} />
+      </Touch>
+    );
+  };
   return (
     <View style={styles.card}>
-      {shown.map((item, index) => {
-        const tone = item.severity === 'error' ? 'error' : 'warning';
-        const { title, macName, detail } = item;
-        const label =
-          item.severity === 'error'
-            ? t`Error: ${title} on ${macName}, ${detail}`
-            : t`Warning: ${title} on ${macName}, ${detail}`;
-        return (
-          <Touch
-            key={item.key}
-            feedback="row"
-            onPress={() => onOpen(item)}
-            accessibilityLabel={label}
-            style={[styles.row, index > 0 && styles.divider]}
-          >
-            <View style={styles.dot(tone)} />
-            <View style={styles.text}>
-              <Text variant="callout" weight="semibold" numberOfLines={1} ellipsizeMode="middle">
-                {item.title}
-              </Text>
-              <Text variant="footnote" tone={tone} numberOfLines={2}>
-                {item.detail}
-              </Text>
-            </View>
-            <Icon name="chevron.right" size={13} color={theme.colors.tertiary} />
-          </Touch>
-        );
-      })}
-      {more > 0 || expanded ? (
+      {items.slice(0, COLLAPSED).map(renderItem)}
+      {more > 0 ? (
+        <Collapsible open={expanded}>
+          {items.slice(COLLAPSED).map((item, index) => renderItem(item, COLLAPSED + index))}
+        </Collapsible>
+      ) : null}
+      {more > 0 ? (
         <Touch feedback="row" onPress={() => setExpanded(!expanded)} style={[styles.row, styles.divider]}>
           <Text variant="footnote" weight="medium" tone="brand">
             {expanded ? t`Show fewer` : t`${more} more`}

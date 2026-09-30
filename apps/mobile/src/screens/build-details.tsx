@@ -6,6 +6,7 @@ import { EaseView, type Transition } from 'react-native-ease';
 import { useReducedMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { Icon } from '@/components/icon';
 import { ListSection, SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
@@ -483,9 +484,7 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                   <Text variant="footnote" tone="secondary">
                     {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
                   </Text>
-                  <View style={{ transform: [{ rotate: expanded ? '90deg' : '0deg' }] }}>
-                    <Icon name="chevron.right" size={12} color={theme.colors.tertiary} />
-                  </View>
+                  <DisclosureChevron open={expanded} size={12} />
                 </View>
                 <Text
                   variant="footnote"
@@ -496,7 +495,9 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
                   {historyDetail(entry, now)}
                 </Text>
               </Touch>
-              {expanded ? <HistoryEntryDetails entry={entry} root={root} /> : null}
+              <Collapsible open={expanded}>
+                <HistoryEntryDetails entry={entry} root={root} />
+              </Collapsible>
             </View>
           );
         })}
@@ -553,7 +554,6 @@ function Fallback({ build }: { build: LastBuild }) {
       onPress={() => setOpen(!open)}
       accessibilityState={{ expanded: open }}
       accessibilityLabel={open ? line.reason : t`${text}. Shows why.`}
-      style={styles.fallback}
     >
       <View style={styles.row}>
         <Icon name="desktopcomputer" size={12} color={theme.colors.tertiary} />
@@ -561,11 +561,13 @@ function Fallback({ build }: { build: LastBuild }) {
           {line.text}
         </Text>
       </View>
-      {open ? (
-        <Text variant="footnote" tone="tertiary" selectable>
-          {line.reason}
-        </Text>
-      ) : null}
+      <Collapsible open={open}>
+        <View style={styles.fallbackReason}>
+          <Text variant="footnote" tone="tertiary" selectable>
+            {line.reason}
+          </Text>
+        </View>
+      </Collapsible>
     </Touch>
   );
 }
@@ -627,7 +629,7 @@ function Note({ children }: { children: ReactNode }) {
 const styles = StyleSheet.create((theme) => ({
   container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
   titles: { gap: theme.space.xxs },
-  fallback: { gap: theme.space.xxs },
+  fallbackReason: { paddingTop: theme.space.xxs },
   switch: {
     flexDirection: 'row',
     padding: SWITCH_INSET,
