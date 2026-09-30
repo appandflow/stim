@@ -489,10 +489,9 @@ msgstr "{platform} · {since} ago"
 msgid "{platform} · started {since} ago"
 msgstr "{platform} · started {since} ago"
 
-#. placeholder {0}: d.slot
 #: src/lib/spoken-status.ts
-msgid "{platform} {0}"
-msgstr "{platform} {0}"
+msgid "{platform} {slot}"
+msgstr "{platform} {slot}"
 
 #: src/lib/workspace-view.ts
 msgid "{platform} app closed"

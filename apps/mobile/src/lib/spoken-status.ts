@@ -51,7 +51,8 @@ export function workspaceStatusLabels(env: EnvironmentState, now: number): strin
   if (env.supervisor && !env.supervisor.healthy) parts.push(t`supervisor unhealthy`);
   for (const d of devicesOf(env).filter((device) => device.running)) {
     const platform = platformName(d.platform);
-    const name = d.slot === 'default' ? platform : t`${platform} ${d.slot}`;
+    const { slot } = d;
+    const name = slot === 'default' ? platform : t`${platform} ${slot}`;
     const activity = activityLabel(d.activity, now);
     parts.push(activity ? t`${name}, ${activity}` : t`${name} running`);
   }
