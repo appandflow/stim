@@ -1,30 +1,36 @@
-import { agentLabel, agentShortLabel, agentsSummary, agentWebUrl } from '@/lib/agents';
+import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/agent-sessions-vectors.json';
+
+import { agentName, agentLabel, agentsSummary, agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
 import type { AgentSession, EndedAgentSession } from '@/protocol/types';
 
-const NOW = Date.parse('2026-09-28T12:00:00.000Z');
-const claude: AgentSession = {
-  tool: 'claude-code',
-  sessionId: 'a',
-  cwd: '/w',
-  title: 'Fix the login bug',
-  lastActiveAt: '2026-09-28T11:55:00.000Z',
+const vectors = fixture as unknown as {
+  labels: { name: string; session: AgentSession; label: string }[];
+  order: { name: string; agents?: AgentSession[]; endedAgents?: EndedAgentSession[]; ids: string[] }[];
 };
+
+const claude: AgentSession = { tool: 'claude-code', sessionId: 'a', cwd: '/w', title: 'Fix the login bug' };
 const codex: AgentSession = { tool: 'codex', sessionId: 'b', cwd: '/w' };
 
-test('an agent label names the tool, the title when there is one and the activity age', () => {
-  expect(agentLabel(claude, NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 5m ago');
-  expect(agentLabel(codex, NOW)).toBe('Codex');
+describe('agentLabel', () => {
+  it.each(vectors.labels.map((c) => [c.name, c] as const))('%s', (_, { session, label }) => {
+    expect(agentLabel(session)).toBe(label);
+  });
 });
 
-test('a short label keeps the title and age, and falls back to the tool without a title', () => {
-  expect(agentShortLabel(claude, NOW)).toEqual({ name: 'Fix the login bug', age: '5m' });
-  expect(agentShortLabel(codex, NOW)).toEqual({ name: 'Codex', age: null });
+describe('workspaceAgentSessions', () => {
+  it.each(vectors.order.map((c) => [c.name, c] as const))('%s', (_, { agents, endedAgents, ids }) => {
+    expect(workspaceAgentSessions({ agents, endedAgents }).map((s) => `${s.tool}:${s.sessionId}`)).toEqual(ids);
+  });
 });
 
-test('the summary shows the most recent session and counts the others', () => {
-  expect(agentsSummary(undefined, NOW)).toBeNull();
-  expect(agentsSummary([claude], NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 5m ago');
-  expect(agentsSummary([claude, codex], NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 5m ago +1');
+test('a session is named by its title, or by the tool without one', () => {
+  expect(agentName(claude)).toBe('Fix the login bug');
+  expect(agentName({ ...codex, title: '' })).toBe('Codex');
+});
+
+test('the summary shows the first session and counts the others', () => {
+  expect(agentsSummary([])).toBeNull();
+  expect(agentsSummary([claude, codex])).toBe('Claude Code \u00B7 Fix the login bug +1');
 });
 
 test('only an https web link opens a session from the phone', () => {
@@ -32,10 +38,4 @@ test('only an https web link opens a session from the phone', () => {
   expect(agentWebUrl({ ...claude, webUrl: url })).toBe(url);
   expect(agentWebUrl({ ...claude, openUrl: 'claude://code/continue?session=local_a' })).toBeNull();
   expect(agentWebUrl({ ...claude, webUrl: 'javascript:alert(1)' })).toBeNull();
-});
-
-test('an ended session is labelled by how long ago it ended', () => {
-  const ended: EndedAgentSession = { ...claude, endedAt: '2026-09-28T10:00:00.000Z' };
-  expect(agentLabel(ended, NOW)).toBe('Claude Code \u00B7 Fix the login bug \u00B7 ended 2h ago');
-  expect(agentShortLabel(ended, NOW)).toEqual({ name: 'Fix the login bug', age: '2h' });
 });

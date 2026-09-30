@@ -1,42 +1,46 @@
-import { shortDuration } from '@/lib/format';
-import type { AgentSession, EndedAgentSession } from '@/protocol/types';
+import type { AgentSession, EnvironmentState } from '@/protocol/types';
 
-function toolName(tool: AgentSession['tool']): string {
-  return tool === 'codex' ? 'Codex' : 'Claude Code';
+/** The tool's product name; a tool this app does not know is shown by its raw name. */
+export function toolName(tool: string): string {
+  return tool === 'codex' ? 'Codex' : tool === 'claude-code' ? 'Claude Code' : tool;
 }
 
-/** A running session or one that ended; only an ended one carries `endedAt`. */
-export type AnyAgentSession = AgentSession | EndedAgentSession;
+const startedAtOf = (agent: AgentSession) => {
+  const at = Date.parse(agent.startedAt ?? '');
+  return Number.isFinite(at) ? at : Infinity;
+};
+const keyOf = (agent: AgentSession) => `${agent.tool}:${agent.sessionId}`;
 
-export function isEndedAgent(agent: AnyAgentSession): agent is EndedAgentSession {
-  return 'endedAt' in agent && typeof agent.endedAt === 'string';
+/**
+ * The workspace's agent sessions, running or ended, earliest started first, so the first is the session that created or
+ * first worked in the workspace and stays first as processes start and stop. Sessions without `startedAt` follow, in
+ * `tool:sessionId` order. Stim Desktop's `AgentSession.associated` holds the same rule; both replay
+ * apps/desktop/Tests/StimKitTests/Fixtures/agent-sessions-vectors.json.
+ */
+export function workspaceAgentSessions(env: Pick<EnvironmentState, 'agents' | 'endedAgents'>): AgentSession[] {
+  return [...(env.agents ?? []), ...(env.endedAgents ?? [])].sort(
+    (a, b) => startedAtOf(a) - startedAtOf(b) || (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0),
+  );
 }
 
-function activityAge(agent: AnyAgentSession, now: number): string | null {
-  const at = Date.parse((isEndedAgent(agent) ? agent.endedAt : agent.lastActiveAt) ?? '');
-  return Number.isFinite(at) ? shortDuration(Math.max(0, now - at)) : null;
+/** The tool and the session's title when it has one, joined by a middle dot. */
+export function agentLabel(agent: AgentSession): string {
+  return [toolName(agent.tool), agent.title].filter(Boolean).join(' \u00B7 ');
 }
 
-/** The tool, the session's title when it has one, and its activity or end age, joined by middle dots. */
-export function agentLabel(agent: AnyAgentSession, now: number): string {
-  const age = activityAge(agent, now);
-  const when = age ? `${isEndedAgent(agent) ? 'ended ' : ''}${age} ago` : isEndedAgent(agent) ? 'ended' : null;
-  return [toolName(agent.tool), agent.title, when].filter(Boolean).join(' \u00B7 ');
+/** The session's title, or the tool when it has none, for a line too narrow for both. */
+export function agentName(agent: AgentSession): string {
+  return agent.title || toolName(agent.tool);
 }
 
-/** The session's title, or the tool when it has none, and its activity or end age, for a line too narrow for both. */
-export function agentShortLabel(agent: AnyAgentSession, now: number): { name: string; age: string | null } {
-  return { name: agent.title || toolName(agent.tool), age: activityAge(agent, now) };
-}
-
-/** The most recently active session's label, with how many others work in the workspace. */
-export function agentsSummary(agents: AgentSession[] | undefined, now: number): string | null {
-  const [first, ...rest] = agents ?? [];
+/** The workspace's session's label, with how many other sessions it has. */
+export function agentsSummary(sessions: AgentSession[]): string | null {
+  const [first, ...rest] = sessions;
   if (!first) return null;
-  return rest.length ? `${agentLabel(first, now)} +${rest.length}` : agentLabel(first, now);
+  return rest.length ? `${agentLabel(first)} +${rest.length}` : agentLabel(first);
 }
 
 /** The session's https link for other devices, which opens it in the Claude app or a browser; any other scheme is ignored. */
-export function agentWebUrl(agent: AnyAgentSession): string | null {
+export function agentWebUrl(agent: AgentSession): string | null {
   return agent.webUrl?.startsWith('https://') ? agent.webUrl : null;
 }

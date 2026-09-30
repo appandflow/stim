@@ -26,6 +26,7 @@ import {
 } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { useRecents } from '@/hooks/recents';
+import { workspaceAgentSessions } from '@/lib/agents';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
@@ -259,10 +260,8 @@ export function WorkspaceDetail({ path }: { path: string }) {
             onPress={() => openLogs((env.logs?.errorsSinceMarker ?? 0) > 0)}
           />
           <WorkCard
-            agents={env.agents ?? []}
-            endedAgents={env.endedAgents ?? []}
+            sessions={workspaceAgentSessions(env)}
             git={gitChip(env.worktree)}
-            now={now}
             onPress={() => open('/mac/[id]/work')}
           />
         </CardGrid>

@@ -856,8 +856,9 @@ carries it for 3 days in `endedAgents`, most recently ended first. Each entry
 has the fields above except `pid`, as the watcher last found them, including
 its `openUrl` and `webUrl`, plus `endedAt`, the last time the watcher found it
 running. A Codex thread ends 30 minutes after its last update. A session that
-runs again is listed in `agents` only. Stim Desktop and the phone app show
-ended sessions, muted, after running ones.
+runs again is listed in `agents` only. Stim Desktop and the phone app show a
+workspace's running and ended sessions alike, earliest `startedAt` first,
+without times.
 
 In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and
