@@ -371,8 +371,12 @@ struct GcPreviewView: View {
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.lg) {
-          Text(report.actionable ? "stim gc --delete would act on the entries not marked kept." : "Nothing here is deletable.")
-            .foregroundStyle(Palette.secondary)
+          Text(
+            report.actionable
+              ? "stim gc --delete would act on the entries not marked kept."
+              : "stim gc --delete would remove nothing: every entry is kept."
+          )
+          .foregroundStyle(Palette.secondary)
           ForEach(report.sections, id: \.key) { section in
             VStack(alignment: .leading, spacing: Space.sm) {
               HStack(spacing: Space.md) {
@@ -400,10 +404,9 @@ struct GcPreviewView: View {
         Text(abbreviatingHome(entry.label))
           .font(.stim(.caption, mono: true))
           .foregroundStyle(entry.kept == nil ? Palette.text : Palette.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
+          .fixedSize(horizontal: false, vertical: true)
         if let kept = entry.kept {
-          Text("kept: \(abbreviatingHome(kept))").foregroundStyle(Palette.tertiary).lineLimit(2)
+          Text("kept: \(abbreviatingHome(kept))").foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
         }
       }
       Spacer()
