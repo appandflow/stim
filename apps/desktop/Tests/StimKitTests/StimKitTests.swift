@@ -705,7 +705,9 @@ import Testing
       ]}
       """
     let outcome = try GcOutcome(json: Data(json.utf8))
-    #expect(outcome.headline == "Freed 4.85 GB \u{00B7} Stopped 2 helper processes \u{00B7} Removed 1 stale watchman root")
+    #expect(
+      outcome.headline == "Reclaimed 4.52 GB of memory \u{00B7} Stopped 2 helper processes \u{00B7} Removed 1 stale watchman root"
+    )
     #expect(outcome.kept.map(\.detail) == ["a Gradle daemon is busy"])
   }
 

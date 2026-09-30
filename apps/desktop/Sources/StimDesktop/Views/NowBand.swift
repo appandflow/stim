@@ -11,7 +11,7 @@ struct NowBand: View {
 
   private static let valueWidth: CGFloat = 64
   private static let actionWidth: CGFloat = 88
-  private static let reclaimWidth: CGFloat = 124
+  private static let reclaimWidth: CGFloat = 140
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
@@ -21,9 +21,7 @@ struct NowBand: View {
         VStack(spacing: Space.md) { tiles }
       }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
-        let actionWidth =
-          machine.owners.contains { GcReport.reclaim(for: $0, in: gc.report) != nil }
-          ? Self.reclaimWidth : machine.owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
+        let actionWidth = actionWidth(machine.owners)
         CollapsibleSection("machine.processes", title: "Processes", items: machine.ranked) { shown in
           Text(
             machine.memorySource == .footprint
@@ -66,6 +64,11 @@ struct NowBand: View {
     } message: { item in
       Text(item.offer.consequence)
     }
+  }
+
+  private func actionWidth(_ owners: [MachineOwner]) -> CGFloat {
+    if owners.contains(where: { GcReport.reclaim(for: $0, in: gc.report) != nil }) { return Self.reclaimWidth }
+    return owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
   }
 
   @ViewBuilder private var tiles: some View {
@@ -112,7 +115,7 @@ struct NowBand: View {
         Text(owner.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text(ownerLine(owner)).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
         if let reason = GcReport.reclaim(for: owner, in: gc.report)?.unavailableReason {
-          Text("Kept: \(abbreviatingHome(reason))")
+          Text(abbreviatingHome(reason))
             .font(.stim(.caption))
             .foregroundStyle(Palette.tertiary)
             .lineLimit(2)
@@ -149,7 +152,7 @@ struct NowBand: View {
         .fixedSize()
         .disabled(!offer.isAvailable || actions.active(for: ActionCenter.machineKey) != nil)
         .help(
-          offer.unavailableReason.map { "Kept: \(abbreviatingHome($0))" }
+          offer.unavailableReason.map { abbreviatingHome($0) }
             ?? "stim gc --delete --cache \(offer.cacheKind): stops only what gc proves unused")
     } else {
       Color.clear.frame(height: 1)
