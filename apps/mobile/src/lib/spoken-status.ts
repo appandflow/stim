@@ -1,8 +1,8 @@
 import { t } from '@lingui/core/macro';
 
 import { activityLabel, buildProgress, outcomeLabel, spokenDuration } from '@/lib/format';
-import { platformName, type DeviceRef } from '@/lib/workspaces';
-import type { BuildReport } from '@/protocol/types';
+import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
+import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
 /** A running build as spoken: what it builds, the phase, how long it has run, its cache outcome and the time left. */
 export function buildLabel(build: BuildReport, now: number): string {
@@ -22,8 +22,11 @@ export function buildLabel(build: BuildReport, now: number): string {
 }
 
 /** What a devices grid tile shows beyond its model, workspace and machine, as spoken labels. */
-export function deviceTileStatusLabels(device: DeviceRef, now: number): string[] {
+export function deviceTileStatusLabels(device: DeviceRef, now: number, env?: EnvironmentState): string[] {
+  const build = env ? runningBuild(env, device) : null;
   return [
+    build ? buildLabel(build, now) : null,
+    device.app?.state === 'stopped' ? t`app not running` : null,
     activityLabel(device.activity, now),
     device.physical ? t`Physical device` : null,
     device.page?.error ? t`Page failed to load` : null,

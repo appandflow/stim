@@ -64,9 +64,17 @@ reload and stop a workspace:
   the list to a grid of every running simulator and emulator on every paired
   machine, with its latest frame, model, workspace name and machine, by project
   and workspace name and, inside a workspace, iOS, Android, Web and then physical
-  devices, by slot. A tile never moves because a tool starts or stops driving
-  it; its driven badge shows that instead. "Activity unknown" is grey: it
-  means Stim has no data, not a problem.
+  devices, by slot. A tile shows the latest frame, then the platform logo and
+  model with the OS or emulator beside it (the OS shortens first), then one colored state that
+  wraps instead of truncating, then the workspace and its project, then the
+  workspace's agent session on one line, which opens its Claude link when it has one. The state is
+  the first that applies: **Building** with its elapsed time on that device, **Driven by**
+  a tool with how long, **App not running**, **Page failed to load**, **Idle**
+  with how long once nothing has used it for 10 minutes, **Activity unknown**
+  (grey: Stim has no data, not a problem), **In use**, **Leased**
+  for a physical device, and otherwise **Running**. The tile names the machine
+  only when more than one is paired. A tile never moves because a tool starts
+  or stops driving it; its state shows that instead.
   Phones sit two to a row; a device whose frame is wider than tall, such as a
   landscape iPad or an unfolded iPhone Duo, takes a whole row.
   Tapping a tile's screen opens the [device view](#device-view); tapping the

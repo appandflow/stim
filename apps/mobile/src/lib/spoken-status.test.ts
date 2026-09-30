@@ -60,4 +60,14 @@ describe('deviceTileStatusLabels', () => {
       'Page failed to load',
     ]);
   });
+
+  it('speaks a build running on the device and an app that is not running', () => {
+    const running = env({ ios: sim({ app: { id: 'a', state: 'stopped' } }), build: build() });
+    const [device] = devicesOf(running);
+    expect(deviceTileStatusLabels(device!, now, running)).toEqual([
+      'Building iOS, install, 2 minutes elapsed, Cache hit, about 3 min left',
+      'app not running',
+    ]);
+    expect(deviceTileStatusLabels(device!, now)).toEqual(['app not running']);
+  });
 });

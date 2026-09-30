@@ -327,10 +327,6 @@ msgstr "{minutesLeft} min left"
 msgid "{model} · {slot}"
 msgstr "{model} · {slot}"
 
-#: src/components/device-grid-tile.tsx
-msgid "{model}, {where}, on {macName}"
-msgstr "{model}, {where}, on {macName}"
-
 #: src/components/attention-strip.tsx
 msgid "{more} more"
 msgstr "{more} more"
@@ -849,6 +845,14 @@ msgstr "App closed"
 msgid "App failed to launch on {name} {count}x in a row"
 msgstr "App failed to launch on {name} {count}x in a row"
 
+#: src/lib/spoken-status.ts
+msgid "app not running"
+msgstr "app not running"
+
+#: src/lib/device-tile.ts
+msgid "App not running"
+msgstr "App not running"
+
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -938,6 +942,10 @@ msgstr "Build: {what}, {phase}, {timing}"
 #: src/lib/workspace-view.ts
 msgid "Building"
 msgstr "Building"
+
+#: src/lib/device-tile.ts
+msgid "Building · {elapsed}"
+msgstr "Building · {elapsed}"
 
 #: src/components/workspace-cards.tsx
 msgid "building {name}"
@@ -1163,6 +1171,7 @@ msgstr "checks passing"
 msgid "checks pending"
 msgstr "checks pending"
 
+#: src/lib/device-tile.ts
 #: src/lib/needs-attention.ts
 #: src/lib/workspaces.ts
 msgid "Chrome"
@@ -1515,6 +1524,7 @@ msgstr "EAS Simulator"
 msgid "EAS Simulator · {platformLabel}"
 msgstr "EAS Simulator · {platformLabel}"
 
+#: src/lib/device-tile.ts
 #: src/lib/workspace-view.ts
 msgid "Emulator"
 msgstr "Emulator"
@@ -1759,6 +1769,10 @@ msgstr "Idle for {spoken}"
 msgid "In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
 msgstr "In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
 
+#: src/lib/device-tile.ts
+msgid "In use"
+msgstr "In use"
+
 #: src/lib/workspace-view.ts
 msgid "Install"
 msgstr "Install"
@@ -1801,6 +1815,7 @@ msgstr "Interrupted"
 msgid "Invalid search: {message}"
 msgstr "Invalid search: {message}"
 
+#: src/lib/device-tile.ts
 #: src/lib/machine-report.ts
 #: src/lib/workspace-view.ts
 msgid "iOS {version}"
@@ -1894,6 +1909,10 @@ msgstr "Launch"
 #: src/lib/needs-attention.ts
 msgid "Lease on {leased} expired"
 msgstr "Lease on {leased} expired"
+
+#: src/lib/device-tile.ts
+msgid "Leased"
+msgstr "Leased"
 
 #: src/components/device-tile.tsx
 msgid "Leased · {leaseLeft} left"
@@ -2514,6 +2533,10 @@ msgstr "Open Settings"
 msgid "Open source licenses"
 msgstr "Open source licenses"
 
+#: src/components/device-grid-tile.tsx
+msgid "Open the agent session"
+msgstr "Open the agent session"
+
 #: src/components/device-tile.tsx
 msgid "Open the live screen of {deviceName}"
 msgstr "Open the live screen of {deviceName}"
@@ -2523,8 +2546,8 @@ msgid "Open the live screen of {deviceName}, app closed"
 msgstr "Open the live screen of {deviceName}, app closed"
 
 #: src/components/device-grid-tile.tsx
-msgid "Open the live screen of {model}"
-msgstr "Open the live screen of {model}"
+msgid "Open the live screen of {name}"
+msgstr "Open the live screen of {name}"
 
 #: src/components/workspace-cards.tsx
 msgid "Opens the logs"
@@ -2562,8 +2585,8 @@ msgstr "Over the cap; each log keeps its newest 8 MiB"
 msgid "Packaging"
 msgstr "Packaging"
 
-#: src/components/device-grid-tile.tsx
 #: src/components/device-tile.tsx
+#: src/lib/device-tile.ts
 #: src/lib/spoken-status.ts
 msgid "Page failed to load"
 msgstr "Page failed to load"
@@ -2612,7 +2635,6 @@ msgstr "Pause"
 msgid "peak {peakCpu}"
 msgstr "peak {peakCpu}"
 
-#: src/components/device-grid-tile.tsx
 #: src/components/device-tile.tsx
 msgid "Physical"
 msgstr "Physical"
@@ -2918,6 +2940,7 @@ msgstr "run Stim from a git checkout"
 msgid "running"
 msgstr "running"
 
+#: src/lib/device-tile.ts
 #: src/lib/home-list.ts
 #: src/lib/home-list.ts
 #: src/lib/workspace-view.ts
@@ -3642,6 +3665,14 @@ msgstr "Work started"
 #: src/app/_layout.tsx
 msgid "Workspace"
 msgstr "Workspace"
+
+#: src/components/device-grid-tile.tsx
+msgid "workspace {where}"
+msgstr "workspace {where}"
+
+#: src/components/device-grid-tile.tsx
+msgid "workspace {where}, on {macName}"
+msgstr "workspace {where}, on {macName}"
 
 #: src/screens/workspace-detail.tsx
 msgid "Workspace not found"

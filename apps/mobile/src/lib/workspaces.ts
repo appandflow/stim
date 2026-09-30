@@ -44,6 +44,8 @@ export interface DeviceRef {
   physical: boolean;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** The AVD's device profile id, such as `pixel_9`, for an Android emulator. */
+  profile?: string | null;
   /** The Stim-owned Chrome's current page and, when its latest load failed, why. */
   page?: { url: string; error: string | null };
   /** Bytes the device's data holds, when status measures it. */
@@ -107,6 +109,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     physical: avd.physical,
     activity: avd.activity,
     app: avd.app,
+    profile: avd.deviceProfile,
     diskBytes: avd.disk?.bytes ?? null,
   };
 }
