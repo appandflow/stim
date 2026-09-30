@@ -38,10 +38,12 @@ struct WallView: View {
               )
               .onTapGesture { selection = .environment(env.path) }
               .focusable()
-              .onKeyPress(.return) {
+              .onKeyPress(keys: [.return, .space]) { _ in
                 selection = .environment(env.path)
                 return .handled
               }
+              .accessibilityElement(children: .contain)
+              .accessibilityLabel(env.names.title)
               .accessibilityAddTraits(.isButton)
               .accessibilityAction { selection = .environment(env.path) }
               ScrollView(.horizontal, showsIndicators: false) {

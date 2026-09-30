@@ -13,7 +13,6 @@ final class StatusStore: ObservableObject {
   }
   private var projectTitleMap: [String: String] = [:]
   @Published private(set) var watching = false
-  /// The directory `stim` keeps its state in; `~/.stim` until the CLI's environment is known.
   private(set) var stimHome = "\(NSHomeDirectory())/.stim"
   @Published private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
 

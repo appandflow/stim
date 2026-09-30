@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const files = globSync('Sources/**/*.swift', { cwd: root, withFileTypes: true })
+const files = globSync('Sources/**/*', { cwd: root, withFileTypes: true })
   .filter((entry) => entry.isFile())
   .map((entry) => join(entry.parentPath, entry.name));
 
