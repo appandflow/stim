@@ -1,9 +1,9 @@
 import {
   activityBadge,
+  activityLabel,
   buildProgress,
   buildTiming,
   clockTime,
-  drivenLabel,
   driversSummary,
   gitBadges,
   durationBars,
@@ -79,9 +79,19 @@ describe('driversSummary', () => {
     expect(driversSummary([{ state: 'idle', basis: [] }, undefined], now)).toBeNull();
   });
 
-  it('spells the driving time out for assistive technology', () => {
-    expect(drivenLabel('iOS', driven('agent-device', 47), now)).toBe('iOS, driven by agent-device for 47 minutes');
-    expect(drivenLabel('Android', driven('claude', 61), now)).toBe('Android, driven by claude for 1 hour 1 minute');
+  it('spells the driving and idle time out for assistive technology', () => {
+    expect(activityLabel(driven('agent-device', 47), now)).toBe('driven by agent-device for 47 minutes');
+    expect(activityLabel(driven('claude', 61), now)).toBe('driven by claude for 1 hour 1 minute');
+    expect(activityLabel({ state: 'idle', lastActivityAt: ago(22 * 60_000), basis: [] }, now)).toBe(
+      'idle for 22 minutes',
+    );
+    expect(activityLabel({ state: 'unknown', basis: [] }, now)).toBe('activity unknown');
+  });
+
+  it('says nothing for a device used in the last 10 minutes, like the badge', () => {
+    expect(activityLabel({ state: 'idle', lastActivityAt: ago(3 * 60_000), basis: [] }, now)).toBeNull();
+    expect(activityLabel({ state: 'active', basis: [] }, now)).toBeNull();
+    expect(activityLabel(undefined, now)).toBeNull();
   });
 });
 

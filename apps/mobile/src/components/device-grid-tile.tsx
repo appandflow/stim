@@ -14,7 +14,9 @@ import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot } from '@/hooks/frames';
 import { useMachineLink } from '@/hooks/machines';
+import { useNow } from '@/hooks/use-now';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
+import { deviceTileStatusLabels } from '@/lib/spoken-status';
 import { shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
@@ -38,6 +40,7 @@ const sameTile = (a: TileProps, b: TileProps) =>
 
 export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible, onAspect, onOpen }: TileProps) {
   const { theme } = useUnistyles();
+  const now = useNow(30_000);
   const { connection, state: link } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
   const streams = streamsFrames(device, link.kind === 'open' ? link.features : null);
@@ -66,7 +69,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const zoomedAway = useZoomedAway(zoomKey(target));
   const { model } = device;
   const { macName } = item;
-  const tileLabel = t`${model}, ${where}, on ${macName}`;
+  const tileLabel = [t`${model}, ${where}, on ${macName}`, ...deviceTileStatusLabels(device, now)].join(', ');
   const openLabel = t`Open the live screen of ${model}`;
   const openLive = () => {
     if (frame) openDeviceViewer(thumbnail.current, target, frame);

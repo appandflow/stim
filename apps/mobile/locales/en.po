@@ -175,6 +175,10 @@ msgstr "{driverName} is driving it. Your touches and keys can interfere with its
 msgid "{duration} saved"
 msgstr "{duration} saved"
 
+#: src/lib/spoken-status.ts
+msgid "{elapsed} elapsed"
+msgstr "{elapsed} elapsed"
+
 #: src/components/workspace-cards.tsx
 msgid "{elapsed} of {estimate}"
 msgstr "{elapsed} of {estimate}"
@@ -185,6 +189,7 @@ msgstr "{errors, plural, one { error} other { errors}}"
 
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-row.tsx
+#: src/lib/spoken-status.ts
 #: src/lib/workspace-view.ts
 msgid "{errors, plural, one {# error} other {# errors}}"
 msgstr "{errors, plural, one {# error} other {# errors}}"
@@ -431,6 +436,10 @@ msgstr "{name} signing or provisioning failed ({code})"
 msgid "{name} simulator"
 msgstr "{name} simulator"
 
+#: src/lib/spoken-status.ts
+msgid "{name}, {activity}"
+msgstr "{name}, {activity}"
+
 #: src/components/mac-chip.tsx
 msgid "{name}, {detail}"
 msgstr "{name}, {detail}"
@@ -438,14 +447,6 @@ msgstr "{name}, {detail}"
 #: src/screens/mac-status.tsx
 msgid "{name}, {worktrees}"
 msgstr "{name}, {worktrees}"
-
-#: src/lib/format.ts
-msgid "{name}, driven by {tool}"
-msgstr "{name}, driven by {tool}"
-
-#: src/lib/format.ts
-msgid "{name}, driven by {tool} for {spoken}"
-msgstr "{name}, driven by {tool} for {spoken}"
 
 #: src/lib/drawer-status.ts
 msgid "{name}: low disk"
@@ -519,6 +520,10 @@ msgstr "{seconds}s"
 #: src/intl/format.ts
 msgid "{secs}s"
 msgstr "{secs}s"
+
+#: src/lib/spoken-status.ts
+msgid "{sessions, plural, one {# EAS session} other {# EAS sessions}}"
+msgstr "{sessions, plural, one {# EAS session} other {# EAS sessions}}"
 
 #: src/lib/workspace-view.ts
 msgid "{since} ago"
@@ -614,6 +619,14 @@ msgstr "{usedGb}/{totalGb} GB"
 msgid "{v} GB"
 msgstr "{v} GB"
 
+#: src/lib/spoken-status.ts
+msgid "{warnings, plural, one {# issue} other {# issues}}"
+msgstr "{warnings, plural, one {# issue} other {# issues}}"
+
+#: src/lib/spoken-status.ts
+msgid "{warnings, plural, one {# warning} other {# warnings}}"
+msgstr "{warnings, plural, one {# warning} other {# warnings}}"
+
 #: src/lib/workspace-view.ts
 msgid "{what} → built here"
 msgstr "{what} → built here"
@@ -700,6 +713,10 @@ msgstr "About Stim"
 #: src/screens/agent-actions.tsx
 msgid "active"
 msgstr "active"
+
+#: src/lib/format.ts
+msgid "activity unknown"
+msgstr "activity unknown"
 
 #: src/lib/format.ts
 msgid "Activity unknown"
@@ -953,10 +970,12 @@ msgid "Building {name} on {host}"
 msgstr "Building {name} on {host}"
 
 #: src/components/build-progress.tsx
+#: src/lib/spoken-status.ts
 msgid "Building {platform}"
 msgstr "Building {platform}"
 
 #: src/components/build-progress.tsx
+#: src/lib/spoken-status.ts
 msgid "Building {platform} · {slot}"
 msgstr "Building {platform} · {slot}"
 
@@ -1447,12 +1466,20 @@ msgid "Driven by {driver}"
 msgstr "Driven by {driver}"
 
 #: src/lib/format.ts
+msgid "driven by {tool}"
+msgstr "driven by {tool}"
+
+#: src/lib/format.ts
 msgid "Driven by {tool}"
 msgstr "Driven by {tool}"
 
 #: src/lib/format.ts
 msgid "Driven by {tool} · {duration}"
 msgstr "Driven by {tool} · {duration}"
+
+#: src/lib/format.ts
+msgid "driven by {tool} for {spoken}"
+msgstr "driven by {tool} for {spoken}"
 
 #: src/screens/agent-actions.tsx
 msgid "driving {driving}"
@@ -1688,6 +1715,7 @@ msgstr "Home"
 msgid "Home view"
 msgstr "Home view"
 
+#: src/lib/format.ts
 #: src/screens/mac-status.tsx
 msgid "idle"
 msgstr "idle"
@@ -1705,6 +1733,10 @@ msgstr "Idle {duration}"
 #: src/lib/workspace-view.ts
 msgid "idle {idle}"
 msgstr "idle {idle}"
+
+#: src/lib/format.ts
+msgid "idle for {spoken}"
+msgstr "idle for {spoken}"
 
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -2039,6 +2071,10 @@ msgstr "Metro :{port}"
 #: src/components/workspace-cards.tsx
 msgid "Metro {metroState}"
 msgstr "Metro {metroState}"
+
+#: src/lib/spoken-status.ts
+msgid "Metro running on port {port}"
+msgstr "Metro running on port {port}"
 
 #: src/lib/settings-options.ts
 msgid "Midnight to 8 AM"
@@ -2512,6 +2548,7 @@ msgstr "Packaging"
 
 #: src/components/device-grid-tile.tsx
 #: src/components/device-tile.tsx
+#: src/lib/spoken-status.ts
 msgid "Page failed to load"
 msgstr "Page failed to load"
 
@@ -2563,6 +2600,10 @@ msgstr "peak {peakCpu}"
 #: src/components/device-tile.tsx
 msgid "Physical"
 msgstr "Physical"
+
+#: src/lib/spoken-status.ts
+msgid "Physical device"
+msgstr "Physical device"
 
 #: src/components/replay-bar.tsx
 msgid "Play"
@@ -3226,6 +3267,7 @@ msgid "Stuck after"
 msgstr "Stuck after"
 
 #: src/components/workspace-row.tsx
+#: src/lib/spoken-status.ts
 msgid "supervisor unhealthy"
 msgstr "supervisor unhealthy"
 
