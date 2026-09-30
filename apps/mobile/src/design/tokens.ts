@@ -13,6 +13,7 @@ export const space = {
   xxl: 20,
   xxxl: 24,
   huge: 32,
+  giant: 48,
 } as const;
 
 export const radius = {

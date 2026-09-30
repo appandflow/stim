@@ -1,10 +1,10 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { ListSection } from '@/components/list';
-import { ScrollView } from '@/components/lists';
+import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
@@ -29,7 +29,6 @@ function workspaceVolumeFree(usage: MachineUsage | null): number | null {
 }
 
 export function WorkspaceResources({ path }: { path: string }) {
-  const { theme } = useUnistyles();
   const status = useStatus();
   const { mac } = useMacConnection();
   const machineUsage = useMachineUsage(mac?.id);
@@ -38,14 +37,11 @@ export function WorkspaceResources({ path }: { path: string }) {
   const env = status?.environments.find((e) => e.path === path);
   if (!env) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-        <Text variant="title">
-          <Trans>Status</Trans>
-        </Text>
+      <SheetScreen title={t`Status`}>
         <Text tone="secondary">
           <Trans>This workspace is no longer in the status.</Trans>
         </Text>
-      </View>
+      </SheetScreen>
     );
   }
   const usage = workspaceUsage(env, status?.machine);
@@ -64,23 +60,24 @@ export function WorkspaceResources({ path }: { path: string }) {
     .filter(Boolean)
     .join(' ');
   return (
-    <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
-      <View style={styles.titles}>
-        <Text variant="title">
-          <Trans>Status</Trans>
-        </Text>
-        <Text variant="callout" weight="semibold" tone={stage.tone}>
-          {stage.label}
-          {stage.subtitle ? (
-            <Text variant="callout" weight="regular" tone="secondary">
-              {` \u00B7 ${stage.subtitle}`}
-            </Text>
-          ) : null}
-        </Text>
-        <Text variant="footnote" tone="secondary">
-          {series && series.minutes > 0 ? t`This workspace \u00B7 last ${minutes} min` : t`This workspace`}
-        </Text>
-      </View>
+    <SheetScreen
+      title={t`Status`}
+      subtitle={
+        <>
+          <Text variant="callout" weight="semibold" tone={stage.tone}>
+            {stage.label}
+            {stage.subtitle ? (
+              <Text variant="callout" weight="regular" tone="secondary">
+                {` \u00B7 ${stage.subtitle}`}
+              </Text>
+            ) : null}
+          </Text>
+          <Text variant="footnote" tone="secondary">
+            {series && series.minutes > 0 ? t`This workspace \u00B7 last ${minutes} min` : t`This workspace`}
+          </Text>
+        </>
+      }
+    >
       <View style={styles.tiles}>
         <Tile
           label={t`CPU`}
@@ -138,7 +135,7 @@ export function WorkspaceResources({ path }: { path: string }) {
           {diskNote}
         </Text>
       ) : null}
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
@@ -187,8 +184,6 @@ function Tile({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
-  titles: { gap: theme.space.xxs },
   tiles: { flexDirection: 'row', gap: theme.space.md },
   tile: {
     flex: 1,

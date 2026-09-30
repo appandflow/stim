@@ -8,11 +8,11 @@ import { useRouter } from 'expo-router';
 import * as Updates from 'expo-updates';
 import { useState } from 'react';
 import { Platform, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { ListRow, ListSection } from '@/components/list';
-import { ScrollView } from '@/components/lists';
+import { SheetScreen } from '@/components/sheet-screen';
 import { describeState } from '@/components/mac-chip';
 import { Text } from '@/components/text';
 import { useMacs, type PairedConnection } from '@/hooks/machines';
@@ -72,7 +72,6 @@ function machineInfo({ mac, state, missing }: PairedConnection): AboutMachine {
 }
 
 export function About({ onClose }: { onClose?: () => void }) {
-  const { theme } = useUnistyles();
   const router = useRouter();
   const { connections } = useMacs();
   const [copied, setCopied] = useState(false);
@@ -88,7 +87,7 @@ export function About({ onClose }: { onClose?: () => void }) {
     });
   const open = (url: string) => void Linking.openURL(url);
   return (
-    <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: theme.colors.background }}>
+    <SheetScreen>
       <View style={styles.header}>
         <Image source={ICON} style={styles.icon} accessibilityIgnoresInvertColors />
         <Text variant="title">
@@ -163,7 +162,7 @@ export function About({ onClose }: { onClose?: () => void }) {
         />
         <ListRow title={t`Made by App&Flow`} accessory="chevron" onPress={() => open(APP_AND_FLOW)} />
       </ListSection>
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
@@ -172,12 +171,6 @@ function MachineRow({ name, stim, server }: { name: string; stim: string; server
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
-    padding: theme.space.xxl,
-    paddingTop: theme.space.xxxl,
-    paddingBottom: theme.space.huge,
-    gap: theme.space.xl,
-  },
   header: { alignItems: 'center', gap: theme.space.xs },
   icon: {
     width: 64,

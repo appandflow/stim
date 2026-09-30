@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AgentSessionRow } from '@/components/agent-sessions';
 import { Button } from '@/components/button';
 import { ListRow, ListSection } from '@/components/list';
-import { ScrollView } from '@/components/lists';
+import { SheetScreen } from '@/components/sheet-screen';
 import { StatusDot } from '@/components/pill';
 import { Text } from '@/components/text';
 import { chipColor } from '@/components/workspace-cards';
@@ -60,15 +60,7 @@ export function WorkspaceWork({ path }: { path: string }) {
   const checkedAt = pr ? Date.parse(pr.checkedAt) : NaN;
   const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
   return (
-    <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
-      <View style={styles.titles}>
-        <Text variant="title" numberOfLines={2}>
-          {worktree?.branch ?? workspaceTitleAt(path, status)}
-        </Text>
-        <Text variant="footnote" tone="secondary">
-          <Trans>Work</Trans>
-        </Text>
-      </View>
+    <SheetScreen title={worktree?.branch ?? workspaceTitleAt(path, status)} titleLines={2} subtitle={t`Work`}>
       {sessions.length ? (
         <ListSection
           title={plural(sessions.length, { one: 'Agent session', other: 'Agent sessions' })}
@@ -129,13 +121,11 @@ export function WorkspaceWork({ path }: { path: string }) {
           ) : null}
         </>
       ) : null}
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
-  titles: { gap: theme.space.xxs },
   pr: { paddingHorizontal: theme.space.lg, paddingVertical: theme.space.sm },
   center: { textAlign: 'center' },
 }));
