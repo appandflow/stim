@@ -34,8 +34,7 @@ public final class StatusStore: ObservableObject {
   private static let doctorTimeout: TimeInterval = 10 * 60
   private static let doctorCheckInterval: TimeInterval = 60
 
-  /// `fetch` reads one status payload; the live watch, doctor and version checks use `cli`.
-  public init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
+  init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
     self.cli = cli
     self.fetch = fetch
     Task { stimHome = await cli.value.stimHome }

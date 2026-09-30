@@ -21,7 +21,6 @@ private func tag(_ report: GcReport?) -> String? {
 
 @MainActor
 struct GcReportStoreTests {
-  /// Catches a stale report served after a cache window, and a rerun inside it.
   @Test func reusesAReportYoungerThanMaxAgeAndRerunsAnOlderOne() async {
     let clock = Clock()
     let runs = Scripted<GcReport>()
@@ -42,7 +41,6 @@ struct GcReportStoreTests {
     #expect(tag(await second.value) == "two")
   }
 
-  /// Catches the Machine page showing a report that predates a cleanup or a start.
   @Test func anActionMakesAYoungReportStale() async {
     let clock = Clock()
     let runs = Scripted<GcReport>()
@@ -60,7 +58,6 @@ struct GcReportStoreTests {
     #expect(tag(await second.value) == "after")
   }
 
-  /// Catches a run that started before an action being handed to a caller who asked after it.
   @Test func aRunThatStartedBeforeAnActionIsNotReusedAfterIt() async {
     let clock = Clock()
     let runs = Scripted<GcReport>()
@@ -82,7 +79,6 @@ struct GcReportStoreTests {
     #expect(tag(store.report) == "new")
   }
 
-  /// Catches two callers starting two `stim gc` processes.
   @Test func callersDuringARunShareIt() async {
     let runs = Scripted<GcReport>()
     let store = GcReportStore(run: { try await runs.call() })
@@ -98,7 +94,6 @@ struct GcReportStoreTests {
     #expect(!store.running)
   }
 
-  /// Catches a caller that asked for a run started after a moment being served an earlier report.
   @Test func startedAfterSkipsAReportFromBeforeThatMoment() async {
     let clock = Clock()
     let runs = Scripted<GcReport>()
@@ -116,7 +111,6 @@ struct GcReportStoreTests {
     #expect(tag(await later.value) == "late")
   }
 
-  /// Catches a failed run blanking the page or passing for a fresh report.
   @Test func aFailedRunKeepsTheLastReportAndItsAgeAndReportsTheError() async {
     let clock = Clock()
     let runs = Scripted<GcReport>()
@@ -145,7 +139,6 @@ struct GcReportStoreTests {
     #expect(store.error == nil)
   }
 
-  /// Catches a burst of actions running gc once per action, or never.
   @Test func actionsInABurstRunGcOnceAfterTheyStop() async {
     let runs = Scripted<GcReport>()
     let store = GcReportStore(run: { try await runs.call() }, settleDelay: 0.05)

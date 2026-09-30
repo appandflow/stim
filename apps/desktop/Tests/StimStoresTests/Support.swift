@@ -1,6 +1,5 @@
 import Foundation
 
-/// An async operation whose calls wait until the test finishes them, in any order.
 final class Scripted<Value: Sendable>: @unchecked Sendable {
   private let lock = NSLock()
   private var waiting: [CheckedContinuation<Value, any Error>] = []
@@ -22,7 +21,6 @@ struct Failed: Error, LocalizedError {
   var errorDescription: String? { "scripted failure" }
 }
 
-/// Waits until `condition` holds, for at most two seconds; false when it never did.
 @MainActor
 func until(_ condition: @MainActor () -> Bool) async -> Bool {
   for _ in 0..<400 {
@@ -32,7 +30,6 @@ func until(_ condition: @MainActor () -> Bool) async -> Bool {
   return condition()
 }
 
-/// Lets work already queued on the main actor and the background pool finish.
 @MainActor
 func settle() async {
   try? await Task.sleep(nanoseconds: 150_000_000)

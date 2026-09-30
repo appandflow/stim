@@ -18,8 +18,7 @@ public final class GcReportStore {
   @ObservationIgnored private var changedAt = Date.distantPast
   @ObservationIgnored private var settle: Timer?
 
-  /// `run` produces one `stim gc --json` report; `now` is the clock that dates runs and decides staleness.
-  public init(
+  init(
     run: @escaping @Sendable () async throws -> GcReport, now: @escaping @MainActor () -> Date = { Date() },
     settleDelay: TimeInterval = 2
   ) {

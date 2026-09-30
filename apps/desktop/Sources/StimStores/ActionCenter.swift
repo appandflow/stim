@@ -5,9 +5,7 @@ import StimKit
 /// failed step does not stop the ones after it.
 @MainActor
 public final class ActionRun: ObservableObject, Identifiable {
-  /// Starts `command` and reports its lines and then its exit status from background queues, as `StimCLI.stream`
-  /// does; throws when it cannot start.
-  public typealias Launch =
+  typealias Launch =
     @Sendable (
       StimCommand, @escaping @Sendable (OutputLine) -> Void, @escaping @Sendable (Int32) -> Void
     ) throws -> Void
