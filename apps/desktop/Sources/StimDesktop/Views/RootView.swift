@@ -18,8 +18,8 @@ struct RootView: View {
   @ObservedObject private var actions: ActionCenter
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
-  @StateObject private var storage: StorageStore
-  @StateObject private var planChecks: BuildPlanChecks
+  @State private var storage: StorageStore
+  @State private var planChecks: BuildPlanChecks
   @State private var selection: SidebarItem? = .wall
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
@@ -53,9 +53,9 @@ struct RootView: View {
     self.autopilot = autopilot
     self.gc = gc
     _metrics = State(initialValue: MetricsStore(status: store, gc: gc))
-    _storage = StateObject(wrappedValue: StorageStore(status: store, cli: cli))
-    _planChecks = StateObject(
-      wrappedValue: BuildPlanChecks { platform, workspace in
+    _storage = State(initialValue: StorageStore(status: store, cli: cli))
+    _planChecks = State(
+      initialValue: BuildPlanChecks { platform, workspace in
         try await cli.value.plan(platform: platform, workspace: workspace)
       })
   }
