@@ -1,7 +1,7 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -48,16 +48,17 @@ import { Touch } from '@/components/touch';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
-import { useDeviceStream } from '@/hooks/device-stream';
+import { useDeviceStream, useReplayAt } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
 import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl } from '@/hooks/device-control';
-import { useMacConnection, useStatus } from '@/hooks/machines';
+import { useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { buildTimeline } from '@/lib/replay';
+import { LIVE_VIEW, replayView } from '@/lib/replay-view';
 import { aspectOf, liftAbove } from '@/lib/zoom';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import { devicesOf, shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
@@ -119,8 +120,9 @@ export function DeviceView({
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
-  const status = useStatus();
-  const env = status?.environments.find((candidate) => candidate.path === workspace);
+  const { id: macId } = useLocalSearchParams<{ id?: string }>();
+  const item = useWorkspace(macId ?? '', workspace);
+  const env = item?.env;
   const device = env
     ? devicesOf(env).find(
         (entry) => entry.platform === platform && entry.slot === slot && Boolean(entry.physical) === physical,
@@ -134,8 +136,8 @@ export function DeviceView({
   const replayOff = !physical && env?.recording?.enabled === false;
   const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
   const hasFootage = timeline !== null && preset.video.length > 0;
-  const [startAt, setStartAt] = useState<number | null>(null);
-  const replayStart = hasFootage ? startAt : null;
+  const [view, setView] = useState(LIVE_VIEW);
+  const replayStart = hasFootage ? view.startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
   const streamOptions = useMemo(
@@ -145,15 +147,15 @@ export function DeviceView({
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
   const replaying = stream.replay !== null;
-  const [lastReplay, setLastReplay] = useState<{ running: boolean; at: number | null } | null>(null);
-  if (stream.replay && (lastReplay?.at !== stream.replay.at || lastReplay.running !== running)) {
-    setLastReplay({ running, at: stream.replay.at });
-  }
-  if (!stream.replay && running && lastReplay) setLastReplay(null);
-  if (lastReplay?.running && !running && startAt === null) {
-    setLastReplay({ running, at: lastReplay.at });
-    setStartAt(lastReplay.at ?? timeline?.start ?? null);
-  }
+  const resumeAt = useReplayAt(view.replayedLive && !running ? stream.playhead : null);
+  const synced = replayView(view, {
+    type: 'sync',
+    replaying,
+    running,
+    at: resumeAt,
+    timelineStart: timeline?.start ?? null,
+  });
+  if (synced !== view) setView(synced);
   const source = stream.video ?? stream.frame;
   const control = useDeviceControl(workspace, platform, slot, physical);
   const readOnly = !viewOnly && control.allowed === false;
@@ -314,11 +316,11 @@ export function DeviceView({
   };
   const seek = (at: number, rate: ReplayRate) => {
     if (controlling) control.end();
-    if (!running && replayStart === null) setStartAt(at);
+    setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
     stream.seek(at, rate);
   };
   const goLive = () => {
-    if (startAt !== null) return setStartAt(null);
+    if (view.startAt !== null) return setView((current) => replayView(current, { type: 'live' }));
     stream.live();
   };
   const toggle = () => {
@@ -367,6 +369,7 @@ export function DeviceView({
         timeline={canReplay ? timeline : null}
         markers={range?.markers ?? []}
         replay={stream.replay}
+        playhead={stream.playhead}
         seeking={stream.seeking}
         canGoLive={running}
         recording={range?.recording ?? false}
@@ -381,7 +384,7 @@ export function DeviceView({
         workspace={workspace}
         slot={slot}
         deviceId={device.id}
-        at={stream.replay ? (stream.replay.at ?? undefined) : null}
+        playhead={replaying ? stream.playhead : null}
         onOpen={() =>
           router.push({
             pathname: '/mac/[id]/agent',
@@ -443,7 +446,7 @@ export function DeviceView({
   const model = device?.page
     ? shortUrl(device.page.url)
     : (device?.model ?? (platform === 'ios' ? t`iOS Simulator` : platform === 'web' ? t`Web` : t`Android Emulator`));
-  const title = workspaceTitleAt(workspace, status);
+  const title = item?.title ?? workspaceTitleAt(workspace, null);
   const subtitle = platform === 'web' ? t`Web \u00B7 ${model}` : t`${model} \u00B7 ${slot}`;
   const scrubHint = t`Scrub below to replay what it recorded.`;
 
