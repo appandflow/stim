@@ -36,7 +36,7 @@ const isSigningCode = (code: string) =>
 
 const DISK_FLOOR_BYTES = 5e9;
 const LOOP_COUNT = 3;
-const STALE_MS = 24 * 60 * 60 * 1000;
+export const STALE_MS = 24 * 60 * 60 * 1000;
 const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
 function languageOf(extension: string): string | undefined {

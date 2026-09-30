@@ -36,7 +36,7 @@ import {
   type DeviceTileItem,
   type HomeItem,
 } from '@/lib/home';
-import { isShownLive } from '@/lib/workspaces';
+import { checkoutProjects, homeSections, type HomeSection } from '@/lib/home-list';
 import { MacList } from '@/screens/mac-list';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
@@ -72,14 +72,9 @@ export function Home() {
     [macs, items],
   );
   const { shown, hiddenByActivity } = useMemo(() => filterWorkspaces(items, filters, macIds), [items, filters, macIds]);
-  const sections = useMemo(() => {
-    const live = shown.filter((item) => isShownLive(item.env));
-    const idle = shown.filter((item) => !isShownLive(item.env));
-    return [
-      { title: t`Live`, data: live },
-      { title: t`Idle`, data: idle },
-    ].filter((s) => s.data.length > 0);
-  }, [shown]);
+  const sections = useMemo(() => homeSections(shown), [shown]);
+  const folders = useMemo(() => checkoutProjects(items), [items]);
+  const showsMachine = (macs?.length ?? 0) > 1;
   const now = useNow(30_000);
   const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
   const rows = useMemo(() => gridRows(tiles, aspects), [tiles, aspects]);
@@ -247,14 +242,16 @@ export function Home() {
         contentContainerStyle={styles.list}
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={listHeader}
-        renderSectionHeader={({ section }) => (
-          <View style={styles.sectionHeader}>
-            <Text variant="body" weight="medium" tone="tertiary">
-              {section.title}
-            </Text>
-          </View>
+        renderSectionHeader={({ section }) => <RepoHeader section={section} />}
+        renderItem={({ item }) => (
+          <WorkspaceRow
+            item={item}
+            now={now}
+            folder={folders.has(item.project)}
+            showsMachine={showsMachine}
+            onOpen={openWorkspace}
+          />
         )}
-        renderItem={({ item }) => <WorkspaceRow item={item} now={now} onOpen={openWorkspace} />}
         ListEmptyComponent={
           <HomeEmpty view="workspaces" items={items.length} noFilterSet={noFilterSet} focused={focused} />
         }
@@ -271,6 +268,28 @@ export function Home() {
           ) : undefined
         }
       />
+    </View>
+  );
+}
+
+function RepoHeader({ section }: { section: HomeSection }) {
+  const { project, live, idle } = section;
+  const counts = [live ? t`${live} live` : null, idle ? t`${idle} idle` : null].filter(Boolean).join(' \u00B7 ');
+  return (
+    <View
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={[project, live ? t`${live} live` : null, idle ? t`${idle} idle` : null]
+        .filter(Boolean)
+        .join(', ')}
+      style={styles.repoHeader}
+    >
+      <Text variant="headline" numberOfLines={1} style={styles.repoName}>
+        {project}
+      </Text>
+      <Text variant="footnote" tone="tertiary">
+        {counts}
+      </Text>
     </View>
   );
 }
@@ -379,6 +398,18 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.space.xxl,
     paddingBottom: theme.space.md,
   },
+  repoHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: theme.space.md,
+    marginHorizontal: theme.space.xxl,
+    paddingTop: theme.space.xxxl,
+    paddingBottom: theme.space.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.separator,
+  },
+  repoName: { flexShrink: 1 },
   chips: { gap: theme.space.md, paddingHorizontal: theme.space.xxl, paddingBottom: theme.space.xs },
   gridRow: { flexDirection: 'row', gap: theme.space.lg, paddingHorizontal: theme.space.xl, paddingTop: theme.space.lg },
   loading: { marginTop: 48 },

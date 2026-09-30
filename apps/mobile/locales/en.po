@@ -63,11 +63,6 @@ msgstr ": {summary}"
 msgid "{0, plural, one {# action} other {# actions}}"
 msgstr "{0, plural, one {# action} other {# actions}}"
 
-#. placeholder {0}: env.warnings.length
-#: src/components/workspace-row.tsx
-msgid "{0, plural, one {# issue} other {# issues}}"
-msgstr "{0, plural, one {# issue} other {# issues}}"
-
 #. placeholder {0}: capacity.liveCount
 #: src/screens/mac-status.tsx
 msgid "{0, plural, one {# live workspace} other {# live workspaces}}"
@@ -87,11 +82,6 @@ msgstr "{0, plural, one {# record} other {# records}}"
 #: src/lib/notifications.ts
 msgid "{0, plural, one {# thing needs a look} other {# things need a look}}"
 msgstr "{0, plural, one {# thing needs a look} other {# things need a look}}"
-
-#. placeholder {0}: env.warnings.length
-#: src/components/workspace-row.tsx
-msgid "{0, plural, one {# warning} other {# warnings}}"
-msgstr "{0, plural, one {# warning} other {# warnings}}"
 
 #. placeholder {0}: runtime.deviceCount
 #: src/screens/mac-status.tsx
@@ -122,21 +112,9 @@ msgstr "{age} ago"
 msgid "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits not pushed to {upstream}}}"
 msgstr "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits not pushed to {upstream}}}"
 
-#: src/components/git-indicator.tsx
-msgid "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
-msgstr "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
-
-#: src/components/build-progress.tsx
-msgid "{basis, plural, one {{remaining} · median of # {kind} run} other {{remaining} · median of # {kind} runs}}"
-msgstr "{basis, plural, one {{remaining} · median of # {kind} run} other {{remaining} · median of # {kind} runs}}"
-
 #: src/lib/format.ts
 msgid "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 msgstr "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
-
-#: src/components/git-indicator.tsx
-msgid "{behind, plural, one {# commit behind the upstream} other {# commits behind the upstream}}"
-msgstr "{behind, plural, one {# commit behind the upstream} other {# commits behind the upstream}}"
 
 #: src/lib/format.ts
 msgid "{cacheHit} cache hit"
@@ -188,8 +166,7 @@ msgid "{errors, plural, one { error} other { errors}}"
 msgstr "{errors, plural, one { error} other { errors}}"
 
 #: src/components/workspace-cards.tsx
-#: src/components/workspace-row.tsx
-#: src/lib/spoken-status.ts
+#: src/lib/home-list.ts
 #: src/lib/workspace-view.ts
 msgid "{errors, plural, one {# error} other {# errors}}"
 msgstr "{errors, plural, one {# error} other {# errors}}"
@@ -242,6 +219,11 @@ msgstr "{hours}h ago"
 msgid "{hours}h{rest}m"
 msgstr "{hours}h{rest}m"
 
+#: src/screens/home.tsx
+#: src/screens/home.tsx
+msgid "{idle} idle"
+msgstr "{idle} idle"
+
 #: src/lib/machine-report.ts
 msgid "{idleDays, plural, one {Not used for # day; rebuilt on the next run} other {Not used for # days; rebuilt on the next run}}"
 msgstr "{idleDays, plural, one {Not used for # day; rebuilt on the next run} other {Not used for # days; rebuilt on the next run}}"
@@ -273,6 +255,11 @@ msgstr "{label}, building"
 #: src/screens/mac-status.tsx
 msgid "{live} · Stim holds {held} of {total} GB{over}"
 msgstr "{live} · Stim holds {held} of {total} GB{over}"
+
+#: src/screens/home.tsx
+#: src/screens/home.tsx
+msgid "{live} live"
+msgstr "{live} live"
 
 #: src/lib/workspace-view.ts
 msgid "{machine} busy"
@@ -388,6 +375,14 @@ msgstr "{name} · last build failed, {since} ago"
 msgid "{name} · no build recorded"
 msgstr "{name} · no build recorded"
 
+#: src/lib/home-list.ts
+msgid "{name} app closed"
+msgstr "{name} app closed"
+
+#: src/lib/home-list.ts
+msgid "{name} build failed"
+msgstr "{name} build failed"
+
 #: src/lib/needs-attention.ts
 msgid "{name} build failed {count}x in a row"
 msgstr "{name} build failed {count}x in a row"
@@ -399,6 +394,10 @@ msgstr "{name} build failed {count}x in a row ({errorCode})"
 #: src/lib/workspace-view.ts
 msgid "{name} checking the next build"
 msgstr "{name} checking the next build"
+
+#: src/lib/home-list.ts
+msgid "{name} device"
+msgstr "{name} device"
 
 #: src/lib/workspace-view.ts
 msgid "{name} last build {cache}"
@@ -424,10 +423,6 @@ msgstr "{name} next build about {took}, {cache}"
 msgid "{name} no build"
 msgstr "{name} no build"
 
-#: src/lib/spoken-status.ts
-msgid "{name} running"
-msgstr "{name} running"
-
 #: src/lib/needs-attention.ts
 msgid "{name} signing or provisioning failed ({code})"
 msgstr "{name} signing or provisioning failed ({code})"
@@ -436,7 +431,7 @@ msgstr "{name} signing or provisioning failed ({code})"
 msgid "{name} simulator"
 msgstr "{name} simulator"
 
-#: src/lib/spoken-status.ts
+#: src/lib/home-list.ts
 msgid "{name}, {activity}"
 msgstr "{name}, {activity}"
 
@@ -493,10 +488,6 @@ msgstr "{platform} app closed"
 msgid "{platform} build"
 msgstr "{platform} build"
 
-#: src/lib/spoken-status.ts
-msgid "{platform} slot {slot}"
-msgstr "{platform} slot {slot}"
-
 #: src/components/connection-banner.tsx
 msgid "{reason} Pair this machine again from Stim Desktop."
 msgstr "{reason} Pair this machine again from Stim Desktop."
@@ -508,6 +499,10 @@ msgstr "{reason} Retrying in {seconds}s."
 #: src/components/connection-banner.tsx
 msgid "{reason} Update this app or the Stim server on the machine."
 msgstr "{reason} Update this app or the Stim server on the machine."
+
+#: src/lib/home-list.ts
+msgid "{remote, plural, one {# EAS session} other {# EAS sessions}}"
+msgstr "{remote, plural, one {# EAS session} other {# EAS sessions}}"
 
 #: src/screens/workspace-detail.tsx
 msgid "{rest} and {last} are running."
@@ -524,10 +519,6 @@ msgstr "{seconds}s"
 #: src/intl/format.ts
 msgid "{secs}s"
 msgstr "{secs}s"
-
-#: src/lib/spoken-status.ts
-msgid "{sessions, plural, one {# EAS session} other {# EAS sessions}}"
-msgstr "{sessions, plural, one {# EAS session} other {# EAS sessions}}"
 
 #: src/lib/workspace-view.ts
 msgid "{since} ago"
@@ -610,10 +601,6 @@ msgstr "{uncommitted, plural, one {# uncommitted change} other {# uncommitted ch
 msgid "{uncommitted} changed"
 msgstr "{uncommitted} changed"
 
-#: src/components/git-indicator.tsx
-msgid "{uncommitted} uncommitted"
-msgstr "{uncommitted} uncommitted"
-
 #: src/lib/home.ts
 #: src/lib/home.ts
 msgid "{usedGb}/{totalGb} GB"
@@ -623,11 +610,11 @@ msgstr "{usedGb}/{totalGb} GB"
 msgid "{v} GB"
 msgstr "{v} GB"
 
-#: src/lib/spoken-status.ts
+#: src/lib/home-list.ts
 msgid "{warnings, plural, one {# issue} other {# issues}}"
 msgstr "{warnings, plural, one {# issue} other {# issues}}"
 
-#: src/lib/spoken-status.ts
+#: src/lib/home-list.ts
 msgid "{warnings, plural, one {# warning} other {# warnings}}"
 msgstr "{warnings, plural, one {# warning} other {# warnings}}"
 
@@ -646,14 +633,6 @@ msgstr "{whole} MB"
 #: src/screens/mac-status.tsx
 msgid "{worktrees} · {location}"
 msgstr "{worktrees} · {location}"
-
-#: src/components/git-indicator.tsx
-msgid "↑{ahead} unpushed"
-msgstr "↑{ahead} unpushed"
-
-#: src/components/git-indicator.tsx
-msgid "↓{behind} behind"
-msgstr "↓{behind} behind"
 
 #: src/screens/logs.tsx
 msgid "+{hidden} framework frames"
@@ -810,7 +789,6 @@ msgstr "an unknown tool"
 msgid "and {more} more"
 msgstr "and {more} more"
 
-#: src/components/build-progress.tsx
 #: src/lib/logs.ts
 #: src/lib/needs-attention.ts
 #: src/lib/workspace-view.ts
@@ -973,14 +951,10 @@ msgstr "building {name} on {host}"
 msgid "Building {name} on {host}"
 msgstr "Building {name} on {host}"
 
-#: src/components/build-progress.tsx
+#: src/lib/home-list.ts
 #: src/lib/spoken-status.ts
 msgid "Building {platform}"
 msgstr "Building {platform}"
-
-#: src/components/build-progress.tsx
-msgid "Building {platform} · {slot}"
-msgstr "Building {platform} · {slot}"
 
 #: src/lib/spoken-status.ts
 msgid "Building {platform}, slot {slot}"
@@ -1195,6 +1169,7 @@ msgid "Chrome (web)"
 msgstr "Chrome (web)"
 
 #: src/components/workspace-cards.tsx
+#: src/lib/home-list.ts
 msgid "CI failing"
 msgstr "CI failing"
 
@@ -1347,6 +1322,10 @@ msgstr "Copy versions"
 msgid "copying ignored files"
 msgstr "copying ignored files"
 
+#: src/components/workspace-row.tsx
+msgid "Copying ignored files"
+msgstr "Copying ignored files"
+
 #: src/lib/workspace-view.ts
 msgid "Copying resources"
 msgstr "Copying resources"
@@ -1468,6 +1447,14 @@ msgstr "Download"
 msgid "Draft"
 msgstr "Draft"
 
+#: src/lib/home-list.ts
+msgid "Driven"
+msgstr "Driven"
+
+#: src/lib/home-list.ts
+msgid "Driven {duration}"
+msgstr "Driven {duration}"
+
 #: src/screens/device-view.tsx
 msgid "Driven by {driver}"
 msgstr "Driven by {driver}"
@@ -1487,6 +1474,14 @@ msgstr "Driven by {tool} · {duration}"
 #: src/lib/format.ts
 msgid "driven by {tool} for {spoken}"
 msgstr "driven by {tool} for {spoken}"
+
+#: src/lib/home-list.ts
+msgid "Driven by an agent"
+msgstr "Driven by an agent"
+
+#: src/lib/home-list.ts
+msgid "Driven by an agent for {spoken}"
+msgstr "Driven by an agent for {spoken}"
 
 #: src/screens/agent-actions.tsx
 msgid "driving {driving}"
@@ -1728,12 +1723,18 @@ msgid "idle"
 msgstr "idle"
 
 #: src/lib/format.ts
+#: src/lib/home-list.ts
+#: src/lib/home-list.ts
 #: src/screens/filters.tsx
-#: src/screens/home.tsx
 msgid "Idle"
 msgstr "Idle"
 
+#: src/lib/home-list.ts
+msgid "idle {duration}"
+msgstr "idle {duration}"
+
 #: src/lib/format.ts
+#: src/lib/home-list.ts
 msgid "Idle {duration}"
 msgstr "Idle {duration}"
 
@@ -1742,8 +1743,13 @@ msgid "idle {idle}"
 msgstr "idle {idle}"
 
 #: src/lib/format.ts
+#: src/lib/home-list.ts
 msgid "idle for {spoken}"
 msgstr "idle for {spoken}"
+
+#: src/lib/home-list.ts
+msgid "Idle for {spoken}"
+msgstr "Idle for {spoken}"
 
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -1778,6 +1784,10 @@ msgstr "install the same CocoaPods there"
 #: src/lib/workspace-view.ts
 msgid "installing dependencies"
 msgstr "installing dependencies"
+
+#: src/components/workspace-row.tsx
+msgid "Installing dependencies"
+msgstr "Installing dependencies"
 
 #: src/lib/format.ts
 msgid "Interrupted"
@@ -1861,9 +1871,13 @@ msgstr "Last build"
 msgid "last bundle {seconds}s"
 msgstr "last bundle {seconds}s"
 
-#: src/components/workspace-row.tsx
+#: src/lib/home-list.ts
 msgid "Last seen {seen} ago"
 msgstr "Last seen {seen} ago"
+
+#: src/lib/home-list.ts
+msgid "Last seen {spoken} ago"
+msgstr "Last seen {spoken} ago"
 
 #: src/components/device-tile.tsx
 msgid "Latest frame of {deviceName}"
@@ -1917,7 +1931,6 @@ msgstr "live"
 #: src/components/replay-bar.tsx
 #: src/components/replay-bar.tsx
 #: src/screens/filters.tsx
-#: src/screens/home.tsx
 msgid "Live"
 msgstr "Live"
 
@@ -2038,11 +2051,6 @@ msgstr "Menu"
 msgid "Menu, {unread} unread notifications"
 msgstr "Menu, {unread} unread notifications"
 
-#: src/components/git-indicator.tsx
-#: src/components/git-indicator.tsx
-msgid "merged"
-msgstr "merged"
-
 #: src/screens/workspace-work.tsx
 msgid "Merged"
 msgstr "Merged"
@@ -2067,10 +2075,6 @@ msgstr "merged into {mergedInto}"
 msgid "Metro"
 msgstr "Metro"
 
-#: src/components/workspace-row.tsx
-msgid "Metro "
-msgstr "Metro "
-
 #: src/screens/logs.tsx
 msgid "Metro :{port}"
 msgstr "Metro :{port}"
@@ -2078,10 +2082,6 @@ msgstr "Metro :{port}"
 #: src/components/workspace-cards.tsx
 msgid "Metro {metroState}"
 msgstr "Metro {metroState}"
-
-#: src/lib/spoken-status.ts
-msgid "Metro running on port {port}"
-msgstr "Metro running on port {port}"
 
 #: src/lib/settings-options.ts
 msgid "Midnight to 8 AM"
@@ -2441,8 +2441,9 @@ msgstr "off"
 msgid "Off"
 msgstr "Off"
 
-#: src/components/workspace-row.tsx
 #: src/lib/attention.ts
+#: src/lib/home-list.ts
+#: src/lib/home-list.ts
 msgid "Offline"
 msgstr "Offline"
 
@@ -2465,6 +2466,10 @@ msgstr "OK"
 #: src/lib/workspace-view.ts
 msgid "on {machine}"
 msgstr "on {machine}"
+
+#: src/lib/home-list.ts
+msgid "on {macName}"
+msgstr "on {macName}"
 
 #: src/screens/build-details.tsx
 msgid "on {remoteHost}"
@@ -2524,6 +2529,10 @@ msgstr "Opens the logs"
 #: src/components/agent-sessions.tsx
 msgid "Opens the session in the Claude app or on claude.ai"
 msgstr "Opens the session in the Claude app or on claude.ai"
+
+#: src/components/workspace-row.tsx
+msgid "Opens the workspace"
+msgstr "Opens the workspace"
 
 #: src/screens/agent-actions.tsx
 msgid "Opens this action in the agent log"
@@ -2712,9 +2721,9 @@ msgstr "Read-only"
 msgid "Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim."
 msgstr "Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim."
 
-#: src/components/workspace-row.tsx
-#: src/components/workspace-row.tsx
 #: src/lib/build-machines.ts
+#: src/lib/home-list.ts
+#: src/lib/home-list.ts
 #: src/lib/workspace-view.ts
 msgid "Ready"
 msgstr "Ready"
@@ -2905,6 +2914,8 @@ msgstr "run Stim from a git checkout"
 msgid "running"
 msgstr "running"
 
+#: src/lib/home-list.ts
+#: src/lib/home-list.ts
 #: src/lib/workspace-view.ts
 msgid "Running"
 msgstr "Running"
@@ -3273,10 +3284,9 @@ msgstr "Stopping {title}"
 msgid "Stuck after"
 msgstr "Stuck after"
 
-#: src/components/workspace-row.tsx
-#: src/lib/spoken-status.ts
-msgid "supervisor unhealthy"
-msgstr "supervisor unhealthy"
+#: src/lib/home-list.ts
+msgid "Supervisor unhealthy"
+msgstr "Supervisor unhealthy"
 
 #: src/lib/needs-attention.ts
 msgid "Swift"
@@ -3460,6 +3470,7 @@ msgid "Unknown"
 msgstr "Unknown"
 
 #: src/lib/format.ts
+#: src/lib/home-list.ts
 msgid "unknown tool"
 msgstr "unknown tool"
 
@@ -3565,22 +3576,23 @@ msgstr "Waiting for the {name} build"
 msgid "warmed {since} ago"
 msgstr "warmed {since} ago"
 
-#: src/components/workspace-row.tsx
+#: src/lib/home-list.ts
+#: src/lib/home-list.ts
 #: src/lib/workspace-view.ts
 msgid "Warming"
 msgstr "Warming"
 
+#: src/lib/home-list.ts
+msgid "Warming {duration}"
+msgstr "Warming {duration}"
+
+#: src/lib/home-list.ts
+msgid "Warming for {spoken}"
+msgstr "Warming for {spoken}"
+
 #: src/components/device-tile.tsx
 msgid "Warming the workspace"
 msgstr "Warming the workspace"
-
-#: src/components/workspace-row.tsx
-msgid "Warming…"
-msgstr "Warming…"
-
-#: src/components/workspace-row.tsx
-msgid "Warming… {warmStep}"
-msgstr "Warming… {warmStep}"
 
 #: src/components/attention-strip.tsx
 msgid "Warning: {title} on {macName}, {detail}"
@@ -3627,10 +3639,6 @@ msgstr "Work started"
 #: src/app/_layout.tsx
 msgid "Workspace"
 msgstr "Workspace"
-
-#: src/components/workspace-row.tsx
-msgid "Workspace {title} on {macName}"
-msgstr "Workspace {title} on {macName}"
 
 #: src/screens/workspace-detail.tsx
 msgid "Workspace not found"

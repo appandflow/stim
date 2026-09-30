@@ -10,7 +10,7 @@ import type {
   WorktreeGit,
 } from '@/protocol/types';
 
-const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
+export const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 
 export function clockDuration(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));

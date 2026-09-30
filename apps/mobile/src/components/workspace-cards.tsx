@@ -5,6 +5,7 @@ import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
+import { PhaseBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
 import { Icon } from '@/components/icon';
 import { StatusDot } from '@/components/pill';
@@ -20,20 +21,15 @@ import { formatDuration } from '@/intl/format';
 import { agentLabel } from '@/lib/agents';
 import { buildKey, buildTiming } from '@/lib/format';
 import {
-  barFills,
   barSteps,
   currentPhaseLabel,
-  namesPhases,
   otherPlatformLine,
-  phaseName,
   phaseSteps,
   remoteBuild,
-  segmentWeights,
   type BuildLine,
   type BundleLine,
   type GitChip,
   type MetroHealth,
-  type PhaseStep,
   type Usage,
   type WorkspaceStage,
   usageLabel,
@@ -355,45 +351,6 @@ export function CardGrid({ children }: { children: ReactNode }) {
   return <View style={[styles.grid, fontScale > STACK_FONT_SCALE && styles.stacked]}>{children}</View>;
 }
 
-function PhaseBar({ steps, buildId }: { steps: PhaseStep[]; buildId: string }) {
-  const weights = segmentWeights(steps);
-  const fills = barFills(steps, buildId);
-  return (
-    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.phases}>
-      <View style={styles.segments}>
-        {steps.map((step, i) => (
-          <View key={step.phase} style={[styles.segment, { flexGrow: weights[i] }]}>
-            <View
-              style={[
-                styles.segmentFill,
-                {
-                  width: `${Math.round(fills[i]! * 100)}%`,
-                },
-              ]}
-            />
-          </View>
-        ))}
-      </View>
-      {namesPhases(steps) ? (
-        <View style={styles.segments}>
-          {steps.map((step, i) => (
-            <Text
-              key={step.phase}
-              variant="caption2"
-              tone={step.state === 'current' ? 'brand' : 'tertiary'}
-              weight={step.state === 'current' ? 'semibold' : undefined}
-              numberOfLines={1}
-              style={[styles.segmentLabel, { flexGrow: weights[i] }]}
-            >
-              {phaseName(step.phase)}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 export function BuildInProgressCard({
   env,
   build,
@@ -510,15 +467,4 @@ const styles = StyleSheet.create((theme) => ({
   },
   buildingHeader: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   phaseLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.sm },
-  phases: { gap: theme.space.xs },
-  segments: { flexDirection: 'row', gap: 3 },
-  segment: {
-    flexBasis: 0,
-    height: 5,
-    borderRadius: theme.radius.round,
-    overflow: 'hidden',
-    backgroundColor: withAlpha(theme.colors.primary, theme.opacity.tint),
-  },
-  segmentFill: { height: 5, backgroundColor: theme.colors.primary },
-  segmentLabel: { flexBasis: 0 },
 }));
