@@ -23,7 +23,7 @@ function profileName(profile: string): string {
     .join(' ');
 }
 
-/** The model on one line and what it runs on the next: `iPhone 18 Pro` over `iOS 27.0`, `Pixel 9` over `Emulator`. */
+/** The model and what it runs on: `iPhone 18 Pro` and `iOS 27.0`, `Pixel 9` and `Emulator`. */
 export function deviceTileName(device: DeviceRef): DeviceTileName {
   if (device.platform === 'web') return { name: t`Chrome`, detail: device.page ? shortUrl(device.page.url) : null };
   if (device.physical) return { name: device.name, detail: device.model === device.name ? null : device.model };

@@ -167,7 +167,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         ) : null}
         {sessions.length ? (
           sessionUrl ? (
-            <Touch onPress={openSession} accessibilityRole="link" accessibilityLabel={openSessionLabel}>
+            <Touch onPress={openSession} accessible={false} hitSlop={8}>
               <AgentSessionLine sessions={sessions} variant="caption" tone="secondary" />
             </Touch>
           ) : (
