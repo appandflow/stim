@@ -162,7 +162,8 @@ struct BuildMachinesView: View {
     case .success(let payload):
       entries = payload.entry("offload.machines")?.value.strings ?? []
       failure = payload.entry("offload.machines") == nil ? "This stim has no offload.machines setting; update it." : nil
-    case .failure(let error): failure = error.localizedDescription
+    case .failure(let error) where !Task.isCancelled: failure = error.localizedDescription
+    case .failure: break
     }
     await refreshStatuses(ask: false)
     var serving: Set<String> = []

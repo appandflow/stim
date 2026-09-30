@@ -601,6 +601,7 @@ private struct RecordingSection: View {
   private func load() async {
     let cli = await cli.value
     let result = await Result.awaiting { try await cli.settings(cwd: NSHomeDirectory()) }
+    guard !Task.isCancelled else { return }
     switch result {
     case .success(let payload):
       entry = payload.entry("recording.enabled")
