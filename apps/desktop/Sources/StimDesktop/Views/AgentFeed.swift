@@ -168,9 +168,8 @@ struct AgentActionLog: View {
               .foregroundStyle(
                 selected ? Palette.primary : option.filter == .failed ? Palette.error : Palette.text)
           }
-          .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow())
         .accessibilityAddTraits(selected ? .isSelected : [])
       }
     }
@@ -200,7 +199,6 @@ struct AgentActionLog: View {
 private struct AgentActionRow: View {
   var action: AgentAction
   var select: () -> Void
-  @State private var hovering = false
 
   var body: some View {
     let time = action.record.date.formatted(date: .omitted, time: .standard)
@@ -225,11 +223,8 @@ private struct AgentActionRow: View {
       }
       .padding(.horizontal, Space.lg)
       .padding(.vertical, Space.md)
-      .background(hovering ? Palette.raised : .clear)
-      .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
+    .buttonStyle(.hoverRow(radius: 0))
     .help(action.record.msg)
     .accessibilityLabel("\(time), \(action.record.msg)")
     .accessibilityHint("Shows this moment in the logs and the replay")

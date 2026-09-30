@@ -143,7 +143,7 @@ struct WorkspaceHeader: View {
         Button(action: openLogs) {
           Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow())
         .help("\(countLabel(errors, "error")) in the logs since the last marker \u{2014} click to open the logs")
       }
     }

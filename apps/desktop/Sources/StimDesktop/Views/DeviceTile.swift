@@ -780,7 +780,6 @@ private struct DeviceAgentRow: View {
   var actions: [AgentAction]
   var showAll: () -> Void
   @State private var shown = false
-  @State private var hovering = false
 
   var body: some View {
     Button {
@@ -802,11 +801,8 @@ private struct DeviceAgentRow: View {
       }
       .padding(.horizontal, Space.lg)
       .padding(.vertical, Space.md)
-      .background(hovering ? Palette.raised : .clear)
-      .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
+    .buttonStyle(.hoverRow(radius: 0))
     .help("stim logs --source agent: what an agent did on this device. Click for the recent actions.")
     .popover(isPresented: $shown, arrowEdge: .bottom) {
       AgentActionsList(actions: actions, driver: device.activity?.driver?.tool) {

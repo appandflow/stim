@@ -131,7 +131,6 @@ struct GitChipButton: View {
   var chip: GitChip
   var worktree: WorktreeInfo
   @State private var shown = false
-  @State private var hovering = false
 
   var body: some View {
     Button {
@@ -152,11 +151,9 @@ struct GitChipButton: View {
       .font(.stim(.caption))
       .padding(.horizontal, Space.md)
       .padding(.vertical, 3)
-      .background(RoundedRectangle(cornerRadius: Radius.control).fill(hovering ? Palette.raised : Palette.surface))
-      .contentShape(Rectangle())
+      .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
     }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
+    .buttonStyle(.hoverRow(radius: Radius.control))
     .help("\(chip.label). Click for the branch and pull request.")
     .accessibilityLabel(chip.label)
     .popover(isPresented: $shown, arrowEdge: .bottom) {

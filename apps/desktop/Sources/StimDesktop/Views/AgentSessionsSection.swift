@@ -20,9 +20,8 @@ struct AgentSessionsSection: View {
               Image(systemName: "arrow.up.forward.app")
             }
             .foregroundStyle(Palette.accent)
-            .contentShape(Rectangle())
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.hoverRow(outset: Space.xs))
           .help(agent.openHelp)
         } else {
           Text(agent.label).lineLimit(1).truncationMode(.middle)

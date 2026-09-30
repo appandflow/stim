@@ -266,9 +266,8 @@ struct BuildHistoryRow: View {
             Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).padding(.leading, Space.lg)
           }
         }
-        .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.hoverRow(outset: Space.xs))
       if expanded {
         VStack(alignment: .leading, spacing: Space.xs) {
           let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
@@ -346,7 +345,7 @@ struct MissReasonButton: View {
       }
       .foregroundStyle(Palette.warning)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.hoverRow(outset: Space.xs))
     .help(help)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
       VStack(alignment: .leading, spacing: Space.md) {

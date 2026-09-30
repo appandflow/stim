@@ -391,12 +391,11 @@ struct MachineView: View {
         totalText(repository.total, complete: repository.totalComplete)
         Color.clear.frame(width: 28)
       }
-      .contentShape(Rectangle())
+      .padding(.horizontal, Space.xl)
+      .padding(.vertical, Space.md)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.hoverRow(radius: 0))
     .help(abbreviatingHome(repository.path))
-    .padding(.horizontal, Space.xl)
-    .padding(.vertical, Space.md)
   }
 
   private func workspaceRow(_ workspace: WorkspaceStorage, nested: Bool) -> some View {
@@ -493,7 +492,7 @@ struct MachineView: View {
         } label: {
           Pill(tone: .info) { Text(lifecycle!.title) }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow())
         .help(url)
       case .stale:
         Pill(tone: .warning) { Text(lifecycle!.title) }.help("No recorded use for that long")
