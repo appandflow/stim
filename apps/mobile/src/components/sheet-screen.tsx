@@ -9,17 +9,13 @@ import type { space } from '@/design/tokens';
 export interface SheetScreenProps {
   title?: string;
   titleLines?: number;
-  /** A string renders as the standard footnote; a node renders as given. */
   subtitle?: ReactNode;
-  /** Sits before the title block. */
   leading?: ReactNode;
-  /** Sits after the title block. */
   accessory?: ReactNode;
   gap?: keyof typeof space;
   children?: ReactNode;
 }
 
-/** The scrolling shell of a sheet: background, standard insets, and the title row. */
 export function SheetScreen({
   title,
   titleLines,

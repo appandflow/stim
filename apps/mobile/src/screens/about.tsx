@@ -12,8 +12,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { ListRow, ListSection } from '@/components/list';
-import { SheetScreen } from '@/components/sheet-screen';
 import { describeState } from '@/components/mac-chip';
+import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { useMacs, type PairedConnection } from '@/hooks/machines';
 import { formatDateTime } from '@/intl/format';
