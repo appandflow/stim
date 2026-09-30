@@ -37,6 +37,13 @@ struct DoctorTests {
     let checkouts = doctorCheckouts(envs) { $0 == "/solo" ? Project(root: "/solo") : Project(root: "/r") }
     #expect(checkouts.map(\.path) == ["/r/apps/m", "/r/.worktrees/a/apps/w", "/solo"])
     #expect(checkouts.map(\.repository) == ["/r", "/r", "/solo"])
+
+    let project = { (path: String) in path == "/solo" ? Project(root: "/solo") : Project(root: "/r") }
+    #expect(doctorCheckout(for: "/r/.worktrees/a/apps/w", in: envs, project: project)?.path == "/r/.worktrees/a/apps/w")
+    #expect(doctorCheckout(for: "/r/.worktrees/b/apps/m", in: envs, project: project)?.path == "/r/apps/m")
+    #expect(doctorCheckout(for: "/solo", in: envs, project: project)?.path == "/solo")
+    #expect(doctorCheckout(for: nil, in: envs, project: project)?.path == "/r/apps/m")
+    #expect(doctorCheckout(for: "/unlisted", in: envs, project: project)?.path == "/r/apps/m")
   }
 
   @Test func isDueWhenNeverRunNewStimOldRunOrChangedSetup() {
