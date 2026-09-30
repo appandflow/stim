@@ -170,10 +170,6 @@ export interface DiskPart {
   bytes: number;
 }
 
-/**
- * The disk a workspace holds, split into parts that add up to `workspaceUsage().diskBytes`: node_modules is part of
- * the worktree, so it is split out of it, and the build folder is Stim's own. Zero-byte parts are left out.
- */
 export function diskParts(env: EnvironmentState): DiskPart[] | null {
   const disk = env.disk;
   if (!disk) return null;
@@ -197,7 +193,6 @@ export function diskParts(env: EnvironmentState): DiskPart[] | null {
   return parts.length ? parts.map((part) => ({ ...part, label: labels[part.kind] })) : null;
 }
 
-/** The parts as one spoken line, for a bar that is not itself readable. */
 export function diskPartsLabel(parts: DiskPart[]): string {
   return parts.map((part) => `${part.label} ${formatSize(part.bytes)}`).join(', ');
 }
