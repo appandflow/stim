@@ -87,9 +87,10 @@ test('Stim Desktop reads progress lines with the same label set', () => {
   expect(desktop).toEqual(OUTPUT_LABELS.filter((label) => /^\S+$/.test(label)));
 });
 
-test('every label the run, lifecycle, and doctor commands print comes from that one set', () => {
-  for (const command of ['ios', 'android', 'worktree', 'start', 'stop', 'doctor']) {
+test('every label the run, lifecycle, doctor and gc commands print comes from that one set', () => {
+  for (const command of ['ios', 'android', 'worktree', 'start', 'stop', 'doctor', 'gc']) {
     const files = [`${command}.ts`];
+    if (command === 'gc') files.push('gc/memory.ts', 'gc/worktrees.ts');
     if (command === 'ios' || command === 'android') {
       files.push(
         ...readdirSync(new URL(`../commands/${command}/`, import.meta.url))

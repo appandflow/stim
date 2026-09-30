@@ -3,6 +3,7 @@ import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject } from '../workspace/config.ts';
+import { plural } from '../command-output.ts';
 import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -17,6 +18,7 @@ import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
 import { recordGcResult, takeGcResults, type GcResult } from './gc/results.ts';
+import { phase } from './gc/progress.ts';
 import {
   emptyCaches,
   includesParkedDevices,
@@ -153,7 +155,7 @@ function removeInvalidProjectEntries(invalidProjects: string[]): void {
 }
 
 function collectGcMemory(scope: MemoryScope): Promise<MemoryReport> {
-  return memorySweepIsScoped() ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope);
+  return memorySweepIsScoped() ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true);
 }
 
 export async function collectGcReport(
@@ -170,6 +172,7 @@ export async function collectGcReport(
   const all = scope !== null && olderThan === null;
   const withWorkspaces = includesWorkspaceOutputs(scope);
   const selected = selectCaches(discoverCaches(), scope).filter((c) => !withWorkspaces || !isInsideWorkspaces(c.dir));
+  if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`);
   const caches = planCacheEmptying(sizeCaches(selected), all);
 
   if (scope) {
@@ -264,6 +267,7 @@ export async function collectGcReport(
         ? 'STIM_HOME scopes this config, but simulators and AVDs are machine-global'
         : null;
 
+  phase('devices', 'listing simulators and emulators');
   if (unsweepableReason) {
     let simNames: string[] = [];
     let avdNames: string[] = [];

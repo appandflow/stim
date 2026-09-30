@@ -2,10 +2,12 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runGc } from '../commands/gc.ts';
 import * as memory from '../commands/gc/memory.ts';
 import {
+  collectMemoryReport,
   gradleHomeFromFiles,
   isKotlinDaemonCommand,
   parseGradleDaemonCommand,
@@ -385,6 +387,68 @@ test.skipIf(process.platform === 'win32')(
     await runGc({ cache: 'watchman', delete: true });
     expect(calls.filter((args) => args[1] === 'shutdown-server')).toHaveLength(1);
     expect(calls.some((args) => args[1] === 'watch-del')).toBe(false);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'watchman roots are probed together, and debug-status runs only once no probe of gc is connected',
+  async () => {
+    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+    const roots = Array.from({ length: 6 }, (_, index) => join(tmpHome, `root-${index}`));
+    let running = 0;
+    let most = 0;
+    let runningAtDebugStatus: number | null = null;
+    setExecutor({
+      runFileQuiet: (file: string) => (file === 'ps' ? PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground') : null),
+      runFileAsync: async (_file: string, args: string[]) => {
+        const [, command] = args;
+        if (command === 'get-pid') return JSON.stringify({ pid: 32725 });
+        if (command === 'watch-list') return JSON.stringify({ roots });
+        running++;
+        most = Math.max(most, running);
+        await new Promise((done) => setTimeout(done, 5));
+        running--;
+        return JSON.stringify(command === 'trigger-list' ? { triggers: [] } : { subscribers: [] });
+      },
+      spawn: () => {
+        runningAtDebugStatus = running;
+        const child = Object.assign(new EventEmitter(), { pid: 777, stdout: new EventEmitter(), kill: () => true });
+        setImmediate(() => {
+          child.stdout.emit('data', Buffer.from(JSON.stringify({ clients: [] })));
+          child.emit('close', 0);
+        });
+        return child;
+      },
+    });
+    const report = await collectMemoryReport({ watchman: true, gradle: false });
+    expect(report.watchmanRoots.map((root) => root.path)).toEqual(roots);
+    expect(report.processes[0]).toMatchObject({ reclaimable: true });
+    expect(most).toBeGreaterThan(2);
+    expect(runningAtDebugStatus).toBe(0);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc --delete --json --cache watchman reports each step on stderr and prints only its payload on stdout',
+  async () => {
+    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+    const gone = join(tmpHome, 'gone-worktree');
+    fakeWatchman({ clients: [], subscribers: { [tmpHome]: [], [gone]: [] } });
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runGc({ cache: 'watchman', delete: true, json: true });
+    expect(stdout.mock.calls).toHaveLength(1);
+    expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toMatchObject({ mode: 'delete', failures: 0 });
+    const steps = stderr.mock.calls
+      .map(([line]) => stripVTControlCharacters(String(line)))
+      .filter((line) => line.startsWith('  daemons '));
+    expect(steps.map((line) => line.slice(14))).toEqual([
+      'watchman pid 32725: checking 2 roots',
+      'watchman pid 32725: checking 2 roots',
+      `removing stale watchman root ${gone}`,
+      'watchman pid 32725: checking 1 root',
+      'shutting down watchman pid 32725: no client uses it',
+    ]);
   },
 );
 

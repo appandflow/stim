@@ -40,6 +40,7 @@ import {
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
+import { phase } from './progress.ts';
 import { recordGcResult } from './results.ts';
 
 const DEFAULT_WORKTREE_IDLE_DAYS = 7;
@@ -412,7 +413,10 @@ export async function collectWorktreeSweep({
   const grace: WorktreeGrace = { ms: graceMsSetting(), now };
   const groups = new Map<string, string[]>();
   const outside: WorktreeCandidate[] = [];
-  for (const root of candidateRoots()) {
+  const candidates = candidateRoots();
+  if (candidates.length)
+    phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`);
+  for (const root of candidates) {
     const entry = matchWorktreeEntry(listWorktrees(root), root);
     if (!entry) {
       outside.push({

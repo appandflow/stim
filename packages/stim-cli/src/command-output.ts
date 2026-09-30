@@ -98,6 +98,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'carry',
   'checkout',
   'compilation cache',
+  'daemons',
   'deps',
   'device',
   'devices',
@@ -139,6 +140,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'verify',
   'version',
   'workspace',
+  'worktrees',
 ];
 
 export function isOutputLabel(label: unknown): boolean {
