@@ -62,8 +62,8 @@ import Testing
       """)
     let gradleOffer = try #require(GcReport.reclaim(for: gradle, in: gc))
     #expect(gradleOffer.isAvailable)
-    #expect(gradleOffer.bytes == 1050 && gradleOffer.stops == 3 && gradleOffer.cacheKind == "gradle-daemons")
-    #expect(gradleOffer.keptReasons == ["a build is using it"])
+    #expect(gradleOffer.bytes == 700 && gradleOffer.stops == 2 && gradleOffer.cacheKind == "gradle-daemons")
+    #expect(gradleOffer.keptReasons == ["a build is using it", "a Gradle daemon is busy or its state is unknown"])
     #expect(GcReport.reclaim(for: kotlin, in: gc) == gradleOffer)
   }
 
