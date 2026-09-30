@@ -27,7 +27,6 @@ import { useSettings } from '@/hooks/settings';
 import { pairingScope, type StimConnection } from '@/lib/connection';
 import {
   APPEARANCE_OPTIONS,
-  HOME_FOOTER,
   NOTIFICATIONS_FOOTER,
   NOTIFY_CATEGORY_LABELS,
   NOTIFY_LEVEL_OPTIONS,
@@ -86,7 +85,7 @@ export function Settings() {
             onChange={setAppearance}
           />
         </Section>
-        <Section colors={colors} title="Home" footer={HOME_FOOTER}>
+        <Section colors={colors} title="Home">
           <Choice
             colors={colors}
             title="Home view"
