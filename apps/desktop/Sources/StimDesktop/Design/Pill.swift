@@ -1,24 +1,5 @@
+import StimKit
 import SwiftUI
-
-enum PillTone: CaseIterable {
-  case neutral
-  case accent
-  case success
-  case warning
-  case error
-  case info
-
-  var color: Color {
-    switch self {
-    case .neutral: return Palette.secondary
-    case .accent: return Palette.primary
-    case .success: return Palette.success
-    case .warning: return Palette.warning
-    case .error: return Palette.error
-    case .info: return Palette.info
-    }
-  }
-}
 
 /// A short label on a tinted background. `regular` is a rounded chip for header facts and filters; `small` is a
 /// capsule badge beside a title or count. An `outlined` pill has no fill and a neutral border, for a filter that is off.
@@ -28,7 +9,7 @@ struct Pill<Content: View>: View {
     case regular
   }
 
-  var tone: PillTone = .neutral
+  var tone: Tone = .neutral
   var size: Size = .regular
   var outlined = false
   @ViewBuilder var content: Content
@@ -36,7 +17,7 @@ struct Pill<Content: View>: View {
   var body: some View {
     HStack(spacing: size == .small ? Space.xs : Space.sm) { content }
       .textStyle(size == .small ? .caption2 : .footnote, weight: size == .small ? .semibold : nil)
-      .foregroundStyle(outlined ? Palette.tertiary : tone.color)
+      .foregroundStyle(outlined ? Palette.tertiary : Color(tone))
       .lineLimit(1)
       .padding(.horizontal, size == .small ? Space.sm : Space.md)
       .padding(.vertical, size == .small ? Space.xxs : Space.xs)
@@ -51,12 +32,12 @@ struct Pill<Content: View>: View {
 
   private var fill: Color {
     if outlined { return .clear }
-    return tone == .neutral ? Palette.surface : tone.color.opacity(Opacity.tint)
+    return tone == .neutral ? Palette.surface : Color(tone).opacity(Opacity.tint)
   }
 }
 
 extension Pill where Content == Text {
-  init(_ title: String, tone: PillTone = .neutral, size: Size = .regular) {
+  init(_ title: String, tone: Tone = .neutral, size: Size = .regular) {
     self.init(tone: tone, size: size) { Text(title) }
   }
 }

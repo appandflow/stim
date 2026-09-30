@@ -36,7 +36,7 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var diagnostics: [BuildDiagnostic]?
 
   public var summary: String {
-    let took = durationMs.map { " in \(formatDuration(ms: $0))" } ?? ""
+    let took = durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
     guard status == "ok" else { return "Failed (\(errorCode ?? "error"))\(took)" }
     switch cacheHit {
     case .local: return "Local cache\(took)"
@@ -169,7 +169,7 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
     let stoppedIn = result == "interrupted" ? order.last { phases[$0] == 0 } ?? order.last { phases[$0] != nil } : nil
     let parts = order.compactMap { phase in
-      phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(formatDuration(ms: ms))" }
+      phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(Format.elapsed(ms: ms))" }
     }
     return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
   }
@@ -199,7 +199,7 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   /// What the next build would do, as the Builds section words it after "Next build: ".
   public var nextBuild: String {
     if let refusal { return "would refuse (\(refusal.code))" }
-    let took = expectedMs.map { ", ~\(formatDuration(ms: $0))" } ?? ""
+    let took = expectedMs.map { ", ~\(Format.elapsed(ms: $0))" } ?? ""
     switch cacheHit {
     case .local: return "cache hit (local)\(took)"
     case .remote: return "cache hit (remote)\(took)"

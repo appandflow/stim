@@ -392,15 +392,17 @@ struct MachineSummary: View {
         }
         if showsMemory, let memory = metrics.memory {
           HStack(spacing: Space.sm) {
-            statItem(icon: "memorychip", value: formatMemoryPair(memory), tone: UsageThresholds.memory(memory.pressure))
+            statItem(
+              icon: "memorychip", value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
+              tone: UsageThresholds.memory(memory.pressure))
             if showsBar {
               ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
-                .tint(Theme.toneColor(UsageThresholds.memory(memory.pressure)))
+                .tint(Color(UsageThresholds.memory(memory.pressure)))
                 .frame(width: 50)
             }
           }
           .help(
-            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(formatGigabytes(mb: cap.committedMb)) of \(formatGigabytes(mb: cap.totalMemoryMb))."
+            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
           )
         }
       }
@@ -410,10 +412,10 @@ struct MachineSummary: View {
         } label: {
           HStack(spacing: Space.sm) {
             statItem(
-              icon: "internaldrive", value: "\(formatDisk(lowest.freeBytes)) free",
+              icon: "internaldrive", value: "\(Format.fileSize(lowest.freeBytes)) free",
               tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
             if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
-              Text("\u{00B7} \(formatDisk(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
+              Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
             }
           }
         }
@@ -440,19 +442,13 @@ struct MachineSummary: View {
     .padding(.horizontal, Space.md)
   }
 
-  private func statItem(icon: String, value: String, tone: UsageTone) -> some View {
+  private func statItem(icon: String, value: String, tone: Tone) -> some View {
     HStack(spacing: Space.xs) {
       Image(systemName: icon)
       Text(value).font(.stim(.caption, mono: true)).fixedSize()
     }
-    .foregroundStyle(Theme.toneColor(tone))
+    .foregroundStyle(Color(tone))
   }
-}
-
-private func formatMemoryPair(_ memory: MachineMemory) -> String {
-  let used = formatGigabytes(mb: Int(memory.usedBytes >> 20)).replacingOccurrences(of: " GB", with: "")
-  let totalGb = Int((Double(memory.totalBytes >> 20) / 1024).rounded())
-  return "\(used)/\(totalGb) GB"
 }
 
 /// macOS proposes no width to a toolbar item, so this proposes `width` to its content and takes the content's size.
@@ -480,7 +476,7 @@ struct DiskPopover: View {
           HStack {
             Text(volume.name).font(.stim(.callout, weight: .semibold))
             Spacer()
-            Text("\(formatDisk(volume.freeBytes)) free of \(formatDisk(volume.totalBytes))")
+            Text("\(Format.fileSize(volume.freeBytes)) free of \(Format.fileSize(volume.totalBytes))")
               .font(.stim(.caption, mono: true))
               .foregroundStyle(Palette.secondary)
           }
@@ -495,7 +491,7 @@ struct DiskPopover: View {
         if reclaimable.entries == 0 {
           Text("stim gc reports nothing to reclaim.").foregroundStyle(Palette.secondary)
         } else {
-          Text(formatDisk(reclaimable.bytes)).font(.stim(.title)).foregroundStyle(Palette.primary)
+          Text(Format.fileSize(reclaimable.bytes)).font(.stim(.title)).foregroundStyle(Palette.primary)
           Text(
             "\(reclaimable.entries) \(reclaimable.entries == 1 ? "entry" : "entries")"
               + (reclaimable.unsized > 0 ? ", \(reclaimable.unsized) of unknown size" : "")

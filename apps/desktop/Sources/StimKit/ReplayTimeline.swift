@@ -117,7 +117,7 @@ public struct ReplayTimeline: Equatable, Sendable {
     var placed: [GapLabel] = []
     let gaps = pieces.filter(\.isGap).sorted { $0.end - $0.start > $1.end - $1.start }
     for gap in gaps {
-      let text = "stopped \(Self.shortDuration(ms: gap.end - gap.start))"
+      let text = "stopped \(Format.roundedDuration(ms: gap.end - gap.start))"
       let labelWidth = measure(text).rounded(.up)
       if labelWidth > width { continue }
       let center = (gap.from + gap.to) / 2 * width
@@ -163,14 +163,4 @@ public struct ReplayTimeline: Equatable, Sendable {
   }
 
   private func nonZero(_ value: Double) -> Double { value == 0 ? 1 : value }
-
-  /// "2h", "14m", "40s": how long a gap or an age is, in its largest unit.
-  public static func shortDuration(ms: Double) -> String {
-    let seconds = max(0, Int((ms / 1000).rounded()))
-    if seconds < 60 { return "\(seconds)s" }
-    let minutes = Int((Double(seconds) / 60).rounded())
-    if minutes < 60 { return "\(minutes)m" }
-    let hours = Int((Double(minutes) / 60).rounded())
-    return hours < 48 ? "\(hours)h" : "\(Int((Double(hours) / 24).rounded()))d"
-  }
 }

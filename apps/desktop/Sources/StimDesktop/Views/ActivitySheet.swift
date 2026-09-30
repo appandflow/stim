@@ -91,7 +91,7 @@ struct ActivitySheet: View {
             .lineLimit(1)
             .truncationMode(.middle)
           Spacer()
-          Text(formatDuration(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
+          Text(Format.elapsed(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
             .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.tertiary)
         }
@@ -185,7 +185,7 @@ struct ActivitySheet: View {
       }
       Spacer()
       if let bytes = item.bytes, bytes > 0 {
-        Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+        Text(Format.fileSize(bytes))
           .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.tertiary)
       }
@@ -317,7 +317,7 @@ struct ActivitySheet: View {
   private func deleteMessage(_ report: GcPreview) -> String {
     var text = "Stim reclaims \(report.deletableCount) reported entries"
     if report.reclaimableBytes > 0 {
-      text += " (\(ByteCountFormatter.string(fromByteCount: report.reclaimableBytes, countStyle: .file)) measured)"
+      text += " (\(Format.fileSize(report.reclaimableBytes)) measured)"
     }
     return text + ". Stim collects the report again when it runs, so it acts on what it finds then."
   }
@@ -331,7 +331,7 @@ struct ActivitySheet: View {
         Text(code == 0 ? "Done" : "Failed")
       }
     } else {
-      Pill(tone: .accent) {
+      Pill(tone: .brand) {
         ProgressView().controlSize(.mini)
         Text("Running")
       }
@@ -411,7 +411,7 @@ struct GcPreviewView: View {
       }
       Spacer()
       if let bytes = entry.bytes, bytes > 0 {
-        Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+        Text(Format.fileSize(bytes))
           .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.tertiary)
       }

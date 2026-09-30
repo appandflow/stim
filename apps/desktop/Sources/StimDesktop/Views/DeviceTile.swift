@@ -171,7 +171,7 @@ struct DeviceTile: View {
                 : "A device Stim uses through this workspace's lease and never owns.")
           if let expires = device.leaseExpiresAt {
             TimelineView(.periodic(from: .now, by: 30)) { context in
-              Pill("Leased \u{00B7} \(shortDuration(expires.timeIntervalSince(context.date))) left")
+              Pill("Leased \u{00B7} \(Format.duration(expires.timeIntervalSince(context.date))) left")
                 .help("This workspace's lease ends at \(expires.formatted(date: .omitted, time: .shortened)).")
             }
           }
@@ -379,7 +379,7 @@ struct DeviceTile: View {
     let basis = device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? ""
     switch badge {
     case .driven:
-      Pill(tone: .accent) {
+      Pill(tone: .brand) {
         StatusDot(color: Palette.primary)
         Text(namesDriver ? badge.text : "Driven")
       }
@@ -721,7 +721,7 @@ private struct BuildCover: View {
     TimelineView(.buildSeconds(build)) { context in
       let progress = build.progress(at: context.date)
       let (phase, counts) = build.currentPhaseLabel
-      let estimate = build.expectedMs.map { " / ~\(clockDuration(ms: $0))" } ?? ""
+      let estimate = build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? ""
       VStack(spacing: Space.sm) {
         Text("Waiting for the \(platformName(build.platform)) build").font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
         Text([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
@@ -738,7 +738,7 @@ private struct BuildCover: View {
         .tint(Palette.accent)
         .controlSize(.small)
         .frame(maxWidth: 160)
-        Text(clockDuration(ms: progress.elapsedMs) + estimate)
+        Text(Format.clock(ms: progress.elapsedMs) + estimate)
           .font(.stim(.caption))
           .monospacedDigit()
           .foregroundStyle(.white.opacity(0.6))

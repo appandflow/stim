@@ -257,7 +257,7 @@ private struct MachineRow: View {
           if let status {
             if status.state == .approved, status.offloadable != nil {
               let ready = status.readiness
-              Pill(ready.title, tone: tone(ready.tone), size: .small).help(ready.reasons ?? "")
+              Pill(ready.title, tone: ready.tone, size: .small).help(ready.reasons ?? "")
             } else {
               Pill(status.state.title, tone: tone(status.state), size: .small)
             }
@@ -285,16 +285,7 @@ private struct MachineRow: View {
     .padding(.vertical, Space.xxs)
   }
 
-  private func tone(_ tone: MachineReadiness.Tone) -> PillTone {
-    switch tone {
-    case .success: return .success
-    case .warning: return .warning
-    case .error: return .error
-    case .neutral: return .neutral
-    }
-  }
-
-  private func tone(_ state: BuildMachineStatus.State) -> PillTone {
+  private func tone(_ state: BuildMachineStatus.State) -> Tone {
     switch state {
     case .approved: return .success
     case .pending: return .warning

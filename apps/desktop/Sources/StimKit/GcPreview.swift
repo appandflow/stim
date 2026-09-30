@@ -150,7 +150,7 @@ public struct GcPreview: Sendable {
     let bytes = (item[bytesKey] as? NSNumber)?.int64Value
     let kept: String?
     if key == "idleDevices" {
-      let idle = (item["idleForMs"] as? NSNumber).map { "idle \(ActivityBadge.duration($0.doubleValue / 1000))" }
+      let idle = (item["idleForMs"] as? NSNumber).map { "idle \(Format.duration($0.doubleValue / 1000))" }
       kept = [idle ?? "idle", "stim gc --idle shuts it down"].joined(separator: "; ")
     } else if key == "unverifiedDevices" {
       kept = "This Stim home has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"

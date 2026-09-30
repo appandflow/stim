@@ -109,7 +109,7 @@ final class OversightNotifier: ObservableObject {
       sticky: notification.category.needsAttention, key: notification.id)
   }
 
-  static func tone(_ category: OversightCategory) -> BannerTone {
+  static func tone(_ category: OversightCategory) -> Tone {
     switch category {
     case .started: return .accent
     case .finished: return .success

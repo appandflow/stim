@@ -840,21 +840,21 @@ import Testing
 
   @Test func toneStepsAtTheCpuWarnAndCriticalFractions() {
     #expect(UsageThresholds.cpu(fraction: 0.79) == .normal)
-    #expect(UsageThresholds.cpu(fraction: 0.8) == .warn)
-    #expect(UsageThresholds.cpu(fraction: 0.95) == .critical)
+    #expect(UsageThresholds.cpu(fraction: 0.8) == .caution)
+    #expect(UsageThresholds.cpu(fraction: 0.95) == .error)
   }
 
   @Test func toneStepsAtTheDiskWarnAndCriticalFloors() {
     #expect(UsageThresholds.disk(freeBytes: 20_000_000_000) == .normal)
-    #expect(UsageThresholds.disk(freeBytes: 19_999_999_999) == .warn)
-    #expect(UsageThresholds.disk(freeBytes: 4_999_999_999) == .critical)
+    #expect(UsageThresholds.disk(freeBytes: 19_999_999_999) == .caution)
+    #expect(UsageThresholds.disk(freeBytes: 4_999_999_999) == .error)
   }
 
   @Test func mapsMemoryPressureToTone() {
     #expect(UsageThresholds.memory(nil) == .normal)
     #expect(UsageThresholds.memory(.normal) == .normal)
-    #expect(UsageThresholds.memory(.warning) == .warn)
-    #expect(UsageThresholds.memory(.critical) == .critical)
+    #expect(UsageThresholds.memory(.warning) == .caution)
+    #expect(UsageThresholds.memory(.critical) == .error)
   }
 }
 

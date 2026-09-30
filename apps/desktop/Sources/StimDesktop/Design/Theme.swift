@@ -13,11 +13,22 @@ enum Theme {
     }
   }
 
-  static func toneColor(_ tone: UsageTone) -> Color {
+}
+
+extension Color {
+  /// The one color each `Tone` stands for.
+  init(_ tone: Tone) {
     switch tone {
-    case .critical: return Palette.error
-    case .warn: return Color(light: 0x94600DFF, dark: 0xF5B454FF)
-    case .normal: return Palette.text
+    case .normal: self = Palette.text
+    case .neutral: self = Palette.secondary
+    case .tertiary: self = Palette.tertiary
+    case .brand: self = Palette.primary
+    case .accent: self = Palette.accent
+    case .info: self = Palette.info
+    case .success: self = Palette.success
+    case .caution: self = Color(light: 0x94600DFF, dark: 0xF5B454FF)
+    case .warning: self = Palette.warning
+    case .error: self = Palette.error
     }
   }
 }

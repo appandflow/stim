@@ -1,3 +1,4 @@
+import StimKit
 import SwiftUI
 
 struct MenuPillOption<Value: Hashable>: Identifiable {
@@ -11,7 +12,7 @@ struct MenuPill<Value: Hashable>: View {
   var label: String
   var selection: Binding<Value>
   var options: [MenuPillOption<Value>]
-  var tone: PillTone = .accent
+  var tone: Tone = .brand
   var isActive = false
   @State private var hovering = false
 

@@ -29,7 +29,7 @@ public struct GcOutcome: Hashable, Sendable {
   /// One line such as "Freed 20.2 GB · Deleted 3 devices".
   public var headline: String {
     var parts: [String] = []
-    if freedBytes > 0 { parts.append("Freed \(ByteCountFormatter.string(fromByteCount: freedBytes, countStyle: .file))") }
+    if freedBytes > 0 { parts.append("Freed \(Format.fileSize(freedBytes))") }
     for (phrase, count) in Self.phrases(done) { parts.append(phrase(count)) }
     if parts.isEmpty { return failures > 0 ? "Nothing was cleaned up" : "Nothing to clean up" }
     return parts.joined(separator: " \u{00B7} ")

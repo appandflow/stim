@@ -76,10 +76,10 @@ struct Inspector: View {
       Text("\(countLabel(platform.hits, "hit")) \u{00B7} \(countLabel(platform.misses, "miss", plural: "misses"))")
         .foregroundStyle(Palette.secondary)
       if let cold = platform.lastColdBuildMs {
-        Text("Last cold \(formatDuration(ms: cold))").foregroundStyle(Palette.secondary)
+        Text("Last cold \(Format.elapsed(ms: cold))").foregroundStyle(Palette.secondary)
       }
       if let saved = platform.timeSavedMs, saved >= 1000 {
-        Text("Saved \(formatDuration(ms: saved))").foregroundStyle(Palette.primary)
+        Text("Saved \(Format.elapsed(ms: saved))").foregroundStyle(Palette.primary)
       }
     }
     .padding(Space.lg)
@@ -111,7 +111,7 @@ struct ResourcesSection: View {
           "cpu", "CPU", usage.cpuPercent.map(formatPercent) ?? "\u{2014}",
           values: history.cpu(env.path).isEmpty ? sampled?.cpu ?? [] : history.cpu(env.path), minimumPeak: 100)
         chart(
-          "memorychip", "Memory", usage.memoryMb.map(formatMemoryMb) ?? "\u{2014}",
+          "memorychip", "Memory", usage.memoryMb.map(Format.memoryMb) ?? "\u{2014}",
           values: history.memoryMb(env.path).isEmpty
             ? sampled.flatMap { $0.isFootprint ? $0.memory.map { $0 / 1_048_576 } : nil } ?? []
             : history.memoryMb(env.path),
@@ -123,7 +123,7 @@ struct ResourcesSection: View {
       if !rows.isEmpty {
         ProcessRowsTable(rows: rows)
       }
-      if let disk = env.diskBreakdown(format: { formatDisk(Int64($0)) }) {
+      if let disk = env.diskBreakdown(format: { Format.fileSize(Int64($0)) }) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Image(systemName: "internaldrive").foregroundStyle(Palette.secondary)
           Text(disk).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
@@ -135,7 +135,7 @@ struct ResourcesSection: View {
 
   private var window: String? {
     guard let span = history.span(env.path), span >= 60 else { return nil }
-    return "Last \(shortDuration(span)), sampled while Stim Desktop is on screen"
+    return "Last \(Format.duration(span)), sampled while Stim Desktop is on screen"
   }
 
   private func chart(_ icon: String, _ title: String, _ value: String, values: [Double], minimumPeak: Double)

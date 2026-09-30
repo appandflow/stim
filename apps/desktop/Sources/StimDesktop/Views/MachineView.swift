@@ -85,7 +85,7 @@ struct MachineView: View {
       Spacer()
       if let at = storage.measuredAt, !storage.measuring, !metrics.gcRunning {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-          Text("Measured \(formatAgo(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
+          Text("Measured \(Format.age(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
         }
       }
       Button("Refresh") {
@@ -135,14 +135,14 @@ struct MachineView: View {
     let under = lowest.flatMap { volume in budget.map { volume.freeBytes < $0 } } ?? false
     return VStack(alignment: .leading, spacing: Space.lg) {
       HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-        Text(lowest.map { formatDisk($0.freeBytes) } ?? "\u{2014}")
+        Text(lowest.map { Format.fileSize($0.freeBytes) } ?? "\u{2014}")
           .font(.stim(.title))
           .foregroundStyle(under ? Palette.warning : Palette.text)
         VStack(alignment: .leading, spacing: Space.xxs) {
-          Text(lowest.map { "free on \($0.name) of \(formatDisk($0.totalBytes))" } ?? "free")
+          Text(lowest.map { "free on \($0.name) of \(Format.fileSize($0.totalBytes))" } ?? "free")
             .foregroundStyle(Palette.secondary)
           Text(
-            budget.map { under ? "Under the \(formatDisk($0)) Stim budget" : "Stim budget \(formatDisk($0)) free" }
+            budget.map { under ? "Under the \(Format.fileSize($0)) Stim budget" : "Stim budget \(Format.fileSize($0)) free" }
               ?? "No Stim disk budget set"
           )
           .font(.stim(.footnote))
@@ -157,7 +157,7 @@ struct MachineView: View {
               Rectangle()
                 .fill(Self.color(category))
                 .frame(width: max(2, (proxy.size.width - 12) * CGFloat(value.bytes) / CGFloat(total)))
-                .help("\(category.title): \(formatDisk(value.bytes))")
+                .help("\(category.title): \(Format.fileSize(value.bytes))")
             }
           }
         }
@@ -170,10 +170,13 @@ struct MachineView: View {
           HStack(spacing: Space.sm) {
             RoundedRectangle(cornerRadius: 2).fill(Self.color(category)).frame(width: 9, height: 9)
             Text(category.title).foregroundStyle(Palette.secondary)
-            Text(value.complete ? formatDisk(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + formatDisk(value.bytes))
-              .font(.stim(.footnote, mono: true))
-              .foregroundStyle(value.complete ? Palette.text : Palette.tertiary)
-              .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
+            Text(
+              value.complete
+                ? Format.fileSize(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + Format.fileSize(value.bytes)
+            )
+            .font(.stim(.footnote, mono: true))
+            .foregroundStyle(value.complete ? Palette.text : Palette.tertiary)
+            .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
           }
         }
       }
@@ -219,7 +222,7 @@ struct MachineView: View {
         }
         .buttonStyle(.stim())
       } else {
-        Button(bytes > 0 ? "Free \(formatDisk(bytes))\u{2026}" : "Free space\u{2026}") { free(commands) }
+        Button(bytes > 0 ? "Free \(Format.fileSize(bytes))\u{2026}" : "Free space\u{2026}") { free(commands) }
           .buttonStyle(.stim(.primary))
           .disabled(commands.isEmpty)
           .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
@@ -438,7 +441,7 @@ struct MachineView: View {
           .overlay(alignment: .leading) {
             if let trimmed = workspace.logsTrimmed {
               Image(systemName: "scissors").font(.system(size: 9)).foregroundStyle(Palette.warning)
-                .help("stim gc --delete trims \(formatDisk(trimmed)) from logs over twice the 8 MiB cap")
+                .help("stim gc --delete trims \(Format.fileSize(trimmed)) from logs over twice the 8 MiB cap")
             } else if let kept = workspace.logsKept {
               Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(Palette.tertiary)
                 .help("Logs over the cap, kept by stim gc --delete: \(abbreviatingHome(kept))")
@@ -450,7 +453,7 @@ struct MachineView: View {
         Button("Reveal in Finder") { reveal(workspace.worktreePath) }
         Divider()
         Button(
-          "Remove worktree" + (workspace.removable.map { ", frees about \(formatDisk($0))" } ?? "")
+          "Remove worktree" + (workspace.removable.map { ", frees about \(Format.fileSize($0))" } ?? "")
             + "\u{2026}", role: .destructive
         ) { removing = workspace }
         .disabled(actions.active(for: workspace.path) != nil || workspace.missing || workspace.unprovisioned)
@@ -471,7 +474,7 @@ struct MachineView: View {
       ("node_modules", workspace.nodeModules), ("devices", workspace.devices), ("outputs", workspace.buildOutputs),
       ("logs", workspace.logs),
     ]
-    .compactMap { name, size in size.bytes.flatMap { $0 > 0 ? "\(name) \(formatDisk($0))" : nil } }
+    .compactMap { name, size in size.bytes.flatMap { $0 > 0 ? "\(name) \(Format.fileSize($0))" : nil } }
     .joined(separator: " \u{00B7} ")
   }
 
@@ -585,13 +588,13 @@ struct MachineView: View {
     switch device.owner {
     case .workspace:
       let name = device.project.map { status.names(ofPath: $0).title } ?? "a workspace"
-      Pill(tone: .accent) {
+      Pill(tone: .brand) {
         Text("Stim \u{00B7} \(name)" + (device.slot.map { $0 == "default" ? "" : " (\($0))" } ?? ""))
           .lineLimit(1).truncationMode(.middle)
       }
       .help(device.project.map { abbreviatingHome($0) } ?? "")
     case .parked:
-      Pill(tone: .accent) { Text("Stim \u{00B7} parked") }
+      Pill(tone: .brand) { Text("Stim \u{00B7} parked") }
         .help("Kept for reuse by the next workspace; stim gc --delete deletes it")
     case .orphaned:
       Pill(tone: .warning) { Text("Stim \u{00B7} no workspace") }
@@ -606,7 +609,7 @@ struct MachineView: View {
   }
 
   private func lastUsed(_ date: Date) -> String {
-    formatAgo(Date().timeIntervalSince(date))
+    Format.age(Date().timeIntervalSince(date))
   }
 
   // MARK: Runtimes
@@ -616,7 +619,7 @@ struct MachineView: View {
     return CollapsibleSection("machine.runtimes", title: "Runtimes and system images", items: report.runtimes) {
       if !unused.isEmpty {
         Pill(tone: .warning) {
-          Text("\(unused.count) unused \u{00B7} \(formatDisk(unused.compactMap(\.size.bytes).reduce(0, +)))")
+          Text("\(unused.count) unused \u{00B7} \(Format.fileSize(unused.compactMap(\.size.bytes).reduce(0, +)))")
         }
       }
     } content: { shown in
@@ -712,7 +715,7 @@ struct MachineView: View {
   // MARK: Shared
 
   private func totalText(_ total: Int64?, complete: Bool) -> some View {
-    Text(total.map { (complete ? "" : "\u{2265} ") + formatDisk($0) } ?? "\u{2026}")
+    Text(total.map { (complete ? "" : "\u{2265} ") + Format.fileSize($0) } ?? "\u{2026}")
       .font(.stim(.footnote, mono: true)).fontWeight(.semibold)
       .foregroundStyle(complete ? Palette.text : Palette.tertiary)
       .frame(width: Self.sizeWidth, alignment: .trailing)
@@ -723,7 +726,7 @@ struct MachineView: View {
     let text: String
     let reason: String
     switch measurement {
-    case .size(let bytes): (text, reason) = (formatDisk(bytes), "")
+    case .size(let bytes): (text, reason) = (Format.fileSize(bytes), "")
     case .absent: (text, reason) = ("None", "Nothing on disk")
     case .measuring: (text, reason) = ("\u{2026}", "Measuring")
     case .failed: (text, reason) = ("Unknown", "Could not be sized; Refresh to try again")
@@ -788,22 +791,13 @@ private struct MachineBuildMachines: View {
       Image(systemName: "desktopcomputer").foregroundStyle(Palette.tertiary).frame(width: 16)
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(verbatim: machineName(machine.machine))
-        Text(ready.line).font(.stim(.caption)).foregroundStyle(color(ready.tone))
+        Text(ready.line).font(.stim(.caption)).foregroundStyle(Color(ready.tone))
       }
       Spacer()
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
     .help(ready.reasons ?? "")
-  }
-
-  private func color(_ tone: MachineReadiness.Tone) -> Color {
-    switch tone {
-    case .success: return Palette.success
-    case .warning: return Palette.warning
-    case .error: return Palette.error
-    case .neutral: return Palette.secondary
-    }
   }
 
   private func load() async {

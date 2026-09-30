@@ -21,14 +21,3 @@ public struct ProjectStats: Decodable, Sendable {
 
   public var project: Scope?
 }
-
-public func formatDuration(ms: Double) -> String {
-  let s = Int(ms / 1000)
-  if s >= 3600 { return "\(s / 3600)h \((s % 3600) / 60)m" }
-  return "\(s / 60)m \(s % 60)s"
-}
-
-public func formatGigabytes(mb: Int) -> String {
-  let tenths = Int((Double(mb) / 1024 * 10).rounded())
-  return "\(tenths / 10).\(tenths % 10) GB"
-}

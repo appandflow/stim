@@ -95,7 +95,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       }
     }
 
-    var readinessTone: MachineReadiness.Tone {
+    var readinessTone: Tone {
       switch self {
       case .approved: return .success
       case .pending, .notOnTailnet, .tailscaleOff, .unreachable: return .warning
@@ -185,8 +185,6 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
 
 /// A build machine's readiness for builds, as `BuildMachineStatus.readiness` reads it from `stim doctor`.
 public struct MachineReadiness: Equatable, Sendable {
-  public enum Tone: Sendable { case success, warning, error, neutral }
-
   public var title: String
   public var remedy: String?
   public var tone: Tone

@@ -1,3 +1,4 @@
+import StimKit
 import SwiftUI
 
 /// A card at the main window's top right corner; clicking it runs its action.
@@ -9,7 +10,7 @@ struct Toast: Identifiable {
 
   let id = UUID()
   var icon: String
-  var tone: BannerTone = .neutral
+  var tone: Tone = .neutral
   var title: String
   var body: String?
   var action: Action?
