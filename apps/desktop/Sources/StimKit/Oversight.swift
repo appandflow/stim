@@ -345,8 +345,6 @@ public enum Oversight {
     "gradle": "Gradle", "kts": "Gradle",
   ]
 
-  static func platformName(_ platform: String?) -> String { platform == "ios" ? "iOS" : "Android" }
-
   static func basename(_ path: String) -> String {
     path.split(separator: "/", omittingEmptySubsequences: false).last(where: { !$0.isEmpty }).map(String.init)
       ?? path
@@ -651,7 +649,7 @@ public enum Oversight {
         run.wake(due)
       } else {
         entry.finished = true
-        let body = "Agent stopped after a green \(platformName(newest.platform)) build"
+        let body = "Agent stopped after a green \(platformName(newest.platform ?? "android")) build"
         run.event(look.notify(.finished, body, .workspace(path: env.path), nil))
       }
     }
@@ -670,7 +668,7 @@ public enum Oversight {
     let due = quietSince + Double(run.prefs.stuckMinutes) * 60_000
     if now < due { return run.wake(due) }
     let minutes = Int(((now - quietSince) / 60_000).rounded(.down))
-    let after = green && newest != nil ? " after a green \(platformName(newest!.platform)) build" : ""
+    let after = green && newest != nil ? " after a green \(platformName(newest!.platform ?? "android")) build" : ""
     let body = "No agent activity for \(minutes) min\(after); \(device.model) still up"
     if run.lasting(look.notify(.stuck, body, deviceTarget(env, device), nil)) { entry.stuckAt = quietSince }
   }
