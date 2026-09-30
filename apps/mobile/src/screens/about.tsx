@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { View } from 'react-native';
@@ -6,32 +8,42 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollView } from '@/components/lists';
 import { describeState } from '@/components/mac-chip';
 import { Text } from '@/components/text';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs, type PairedConnection } from '@/hooks/mac-connection';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 
 export function About() {
   const { theme } = useUnistyles();
   const { connections } = useMacs();
+  const version = Constants.expoConfig?.version ?? '';
+  const update = Updates.isEmbeddedLaunch || !Updates.updateId ? t`embedded` : Updates.updateId;
   return (
     <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: theme.colors.background }}>
-      <Text variant="title">About</Text>
+      <Text variant="title">
+        <Trans>About</Trans>
+      </Text>
       <View style={styles.group}>
         <Text variant="body" weight="medium">
-          {`Stim for phones ${Constants.expoConfig?.version ?? ''} \u00B7 protocol ${PROTOCOL_VERSION}`}
+          <Trans>
+            Stim for phones {version} \u00B7 protocol {PROTOCOL_VERSION}
+          </Trans>
         </Text>
         <Text variant="footnote" tone="secondary">
-          {`Update ${Updates.isEmbeddedLaunch || !Updates.updateId ? 'embedded' : Updates.updateId}`}
+          <Trans>Update {update}</Trans>
         </Text>
         {connections.map((c) => (
           <Text key={c.mac.id} variant="footnote" tone="secondary">
-            {c.state.kind === 'open'
-              ? `${c.mac.name}: stim ${c.state.server.stim} \u00B7 server ${c.state.server.version}`
-              : `${c.mac.name}: ${describeState(c.state, c.missing)}`}
+            {connectionLine(c)}
           </Text>
         ))}
       </View>
     </ScrollView>
   );
+}
+
+function connectionLine({ mac: { name }, state, missing }: PairedConnection): string {
+  if (state.kind !== 'open') return `${name}: ${describeState(state, missing)}`;
+  const { stim, version } = state.server;
+  return t`${name}: stim ${stim} \u00B7 server ${version}`;
 }
 
 const styles = StyleSheet.create((theme) => ({

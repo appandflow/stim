@@ -1,4 +1,5 @@
 import type { PillTone } from '@/components/pill';
+import { formatSize } from '@/intl/format';
 import type { EnvironmentState, MachineOwner, StatusPayload, WorktreeFacts } from '@/protocol/types';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle, workspaceTitleAt } from '@/lib/workspaces';
 
@@ -651,15 +652,6 @@ export function buildStats(stats: Record<string, unknown> | null | undefined): B
       },
     ];
   });
-}
-
-/** Decimal units like the Finder, down to kilobytes for logs and small caches. */
-function formatSize(bytes: number): string {
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
-  if (bytes > 0) return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
-  return 'None';
 }
 
 /** A size, marked as a lower bound when part of it is unsized, or a dash when nothing is. */

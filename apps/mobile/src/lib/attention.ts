@@ -1,5 +1,5 @@
+import { formatDuration } from '@/intl/format';
 import type { ConnectionState } from '@/lib/connection';
-import { shortDuration } from '@/lib/format';
 import { needsAttention } from '@/lib/needs-attention';
 import { tildeHome } from '@/lib/paths';
 import { repositoryRoots, workspaceTitle } from '@/lib/workspaces';
@@ -48,7 +48,7 @@ function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | nu
   }
   if (state.kind === 'open' || (state.kind === 'connecting' && mac.disconnectedAt === null)) return null;
   const lastSeenAt = mac.seenAt ?? mac.disconnectedAt;
-  const seen = lastSeenAt === null ? '' : ` \u00B7 last seen ${shortDuration(now - lastSeenAt)} ago`;
+  const seen = lastSeenAt === null ? '' : ` \u00B7 last seen ${formatDuration(now - lastSeenAt)} ago`;
   return { ...base, severity: 'warning', detail: `Offline${seen}` };
 }
 

@@ -192,13 +192,6 @@ export function projectNames(items: HomeItem[]): string[] {
 
 const LOW_DISK_BYTES = 20e9;
 
-/** Decimal units, like the Finder and Stim Desktop's disk figures. */
-export function formatBytes(bytes: number): string {
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
-  const gb = bytes / 1e9;
-  return gb >= 100 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
-}
-
 /** Binary units labeled GB, like Activity Monitor's memory figures. */
 const memoryGb = (bytes: number) => bytes / 2 ** 30;
 

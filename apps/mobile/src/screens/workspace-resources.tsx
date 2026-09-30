@@ -6,11 +6,10 @@ import { ScrollView } from '@/components/lists';
 import { Text } from '@/components/text';
 import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
-import { formatBytes } from '@/lib/home';
+import { formatBytes, formatMemoryMb } from '@/intl/format';
 import {
   diskBreakdown,
   formatCpu,
-  formatMemoryMb,
   processRows,
   sparkline,
   workspaceSeries,

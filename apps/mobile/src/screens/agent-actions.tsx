@@ -13,7 +13,8 @@ import { withAlpha } from '@/design/color';
 import { useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { useAgentActions } from '@/hooks/workspace-logs';
-import { clockTime, shortDuration } from '@/lib/format';
+import { formatDuration } from '@/intl/format';
+import { clockTime } from '@/lib/format';
 import { agentFilterOptions, matchesAgentFilter, type AgentFilter } from '@/lib/logs';
 import { deviceTitle } from '@/lib/workspace-view';
 import { devicesOf, platformName } from '@/lib/workspaces';
@@ -49,7 +50,7 @@ export function AgentActions({
   const since = driven && activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
   const name = device ? deviceTitle(device).name : platformName(platform);
   const subtitle = [
-    Number.isFinite(since) ? `driving ${shortDuration(Math.max(0, now - since))}` : null,
+    Number.isFinite(since) ? `driving ${formatDuration(Math.max(0, now - since))}` : null,
     actions.length === 1 ? '1 action' : `${actions.length} actions`,
   ]
     .filter(Boolean)

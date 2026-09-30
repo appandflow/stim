@@ -44,6 +44,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter stim-mobile
       - run: pnpm run format:check
       - run: pnpm run lint
+      - run: pnpm run intl:check
       - run: pnpm run typecheck
       - run: pnpm test --ci
       - run: pnpm run licenses:check

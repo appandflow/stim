@@ -1,5 +1,5 @@
-import { clockDuration, gitBadges, machineName, shortDuration } from '@/lib/format';
-import { formatBytes } from '@/lib/home';
+import { formatBytes, formatDuration } from '@/intl/format';
+import { clockDuration, gitBadges, machineName } from '@/lib/format';
 import type { PlanState } from '@/lib/plan-checks';
 import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
 import type {
@@ -27,7 +27,7 @@ export interface WorkspaceStage {
 
 const ago = (now: number, iso: string | null | undefined): string | null => {
   const at = iso ? Date.parse(iso) : NaN;
-  return Number.isFinite(at) ? shortDuration(Math.max(0, now - at)) : null;
+  return Number.isFinite(at) ? formatDuration(Math.max(0, now - at)) : null;
 };
 
 function latestBuild(env: EnvironmentState): LastBuild | null {
@@ -103,10 +103,6 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
 /** `ps` CPU, where 100 is one core, so a busy workspace reads above 100%. */
 export function formatCpu(percent: number): string {
   return `${Math.round(percent)}%`;
-}
-
-export function formatMemoryMb(mb: number): string {
-  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }
 
 export interface Usage {
@@ -533,7 +529,7 @@ export function bundleLine(env: EnvironmentState, now: number, reportsBundles: b
   if (!last) return null;
   if (last.status === 'failed') {
     const finished = Date.parse(last.finishedAt);
-    const since = Number.isFinite(finished) ? sinceLabel(now - finished) : null;
+    const since = Number.isFinite(finished) ? formatDuration(now - finished, { seconds: true }) : null;
     const when = since ? ` \u00B7 ${since} ago` : '';
     return { text: `Bundle failed${when}`, tone: 'error' };
   }
@@ -558,14 +554,14 @@ export function agentRow(
   last: { ts: number; msg: string } | null,
   now: number,
 ): AgentRow {
-  const lastText = last ? `${last.msg} \u00B7 ${sinceLabel(now - last.ts)} ago` : null;
+  const lastText = last ? `${last.msg} \u00B7 ${formatDuration(now - last.ts, { seconds: true })} ago` : null;
   if (activity?.state === 'driven') {
     return { tool: activity.driver?.tool ?? 'Agent', text: lastText ?? 'no action yet' };
   }
   const idleSince = last?.ts ?? (activity?.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN);
   return {
     tool: null,
-    text: Number.isFinite(idleSince) ? `idle ${shortDuration(Math.max(0, now - idleSince))}` : 'nothing yet',
+    text: Number.isFinite(idleSince) ? `idle ${formatDuration(Math.max(0, now - idleSince))}` : 'nothing yet',
   };
 }
 
@@ -595,11 +591,6 @@ export function workspaceSeries(usage: StatusUsage | null | undefined, path: str
     peakCpuPercent: cpu.length ? Math.max(...cpu) : null,
     memoryChangeMb: memory.length > 1 ? memory.at(-1)! - memory[0]! : null,
   };
-}
-
-export function sinceLabel(ms: number): string {
-  const clamped = Math.max(0, ms);
-  return clamped < 60_000 ? `${Math.floor(clamped / 1000)}s` : shortDuration(clamped);
 }
 
 export type ChipTone = 'default' | 'secondary' | 'tertiary' | 'success' | 'warning' | 'error' | 'brand';

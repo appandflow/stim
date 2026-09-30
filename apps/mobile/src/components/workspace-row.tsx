@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Plural, Trans } from '@lingui/react/macro';
 import { Fragment, memo } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -11,8 +13,9 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/mac-connection';
+import { formatDuration } from '@/intl/format';
 import { agentsSummary, workspaceAgentSessions } from '@/lib/agents';
-import { drivenLabel, driversSummary, gitBadges, shortDuration } from '@/lib/format';
+import { drivenLabel, driversSummary, gitBadges } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
 import { deviceKey, devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
 
@@ -56,19 +59,18 @@ export const WorkspaceRow = memo(function WorkspaceRow({
       : active
         ? theme.colors.success
         : theme.colors.tertiary;
-  const lastSeen = offline
-    ? lastSeenAt === null
-      ? 'Offline'
-      : `Last seen ${shortDuration(now - lastSeenAt)} ago`
-    : null;
+  const seen = lastSeenAt === null ? null : formatDuration(now - lastSeenAt);
+  const lastSeen = offline ? (seen === null ? t`Offline` : t`Last seen ${seen} ago`) : null;
+  const { title, macName } = item;
+  const warmStep = env.warmStep;
   return (
     <Touch
       feedback="row"
       onPress={() => onOpen(item, false)}
       accessibilityLabel={[
-        `Workspace ${item.title} on ${item.macName}`,
+        t`Workspace ${title} on ${macName}`,
         lastSeen,
-        settingUp ? (env.phase === 'ready' ? 'Ready' : ['Warming', env.warmStep].filter(Boolean).join(', ')) : null,
+        settingUp ? (env.phase === 'ready' ? t`Ready` : [t`Warming`, env.warmStep].filter(Boolean).join(', ')) : null,
         gitBadges(env.worktree?.git)?.label,
         agents,
         ...drivenLabels,
@@ -112,13 +114,21 @@ export const WorkspaceRow = memo(function WorkspaceRow({
               <View style={styles.warming}>
                 {offline ? null : <ActivityIndicator size="small" color={theme.colors.accent} />}
                 <Pill tone={offline ? 'neutral' : 'accent'}>
-                  {env.warmStep ? `Warming\u2026 ${env.warmStep}` : 'Warming\u2026'}
+                  {warmStep ? t`Warming\u2026 ${warmStep}` : t`Warming\u2026`}
                 </Pill>
               </View>
             ) : null}
-            {settingUp && env.phase === 'ready' ? <Pill tone={offline ? 'neutral' : 'accent'}>Ready</Pill> : null}
-            {env.metro?.running ? <Pill tabular={`:${env.metro.port}`}>{'Metro '}</Pill> : null}
-            {env.supervisor && !env.supervisor.healthy ? <Pill tone="warning">supervisor unhealthy</Pill> : null}
+            {settingUp && env.phase === 'ready' ? (
+              <Pill tone={offline ? 'neutral' : 'accent'}>
+                <Trans>Ready</Trans>
+              </Pill>
+            ) : null}
+            {env.metro?.running ? <Pill tabular={`:${env.metro.port}`}>{t`Metro `}</Pill> : null}
+            {env.supervisor && !env.supervisor.healthy ? (
+              <Pill tone="warning">
+                <Trans>supervisor unhealthy</Trans>
+              </Pill>
+            ) : null}
             {running.map((d) => {
               const driven = d.activity?.state === 'driven';
               return (
@@ -139,17 +149,21 @@ export const WorkspaceRow = memo(function WorkspaceRow({
             ) : null}
             {(env.remoteDevices ?? []).map((r) => (
               <Pill key={r.sessionId} tone="info">
-                EAS session
+                <Trans>EAS session</Trans>
               </Pill>
             ))}
             {errors > 0 ? (
               <Pill tone="error" onPress={() => onOpen(item, true)}>
-                {errors === 1 ? '1 error' : `${errors} errors`}
+                <Plural value={errors} one="# error" other="# errors" />
               </Pill>
             ) : null}
             {env.warnings.length > 0 ? (
               <Pill tone={hasErrorIssue ? 'error' : 'warning'}>
-                {`${env.warnings.length} ${hasErrorIssue ? 'issue' : 'warning'}${env.warnings.length === 1 ? '' : 's'}`}
+                {hasErrorIssue ? (
+                  <Plural value={env.warnings.length} one="# issue" other="# issues" />
+                ) : (
+                  <Plural value={env.warnings.length} one="# warning" other="# warnings" />
+                )}
               </Pill>
             ) : null}
           </View>

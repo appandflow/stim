@@ -16,6 +16,7 @@ import type { Theme } from '@/design/theme';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { useBuildOutput } from '@/hooks/workspace-logs';
+import { formatDuration } from '@/intl/format';
 import {
   clockDuration,
   durationBars,
@@ -24,7 +25,6 @@ import {
   lastBuildSummary,
   nextBuild,
   planDetail,
-  shortDuration,
 } from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
@@ -92,7 +92,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
             {[
               target ? deviceTitle(target).name : null,
               remote ? `on ${remote.host}` : null,
-              Number.isFinite(started) ? `started ${shortDuration(Math.max(0, now - started))} ago` : null,
+              Number.isFinite(started) ? `started ${formatDuration(Math.max(0, now - started))} ago` : null,
             ]
               .filter(Boolean)
               .join(' \u00B7 ')}
@@ -179,7 +179,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
         )}
         {checkedAt !== null && !checking && !building ? (
           <Text variant="footnote" tone="tertiary">
-            {`Checked ${shortDuration(now - checkedAt)} ago`}
+            {`Checked ${formatDuration(now - checkedAt)} ago`}
           </Text>
         ) : null}
       </Section>

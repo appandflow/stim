@@ -69,7 +69,7 @@ CI. Format and lint its Swift sources with `scripts/format.sh` and
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
 workspace named `stim-mobile`; see its README. Of the root checks above, only
 `pnpm run knip` covers it. Run `pnpm run format:check`, `pnpm run lint`,
-`pnpm run typecheck` and `pnpm test` from that directory.
+`pnpm run typecheck`, `pnpm run intl:check` and `pnpm test` from that directory.
 Develop it with Stim and its mock server, which replays captured Stim payloads.
 
 Native tool compatibility runs separately with `pnpm run test:compat`. Follow

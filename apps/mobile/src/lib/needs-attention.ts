@@ -1,3 +1,4 @@
+import { formatBytes } from '@/intl/format';
 import type { DeviceActivity, EnvironmentState, LastBuild } from '@/protocol/types';
 
 /**
@@ -61,12 +62,6 @@ const LANGUAGES: Record<string, string> = {
 const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : 'Android');
 const basename = (path: string) => path.split('/').findLast(Boolean) ?? path;
 const time = (text: string | null | undefined) => (text ? Date.parse(text) : Number.NaN);
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
-  const gb = bytes / 1e9;
-  return gb >= 100 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
-}
 
 function signingItem(
   env: EnvironmentState,

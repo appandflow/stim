@@ -24,9 +24,10 @@ import type { Theme } from '@/design/theme';
 import { useMachineDetails } from '@/hooks/machine-details';
 import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { formatBytes, formatMemoryMb } from '@/intl/format';
 import { machineReadiness } from '@/lib/build-machines';
 import { pairingScope } from '@/lib/connection';
-import { budgetRows, formatBytes, usageCharts, type BudgetRow } from '@/lib/home';
+import { budgetRows, usageCharts, type BudgetRow } from '@/lib/home';
 import {
   agoLabel,
   buildStats,
@@ -43,7 +44,7 @@ import {
   type WorktreeRow,
 } from '@/lib/machine-report';
 import { tildeHome } from '@/lib/paths';
-import { formatCpu, formatMemoryMb } from '@/lib/workspace-view';
+import { formatCpu } from '@/lib/workspace-view';
 import { attentionGroups, workspaceTitleAt, type AttentionGroup } from '@/lib/workspaces';
 import type { DeviceLeaseState, MachineOwner, StatusPayload } from '@/protocol/types';
 
