@@ -4,7 +4,7 @@ import SwiftUI
 /// What uses the Mac's CPU and memory now, from the status watch's `machine` section.
 struct NowBand: View {
   @ObservedObject var status: StatusStore
-  @ObservedObject var metrics: MetricsStore
+  var metrics: MetricsStore
   @EnvironmentObject private var actions: ActionCenter
 
   private static let valueWidth: CGFloat = 64

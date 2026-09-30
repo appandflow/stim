@@ -23,15 +23,20 @@ final class StorageStore: ObservableObject {
 
   private let status: StatusStore
   private let cli: Task<StimCLI, Never>
+  private let terminationObserver: NSObjectProtocol
 
   var measuring: Bool { !disk.pending.isEmpty || loadingPulls }
 
   init(status: StatusStore, cli: Task<StimCLI, Never>) {
     self.status = status
     self.cli = cli
-    NotificationCenter.default.addObserver(
+    terminationObserver = NotificationCenter.default.addObserver(
       forName: NSApplication.willTerminateNotification, object: nil, queue: nil
     ) { _ in Self.running.terminateAll() }
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(terminationObserver)
   }
 
   func refresh(force: Bool = false) {

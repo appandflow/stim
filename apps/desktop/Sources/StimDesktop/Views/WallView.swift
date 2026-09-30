@@ -3,7 +3,7 @@ import SwiftUI
 
 struct WallView: View {
   @ObservedObject var store: StatusStore
-  @ObservedObject var metrics: MetricsStore
+  var metrics: MetricsStore
   var project: Project?
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void

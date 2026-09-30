@@ -2,7 +2,7 @@ import Foundation
 
 /// Where the space Stim Desktop measures lives. Stim's own directories are sized by `stim gc --json`;
 /// these are the paths the app sizes itself with `du`, none of them under `$STIM_HOME`.
-public struct StoragePaths: Sendable {
+public struct StoragePaths: Equatable, Sendable {
   public var home: String
   public var simulatorDevices: String
   public var avds: String
@@ -84,7 +84,7 @@ public enum DiskSize: Hashable, Sendable {
 }
 
 /// What `du` has reported so far for the paths Stim Desktop asked it to size.
-public struct DiskMeasurements: Sendable {
+public struct DiskMeasurements: Equatable, Sendable {
   /// Bytes by path, including each entry `du -d 1` reports inside a device set.
   public var sizes: [String: Int64]
   public var pending: Set<String>

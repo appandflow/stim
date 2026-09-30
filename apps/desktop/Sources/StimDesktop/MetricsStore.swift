@@ -1,5 +1,5 @@
 import AppKit
-import Combine
+import Observation
 import StimKit
 
 struct UsageHistory {
@@ -22,32 +22,26 @@ struct UsageHistory {
   }
 }
 
-@MainActor
-final class MetricsStore: ObservableObject {
-  @Published private(set) var usage: [String: UsageHistory] = [:]
-  @Published private(set) var volumes: [DiskVolume] = []
-  @Published private(set) var memory: MachineMemory?
+@MainActor @Observable
+final class MetricsStore {
+  private(set) var usage: [String: UsageHistory] = [:]
+  private(set) var volumes: [DiskVolume] = []
+  private(set) var memory: MachineMemory?
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
-  @Published private(set) var memoryUsed: [Double] = []
-  @Published private(set) var ownersCpu: [Double] = []
-  @Published private(set) var owners = OwnerHistory()
+  private(set) var memoryUsed: [Double] = []
+  private(set) var ownersCpu: [Double] = []
+  private(set) var owners = OwnerHistory()
 
   private let status: StatusStore
-  let gc: GcReportStore
-  private var sampler = ResourceSampler()
-  private var timer: Timer?
-  private var sampling = false
-  private var relay: AnyCancellable?
+  private let gc: GcReportStore
+  @ObservationIgnored private var sampler = ResourceSampler()
+  @ObservationIgnored private var timer: Timer?
+  @ObservationIgnored private var sampling = false
 
   init(status: StatusStore, gc: GcReportStore) {
     self.status = status
     self.gc = gc
-    relay = gc.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
   }
-
-  var gcReport: GcReport? { gc.report }
-  var gcRunning: Bool { gc.running }
-  var gcError: String? { gc.error }
 
   func start() {
     guard timer == nil else { return }
@@ -61,8 +55,6 @@ final class MetricsStore: ObservableObject {
       MainActor.assumeIsolated { self?.tick() }
     }
   }
-
-  var reclaimable: GcReport.Reclaimable? { gcReport?.reclaimable }
 
   private static var cores: Int { ProcessInfo.processInfo.activeProcessorCount }
 
@@ -121,10 +113,6 @@ final class MetricsStore: ObservableObject {
         }
       }
     }
-  }
-
-  func refreshGc() {
-    gc.refresh()
   }
 }
 
