@@ -5,6 +5,7 @@ import { Share, TextInput, View, type NativeScrollEvent, type NativeSyntheticEve
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
+import { HeaderTitle } from '@/components/header-title';
 import { FlatList, ScrollView } from '@/components/lists';
 import { StatusDot } from '@/components/pill';
 import { PlatformLogo } from '@/components/platform-logo';
@@ -145,7 +146,9 @@ export function Logs({
 
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: `Logs \u00B7 ${workspaceTitleAt(path, status)}` }} />
+      <Stack.Screen
+        options={{ headerTitle: () => <HeaderTitle title="Logs" subtitle={workspaceTitleAt(path, status)} /> }}
+      />
       <ConnectionBanner state={state} />
       <View style={styles.filters}>
         <MetroLine metro={env?.metro} bundleMs={bundleMs} />
