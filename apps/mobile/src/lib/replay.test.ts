@@ -3,7 +3,6 @@ import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/replay-timelin
 import {
   adjacentAction,
   buildTimeline,
-  layoutGapLabels,
   LONG_GAP_MS,
   markerSeek,
   positionOf,
@@ -24,7 +23,6 @@ const vectors = fixture as unknown as {
     timeline: Pick<Timeline, 'start' | 'end' | 'length' | 'pieces'>;
     positions: [number, number][];
     times: [number, number][];
-    labels: { width: number; labels: ReturnType<typeof layoutGapLabels> }[];
   }[];
 };
 
@@ -34,7 +32,6 @@ describe('the replay timeline vectors Stim Desktop replays too', () => {
     expect(timeline).toEqual({ ...vector.timeline, spans: vector.input.spans });
     expect(vector.positions.map(([at]) => [at, positionOf(timeline, at)])).toEqual(vector.positions);
     expect(vector.times.map(([position]) => [position, timeAt(timeline, position)])).toEqual(vector.times);
-    for (const { width, labels } of vector.labels) expect(layoutGapLabels(timeline.pieces, width)).toEqual(labels);
   });
 });
 
@@ -116,46 +113,6 @@ describe('the replay timeline', () => {
 
   it('names durations in their largest unit', () => {
     expect([40_000, 14 * MINUTE, 2 * HOUR, 72 * HOUR].map(shortDuration)).toEqual(['40s', '14m', '2h', '3d']);
-  });
-
-  it('lays out several stopped labels near the start without overlap, inside the track, longest stop first', () => {
-    const timeline = buildTimeline([
-      { start: 0, end: 1_000 },
-      { start: 12_000, end: 14_000 },
-      { start: 60_000, end: 62_000 },
-      { start: 86_000, end: 4 * MINUTE },
-    ])!;
-    const width = 360;
-    const labels = layoutGapLabels(timeline.pieces, width);
-    expect(labels.map((label) => label.text)).toEqual(['stopped 46s']);
-    const wide = layoutGapLabels(timeline.pieces, 2000);
-    expect(wide.map((label) => label.text)).toEqual(['stopped 11s', 'stopped 46s', 'stopped 24s']);
-    const edge = buildTimeline([
-      { start: 0, end: 1_000 },
-      { start: 12_000, end: 4 * MINUTE },
-    ])!;
-    expect(layoutGapLabels(edge.pieces, width)[0]!.left).toBe(0);
-    for (const [laid, trackWidth] of [
-      [labels, width],
-      [wide, 2000],
-    ] as const) {
-      for (const [index, label] of laid.entries()) {
-        expect(label.left).toBeGreaterThanOrEqual(0);
-        expect(label.left + label.width).toBeLessThanOrEqual(trackWidth);
-        const next = laid[index + 1];
-        if (next) expect(label.left + label.width).toBeLessThanOrEqual(next.left);
-      }
-    }
-  });
-
-  it('keeps a stopped label at the right end inside the track, and drops one wider than the track', () => {
-    const timeline = buildTimeline([
-      { start: 0, end: 4 * MINUTE },
-      { start: 4 * MINUTE + 30_000, end: 4 * MINUTE + 31_000 },
-    ])!;
-    const [label] = layoutGapLabels(timeline.pieces, 300);
-    expect(label!.left + label!.width).toBeLessThanOrEqual(300);
-    expect(layoutGapLabels(timeline.pieces, 40)).toEqual([]);
   });
 
   it('steps to the next or previous agent action, skipping errors and the action it stands on', () => {

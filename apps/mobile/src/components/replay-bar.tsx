@@ -9,7 +9,6 @@ import type { Replay } from '@/hooks/device-stream';
 import {
   adjacentAction,
   buildTimeline,
-  layoutGapLabels,
   MARKER_TITLES,
   markerSeek,
   positionOf,
@@ -187,8 +186,7 @@ export function ReplayBar({
   const from = stepFrom(shownAt ?? track.end, stepped, playing);
   const previousAction = adjacentAction(markers, from, -1);
   const nextAction = adjacentAction(markers, from, 1);
-  const step = (target: ReplayMarker | null) => {
-    if (!target) return onLive();
+  const step = (target: ReplayMarker) => {
     seekTo(markerSeek(track, target), playing ? speed : 0, target.at);
   };
   const togglePlay = () => {
@@ -212,13 +210,12 @@ export function ReplayBar({
       <View style={styles.controls}>
         {livePill}
         <Touch
-          onPress={() => step(previousAction)}
-          disabled={isLive || !previousAction}
+          onPress={() => previousAction && step(previousAction)}
+          disabled={!previousAction}
           accessibilityRole="button"
           accessibilityLabel="Previous agent action"
-          accessibilityElementsHidden={isLive}
-          importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
-          defaultOpacity={isLive ? 0 : previousAction ? 1 : theme.opacity.disabled}
+          accessibilityState={{ disabled: !previousAction }}
+          defaultOpacity={previousAction ? 1 : theme.opacity.disabled}
           style={styles.round}
           hitSlop={4}
         >
@@ -236,13 +233,12 @@ export function ReplayBar({
           </Text>
         </Touch>
         <Touch
-          onPress={() => step(nextAction)}
-          disabled={isLive || (!nextAction && !canGoLive)}
+          onPress={() => nextAction && step(nextAction)}
+          disabled={!nextAction}
           accessibilityRole="button"
-          accessibilityLabel={nextAction || !canGoLive ? 'Next agent action' : 'Next agent action, none; go live'}
-          accessibilityElementsHidden={isLive}
-          importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
-          defaultOpacity={isLive ? 0 : nextAction || canGoLive ? 1 : theme.opacity.disabled}
+          accessibilityLabel="Next agent action"
+          accessibilityState={{ disabled: !nextAction }}
+          defaultOpacity={nextAction ? 1 : theme.opacity.disabled}
           style={styles.round}
           hitSlop={4}
         >
@@ -285,18 +281,6 @@ export function ReplayBar({
               { left: piece.from * width, width: Math.max(1, (piece.to - piece.from) * width) },
             ]}
           />
-        ))}
-        {layoutGapLabels(track.pieces, width).map((label) => (
-          <Text
-            key={`label-${label.start}`}
-            variant="caption2"
-            maxFontSizeMultiplier={1}
-            pointerEvents="none"
-            style={[styles.gapText, { left: label.left, width: label.width }]}
-            numberOfLines={1}
-          >
-            {label.text}
-          </Text>
         ))}
         <View
           pointerEvents="none"
@@ -397,13 +381,6 @@ const styles = StyleSheet.create((theme) => ({
     borderStyle: 'dashed',
     borderTopWidth: 1,
     borderColor: theme.media.textTertiary,
-  },
-  gapText: {
-    position: 'absolute',
-    top: TRACK_HEIGHT / 2 + 8,
-    textAlign: 'center',
-    color: theme.media.textTertiary,
-    ...textShadow,
   },
   played: {
     position: 'absolute',
