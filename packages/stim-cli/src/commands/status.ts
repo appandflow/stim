@@ -357,10 +357,18 @@ function readLogDerivedFacts(states: EnvironmentState[]): void {
         continue;
       }
       const report = buildReport(record, { state: activeBuildState(record.claim), history: undefined });
+      const { outcome, expectedMs, expectedPhaseMs, basis, plannedPhases } = state.build;
       state.build =
         record.estimate || record.startedAt !== state.build.startedAt
           ? report
-          : { ...state.build, state: report.state, phase: report.phase, phaseStartedAt: report.phaseStartedAt };
+          : {
+              ...report,
+              outcome,
+              expectedMs,
+              expectedPhaseMs: report.phase === state.build.phase ? expectedPhaseMs : null,
+              basis,
+              plannedPhases,
+            };
       const detail = record.phase === 'compile' ? readBuildDetail(state.path, record.claim.claimId) : null;
       if (detail) state.build.detail = detail;
       else delete state.build.detail;
