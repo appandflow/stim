@@ -107,7 +107,7 @@ export function AgentSessionRow({ agent, card = false }: { agent: AgentSession; 
 }
 
 const styles = StyleSheet.create((theme) => ({
-  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.xs + 1, rowGap: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs + 1 },
   shrink: { flexShrink: 1 },
   fixed: { flexShrink: 0 },
   listRow: {
