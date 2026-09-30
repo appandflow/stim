@@ -7,6 +7,7 @@ import SwiftUI
 struct BuildMachinesView: View {
   var cli: Task<StimCLI, Never>
   @ObservedObject var store: StatusStore
+  var workspace: String?
   var onSettingChanged: () -> Void
 
   @State private var entries: [String]?
@@ -21,7 +22,7 @@ struct BuildMachinesView: View {
   @State private var latestRun = 0
 
   private var checkout: String? {
-    doctorCheckouts(store.payload?.environments ?? [], project: store.project(ofPath:)).first?.path
+    doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
   }
 
   var body: some View {

@@ -54,21 +54,40 @@ public struct DoctorCheckout: Hashable, Sendable {
 /// it, else the first worktree workspace of that folder. Only listed workspaces qualify, because doctor records its
 /// run in the Stim project registry and would add an unlisted checkout to `stim status`.
 public func doctorCheckouts(_ environments: [Workspace], project: (String) -> Project) -> [DoctorCheckout] {
+  doctorCheckoutsBySource(environments, project: project).map(\.checkout)
+}
+
+/// The checkout doctor runs in for `workspace`'s app, else the first one.
+public func doctorCheckout(
+  for workspace: String?, in environments: [Workspace], project: (String) -> Project
+) -> DoctorCheckout? {
+  let checkouts = doctorCheckoutsBySource(environments, project: project)
+  let source = environments.first { $0.path == workspace }.map { doctorSource(of: $0, project: project) }
+  return (checkouts.first { $0.source == source } ?? checkouts.first)?.checkout
+}
+
+private func doctorSource(of env: Workspace, project: (String) -> Project) -> String {
+  let root = project(env.path).root
+  if let worktree = env.worktree?.path, worktree != root, env.path == worktree || env.path.hasPrefix(worktree + "/") {
+    return root + env.path.dropFirst(worktree.count)
+  }
+  return env.path
+}
+
+private func doctorCheckoutsBySource(
+  _ environments: [Workspace], project: (String) -> Project
+) -> [(source: String, checkout: DoctorCheckout)] {
   let listed = Set(environments.map(\.path))
   var order: [String] = []
   var chosen: [String: DoctorCheckout] = [:]
   for env in environments {
-    let root = project(env.path).root
-    var source = env.path
-    if let worktree = env.worktree?.path, worktree != root, env.path == worktree || env.path.hasPrefix(worktree + "/") {
-      source = root + env.path.dropFirst(worktree.count)
-    }
+    let source = doctorSource(of: env, project: project)
     if chosen[source] == nil { order.append(source) }
     if chosen[source] == nil || (env.path == source && listed.contains(source)) {
-      chosen[source] = DoctorCheckout(path: env.path, repository: root)
+      chosen[source] = DoctorCheckout(path: env.path, repository: project(env.path).root)
     }
   }
-  return order.compactMap { chosen[$0] }
+  return order.compactMap { source in chosen[source].map { (source, $0) } }
 }
 
 /// When Stim Desktop last ran `stim doctor` in a checkout.
