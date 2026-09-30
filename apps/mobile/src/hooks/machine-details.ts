@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
+import { usePolledRequest } from '@/hooks/polled-request';
 import { RequestError, type StimConnection } from '@/lib/connection';
 import type { MachineDetails } from '@/protocol/types';
 
@@ -13,6 +14,21 @@ const REFRESH_MS = 60_000;
 const PENDING_POLL_MS = 2_000;
 const PENDING_POLL_MAX_MS = 30_000;
 
+interface Pending {
+  since: number | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+function schedulePending(details: MachineDetails, pending: Pending, refetch: () => void): void {
+  if (pending.timer) clearTimeout(pending.timer);
+  if (!details.buildMachinesPending) {
+    pending.since = null;
+    return;
+  }
+  if (pending.since === null) pending.since = Date.now();
+  if (Date.now() - pending.since < PENDING_POLL_MAX_MS) pending.timer = setTimeout(refetch, PENDING_POLL_MS);
+}
+
 /**
  * The Mac's `machine.details`, asked when `active` turns on and each minute while it stays on; the server
  * shares one result per minute, so asking more often gets nothing newer. A server that predates it answers
@@ -24,43 +40,28 @@ const PENDING_POLL_MAX_MS = 30_000;
  * the next minute, so the Build Machines section fills in shortly after the rest of the screen renders.
  */
 export function useMachineDetails(connection: StimConnection | null, active: boolean): MachineDetailsState {
-  const [state, setState] = useState<MachineDetailsState>({ kind: 'loading' });
-  useEffect(() => {
-    if (!connection || !active) return;
-    let cancelled = false;
-    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-    let pendingSince: number | null = null;
-    const ask = () =>
-      connection.request('machine.details', {}).then(
-        (details) => {
-          if (cancelled) return;
-          setState({ kind: 'ready', details });
-          if (!details.buildMachinesPending) {
-            pendingSince = null;
-            return;
-          }
-          if (pendingSince === null) pendingSince = Date.now();
-          if (pendingTimer) clearTimeout(pendingTimer);
-          if (Date.now() - pendingSince < PENDING_POLL_MAX_MS) {
-            pendingTimer = setTimeout(() => void ask(), PENDING_POLL_MS);
-          }
-        },
-        (error: unknown) => {
-          if (cancelled) return;
-          if (error instanceof RequestError && error.error.code === 'unknown-method') {
-            return setState({ kind: 'unsupported' });
-          }
-          const message = error instanceof Error ? error.message : String(error);
-          setState((current) => (current.kind === 'ready' ? current : { kind: 'failed', message }));
-        },
-      );
-    void ask();
-    const timer = setInterval(() => void ask(), REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      if (pendingTimer) clearTimeout(pendingTimer);
-    };
-  }, [connection, active]);
-  return state;
+  const pending = useRef<Pending>({ since: null, timer: null });
+  const { data, error, refetch } = usePolledRequest(
+    connection,
+    'machine.details',
+    {},
+    {
+      intervalMs: REFRESH_MS,
+      active,
+      onData: (details) => schedulePending(details, pending.current, refetch),
+    },
+  );
+
+  useEffect(
+    () => () => {
+      pending.current.since = null;
+      if (pending.current.timer) clearTimeout(pending.current.timer);
+    },
+    [connection, active],
+  );
+
+  if (error instanceof RequestError && error.error.code === 'unknown-method') return { kind: 'unsupported' };
+  if (data) return { kind: 'ready', details: data };
+  if (error) return { kind: 'failed', message: error.message };
+  return { kind: 'loading' };
 }

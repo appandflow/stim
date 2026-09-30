@@ -9,6 +9,7 @@ import { STAT_ICON, toneColor } from '@/components/machine-stats';
 import { Text } from '@/components/text';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
+import { usePolledRequest } from '@/hooks/polled-request';
 import type { StimConnection } from '@/lib/connection';
 import { HISTORY_WINDOW_MS, type UsageChart, type UsageTone } from '@/lib/home';
 import type { MachineUsage, UsageSample } from '@/protocol/types';
@@ -28,17 +29,16 @@ export function useUsageHistory(connection: StimConnection | null, open: boolean
   const lastAt = useRef<number | undefined>(undefined);
   const loaded = samples !== null;
 
-  useEffect(() => {
-    if (!connection || !open) return;
-    let cancelled = false;
-    connection.request('machine.history', {}).then(
-      (history) => !cancelled && setSamples(merge([], history.samples)),
-      () => !cancelled && setSamples(null),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [connection, open]);
+  usePolledRequest(
+    connection,
+    'machine.history',
+    {},
+    {
+      active: open,
+      onData: (history) => setSamples(merge([], history.samples)),
+      onError: () => setSamples(null),
+    },
+  );
 
   useEffect(() => {
     lastAt.current = samples?.at(-1)?.at;

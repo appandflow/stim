@@ -1,8 +1,8 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import * as Clipboard from 'expo-clipboard';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useIsFocused } from 'expo-router';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -63,13 +63,7 @@ export function MacStatus({ id }: { id: string }) {
   const open = state.kind === 'open';
   const samples = useUsageHistory(connection, open, usage);
   const charts = useMemo(() => usageCharts(samples ?? [], usage), [samples, usage]);
-  const [focused, setFocused] = useState(true);
-  useFocusEffect(
-    useCallback(() => {
-      setFocused(true);
-      return () => setFocused(false);
-    }, []),
-  );
+  const focused = useIsFocused();
   const details = useMachineDetails(connection, open && focused);
   const now = useNow(60_000);
   const gc = useMemo(() => (details.kind === 'ready' ? parseGcReport(details.details.gc) : null), [details]);

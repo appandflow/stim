@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
+import { usePolledRequest } from '@/hooks/polled-request';
 import type { StimConnection } from '@/lib/connection';
 
 export interface RecordingSetting {
@@ -18,12 +19,13 @@ export function useRecordingSetting(connection: StimConnection | null): Recordin
   const [fromEnvironment, setFromEnvironment] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!connection) return;
-    let cancelled = false;
-    connection.request('settings.get', {}).then(
-      (payload) => {
-        if (cancelled) return;
+  usePolledRequest(
+    connection,
+    'settings.get',
+    {},
+    {
+      active: true,
+      onData: (payload) => {
         const settings = Array.isArray(payload.settings) ? payload.settings : [];
         const entry = settings.find(
           (candidate): candidate is { value: unknown; origin: unknown } =>
@@ -32,12 +34,8 @@ export function useRecordingSetting(connection: StimConnection | null): Recordin
         setEnabled(typeof entry?.value === 'boolean' ? entry.value : null);
         setFromEnvironment(entry?.origin === 'env');
       },
-      () => {},
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [connection]);
+    },
+  );
   const set = useCallback(
     (next: boolean) => {
       if (!connection) return;

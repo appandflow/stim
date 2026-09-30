@@ -2,7 +2,7 @@ import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
-import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { Stack, useIsFocused, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, View, type ListViewToken } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -60,13 +60,7 @@ export function Home() {
       setAspects((current) => (current.get(key) === aspect ? current : new Map(current).set(key, aspect))),
     [],
   );
-  const [focused, setFocused] = useState(true);
-  useFocusEffect(
-    useCallback(() => {
-      setFocused(true);
-      return () => setFocused(false);
-    }, []),
-  );
+  const focused = useIsFocused();
   const onViewable = useCallback(
     ({ viewableItems }: { viewableItems: ListViewToken[] }) =>
       setVisible(new Set(viewableItems.flatMap((token) => (token.item as DeviceTileItem[]).map((tile) => tile.key)))),
