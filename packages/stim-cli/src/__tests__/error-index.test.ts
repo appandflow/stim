@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
-import { queryLogs } from '@stim-cli/core/state';
+import { countErrorEntries, queryLogs } from '@stim-cli/core/state';
 import { parseNdjsonLine } from '../ndjson.ts';
 
 vi.mock('../ndjson.ts', async (importOriginal) => {
@@ -53,9 +53,33 @@ function append(name: string, records: unknown[]) {
 
 function count(): number {
   const counted = countErrorsSinceMarker(dir, index);
-  expect(counted).toBe(queryLogs({ dir, errorsOnly: true }).length);
+  expect(counted).toBe(countErrorEntries(queryLogs({ dir, errorsOnly: true })));
   return counted;
 }
+
+test('counts one error for a bundle failure logged as a marker, an error line and a failed response', () => {
+  write('metro.ndjson', [
+    {
+      ts: 100,
+      src: 'metro',
+      level: 'error',
+      msg: 'iOS Bundling failed 1ms index.js',
+      raw: true,
+      event: 'expo_stdout',
+      marker: true,
+    },
+    { ts: 100, src: 'metro', level: 'error', msg: ' ERROR  SyntaxError: x', raw: true, event: 'expo_stdout' },
+    {
+      ts: 300,
+      src: 'metro',
+      level: 'error',
+      msg: 'ios bundle response failed',
+      event: 'bundle_response_failed',
+      platform: 'ios',
+    },
+  ]);
+  expect(count()).toBe(1);
+});
 
 test('counts what logs --errors counts across marker boundaries', () => {
   write('metro.ndjson', [

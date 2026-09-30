@@ -4,6 +4,7 @@ export * from './config.ts';
 export * from './config-types.ts';
 export * from './json-file.ts';
 export * from './ledgers.ts';
+export * from './error-entries.ts';
 export * from './logs-query.ts';
 export * from './ndjson.ts';
 export * from './paths.ts';

@@ -2,9 +2,17 @@ import { rotatedLogPath } from '@stim-cli/core';
 import { closeSync, fstatSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
-import { bundleMarkerPlatform, ERROR_SOURCES, logFiles, queryLogs, recordMatches } from '@stim-cli/core/state';
+import {
+  bundleMarkerPlatform,
+  countErrorEntries,
+  ERROR_SOURCES,
+  logFiles,
+  queryLogs,
+  recordMatches,
+  sortByTs,
+} from '@stim-cli/core/state';
 
-const INDEX_VERSION = 6;
+const INDEX_VERSION = 7;
 const HEAD_BYTES = 1024;
 const TAIL_BYTES = 256;
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -26,7 +34,7 @@ interface ErrorIndex {
 }
 
 /**
- * The number of records `queryLogs({ dir, errorsOnly: true })` returns, without parsing every
+ * The number of rows the apps list for `queryLogs({ dir, errorsOnly: true })`, one per failure, without parsing every
  * line on every call. `indexFile` keeps, per log file generation, the markers and error records
  * already read and the byte offset they were read through; a later call reads only what was
  * appended since. The index is a cache: losing it or a concurrent writer only costs a rescan.
@@ -51,7 +59,7 @@ export function countErrorsSinceMarker(dir: string, indexFile: string): number {
   for (const summary of Object.values(files)) {
     records.push(...Object.values(summary.markers), ...summary.errors);
   }
-  return queryLogs({ records, errorsOnly: true }).length;
+  return countErrorEntries(sortByTs(queryLogs({ records, errorsOnly: true })));
 }
 
 function summarize(
@@ -160,6 +168,9 @@ function collect(record: NdjsonRecord, markers: Record<string, NdjsonRecord>, er
       platform: record.src === 'metro' && record.marker === true ? bundleMarkerPlatform(record) : record.platform,
       ts: ts ?? undefined,
       slot: record.slot,
+      raw: record.raw,
+      marker: record.marker,
+      msg: record.marker === true ? record.msg : undefined,
     });
   }
 }
