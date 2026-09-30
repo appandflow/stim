@@ -153,7 +153,7 @@ struct BuildMachinesView: View {
 
   private func load() async {
     let cli = await cli.value
-    async let settings = Task.detached { Result { try cli.settings(cwd: NSHomeDirectory()) } }.value
+    async let settings = Result.awaiting { try await cli.settings(cwd: NSHomeDirectory()) }
     probing = true
     let environment = cli.environment
     let found = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
@@ -162,7 +162,8 @@ struct BuildMachinesView: View {
     case .success(let payload):
       entries = payload.entry("offload.machines")?.value.strings ?? []
       failure = payload.entry("offload.machines") == nil ? "This stim has no offload.machines setting; update it." : nil
-    case .failure(let error): failure = error.localizedDescription
+    case .failure(let error) where !Task.isCancelled: failure = error.localizedDescription
+    case .failure: break
     }
     await refreshStatuses(ask: false)
     var serving: Set<String> = []
@@ -184,8 +185,8 @@ struct BuildMachinesView: View {
     let run = latestRun
     defer { runs -= 1 }
     let cli = await cli.value
-    let result = await Task.detached(operation: { Result { try cli.buildMachines(cwd: checkout, ask: ask) } }).value
-    guard run == latestRun else { return }
+    let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: ask) }
+    guard run == latestRun, !Task.isCancelled else { return }
     switch result {
     case .success(let reported):
       statuses = reported ?? []
@@ -219,9 +220,9 @@ struct BuildMachinesView: View {
     working = entry
     Task {
       let cli = await cli.value
-      let result = await Task.detached {
-        Result { try cli.writeSetting("offload.machines", value: value, scope: .machine, cwd: NSHomeDirectory()) }
-      }.value
+      let result = await Result.awaiting {
+        try await cli.writeSetting("offload.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
+      }
       switch result {
       case .success(.written(let setting)):
         failure = nil

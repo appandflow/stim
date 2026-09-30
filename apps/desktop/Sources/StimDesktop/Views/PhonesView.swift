@@ -511,7 +511,7 @@ struct PairSheet: View {
     let control = allowsControl
     Task {
       let cli = await server.cli()
-      let result = await Task.detached(operation: { Result { try cli.pair(port: port, control: control) } }).value
+      let result = await Result.awaiting { try await cli.pair(port: port, control: control) }
       guard control == allowsControl else { return }
       switch result {
       case .success(let value): code = value
@@ -600,7 +600,8 @@ private struct RecordingSection: View {
 
   private func load() async {
     let cli = await cli.value
-    let result = await Task.detached { Result { try cli.settings(cwd: NSHomeDirectory()) } }.value
+    let result = await Result.awaiting { try await cli.settings(cwd: NSHomeDirectory()) }
+    guard !Task.isCancelled else { return }
     switch result {
     case .success(let payload):
       entry = payload.entry("recording.enabled")
@@ -613,11 +614,9 @@ private struct RecordingSection: View {
     writing = true
     Task {
       let cli = await cli.value
-      let result = await Task.detached {
-        Result {
-          try cli.writeSetting("recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory())
-        }
-      }.value
+      let result = await Result.awaiting {
+        try await cli.writeSetting("recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory())
+      }
       switch result {
       case .success(.written): failure = nil
       case .success(.refused(let refusal)): failure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")

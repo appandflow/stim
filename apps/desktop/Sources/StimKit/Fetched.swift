@@ -17,3 +17,16 @@ public struct Fetched<Value: Sendable>: Sendable {
     }
   }
 }
+
+extension Result where Success: Sendable, Failure == any Error {
+  /// What `body` returns, or the error it throws, as `init(catching:)` captures a synchronous call.
+  public static func awaiting(
+    isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> Success
+  ) async -> Result {
+    do {
+      return .success(try await body())
+    } catch {
+      return .failure(error)
+    }
+  }
+}

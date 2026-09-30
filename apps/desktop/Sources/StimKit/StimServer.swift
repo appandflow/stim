@@ -174,30 +174,30 @@ public struct StimServerCLI: Sendable {
   public static let minimumVersion = SemanticVersion("1.11.0")!
 
   /// What `stim-server --version` printed, or nil when it is missing, fails to start, or exits non-zero.
-  public func versionOutput() -> String? {
-    (try? run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
+  public func versionOutput() async -> String? {
+    (try? await run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
   }
 
-  public func pair(port: Int = defaultPort, control: Bool) throws -> PairingCode {
+  public func pair(port: Int = defaultPort, control: Bool) async throws -> PairingCode {
     try Self.decoder.decode(
-      PairingCode.self, from: run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])))
+      PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])))
   }
 
-  public func devices() throws -> [PairedDevice] {
-    try Self.decoder.decode(PairedDeviceList.self, from: run(["devices", "--json"])).devices
+  public func devices() async throws -> [PairedDevice] {
+    try Self.decoder.decode(PairedDeviceList.self, from: await run(["devices", "--json"])).devices
   }
 
-  public func grant(_ id: String, control: Bool) throws {
-    _ = try run(["devices", "grant", id, control ? "--control" : "--read"])
+  public func grant(_ id: String, control: Bool) async throws {
+    _ = try await run(["devices", "grant", id, control ? "--control" : "--read"])
   }
 
   /// Approves a Mac's request to build here.
-  public func grantBuild(_ id: String) throws {
-    _ = try run(["devices", "grant", id, "--build"])
+  public func grantBuild(_ id: String) async throws {
+    _ = try await run(["devices", "grant", id, "--build"])
   }
 
-  public func revoke(_ id: String) throws {
-    _ = try run(["devices", "revoke", id])
+  public func revoke(_ id: String) async throws {
+    _ = try await run(["devices", "revoke", id])
   }
 
   /// Starts the server on `port`; it runs until terminated.
@@ -224,24 +224,11 @@ public struct StimServerCLI: Sendable {
     return health
   }
 
-  private func run(_ args: [String]) throws -> Data {
+  private func run(_ args: [String]) async throws -> Data {
     guard let executable else { throw Failure.notFound }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = args
-    process.environment = environment
-    let out = Pipe()
-    let err = Pipe()
-    process.standardOutput = out
-    process.standardError = err
-    try process.run()
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    let stderr = err.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-      throw Failure.exited(
-        process.terminationStatus,
-        String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    let (status, data, stderr) = try await runCommand(executable, args, cwd: nil, environment: environment)
+    guard status == 0 else {
+      throw Failure.exited(status, stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
     return data
   }

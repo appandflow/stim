@@ -54,13 +54,10 @@ final class StatusStore: ObservableObject {
     inFlight = true
     let sequence = nextSequence()
     let cli = cli
-    Task.detached {
-      let cli = await cli.value
-      let result = Result { try cli.status() }
-      await MainActor.run {
-        self.inFlight = false
-        self.show(result, sequence: sequence)
-      }
+    Task {
+      let result = await Result.awaiting { try await cli.value.status() }
+      inFlight = false
+      show(result, sequence: sequence)
     }
   }
 
@@ -222,11 +219,11 @@ final class StatusStore: ObservableObject {
     let cli = cli
     Task.detached(priority: .utility) { [self] in
       let cli = await cli.value
-      let version = cli.versionOutput()
+      let version = await cli.versionOutput()
       for checkout in checkouts where FileManager.default.fileExists(atPath: checkout.path) {
         let inputs = newestModification(doctorInputs(checkout: checkout.path, repository: checkout.repository))
         guard DoctorRun.due(runs[checkout.path], version: version, inputsChangedAt: inputs, now: Date()) else { continue }
-        let result = Result { try cli.doctor(cwd: checkout.path) }
+        let result = await Result.awaiting { try await cli.doctor(cwd: checkout.path) }
         let run = DoctorRun(at: Date(), version: version, inputsChangedAt: inputs)
         await recordDoctor(checkout.path, run: run, result: result)
       }
