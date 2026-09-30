@@ -154,6 +154,31 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(env.usage(machine: nil).diskBytes == 2.2e9)
   }
 
+  @Test func splitsNodeModulesOutOfTheWorktreeSoTheDiskPartsAddUpToTheTotal() throws {
+    let env = try workspace(#""disk":{"worktreeBytes":1720000000,"nodeModulesBytes":1530000000,"buildBytes":19200000}"#)
+    let breakdown = try #require(env.diskBreakdown)
+    #expect(breakdown.parts.map(\.kind) == [.nodeModules, .worktree, .build])
+    #expect(breakdown.parts.map(breakdown.label(of:)) == ["node_modules", "Rest of worktree", "Build output"])
+    #expect(breakdown.total == env.diskBytes)
+  }
+
+  @Test func namesTheWholeWorktreeWhenNodeModulesIsUnmeasuredAndOmitsAnUnmeasuredBuild() throws {
+    let env = try workspace(#""disk":{"worktreeBytes":500000000}"#)
+    let breakdown = try #require(env.diskBreakdown)
+    #expect(breakdown.parts.map(breakdown.label(of:)) == ["Worktree"])
+    #expect(try workspace(#""disk":{"measuredAt":"x"}"#).diskBreakdown == nil)
+  }
+
+  @Test func keepsTheDiskPartsSummingToTheTotalWhenNodeModulesFillsOrExceedsTheWorktree() throws {
+    let whole = try #require(
+      try workspace(#""disk":{"worktreeBytes":900,"nodeModulesBytes":900,"buildBytes":0}"#).diskBreakdown)
+    #expect(whole.parts.map(\.kind) == [.nodeModules])
+    let over = try workspace(#""disk":{"worktreeBytes":900,"nodeModulesBytes":950,"buildBytes":100}"#)
+    let breakdown = try #require(over.diskBreakdown)
+    #expect(breakdown.parts.map(\.kind) == [.worktree, .build])
+    #expect(breakdown.total == over.diskBytes)
+  }
+
   @Test func keepsTenMinutesOfEachWorkspaceAndDropsOneThatStopped() {
     var history = OwnerHistory()
     for minute in 0...12 { history.append(machine, at: now.addingTimeInterval(Double(minute) * 60)) }

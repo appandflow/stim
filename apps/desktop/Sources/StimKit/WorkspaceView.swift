@@ -173,16 +173,44 @@ extension Workspace {
       cpuPercent: owner?.cpuPercent, memoryMb: owner.map { Double($0.memory) }, diskBytes: device.diskBytes)
   }
 
-  /// "Disk: worktree 1.9 GB, node_modules 0.9 GB of it, build output 0.3 GB."
-  public func diskBreakdown(format: (Double) -> String) -> String? {
+  /// The disk the workspace holds, split into parts that add up to `diskBytes`: node_modules, the rest of the
+  /// worktree, and Stim's build folder. node_modules is part of the worktree, so it is split out of it.
+  public var diskBreakdown: DiskBreakdown? {
     guard let disk else { return nil }
-    let parts = [
-      disk.worktreeBytes.map { "worktree \(format($0))" },
-      disk.nodeModulesBytes.map { "node_modules \(format($0)) of it" },
-      disk.buildBytes.map { "build output \(format($0))" },
-    ].compactMap { $0 }
-    return parts.isEmpty ? nil : "Disk: \(parts.joined(separator: ", "))."
+    var parts: [DiskBreakdown.Part] = []
+    if let worktree = disk.worktreeBytes {
+      if let modules = disk.nodeModulesBytes, modules > 0, modules <= worktree {
+        parts.append(.init(kind: .nodeModules, bytes: modules))
+        if worktree > modules { parts.append(.init(kind: .worktree, bytes: worktree - modules)) }
+      } else {
+        parts.append(.init(kind: .worktree, bytes: worktree))
+      }
+    }
+    if let build = disk.buildBytes, build > 0 { parts.append(.init(kind: .build, bytes: build)) }
+    return parts.isEmpty ? nil : DiskBreakdown(parts: parts)
   }
+}
+
+public struct DiskBreakdown: Equatable, Sendable {
+  public struct Part: Equatable, Identifiable, Sendable {
+    public enum Kind: String, Sendable { case nodeModules, worktree, build }
+    public var kind: Kind
+    public var bytes: Double
+    public var id: Kind { kind }
+
+    public func label(splitFromNodeModules: Bool) -> String {
+      switch kind {
+      case .nodeModules: "node_modules"
+      case .worktree: splitFromNodeModules ? "Rest of worktree" : "Worktree"
+      case .build: "Build output"
+      }
+    }
+  }
+
+  public var parts: [Part]
+  public var total: Double { parts.reduce(0) { $0 + $1.bytes } }
+  public var hasNodeModules: Bool { parts.contains { $0.kind == .nodeModules } }
+  public func label(of part: Part) -> String { part.label(splitFromNodeModules: hasNodeModules) }
 }
 
 public struct ProcessRow: Equatable, Identifiable, Sendable {
