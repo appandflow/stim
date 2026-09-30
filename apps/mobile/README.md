@@ -1015,7 +1015,8 @@ that `src` writes as `\uXXXX` escapes.
 
 Dates, numbers, sizes and durations go through `src/intl/format.ts`
 (`formatDateTime`, `formatDuration`, `formatBytes`, `formatSize`,
-`formatMemoryMb`); they format for the device's region. Hermes has no
+`formatMemoryMb`). Dates follow the device's region, as `toLocaleString()`
+did; sizes follow the messages' language, so they read `3.3 GB` in any region. Hermes has no
 `Intl.PluralRules` or `Intl.Locale`, so `src/intl/polyfills.ts` loads the
 formatjs polyfills with English plural rules only; each installs only when the
 API is missing. Hermes on iOS also rounds half to even and ignores

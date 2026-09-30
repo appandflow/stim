@@ -5,8 +5,9 @@ export function formatDateTime(value: Date | number | string, options?: Intl.Dat
   return i18n.date(typeof value === 'number' ? new Date(value) : value, options);
 }
 
+/** Numbers follow the messages' language, so a size reads the same in the sentence around it. */
 function formatNumber(value: number, options?: Intl.NumberFormatOptions): string {
-  return i18n.number(value, options);
+  return new Intl.NumberFormat(i18n.locale, options).format(value);
 }
 
 /**
@@ -28,7 +29,7 @@ export function formatDuration(
   ms: number,
   { seconds = false, coarse = false }: { seconds?: boolean; coarse?: boolean } = {},
 ): string {
-  const clamped = Math.max(0, ms);
+  const clamped = ms > 0 ? ms : 0;
   if (clamped < 60_000) {
     const secs = Math.floor(clamped / 1000);
     return seconds ? t`${secs}s` : t`<1m`;
