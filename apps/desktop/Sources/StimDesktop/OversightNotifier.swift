@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import StimKit
+import StimStores
 import SystemConfiguration
 
 @MainActor

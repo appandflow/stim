@@ -1,5 +1,6 @@
 import AppKit
 import StimKit
+import StimStores
 
 /// Disk sizes Stim Desktop measures itself with `du`, and open pull requests from `gh`. Each path is sized by
 /// its own `du` and published as it finishes, so one slow tree delays only its own row. Results are kept for

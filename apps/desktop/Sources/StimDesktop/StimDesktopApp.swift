@@ -1,6 +1,7 @@
 import AppKit
 import SimulatorFrames
 import StimKit
+import StimStores
 import SwiftUI
 
 @MainActor

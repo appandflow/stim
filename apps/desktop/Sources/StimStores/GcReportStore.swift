@@ -5,49 +5,59 @@ import StimKit
 /// The one `stim gc --json` report the Machine page, the metrics and the autopilot share. At most one run is in
 /// flight; a caller that asks while it runs gets its result.
 @MainActor @Observable
-final class GcReportStore {
-  static let settleDelay: TimeInterval = 2
+public final class GcReportStore {
+  public private(set) var latest = Fetched<GcReport>()
+  public private(set) var at: Date?
+  public private(set) var running = false
 
-  private(set) var latest = Fetched<GcReport>()
-  private(set) var at: Date?
-  private(set) var running = false
-
-  private let cli: Task<StimCLI, Never>
+  private let run: @Sendable () async throws -> GcReport
+  private let now: @MainActor () -> Date
+  private let settleDelay: TimeInterval
   @ObservationIgnored private var task: Task<GcReport?, Never>?
   @ObservationIgnored private var taskStartedAt = Date.distantPast
   @ObservationIgnored private var changedAt = Date.distantPast
   @ObservationIgnored private var settle: Timer?
 
-  init(cli: Task<StimCLI, Never>) {
-    self.cli = cli
+  /// `run` produces one `stim gc --json` report; `now` is the clock that dates runs and decides staleness.
+  public init(
+    run: @escaping @Sendable () async throws -> GcReport, now: @escaping @MainActor () -> Date = { Date() },
+    settleDelay: TimeInterval = 2
+  ) {
+    self.run = run
+    self.now = now
+    self.settleDelay = settleDelay
   }
 
-  var report: GcReport? { latest.value }
-  var error: String? { latest.error }
+  public convenience init(cli: Task<StimCLI, Never>) {
+    self.init(run: { try await cli.value.gcReport() })
+  }
+
+  public var report: GcReport? { latest.value }
+  public var error: String? { latest.error }
 
   /// The last report while it is younger than `maxAge` and no action changed what it reports since it started;
   /// otherwise the result of a run that started after that change, nil when that run fails.
-  func report(maxAge: TimeInterval) async -> GcReport? {
-    if let report, let at, at >= changedAt, Date().timeIntervalSince(at) < maxAge { return report }
+  public func report(maxAge: TimeInterval) async -> GcReport? {
+    if let report, let at, at >= changedAt, now().timeIntervalSince(at) < maxAge { return report }
     return await current().value
   }
 
   /// The result of a run that started at or after `date`, so it saw everything that happened before then.
-  func report(startedAfter date: Date) async -> GcReport? {
+  public func report(startedAfter date: Date) async -> GcReport? {
     if let report, let at, at >= max(changedAt, date) { return report }
     return await current(after: date).value
   }
 
-  func refresh() {
+  public func refresh() {
     _ = current()
   }
 
   /// Marks the report stale after an action that can change it, and runs gc once actions have settled for
   /// `settleDelay`, unless a run has started since.
-  func changed() {
-    changedAt = Date()
+  public func changed() {
+    changedAt = now()
     settle?.invalidate()
-    settle = Timer.scheduledTimer(withTimeInterval: Self.settleDelay, repeats: false) { [weak self] _ in
+    settle = Timer.scheduledTimer(withTimeInterval: settleDelay, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated {
         guard let self, self.task == nil || self.taskStartedAt < self.changedAt else { return }
         if let at = self.at, at >= self.changedAt { return }
@@ -59,11 +69,11 @@ final class GcReportStore {
   private func current(after date: Date = .distantPast) -> Task<GcReport?, Never> {
     if let task, taskStartedAt >= max(changedAt, date) { return task }
     let previous = task
-    let startedAt = Date()
-    let cli = cli
+    let startedAt = now()
+    let run = run
     let next = Task { [weak self] () -> GcReport? in
       _ = await previous?.value
-      let result = await Result.awaiting { try await cli.value.gcReport() }
+      let result = await Result.awaiting { try await run() }
       self?.finish(result, startedAt: startedAt)
       return try? result.get()
     }

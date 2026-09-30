@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import StimKit
+import StimStores
 
 struct UsageHistory {
   static let limit = 40

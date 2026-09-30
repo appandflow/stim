@@ -1,5 +1,6 @@
 import AppKit
 import StimKit
+import StimStores
 import SwiftUI
 
 /// One device of a workspace, large: its live screen, Take over and Release with the device's buttons, replay, the

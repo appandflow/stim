@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// Shows one `ActionRun`: a spinner and one line while it runs, then a short summary of what it did. Items it

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import StimKit
+import StimStores
 
 /// Checks at launch that the `stim` and, while phones are served, `stim-server` Stim Desktop runs are
 /// recent enough, and whether Stim already opens its devices here.

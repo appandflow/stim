@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// The last lines `stim logs --source build` printed for a slot since a build started.

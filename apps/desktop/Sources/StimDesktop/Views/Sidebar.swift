@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 struct Sidebar: View {
