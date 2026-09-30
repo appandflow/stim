@@ -16,7 +16,7 @@ import { Touch } from '@/components/touch';
 import { confirmRestartToUpdate, useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import { useRecents } from '@/hooks/recents';
 import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
 import { machineStats } from '@/lib/home';

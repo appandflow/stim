@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
-import { useMacConnection } from '@/hooks/mac-connection';
+import { frameTarget } from '@/hooks/frame-target';
+import { useMacConnection } from '@/hooks/machines';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
 import type { DevicePlatform, FrameEvent, ReplayRate } from '@/protocol/types';
@@ -87,7 +88,7 @@ export function useDeviceStream(
   const seeks = useRef(new SeekQueue());
   const key =
     connection && options.enabled
-      ? `${workspace}\n${platform}\n${slot}\n${physical ? 'physical' : ''}\n${fps}\n${maxEdge}\n${video.join(',')}\n${startAt ?? ''}`
+      ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt }).key
       : null;
   const [meter] = useState(() => new VideoMeter());
   /**
@@ -134,10 +135,7 @@ export function useDeviceStream(
     const unsubscribe = connection.subscribe(
       'frames.subscribe',
       {
-        workspace,
-        platform,
-        slot,
-        ...(physical ? { physical } : {}),
+        ...frameTarget({ workspace, platform, slot, physical }).params,
         fps,
         maxEdge,
         video,

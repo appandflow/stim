@@ -11,7 +11,7 @@ import { ScrollView } from '@/components/lists';
 import { StatusDot } from '@/components/pill';
 import { Text } from '@/components/text';
 import { chipColor } from '@/components/workspace-cards';
-import { useStatus } from '@/hooks/mac-connection';
+import { useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';

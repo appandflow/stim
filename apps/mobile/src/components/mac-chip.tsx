@@ -7,7 +7,7 @@ import { Icon } from '@/components/icon';
 import { MachineStatsRow } from '@/components/machine-stats';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { useMachineLink, useMachineUsage } from '@/hooks/mac-connection';
+import { useMachineLink, useMachineUsage } from '@/hooks/machines';
 import type { ConnectionState } from '@/lib/connection';
 import { machineStats } from '@/lib/home';
 import type { PairedMac } from '@/lib/macs';

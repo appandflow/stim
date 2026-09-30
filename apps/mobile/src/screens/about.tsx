@@ -8,7 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollView } from '@/components/lists';
 import { describeState } from '@/components/mac-chip';
 import { Text } from '@/components/text';
-import { useMacs, type PairedConnection } from '@/hooks/mac-connection';
+import { useMacs, type PairedConnection } from '@/hooks/machines';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 
 export function About() {

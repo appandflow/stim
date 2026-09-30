@@ -9,7 +9,7 @@ const mockConnection = {
   request: jest.fn(() => new Promise<ReplayRange>((resolve) => mockAnswers.push(resolve))),
 };
 
-jest.mock('@/hooks/mac-connection', () => ({
+jest.mock('@/hooks/machines', () => ({
   useMacConnection: () => ({ connection: mockConnection, state: { kind: 'open' } }),
 }));
 

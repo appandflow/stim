@@ -12,7 +12,7 @@ import { Icon } from '@/components/icon';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { useMachinePresence } from '@/hooks/mac-connection';
+import { useMachinePresence } from '@/hooks/machines';
 import { formatDuration } from '@/intl/format';
 import { agentsSummary, workspaceAgentSessions } from '@/lib/agents';
 import { drivenLabel, driversSummary, gitBadges } from '@/lib/format';

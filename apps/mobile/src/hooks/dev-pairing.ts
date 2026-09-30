@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { CLIENT, useMacs } from '@/hooks/mac-connection';
+import { CLIENT, useMacs } from '@/hooks/machines';
 import { applyDevPairing, devPairing } from '@/lib/dev-pairing';
 
 export function DevPairing(): null {

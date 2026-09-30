@@ -22,7 +22,7 @@ import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
-import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/mac-connection';
+import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { useNow } from '@/hooks/use-now';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';

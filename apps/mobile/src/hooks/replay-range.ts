@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { useMacConnection } from '@/hooks/mac-connection';
+import { useMacConnection } from '@/hooks/machines';
 import { RequestError } from '@/lib/connection';
 import type { DevicePlatform, ReplayRange } from '@/protocol/types';
 

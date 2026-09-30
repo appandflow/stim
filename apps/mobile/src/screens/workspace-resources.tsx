@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ListSection } from '@/components/list';
 import { ScrollView } from '@/components/lists';
 import { Text } from '@/components/text';
-import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/mac-connection';
+import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatBytes, formatMemoryMb } from '@/intl/format';
 import {

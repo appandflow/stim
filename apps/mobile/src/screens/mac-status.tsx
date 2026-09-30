@@ -25,7 +25,7 @@ import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useMachineDetails } from '@/hooks/machine-details';
-import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/mac-connection';
+import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatBytes, formatMemoryMb } from '@/intl/format';
 import { machineReadiness } from '@/lib/build-machines';

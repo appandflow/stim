@@ -10,7 +10,7 @@ import { connectionColor, describeState } from '@/components/mac-chip';
 import { StatusDot } from '@/components/pill';
 import { ScopeChip } from '@/components/read-only';
 import { Text } from '@/components/text';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import { forgetInbox } from '@/hooks/inbox';
 import { unregisterPush } from '@/hooks/notifications';
 import { forgetMac, type PairedMac } from '@/lib/macs';

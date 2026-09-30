@@ -7,7 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Alert, AppState, Linking, Platform } from 'react-native';
 
 import { markNotificationRead } from '@/hooks/inbox';
-import { toAttentionMachine, useMacs } from '@/hooks/mac-connection';
+import { toAttentionMachine, useMacs } from '@/hooks/machines';
 import { RequestError, type StimConnection } from '@/lib/connection';
 import { NOTIFY_STATE_KEY } from '@/lib/derived-data';
 import {

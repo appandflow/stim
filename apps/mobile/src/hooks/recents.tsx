@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import { newlyLive, parseRecents, touchRecents, type RecentWorkspace } from '@/lib/recents';
 
 const KEY = 'stim.recentWorkspaces';
