@@ -111,6 +111,8 @@ function RootLayoutContent() {
                           : null),
                       }}
                     />
+                    <Stack.Screen name="licenses" options={{ title: 'Open source licenses' }} />
+                    <Stack.Screen name="license" options={{ title: '' }} />
                     <Stack.Screen name="inbox" options={{ title: 'Notifications' }} />
                     <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
                     <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />

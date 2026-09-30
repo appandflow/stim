@@ -8,6 +8,8 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "mock-server": "node mock-server/server.mjs",
+    "licenses": "node scripts/generate-licenses.mjs",
+    "licenses:check": "node scripts/generate-licenses.mjs --check",
     "dev:pair": "node scripts/dev-pair.mjs",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error && node scripts/check-ascii.mjs",
     "typecheck": "tsc --noEmit",
