@@ -37,35 +37,35 @@ struct FormatTests {
   }
 
   @Test func durationTruncatesAndRollsOverAtHoursAndDays() {
-    #expect([0, 59, 60, 719, 3599].map(Format.duration) == ["<1m", "<1m", "1m", "11m", "59m"])
-    #expect([3600, 3660, 5400, 86_399].map(Format.duration) == ["1h", "1h01m", "1h30m", "23h59m"])
-    #expect([86_400, 172_800 + 3600].map(Format.duration) == ["1d", "2d"])
+    #expect([0.0, 59, 60, 719, 3599].map(Format.duration) == ["<1m", "<1m", "1m", "11m", "59m"])
+    #expect([3600.0, 3660, 5400, 86_399].map(Format.duration) == ["1h", "1h01m", "1h30m", "23h59m"])
+    #expect([86_400.0, 172_800 + 3600].map(Format.duration) == ["1d", "2d"])
     #expect(Format.duration(-300) == "<1m")
   }
 
   @Test func sinceShowsSecondsUnderAMinute() {
-    #expect([-5, 0, 12.9, 59.9].map(Format.since) == ["0s", "0s", "12s", "59s"])
-    #expect([60, 3700].map(Format.since) == ["1m", "1h01m"])
+    #expect([-5.0, 0, 12.9, 59.9].map(Format.since) == ["0s", "0s", "12s", "59s"])
+    #expect([60.0, 3700].map(Format.since) == ["1m", "1h01m"])
   }
 
   @Test func roundedDurationRoundsAndKeepsHoursUntilTwoDays() {
-    #expect([-1000, 0, 40_000, 59_400].map(Format.roundedDuration(ms:)) == ["0s", "0s", "40s", "59s"])
-    #expect([60_000, 14 * 60_000, 3_570_000].map(Format.roundedDuration(ms:)) == ["1m", "14m", "1h"])
-    #expect([47 * 3_600_000, 48 * 3_600_000, 72 * 3_600_000].map(Format.roundedDuration(ms:)) == ["47h", "2d", "3d"])
+    #expect([-1000.0, 0, 40_000, 59_400].map(Format.roundedDuration(ms:)) == ["0s", "0s", "40s", "59s"])
+    #expect([60_000.0, 14 * 60_000, 3_570_000].map(Format.roundedDuration(ms:)) == ["1m", "14m", "1h"])
+    #expect([47.0 * 3_600_000, 48 * 3_600_000, 72 * 3_600_000].map(Format.roundedDuration(ms:)) == ["47h", "2d", "3d"])
   }
 
   @Test func clockPadsSeconds() {
-    #expect([-5000, 0, 5000, 158_000, 3_600_000].map(Format.clock(ms:)) == ["0:00", "0:00", "0:05", "2:38", "60:00"])
+    #expect([-5000.0, 0, 5000, 158_000, 3_600_000].map(Format.clock(ms:)) == ["0:00", "0:00", "0:05", "2:38", "60:00"])
   }
 
   @Test func elapsedSpellsMinutesAndSecondsThenHours() {
-    #expect([0, 59_000, 65_000, 3_599_000].map(Format.elapsed(ms:)) == ["0m 0s", "0m 59s", "1m 5s", "59m 59s"])
-    #expect([3_600_000, 3_720_000].map(Format.elapsed(ms:)) == ["1h 0m", "1h 2m"])
+    #expect([0.0, 59_000, 65_000, 3_599_000].map(Format.elapsed(ms:)) == ["0m 0s", "0m 59s", "1m 5s", "59m 59s"])
+    #expect([3_600_000.0, 3_720_000].map(Format.elapsed(ms:)) == ["1h 0m", "1h 2m"])
   }
 
   @Test func ageWordsUnderAMinuteAsJustNow() {
-    #expect([-30, 0, 59].map(Format.age) == ["just now", "just now", "just now"])
-    #expect([60, 3599, 3600, 90_000].map(Format.age) == ["1m ago", "59m ago", "1h ago", "25h ago"])
+    #expect([-30.0, 0, 59].map(Format.age) == ["just now", "just now", "just now"])
+    #expect([60.0, 3599, 3600, 90_000].map(Format.age) == ["1m ago", "59m ago", "1h ago", "25h ago"])
   }
 
   @Test func simulatorModelTakesTheLastParenthesizedGroup() {
