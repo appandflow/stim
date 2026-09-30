@@ -90,8 +90,8 @@ type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas
 
 /**
  * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append or a running
- * build's detail, which can change only the log-derived fields, `full` for anything else that can change the payload, null for none. A null
- * name means the platform did not report one.
+ * build's detail, which can change only the log-derived fields, `full` for anything else that can change the payload,
+ * null for none. A null name means the platform did not report one.
  */
 export function statusChange(dir: WatchedDir, name: string | null): RefreshKind | null {
   if (name?.includes('.lock')) return null;

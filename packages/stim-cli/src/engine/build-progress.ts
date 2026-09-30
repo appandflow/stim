@@ -138,10 +138,6 @@ function writeBuildDetail(root: string, claimId: string, detail: BuildDetail): v
 const COLD_PHASES: readonly BuildPhase[] = ['prebuild', 'pods', 'compile'];
 const HIT_PHASES: readonly BuildPhase[] = ['install', 'launch'];
 
-/**
- * The outcome entering `phase` settles: a native build step means cold; reaching the device after the cache lookup,
- * or install, without one means hit. An --eas-profile run has no cache lookup.
- */
 function settledOutcome(phase: BuildPhase, entered: ActiveBuildRecord['phases']): RunOutcomeKind | null {
   if (COLD_PHASES.includes(phase)) return 'cold';
   if (phase === 'device') return entered.some((entry) => entry.phase === 'cache-lookup') ? 'hit' : null;
@@ -457,10 +453,6 @@ function median(values: readonly number[]): number | null {
   return sorted.length % 2 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
 }
 
-/**
- * Estimates a run from the project's recent runs with the known outcome, or its latest outcome while unknown. When
- * the run knows whether it set up its device, only runs in the same situation count.
- */
 export function estimateBuild(
   history: RunHistory | undefined,
   platform: StatsPlatform,
@@ -490,11 +482,6 @@ export function estimateBuild(
 
 const MIN_TAGGED_SAMPLES = 3;
 
-/**
- * The samples in the run's device situation. A setup run uses only setup samples. A run that reuses its device uses
- * reuse samples once there are `MIN_TAGGED_SAMPLES`, and until then those plus the untagged ones recorded before the
- * tag, which are mostly reruns.
- */
 function matchDeviceSetup(samples: RunSample[], deviceSetup: boolean | undefined): RunSample[] {
   if (deviceSetup === undefined) return samples;
   const tagged = samples.filter((sample) => sample.deviceSetup === deviceSetup);
@@ -512,10 +499,6 @@ function latestOutcome(lists: Partial<Record<RunOutcomeKind, RunSample[]>> | und
   return latest?.outcome ?? null;
 }
 
-/**
- * The status report of an active build. It uses the estimate the run stored; `history` stands in only for a record
- * written before the run made one, with the same inputs the run uses.
- */
 export function buildReport(
   record: ActiveBuildRecord,
   { state, history }: { state: ActiveBuildState; history: RunHistory | undefined },
