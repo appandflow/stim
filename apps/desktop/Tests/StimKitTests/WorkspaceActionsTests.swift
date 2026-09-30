@@ -5,7 +5,9 @@ import Testing
 
 @Suite struct WorkspaceMenuItemsTests {
   @Test func workspaceRowOffersStartWhenMetroIsStopped() {
-    let items = workspaceMenuItems(for: .workspace(metroRunning: false, platforms: ["ios"])).compactMap { $0 }
+    let items = workspaceMenuItems(for: .workspace(metroRunning: false, platforms: ["ios"], linkedWorktree: true)).compactMap {
+      $0
+    }
     #expect(items.contains(.run(platform: "ios")))
     #expect(!items.contains(.run(platform: "android")))
     #expect(items.contains(.startDevServer))
@@ -16,8 +18,14 @@ import Testing
     #expect(!items.contains(.warmWorktree))
   }
 
+  @Test func sourceCheckoutRowDoesNotOfferRemoveWorktree() {
+    let items = workspaceMenuItems(for: .workspace(metroRunning: true, platforms: ["ios"], linkedWorktree: false))
+    #expect(!items.compactMap { $0 }.contains(.removeWorktree))
+    #expect(items.last! != nil)
+  }
+
   @Test func workspaceRowOffersStopWhenMetroIsRunning() {
-    let items = workspaceMenuItems(for: .workspace(metroRunning: true, platforms: [])).compactMap { $0 }
+    let items = workspaceMenuItems(for: .workspace(metroRunning: true, platforms: [], linkedWorktree: true)).compactMap { $0 }
     #expect(items.contains(.stopDevServer))
     #expect(!items.contains(.startDevServer))
   }
