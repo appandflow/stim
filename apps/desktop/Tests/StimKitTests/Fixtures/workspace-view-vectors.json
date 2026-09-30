@@ -843,6 +843,36 @@
       }
     },
     {
+      "name": "commits ahead without an upstream name it generically",
+      "worktree": {
+        "path": "/w",
+        "branch": "b",
+        "repository": "r",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": null,
+          "ahead": 2,
+          "behind": null,
+          "mergedInto": null
+        }
+      },
+      "chip": {
+        "parts": [
+          {
+            "text": "↑2",
+            "tone": "normal"
+          },
+          {
+            "text": "no upstream",
+            "tone": "tertiary"
+          }
+        ],
+        "pullRequest": null,
+        "label": "Branch, 2 commits not pushed to the upstream, no upstream"
+      }
+    },
+    {
       "name": "commits behind only",
       "worktree": {
         "path": "/w",

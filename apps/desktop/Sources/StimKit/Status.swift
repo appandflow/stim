@@ -258,7 +258,7 @@ public struct WorktreeGit: Decodable, Hashable, Sendable {
   }
 
   public func unpushedLabel(_ count: Int) -> String {
-    "\(Self.commits(count)) not pushed" + (upstream.map { " to \($0)" } ?? "")
+    "\(Self.commits(count)) not pushed to \(upstream ?? "the upstream")"
   }
 
   public func behindLabel(_ count: Int) -> String {

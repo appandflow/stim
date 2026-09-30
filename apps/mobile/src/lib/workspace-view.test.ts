@@ -643,11 +643,7 @@ describe('workspaceSeries', () => {
   });
 });
 
-type VectorStep = Omit<PhaseStep, 'phase' | 'state'> & {
-  phase: PhaseStep['phase'];
-  state: PhaseStep['state'];
-  name: string;
-};
+type VectorStep = PhaseStep & { name: string };
 
 const vectorNow = Date.parse(vectors.now);
 const steady = (steps: readonly PhaseStep[]) =>
