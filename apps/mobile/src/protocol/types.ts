@@ -294,6 +294,8 @@ export interface EnvironmentState {
   disk?: WorkspaceDisk;
   /** The coding-agent sessions working here, most recently active first; absent when none or from an older `stim`. */
   agents?: AgentSession[];
+  /** The sessions that stopped running here in the last 3 days, most recently ended first; absent from an older `stim`. */
+  endedAgents?: EndedAgentSession[];
 }
 
 /**
@@ -311,6 +313,11 @@ export interface AgentSession {
   pid?: number;
   openUrl?: string;
   webUrl?: string;
+}
+
+/** A session that stopped running, with its last known title and links; `endedAt` is when Stim last found it running. */
+export interface EndedAgentSession extends Omit<AgentSession, 'pid'> {
+  endedAt: string;
 }
 
 /**

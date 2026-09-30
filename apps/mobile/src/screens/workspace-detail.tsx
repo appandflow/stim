@@ -260,6 +260,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
           />
           <WorkCard
             agents={env.agents ?? []}
+            endedAgents={env.endedAgents ?? []}
             git={gitChip(env.worktree)}
             now={now}
             onPress={() => open('/mac/[id]/work')}

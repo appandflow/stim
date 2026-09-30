@@ -1568,6 +1568,18 @@
             "openUrl": "claude://code/continue?session=local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7",
             "webUrl": "https://claude.ai/code/session_016mNVcEGnttEVda1aDtiDUK"
           }
+        ],
+        "endedAgents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "7c1f2a9e-5b3d-4e8a-9f60-2d4c8b1e7a35",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/a4-running",
+            "title": "Add ended agent sessions",
+            "startedAt": "2026-09-25T01:05:00.000Z",
+            "lastActiveAt": "2026-09-25T02:40:00.000Z",
+            "webUrl": "https://claude.ai/code/session_01Hq8ZbR3vKx2mYtN6pLwD4c",
+            "endedAt": "2026-09-25T02:41:10.000Z"
+          }
         ]
       },
       {
@@ -3338,7 +3350,29 @@
           "nodeModulesBytes": null,
           "buildBytes": null,
           "measuredAt": "2026-09-25T03:53:30.012Z"
-        }
+        },
+        "endedAgents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "3e9d7b21-6a4f-4c0e-8b2d-51f7a9c3e6d8",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/a4-ready",
+            "title": "Warm the a4 worktree",
+            "startedAt": "2026-09-24T22:10:00.000Z",
+            "lastActiveAt": "2026-09-24T23:30:00.000Z",
+            "openUrl": "claude://code/continue?session=local_5d2e8c14-7b3a-4f69-a0e1-9c6b2d4f8e71",
+            "webUrl": "https://claude.ai/code/session_01Vn4TcW8sGj5pQr2xKmYb7e",
+            "endedAt": "2026-09-24T23:31:25.000Z"
+          },
+          {
+            "tool": "codex",
+            "sessionId": "019a4c2e-8f1b-7d3a-b6e5-2c9f0a1d4e87",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/a4-ready",
+            "title": "Review the offload docs",
+            "startedAt": "2026-09-24T18:00:00.000Z",
+            "lastActiveAt": "2026-09-24T18:45:00.000Z",
+            "endedAt": "2026-09-24T19:15:30.000Z"
+          }
+        ]
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
@@ -4126,6 +4160,7 @@
     "environments[path*=chat-perf-demo].physicalDevices and deviceLeases: added by hand in the PhysicalDeviceState shape, a connected iPhone leased in the default slot and a disconnected Android phone in the pixel slot; the capture machine leased no physical device",
     "environments[path*=a4-ready]: added by hand in the shape stim status --json reports for a worktree stim worktree warm prepared that never built or ran, with an open pull request whose checks all pass",
     "environments[path*=a4-running].agents and environments[path*=1123-mobile-app].agents: added by hand in the AgentSession shape; the capture predates the field. The a4-running session carries a webUrl as a Remote Control session does",
-    "environments[path*=a4-offloading], [path*=a4-offloaded] and [path*=a4-offload-fallback]: added by hand from a4-building and a4-running in the shapes #1876 added: an iOS build offloaded to janics-mac-mini:7869 in its pods step (build.placement), a last build that machine compiled (offloadedTo), and a local build after the machine was busy (offloadFallback)"
+    "environments[path*=a4-offloading], [path*=a4-offloaded] and [path*=a4-offload-fallback]: added by hand from a4-building and a4-running in the shapes #1876 added: an iOS build offloaded to janics-mac-mini:7869 in its pods step (build.placement), a last build that machine compiled (offloadedTo), and a local build after the machine was busy (offloadFallback)",
+    "environments[path*=a4-running].endedAgents and environments[path*=a4-ready].endedAgents: added by hand in the EndedAgentSession shape; the capture predates the field. a4-running has a running and an ended session; a4-ready has only ended ones, a Claude Code session with a webUrl and a Codex thread without one"
   ]
 }

@@ -8,8 +8,7 @@ import { Icon } from '@/components/icon';
 import { Text, type TextTone } from '@/components/text';
 import { Touch } from '@/components/touch';
 import type { FontWeight, TextVariant } from '@/design/tokens';
-import { agentLabel, agentShortLabel, agentWebUrl } from '@/lib/agents';
-import type { AgentSession } from '@/protocol/types';
+import { agentLabel, agentShortLabel, agentWebUrl, isEndedAgent, type AnyAgentSession } from '@/lib/agents';
 
 /**
  * A workspace's most recent coding-agent session on one line: the tool's mark, the title, its age and how many others
@@ -22,7 +21,7 @@ export function AgentSessionLine({
   weight,
   tone = 'default',
 }: {
-  agents: AgentSession[];
+  agents: AnyAgentSession[];
   now: number;
   variant: TextVariant;
   weight?: FontWeight;
@@ -32,7 +31,8 @@ export function AgentSessionLine({
   const [agent, ...rest] = agents;
   if (!agent) return null;
   const short = agentShortLabel(agent, now);
-  const tail = [short.age, rest.length ? `+${rest.length}` : null].filter(Boolean).join(' \u00B7 ');
+  const age = isEndedAgent(agent) ? (short.age ? `ended ${short.age}` : 'ended') : short.age;
+  const tail = [age, rest.length ? `+${rest.length}` : null].filter(Boolean).join(' \u00B7 ');
   return (
     <View style={styles.row}>
       <AgentIcon tool={agent.tool} size={theme.typography[variant].fontSize ?? 13} color={theme.colors.secondary} />
@@ -49,24 +49,34 @@ export function AgentSessionLine({
 }
 
 /**
- * One session in a list; a session with a web link opens it in the Claude app or on claude.ai. With `card`, a session
- * with a link is a card of its own, for a section that holds only this session.
+ * One session in a list; a session with a web link opens it in the Claude app or on claude.ai. An ended session is
+ * muted. With `card`, a session with a link is a card of its own, for a section that holds only this session.
  */
-export function AgentSessionRow({ agent, now, card = false }: { agent: AgentSession; now: number; card?: boolean }) {
+export function AgentSessionRow({ agent, now, card = false }: { agent: AnyAgentSession; now: number; card?: boolean }) {
   const { theme } = useUnistyles();
   const label = agentLabel(agent, now);
   const short = agentShortLabel(agent, now);
   const url = agentWebUrl(agent);
+  const ended = isEndedAgent(agent);
+  const iconColor = ended ? theme.colors.tertiary : url ? theme.colors.brand : theme.colors.secondary;
+  const titleTone: TextTone = ended ? 'secondary' : url ? 'brand' : 'default';
+  const subtitle = ended
+    ? short.age
+      ? `Ended ${short.age} ago`
+      : 'Ended'
+    : short.age
+      ? `Active ${short.age} ago`
+      : null;
   const content = (
     <>
-      <AgentIcon tool={agent.tool} size={18} color={url ? theme.colors.brand : theme.colors.secondary} />
+      <AgentIcon tool={agent.tool} size={18} color={iconColor} />
       <View style={styles.titles}>
-        <Text variant="callout" tone={url ? 'brand' : 'default'} numberOfLines={2}>
+        <Text variant="callout" tone={titleTone} numberOfLines={2}>
           {short.name}
         </Text>
-        {short.age ? (
-          <Text variant="footnote" tone="secondary">
-            {`Active ${short.age} ago`}
+        {subtitle ? (
+          <Text variant="footnote" tone={ended ? 'tertiary' : 'secondary'}>
+            {subtitle}
           </Text>
         ) : null}
       </View>

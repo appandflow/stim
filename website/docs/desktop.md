@@ -125,8 +125,12 @@ The inspector's **Agents** section lists the Claude Code and Codex sessions
 working in the workspace, such as "Claude Code · Fix the login bug · 5m ago",
 from `agents` in `stim status`. Click a session to open it in the Claude
 desktop app or the Codex app. A Claude Code session started in a terminal has
-no link, because the Claude app can only open sessions it hosts. The phone app
-shows the same sessions on each workspace row and screen, without a link.
+no link, because the Claude app can only open sessions it hosts. Below them,
+muted, are the sessions that stopped running in the workspace in the last 3
+days, such as "Claude Code · Fix the login bug · ended 2h ago", from
+`endedAgents`; one with a link still opens on click. The phone app shows the
+same sessions on each workspace screen, and opens one, running or ended, in
+the Claude app when it had Claude Code Remote Control connected.
 
 ## See what uses the disk
 
