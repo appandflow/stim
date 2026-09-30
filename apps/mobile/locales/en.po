@@ -428,6 +428,10 @@ msgstr "{name} next build about {took}, {cache}"
 msgid "{name} no build"
 msgstr "{name} no build"
 
+#: src/lib/spoken-status.ts
+msgid "{name} running"
+msgstr "{name} running"
+
 #: src/lib/needs-attention.ts
 msgid "{name} signing or provisioning failed ({code})"
 msgstr "{name} signing or provisioning failed ({code})"
@@ -484,6 +488,11 @@ msgstr "{platform} · {since} ago"
 #: src/lib/workspace-view.ts
 msgid "{platform} · started {since} ago"
 msgstr "{platform} · started {since} ago"
+
+#. placeholder {0}: d.slot
+#: src/lib/spoken-status.ts
+msgid "{platform} {0}"
+msgstr "{platform} {0}"
 
 #: src/lib/workspace-view.ts
 msgid "{platform} app closed"
@@ -975,9 +984,12 @@ msgid "Building {platform}"
 msgstr "Building {platform}"
 
 #: src/components/build-progress.tsx
-#: src/lib/spoken-status.ts
 msgid "Building {platform} · {slot}"
 msgstr "Building {platform} · {slot}"
+
+#: src/lib/spoken-status.ts
+msgid "Building {platform}, slot {slot}"
+msgstr "Building {platform}, slot {slot}"
 
 #: src/lib/format.ts
 #: src/lib/format.ts

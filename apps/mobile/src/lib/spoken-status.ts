@@ -15,7 +15,7 @@ export function buildLabel(build: BuildReport, now: number): string {
   const { slot } = build;
   const elapsed = spokenDuration(progress.elapsedMs);
   return [
-    slot === 'default' ? t`Building ${platform}` : t`Building ${platform} \u00B7 ${slot}`,
+    slot === 'default' ? t`Building ${platform}` : t`Building ${platform}, slot ${slot}`,
     build.phase,
     t`${elapsed} elapsed`,
     outcomeLabel(build),
@@ -26,25 +26,11 @@ export function buildLabel(build: BuildReport, now: number): string {
 }
 
 /**
- * What a workspace row shows beyond its title, as spoken labels: the running build, Metro, each running device with
- * its activity, remote EAS sessions, and error and warning counts. `now` is the moment the row's times count to.
+ * What a workspace row shows beyond its title, as spoken labels: error and warning counts first, then the running
+ * build, Metro, each running device with its activity, and remote EAS sessions. `now` is the moment the row's times count to.
  */
 export function workspaceStatusLabels(env: EnvironmentState, now: number): string[] {
   const parts: (string | null)[] = [];
-  const build = runningBuild(env);
-  if (build) parts.push(buildLabel(build, now));
-  if (env.metro?.running) {
-    const { port } = env.metro;
-    parts.push(t`Metro running on port ${port}`);
-  }
-  if (env.supervisor && !env.supervisor.healthy) parts.push(t`supervisor unhealthy`);
-  for (const d of devicesOf(env).filter((device) => device.running)) {
-    const name = deviceTitle(d);
-    const activity = activityLabel(d.activity, now);
-    parts.push(activity ? t`${name}, ${activity}` : name);
-  }
-  const sessions = env.remoteDevices?.length ?? 0;
-  if (sessions > 0) parts.push(plural(sessions, { one: '# EAS session', other: '# EAS sessions' }));
   const errors = env.logs?.errorsSinceMarker ?? 0;
   if (errors > 0) parts.push(plural(errors, { one: '# error', other: '# errors' }));
   const warnings = env.warnings.length;
@@ -56,6 +42,21 @@ export function workspaceStatusLabels(env: EnvironmentState, now: number): strin
         : plural(warnings, { one: '# warning', other: '# warnings' }),
     );
   }
+  const build = runningBuild(env);
+  if (build) parts.push(buildLabel(build, now));
+  if (env.metro?.running) {
+    const { port } = env.metro;
+    parts.push(t`Metro running on port ${port}`);
+  }
+  if (env.supervisor && !env.supervisor.healthy) parts.push(t`supervisor unhealthy`);
+  for (const d of devicesOf(env).filter((device) => device.running)) {
+    const platform = platformName(d.platform);
+    const name = d.slot === 'default' ? platform : t`${platform} ${d.slot}`;
+    const activity = activityLabel(d.activity, now);
+    parts.push(activity ? t`${name}, ${activity}` : t`${name} running`);
+  }
+  const sessions = env.remoteDevices?.length ?? 0;
+  if (sessions > 0) parts.push(plural(sessions, { one: '# EAS session', other: '# EAS sessions' }));
   return parts.filter((part): part is string => Boolean(part));
 }
 

@@ -40,7 +40,7 @@ describe('buildLabel', () => {
 
   it('names a non-default slot and leaves out what a run without history does not know', () => {
     expect(buildLabel(build({ slot: 'phone', outcome: null, expectedMs: null }), now)).toBe(
-      'Building iOS \u00B7 phone, install, 2 minutes elapsed',
+      'Building iOS, slot phone, install, 2 minutes elapsed',
     );
   });
 });
@@ -60,7 +60,7 @@ describe('workspaceStatusLabels', () => {
       }),
       now,
     );
-    expect(labels).toEqual(['Metro running on port 8087', 'iOS, idle for 22 minutes', 'Android', '1 error']);
+    expect(labels).toEqual(['1 error', 'Metro running on port 8087', 'iOS, idle for 22 minutes', 'Android running']);
   });
 
   it('speaks a running build, remote sessions, an unhealthy supervisor and driven devices', () => {

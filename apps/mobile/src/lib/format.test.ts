@@ -86,6 +86,10 @@ describe('driversSummary', () => {
       'idle for 22 minutes',
     );
     expect(activityLabel({ state: 'unknown', basis: [] }, now)).toBe('activity unknown');
+    expect(activityLabel({ state: 'idle', basis: [] }, now)).toBe('idle');
+    expect(activityLabel({ state: 'driven', driver: { tool: 'claude', pid: 1, since: null }, basis: [] }, now)).toBe(
+      'driven by claude',
+    );
   });
 
   it('says nothing for a device used in the last 10 minutes, like the badge', () => {
