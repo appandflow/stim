@@ -26,6 +26,7 @@ final class ServerController: ObservableObject {
   private var output: [String] = []
   private var generation = 0
   private var devicesEpoch = 0
+  private var missedProbes = 0
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -84,6 +85,7 @@ final class ServerController: ObservableObject {
     generation += 1
     let current = generation
     state = .starting
+    missedProbes = 0
     Task {
       if let exiting {
         await Task.detached { Self.waitForExit(exiting) }.value
@@ -145,8 +147,12 @@ final class ServerController: ObservableObject {
         let health = await StimServerCLI.health(port: port)
         guard current == generation, isRunning else { return }
         if let health {
+          missedProbes = 0
           state = .running(health, owned: owned)
         } else if !owned {
+          missedProbes += 1
+          guard missedProbes >= 2 else { return }
+          missedProbes = 0
           state = .off
           if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
         }
