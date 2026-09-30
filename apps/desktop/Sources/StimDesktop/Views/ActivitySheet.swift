@@ -260,7 +260,7 @@ struct ActivitySheet: View {
   @ViewBuilder private var footer: some View {
     HStack {
       if run.isRunning {
-        Text("Closing keeps it running in the background.").foregroundStyle(Palette.tertiary)
+        Text("Closing keeps it running. Find it under Operations in the sidebar footer.").foregroundStyle(Palette.tertiary)
       }
       Spacer()
       if case .success(let report) = report, run.command.arguments == ["gc", "--json"], !report.idleDevices.isEmpty {
