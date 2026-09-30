@@ -1,3 +1,5 @@
+import type { ConnectionState } from '@/lib/connection';
+
 export interface AboutApp {
   version: string;
   build: string | null;
@@ -12,7 +14,7 @@ export interface AboutApp {
 
 export interface AboutMachine {
   name: string;
-  detail: { stim: string; server: string; protocol: number } | { state: string };
+  detail: { stim: string; server: string; protocol: number } | { state: string; plain: string };
 }
 
 export interface AboutDevice {
@@ -35,20 +37,35 @@ function updateText(app: AboutApp): string {
   return `${app.updateId}${app.updatedAt ? ` (published ${app.updatedAt.toISOString()})` : ''}`;
 }
 
+/** A machine's connection state as a fixed English word, since the sheet's own text carries a countdown and is translated. */
+export function plainState(state: ConnectionState, missing: boolean): string {
+  if (missing) return 'not paired';
+  return state.kind === 'refused' ? `refused (${state.code})` : state.kind;
+}
+
+function deviceLines(device: AboutDevice): string[] {
+  return [
+    `OS: ${device.os === 'ios' ? 'iOS' : 'Android'} ${device.osVersion}`,
+    `Device: ${device.model ?? 'unknown'}`,
+    `Locale: ${device.locale}`,
+  ];
+}
+
 function machineText(label: string, detail: AboutMachine['detail']): string {
   return 'stim' in detail
     ? `${label}: stim ${detail.stim}, server ${detail.server}, protocol ${detail.protocol}`
-    : `${label}: ${detail.state}`;
+    : `${label}: ${detail.plain}`;
 }
 
 /** Every version the sheet shows, as plain text for a bug report. Not translated, so a report reads the same anywhere. */
-export function diagnosticText(app: AboutApp, machines: AboutMachine[]): string {
+export function diagnosticText(app: AboutApp, machines: AboutMachine[], device: AboutDevice): string {
   return [
     `Stim for phones ${versionWithBuild(app)} (${app.platform})`,
     `Runtime version: ${app.runtimeVersion ?? 'none'}`,
     `Channel: ${app.channel || 'none'}`,
     `Update: ${updateText(app)}`,
     `Protocol: ${app.protocol}`,
+    ...deviceLines(device),
     ...machines.map(({ name, detail }) => machineText(name, detail)),
   ].join('\n');
 }
@@ -75,9 +92,7 @@ export function bugReportUrl(app: AboutApp, machines: AboutMachine[], device: Ab
     `- Channel: ${app.channel || 'none'}`,
     `- Runtime version: ${app.runtimeVersion ?? 'none'}`,
     `- Protocol: ${app.protocol}`,
-    `- OS: ${device.os === 'ios' ? 'iOS' : 'Android'} ${device.osVersion}`,
-    `- Device: ${device.model ?? 'unknown'}`,
-    `- Locale: ${device.locale}`,
+    ...deviceLines(device).map((line) => `- ${line}`),
   ];
   const lines = machines.map(({ detail }, index) => `- ${machineText(`Machine ${index + 1}`, detail)}`);
   let shown = lines.length;

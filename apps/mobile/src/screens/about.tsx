@@ -19,6 +19,7 @@ import { useMacs, type PairedConnection } from '@/hooks/machines';
 import { formatDateTime } from '@/intl/format';
 import {
   bugReportUrl,
+  plainState,
   diagnosticText,
   shortId,
   versionWithBuild,
@@ -56,13 +57,14 @@ function deviceInfo(): AboutDevice {
   return {
     os: Platform.OS,
     osVersion: String(Platform.Version),
-    model: Platform.OS === 'android' ? Platform.constants.Model : (Constants.platform?.ios?.model ?? null),
+    model: (Platform.OS === 'android' ? Platform.constants.Model : Constants.platform?.ios?.model) || null,
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
   };
 }
 
 function machineInfo({ mac, state, missing }: PairedConnection): AboutMachine {
-  if (state.kind !== 'open') return { name: mac.name, detail: { state: describeState(state, missing) } };
+  if (state.kind !== 'open')
+    return { name: mac.name, detail: { state: describeState(state, missing), plain: plainState(state, missing) } };
   return {
     name: mac.name,
     detail: { stim: state.server.stim, server: state.server.version, protocol: state.protocol },
@@ -80,7 +82,7 @@ export function About({ onClose }: { onClose?: () => void }) {
   const published = app.updatedAt ? formatDateTime(app.updatedAt, { dateStyle: 'medium', timeStyle: 'short' }) : null;
   const builtIn = app.embedded || !app.updateId;
   const copy = () =>
-    void Clipboard.setStringAsync(diagnosticText(app, connections.map(machineInfo))).then(() => {
+    void Clipboard.setStringAsync(diagnosticText(app, connections.map(machineInfo), deviceInfo())).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

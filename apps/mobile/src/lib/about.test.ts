@@ -20,6 +20,8 @@ const app: AboutApp = {
   protocol: 1,
 };
 
+const device: AboutDevice = { os: 'ios', osVersion: '27.0', model: 'iPhone 18 Pro', locale: 'en-CA' };
+
 describe('about', () => {
   it('appends the build number only when the app has one', () => {
     expect(versionWithBuild(app)).toBe('0.1.0 (12)');
@@ -33,10 +35,14 @@ describe('about', () => {
 
   it('lists every version, and what keeps a machine from reporting its own', () => {
     expect(
-      diagnosticText(app, [
-        { name: 'MacBook Pro', detail: { stim: '1.14.0', server: '1.14.0', protocol: 1 } },
-        { name: 'Mac mini', detail: { state: 'Needs an update' } },
-      ]),
+      diagnosticText(
+        app,
+        [
+          { name: 'MacBook Pro', detail: { stim: '1.14.0', server: '1.14.0', protocol: 1 } },
+          { name: 'Mac mini', detail: { state: 'Needs an update', plain: 'refused (protocol-unsupported)' } },
+        ],
+        device,
+      ),
     ).toBe(
       [
         'Stim for phones 0.1.0 (12) (ios)',
@@ -44,20 +50,22 @@ describe('about', () => {
         'Channel: production',
         'Update: 01a0f251-5fa5-7d78-bafd-b77f915d8900 (published 2026-09-30T13:15:00.000Z)',
         'Protocol: 1',
+        'OS: iOS 27.0',
+        'Device: iPhone 18 Pro',
+        'Locale: en-CA',
         'MacBook Pro: stim 1.14.0, server 1.14.0, protocol 1',
-        'Mac mini: Needs an update',
+        'Mac mini: refused (protocol-unsupported)',
       ].join('\n'),
     );
   });
 
   it('reports a built-in launch without an update id', () => {
-    const text = diagnosticText({ ...app, embedded: true, channel: null, runtimeVersion: null }, []);
+    const text = diagnosticText({ ...app, embedded: true, channel: null, runtimeVersion: null }, [], device);
     expect(text).toContain('Update: built-in');
     expect(text).toContain('Channel: none');
   });
 
   describe('bugReportUrl', () => {
-    const device: AboutDevice = { os: 'ios', osVersion: '27.0', model: 'iPhone 18 Pro', locale: 'en-CA' };
     const machine = (name: string, patch: Partial<AboutMachine> = {}): AboutMachine => ({
       name,
       detail: { stim: '1.14.0', server: '1.14.0', protocol: 1 },
@@ -82,12 +90,15 @@ describe('about', () => {
     it('numbers machines and leaves out their names', () => {
       const url = bugReportUrl(
         app,
-        [machine("Janic's MacBook Pro"), machine('mini.tail1234.ts.net', { detail: { state: 'Offline' } })],
+        [
+          machine("Janic's MacBook Pro"),
+          machine('mini.tail1234.ts.net', { detail: { state: 'Offline', plain: 'waiting' } }),
+        ],
         device,
       );
       const { body } = parse(url);
       expect(body).toContain('- Machine 1: stim 1.14.0, server 1.14.0, protocol 1');
-      expect(body).toContain('- Machine 2: Offline');
+      expect(body).toContain('- Machine 2: waiting');
       expect(url).not.toMatch(/Janic|MacBook|tail1234|ts\.net/);
     });
 
