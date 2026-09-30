@@ -3,12 +3,12 @@ import { Trans } from '@lingui/react/macro';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { ListSection } from '@/components/list';
-import { ScrollView } from '@/components/lists';
 import { Pill } from '@/components/pill';
+import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
@@ -35,7 +35,6 @@ export function AgentActions({
   slot: string;
   deviceId: string;
 }) {
-  const { theme } = useUnistyles();
   const router = useRouter();
   const macId = useMacConnection().mac?.id ?? '';
   const status = useStatus();
@@ -65,22 +64,18 @@ export function AgentActions({
       params: { id: macId, path, source: 'agent', slot, ...(at === undefined ? {} : { at: String(at) }) },
     });
   return (
-    <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.titles}>
-          <Text variant="title" numberOfLines={1}>
-            {titleText}
-          </Text>
-          <Text variant="footnote" tone="secondary">
-            {subtitle}
-          </Text>
-        </View>
-        {driven ? (
+    <SheetScreen
+      title={titleText}
+      titleLines={1}
+      subtitle={subtitle}
+      accessory={
+        driven ? (
           <Pill tone="success">
             <Trans>active</Trans>
           </Pill>
-        ) : null}
-      </View>
+        ) : null
+      }
+    >
       {actions.length ? (
         <View style={styles.filters}>
           {options.map((option) => {
@@ -143,14 +138,11 @@ export function AgentActions({
         </Text>
       )}
       <Button title={t`Open in logs`} variant="secondary" onPress={() => openLog()} />
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
-  header: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.md },
-  titles: { flex: 1, gap: theme.space.xxs },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
   filter: {
     paddingHorizontal: theme.space.lg,

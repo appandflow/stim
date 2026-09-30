@@ -13,12 +13,12 @@ import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { CollapsibleSection } from '@/components/collapsible-section';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Icon } from '@/components/icon';
-import { ScrollView } from '@/components/lists';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { MachineStatsRow } from '@/components/machine-stats';
 import { Pill } from '@/components/pill';
 import { PlatformGlyph } from '@/components/platform-glyph';
 import { explainReadOnly, ScopeChip } from '@/components/read-only';
+import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { UsageCharts, useUsageHistory } from '@/components/usage-charts';
@@ -114,22 +114,19 @@ export function MacStatus({ id }: { id: string }) {
         : null;
 
   return (
-    <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: theme.colors.background }}>
-      <View style={styles.titleRow}>
+    <SheetScreen
+      title={mac.name}
+      titleLines={1}
+      subtitle={open ? serverLine(state.server.stim, state.server.version) : describeState(state, missing)}
+      leading={
         <View>
           <Icon name="laptopcomputer" size={26} color={theme.colors.text} />
           <View style={[styles.dot, { backgroundColor: connectionColor(state, missing, theme.colors) }]} />
         </View>
-        <View style={styles.titleText}>
-          <Text variant="title" numberOfLines={1}>
-            {mac.name}
-          </Text>
-          <Text tone="secondary" style={styles.subtitle} numberOfLines={1}>
-            {open ? serverLine(state.server.stim, state.server.version) : describeState(state, missing)}
-          </Text>
-        </View>
-        <ScopeChip state={state} />
-      </View>
+      }
+      accessory={<ScopeChip state={state} />}
+      gap="xxl"
+    >
       <Text variant="caption" tone="tertiary" mono selectable>
         {mac.endpoint}
       </Text>
@@ -400,7 +397,7 @@ export function MacStatus({ id }: { id: string }) {
           renderRow={(group) => <AttentionRows group={group} home={home} status={status} />}
         />
       ) : null}
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
@@ -870,8 +867,6 @@ function AttentionRows({
 
 const styles = StyleSheet.create((theme) => ({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background },
-  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xxl, paddingBottom: 48 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.lg },
   banner: { marginHorizontal: -theme.space.xxl },
   dot: {
     position: 'absolute',
@@ -883,8 +878,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 2,
     borderColor: theme.colors.background,
   },
-  titleText: { flex: 1 },
-  subtitle: { marginTop: theme.space.xxs },
   block: { gap: theme.space.sm },
   headerRow: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.md },
   padded: { padding: theme.space.lg, gap: theme.space.lg },

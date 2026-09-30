@@ -9,8 +9,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { Icon } from '@/components/icon';
 import { ListSection, SectionHeader } from '@/components/list';
-import { ScrollView } from '@/components/lists';
 import { PlatformGlyph } from '@/components/platform-glyph';
+import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { buildTiming } from '@/components/workspace-cards';
@@ -108,23 +108,20 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
     planned && planned.expectedMs !== null && !planned.refusal ? clockDuration(planned.expectedMs) : null;
   const checkedAge = checkedAt === null ? '' : formatDuration(now - checkedAt);
   return (
-    <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
-      <View style={styles.titles}>
-        <Text variant="title">
-          <Trans>Build</Trans>
-        </Text>
-        {running ? (
-          <Text variant="footnote" tone="secondary">
-            {[
+    <SheetScreen
+      title={t`Build`}
+      subtitle={
+        running
+          ? [
               target ? deviceTitle(target).name : null,
               remote ? t`on ${remoteHost}` : null,
               Number.isFinite(started) ? t`started ${startedAge} ago` : null,
             ]
               .filter(Boolean)
-              .join(' \u00B7 ')}
-          </Text>
-        ) : null}
-      </View>
+              .join(' \u00B7 ')
+          : undefined
+      }
+    >
       <PlatformSwitch value={platform} onChange={setPlatform} building={building?.platform ?? null} />
 
       {running ? <RunningBuild build={running} path={path} history={history} now={now} /> : null}
@@ -215,7 +212,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
           </Text>
         ) : null}
       </Section>
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
@@ -628,8 +625,6 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
-  titles: { gap: theme.space.xxs },
   fallbackReason: { paddingTop: theme.space.xxs },
   switch: {
     flexDirection: 'row',

@@ -12,6 +12,7 @@ enum Space {
   static let xxl: CGFloat = 20
   static let xxxl: CGFloat = 24
   static let huge: CGFloat = 32
+  static let giant: CGFloat = 48
 }
 
 enum Radius {

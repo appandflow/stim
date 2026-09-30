@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { SectionHeader } from '@/components/list';
-import { ScrollView } from '@/components/lists';
+import { SheetScreen } from '@/components/sheet-screen';
 import { Switch } from '@/components/switch';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
@@ -34,13 +34,7 @@ export function Filters() {
   const selectedMacs = filters.macs.filter((id) => connections.some((c) => c.mac.id === id));
 
   return (
-    <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: theme.colors.background }}>
-      <View style={styles.titleRow}>
-        <Text variant="title">
-          <Trans>Filters</Trans>
-        </Text>
-        <Button title={t`Reset`} variant="plain" onPress={reset} />
-      </View>
+    <SheetScreen title={t`Filters`} gap="xxl" accessory={<Button title={t`Reset`} variant="plain" onPress={reset} />}>
       <Group title={t`Show`}>
         {activity.map(({ value, label }) => (
           <Toggle
@@ -96,7 +90,7 @@ export function Filters() {
       <Text variant="caption" tone="tertiary">
         <Trans>Filters are saved on this phone.</Trans>
       </Text>
-    </ScrollView>
+    </SheetScreen>
   );
 }
 
@@ -110,8 +104,6 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.huge, gap: theme.space.xxl },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   group: { gap: theme.space.md },
   toggles: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.md },
   switches: { gap: theme.space.lg, alignItems: 'flex-start' },
