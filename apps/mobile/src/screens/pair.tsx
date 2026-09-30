@@ -12,7 +12,7 @@ import { Button, IconButton } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { CLIENT, useMacs } from '@/hooks/mac-connection';
+import { CLIENT, useMacs } from '@/hooks/machines';
 import { pair } from '@/lib/connection';
 import { renameMac, saveMac } from '@/lib/macs';
 import { manualPairing, parsePairingCode } from '@/lib/pairing';

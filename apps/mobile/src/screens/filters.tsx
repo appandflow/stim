@@ -12,7 +12,7 @@ import { Switch } from '@/components/switch';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { useHomeFilters } from '@/hooks/home-filters';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import { mergeWorkspaces, projectNames, type ActivityFilter } from '@/lib/home';
 
 const toggled = (list: string[], value: string) =>

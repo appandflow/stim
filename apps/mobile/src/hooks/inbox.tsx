@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import type { ConnectionState, StimConnection } from '@/lib/connection';
 import {
   applyList,

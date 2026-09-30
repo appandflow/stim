@@ -2265,7 +2265,7 @@ msgstr "Not checked yet."
 msgid "Not claimed"
 msgstr "Not claimed"
 
-#: src/hooks/mac-connection.tsx
+#: src/hooks/workspace-actions.ts
 #: src/lib/connection.ts
 msgid "Not connected."
 msgstr "Not connected."
@@ -3221,7 +3221,7 @@ msgstr "the cache provider"
 msgid "The chips above show why each machine is offline."
 msgstr "The chips above show why each machine is offline."
 
-#: src/hooks/mac-connection.tsx
+#: src/hooks/device-control.ts
 msgid "The connection dropped."
 msgstr "The connection dropped."
 

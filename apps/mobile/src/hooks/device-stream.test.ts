@@ -17,7 +17,7 @@ const mockConnection = {
   }),
 };
 
-jest.mock('@/hooks/mac-connection', () => ({ useMacConnection: () => ({ connection: mockConnection }) }));
+jest.mock('@/hooks/machines', () => ({ useMacConnection: () => ({ connection: mockConnection }) }));
 jest.mock('../../modules/stim-video/src', () => ({ pushAccessUnit: () => {} }));
 
 const TARGET = { workspace: '/app', platform: 'ios' as const, slot: 'default' };

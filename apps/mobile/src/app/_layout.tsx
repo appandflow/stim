@@ -18,7 +18,7 @@ import { useForegroundUpdateCheck } from '@/hooks/app-update';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { InboxSync } from '@/hooks/inbox';
-import { MacsProvider } from '@/hooks/mac-connection';
+import { MacsProvider } from '@/hooks/machines';
 import { NotificationsProvider } from '@/hooks/notifications';
 import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';

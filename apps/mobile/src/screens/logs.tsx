@@ -14,7 +14,8 @@ import { PlatformLogo } from '@/components/platform-logo';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { Touch } from '@/components/touch';
-import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
+import { useLogs, type LogsChange } from '@/hooks/logs';
+import { useMacConnection, useStatus } from '@/hooks/machines';
 import {
   appendRecords,
   chipLabel,

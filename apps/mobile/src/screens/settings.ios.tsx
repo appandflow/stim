@@ -23,7 +23,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 import { describeState } from '@/components/mac-chip';
 import { explainReadOnly } from '@/components/read-only';
 import { useHomeFilters } from '@/hooks/home-filters';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { NOTIFY_CATEGORIES, type NotifyLevel } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';

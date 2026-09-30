@@ -12,7 +12,8 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
-import { useFrameSnapshot, useMachineLink } from '@/hooks/mac-connection';
+import { useFrameSnapshot } from '@/hooks/frames';
+import { useMachineLink } from '@/hooks/machines';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
 import { shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
 

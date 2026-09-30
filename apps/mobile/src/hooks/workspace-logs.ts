@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 
-import { useLogs, type LogsChange } from '@/hooks/mac-connection';
+import { useLogs, type LogsChange } from '@/hooks/logs';
 import { agentActions, agentFeedFilter, appendRecords, type AgentAction } from '@/lib/logs';
 import type { LogFilter, LogRecord } from '@/protocol/types';
 

@@ -17,14 +17,9 @@ import { RemoteTile } from '@/components/remote-tile';
 import { Text } from '@/components/text';
 import { BuildCard, BuildInProgressCard, CardGrid, LogsCard, StatusCard, WorkCard } from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
-import {
-  useAction,
-  useBuildPlans,
-  useHasStatus,
-  useMacConnection,
-  useMachineStatus,
-  useWorkspace,
-} from '@/hooks/mac-connection';
+import { useBuildPlans } from '@/hooks/build-plans';
+import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
+import { useAction } from '@/hooks/workspace-actions';
 import { useNow } from '@/hooks/use-now';
 import { useRecents } from '@/hooks/recents';
 import { workspaceAgentSessions } from '@/lib/agents';

@@ -12,7 +12,7 @@ import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useInbox } from '@/hooks/inbox';
-import { usePairedMacs } from '@/hooks/mac-connection';
+import { usePairedMacs } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { byDay, itemData, type InboxFilters, type InboxItem } from '@/lib/inbox';

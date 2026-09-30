@@ -12,7 +12,7 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
-import { useMacConnection, useStatus } from '@/hooks/mac-connection';
+import { useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { formatDuration } from '@/intl/format';

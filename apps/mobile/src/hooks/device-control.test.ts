@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react-native';
 import type { StimConnection } from '@/lib/connection';
 import type { createMachineStore } from '@/lib/machine-store';
 
-import { useDeviceControl } from './mac-connection';
+import { useDeviceControl } from './device-control';
 
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: 'm1' }) }));
 jest.mock('@/storage', () => ({ statusStorage: {} }));

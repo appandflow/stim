@@ -5,7 +5,7 @@ import { TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
-import { useMacs } from '@/hooks/mac-connection';
+import { useMacs } from '@/hooks/machines';
 import { listMacs, renameMac } from '@/lib/macs';
 
 export function Rename({ id }: { id: string }) {
