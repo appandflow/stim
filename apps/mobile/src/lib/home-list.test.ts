@@ -1,6 +1,8 @@
+import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-row-vectors.json';
+
 import type { HomeItem } from '@/lib/home';
 import { checkoutProjects, homeSections, rowDevices, rowLabel, rowProblems, rowStatus } from '@/lib/home-list';
-import type { BuildReport, DeviceActivity, EnvironmentState, LastBuild, PhysicalDeviceState } from '@/protocol/types';
+import type { BuildReport, DeviceActivity, EnvironmentState } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -27,7 +29,6 @@ const driven = (tool: string, sinceMs: number): DeviceActivity => ({
   driver: { tool, pid: 1, since: ago(sinceMs) },
   basis: [],
 });
-const idle = (lastMs: number): DeviceActivity => ({ state: 'idle', lastActivityAt: ago(lastMs), basis: [] });
 const booted = (activity?: DeviceActivity) => ({ name: 'sim', udid: 'u', owned: true, state: 'Booted', activity });
 const build = (extra: Partial<BuildReport> = {}): BuildReport =>
   ({
@@ -43,28 +44,6 @@ const build = (extra: Partial<BuildReport> = {}): BuildReport =>
     basis: 0,
     ...extra,
   }) as BuildReport;
-const failed = (finishedMsAgo: number): LastBuild =>
-  ({
-    platform: 'ios',
-    status: 'failed',
-    cacheHit: false,
-    cacheSkipped: false,
-    durationMs: 1000,
-    fingerprint: null,
-    startedAt: ago(finishedMsAgo + 1000),
-    finishedAt: ago(finishedMsAgo),
-  }) as LastBuild;
-const lease: PhysicalDeviceState = {
-  platform: 'ios',
-  slot: 'default',
-  id: 'phone',
-  name: 'iPhone',
-  model: 'iPhone 17',
-  owned: false,
-  physical: true,
-  connection: 'connected',
-  lease: { holder: 'h', kind: 'declared', grantedAt: null, expiresAt: ago(-60 * MIN) },
-};
 
 describe('homeSections', () => {
   it('puts repos with live work first and live rows before idle ones, keeping the list order within each', () => {
@@ -96,38 +75,6 @@ describe('checkoutProjects', () => {
 });
 
 describe('rowStatus', () => {
-  it('reads Building while a build runs, even when an agent drives a device', () => {
-    const e = env('/w', { live: true, build: build(), ios: booted(driven('agent-device', 5 * MIN)) });
-    expect(rowStatus(e, NOW, null)).toMatchObject({ kind: 'building', text: 'Building iOS' });
-  });
-
-  it('reads Driven with how long the most recently started driver has driven', () => {
-    const e = env('/w', {
-      live: true,
-      ios: booted(driven('agent-device', 30 * MIN)),
-      android: { owned: true, physical: false, state: 'detected', activity: driven('maestro', 4 * MIN) },
-    });
-    expect(rowStatus(e, NOW, null)).toMatchObject({ kind: 'driven', text: 'Driven 4m', tone: 'brand' });
-  });
-
-  it('reads Running, not Idle, for a workspace live only through a leased phone', () => {
-    const e = env('/w', { physicalDevices: [lease] });
-    expect(rowStatus(e, NOW, null)).toMatchObject({ kind: 'running', tone: 'success' });
-  });
-
-  it('reads Warming with its time, Ready, and Idle with how long ago Metro stopped', () => {
-    expect(rowStatus(env('/w', { phase: 'warming', phaseSince: ago(3 * MIN) }), NOW, null).text).toBe('Warming 3m');
-    expect(rowStatus(env('/w', { phase: 'ready' }), NOW, null).kind).toBe('ready');
-    const stopped = env('/w', {
-      metro: { port: 8081, running: false, lastStop: { reason: 'stop', at: ago(45 * MIN) } },
-    } as Partial<EnvironmentState>);
-    expect(rowStatus(stopped, NOW, null)).toMatchObject({
-      kind: 'idle',
-      text: 'Idle 45m',
-      label: 'Idle for 45 minutes',
-    });
-  });
-
   it('reads Last seen for a machine that is not connected, whatever the stale status says', () => {
     const e = env('/w', { live: true, build: build() });
     expect(rowStatus(e, NOW, { lastSeenAt: NOW - 3 * MIN })).toMatchObject({
@@ -138,63 +85,15 @@ describe('rowStatus', () => {
   });
 });
 
-describe('rowProblems', () => {
-  it('lists errors first and shows a failed build while the workspace is live', () => {
-    const e = env('/w', {
-      live: true,
-      logs: { dir: '/l', errorsSinceMarker: 3 },
-      lastBuilds: { ios: failed(3 * 24 * 60 * MIN) },
-      warnings: ['w'],
-    });
-    expect(rowProblems(e, NOW).map((p) => [p.text, p.tone])).toEqual([
-      ['3 errors', 'error'],
-      ['iOS build failed', 'error'],
-      ['1 warning', 'warning'],
-    ]);
-  });
+const vectorNow = Date.parse(vectors.now);
 
-  it('drops the failed build of an idle workspace after a day, and of a platform that is building again', () => {
-    expect(rowProblems(env('/w', { lastBuilds: { ios: failed(2 * MIN) } }), NOW).map((p) => p.kind)).toEqual([
-      'build-failed',
-    ]);
-    expect(rowProblems(env('/w', { lastBuilds: { ios: failed(25 * 60 * MIN) } }), NOW)).toEqual([]);
-    const rebuilding = env('/w', { live: true, build: build(), lastBuilds: { ios: failed(2 * MIN) } });
-    expect(rowProblems(rebuilding, NOW)).toEqual([]);
-  });
-
-  it('counts warnings as issues in red when one of the status issues is an error', () => {
-    const e = env('/w', {
-      warnings: ['a', 'b'],
-      issues: [{ severity: 'error' } as NonNullable<EnvironmentState['issues']>[number]],
-    });
-    expect(rowProblems(e, NOW)).toEqual([{ kind: 'issues', text: '2 issues', tone: 'error' }]);
-  });
-});
-
-describe('rowDevices', () => {
-  it('counts running devices by kind and names each driving tool once', () => {
-    const e = env('/w', {
-      live: true,
-      ios: booted(driven('agent-device', MIN)),
-      slots: [{ slot: 'ipad', ios: booted(driven('agent-device', 2 * MIN)) }],
-      physicalDevices: [lease],
-    });
-    expect(rowDevices(e, NOW)).toEqual({ names: '2 iOS, iOS device', drivers: 'agent-device', idle: null, remote: 0 });
-  });
-
-  it('shows idle time only when every running device has been idle for 10 minutes', () => {
-    const quiet = env('/w', {
-      live: true,
-      ios: booted(idle(25 * MIN)),
-      android: { owned: true, physical: false, state: 'detected', activity: idle(12 * MIN) },
-    });
-    expect(rowDevices(quiet, NOW).idle).toEqual({ text: 'idle 12m', label: 'idle for 12 minutes' });
-    const recent = env('/w', {
-      live: true,
-      ios: booted(idle(25 * MIN)),
-      android: { ...quiet.android!, activity: idle(MIN) },
-    });
-    expect(rowDevices(recent, NOW).idle).toBeNull();
+describe('workspace row vectors', () => {
+  it.each(vectors.cases.map((c) => [c.name, c] as const))('%s', (_, c) => {
+    const e = c.workspace as unknown as EnvironmentState;
+    const { kind, text, label, tone } = rowStatus(e, vectorNow, null);
+    expect({ kind, text, label, tone }).toEqual(c.status);
+    expect(rowProblems(e, vectorNow)).toEqual(c.problems);
+    expect(rowDevices(e, vectorNow)).toEqual(c.devices);
   });
 });
 

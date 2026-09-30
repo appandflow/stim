@@ -24,8 +24,8 @@ struct Sidebar: View {
             DisclosureGroup(isExpanded: isExpanded(tree.summary)) {
               ForEach(tree.entries) { entry in
                 EntryRow(
-                  entry: entry, subtitle: nil, showsGit: options.showsGitStatus, selection: selection,
-                  openLogs: openLogs)
+                  entry: entry, subtitle: nil, showsFolder: tree.foldersDiffer, showsGit: options.showsGitStatus,
+                  selection: selection, openLogs: openLogs)
               }
             } label: {
               ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
@@ -37,8 +37,8 @@ struct Sidebar: View {
           let entries = store.sidebarList(options)
           ForEach(entries) { entry in
             EntryRow(
-              entry: entry, subtitle: store.title(of: store.project(ofPath: entry.path)), showsGit: options.showsGitStatus,
-              selection: selection, openLogs: openLogs)
+              entry: entry, subtitle: store.title(of: store.project(ofPath: entry.path)), showsFolder: true,
+              showsGit: options.showsGitStatus, selection: selection, openLogs: openLogs)
           }
           if entries.isEmpty { emptyText(options) }
         }
@@ -228,6 +228,7 @@ struct ProjectRow: View {
 struct EntryRow: View {
   var entry: SidebarEntry
   var subtitle: String?
+  var showsFolder: Bool
   var showsGit: Bool
   var selection: SidebarItem?
   var openLogs: (String) -> Void
@@ -235,16 +236,23 @@ struct EntryRow: View {
   var body: some View {
     switch entry {
     case .workspace(let env):
-      WorkspaceRow(env: env, subtitle: subtitle, showsGit: showsGit, selection: selection, openLogs: openLogs)
+      WorkspaceRow(
+        env: env, place: place(env.names), showsGit: showsGit, selection: selection, openLogs: openLogs)
     case .worktree(let worktree):
-      NoEnvironmentRow(worktree: worktree, subtitle: subtitle, showsGit: showsGit, selection: selection)
+      NoEnvironmentRow(worktree: worktree, place: subtitle, showsGit: showsGit, selection: selection)
     }
+  }
+
+  /// The project in an ungrouped list, and the folder in the checkout when it tells the rows apart.
+  private func place(_ names: PathNames) -> String? {
+    let parts = [subtitle, showsFolder ? names.inCheckout : nil].compactMap { $0 }.filter { $0 != names.title }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
   }
 }
 
 struct WorkspaceRow: View {
   var env: Workspace
-  var subtitle: String?
+  var place: String?
   var showsGit: Bool
   var selection: SidebarItem?
   var openLogs: (String) -> Void
@@ -252,56 +260,9 @@ struct WorkspaceRow: View {
   @State private var confirmingStop = false
   @State private var removal: WorktreeRemoval?
 
-  private var subtitleText: String {
-    SidebarSubtitle.text(title: env.names.title, parts: [subtitle, env.names.inCheckout])
-  }
-
-  @ViewBuilder private var metroPort: some View {
-    if let metro = env.metro {
-      Text(":\(String(metro.port))").font(.stim(.caption2, mono: true)).foregroundStyle(Palette.tertiary).fixedSize()
-        .help("Metro port \(String(metro.port))\(metro.running ? "" : ", stopped")")
-    }
-  }
-
   var body: some View {
-    HStack(alignment: .top, spacing: Space.md) {
-      StatusDot(
-        color: env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary,
-        filled: env.live || env.isSettingUp
-      )
-      .padding(.top, Space.sm - 1)
-      .contentShape(Circle())
-      .help(env.live ? "Live" : env.isWarming ? "Warming" : env.isSettingUp ? "Warmed, not started" : "Idle")
-      VStack(alignment: .leading, spacing: 1) {
-        HStack(spacing: Space.sm) {
-          Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
-          Spacer(minLength: 0)
-          if subtitleText.isEmpty { metroPort }
-          if !env.live { SetupBadge(env: env, compact: true) }
-          if showsGit { GitIndicator(git: env.worktree?.git) }
-          if let errors = env.logs?.errorsSinceMarker, errors > 0 {
-            HStack(spacing: Space.xxs) {
-              Image(systemName: "xmark.octagon.fill").font(.system(size: 10))
-              Text("\(errors)").font(.stim(.caption2, weight: .semibold)).monospacedDigit()
-            }
-            .foregroundStyle(Palette.error)
-            .fixedSize()
-            .help(countLabel(errors, "error") + " in the logs")
-          }
-          if !env.warnings.isEmpty {
-            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.warning)
-              .help(env.warnings.map { abbreviatingHome($0) }.joined(separator: "\n"))
-              .accessibilityLabel(countLabel(env.warnings.count, "warning"))
-          }
-        }
-        if !subtitleText.isEmpty {
-          HStack(spacing: Space.sm) {
-            SidebarSubtitle(text: subtitleText)
-            Spacer(minLength: 0)
-            metroPort
-          }
-        }
-      }
+    TimelineView(.everyMinute) { context in
+      WorkspaceRowContent(env: env, now: context.date, place: place, showsGit: showsGit, openLogs: openLogs)
     }
     .sidebarTag(.environment(env.path), selection: selection)
     .contextMenu {
@@ -350,21 +311,190 @@ struct WorkspaceRow: View {
   }
 }
 
-private struct SidebarSubtitle: View {
-  var text: String
+/// A workspace row, each line only when it has something: the branch and what the workspace is doing, the agent
+/// session, what is wrong, the running build or the warm step, then the devices and git.
+private struct WorkspaceRowContent: View {
+  var env: Workspace
+  var now: Date
+  var place: String?
+  var showsGit: Bool
+  var openLogs: (String) -> Void
 
-  static func text(title: String, parts: [String?]) -> String {
-    parts.compactMap { $0 }.filter { $0 != title }.joined(separator: " \u{00B7} ")
+  var body: some View {
+    let status = env.rowStatus(now: now)
+    let problems = env.rowProblems(now: now)
+    let sessions = AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents)
+    let live = env.isShownLive
+    HStack(alignment: .top, spacing: Space.md) {
+      StatusDot(color: Color(status.tone), filled: live)
+        .padding(.top, Space.sm - 1)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+          Text(env.names.title).foregroundStyle(live ? Palette.text : Palette.secondary)
+            .lineLimit(1).truncationMode(.middle).layoutPriority(1)
+          Spacer(minLength: 0)
+          Text(status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(status.tone))
+            .lineLimit(1).fixedSize()
+        }
+        if let session = sessions.first {
+          SessionLine(session: session, others: sessions.count - 1)
+        }
+        if !problems.isEmpty {
+          FlowLayout(spacing: Space.xs, lineSpacing: Space.xs) {
+            ForEach(problems, id: \.text) { problem in
+              ProblemPill(problem: problem, warnings: env.warnings) { openLogs(env.path) }
+            }
+          }
+        }
+        if let build = env.build, build.isRunning {
+          RowBuild(env: env, build: build)
+        } else if status.kind == .warming {
+          HStack(spacing: Space.xs) {
+            ProgressView().controlSize(.mini)
+            Text(env.warmStepText).foregroundStyle(Palette.secondary).lineLimit(1)
+          }
+          .font(.stim(.caption))
+        }
+        RowDetailLine(
+          context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
+      }
+    }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(env.rowLabel(now: now, folder: place, showsGit: showsGit))
+    .accessibilityActions {
+      if (env.logs?.errorsSinceMarker ?? 0) > 0 {
+        Button("Show errors") { openLogs(env.path) }
+      }
+    }
+  }
+
+  private func context(_ devices: RowDevices) -> Text? {
+    var parts: [Text] = []
+    if let place { parts.append(Text(place).foregroundStyle(Palette.tertiary)) }
+    if let names = devices.names { parts.append(Text(names).foregroundStyle(Palette.secondary)) }
+    if let drivers = devices.drivers {
+      parts.append(Text("\(Image(systemName: "cursorarrow.rays")) \(drivers)").foregroundStyle(Palette.primary))
+    }
+    if let idle = devices.idle { parts.append(Text(idle.text).foregroundStyle(Palette.tertiary)) }
+    if devices.remote > 0 {
+      let text = devices.remote == 1 ? "EAS session" : "\(devices.remote) EAS sessions"
+      parts.append(Text(text).foregroundStyle(Palette.info))
+    }
+    return RowDetailLine.joined(parts)
+  }
+}
+
+private struct SessionLine: View {
+  var session: AgentSession
+  var others: Int
+
+  var body: some View {
+    HStack(spacing: Space.xs) {
+      AgentIcon(tool: session.tool, size: 11)
+      Text(session.title.flatMap { $0.isEmpty ? nil : $0 } ?? session.toolName).lineLimit(1).truncationMode(.tail)
+      if others > 0 { Text("+\(others)").foregroundStyle(Palette.tertiary).fixedSize() }
+    }
+    .font(.stim(.caption))
+    .foregroundStyle(Palette.secondary)
+  }
+}
+
+/// A problem as a small pill; the error count opens the logs.
+private struct ProblemPill: View {
+  var problem: RowProblem
+  var warnings: [String]
+  var openLogs: () -> Void
+
+  var body: some View {
+    switch problem.kind {
+    case .errors:
+      Button(action: openLogs) { Pill(problem.text, tone: problem.tone, size: .small) }
+        .buttonStyle(.plain)
+        .help("Show the logs")
+    case .warnings, .issues:
+      Pill(problem.text, tone: problem.tone, size: .small)
+        .help(warnings.map { abbreviatingHome($0) }.joined(separator: "\n"))
+    default:
+      Pill(problem.text, tone: problem.tone, size: .small)
+    }
+  }
+}
+
+/// The running build's step and counts, elapsed over the estimate, and the phase bar without phase names.
+private struct RowBuild: View {
+  var env: Workspace
+  var build: Build
+
+  var body: some View {
+    TimelineView(.buildSeconds(build)) { context in
+      let progress = build.progress(at: context.date)
+      let (phase, counts) = build.currentPhaseLabel
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(spacing: Space.xs) {
+          Text(phase).font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary).fixedSize()
+          if let counts {
+            Text(counts).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
+          }
+          Spacer(minLength: Space.xs)
+          (Text(Format.clock(ms: progress.elapsedMs))
+            + Text(build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? "").foregroundStyle(Palette.tertiary))
+            .fixedSize()
+        }
+        .font(.stim(.caption))
+        .monospacedDigit()
+        PhaseBar(
+          steps: barSteps(
+            build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)),
+          key: build.key, names: false)
+      }
+      .padding(.vertical, Space.xxs)
+    }
+  }
+}
+
+/// The row's last line: where the workspace is and its devices, then git. When both do not fit on one line, git
+/// moves to a line of its own.
+private struct RowDetailLine: View {
+  var context: Text?
+  var git: GitChip?
+
+  static func joined(_ parts: [Text]) -> Text? {
+    guard let first = parts.first else { return nil }
+    return parts.dropFirst().reduce(first) { $0 + Text(" \u{00B7} ").foregroundStyle(Palette.tertiary) + $1 }
+  }
+
+  private var gitText: Text? {
+    guard let git else { return nil }
+    var parts: [Text] = []
+    if let pull = git.pullRequest { parts.append(Text(pull.text).fontWeight(.medium).foregroundStyle(Color(pull.tone))) }
+    for part in git.parts {
+      parts.append(Text(part.text).foregroundStyle(part.tone == .normal ? Palette.secondary : Color(part.tone)))
+    }
+    return Self.joined(parts)
   }
 
   var body: some View {
-    Text(text).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+    let lines = [context, gitText].compactMap { $0 }
+    Group {
+      if lines.count == 2, let joined = Self.joined(lines) {
+        ViewThatFits(in: .horizontal) {
+          joined.lineLimit(1).fixedSize()
+          VStack(alignment: .leading, spacing: Space.xs) {
+            ForEach(lines.indices, id: \.self) { lines[$0].lineLimit(1).truncationMode(.tail) }
+          }
+        }
+      } else if let line = lines.first {
+        line.lineLimit(1).truncationMode(.tail)
+      }
+    }
+    .font(.stim(.caption))
+    .monospacedDigit()
   }
 }
 
 struct NoEnvironmentRow: View {
   var worktree: UnprovisionedWorktree
-  var subtitle: String?
+  var place: String?
   var showsGit: Bool
   var selection: SidebarItem?
   @EnvironmentObject private var actions: ActionCenter
@@ -372,22 +502,21 @@ struct NoEnvironmentRow: View {
 
   var body: some View {
     let names = worktree.names
+    let git = showsGit ? GitChip(worktree.info) : nil
     HStack(alignment: .top, spacing: Space.md) {
       StatusDot(color: Palette.tertiary, filled: false)
         .padding(.top, Space.sm - 1)
-      VStack(alignment: .leading, spacing: 1) {
-        Text(names.title).lineLimit(1).truncationMode(.middle)
-        let text = SidebarSubtitle.text(title: names.title, parts: [subtitle, names.inCheckout])
-        if !text.isEmpty { SidebarSubtitle(text: text) }
-      }
-      .layoutPriority(1)
-      Spacer()
-      if showsGit, worktree.git?.isNotable == true {
-        GitIndicator(git: worktree.git)
-      } else {
-        Text("no environment").font(.stim(.caption2)).foregroundStyle(Palette.tertiary).fixedSize()
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+          Text(names.title).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+          Spacer(minLength: 0)
+          Text("No environment").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
+        }
+        RowDetailLine(context: place.map { Text($0).foregroundStyle(Palette.tertiary) }, git: git)
       }
     }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel([names.title, "No environment", git?.label, place].compactMap { $0 }.joined(separator: ", "))
     .sidebarTag(.worktree(worktree.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(

@@ -106,6 +106,12 @@ extension Workspace {
 public struct ProjectTree: Hashable, Sendable {
   public var summary: ProjectSummary
   public var entries: [SidebarEntry]
+
+  /// Whether the workspaces sit in different folders of the checkout, the only case where the folder tells them
+  /// apart. A worktree with no environment has no folder of its own.
+  public var foldersDiffer: Bool {
+    Set(entries.compactMap { if case .workspace(let env) = $0 { env.names.inCheckout ?? "" } else { nil } }).count > 1
+  }
 }
 
 /// The sidebar grouped by project. A project left with no rows is omitted unless `showsEmptyProjects` is set.

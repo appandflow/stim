@@ -39,7 +39,7 @@ private let signingCodes: Set<String> = [
 ]
 private let diskFloorBytes: Double = 5e9
 private let loopCount = 3
-private let staleMs: Double = 24 * 60 * 60 * 1000
+let staleMs: Double = 24 * 60 * 60 * 1000
 private let workEvidence = ["agent-action", "metro-bundle", "workspace-use"]
 private let languages = [
   "swift": "Swift", "m": "Objective-C", "mm": "Objective-C++", "kt": "Kotlin", "java": "Java", "c": "C", "cc": "C++",

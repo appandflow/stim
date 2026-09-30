@@ -36,6 +36,9 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
   public var git: WorktreeGit?
 
   public var names: PathNames { PathNames(path: path, branch: branch, worktree: path) }
+
+  /// The worktree as a workspace's `worktree` reports it, with no pull request.
+  public var info: WorktreeInfo { WorktreeInfo(path: path, branch: branch, repository: repository, git: git) }
 }
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {

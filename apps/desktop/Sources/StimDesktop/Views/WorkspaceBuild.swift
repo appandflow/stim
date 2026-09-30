@@ -81,6 +81,7 @@ extension TimelineSchedule where Self == PeriodicTimelineSchedule {
 struct PhaseBar: View {
   var steps: [PhaseStep]
   var key: String
+  var names = true
 
   var body: some View {
     let weights = segmentWeights(steps)
@@ -101,7 +102,7 @@ struct PhaseBar: View {
         }
       }
       .frame(height: 5)
-      if namesPhases(steps) {
+      if names, namesPhases(steps) {
         GeometryReader { geo in
           let sum = weights.reduce(0, +)
           let gaps = CGFloat(max(0, steps.count - 1)) * 3
