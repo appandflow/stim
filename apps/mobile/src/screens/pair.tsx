@@ -1,4 +1,6 @@
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
@@ -23,7 +25,7 @@ type Step =
   | { kind: 'name'; id: string; name: string };
 
 async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name: string }> {
-  const paired = await pair(payload.endpoint, payload.pairingToken, Constants.deviceName ?? 'Phone', CLIENT);
+  const paired = await pair(payload.endpoint, payload.pairingToken, Constants.deviceName ?? t`Phone`, CLIENT);
   const name = payload.name || paired.serverName;
   const mac = await saveMac({ name, endpoint: payload.endpoint }, paired.deviceToken);
   return { id: mac.id, name };
@@ -39,6 +41,7 @@ export function Pair() {
   const [token, setToken] = useState('');
   const [name, setName] = useState('');
   const busy = useRef(false);
+  const connectingTo = step.kind === 'connecting' ? step.endpoint : '';
 
   const start = async (payload: PairingPayload, from: 'scan' | 'manual') => {
     if (busy.current) return;
@@ -85,7 +88,7 @@ export function Pair() {
       <Stack.Screen
         options={{
           headerLeft: () => (
-            <IconButton icon="xmark" tone="default" accessibilityLabel="Close" onPress={() => router.dismiss()} />
+            <IconButton icon="xmark" tone="default" accessibilityLabel={t`Close`} onPress={() => router.dismiss()} />
           ),
         }}
       />
@@ -95,7 +98,7 @@ export function Pair() {
           <View style={styles.form}>
             <Field
               mono
-              label="Endpoint"
+              label={t`Endpoint`}
               value={endpoint}
               onChangeText={setEndpoint}
               placeholder="wss://my-mac.tail1234.ts.net:7443"
@@ -106,32 +109,32 @@ export function Pair() {
             <Field
               mono
               secret
-              label="Pairing token"
+              label={t`Pairing token`}
               value={token}
               onChangeText={setToken}
-              placeholder="From Pair a phone in Stim Desktop"
+              placeholder={t`From Pair a phone in Stim Desktop`}
               textContentType="oneTimeCode"
               autoComplete="off"
               importantForAutofill="no"
             />
-            <Button title="Pair" onPress={onManual} />
+            <Button title={t`Pair`} onPress={onManual} />
           </View>
         ) : null}
         {step.kind === 'connecting' ? (
           <View style={styles.connecting}>
             <ActivityIndicator color={theme.colors.primary} />
             <Text variant="footnote" tone="secondary" style={styles.centered}>
-              Pairing with {step.endpoint}
+              <Trans>Pairing with {connectingTo}</Trans>
             </Text>
           </View>
         ) : null}
         {step.kind === 'name' ? (
           <View style={styles.form}>
             <Text variant="title" weight="semibold">
-              Paired
+              <Trans>Paired</Trans>
             </Text>
-            <Field label="Name this machine" value={name} onChangeText={setName} placeholder={step.name} />
-            <Button title="Save" onPress={onSave} />
+            <Field label={t`Name this machine`} value={name} onChangeText={setName} placeholder={step.name} />
+            <Button title={t`Save`} onPress={onSave} />
           </View>
         ) : null}
         {error ? (
@@ -148,13 +151,15 @@ export function Pair() {
             hitSlop={8}
           >
             <Text variant="body" weight="medium" tone="brand" style={styles.centered}>
-              {step.kind === 'scan' ? 'Enter the endpoint and token instead' : 'Scan a QR code instead'}
+              {step.kind === 'scan' ? t`Enter the endpoint and token instead` : t`Scan a QR code instead`}
             </Text>
           </Touch>
         ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.centered}>
-          Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any
-          network where both devices are signed in to the same tailnet.
+          <Trans>
+            Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any
+            network where both devices are signed in to the same tailnet.
+          </Trans>
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -169,9 +174,9 @@ function Scanner({ onScanned }: { onScanned: (result: BarcodeScanningResult) => 
       <View style={[styles.camera, styles.cameraMessage]}>
         <View style={styles.cameraBody}>
           <Text variant="footnote" tone="secondary" style={styles.centered}>
-            Stim needs the camera to scan the pairing QR code.
+            <Trans>Stim needs the camera to scan the pairing QR code.</Trans>
           </Text>
-          {permission.canAskAgain ? <Button title="Allow camera" onPress={requestPermission} /> : null}
+          {permission.canAskAgain ? <Button title={t`Allow camera`} onPress={requestPermission} /> : null}
         </View>
       </View>
     );
@@ -223,7 +228,7 @@ function Field({
         {secret ? (
           <Touch
             onPress={() => setRevealed((r) => !r)}
-            accessibilityLabel={revealed ? 'Hide token' : 'Show token'}
+            accessibilityLabel={revealed ? t`Hide token` : t`Show token`}
             hitSlop={8}
             style={styles.reveal}
           >

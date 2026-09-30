@@ -1025,8 +1025,13 @@ message. `lib/oversight.ts` stays unlocalized, byte for byte the same as
 `packages/server`'s.
 
 The `lingui/no-unlocalized-strings` lint rule, through oxlint's `jsPlugins`,
-fails on an unmarked string in the files `.oxlintrc.json` lists; a migrated
-file joins that list.
+fails on an unmarked string anywhere in `src`. It skips single lowercase words,
+which are mostly identifiers, so wrap a lowercase word a person reads by hand;
+and it skips commands that start with `stim`. It is off for tests, for
+`src/design/tokens.ts` and `src/lib/agent-prompts.ts`, which Stim Desktop's
+generator imports without the Lingui macros, for `src/lib/oversight.ts`, which
+stays byte for byte the same as `packages/server`'s, and for the components
+that hold SVG paths.
 
 ## Checks
 

@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import { clockTime } from '@/lib/format';
 import type { ReplayMarker, ReplaySpan } from '@/protocol/types';
 
@@ -132,22 +134,31 @@ export function adjacentAction(markers: readonly ReplayMarker[], from: number, d
 }
 
 /** "2h", "14m", "40s": how long a gap or an age is, in its largest unit. */
-export function shortDuration(ms: number): string {
+export function replayDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return t`${seconds}s`;
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return t`${minutes}m`;
   const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`;
+  if (hours < 48) return t`${hours}h`;
+  const days = Math.round(hours / 24);
+  return t`${days}d`;
 }
 
 /** The label of a paused or playing frame: its time of day, and how long ago it was. */
 export function replayLabel(at: number, now: number, locale?: string): string {
-  return `${clockTime(at, locale)} \u00B7 ${shortDuration(now - at)} ago`;
+  const time = clockTime(at, locale);
+  const age = replayDuration(now - at);
+  return t`${time} \u00B7 ${age} ago`;
 }
 
-export const MARKER_TITLES: Record<ReplayMarker['kind'], string> = {
-  action: 'Agent',
-  error: 'Error',
-  crash: 'Crash',
-};
+export function markerTitle(kind: ReplayMarker['kind']): string {
+  switch (kind) {
+    case 'action':
+      return t`Agent`;
+    case 'error':
+      return t`Error`;
+    case 'crash':
+      return t`Crash`;
+  }
+}

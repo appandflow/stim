@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -26,10 +28,10 @@ export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void 
   const open = state.kind === 'open';
   const stats = open ? machineStats(usage) : [];
   const detail = open
-    ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || 'Loading'
+    ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || t`Loading`
     : describeState(state, missing);
   return (
-    <Touch feedback="card" onPress={onPress} accessibilityLabel={`${name}, ${detail}`} style={styles.chip}>
+    <Touch feedback="card" onPress={onPress} accessibilityLabel={t`${name}, ${detail}`} style={styles.chip}>
       <View>
         <Icon name="laptopcomputer" size={20} color={theme.colors.text} />
         <View style={[styles.dot, { backgroundColor: dot }]} />
@@ -42,7 +44,7 @@ export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void 
           <MachineStatsRow usage={usage} />
         ) : (
           <Text variant="caption" tone="secondary" style={styles.detail} numberOfLines={1}>
-            {open ? 'Loading' : detail}
+            {open ? <Trans>Loading</Trans> : detail}
           </Text>
         )}
       </View>
@@ -51,18 +53,20 @@ export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void 
 }
 
 export function describeState(state: ConnectionState, missing: boolean): string {
-  if (missing) return 'Not paired';
+  if (missing) return t`Not paired`;
   switch (state.kind) {
     case 'open':
-      return 'Connected';
+      return t`Connected`;
     case 'connecting':
-      return 'Connecting';
-    case 'waiting':
-      return `Offline \u00B7 retrying in ${Math.round(state.retryInMs / 1000)}s`;
+      return t`Connecting`;
+    case 'waiting': {
+      const seconds = Math.round(state.retryInMs / 1000);
+      return t`Offline \u00B7 retrying in ${seconds}s`;
+    }
     case 'refused':
-      return state.code === 'protocol-unsupported' ? 'Needs an update' : 'Pair again';
+      return state.code === 'protocol-unsupported' ? t`Needs an update` : t`Pair again`;
     default:
-      return 'Disconnected';
+      return t`Disconnected`;
   }
 }
 

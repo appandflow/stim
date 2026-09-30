@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { Image } from 'expo-image';
 import { useEffect, useState, type ReactNode } from 'react';
 import { View, type ViewProps } from 'react-native';
@@ -27,8 +28,9 @@ export function DeviceScreen({
   requested?: { fps: number; maxEdge: number };
 }) {
   const source = stream.video ?? stream.frame;
+  const screenLabel = t`Live screen of ${label}`;
   return (
-    <View style={[styles.screen, style]} accessibilityLabel={`Live screen of ${label}`}>
+    <View style={[styles.screen, style]} accessibilityLabel={screenLabel}>
       <StimVideoView
         streamId={stream.streamId}
         style={StyleSheet.absoluteFill}
@@ -44,7 +46,7 @@ export function DeviceScreen({
       ) : null}
       {!source ? (
         <Text variant="footnote" tone="tertiary" style={styles.placeholder}>
-          {stream.error ?? 'Waiting for frames'}
+          {stream.error ?? t`Waiting for frames`}
         </Text>
       ) : null}
       {children}
@@ -69,12 +71,15 @@ function StreamStats({
   requested?: { fps: number; maxEdge: number };
 }) {
   const [text, setText] = useState('');
-  const asked = requested ? ` (asked ${requested.fps}fps/${requested.maxEdge}px)` : '';
+  const asked = requested ? askedLabel(requested.fps, requested.maxEdge) : '';
   useEffect(() => {
     const show = () => {
-      if (mode !== 'video') return setText(mode === 'jpeg' ? `JPEG${asked}` : '');
+      if (mode !== 'video') return setText(mode === 'jpeg' ? t`JPEG${asked}` : '');
       const { fps, kbps, latencyMs } = meter.stats();
-      setText(`H.264 ${fps.toFixed(0)} fps ${kbps.toFixed(0)} kbps ${latencyMs?.toFixed(0) ?? '-'} ms${asked}`);
+      const rate = fps.toFixed(0);
+      const bitrate = kbps.toFixed(0);
+      const latency = latencyMs?.toFixed(0) ?? '-';
+      setText(t`H.264 ${rate} fps ${bitrate} kbps ${latency} ms${asked}`);
     };
     show();
     const timer = setInterval(show, 500);
@@ -86,6 +91,8 @@ function StreamStats({
     </Text>
   ) : null;
 }
+
+const askedLabel = (fps: number, edge: number) => t` (asked ${fps}fps/${edge}px)`;
 
 const styles = StyleSheet.create((theme) => ({
   screen: { backgroundColor: theme.media.frame, overflow: 'hidden', justifyContent: 'center' },

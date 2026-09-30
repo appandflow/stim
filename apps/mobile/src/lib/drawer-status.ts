@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import type { ConnectionState } from '@/lib/connection';
 import type { UsageTone } from '@/lib/home';
 
@@ -19,8 +21,12 @@ export interface DrawerStatus {
   macId: string | null;
 }
 
-const unreachableText = (machine: DrawerMachine): string =>
-  machine.state.kind === 'waiting' ? `Reconnecting to ${machine.name}\u2026` : `Disconnected from ${machine.name}`;
+const lowDisk = (name: string) => t`${name}: low disk`;
+
+const unreachableText = (machine: DrawerMachine): string => {
+  const { name } = machine;
+  return machine.state.kind === 'waiting' ? t`Reconnecting to ${name}\u2026` : t`Disconnected from ${name}`;
+};
 
 /**
  * The drawer footer's one status line. Highest priority first: a paired machine that's disconnected or
@@ -34,10 +40,10 @@ export function drawerStatus(machines: DrawerMachine[], normalText: string): Dra
   if (unreachable) return { text: unreachableText(unreachable), tone: 'warn', macId: null };
 
   const critical = machines.find((m) => m.diskTone === 'critical');
-  if (critical) return { text: `${critical.name}: low disk`, tone: 'critical', macId: critical.id };
+  if (critical) return { text: lowDisk(critical.name), tone: 'critical', macId: critical.id };
 
   const warn = machines.find((m) => m.diskTone === 'warn');
-  if (warn) return { text: `${warn.name}: low disk`, tone: 'warn', macId: warn.id };
+  if (warn) return { text: lowDisk(warn.name), tone: 'warn', macId: warn.id };
 
   return { text: normalText, tone: 'normal', macId: null };
 }

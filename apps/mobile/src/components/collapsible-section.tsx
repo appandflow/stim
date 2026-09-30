@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { Fragment, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -37,13 +38,14 @@ export function CollapsibleSection<T>({
   const [state, update] = useSectionState(id);
   const { shown, toggle } = sectionRows(rows, state.showAll);
   const open = !state.collapsed;
+  const count = rows.length;
   return (
     <View style={styles.section}>
       <Touch
         feedback="opacity"
         onPress={() => update({ collapsed: open })}
         accessibilityLabel={`${title}, ${rows.length}`}
-        accessibilityHint={open ? 'Collapses the section' : 'Expands the section'}
+        accessibilityHint={open ? t`Collapses the section` : t`Expands the section`}
         accessibilityState={{ expanded: open }}
         style={styles.header}
       >
@@ -81,9 +83,7 @@ export function CollapsibleSection<T>({
                   <Touch
                     feedback="row"
                     onPress={() => update({ showAll: !state.showAll })}
-                    accessibilityLabel={
-                      state.showAll ? `Show the first 10 ${title}` : `Show all ${rows.length} ${title}`
-                    }
+                    accessibilityLabel={state.showAll ? t`Show the first 10 ${title}` : t`Show all ${count} ${title}`}
                     style={styles.toggle}
                   >
                     <Text variant="callout" weight="medium" tone="brand">

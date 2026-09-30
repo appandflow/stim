@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
@@ -18,7 +20,8 @@ import { useMacs } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
 import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
 import { machineStats } from '@/lib/home';
-import { isShownLive, workspaceTitleAt } from '@/lib/workspaces';
+import { workspaceTitleAt } from '@/lib/workspace-names';
+import { isShownLive } from '@/lib/workspaces';
 import { About } from '@/screens/about';
 
 const WORDMARK = require('@/assets/images/wordmark.png');
@@ -57,10 +60,12 @@ export function Menu({ onClose }: { onClose: () => void }) {
     missing: c.missing,
     diskTone: machineStats(c.usage).find((s) => s.kind === 'disk')?.tone ?? 'normal',
   }));
-  const versionText = `Stim ${Constants.expoConfig?.version ?? ''}${
-    Constants.nativeBuildVersion ? ` (${Constants.nativeBuildVersion})` : ''
-  }`;
+  const version = Constants.expoConfig?.version ?? '';
+  const build = Constants.nativeBuildVersion;
+  const versionText = build ? t`Stim ${version} (${build})` : t`Stim ${version}`;
   const status = drawerStatus(machines, versionText);
+  const statusText = status.text;
+  const machineCount = connections.length;
   const statusTone = status.tone === 'critical' ? 'error' : status.tone === 'warn' ? 'warning' : 'secondary';
 
   return (
@@ -76,62 +81,72 @@ export function Menu({ onClose }: { onClose: () => void }) {
           tintColor={theme.colors.text}
           style={styles.wordmark}
           contentFit="contain"
-          accessibilityLabel="Stim"
+          accessibilityLabel={t`Stim`}
         />
         <NavRow
           icon="rectangle.stack"
-          title="Workspaces"
+          title={t`Workspaces`}
           selected={pathname === '/' && view === 'workspaces'}
           onPress={() => show('workspaces')}
         />
         <NavRow
           icon="square.grid.2x2"
-          title="Devices"
+          title={t`Devices`}
           selected={pathname === '/' && view === 'devices'}
           onPress={() => show('devices')}
         />
         <NavRow
           icon="laptopcomputer"
-          title="Machines"
+          title={t`Machines`}
           selected={pathname === '/' && view === 'machines'}
           onPress={() => show('machines')}
         />
         {inbox.supported ? (
           <NavRow
             icon="bell"
-            title="Notifications"
+            title={t`Notifications`}
             count={inbox.unread}
             selected={pathname === '/inbox'}
             onPress={() => go('/inbox')}
           />
         ) : null}
-        <NavRow icon="plus" title="Pair a machine" selected={false} onPress={() => go('/pair')} />
+        <NavRow icon="plus" title={t`Pair a machine`} selected={false} onPress={() => go('/pair')} />
         {update.ready ? (
-          <NavRow icon="arrow.clockwise" title="Restart to update" selected={false} onPress={confirmRestartToUpdate} />
+          <NavRow
+            icon="arrow.clockwise"
+            title={t`Restart to update`}
+            selected={false}
+            onPress={confirmRestartToUpdate}
+          />
         ) : null}
         {recentRows.length > 0 ? (
           <>
             <Text variant="callout" weight="medium" tone="secondary" style={styles.sectionTitle}>
-              Recent workspaces
+              <Trans>Recent workspaces</Trans>
             </Text>
-            {recentRows.map((recent) => (
-              <Touch
-                key={`${recent.macId}\n${recent.path}`}
-                feedback="row"
-                onPress={() => go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })}
-                accessibilityLabel={recent.live ? `${recent.title}, live` : recent.title}
-                style={styles.recent}
-              >
-                <Icon
-                  name="arrow.triangle.branch"
-                  size={15}
-                  color={recent.live ? theme.colors.success : theme.colors.tertiary}
-                />
-                <Text variant="body" numberOfLines={1} ellipsizeMode="middle" style={styles.grow}>
-                  {recent.title}
-                </Text>
-              </Touch>
-            ))}
+            {recentRows.map((recent) => {
+              const { title } = recent;
+              return (
+                <Touch
+                  key={`${recent.macId}\n${recent.path}`}
+                  feedback="row"
+                  onPress={() =>
+                    go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })
+                  }
+                  accessibilityLabel={recent.live ? t`${title}, live` : title}
+                  style={styles.recent}
+                >
+                  <Icon
+                    name="arrow.triangle.branch"
+                    size={15}
+                    color={recent.live ? theme.colors.success : theme.colors.tertiary}
+                  />
+                  <Text variant="body" numberOfLines={1} ellipsizeMode="middle" style={styles.grow}>
+                    {recent.title}
+                  </Text>
+                </Touch>
+              );
+            })}
           </>
         ) : null}
       </ScrollView>
@@ -144,9 +159,10 @@ export function Menu({ onClose }: { onClose: () => void }) {
                 ? setAboutOpen(true)
                 : router.push('/about')
           }
-          accessibilityLabel={
-            connections.length === 1 ? `1 machine, ${status.text}` : `${connections.length} machines, ${status.text}`
-          }
+          accessibilityLabel={plural(machineCount, {
+            one: `# machine, ${statusText}`,
+            other: `# machines, ${statusText}`,
+          })}
           style={styles.footerLeft}
         >
           <View style={styles.badge}>
@@ -160,7 +176,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
             </Text>
           </View>
         </Touch>
-        <IconButton icon="gearshape" accessibilityLabel="Settings" onPress={() => go('/settings')} />
+        <IconButton icon="gearshape" accessibilityLabel={t`Settings`} onPress={() => go('/settings')} />
       </View>
       {/* react-native-screens draws an Android formSheet inside the stack, which sits in the drawer's scene card. */}
       {Platform.OS === 'android' ? (
@@ -176,7 +192,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
             style={styles.scrim}
             onPress={() => setAboutOpen(false)}
             accessibilityRole="button"
-            accessibilityLabel="Close About"
+            accessibilityLabel={t`Close About`}
           />
           <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
             <About />
@@ -206,7 +222,7 @@ function NavRow({
     <Touch
       feedback="row"
       onPress={onPress}
-      accessibilityLabel={count > 0 ? `${title}, ${count} unread` : title}
+      accessibilityLabel={count > 0 ? t`${title}, ${count} unread` : title}
       accessibilityState={{ selected }}
       style={styles.row(selected)}
     >

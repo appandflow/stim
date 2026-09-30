@@ -1,7 +1,9 @@
+import { plural, t } from '@lingui/core/macro';
+
 import type { PillTone } from '@/components/pill';
 import { formatSize } from '@/intl/format';
 import type { EnvironmentState, MachineOwner, StatusPayload, WorktreeFacts } from '@/protocol/types';
-import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle, workspaceTitleAt } from '@/lib/workspaces';
+import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle, workspaceTitleAt } from '@/lib/workspace-names';
 
 /** The parts of a `stim gc --json` dry run the Machine screen reads. Every field may be absent from an older stim. */
 export interface GcReport {
@@ -219,7 +221,22 @@ function iosRuntimeTitle(identifier: string): string {
 function systemImageTitle(pkg: string): string {
   const parts = pkg.split(';');
   if (parts.length < 3 || !parts[1]!.startsWith('android-')) return pkg;
-  return `Android ${parts[1]!.slice('android-'.length)} \u00B7 ${parts[2]}`;
+  const version = parts[1]!.slice('android-'.length);
+  const variant = parts[2];
+  return t`Android ${version} \u00B7 ${variant}`;
+}
+
+function usedLabel(iso: string, now: number): string | null {
+  const ago = agoLabel(iso, now);
+  return ago === null ? null : t`used ${ago}`;
+}
+
+function stimWorkspaceLabel(title: string): string {
+  return t`Stim \u00B7 ${title}`;
+}
+
+function iosVersionTitle(version: string): string {
+  return t`iOS ${version}`;
 }
 
 /** Hours or days since `iso`, from `now`. */
@@ -227,10 +244,12 @@ export function agoLabel(iso: string, now: number): string | null {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return null;
   const minutes = Math.max(0, Math.floor((now - at) / 60_000));
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return t`just now`;
+  if (minutes < 60) return t`${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  return hours < 48 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
+  if (hours < 48) return t`${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return t`${days}d ago`;
 }
 
 function lifecycle(
@@ -239,21 +258,30 @@ function lifecycle(
   missing: boolean,
   unprovisioned: boolean,
 ): Chip | null {
-  if (missing) return { label: 'Folder gone', tone: 'warning' };
-  if (worktree?.mergedInto)
-    return { label: `Merged into ${worktree.mergedInto.replace(/^origin\//, '')}`, tone: 'success' };
+  if (missing) return { label: t`Folder gone`, tone: 'warning' };
+  if (worktree?.mergedInto) {
+    const branch = worktree.mergedInto.replace(/^origin\//, '');
+    return { label: t`Merged into ${branch}`, tone: 'success' };
+  }
   const pull = worktree?.pullRequest ?? null;
-  if (pull?.state === 'merged' && pull.containsHead) return { label: `PR #${pull.number} merged`, tone: 'success' };
+  if (pull?.state === 'merged' && pull.containsHead) {
+    const { number } = pull;
+    return { label: t`PR #${number} merged`, tone: 'success' };
+  }
   const open =
     pull?.state === 'open'
       ? pull
       : facts?.pullRequest?.state === 'open' || facts?.pullRequest?.state === 'draft'
         ? facts.pullRequest
         : null;
-  if (open) return { label: `PR #${open.number} open`, tone: 'info' };
-  if (unprovisioned) return { label: 'Not warmed', tone: 'neutral' };
+  if (open) {
+    const { number } = open;
+    return { label: t`PR #${number} open`, tone: 'info' };
+  }
+  if (unprovisioned) return { label: t`Not warmed`, tone: 'neutral' };
   if (worktree?.idleDays != null && worktree.idleDays >= STALE_DAYS) {
-    return { label: `Stale ${worktree.idleDays}d`, tone: 'warning' };
+    const { idleDays } = worktree;
+    return { label: t`Stale ${idleDays}d`, tone: 'warning' };
   }
   return null;
 }
@@ -275,18 +303,21 @@ function statusDeviceSizes(env: EnvironmentState): { kind: 'ios' | 'android'; na
 function ownerChip(device: InventoryDevice, status: StatusPayload | null): Chip {
   switch (device.owner) {
     case 'workspace': {
-      const name = device.project ? workspaceTitleAt(device.project, status) : 'a workspace';
-      const slot = device.slot && device.slot !== 'default' ? ` (${device.slot})` : '';
-      return { label: `Stim \u00B7 ${name}${slot}`, tone: 'accent' };
+      const name = device.project ? workspaceTitleAt(device.project, status) : t`a workspace`;
+      if (device.slot && device.slot !== 'default') {
+        const { slot } = device;
+        return { label: t`Stim \u00B7 ${name} (${slot})`, tone: 'accent' };
+      }
+      return { label: t`Stim \u00B7 ${name}`, tone: 'accent' };
     }
     case 'parked':
-      return { label: 'Stim \u00B7 parked', tone: 'accent' };
+      return { label: t`Stim \u00B7 parked`, tone: 'accent' };
     case 'orphaned':
-      return { label: 'Stim \u00B7 no workspace', tone: 'warning' };
+      return { label: t`Stim \u00B7 no workspace`, tone: 'warning' };
     case 'otherStimHome':
-      return { label: 'Another Stim home', tone: 'neutral' };
+      return { label: t`Another Stim home`, tone: 'neutral' };
     default:
-      return { label: 'Yours', tone: 'neutral' };
+      return { label: t`Yours`, tone: 'neutral' };
   }
 }
 
@@ -319,7 +350,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
               ? iosRuntimeTitle(device.runtime)
               : systemImageTitle(device.runtime)
             : null,
-          device.lastUsedAt ? `used ${agoLabel(device.lastUsedAt, now)}` : null,
+          device.lastUsedAt ? usedLabel(device.lastUsedAt, now) : null,
         ]
           .filter(Boolean)
           .join(' \u00B7 '),
@@ -331,9 +362,9 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
         statusDeviceSizes(env).map(({ kind, name, bytes }) => ({
           id: `${env.path}:${name}`,
           kind,
-          name: name ?? 'Device',
+          name: name ?? t`Device`,
           subtitle: '',
-          owner: { label: `Stim \u00B7 ${workspaceTitle(env, roots)}`, tone: 'accent' as const },
+          owner: { label: stimWorkspaceLabel(workspaceTitle(env, roots)), tone: 'accent' as const },
           stim: true,
           bytes,
         })),
@@ -449,46 +480,53 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       });
     }
   };
-  gcDevices(s.parkedSimulators, 'Parked simulator, kept for reuse');
-  gcDevices(s.parkedEmulators, 'Parked emulator, kept for reuse');
-  gcDevices(s.orphanedDevices, 'Created by this Stim home; no workspace uses it');
-  gcDevices(s.staleDevices, 'Its workspace has not been used for a while');
+  gcDevices(s.parkedSimulators, t`Parked simulator, kept for reuse`);
+  gcDevices(s.parkedEmulators, t`Parked emulator, kept for reuse`);
+  gcDevices(s.orphanedDevices, t`Created by this Stim home; no workspace uses it`);
+  gcDevices(s.staleDevices, t`Its workspace has not been used for a while`);
   for (const dir of s.orphanedWorkspaces ?? []) {
     free.push({
       id: `workspace:${dir.dir ?? '?'}`,
-      title: 'Data of a removed workspace',
-      detail: dir.dir ?? 'Stim workspace directory',
+      title: t`Data of a removed workspace`,
+      detail: dir.dir ?? t`Stim workspace directory`,
       bytes: dir.bytes,
       command: 'stim gc --delete',
     });
   }
   for (const project of s.deadProjects ?? []) {
+    const { path } = project;
     free.push({
-      id: `project:${project.path}`,
-      title: 'Record of a deleted folder',
-      detail: `${project.path} is gone`,
+      id: `project:${path}`,
+      title: t`Record of a deleted folder`,
+      detail: t`${path} is gone`,
       bytes: null,
       command: 'stim gc --delete',
     });
   }
   for (const log of s.workspaceLogs ?? []) {
     if (!log.willTrim) continue;
+    const workspace = log.projectRoot ? workspaceTitleAt(log.projectRoot, status) : t`a workspace`;
     free.push({
       id: `logs:${log.projectRoot ?? '?'}`,
-      title: `Logs of ${log.projectRoot ? workspaceTitleAt(log.projectRoot, status) : 'a workspace'}`,
-      detail: 'Over the cap; each log keeps its newest 8 MiB',
+      title: t`Logs of ${workspace}`,
+      detail: t`Over the cap; each log keeps its newest 8 MiB`,
       bytes: log.trimBytes,
       command: 'stim gc --delete',
     });
   }
   for (const output of s.workspaceBuildOutputs ?? []) {
     if (!output.willClear) continue;
+    const workspace = output.projectRoot ? workspaceTitleAt(output.projectRoot, status) : t`a workspace`;
+    const { idleDays } = output;
     free.push({
       id: `outputs:${output.projectRoot ?? output.dir ?? '?'}`,
-      title: `Build outputs of ${output.projectRoot ? workspaceTitleAt(output.projectRoot, status) : 'a workspace'}`,
-      detail: output.idleDays
-        ? `Not used for ${output.idleDays} days; rebuilt on the next run`
-        : 'Not in use; rebuilt on the next run',
+      title: t`Build outputs of ${workspace}`,
+      detail: idleDays
+        ? plural(idleDays, {
+            one: 'Not used for # day; rebuilt on the next run',
+            other: 'Not used for # days; rebuilt on the next run',
+          })
+        : t`Not in use; rebuilt on the next run`,
       bytes: output.bytes,
       command: 'stim gc --delete --cache workspaces',
     });
@@ -498,12 +536,12 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     const finished = !!pull?.containsHead && (pull.state === 'merged' || pull.state === 'closed');
     if (!worktree.willRemove || (!worktree.mergedInto && !finished)) continue;
     const row = rows.find((r) => r.root === worktree.path);
+    const name = row?.title ?? worktree.path.split('/').pop() ?? '';
+    const branch = worktree.mergedInto?.replace(/^origin\//, '') ?? '';
     free.push({
       id: `worktree:${worktree.path}`,
-      title: `Worktree ${row?.title ?? worktree.path.split('/').pop()}`,
-      detail: worktree.mergedInto
-        ? `Merged into ${worktree.mergedInto.replace(/^origin\//, '')}`
-        : 'Its pull request is finished',
+      title: t`Worktree ${name}`,
+      detail: worktree.mergedInto ? t`Merged into ${branch}` : t`Its pull request is finished`,
       bytes: row?.nodeModules ?? null,
       command: 'stim worktree remove',
     });
@@ -519,7 +557,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     ...(inventory?.runtimes ?? []).map((runtime) => ({
       id: runtime.identifier,
       title: runtime.version
-        ? `iOS ${runtime.version}`
+        ? iosVersionTitle(runtime.version)
         : iosRuntimeTitle(runtime.runtimeIdentifier ?? runtime.identifier),
       detail: runtime.build,
       bytes: runtime.bytes,
@@ -566,9 +604,9 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
   const recordings: SizedRow[] = (s.recordings ?? [])
     .map((recording) => ({
       id: recording.dir,
-      title: recording.projectRoot ? workspaceTitleAt(recording.projectRoot, status) : 'A removed workspace',
+      title: recording.projectRoot ? workspaceTitleAt(recording.projectRoot, status) : t`A removed workspace`,
       detail: recording.withWorkspace
-        ? 'Its workspace was removed; stim gc --delete deletes it with the workspace data'
+        ? t`Its workspace was removed; stim gc --delete deletes it with the workspace data`
         : null,
       bytes: recording.bytes,
     }))
@@ -593,15 +631,15 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     : environments.map((env) => env.disk?.buildBytes ?? null);
   const inventoried = (sizes: (number | null)[]) => (inventory ? total(sizes) : { bytes: 0, complete: false });
   const categories: Category[] = [
-    { key: 'stimDevices', title: 'Stim devices', total: total(devices.filter((d) => d.stim).map((d) => d.bytes)) },
-    { key: 'stimOutputs', title: 'Stim caches and outputs', total: total(stimOutputs) },
+    { key: 'stimDevices', title: t`Stim devices`, total: total(devices.filter((d) => d.stim).map((d) => d.bytes)) },
+    { key: 'stimOutputs', title: t`Stim caches and outputs`, total: total(stimOutputs) },
     { key: 'nodeModules', title: 'node_modules', total: total(modules) },
     {
       key: 'otherDevices',
-      title: 'Other simulators and AVDs',
+      title: t`Other simulators and AVDs`,
       total: inventoried(devices.filter((d) => !d.stim).map((d) => d.bytes)),
     },
-    { key: 'runtimes', title: 'Runtimes and system images', total: inventoried(runtimes.map((r) => r.bytes)) },
+    { key: 'runtimes', title: t`Runtimes and system images`, total: inventoried(runtimes.map((r) => r.bytes)) },
   ];
 
   return {

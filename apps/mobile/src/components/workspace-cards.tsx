@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Plural, Trans } from '@lingui/react/macro';
 import type { ReactNode } from 'react';
 import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -95,16 +97,16 @@ function SmallCard({
 
 const usageParts = (usage: Usage) =>
   [
-    usage.cpuPercent === null ? null : { kind: 'cpu' as const, value: formatCpu(usage.cpuPercent), label: 'CPU' },
+    usage.cpuPercent === null ? null : { kind: 'cpu' as const, value: formatCpu(usage.cpuPercent), label: t`CPU` },
     usage.memoryMb === null
       ? null
-      : { kind: 'memory' as const, value: formatMemoryMb(usage.memoryMb), label: 'memory' },
-    usage.diskBytes === null ? null : { kind: 'disk' as const, value: formatBytes(usage.diskBytes), label: 'disk' },
+      : { kind: 'memory' as const, value: formatMemoryMb(usage.memoryMb), label: t`memory` },
+    usage.diskBytes === null ? null : { kind: 'disk' as const, value: formatBytes(usage.diskBytes), label: t`disk` },
   ].filter((part) => part !== null);
 
 export const usageLabel = (usage: Usage) =>
   usageParts(usage)
-    .map((part) => `${part.label} ${part.value}`)
+    .map(({ label, value }) => `${label} ${value}`)
     .join(', ');
 
 function UsagePart({ kind, value }: { kind: keyof typeof STAT_ICON; value: string }) {
@@ -121,16 +123,16 @@ function UsagePart({ kind, value }: { kind: keyof typeof STAT_ICON; value: strin
 
 export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; usage: Usage; onPress: () => void }) {
   const parts = usageParts(usage);
-  const note = stage.label === 'Building' ? null : stage.subtitle;
+  const note = stage.kind === 'building' ? null : stage.subtitle;
   return (
     <SmallCard
-      title="Status"
+      title={t`Status`}
       alert={stage.tone === 'error'}
       onPress={onPress}
-      accessibilityLabel={['Status', stage.label, note, usageLabel(usage) || 'resources not measured']
+      accessibilityLabel={[t`Status`, stage.label, note, usageLabel(usage) || t`resources not measured`]
         .filter(Boolean)
         .join(', ')}
-      accessibilityHint="Shows the status and what this workspace uses"
+      accessibilityHint={t`Shows the status and what this workspace uses`}
     >
       <Text variant={VALUE} weight="semibold" tone={stage.tone} numberOfLines={1}>
         {stage.label}
@@ -148,7 +150,7 @@ export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; u
         </View>
       ) : (
         <Text variant={VALUE} tone="tertiary">
-          Not measured
+          <Trans>Not measured</Trans>
         </Text>
       )}
     </SmallCard>
@@ -167,13 +169,14 @@ export function BuildCard({
   onPress: () => void;
 }) {
   if (building) return <BuildingCard build={building} onPress={onPress} />;
+  const spoken = lines.map((line) => line.spoken).join(', ');
   return (
     <SmallCard
-      title="Build"
+      title={t`Build`}
       alert={lines.some((line) => line.tone === 'error')}
       onPress={onPress}
-      accessibilityLabel={`Build: ${lines.map((line) => line.spoken).join(', ')}`}
-      accessibilityHint="Shows the builds"
+      accessibilityLabel={t`Build: ${spoken}`}
+      accessibilityHint={t`Shows the builds`}
     >
       {lines.map((line) => (
         <View key={line.platform} style={styles.stat}>
@@ -206,12 +209,16 @@ function BuildingCard({ build, onPress }: { build: BuildReport; onPress: () => v
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase } = currentPhaseLabel(build);
   const remote = remoteBuild(build, now);
+  const name = platformName(build.platform);
+  const host = remote?.host;
+  const what = host ? t`building ${name} on ${host}` : t`building ${name}`;
+  const timing = timingText(elapsed, estimate);
   return (
     <SmallCard
-      title="Build"
+      title={t`Build`}
       onPress={onPress}
-      accessibilityLabel={`Build: building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}, ${phase}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
-      accessibilityHint="Shows the build"
+      accessibilityLabel={t`Build: ${what}, ${phase}, ${timing}`}
+      accessibilityHint={t`Shows the build`}
     >
       <View style={styles.stat}>
         <View style={styles.glyphBox}>
@@ -234,6 +241,21 @@ function BuildingCard({ build, onPress }: { build: BuildReport; onPress: () => v
   );
 }
 
+function timingText(elapsed: string, estimate: string | null): string {
+  return estimate ? t`${elapsed} of ${estimate}` : elapsed;
+}
+
+function healthLabel(health: MetroHealth): string {
+  switch (health) {
+    case 'healthy':
+      return t`healthy`;
+    case 'unhealthy':
+      return t`unhealthy`;
+    case 'stopped':
+      return t`stopped`;
+  }
+}
+
 function healthColor(health: MetroHealth, colors: Theme['colors']): string {
   return health === 'healthy' ? colors.success : health === 'unhealthy' ? colors.error : colors.tertiary;
 }
@@ -250,31 +272,32 @@ export function LogsCard({
   onPress: () => void;
 }) {
   const { theme } = useUnistyles();
+  const metroState = metro ? healthLabel(metro) : null;
   return (
     <SmallCard
-      title="Logs"
+      title={t`Logs`}
       alert={errors !== null && errors > 0}
       onPress={onPress}
       accessibilityLabel={[
-        'Logs',
-        errors === null ? null : errors === 1 ? '1 error' : `${errors} errors`,
-        metro ? `Metro ${metro}` : null,
+        t`Logs`,
+        errors === null ? null : plural(errors, { one: '# error', other: '# errors' }),
+        metroState ? t`Metro ${metroState}` : null,
         bundle?.text,
       ]
         .filter(Boolean)
         .join(', ')}
-      accessibilityHint="Opens the logs"
+      accessibilityHint={t`Opens the logs`}
     >
       {errors === null && !metro ? (
         <Text variant={VALUE} tone="tertiary">
-          No logs yet
+          <Trans>No logs yet</Trans>
         </Text>
       ) : null}
       {errors !== null ? (
         <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.tabular}>
           {String(errors)}
           <Text variant={VALUE} weight="regular" tone="secondary">
-            {errors === 1 ? ' error' : ' errors'}
+            <Plural value={errors} one=" error" other=" errors" />
           </Text>
         </Text>
       ) : null}
@@ -282,7 +305,7 @@ export function LogsCard({
         <View style={styles.stat}>
           <StatusDot color={healthColor(metro, theme.colors)} filled={metro !== 'stopped'} />
           <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.shrink}>
-            Metro
+            <Trans>Metro</Trans>
             {bundle ? (
               <Text
                 variant={VALUE}
@@ -308,25 +331,26 @@ export function WorkCard({
 }) {
   const { theme } = useUnistyles();
   const agent = sessions[0];
+  const more = sessions.length - 1;
   return (
     <SmallCard
-      title="Work"
+      title={t`Work`}
       onPress={onPress}
       accessibilityLabel={[
-        'Work',
-        agent ? agentLabel(agent) : 'No agent session',
-        sessions.length > 1 ? `and ${sessions.length - 1} more` : null,
-        git?.label ?? 'no git state',
+        t`Work`,
+        agent ? agentLabel(agent) : t`No agent session`,
+        more > 0 ? t`and ${more} more` : null,
+        git?.label ?? t`no git state`,
       ]
         .filter(Boolean)
         .join(', ')}
-      accessibilityHint="Shows the agent sessions and the branch"
+      accessibilityHint={t`Shows the agent sessions and the branch`}
     >
       {agent ? (
         <AgentSessionLine sessions={sessions} variant={VALUE} weight={VALUE_WEIGHT} />
       ) : (
         <Text variant={VALUE} tone="tertiary" numberOfLines={1}>
-          No agent session
+          <Trans>No agent session</Trans>
         </Text>
       )}
       {git ? (
@@ -338,7 +362,7 @@ export function WorkCard({
               </Text>
               {git.pr.ci === 'failing' ? (
                 <Text variant={VALUE} weight={VALUE_WEIGHT} tone="error" numberOfLines={1}>
-                  CI failing
+                  <Trans>CI failing</Trans>
                 </Text>
               ) : null}
             </>
@@ -358,13 +382,13 @@ export function WorkCard({
           ))}
           {!git.pr && git.parts.length === 0 ? (
             <Text variant={VALUE} tone="secondary">
-              Up to date
+              <Trans>Up to date</Trans>
             </Text>
           ) : null}
         </View>
       ) : (
         <Text variant={VALUE} tone="tertiary" numberOfLines={1}>
-          No git state
+          <Trans>No git state</Trans>
         </Text>
       )}
     </SmallCard>
@@ -445,11 +469,16 @@ export function BuildInProgressCard({
   const miss = build.missReason?.summary;
   const remote = remoteBuild(build, now);
   const detail = remote?.phaseElapsedMs != null ? formatDuration(remote.phaseElapsedMs, { seconds: true }) : counts;
+  const name = platformName(build.platform);
+  const host = remote?.host;
+  const title = host ? t`Building ${name} on ${host}` : t`Building ${name}`;
+  const phaseText = detail ? `${phase} ${detail}` : phase;
+  const timing = timingText(elapsed, estimate);
   return (
     <Card
       onPress={onPress}
-      accessibilityLabel={`Building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}, ${phase}${detail ? ` ${detail}` : ''}, ${elapsed}${estimate ? ` of ${estimate}` : ''}`}
-      accessibilityHint="Shows the build"
+      accessibilityLabel={t`${title}, ${phaseText}, ${timing}`}
+      accessibilityHint={t`Shows the build`}
       style={styles.building}
     >
       <View style={styles.buildingHeader}>
@@ -460,7 +489,7 @@ export function BuildInProgressCard({
           background={theme.colors.raised}
         />
         <Text variant="body" weight="semibold" numberOfLines={1} style={remote ? styles.shrink : undefined}>
-          {`Building ${platformName(build.platform)}${remote ? ` on ${remote.host}` : ''}`}
+          {title}
         </Text>
         {remote ? <Icon name="desktopcomputer" size={14} color={theme.colors.secondary} /> : null}
         {target && !remote ? (
@@ -493,7 +522,7 @@ export function BuildInProgressCard({
       <PhaseBar steps={barSteps(steps)} buildId={buildKey(build)} />
       {miss ? (
         <Text variant="caption" tone="secondary">
-          {`Cache miss: ${miss}`}
+          {t`Cache miss: ${miss}`}
         </Text>
       ) : null}
       {other ? (

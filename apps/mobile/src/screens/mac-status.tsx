@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -35,6 +37,7 @@ import {
   parseGcReport,
   rankedOwners,
   sizeLabel,
+  type BuildStatsRow,
   type CategoryKey,
   type DeviceRow,
   type FreeRow,
@@ -45,10 +48,9 @@ import {
 } from '@/lib/machine-report';
 import { tildeHome } from '@/lib/paths';
 import { formatCpu } from '@/lib/workspace-view';
-import { attentionGroups, workspaceTitleAt, type AttentionGroup } from '@/lib/workspaces';
+import { workspaceTitleAt } from '@/lib/workspace-names';
+import { attentionGroups, type AttentionGroup } from '@/lib/workspaces';
 import type { DeviceLeaseState, MachineOwner, StatusPayload } from '@/protocol/types';
-
-const MANAGE_NOTE = 'Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim.';
 
 export function MacStatus({ id }: { id: string }) {
   const { theme } = useUnistyles();
@@ -99,7 +101,9 @@ export function MacStatus({ id }: { id: string }) {
   if (!mac) {
     return (
       <View style={styles.center}>
-        <Text tone="secondary">This machine is not paired.</Text>
+        <Text tone="secondary">
+          <Trans>This machine is not paired.</Trans>
+        </Text>
       </View>
     );
   }
@@ -126,7 +130,7 @@ export function MacStatus({ id }: { id: string }) {
             {mac.name}
           </Text>
           <Text tone="secondary" style={styles.subtitle} numberOfLines={1}>
-            {open ? `stim ${state.server.stim} \u00B7 server ${state.server.version}` : describeState(state, missing)}
+            {open ? serverLine(state.server.stim, state.server.version) : describeState(state, missing)}
           </Text>
         </View>
         <ScopeChip state={state} />
@@ -137,13 +141,15 @@ export function MacStatus({ id }: { id: string }) {
       <ConnectionBanner state={state} style={styles.banner} />
       {pairingScope(state) === 'read' ? (
         <Banner
-          message="This phone is read-only: it cannot reload or stop workspaces, or control devices."
-          action={{ label: 'Allow control', onPress: () => explainReadOnly(mac.name, state, connection) }}
+          message={t`This phone is read-only: it cannot reload or stop workspaces, or control devices.`}
+          action={{ label: t`Allow control`, onPress: () => explainReadOnly(mac.name, state, connection) }}
         />
       ) : null}
 
       <View style={styles.block}>
-        <Text variant="headline">Now</Text>
+        <Text variant="headline">
+          <Trans>Now</Trans>
+        </Text>
         {usage ? (
           <MachineStatsRow usage={usage} large />
         ) : open ? (
@@ -156,7 +162,7 @@ export function MacStatus({ id }: { id: string }) {
         ) : null}
         {status?.capacity ? (
           <Text variant="footnote" tone={status.capacity.overCapacity ? 'warning' : 'secondary'}>
-            {`${status.capacity.liveCount} live ${status.capacity.liveCount === 1 ? 'workspace' : 'workspaces'} \u00B7 Stim holds ${(status.capacity.committedMb / 1024).toFixed(1)} of ${Math.round(status.capacity.totalMemoryMb / 1024)} GB${status.capacity.overCapacity ? ', over comfortable capacity' : ''}`}
+            {capacityLine(status.capacity)}
           </Text>
         ) : null}
       </View>
@@ -164,21 +170,21 @@ export function MacStatus({ id }: { id: string }) {
       {status ? (
         <CollapsibleSection
           id="machine.owners"
-          title="CPU and memory"
+          title={t`CPU and memory`}
           rows={owners}
           rowKey={(owner) => `${owner.kind}\n${owner.workspace ?? ''}\n${owner.slot ?? ''}\n${owner.id ?? owner.name}`}
           renderRow={(owner) => <OwnerRow owner={owner} status={status} />}
           empty={
             status.machine === undefined || status.machine === null
-              ? 'No simulator, emulator, dev server or build is running.'
-              : 'Nothing Stim tracks is using CPU or memory.'
+              ? t`No simulator, emulator, dev server or build is running.`
+              : t`Nothing Stim tracks is using CPU or memory.`
           }
           footer={
             owners.length ? (
               <Text variant="footnote" tone="tertiary" style={styles.note}>
                 {status.machine?.memorySource === 'footprint'
-                  ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
-                  : 'Each process counts in one row. Resident memory counts shared memory once per process, so simulators read high.'}
+                  ? t`Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it.`
+                  : t`Each process counts in one row. Resident memory counts shared memory once per process, so simulators read high.`}
               </Text>
             ) : null
           }
@@ -190,30 +196,22 @@ export function MacStatus({ id }: { id: string }) {
         usage={usage}
         minFreeGb={minFreeGb}
         measured={measured}
-        detailsNote={
-          details.kind === 'unsupported'
-            ? 'Update stim-server on the Mac to see caches, runtimes and what Stim can free.'
-            : details.kind === 'failed'
-              ? `Disk details are unavailable: ${details.message}`
-              : details.kind === 'ready' && details.details.gcError
-                ? `stim gc did not answer: ${details.details.gcError}`
-                : null
-        }
+        detailsNote={detailsNote(details)}
       />
 
       {gcSections ? (
         <CollapsibleSection
           id="machine.free"
-          title="Safe to free now"
+          title={t`Safe to free now`}
           rows={report.free}
           rowKey={(row) => row.id}
           renderRow={(row) => <FreeItemRow row={row} home={home} />}
           trailing={<SizeText size={report.freeTotal} strong />}
-          empty="stim gc found nothing to free."
+          empty={t`stim gc found nothing to free.`}
           footer={
             report.free.length ? (
               <Text variant="footnote" tone="tertiary" style={styles.note}>
-                {MANAGE_NOTE}
+                <Trans>Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim.</Trans>
               </Text>
             ) : null
           }
@@ -223,18 +221,18 @@ export function MacStatus({ id }: { id: string }) {
       {status ? (
         <CollapsibleSection
           id="machine.projects"
-          title="Projects"
+          title={t`Projects`}
           rows={report.repositories}
           rowKey={(repository) => repository.path}
           renderRow={(repository) => <RepositoryRows repository={repository} home={home} />}
-          empty="stim status reports no workspaces."
+          empty={t`stim status reports no workspaces.`}
         />
       ) : null}
 
       {status ? (
         <CollapsibleSection
           id="machine.devices"
-          title="Simulators and emulators"
+          title={t`Simulators and emulators`}
           rows={report.devices}
           rowKey={(device) => device.id}
           renderRow={(device) => <DeviceItemRow device={device} />}
@@ -242,8 +240,8 @@ export function MacStatus({ id }: { id: string }) {
             <View style={styles.notes}>
               <Text variant="footnote" tone="tertiary" style={styles.note}>
                 {report.inventory
-                  ? 'Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.'
-                  : 'Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details.'}
+                  ? t`Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.`
+                  : t`Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details.`}
               </Text>
               {report.notices.map((notice) => (
                 <Text key={notice} variant="footnote" tone="warning" style={styles.note}>
@@ -252,14 +250,14 @@ export function MacStatus({ id }: { id: string }) {
               ))}
             </View>
           }
-          empty="No simulator or emulator is listed."
+          empty={t`No simulator or emulator is listed.`}
         />
       ) : null}
 
       {status && status.deviceLeases.length > 0 ? (
         <CollapsibleSection
           id="machine.leases"
-          title="Leased devices"
+          title={t`Leased devices`}
           rows={status.deviceLeases}
           rowKey={(lease) => `${lease.platform}\n${lease.id ?? lease.path}\n${lease.slot ?? ''}`}
           renderRow={(lease) => <LeaseRow lease={lease} status={status} now={now} />}
@@ -269,71 +267,69 @@ export function MacStatus({ id }: { id: string }) {
       {gcSections && report.inventory ? (
         <CollapsibleSection
           id="machine.runtimes"
-          title="Runtimes and system images"
+          title={t`Runtimes and system images`}
           rows={report.runtimes}
           rowKey={(runtime) => runtime.id}
           renderRow={(runtime) => <RuntimeItemRow runtime={runtime} />}
           trailing={<UnusedPill runtimes={report.runtimes} />}
           note={
             <Text variant="footnote" tone="tertiary" style={styles.note}>
-              Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac.
+              <Trans>
+                Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac.
+              </Trans>
             </Text>
           }
-          empty="No simulator runtime or Android system image is installed."
+          empty={t`No simulator runtime or Android system image is installed.`}
         />
       ) : null}
 
       {gcSections ? (
         <CollapsibleSection
           id="machine.recordings"
-          title="Recordings"
+          title={t`Recordings`}
           rows={report.recordings}
           rowKey={(row) => row.id}
           renderRow={(row) => <SizedItemRow row={row} />}
           trailing={<SizeText size={sum(report.recordings)} />}
-          empty="No device recordings are kept."
+          empty={t`No device recordings are kept.`}
         />
       ) : null}
 
       {gcSections ? (
         <CollapsibleSection
           id="machine.caches"
-          title="Caches"
+          title={t`Caches`}
           rows={report.caches}
           rowKey={(row) => row.id}
           renderRow={(row) => <SizedItemRow row={row} />}
           trailing={<SizeText size={sum(report.caches)} />}
           note={
             <Text variant="footnote" tone="tertiary" style={styles.note}>
-              Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache.
+              <Trans>Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache.</Trans>
             </Text>
           }
-          empty="No shared cache was found."
+          empty={t`No shared cache was found.`}
         />
       ) : null}
 
       {builds.length > 0 ? (
         <View style={styles.block}>
-          <Text variant="headline">Native builds</Text>
+          <Text variant="headline">
+            <Trans>Native builds</Trans>
+          </Text>
           <Card>
             {builds.map((row, index) => (
               <View key={row.platform} style={[styles.row, index > 0 && styles.separated]}>
                 <PlatformGlyph platform={row.platform} size={16} color={theme.colors.secondary} />
                 <View style={styles.grow}>
-                  <Text variant="callout">{row.platform === 'ios' ? 'iOS' : 'Android'}</Text>
+                  <Text variant="callout">{row.platform === 'ios' ? t`iOS` : t`Android`}</Text>
                   <Text variant="footnote" tone="secondary">
-                    {[
-                      `${row.runs} runs`,
-                      row.failed ? `${row.failed} failed` : null,
-                      row.hitRate === null ? null : `${Math.round(row.hitRate * 100)}% cache hits`,
-                    ]
-                      .filter(Boolean)
-                      .join(' \u00B7 ')}
+                    {buildLine(row)}
                   </Text>
                 </View>
                 {row.timeSavedMs ? (
                   <Text variant="callout" weight="medium" style={styles.tabular}>
-                    {`${hours(row.timeSavedMs)} saved`}
+                    {savedLabel(row.timeSavedMs)}
                   </Text>
                 ) : null}
               </View>
@@ -344,17 +340,21 @@ export function MacStatus({ id }: { id: string }) {
 
       {machines.length > 0 || machinesError || machinesPending ? (
         <View style={styles.block}>
-          <Text variant="headline">Build machines</Text>
+          <Text variant="headline">
+            <Trans>Build machines</Trans>
+          </Text>
           {machinesPending && machines.length === 0 && !machinesError ? (
             <View style={styles.legendRow}>
               <ActivityIndicator size="small" color={theme.colors.secondary} />
               <Text variant="footnote" tone="secondary">
-                {'Checking build machines\u2026'}
+                <Trans>Checking build machines\u2026</Trans>
               </Text>
             </View>
           ) : null}
           {machinesError ? (
-            <Text variant="footnote" tone="secondary">{`Cannot check build machines: ${machinesError}`}</Text>
+            <Text variant="footnote" tone="secondary">
+              <Trans>Cannot check build machines: {machinesError}</Trans>
+            </Text>
           ) : null}
           {machines.length > 0 ? (
             <Card>
@@ -366,7 +366,7 @@ export function MacStatus({ id }: { id: string }) {
                       {machine.name}
                     </Text>
                     <Text variant="footnote" tone={machine.tone}>
-                      {machine.remedy ? `${machine.title} \u2014 ${machine.remedy}` : machine.title}
+                      {machineLine(machine.title, machine.remedy)}
                     </Text>
                   </View>
                 </View>
@@ -378,7 +378,9 @@ export function MacStatus({ id }: { id: string }) {
 
       {budgets && budgets.length > 0 ? (
         <View style={styles.block}>
-          <Text variant="headline">Budgets</Text>
+          <Text variant="headline">
+            <Trans>Budgets</Trans>
+          </Text>
           <Card>
             {budgets.map((row, index) => (
               <View key={row.label} style={[styles.row, index > 0 && styles.separated]}>
@@ -397,7 +399,7 @@ export function MacStatus({ id }: { id: string }) {
       {attention.length > 0 ? (
         <CollapsibleSection
           id="machine.attention"
-          title="Needs attention"
+          title={t`Needs attention`}
           rows={attention}
           rowKey={(group) => group.path}
           renderRow={(group) => <AttentionRows group={group} home={home} status={status} />}
@@ -414,8 +416,64 @@ const sum = (rows: SizedRow[]) => ({
 
 const hours = (ms: number) => {
   const h = ms / 3_600_000;
-  return h >= 10 ? `${Math.round(h)} h` : h >= 1 ? `${h.toFixed(1)} h` : `${Math.round(ms / 60_000)} min`;
+  if (h >= 10) {
+    const whole = Math.round(h);
+    return t`${whole} h`;
+  }
+  if (h >= 1) {
+    const tenths = h.toFixed(1);
+    return t`${tenths} h`;
+  }
+  const minutes = Math.round(ms / 60_000);
+  return t`${minutes} min`;
 };
+
+function serverLine(stim: string, version: string): string {
+  return t`stim ${stim} \u00B7 server ${version}`;
+}
+
+function capacityLine(capacity: NonNullable<StatusPayload['capacity']>): string {
+  const live = plural(capacity.liveCount, { one: '# live workspace', other: '# live workspaces' });
+  const held = (capacity.committedMb / 1024).toFixed(1);
+  const total = Math.round(capacity.totalMemoryMb / 1024);
+  const over = capacity.overCapacity ? t`, over comfortable capacity` : '';
+  return t`${live} \u00B7 Stim holds ${held} of ${total} GB${over}`;
+}
+
+function detailsNote(details: ReturnType<typeof useMachineDetails>): string | null {
+  if (details.kind === 'unsupported')
+    return t`Update stim-server on the Mac to see caches, runtimes and what Stim can free.`;
+  if (details.kind === 'failed') {
+    const { message } = details;
+    return t`Disk details are unavailable: ${message}`;
+  }
+  if (details.kind === 'ready' && details.details.gcError) {
+    const { gcError } = details.details;
+    return t`stim gc did not answer: ${gcError}`;
+  }
+  return null;
+}
+
+function buildLine(row: BuildStatsRow): string {
+  const { runs, failed } = row;
+  const percent = row.hitRate === null ? 0 : Math.round(row.hitRate * 100);
+  return [
+    plural(runs, { one: '# run', other: '# runs' }),
+    row.failed ? t`${failed} failed` : null,
+    row.hitRate === null ? null : t`${percent}% cache hits`,
+  ]
+    .filter(Boolean)
+    .join(' \u00B7 ');
+}
+
+function savedLabel(ms: number): string {
+  const duration = hours(ms);
+  return t`${duration} saved`;
+}
+
+function machineLine(title: string, remedy: string | null): string {
+  return remedy ? t`${title} \u2014 ${remedy}` : title;
+}
 
 function SizeText({ size, strong }: { size: Parameters<typeof sizeLabel>[0]; strong?: boolean }) {
   const known = size !== null && (typeof size === 'number' ? size > 0 : size.bytes > 0);
@@ -457,7 +515,10 @@ function DiskHeadline({
     (min, volume) => (min === null || volume.freeBytes < min.freeBytes ? volume : min),
     null,
   );
+  const mount = lowest?.mount ?? '';
+  const totalSize = lowest ? formatBytes(lowest.totalBytes) : '';
   const budget = minFreeGb === null ? null : minFreeGb * 1e9;
+  const budgetSize = budget === null ? '' : formatBytes(budget);
   const under = lowest && budget !== null ? lowest.freeBytes < budget : false;
   const shown = report.categories.filter((category) => category.total.bytes > 0);
   const whole = Math.max(
@@ -468,11 +529,11 @@ function DiskHeadline({
     <View style={styles.block}>
       <View style={styles.headerRow}>
         <Text variant="headline" style={styles.grow}>
-          Disk
+          <Trans>Disk</Trans>
         </Text>
         {measured ? (
           <Text variant="footnote" tone="tertiary">
-            {measured === 'measuring' ? 'Measuring\u2026' : `Measured ${measured}`}
+            {measured === 'measuring' ? t`Measuring\u2026` : t`Measured ${measured}`}
           </Text>
         ) : null}
       </View>
@@ -483,19 +544,19 @@ function DiskHeadline({
           </Text>
           <View style={styles.grow}>
             <Text variant="footnote" tone="secondary">
-              {lowest ? `free on ${lowest.mount} of ${formatBytes(lowest.totalBytes)}` : 'free'}
+              {lowest ? t`free on ${mount} of ${totalSize}` : t`free`}
             </Text>
             <Text variant="caption" tone={under ? 'warning' : 'tertiary'}>
               {budget === null
-                ? 'No Stim disk budget set'
+                ? t`No Stim disk budget set`
                 : under
-                  ? `Under the ${formatBytes(budget)} Stim budget`
-                  : `Stim budget ${formatBytes(budget)} free`}
+                  ? t`Under the ${budgetSize} Stim budget`
+                  : t`Stim budget ${budgetSize} free`}
             </Text>
           </View>
         </View>
         {shown.length ? (
-          <View style={styles.bar} accessibilityLabel="Disk use by category">
+          <View style={styles.bar} accessibilityLabel={t`Disk use by category`}>
             {shown.map((category) => (
               <View
                 key={category.key}
@@ -564,14 +625,15 @@ function RowLayout({
 
 function OwnerRow({ owner, status }: { owner: MachineOwner; status: StatusPayload }) {
   const { theme } = useUnistyles();
-  const count = `${owner.processes} ${owner.processes === 1 ? 'process' : 'processes'}`;
+  const count = plural(owner.processes, { one: '# process', other: '# processes' });
+  const cpu = formatCpu(owner.cpuPercent);
   const where = owner.workspace
     ? `${workspaceTitleAt(owner.workspace, status)}${owner.slot ? ` \u00B7 ${owner.slot}` : ''}`
     : owner.kind === 'simulator' || owner.kind === 'emulator'
-      ? "Not Stim's"
+      ? t`Not Stim's`
       : owner.kind === 'server'
-        ? 'Stim'
-        : 'Shared by the machine';
+        ? t`Stim`
+        : t`Shared by the machine`;
   const glyph = owner.kind === 'simulator' ? 'ios' : owner.kind === 'emulator' ? 'android' : null;
   return (
     <RowLayout
@@ -594,7 +656,7 @@ function OwnerRow({ owner, status }: { owner: MachineOwner; status: StatusPayloa
             {formatMemoryMb(owner.memoryMb)}
           </Text>
           <Text variant="footnote" tone="secondary" style={styles.tabular}>
-            {`${formatCpu(owner.cpuPercent)} CPU`}
+            {t`${cpu} CPU`}
           </Text>
         </View>
       }
@@ -614,12 +676,17 @@ function FreeItemRow({ row, home }: { row: FreeRow; home: string | null | undefi
 }
 
 function worktreeLine(row: WorktreeRow): string | null {
+  const nodeModules = sizeLabel(row.nodeModules);
+  const deviceSize = sizeLabel(row.devices);
+  const devices = plural(row.deviceCount, { one: `device ${deviceSize}`, other: `# devices ${deviceSize}` });
+  const outputs = sizeLabel(row.outputs);
+  const logs = sizeLabel(row.logs);
   const parts = [
     row.inCheckout,
-    row.nodeModules ? `node_modules ${sizeLabel(row.nodeModules)}` : null,
-    row.devices ? `${row.deviceCount === 1 ? 'device' : `${row.deviceCount} devices`} ${sizeLabel(row.devices)}` : null,
-    row.outputs ? `outputs ${sizeLabel(row.outputs)}` : null,
-    row.logs ? `logs ${sizeLabel(row.logs)}` : null,
+    row.nodeModules ? t`node_modules ${nodeModules}` : null,
+    row.devices ? devices : null,
+    row.outputs ? t`outputs ${outputs}` : null,
+    row.logs ? t`logs ${logs}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' \u00B7 ') : null;
 }
@@ -639,6 +706,10 @@ function WorktreeItem({ row, indent }: { row: WorktreeRow; indent: boolean }) {
 function RepositoryRows({ repository, home }: { repository: RepositoryRow; home: string | null | undefined }) {
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
+  const { name } = repository;
+  const count = repository.worktrees.length;
+  const worktrees = plural(count, { one: '# worktree', other: '# worktrees' });
+  const location = tildeHome(repository.path, home);
   const only = repository.worktrees.length === 1 ? repository.worktrees[0] : null;
   if (only) return <WorktreeItem row={only} indent={false} />;
   return (
@@ -646,7 +717,7 @@ function RepositoryRows({ repository, home }: { repository: RepositoryRow; home:
       <Touch
         feedback="row"
         onPress={() => setExpanded(!expanded)}
-        accessibilityLabel={`${repository.name}, ${repository.worktrees.length} worktrees`}
+        accessibilityLabel={t`${name}, ${worktrees}`}
         accessibilityState={{ expanded }}
         style={styles.row}
       >
@@ -658,7 +729,7 @@ function RepositoryRows({ repository, home }: { repository: RepositoryRow; home:
             {repository.name}
           </Text>
           <Text variant="footnote" tone="secondary" numberOfLines={1} ellipsizeMode="middle">
-            {`${repository.worktrees.length} worktrees \u00B7 ${tildeHome(repository.path, home)}`}
+            {t`${worktrees} \u00B7 ${location}`}
           </Text>
         </View>
         <SizeText size={repository.total} strong />
@@ -695,6 +766,7 @@ function DeviceItemRow({ device }: { device: DeviceRow }) {
 
 function LeaseRow({ lease, status, now }: { lease: DeviceLeaseState; status: StatusPayload; now: number }) {
   const until = lease.expiresAt ? Date.parse(lease.expiresAt) - now : null;
+  const minutesLeft = until === null ? 0 : Math.max(1, Math.round(until / 60_000));
   const holder = status.environments.find(
     (env) => env.path === lease.holder || env.physicalDevices?.some((device) => device.id === lease.id),
   );
@@ -705,19 +777,21 @@ function LeaseRow({ lease, status, now }: { lease: DeviceLeaseState; status: Sta
           <PlatformGlyph platform={lease.platform} size={16} />
         ) : null
       }
-      title={lease.deviceName ?? lease.id ?? 'Device'}
+      title={lease.deviceName ?? lease.id ?? t`Device`}
       subtitle={[
-        holder ? workspaceTitleAt(holder.path, status) : 'Held outside a listed workspace',
+        holder ? workspaceTitleAt(holder.path, status) : t`Held outside a listed workspace`,
         lease.slot && lease.slot !== 'default' ? lease.slot : null,
       ]
         .filter(Boolean)
         .join(' \u00B7 ')}
       trailing={
         lease.expired ? (
-          <Pill tone="warning">Expired</Pill>
+          <Pill tone="warning">
+            <Trans>Expired</Trans>
+          </Pill>
         ) : until !== null && until > 0 ? (
           <Text variant="footnote" tone="secondary">
-            {`${Math.max(1, Math.round(until / 60_000))} min left`}
+            {t`${minutesLeft} min left`}
           </Text>
         ) : null
       }
@@ -726,15 +800,18 @@ function LeaseRow({ lease, status, now }: { lease: DeviceLeaseState; status: Sta
 }
 
 function RuntimeItemRow({ runtime }: { runtime: RuntimeRow }) {
+  const devices = plural(runtime.deviceCount, { one: '1 device', other: '# devices' });
   return (
     <RowLayout
       title={runtime.title}
       subtitle={runtime.detail}
       chip={
         runtime.unused ? (
-          <Pill tone="warning">Unused</Pill>
+          <Pill tone="warning">
+            <Trans>Unused</Trans>
+          </Pill>
         ) : (
-          <Pill>{runtime.deviceCount === 1 ? '1 device' : `${runtime.deviceCount} devices`}</Pill>
+          <Pill>{devices}</Pill>
         )
       }
       trailing={<SizeText size={runtime.bytes} />}
@@ -744,8 +821,9 @@ function RuntimeItemRow({ runtime }: { runtime: RuntimeRow }) {
 
 function UnusedPill({ runtimes }: { runtimes: RuntimeRow[] }) {
   const unused = runtimes.filter((runtime) => runtime.unused);
-  if (!unused.length) return null;
-  return <Pill tone="warning">{`${unused.length} unused`}</Pill>;
+  const count = unused.length;
+  if (!count) return null;
+  return <Pill tone="warning">{t`${count} unused`}</Pill>;
 }
 
 function SizedItemRow({ row }: { row: SizedRow }) {
@@ -768,7 +846,7 @@ function AttentionRows({
           {workspaceTitleAt(group.path, status)}
         </Text>
         <Text variant="caption" tone={group.live ? 'success' : 'tertiary'}>
-          {group.live ? 'live' : 'idle'}
+          {group.live ? t`live` : t`idle`}
         </Text>
       </View>
       {group.items.map((item, index) => (
@@ -784,8 +862,8 @@ function AttentionRows({
               <Button
                 variant="plain"
                 size="small"
-                title="Copy"
-                accessibilityLabel="Copy command"
+                title={t`Copy`}
+                accessibilityLabel={t`Copy command`}
                 onPress={() => void Clipboard.setStringAsync(item.command ?? '')}
               />
             </View>

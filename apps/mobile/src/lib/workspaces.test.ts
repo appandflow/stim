@@ -1,5 +1,6 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
+import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle, workspaceTitleAt } from '@/lib/workspace-names';
 import {
   attentionGroups,
   deviceKey,
@@ -9,15 +10,10 @@ import {
   isActive,
   livePlatforms,
   orderDevices,
-  pathInCheckout,
   streamsFrames,
   unservedReason,
-  projectOf,
-  repositoryRoots,
   runningBuild,
   shortUrl,
-  workspaceTitle,
-  workspaceTitleAt,
 } from '@/lib/workspaces';
 import type { EnvironmentState, StatusIssue, StatusPayload, WebBrowserState } from '@/protocol/types';
 

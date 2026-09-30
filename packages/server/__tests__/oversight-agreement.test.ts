@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { StatusPayload as ServerStatus } from '@stim-cli/core/state';
 import fixture from '../../../apps/mobile/mock-server/fixtures/status.json' with { type: 'json' };
 import { oversightTitle as phoneTitle } from '../../../apps/mobile/src/lib/oversight.ts';
-import { repositoryRoots, workspaceTitle } from '../../../apps/mobile/src/lib/workspaces.ts';
+import { repositoryRoots, workspaceTitle } from '../../../apps/mobile/src/lib/workspace-names.ts';
 import type { StatusPayload as PhoneStatus } from '../../../apps/mobile/src/protocol/types.ts';
 import { OVERSIGHT_CATEGORIES, oversightTitle } from '../src/oversight.ts';
 import { PUSH_EVENTS } from '../src/protocol.ts';

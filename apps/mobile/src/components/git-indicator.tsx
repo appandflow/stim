@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,26 +9,36 @@ import { withAlpha } from '@/design/color';
 import { gitBadges } from '@/lib/format';
 import type { WorktreeGit } from '@/protocol/types';
 
-const commits = (n: number) => `${n} ${n === 1 ? 'commit' : 'commits'}`;
-
 /** Uncommitted changes, commits ahead and behind, and a merged branch: inline text, or pills with `chips`. */
 export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null | undefined; chips?: boolean }) {
   const { theme } = useUnistyles();
   const badges = gitBadges(git);
   if (!badges) return null;
   if (chips) {
+    const { uncommitted, ahead, behind } = badges;
     return (
       <>
-        {badges.uncommitted ? <Pill tone="warning">{`${badges.uncommitted} uncommitted`}</Pill> : null}
-        {badges.ahead ? (
-          <Pill accessibilityLabel={`${commits(badges.ahead)} not pushed`}>{`\u2191${badges.ahead} unpushed`}</Pill>
+        {uncommitted ? <Pill tone="warning">{t`${uncommitted} uncommitted`}</Pill> : null}
+        {ahead ? (
+          <Pill
+            accessibilityLabel={plural(ahead, { one: '# commit not pushed', other: '# commits not pushed' })}
+          >{t`\u2191${ahead} unpushed`}</Pill>
         ) : null}
-        {badges.behind ? (
-          <Pill accessibilityLabel={`${commits(badges.behind)} behind the upstream`}>
-            {`\u2193${badges.behind} behind`}
+        {behind ? (
+          <Pill
+            accessibilityLabel={plural(behind, {
+              one: '# commit behind the upstream',
+              other: '# commits behind the upstream',
+            })}
+          >
+            {t`\u2193${behind} behind`}
           </Pill>
         ) : null}
-        {badges.merged ? <Pill tone="accent">merged</Pill> : null}
+        {badges.merged ? (
+          <Pill tone="accent">
+            <Trans>merged</Trans>
+          </Pill>
+        ) : null}
       </>
     );
   }
@@ -47,7 +59,7 @@ export function GitIndicator({ git, chips = false }: { git: WorktreeGit | null |
       ) : null}
       {badges.merged ? (
         <Text variant="caption2" weight="semibold" tone="brand" style={styles.merged}>
-          merged
+          <Trans>merged</Trans>
         </Text>
       ) : null}
     </View>

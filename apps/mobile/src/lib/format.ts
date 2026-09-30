@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+
 import { formatDuration } from '@/intl/format';
 import type {
   BuildHistoryEntry,
@@ -28,20 +30,20 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
   if (!activity) return null;
   switch (activity.state) {
     case 'driven': {
-      const tool = activity.driver?.tool ?? 'an unknown tool';
+      const tool = activity.driver?.tool ?? t`an unknown tool`;
       const since = activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
-      const text = Number.isFinite(since)
-        ? `Driven by ${tool} \u00B7 ${formatDuration(Math.max(0, now - since))}`
-        : `Driven by ${tool}`;
+      const duration = formatDuration(Math.max(0, now - since));
+      const text = Number.isFinite(since) ? t`Driven by ${tool} \u00B7 ${duration}` : t`Driven by ${tool}`;
       return { kind: 'driven', text };
     }
     case 'idle': {
       const last = activity.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN;
       if (Number.isFinite(last) && now - last < ACTIVE_WINDOW_MS) return null;
-      return { kind: 'idle', text: Number.isFinite(last) ? `Idle ${formatDuration(Math.max(0, now - last))}` : 'Idle' };
+      const duration = formatDuration(Math.max(0, now - last));
+      return { kind: 'idle', text: Number.isFinite(last) ? t`Idle ${duration}` : t`Idle` };
     }
     case 'unknown':
-      return { kind: 'unknown', text: 'Activity unknown' };
+      return { kind: 'unknown', text: t`Activity unknown` };
     default:
       return null;
   }
@@ -54,30 +56,34 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
 export function driversSummary(activities: (DeviceActivity | undefined)[], now: number): string | null {
   const driven = activities.filter((a): a is DeviceActivity => a?.state === 'driven');
   if (driven.length === 0) return null;
-  const tools = [...new Set(driven.map((a) => a.driver?.tool ?? 'unknown tool'))];
+  const unknownTool = t`unknown tool`;
+  const tools = [...new Set(driven.map((a) => a.driver?.tool ?? unknownTool))];
   const starts = driven.map((a) => (a.driver?.since ? Date.parse(a.driver.since) : NaN)).filter(Number.isFinite);
   const latest = starts.length ? Math.max(...starts) : NaN;
-  return Number.isFinite(latest)
-    ? `${tools.join(', ')} \u00B7 ${formatDuration(Math.max(0, now - latest))}`
-    : tools.join(', ');
+  const names = tools.join(', ');
+  const duration = formatDuration(Math.max(0, now - latest));
+  return Number.isFinite(latest) ? t`${names} \u00B7 ${duration}` : names;
 }
 
 function spokenDuration(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return 'less than a minute';
-  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
-  if (minutes < 60) return plural(minutes, 'minute');
+  if (minutes < 1) return t`less than a minute`;
+  const minuteCount = (n: number) => plural(n, { one: '# minute', other: '# minutes' });
+  const hourCount = (n: number) => plural(n, { one: '# hour', other: '# hours' });
+  if (minutes < 60) return minuteCount(minutes);
   const hours = Math.floor(minutes / 60);
-  return minutes % 60 === 0 ? plural(hours, 'hour') : `${plural(hours, 'hour')} ${plural(minutes % 60, 'minute')}`;
+  if (minutes % 60 === 0) return hourCount(hours);
+  const hoursText = hourCount(hours);
+  const minutesText = minuteCount(minutes % 60);
+  return `${hoursText} ${minutesText}`;
 }
 
 /** A driven device's accessibility label, such as "iOS, driven by agent-device for 47 minutes". */
 export function drivenLabel(name: string, activity: DeviceActivity, now: number): string {
-  const tool = activity.driver?.tool ?? 'an unknown tool';
+  const tool = activity.driver?.tool ?? t`an unknown tool`;
   const since = activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
-  return Number.isFinite(since)
-    ? `${name}, driven by ${tool} for ${spokenDuration(Math.max(0, now - since))}`
-    : `${name}, driven by ${tool}`;
+  const spoken = spokenDuration(Math.max(0, now - since));
+  return Number.isFinite(since) ? t`${name}, driven by ${tool} for ${spoken}` : t`${name}, driven by ${tool}`;
 }
 
 export interface BuildProgress {
@@ -112,12 +118,13 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
   const expected = build.expectedMs;
   if (!expected || expected <= 0) return { elapsedMs, fraction: null, remaining: null };
   const remainingMs = expected - elapsedMs;
+  const minutesLeft = Math.ceil(remainingMs / 60_000);
   const remaining =
     remainingMs <= 0
-      ? 'longer than usual'
+      ? t`longer than usual`
       : remainingMs < 60_000
-        ? 'under a minute left'
-        : `about ${Math.ceil(remainingMs / 60_000)} min left`;
+        ? t`under a minute left`
+        : t`about ${minutesLeft} min left`;
   const fraction = steadyFraction(`${buildKey(build)}|top`, Math.min(elapsedMs / expected, 0.99));
   return { elapsedMs, fraction, remaining };
 }
@@ -129,26 +136,26 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
 export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase' | 'outcomeKnown'>): string | null {
   if (!build.outcome) return null;
   const settled = build.outcomeKnown ?? !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
-  if (build.outcome === 'hit') return settled ? 'Cache hit' : 'Likely cache hit';
-  return settled ? 'Cold build' : 'Likely cold';
+  if (build.outcome === 'hit') return settled ? t`Cache hit` : t`Likely cache hit`;
+  return settled ? t`Cold build` : t`Likely cold`;
 }
 
 export function lastBuildSummary(last: LastBuild, now: number, withReason = true): string {
   const ended = Date.parse(last.finishedAt ?? last.startedAt);
+  const age = formatDuration(now - ended);
+  const ago = t`${age} ago`;
   const took = `${last.durationMs === null ? '' : ` \u00B7 ${clockDuration(last.durationMs)}`}${
-    Number.isNaN(ended) ? '' : ` \u00B7 ${formatDuration(now - ended)} ago`
+    Number.isNaN(ended) ? '' : ` \u00B7 ${ago}`
   }`;
-  if (last.status !== 'ok') return `Failed (${last.errorCode ?? 'error'})${took}`;
-  if (last.cacheHit === 'local') return `Cache hit (local)${took}`;
-  if (last.cacheHit === 'remote') return `Cache hit (remote)${took}`;
-  const why = last.missReason
-    ? withReason
-      ? `: ${last.missReason.summary}`
-      : ''
-    : last.cacheSkipped
-      ? ' (cache reads off)'
-      : '';
-  return `${last.offloadedTo ? `Built on ${machineName(last.offloadedTo)}` : 'Cold build'}${why}${took}`;
+  const code = last.errorCode ?? 'error';
+  if (last.status !== 'ok') return t`Failed (${code})${took}`;
+  if (last.cacheHit === 'local') return t`Cache hit (local)${took}`;
+  if (last.cacheHit === 'remote') return t`Cache hit (remote)${took}`;
+  const summary = last.missReason?.summary ?? '';
+  const why = last.missReason ? (withReason ? t`: ${summary}` : '') : last.cacheSkipped ? t` (cache reads off)` : '';
+  const machine = last.offloadedTo ? machineName(last.offloadedTo) : null;
+  const built = machine ? t`Built on ${machine}` : t`Cold build`;
+  return `${built}${why}${took}`;
 }
 
 /** A build machine's `offload.machines` entry without its `:port`. */
@@ -156,33 +163,35 @@ export const machineName = (entry: string) => entry.replace(/:\d+$/, '');
 
 /** A history row's title: how the run ended, and for a finished run where its app came from. */
 export function historyTitle(entry: BuildHistoryEntry): string {
-  if (entry.result === 'interrupted') return 'Interrupted';
-  if (entry.result === 'cancelled') return 'Cancelled';
-  if (entry.result === 'failed') return `Failed (${entry.errorCode ?? 'error'})`;
-  if (entry.cacheHit) return `Cache hit (${entry.cacheHit})`;
-  return entry.offloadedTo ? `Built on ${machineName(entry.offloadedTo)}` : 'Cold build';
+  if (entry.result === 'interrupted') return t`Interrupted`;
+  if (entry.result === 'cancelled') return t`Cancelled`;
+  const code = entry.errorCode ?? 'error';
+  if (entry.result === 'failed') return t`Failed (${code})`;
+  const { cacheHit } = entry;
+  if (cacheHit) return t`Cache hit (${cacheHit})`;
+  const machine = entry.offloadedTo ? machineName(entry.offloadedTo) : null;
+  return machine ? t`Built on ${machine}` : t`Cold build`;
 }
 
 /** A history row's detail line: the cache outcome of a run that looked one up, when it ran, and its slot. */
 export function historyDetail(entry: BuildHistoryEntry, now: number): string {
+  const { cacheHit, slot } = entry;
+  const summary = entry.missReason?.summary ?? '';
   const cache =
     entry.result === 'interrupted'
       ? null
-      : entry.cacheHit
+      : cacheHit
         ? entry.result === 'succeeded'
           ? null
-          : `${entry.cacheHit} cache hit`
+          : t`${cacheHit} cache hit`
         : entry.missReason
-          ? `miss: ${entry.missReason.summary}`
+          ? t`miss: ${summary}`
           : entry.cacheSkipped
-            ? 'cache reads off'
+            ? t`cache reads off`
             : null;
   const at = Date.parse(entry.finishedAt ?? entry.startedAt);
-  return [
-    cache,
-    Number.isNaN(at) ? null : `${formatDuration(Math.max(0, now - at))} ago`,
-    entry.slot === 'default' ? null : `slot ${entry.slot}`,
-  ]
+  const age = formatDuration(Math.max(0, now - at));
+  return [cache, Number.isNaN(at) ? null : t`${age} ago`, slot === 'default' ? null : t`slot ${slot}`]
     .filter(Boolean)
     .join(' \u00B7 ');
 }
@@ -198,26 +207,35 @@ export function durationBars(
 
 /** What the next build would do and why, worded to follow "Next: ". */
 export function nextBuild(plan: BuildPlan, withReason = true): string {
-  if (plan.refusal) return `would refuse (${plan.refusal.code})`;
-  if (plan.cacheHit === 'local') return 'cache hit (local)';
-  if (plan.cacheHit === 'remote') return 'cache hit (remote)';
-  const off = plan.cacheSkipped ? ' (cache reads off)' : '';
+  if (plan.refusal) {
+    const { code } = plan.refusal;
+    return t`would refuse (${code})`;
+  }
+  if (plan.cacheHit === 'local') return t`cache hit (local)`;
+  if (plan.cacheHit === 'remote') return t`cache hit (remote)`;
+  const off = plan.cacheSkipped ? t` (cache reads off)` : '';
+  const prebuilds = plan.missReason?.kind !== 'prebuild-pending';
   const native =
-    (plan.prebuild === 'generate' || plan.prebuild === 'regenerate') && plan.missReason?.kind !== 'prebuild-pending'
-      ? `, ${plan.prebuild}s the native dir`
-      : '';
-  const why = withReason && plan.missReason ? `, ${plan.missReason.summary}` : '';
-  return `cold build${off}${native}${why}`;
+    prebuilds && plan.prebuild === 'generate'
+      ? t`, generates the native dir`
+      : prebuilds && plan.prebuild === 'regenerate'
+        ? t`, regenerates the native dir`
+        : '';
+  const summary = plan.missReason?.summary ?? '';
+  const why = withReason && plan.missReason ? t`, ${summary}` : '';
+  return t`cold build${off}${native}${why}`;
 }
 
 /** The remote provider and the runs behind the estimate. */
 export function planDetail(plan: BuildPlan): string | null {
   if (plan.refusal || !plan.outcome) return null;
+  const { outcome } = plan;
   const runs =
     plan.expectedMs === null
-      ? `No ${plan.outcome} run of this project recorded yet`
-      : `Median of ${plan.basis} ${plan.outcome} run${plan.basis === 1 ? '' : 's'}`;
-  return plan.cacheHit === 'remote' ? `From ${plan.provider ?? 'the cache provider'}. ${runs}` : runs;
+      ? t`No ${outcome} run of this project recorded yet`
+      : plural(plan.basis, { one: `Median of # ${outcome} run`, other: `Median of # ${outcome} runs` });
+  const provider = plan.provider ?? t`the cache provider`;
+  return plan.cacheHit === 'remote' ? t`From ${provider}. ${runs}` : runs;
 }
 
 export interface GitBadges {
@@ -238,12 +256,12 @@ export function gitBadges(git: WorktreeGit | null | undefined): GitBadges | null
   const merged = git.mergedInto !== null;
   if (!uncommitted && !ahead && !behind && !merged) return null;
   const arrows = [ahead ? `\u2191${ahead}` : '', behind ? `\u2193${behind}` : ''].filter(Boolean).join(' ');
-  const commits = (n: number) => `${n} ${n === 1 ? 'commit' : 'commits'}`;
+  const mergedInto = git.mergedInto ?? '';
   const label = [
-    uncommitted ? `${uncommitted} uncommitted ${uncommitted === 1 ? 'change' : 'changes'}` : '',
-    ahead ? `${commits(ahead)} not pushed` : '',
-    behind ? `${commits(behind)} behind the upstream` : '',
-    merged ? `merged into ${git.mergedInto}` : '',
+    uncommitted ? plural(uncommitted, { one: '# uncommitted change', other: '# uncommitted changes' }) : '',
+    ahead ? plural(ahead, { one: '# commit not pushed', other: '# commits not pushed' }) : '',
+    behind ? plural(behind, { one: '# commit behind the upstream', other: '# commits behind the upstream' }) : '',
+    merged ? t`merged into ${mergedInto}` : '',
   ]
     .filter(Boolean)
     .join(', ');

@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
@@ -46,15 +48,17 @@ export function AgentActions({
   const shown = actions.filter((action) => matchesAgentFilter(action, filter));
   const activity = device?.activity;
   const driven = activity?.state === 'driven';
-  const tool = driven ? (activity.driver?.tool ?? 'Agent') : 'No agent';
+  const tool = driven ? (activity.driver?.tool ?? t`Agent`) : t`No agent`;
   const since = driven && activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
   const name = device ? deviceTitle(device).name : platformName(platform);
+  const driving = Number.isFinite(since) ? formatDuration(Math.max(0, now - since)) : null;
   const subtitle = [
-    Number.isFinite(since) ? `driving ${formatDuration(Math.max(0, now - since))}` : null,
-    actions.length === 1 ? '1 action' : `${actions.length} actions`,
+    driving === null ? null : t`driving ${driving}`,
+    plural(actions.length, { one: '# action', other: '# actions' }),
   ]
     .filter(Boolean)
     .join(' \u00B7 ');
+  const titleText = t`${name} \u00B7 ${tool}`;
   const openLog = (at?: number) =>
     router.push({
       pathname: '/mac/[id]/logs',
@@ -64,17 +68,25 @@ export function AgentActions({
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <View style={styles.titles}>
-          <Text variant="title" numberOfLines={1}>{`${name} \u00B7 ${tool}`}</Text>
+          <Text variant="title" numberOfLines={1}>
+            {titleText}
+          </Text>
           <Text variant="footnote" tone="secondary">
             {subtitle}
           </Text>
         </View>
-        {driven ? <Pill tone="success">active</Pill> : null}
+        {driven ? (
+          <Pill tone="success">
+            <Trans>active</Trans>
+          </Pill>
+        ) : null}
       </View>
       {actions.length ? (
         <View style={styles.filters}>
           {options.map((option) => {
             const selected = JSON.stringify(option.filter) === JSON.stringify(filter);
+            const { label, count } = option;
+            const filterText = t`${label} \u00B7 ${count}`;
             return (
               <Touch
                 key={JSON.stringify(option.filter)}
@@ -88,7 +100,7 @@ export function AgentActions({
                   weight="medium"
                   tone={selected ? 'brand' : option.filter.kind === 'failed' ? 'error' : 'default'}
                 >
-                  {`${option.label} \u00B7 ${option.count}`}
+                  {filterText}
                 </Text>
               </Touch>
             );
@@ -99,13 +111,15 @@ export function AgentActions({
         <ListSection>
           {shown.map(({ key, record }, i) => {
             const failed = record.level === 'error';
+            const time = clockTime(record.ts);
+            const { msg } = record;
             return (
               <Touch
                 key={key}
                 feedback="row"
                 onPress={() => openLog(record.ts)}
-                accessibilityLabel={`${clockTime(record.ts)}, ${record.msg}`}
-                accessibilityHint="Opens this action in the agent log"
+                accessibilityLabel={t`${time}, ${msg}`}
+                accessibilityHint={t`Opens this action in the agent log`}
                 style={[styles.action, i > 0 && styles.separated]}
               >
                 <Text variant="caption" tone="tertiary" style={styles.time}>
@@ -125,10 +139,10 @@ export function AgentActions({
         </ListSection>
       ) : (
         <Text variant="footnote" tone="secondary">
-          No agent action on this device yet.
+          <Trans>No agent action on this device yet.</Trans>
         </Text>
       )}
-      <Button title="Open in logs" variant="secondary" onPress={() => openLog()} />
+      <Button title={t`Open in logs`} variant="secondary" onPress={() => openLog()} />
     </ScrollView>
   );
 }

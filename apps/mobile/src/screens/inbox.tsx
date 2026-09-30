@@ -18,7 +18,7 @@ import { formatDuration } from '@/intl/format';
 import { byDay, itemData, type InboxFilters, type InboxItem } from '@/lib/inbox';
 import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
-import { NOTIFY_CATEGORY_LABELS } from '@/lib/settings-options';
+import { notifyCategoryLabel } from '@/lib/settings-options';
 
 const FUNNEL_ICON = require('@/assets/icons/funnel.png');
 
@@ -94,7 +94,7 @@ export function Inbox() {
             </Stack.Toolbar.MenuAction>
             {NOTIFY_CATEGORIES.map((value) => (
               <Stack.Toolbar.MenuAction key={value} isOn={category === value} onPress={() => setCategory(value)}>
-                {NOTIFY_CATEGORY_LABELS[value]}
+                {notifyCategoryLabel(value)}
               </Stack.Toolbar.MenuAction>
             ))}
           </Stack.Toolbar.Menu>
@@ -145,7 +145,7 @@ export function Inbox() {
 
 function InboxRow({ item, now, onPress }: { item: InboxItem; now: number; onPress: (item: InboxItem) => void }) {
   const { theme } = useUnistyles();
-  const label = NOTIFY_CATEGORY_LABELS[item.category];
+  const label = notifyCategoryLabel(item.category);
   const ago = formatDuration(Math.max(0, now - Date.parse(item.at)), { coarse: true });
   const machine = item.target.kind === 'machine';
   const detail = [label, machine ? null : item.macName].filter(Boolean).join(' \u00B7 ');

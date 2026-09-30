@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import * as Linking from 'expo-linking';
 import { Stack } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
@@ -18,9 +19,9 @@ export function License({ index }: { index: number }) {
       <Text variant="footnote" tone="secondary">
         {`${entry.version} - ${entry.license}`}
       </Text>
-      {url ? <Button title="Open repository" variant="secondary" onPress={() => void Linking.openURL(url)} /> : null}
+      {url ? <Button title={t`Open repository`} variant="secondary" onPress={() => void Linking.openURL(url)} /> : null}
       <Text variant="footnote" mono selectable>
-        {entry.text ?? 'This package does not include a license file.'}
+        {entry.text ?? t`This package does not include a license file.`}
       </Text>
     </ScrollView>
   );

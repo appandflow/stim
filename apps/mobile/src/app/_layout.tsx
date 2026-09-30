@@ -1,4 +1,5 @@
 import { i18n } from '@lingui/core';
+import { t } from '@lingui/core/macro';
 import { I18nProvider } from '@lingui/react';
 import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
@@ -35,8 +36,8 @@ function RootErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   useEffect(() => SplashScreen.hide(), []);
   return (
     <View style={styles.error}>
-      <EmptyState title="Something went wrong" message={error.message}>
-        <Button title="Try again" onPress={() => void retry()} />
+      <EmptyState title={t`Something went wrong`} message={error.message}>
+        <Button title={t`Try again`} onPress={() => void retry()} />
       </EmptyState>
     </View>
   );
@@ -100,13 +101,13 @@ function RootLayoutContent() {
                       headerShadowVisible: false,
                     }}
                   >
-                    <Stack.Screen name="index" options={{ title: 'Stim' }} />
+                    <Stack.Screen name="index" options={{ title: t`Stim` }} />
                     <Stack.Screen name="filters" options={sheet([0.6, 1])} />
                     <Stack.Screen name="about" options={sheet([0.5, 1])} />
                     <Stack.Screen
                       name="settings"
                       options={{
-                        title: 'Settings',
+                        title: t`Settings`,
                         ...(Platform.OS === 'android'
                           ? {
                               contentStyle: { backgroundColor: colors.grouped },
@@ -115,14 +116,14 @@ function RootLayoutContent() {
                           : null),
                       }}
                     />
-                    <Stack.Screen name="licenses" options={{ title: 'Open source licenses' }} />
+                    <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
                     <Stack.Screen name="license" options={{ title: '' }} />
-                    <Stack.Screen name="inbox" options={{ title: 'Notifications' }} />
-                    <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
-                    <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
+                    <Stack.Screen name="inbox" options={{ title: t`Notifications` }} />
+                    <Stack.Screen name="pair" options={{ title: t`Pair a machine`, presentation: 'modal' }} />
+                    <Stack.Screen name="rename" options={{ title: t`Rename machine`, presentation: 'modal' }} />
                     <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/workspace" options={{ title: 'Workspace' }} />
-                    <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
+                    <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
+                    <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs` }} />
                     <Stack.Screen
                       name="mac/[id]/device"
                       options={{

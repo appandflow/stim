@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -67,8 +69,9 @@ function Chart({ chart }: { chart: UsageChart }) {
   const colors = theme.colors;
   const lastIndex = chart.columns.findLastIndex((column) => column !== null);
   const last = chart.columns[lastIndex];
+  const { label, value } = chart;
   return (
-    <View style={styles.chart} accessibilityLabel={`${chart.label} over the last hour, now ${chart.value}`}>
+    <View style={styles.chart} accessibilityLabel={t`${label} over the last hour, now ${value}`}>
       <View style={styles.header}>
         <Icon name={STAT_ICON[chart.kind]} size={13} color={colors.secondary} />
         <Text variant="footnote" tone="secondary" style={styles.label}>
@@ -126,10 +129,10 @@ export function UsageCharts({ charts }: { charts: UsageChart[] }) {
       ))}
       <View style={styles.axis}>
         <Text variant="caption2" tone="tertiary" style={styles.tabular}>
-          60 min ago
+          <Trans>60 min ago</Trans>
         </Text>
         <Text variant="caption2" tone="tertiary" style={styles.tabular}>
-          now
+          <Trans>now</Trans>
         </Text>
       </View>
     </View>

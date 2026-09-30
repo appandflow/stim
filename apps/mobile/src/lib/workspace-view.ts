@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+
 import { formatBytes, formatDuration } from '@/intl/format';
 import { clockDuration, gitBadges, machineName, steadyFraction } from '@/lib/format';
 import type { PlanState } from '@/lib/plan-checks';
@@ -20,7 +22,8 @@ import type {
 export type StageTone = 'success' | 'brand' | 'error' | 'warning' | 'tertiary';
 
 export interface WorkspaceStage {
-  label: 'Running' | 'Building' | 'Build failed' | 'Warming' | 'Ready' | 'Stopped';
+  kind: 'running' | 'building' | 'build-failed' | 'warming' | 'ready' | 'stopped';
+  label: string;
   tone: StageTone;
   subtitle: string | null;
 }
@@ -59,45 +62,53 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
   const build = runningBuild(env);
   if (build) {
     const since = ago(now, build.startedAt);
+    const platform = platformName(build.platform);
     return {
-      label: 'Building',
+      kind: 'building',
+      label: t`Building`,
       tone: 'brand',
-      subtitle: `${platformName(build.platform)}${since ? ` \u00B7 started ${since} ago` : ''}`,
+      subtitle: since ? t`${platform} \u00B7 started ${since} ago` : platform,
     };
   }
   if (!env.live && env.phase === 'warming') {
-    const step = env.warmStep === 'copy' ? 'copying ignored files' : 'installing dependencies';
+    const step = env.warmStep === 'copy' ? t`copying ignored files` : t`installing dependencies`;
     const since = ago(now, env.phaseSince);
-    return { label: 'Warming', tone: 'warning', subtitle: since ? `${step} \u00B7 ${since}` : step };
+    return { kind: 'warming', label: t`Warming`, tone: 'warning', subtitle: since ? t`${step} \u00B7 ${since}` : step };
   }
   if (!env.live && env.phase === 'ready') {
     const since = ago(now, env.phaseSince);
-    return { label: 'Ready', tone: 'success', subtitle: since ? `warmed ${since} ago` : null };
+    return { kind: 'ready', label: t`Ready`, tone: 'success', subtitle: since ? t`warmed ${since} ago` : null };
   }
   const latest = latestBuild(env);
   if (latest?.status === 'failed') {
     const since = ago(now, latest.finishedAt ?? latest.startedAt);
+    const platform = platformName(latest.platform);
     return {
-      label: 'Build failed',
+      kind: 'build-failed',
+      label: t`Build failed`,
       tone: 'error',
-      subtitle: `${platformName(latest.platform)}${since ? ` \u00B7 ${since} ago` : ''}`,
+      subtitle: since ? t`${platform} \u00B7 ${since} ago` : platform,
     };
   }
   if (env.live || (env.remoteDevices?.length ?? 0) > 0) {
     const errors = env.logs?.errorsSinceMarker ?? 0;
     const problems = [
-      errors > 0 ? (errors === 1 ? '1 error' : `${errors} errors`) : null,
-      ...closedApps(env, devices).map((d) => `${platformName(d.platform)} app closed`),
+      errors > 0 ? plural(errors, { one: '# error', other: '# errors' }) : null,
+      ...closedApps(env, devices).map((d) => {
+        const platform = platformName(d.platform);
+        return t`${platform} app closed`;
+      }),
     ].filter((p): p is string => p !== null);
     const up = ago(now, env.supervisor?.startedAt);
     return {
-      label: 'Running',
+      kind: 'running',
+      label: t`Running`,
       tone: problems.length ? 'error' : 'success',
-      subtitle: [up ? `up ${up}` : null, ...problems].filter(Boolean).join(' \u00B7 ') || null,
+      subtitle: [up ? t`up ${up}` : null, ...problems].filter(Boolean).join(' \u00B7 ') || null,
     };
   }
   const stopped = ago(now, env.metro?.lastStop?.at);
-  return { label: 'Stopped', tone: 'tertiary', subtitle: stopped ? `${stopped} ago` : null };
+  return { kind: 'stopped', label: t`Stopped`, tone: 'tertiary', subtitle: stopped ? t`${stopped} ago` : null };
 }
 
 /** `ps` CPU, where 100 is one core, so a busy workspace reads above 100%. */
@@ -136,12 +147,16 @@ function workspaceDiskBytes(env: EnvironmentState): number | null {
 export function diskBreakdown(env: EnvironmentState): string | null {
   const disk = env.disk;
   if (!disk) return null;
+  const worktree = disk.worktreeBytes === null ? null : formatBytes(disk.worktreeBytes);
+  const nodeModules = disk.nodeModulesBytes === null ? null : formatBytes(disk.nodeModulesBytes);
+  const build = disk.buildBytes === null ? null : formatBytes(disk.buildBytes);
   const parts = [
-    disk.worktreeBytes === null ? null : `worktree ${formatBytes(disk.worktreeBytes)}`,
-    disk.nodeModulesBytes === null ? null : `node_modules ${formatBytes(disk.nodeModulesBytes)} of it`,
-    disk.buildBytes === null ? null : `build output ${formatBytes(disk.buildBytes)}`,
+    worktree === null ? null : t`worktree ${worktree}`,
+    nodeModules === null ? null : t`node_modules ${nodeModules} of it`,
+    build === null ? null : t`build output ${build}`,
   ].filter(Boolean);
-  return parts.length ? `Disk: ${parts.join(', ')}.` : null;
+  const list = parts.join(', ');
+  return parts.length ? t`Disk: ${list}.` : null;
 }
 
 const DEVICE_KIND: Record<DeviceRef['platform'], MachineOwner['kind']> = {
@@ -187,21 +202,29 @@ export interface ProcessRow {
 
 const OWNER_ORDER: MachineOwner['kind'][] = ['simulator', 'emulator', 'browser', 'metro', 'build'];
 
+function withSlot(label: string, slot: string | null): string {
+  return slot ? t`${label} \u00B7 ${slot}` : label;
+}
+
 function ownerLabel(owner: MachineOwner, devices: DeviceRef[]): string {
-  const slot = owner.slot && owner.slot !== 'default' ? ` \u00B7 ${owner.slot}` : '';
+  const slot = owner.slot && owner.slot !== 'default' ? owner.slot : null;
   switch (owner.kind) {
     case 'simulator': {
       const device = devices.find((d) => d.platform === 'ios' && d.slot === (owner.slot ?? 'default'));
-      return `${device ? deviceTitle(device).name : 'iOS'} simulator${slot}`;
+      const name = device ? deviceTitle(device).name : 'iOS';
+      return withSlot(t`${name} simulator`, slot);
     }
     case 'emulator':
-      return `Android emulator${slot}`;
+      return withSlot(t`Android emulator`, slot);
     case 'browser':
-      return 'Chrome (web)';
+      return t`Chrome (web)`;
     case 'metro':
-      return 'Metro';
-    case 'build':
-      return `${owner.id === 'ios' || owner.id === 'android' ? `${platformName(owner.id)} build` : 'Build'}${slot}`;
+      return t`Metro`;
+    case 'build': {
+      if (owner.id !== 'ios' && owner.id !== 'android') return withSlot(t`Build`, slot);
+      const platform = platformName(owner.id);
+      return withSlot(t`${platform} build`, slot);
+    }
     default:
       return owner.name;
   }
@@ -235,20 +258,23 @@ export interface DeviceTitle {
 export function deviceTitle(device: DeviceRef): DeviceTitle {
   const slot = device.slot === 'default' ? null : device.slot;
   const join = (...parts: (string | null)[]) => parts.filter(Boolean).join(' \u00B7 ');
-  if (device.platform === 'web') return { name: 'Web', detail: join(device.name, slot) };
+  if (device.platform === 'web') return { name: t`Web`, detail: join(device.name, slot) };
   if (device.platform === 'android') {
     return {
-      name: device.physical ? device.name : 'Android',
-      detail: join(device.physical ? 'USB' : 'Emulator', slot),
+      name: device.physical ? device.name : t`Android`,
+      detail: join(device.physical ? t`USB` : t`Emulator`, slot),
     };
   }
   if (device.physical)
     return { name: device.name, detail: join(device.name !== device.model ? device.model : null, slot) };
   const runtime = /^(.*\S)\s+(\d+(?:\.\d+)*)$/.exec(device.model);
-  if (runtime) return { name: runtime[1]!, detail: join(`iOS ${runtime[2]}`, slot) };
+  if (runtime) {
+    const version = runtime[2]!;
+    return { name: runtime[1]!, detail: join(t`iOS ${version}`, slot) };
+  }
   return device.model === 'iOS Simulator'
-    ? { name: device.name, detail: join('Simulator', slot) }
-    : { name: device.model, detail: join('Simulator', slot) };
+    ? { name: device.name, detail: join(t`Simulator`, slot) }
+    : { name: device.model, detail: join(t`Simulator`, slot) };
 }
 
 export interface BuildLine {
@@ -259,15 +285,16 @@ export interface BuildLine {
   spoken: string;
 }
 
-const FALLBACK_WORDS: [RegExp, string][] = [
-  [/^busy\b/, 'busy'],
-  [/^no less loaded\b/, 'no less loaded'],
-  [/^capacity unknown\b/, 'too old'],
-  [/^Stim build /, 'on another Stim build'],
-  [/^(CPU|Xcode|simulator SDK|CocoaPods|JDK) /, 'toolchain differs'],
-  [/^no (iPhone simulator|Android SDK|NDK|build-tools|platform) /, 'missing SDK'],
-  [/ GB free, needs /, 'low on disk'],
-];
+function fallbackText(machine: string, detail: string): string {
+  if (/^busy\b/.test(detail)) return t`${machine} busy`;
+  if (/^no less loaded\b/.test(detail)) return t`${machine} no less loaded`;
+  if (/^capacity unknown\b/.test(detail)) return t`${machine} too old`;
+  if (detail.startsWith('Stim build ')) return t`${machine} on another Stim build`;
+  if (/^(CPU|Xcode|simulator SDK|CocoaPods|JDK) /.test(detail)) return t`${machine} toolchain differs`;
+  if (/^no (iPhone simulator|Android SDK|NDK|build-tools|platform) /.test(detail)) return t`${machine} missing SDK`;
+  if (/ GB free, needs /.test(detail)) return t`${machine} low on disk`;
+  return t`${machine} failed`;
+}
 
 export interface FallbackLine {
   text: string;
@@ -282,34 +309,43 @@ export function fallbackLine(build: Pick<LastBuild, 'offloadFallback'>): Fallbac
   const reason = build.offloadFallback;
   if (!reason) return null;
   const match = /^([A-Za-z0-9][A-Za-z0-9.-]*(?::\d{1,5})?): (.+)$/.exec(reason);
-  const why = match ? (FALLBACK_WORDS.find(([pattern]) => pattern.test(match[2]!))?.[1] ?? 'failed') : null;
-  const what = match ? `${machineName(match[1]!)} ${why}` : 'offload skipped';
-  return { text: `${what} \u2192 built here`, reason };
+  const what = match ? fallbackText(machineName(match[1]!), match[2]!) : t`offload skipped`;
+  return { text: t`${what} \u2192 built here`, reason };
 }
 
 export function buildLine(platform: Platform, last: LastBuild | undefined, plan: PlanState | undefined): BuildLine {
+  const name = platformName(platform);
   const line = (main: string, sub: string | null, tone: BuildLine['tone'], spoken: string): BuildLine => ({
     platform,
     main,
     sub,
     tone,
-    spoken: `${platformName(platform)} ${spoken}`,
+    spoken,
   });
   if (last) {
-    if (last.status === 'failed') return line('Failed', null, 'error', 'last build failed');
-    const cache = last.cacheHit ? 'hit' : last.offloadedTo ? `on ${machineName(last.offloadedTo)}` : 'cold';
-    if (last.durationMs === null) return line('\u2014', cache, 'default', `last build ${cache}`);
+    if (last.status === 'failed') return line(t`Failed`, null, 'error', t`${name} last build failed`);
+    let cache = t`cold`;
+    if (last.cacheHit) cache = t`hit`;
+    else if (last.offloadedTo) {
+      const machine = machineName(last.offloadedTo);
+      cache = t`on ${machine}`;
+    }
+    if (last.durationMs === null) return line('\u2014', cache, 'default', t`${name} last build ${cache}`);
     const took = clockDuration(last.durationMs);
-    return line(took, cache, 'default', `last build ${took}, ${cache}`);
+    return line(took, cache, 'default', t`${name} last build ${took}, ${cache}`);
   }
   if (plan?.kind === 'done' && !plan.plan.refusal) {
-    const cache = plan.plan.cacheHit ? 'hit' : 'cold';
-    if (plan.plan.expectedMs === null) return line('\u2014', `est. ${cache}`, 'secondary', `next build ${cache}`);
+    const cache = plan.plan.cacheHit ? t`hit` : t`cold`;
+    if (plan.plan.expectedMs === null) {
+      return line('\u2014', t`est. ${cache}`, 'secondary', t`${name} next build ${cache}`);
+    }
     const took = clockDuration(plan.plan.expectedMs);
-    return line(`~${took}`, 'est.', 'secondary', `next build about ${took}, ${cache}`);
+    return line(`~${took}`, t`est.`, 'secondary', t`${name} next build about ${took}, ${cache}`);
   }
-  if (plan?.kind === 'checking') return line('Checking\u2026', null, 'secondary', 'checking the next build');
-  return line('No build', null, 'secondary', 'no build');
+  if (plan?.kind === 'checking') {
+    return line(t`Checking\u2026`, null, 'secondary', t`${name} checking the next build`);
+  }
+  return line(t`No build`, null, 'secondary', t`${name} no build`);
 }
 
 export function usedPlatforms(env: EnvironmentState): Platform[] {
@@ -336,19 +372,28 @@ export const PHASE_ORDER: readonly BuildPhase[] = [
   'launch',
 ];
 
-const PHASE_NAMES: Record<BuildPhase, string> = {
-  prepare: 'Prepare',
-  'cache-lookup': 'Cache lookup',
-  wait: 'Wait',
-  prebuild: 'Prebuild',
-  pods: 'Pods',
-  compile: 'Compile',
-  device: 'Device',
-  install: 'Install',
-  launch: 'Launch',
-};
-
-export const phaseName = (phase: BuildPhase) => PHASE_NAMES[phase];
+export function phaseName(phase: BuildPhase): string {
+  switch (phase) {
+    case 'prepare':
+      return t`Prepare`;
+    case 'cache-lookup':
+      return t`Cache lookup`;
+    case 'wait':
+      return t`Wait`;
+    case 'prebuild':
+      return t`Prebuild`;
+    case 'pods':
+      return t`Pods`;
+    case 'compile':
+      return t`Compile`;
+    case 'device':
+      return t`Device`;
+    case 'install':
+      return t`Install`;
+    case 'launch':
+      return t`Launch`;
+  }
+}
 
 export interface PhaseStep {
   phase: BuildPhase;
@@ -407,16 +452,26 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
   });
 }
 
-const STEP_NAMES: Record<NonNullable<NonNullable<BuildReport['detail']>['step']>, string> = {
-  configure: 'Configuring',
-  compile: 'Compiling',
-  link: 'Linking',
-  resources: 'Copying resources',
-  script: 'Running scripts',
-  dex: 'Dexing',
-  package: 'Packaging',
-  sign: 'Signing',
-};
+function stepName(step: NonNullable<NonNullable<BuildReport['detail']>['step']>): string {
+  switch (step) {
+    case 'configure':
+      return t`Configuring`;
+    case 'compile':
+      return t`Compiling`;
+    case 'link':
+      return t`Linking`;
+    case 'resources':
+      return t`Copying resources`;
+    case 'script':
+      return t`Running scripts`;
+    case 'dex':
+      return t`Dexing`;
+    case 'package':
+      return t`Packaging`;
+    case 'sign':
+      return t`Signing`;
+  }
+}
 
 const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
   prepare: 'prepare',
@@ -501,14 +556,24 @@ export function barFills(steps: readonly PhaseStep[], key: string): number[] {
 /** Whether a phase bar or checklist names its phases: only with more than one, since the stage line names a lone phase. */
 export const namesPhases = (steps: readonly PhaseStep[]) => steps.length > 1;
 
-const REMOTE_PHASES: Record<string, string> = {
-  sync: 'Sync',
-  deps: 'Dependencies',
-  prebuild: 'Prebuild',
-  pods: 'Pods',
-  build: 'Compile',
-  fetch: 'Download',
-};
+function remotePhaseName(phase: string): string | null {
+  switch (phase) {
+    case 'sync':
+      return t`Sync`;
+    case 'deps':
+      return t`Dependencies`;
+    case 'prebuild':
+      return t`Prebuild`;
+    case 'pods':
+      return t`Pods`;
+    case 'build':
+      return t`Compile`;
+    case 'fetch':
+      return t`Download`;
+    default:
+      return null;
+  }
+}
 
 export interface RemoteBuild {
   host: string;
@@ -523,7 +588,7 @@ export function remoteBuild(build: BuildReport, now: number): RemoteBuild | null
   const started = Date.parse(placement.phaseStartedAt);
   return {
     host: machineName(placement.host),
-    phase: REMOTE_PHASES[placement.phase] ?? placement.phase.charAt(0).toUpperCase() + placement.phase.slice(1),
+    phase: remotePhaseName(placement.phase) ?? placement.phase.charAt(0).toUpperCase() + placement.phase.slice(1),
     phaseElapsedMs: Number.isFinite(started) ? Math.max(0, now - started) : null,
   };
 }
@@ -531,14 +596,12 @@ export function remoteBuild(build: BuildReport, now: number): RemoteBuild | null
 export function currentPhaseLabel(build: BuildReport): { phase: string; counts: string | null } {
   const detail = compileDetail(build);
   const remote = remoteBuild(build, 0);
-  const phase = detail?.step ? STEP_NAMES[detail.step] : (remote?.phase ?? phaseName(build.phase));
+  const phase = detail?.step ? stepName(detail.step) : (remote?.phase ?? phaseName(build.phase));
   if (!detail?.unit || typeof detail.done !== 'number') return { phase, counts: null };
+  const { done, unit, total } = detail;
   return {
     phase,
-    counts:
-      typeof detail.total === 'number'
-        ? `${detail.done} of ${detail.total} ${detail.unit}`
-        : `${detail.done} ${detail.unit}`,
+    counts: typeof total === 'number' ? t`${done} of ${total} ${unit}` : `${done} ${unit}`,
   };
 }
 
@@ -546,14 +609,15 @@ export function otherPlatformLine(env: EnvironmentState, building: Platform, now
   const other: Platform = building === 'ios' ? 'android' : 'ios';
   if (!usedPlatforms(env).includes(other)) return null;
   const last = env.lastBuilds?.[other];
-  if (!last) return `${platformName(other)} \u00B7 no build recorded`;
-  if (last.status === 'failed') {
-    const since = ago(now, last.finishedAt ?? last.startedAt);
-    return `${platformName(other)} \u00B7 last build failed${since ? `, ${since} ago` : ''}`;
-  }
+  const name = platformName(other);
+  if (!last) return t`${name} \u00B7 no build recorded`;
   const since = ago(now, last.finishedAt ?? last.startedAt);
+  if (last.status === 'failed') {
+    return since ? t`${name} \u00B7 last build failed, ${since} ago` : t`${name} \u00B7 last build failed`;
+  }
   const took = last.durationMs === null ? null : clockDuration(last.durationMs);
-  return `${platformName(other)} \u00B7 last build ${[took, since ? `${since} ago` : null].filter(Boolean).join(', ')}`;
+  const list = [took, since ? t`${since} ago` : null].filter(Boolean).join(', ');
+  return t`${name} \u00B7 last build ${list}`;
 }
 
 export interface BundleLine {
@@ -565,20 +629,21 @@ export function bundleLine(env: EnvironmentState, now: number, reportsBundles: b
   const metro = env.metro;
   if (!metro) return null;
   const bundle = metro.bundle;
-  if (!bundle) return reportsBundles && metro.running ? { text: 'Not bundled yet', tone: 'tertiary' } : null;
+  if (!bundle) return reportsBundles && metro.running ? { text: t`Not bundled yet`, tone: 'tertiary' } : null;
   if (bundle.bundling) {
-    const pct = typeof bundle.percent === 'number' ? ` \u00B7 ${Math.round(bundle.percent)}%` : '';
-    return { text: `Bundling${pct}`, tone: 'default' };
+    if (typeof bundle.percent !== 'number') return { text: t`Bundling`, tone: 'default' };
+    const percent = Math.round(bundle.percent);
+    return { text: t`Bundling \u00B7 ${percent}%`, tone: 'default' };
   }
   const last = bundle.last;
   if (!last) return null;
   if (last.status === 'failed') {
     const finished = Date.parse(last.finishedAt);
     const since = Number.isFinite(finished) ? formatDuration(now - finished, { seconds: true }) : null;
-    const when = since ? ` \u00B7 ${since} ago` : '';
-    return { text: `Bundle failed${when}`, tone: 'error' };
+    return { text: since ? t`Bundle failed \u00B7 ${since} ago` : t`Bundle failed`, tone: 'error' };
   }
-  return { text: `Bundled in ${(last.durationMs / 1000).toFixed(1)}s`, tone: 'tertiary' };
+  const seconds = (last.durationMs / 1000).toFixed(1);
+  return { text: t`Bundled in ${seconds}s`, tone: 'tertiary' };
 }
 
 export type MetroHealth = 'healthy' | 'unhealthy' | 'stopped';
@@ -599,15 +664,18 @@ export function agentRow(
   last: { ts: number; msg: string } | null,
   now: number,
 ): AgentRow {
-  const lastText = last ? `${last.msg} \u00B7 ${formatDuration(now - last.ts, { seconds: true })} ago` : null;
+  let lastText: string | null = null;
+  if (last) {
+    const { msg } = last;
+    const elapsed = formatDuration(now - last.ts, { seconds: true });
+    lastText = t`${msg} \u00B7 ${elapsed} ago`;
+  }
   if (activity?.state === 'driven') {
-    return { tool: activity.driver?.tool ?? 'Agent', text: lastText ?? 'no action yet' };
+    return { tool: activity.driver?.tool ?? t`Agent`, text: lastText ?? t`no action yet` };
   }
   const idleSince = last?.ts ?? (activity?.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN);
-  return {
-    tool: null,
-    text: Number.isFinite(idleSince) ? `idle ${formatDuration(Math.max(0, now - idleSince))}` : 'nothing yet',
-  };
+  const idle = Number.isFinite(idleSince) ? formatDuration(Math.max(0, now - idleSince)) : null;
+  return { tool: null, text: idle === null ? t`nothing yet` : t`idle ${idle}` };
 }
 
 export function sparkline(values: readonly (number | null)[]): (number | null)[] {
@@ -669,6 +737,34 @@ function ciState(checks: PullRequestFacts['checks']): CiState | null {
   return checks.passing > 0 ? 'passing' : null;
 }
 
+function prText(number: number): string {
+  return t`PR #${number}`;
+}
+
+function pullRequestLabel(number: number, state: PullRequestFacts['state']): string {
+  switch (state) {
+    case 'open':
+      return t`Pull request ${number}, open`;
+    case 'draft':
+      return t`Pull request ${number}, draft`;
+    case 'merged':
+      return t`Pull request ${number}, merged`;
+    case 'closed':
+      return t`Pull request ${number}, closed`;
+  }
+}
+
+function checksLabel(ci: CiState): string {
+  switch (ci) {
+    case 'passing':
+      return t`checks passing`;
+    case 'failing':
+      return t`checks failing`;
+    case 'pending':
+      return t`checks pending`;
+  }
+}
+
 export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | null {
   const git = worktree?.git;
   if (!git) return null;
@@ -676,28 +772,35 @@ export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | n
   const pull = worktree.pullRequest;
   const parts: GitChip['parts'] = [];
   if (badges?.arrows) parts.push({ text: badges.arrows, tone: 'default' });
-  if (badges?.uncommitted) parts.push({ text: `${badges.uncommitted} changed`, tone: 'secondary' });
-  if (badges?.merged && pull?.state !== 'merged') parts.push({ text: `merged into ${git.mergedInto}`, tone: 'brand' });
-  if (!badges?.merged && git.upstream === null) parts.push({ text: 'no upstream', tone: 'tertiary' });
+  if (badges?.uncommitted) {
+    const { uncommitted } = badges;
+    parts.push({ text: t`${uncommitted} changed`, tone: 'secondary' });
+  }
+  if (badges?.merged && pull?.state !== 'merged') {
+    const mergedInto = git.mergedInto ?? '';
+    parts.push({ text: t`merged into ${mergedInto}`, tone: 'brand' });
+  }
+  if (!badges?.merged && git.upstream === null) parts.push({ text: t`no upstream`, tone: 'tertiary' });
   const ci = pull ? ciState(pull.checks) : null;
   const label = [
-    pull ? `Pull request ${pull.number}, ${pull.state}` : 'Branch',
-    ci ? `checks ${ci}` : null,
+    pull ? pullRequestLabel(pull.number, pull.state) : t`Branch`,
+    ci ? checksLabel(ci) : null,
     badges?.label,
-    !badges?.merged && git.upstream === null ? 'no upstream' : null,
-    !pull && parts.length === 0 ? 'up to date' : null,
+    !badges?.merged && git.upstream === null ? t`no upstream` : null,
+    !pull && parts.length === 0 ? t`up to date` : null,
   ]
     .filter(Boolean)
     .join(', ');
-  return { parts, pr: pull ? { text: `PR #${pull.number}`, tone: PR_TONE[pull.state], ci } : null, label };
+  return { parts, pr: pull ? { text: prText(pull.number), tone: PR_TONE[pull.state], ci } : null, label };
 }
 
 export function checksSummary(checks: PullRequestFacts['checks']): string | null {
   if (!checks) return null;
+  const { failing, pending, passing } = checks;
   const parts = [
-    checks.failing ? `${checks.failing} failing` : null,
-    checks.pending ? `${checks.pending} pending` : null,
-    checks.passing ? `${checks.passing} passing` : null,
+    failing ? t`${failing} failing` : null,
+    pending ? t`${pending} pending` : null,
+    passing ? t`${passing} passing` : null,
   ].filter(Boolean);
-  return parts.length ? parts.join(', ') : 'No checks';
+  return parts.length ? parts.join(', ') : t`No checks`;
 }

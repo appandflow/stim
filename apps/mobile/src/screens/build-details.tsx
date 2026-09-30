@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { EaseView, type Transition } from 'react-native-ease';
@@ -16,7 +18,7 @@ import type { Theme } from '@/design/theme';
 import { useBuildPlan, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
 import { useBuildOutput } from '@/hooks/workspace-logs';
-import { formatDuration } from '@/intl/format';
+import { formatDateTime, formatDuration } from '@/intl/format';
 import {
   clockDuration,
   durationBars,
@@ -54,6 +56,18 @@ const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', rem
 
 const PLATFORMS: Platform[] = ['ios', 'android'];
 
+const DATE_TIME: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+};
+const TIME: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', second: '2-digit' };
+
+const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Date(b).toDateString();
+
 const SWITCH_INSET = 3;
 const PILL_SPRING: Transition = { type: 'spring', damping: 33, stiffness: 260, mass: 1 };
 const LABEL_FADE: Transition = { type: 'timing', duration: 180, easing: 'easeInOut' };
@@ -83,16 +97,26 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
     (entry) =>
       entry.startedAt === last?.startedAt && entry.result === 'succeeded' && Object.keys(entry.phases).length > 0,
   );
+  const remoteHost = remote?.host ?? '';
+  const startedAge = formatDuration(Math.max(0, now - started));
+  const planned = plan?.kind === 'done' ? plan.plan : null;
+  const planMessage = plan?.kind === 'failed' ? plan.message : null;
+  const next = planned ? nextBuild(planned, false) : '';
+  const estimated =
+    planned && planned.expectedMs !== null && !planned.refusal ? clockDuration(planned.expectedMs) : null;
+  const checkedAge = checkedAt === null ? '' : formatDuration(now - checkedAt);
   return (
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
       <View style={styles.titles}>
-        <Text variant="title">Build</Text>
+        <Text variant="title">
+          <Trans>Build</Trans>
+        </Text>
         {running ? (
           <Text variant="footnote" tone="secondary">
             {[
               target ? deviceTitle(target).name : null,
-              remote ? `on ${remote.host}` : null,
-              Number.isFinite(started) ? `started ${formatDuration(Math.max(0, now - started))} ago` : null,
+              remote ? t`on ${remoteHost}` : null,
+              Number.isFinite(started) ? t`started ${startedAge} ago` : null,
             ]
               .filter(Boolean)
               .join(' \u00B7 ')}
@@ -104,45 +128,53 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
       {running ? <RunningBuild build={running} path={path} history={history} now={now} /> : null}
 
       {running ? null : (
-        <Section title="Last build">
-          {last ? <LastBuildDetails last={last} now={now} root={path} /> : <Note>{`No ${name} build recorded.`}</Note>}
+        <Section title={t`Last build`}>
+          {last ? (
+            <LastBuildDetails last={last} now={now} root={path} />
+          ) : (
+            <Note>
+              <Trans>No {name} build recorded.</Trans>
+            </Note>
+          )}
           {lastRun ? <PhaseList steps={finishedSteps(lastRun)} /> : null}
         </Section>
       )}
 
       {history.length ? (
-        <Section title="Recent builds">
+        <Section title={t`Recent builds`}>
           <History entries={history} now={now} root={path} />
         </Section>
       ) : null}
 
       <Section
-        title="Next build"
+        title={t`Next build`}
         action={
           <Touch
             onPress={() => recheck?.()}
             disabled={!canCheck}
-            accessibilityLabel={`Check the next ${name} build again`}
+            accessibilityLabel={t`Check the next ${name} build again`}
             hitSlop={10}
             style={styles.refresh}
           >
             <Icon name="arrow.clockwise" size={14} color={canCheck ? theme.colors.primary : theme.colors.tertiary} />
             <Text variant="footnote" weight="medium" tone={canCheck ? 'brand' : 'tertiary'}>
-              Check again
+              <Trans>Check again</Trans>
             </Text>
           </Touch>
         }
       >
         {building ? (
-          <Note>Checked after the running build.</Note>
+          <Note>
+            <Trans>Checked after the running build.</Trans>
+          </Note>
         ) : checking ? (
           <View style={styles.row}>
             <ActivityIndicator size="small" color={theme.colors.tertiary} />
-            <Note>{'Checking the next build\u2026'}</Note>
+            <Note>{t`Checking the next build\u2026`}</Note>
           </View>
         ) : plan?.kind === 'failed' ? (
           <Text tone="warning" selectable>
-            {`Cannot plan: ${plan.message}`}
+            <Trans>Cannot plan: {planMessage}</Trans>
           </Text>
         ) : plan?.kind === 'done' ? (
           <>
@@ -150,18 +182,14 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
               variant="body"
               weight="semibold"
               tone={plan.plan.refusal || plan.plan.cacheHit === false ? 'warning' : 'success'}
-              accessibilityLabel={`Next build: ${nextBuild(plan.plan, false)}${
-                plan.plan.expectedMs !== null && !plan.plan.refusal
-                  ? `, about ${clockDuration(plan.plan.expectedMs)}`
-                  : ''
-              }`}
+              accessibilityLabel={estimated ? t`Next build: ${next}, about ${estimated}` : t`Next build: ${next}`}
             >
-              {`Next: ${nextBuild(plan.plan, false)}`}
-              {plan.plan.expectedMs !== null && !plan.plan.refusal ? (
+              {t`Next: ${next}`}
+              {estimated ? (
                 <Text variant="body" weight="semibold" tone="secondary" style={styles.tabular}>
-                  {`  ~${clockDuration(plan.plan.expectedMs)}`}
+                  {t`  ~${estimated}`}
                   <Text variant="footnote" weight="regular" tone="tertiary">
-                    {' est.'}
+                    {t` est.`}
                   </Text>
                 </Text>
               ) : null}
@@ -175,11 +203,13 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
             {plan.plan.missReason ? <MissReason reason={plan.plan.missReason} /> : null}
           </>
         ) : (
-          <Note>Not checked yet.</Note>
+          <Note>
+            <Trans>Not checked yet.</Trans>
+          </Note>
         )}
         {checkedAt !== null && !checking && !building ? (
           <Text variant="footnote" tone="tertiary">
-            {`Checked ${formatDuration(now - checkedAt)} ago`}
+            {t`Checked ${checkedAge} ago`}
           </Text>
         ) : null}
       </Section>
@@ -215,13 +245,14 @@ function PlatformSwitch({
       ) : null}
       {PLATFORMS.map((platform) => {
         const selected = platform === value;
+        const label = platformName(platform);
         return (
           <Touch
             key={platform}
             onPress={() => onChange(platform)}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
-            accessibilityLabel={`${platformName(platform)}${building === platform ? ', building' : ''}`}
+            accessibilityLabel={building === platform ? t`${label}, building` : label}
             style={styles.segment}
           >
             {[false, true].map((layerSelected) => (
@@ -274,7 +305,7 @@ function RunningBuild({
       <View style={styles.elapsed}>
         <Text style={styles.big}>{elapsed}</Text>
         <Text variant="callout" tone="secondary" style={styles.grow}>
-          {[estimate ? `of ${estimate}` : null, miss ? `cache miss, ${miss}` : null].filter(Boolean).join(' \u00B7 ')}
+          {[estimate ? t`of ${estimate}` : null, miss ? t`cache miss, ${miss}` : null].filter(Boolean).join(' \u00B7 ')}
         </Text>
       </View>
       <PhaseList
@@ -282,7 +313,7 @@ function RunningBuild({
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
       />
       {lines.length ? (
-        <Section title="Live output">
+        <Section title={t`Live output`}>
           <View style={styles.output}>
             {lines.map((line, i) => (
               <Text
@@ -364,18 +395,11 @@ function PhaseList({ steps, counts }: { steps: PhaseStep[]; counts?: string | nu
 
 function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
   const failed = last.status === 'failed';
-  const when = [
-    `Started ${new Date(last.startedAt).toLocaleString()}`,
-    last.finishedAt
-      ? `finished ${
-          new Date(last.finishedAt).toDateString() === new Date(last.startedAt).toDateString()
-            ? new Date(last.finishedAt).toLocaleTimeString()
-            : new Date(last.finishedAt).toLocaleString()
-        }`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(', ');
+  const startedAt = formatDateTime(last.startedAt, DATE_TIME);
+  const finishedAt = last.finishedAt
+    ? formatDateTime(last.finishedAt, sameDay(last.finishedAt, last.startedAt) ? TIME : DATE_TIME)
+    : null;
+  const when = [t`Started ${startedAt}`, finishedAt ? t`finished ${finishedAt}` : null].filter(Boolean).join(', ');
   return (
     <>
       <Text variant="body" weight="semibold" tone={failed ? 'error' : 'default'}>
@@ -489,14 +513,12 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
       : undefined;
   const phases = entered
     .map((phase) =>
-      phase === stoppedIn ? `stopped in ${phase}` : `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`,
+      phase === stoppedIn ? t`stopped in ${phase}` : `${phase} ${clockDuration(entry.phases[phase] ?? 0)}`,
     )
     .join(' \u00B7 ');
-  const facts = [
-    `Started ${new Date(entry.startedAt).toLocaleString()}`,
-    entry.configuration,
-    entry.fingerprint ? `fingerprint ${entry.fingerprint.slice(0, 8)}` : null,
-  ]
+  const startedAt = formatDateTime(entry.startedAt, DATE_TIME);
+  const fingerprint = entry.fingerprint?.slice(0, 8);
+  const facts = [t`Started ${startedAt}`, entry.configuration, fingerprint ? t`fingerprint ${fingerprint}` : null]
     .filter(Boolean)
     .join(' \u00B7 ');
   return (
@@ -508,7 +530,9 @@ function HistoryEntryDetails({ entry, root }: { entry: BuildHistoryEntry; root: 
         </Text>
       ) : null}
       {entry.result === 'interrupted' ? (
-        <Note>The run ended without recording a result; the next run in this workspace recorded it.</Note>
+        <Note>
+          <Trans>The run ended without recording a result; the next run in this workspace recorded it.</Trans>
+        </Note>
       ) : null}
       <Fallback build={entry} />
       {entry.diagnostics?.length ? <Diagnostics diagnostics={entry.diagnostics} root={root} /> : null}
@@ -523,11 +547,12 @@ function Fallback({ build }: { build: LastBuild }) {
   const [open, setOpen] = useState(false);
   const line = fallbackLine(build);
   if (!line) return null;
+  const { text } = line;
   return (
     <Touch
       onPress={() => setOpen(!open)}
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={open ? line.reason : `${line.text}. Shows why.`}
+      accessibilityLabel={open ? line.reason : t`${text}. Shows why.`}
       style={styles.fallback}
     >
       <View style={styles.row}>
@@ -547,10 +572,11 @@ function Fallback({ build }: { build: LastBuild }) {
 
 function MissReason({ reason }: { reason: BuildMissReason }) {
   const hidden = reason.changeCount - reason.changes.length;
+  const fingerprint = reason.baseline?.fingerprint.slice(0, 8) ?? '';
   const baseline = reason.baseline
-    ? `Compared with ${reason.baseline.fingerprint.slice(0, 8)}, the last build ${
-        reason.baseline.from === 'workspace' ? 'in this workspace' : 'of this project in another worktree'
-      }.`
+    ? reason.baseline.from === 'workspace'
+      ? t`Compared with ${fingerprint}, the last build in this workspace.`
+      : t`Compared with ${fingerprint}, the last build of this project in another worktree.`
     : null;
   return (
     <>
@@ -574,7 +600,9 @@ function MissReason({ reason }: { reason: BuildMissReason }) {
           ))}
         </ListSection>
       ) : null}
-      {hidden > 0 ? <Note>{hidden === 1 ? '1 more source changed.' : `${hidden} more sources changed.`}</Note> : null}
+      {hidden > 0 ? (
+        <Note>{plural(hidden, { one: '# more source changed.', other: '# more sources changed.' })}</Note>
+      ) : null}
     </>
   );
 }

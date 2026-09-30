@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import {
   PROTOCOL_VERSION,
   type ActionName,
@@ -122,7 +124,7 @@ export class StimConnection {
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
     const socket = this.socket;
-    this.detach('Reconnecting.');
+    this.detach(t`Reconnecting.`);
     socket?.close();
     this.connect();
   }
@@ -134,12 +136,12 @@ export class StimConnection {
     for (const sub of this.subscriptions) this.cancelRetry(sub);
     this.socket?.close();
     this.socket = null;
-    this.failPending('Connection closed.');
+    this.failPending(t`Connection closed.`);
     this.options.onState?.({ kind: 'closed' });
   }
 
   request<M extends Method>(method: M, params: Methods[M]['params']): Promise<Methods[M]['result']> {
-    if (!this.open || !this.socket) return Promise.reject(new Error('Not connected.'));
+    if (!this.open || !this.socket) return Promise.reject(new Error(t`Not connected.`));
     return this.send(this.socket, method, params);
   }
 
@@ -229,8 +231,9 @@ export class StimConnection {
     };
     socket.onclose = () => {
       if (socket !== this.socket) return;
-      this.detach('Connection lost.');
-      if (!this.stopped) this.scheduleRetry('Connection lost.');
+      const lost = t`Connection lost.`;
+      this.detach(lost);
+      if (!this.stopped) this.scheduleRetry(lost);
     };
   }
 
@@ -354,7 +357,7 @@ export function pair(
   return new Promise((resolve, reject) => {
     const socket = createSocket(endpoint);
     let done = false;
-    const unreachable = () => new Error(`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`);
+    const unreachable = () => new Error(t`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`);
     const timeout = setTimeout(() => finish(() => reject(unreachable())), PAIRING_TIMEOUT_MS);
     const finish = (settle: () => void) => {
       if (done) return;
@@ -380,7 +383,7 @@ export function pair(
       finish(() => {
         if ('error' in parsed) return reject(new RequestError(parsed.error));
         const result = parsed.result as Methods['hello']['result'];
-        if (!result.deviceToken) return reject(new Error('The server did not issue a device token.'));
+        if (!result.deviceToken) return reject(new Error(t`The server did not issue a device token.`));
         resolve({ deviceToken: result.deviceToken, serverName: result.server.name });
       });
     };

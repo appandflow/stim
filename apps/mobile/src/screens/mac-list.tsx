@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { useRouter } from 'expo-router';
 import { Alert, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -19,11 +20,12 @@ export function MacList() {
   const router = useRouter();
   const { reload, connections } = useMacs();
 
-  const forget = (mac: PairedMac) =>
-    Alert.alert(`Forget ${mac.name}?`, 'This phone stops connecting to it. Pair again from Stim Desktop to undo.', [
-      { text: 'Cancel', style: 'cancel' },
+  const forget = (mac: PairedMac) => {
+    const { name } = mac;
+    Alert.alert(t`Forget ${name}?`, t`This phone stops connecting to it. Pair again from Stim Desktop to undo.`, [
+      { text: t`Cancel`, style: 'cancel' },
       {
-        text: 'Forget',
+        text: t`Forget`,
         style: 'destructive',
         onPress: () => {
           unregisterPush(connections.find((c) => c.mac.id === mac.id)?.connection ?? null, mac.id);
@@ -32,6 +34,7 @@ export function MacList() {
         },
       },
     ]);
+  };
 
   return (
     <FlatList
@@ -39,41 +42,47 @@ export function MacList() {
       keyExtractor={({ mac }) => mac.id}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.list}
-      renderItem={({ item: { mac: item, state, missing } }) => (
-        <Card accessibilityRole="link" onPress={() => router.push({ pathname: '/mac/[id]', params: { id: item.id } })}>
-          <View style={styles.row}>
-            <StatusDot color={connectionColor(state, missing, theme.colors)} />
-            <View style={styles.rowText}>
-              <View style={styles.nameRow}>
-                <Text variant="headline" style={styles.shrink} numberOfLines={1}>
-                  {item.name}
+      renderItem={({ item: { mac: item, state, missing } }) => {
+        const { name } = item;
+        return (
+          <Card
+            accessibilityRole="link"
+            onPress={() => router.push({ pathname: '/mac/[id]', params: { id: item.id } })}
+          >
+            <View style={styles.row}>
+              <StatusDot color={connectionColor(state, missing, theme.colors)} />
+              <View style={styles.rowText}>
+                <View style={styles.nameRow}>
+                  <Text variant="headline" style={styles.shrink} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <ScopeChip state={state} />
+                </View>
+                <Text variant="footnote" tone="secondary" numberOfLines={1}>
+                  {describeState(state, missing)}
                 </Text>
-                <ScopeChip state={state} />
+                <Text variant="caption" tone="secondary" mono numberOfLines={1}>
+                  {item.endpoint}
+                </Text>
               </View>
-              <Text variant="footnote" tone="secondary" numberOfLines={1}>
-                {describeState(state, missing)}
-              </Text>
-              <Text variant="caption" tone="secondary" mono numberOfLines={1}>
-                {item.endpoint}
-              </Text>
+              <Button
+                title={t`Rename`}
+                variant="plain"
+                size="small"
+                accessibilityLabel={t`Rename ${name}`}
+                onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
+              />
+              <Button
+                title={t`Forget`}
+                variant="destructive"
+                size="small"
+                accessibilityLabel={t`Forget ${name}`}
+                onPress={() => forget(item)}
+              />
             </View>
-            <Button
-              title="Rename"
-              variant="plain"
-              size="small"
-              accessibilityLabel={`Rename ${item.name}`}
-              onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
-            />
-            <Button
-              title="Forget"
-              variant="destructive"
-              size="small"
-              accessibilityLabel={`Forget ${item.name}`}
-              onPress={() => forget(item)}
-            />
-          </View>
-        </Card>
-      )}
+          </Card>
+        );
+      }}
     />
   );
 }

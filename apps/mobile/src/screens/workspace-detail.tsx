@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -11,7 +12,7 @@ import { EmptyState } from '@/components/empty-state';
 import { HeaderTitle } from '@/components/header-title';
 import { SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
-import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
+import { explainReadOnly, readOnlyReason } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { Text } from '@/components/text';
 import { BuildCard, BuildInProgressCard, CardGrid, LogsCard, StatusCard, WorkCard } from '@/components/workspace-cards';
@@ -41,6 +42,7 @@ import {
   workspaceStage,
   workspaceUsage,
 } from '@/lib/workspace-view';
+import { workspaceTitleAt } from '@/lib/workspace-names';
 import {
   deviceWarnings,
   deviceKey,
@@ -49,9 +51,15 @@ import {
   orderDevices,
   platformName,
   runningBuild,
-  workspaceTitleAt,
 } from '@/lib/workspaces';
 import type { ActionName, DevicePlatform, Platform } from '@/protocol/types';
+
+function reloadMessage(platform: DevicePlatform | undefined, done: boolean): string {
+  if (!platform) return done ? t`Reloaded` : t`Reloading`;
+  if (platform === 'web') return done ? t`Reloaded the web page` : t`Reloading the web page`;
+  const name = platformName(platform);
+  return done ? t`Reloaded the ${name} app` : t`Reloading the ${name} app`;
+}
 
 const ELLIPSIS_ICON = require('@/assets/icons/ellipsis.png');
 
@@ -86,12 +94,11 @@ export function WorkspaceDetail({ path }: { path: string }) {
   }, [macId, path, touch]);
 
   const perform = async (action: ActionName, platform?: DevicePlatform) => {
-    const app = platform ? (platform === 'web' ? ' the web page' : ` the ${platformName(platform)} app`) : '';
-    setToast({ kind: 'pending', message: action === 'stop' ? `Stopping ${title}` : `Reloading${app}` });
+    setToast({ kind: 'pending', message: action === 'stop' ? t`Stopping ${title}` : reloadMessage(platform, false) });
     const error = await actions.run(action, platform ? { platform } : {});
     setToast(
       error === null
-        ? { kind: 'success', message: action === 'stop' ? `Stopped ${title}` : `Reloaded${app}` }
+        ? { kind: 'success', message: action === 'stop' ? t`Stopped ${title}` : reloadMessage(platform, true) }
         : { kind: 'error', message: error },
     );
   };
@@ -100,15 +107,17 @@ export function WorkspaceDetail({ path }: { path: string }) {
     const platforms = env ? livePlatforms(env) : [];
     if (platforms.length < 2) return void perform('reload', platforms[0] === 'web' ? 'web' : undefined);
     const names = platforms.map(platformName);
+    const rest = names.slice(0, -1).join(', ');
+    const last = names.at(-1)!;
     Alert.alert(
-      'Reload which app?',
-      `${names.slice(0, -1).join(', ')} and ${names.at(-1)} are running.`,
+      t`Reload which app?`,
+      t`${rest} and ${last} are running.`,
       [
         ...platforms.map((platform) => ({
           text: platformName(platform),
           onPress: () => void perform('reload', platform),
         })),
-        { text: 'Cancel', style: 'cancel' as const },
+        { text: t`Cancel`, style: 'cancel' as const },
       ],
       // Android's Alert shows at most three buttons, so with three platforms it drops Cancel; tapping outside closes it.
       { cancelable: true },
@@ -116,9 +125,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
   };
 
   const stop = () =>
-    Alert.alert(`Stop ${title}?`, "Stim stops Metro and shuts down this workspace's simulators and emulators.", [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Stop', style: 'destructive', onPress: () => void perform('stop') },
+    Alert.alert(t`Stop ${title}?`, t`Stim stops Metro and shuts down this workspace's simulators and emulators.`, [
+      { text: t`Cancel`, style: 'cancel' },
+      { text: t`Stop`, style: 'destructive', onPress: () => void perform('stop') },
     ]);
 
   const openLogs = (errors: boolean) =>
@@ -137,13 +146,13 @@ export function WorkspaceDetail({ path }: { path: string }) {
         <Stack.Toolbar.Menu
           icon={OS.OS === 'ios' ? 'ellipsis' : ELLIPSIS_ICON}
           tintColor={theme.colors.text}
-          accessibilityLabel="More"
+          accessibilityLabel={t`More`}
         >
           {env && actions.available?.length ? (
             <Stack.Toolbar.Menu inline>
               {actions.available.includes('reload') ? (
                 <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled={actions.pending !== null} onPress={reload}>
-                  Reload
+                  {t`Reload`}
                 </Stack.Toolbar.MenuAction>
               ) : null}
               {actions.available.includes('stop') ? (
@@ -153,41 +162,41 @@ export function WorkspaceDetail({ path }: { path: string }) {
                   disabled={actions.pending !== null}
                   onPress={stop}
                 >
-                  Stop
+                  {t`Stop`}
                 </Stack.Toolbar.MenuAction>
               ) : null}
             </Stack.Toolbar.Menu>
           ) : env && actions.available ? (
             <Stack.Toolbar.Menu inline>
-              <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled subtitle={READ_ONLY_REASON}>
-                Reload
+              <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled subtitle={readOnlyReason()}>
+                {t`Reload`}
               </Stack.Toolbar.MenuAction>
-              <Stack.Toolbar.MenuAction icon="stop.circle" disabled subtitle={READ_ONLY_REASON}>
-                Stop
+              <Stack.Toolbar.MenuAction icon="stop.circle" disabled subtitle={readOnlyReason()}>
+                {t`Stop`}
               </Stack.Toolbar.MenuAction>
               <Stack.Toolbar.MenuAction icon="lock.open" onPress={() => explainReadOnly(mac?.name, state, connection)}>
-                Allow control...
+                {t`Allow control...`}
               </Stack.Toolbar.MenuAction>
             </Stack.Toolbar.Menu>
           ) : null}
           <Stack.Toolbar.MenuAction icon="text.alignleft" onPress={() => openLogs(false)}>
-            Logs
+            {t`Logs`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             icon="doc.on.doc"
             subtitle={tildeHome(path, home)}
             onPress={() => void Clipboard.setStringAsync(path)}
           >
-            Copy path
+            {t`Copy path`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="exclamationmark.triangle" onPress={() => openLogs(true)}>
-            Show errors
+            {t`Show errors`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             icon="laptopcomputer"
             onPress={() => router.push({ pathname: '/mac/[id]', params: { id: macId } })}
           >
-            Machine status
+            {t`Machine status`}
           </Stack.Toolbar.MenuAction>
         </Stack.Toolbar.Menu>
       </Stack.Toolbar>
@@ -211,11 +220,12 @@ export function WorkspaceDetail({ path }: { path: string }) {
     );
   }
   if (!env) {
+    const displayPath = tildeHome(path, home);
     return (
       <>
         <ScrollView style={{ backgroundColor: theme.colors.background }} contentInsetAdjustmentBehavior="automatic">
           {header}
-          <EmptyState title="Workspace not found" message={`stim status no longer lists ${tildeHome(path, home)}.`} />
+          <EmptyState title={t`Workspace not found`} message={t`stim status no longer lists ${displayPath}.`} />
         </ScrollView>
         <ActionToast toast={toast} onDismiss={dismissToast} />
       </>
@@ -226,7 +236,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const { byDevice, general } = deviceWarnings(env.warnings, all);
   const build = runningBuild(env);
   const stage = workspaceStage(env, all, now);
-  const devices = stage.label === 'Stopped' ? [] : all;
+  const devices = stage.kind === 'stopped' ? [] : all;
   const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
   const lines = platforms.map((platform) => buildLine(platform, env.lastBuilds?.[platform], plan(platform)));
@@ -276,8 +286,8 @@ export function WorkspaceDetail({ path }: { path: string }) {
             {tildeHome(warning, home)}
           </Text>
         ))}
-        {devices.length || env.remoteDevices?.length || stage.label === 'Warming' ? (
-          <SectionHeader title="Devices" />
+        {devices.length || env.remoteDevices?.length || stage.kind === 'warming' ? (
+          <SectionHeader title={t`Devices`} />
         ) : null}
         {(env.remoteDevices ?? []).map((session) => (
           <RemoteTile key={session.sessionId} session={session} />
@@ -291,12 +301,12 @@ export function WorkspaceDetail({ path }: { path: string }) {
             usage={device.running ? deviceUsage(device, env.path, machine, device.diskBytes) : null}
           />
         ))}
-        {devices.length === 0 && stage.label === 'Warming' ? <WarmingPlaceholder subtitle={stage.subtitle} /> : null}
-        {devices.length === 0 && !env.remoteDevices?.length && stage.label !== 'Warming' ? (
+        {devices.length === 0 && stage.kind === 'warming' ? <WarmingPlaceholder subtitle={stage.subtitle} /> : null}
+        {devices.length === 0 && !env.remoteDevices?.length && stage.kind !== 'warming' ? (
           <Text variant="footnote" tone="secondary" style={styles.none}>
-            {stage.label === 'Stopped'
-              ? 'Nothing is running. Ask your agent to run the app.'
-              : 'No device in this workspace yet.'}
+            {stage.kind === 'stopped'
+              ? t`Nothing is running. Ask your agent to run the app.`
+              : t`No device in this workspace yet.`}
           </Text>
         ) : null}
       </ScrollView>

@@ -10,6 +10,7 @@ import {
   Text,
 } from '@expo/ui/jetpack-compose';
 import { clickable, clip, fillMaxSize, fillMaxWidth, padding, Shapes } from '@expo/ui/jetpack-compose/modifiers';
+import { t } from '@lingui/core/macro';
 import { router } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { Children, isValidElement, useState, type ReactNode } from 'react';
@@ -26,20 +27,20 @@ import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope, type StimConnection } from '@/lib/connection';
 import {
-  APPEARANCE_OPTIONS,
-  NOTIFICATIONS_FOOTER,
-  NOTIFY_CATEGORY_LABELS,
-  NOTIFY_LEVEL_OPTIONS,
-  HOME_VIEW_OPTIONS,
+  appearanceOptions,
+  homeViewOptions,
   labelOf,
+  notificationsFooter,
+  notifyCategoryLabel,
+  notifyLevelOptions,
   parseQuietHoursValue,
-  QUIET_HOURS_OPTIONS,
+  quietHoursOptions,
   quietHoursValue,
-  STUCK_MINUTES_OPTIONS,
-  READ_ONLY_FOOTER,
-  REPLAY_FOOTER,
-  VIDEO_QUALITY_FOOTER,
-  VIDEO_QUALITY_OPTIONS,
+  readOnlyFooter,
+  replayFooter,
+  stuckMinutesOptions,
+  videoQualityFooter,
+  videoQualityOptions,
   type Option,
 } from '@/lib/settings-options';
 import type { Theme } from '@/design/theme';
@@ -75,28 +76,28 @@ export function Settings() {
         contentPadding={{ start: 16, end: 16, top: 16, bottom: 32 }}
         modifiers={[fillMaxSize()]}
       >
-        <Section colors={colors} title="Appearance">
+        <Section colors={colors} title={t`Appearance`}>
           <Choice
             colors={colors}
-            title="Appearance"
+            title={t`Appearance`}
             icon={ICONS.appearance}
-            options={APPEARANCE_OPTIONS}
+            options={appearanceOptions()}
             value={appearance}
             onChange={setAppearance}
           />
         </Section>
-        <Section colors={colors} title="Home">
+        <Section colors={colors} title={t`Home`}>
           <Choice
             colors={colors}
-            title="Home view"
+            title={t`Home view`}
             icon={ICONS.home}
-            options={HOME_VIEW_OPTIONS}
+            options={homeViewOptions()}
             value={view}
             onChange={setView}
           />
           <Row
             colors={colors}
-            title="Show idle workspaces"
+            title={t`Show idle workspaces`}
             icon={ICONS.idle}
             onPress={() => update({ activity: showIdle ? 'live' : 'all' })}
             trailing={
@@ -108,10 +109,10 @@ export function Settings() {
             }
           />
         </Section>
-        <Section colors={colors} title="Notifications" footer={NOTIFICATIONS_FOOTER}>
+        <Section colors={colors} title={t`Notifications`} footer={notificationsFooter()}>
           <Row
             colors={colors}
-            title="Notify when something needs attention"
+            title={t`Notify when something needs attention`}
             icon={ICONS.notifications}
             onPress={() => (prefs.enabled ? updateNotifications({ enabled: false }) : void enable())}
             trailing={
@@ -127,8 +128,8 @@ export function Settings() {
                 <Choice
                   key={category}
                   colors={colors}
-                  title={NOTIFY_CATEGORY_LABELS[category]}
-                  options={NOTIFY_LEVEL_OPTIONS}
+                  title={notifyCategoryLabel(category)}
+                  options={notifyLevelOptions()}
                   value={prefs.levels[category]}
                   onChange={(level) => setLevel(category, level)}
                 />
@@ -137,9 +138,9 @@ export function Settings() {
           {prefs.enabled && prefs.levels.stuck !== 'off' ? (
             <Choice
               colors={colors}
-              title="Stuck after"
+              title={t`Stuck after`}
               icon={ICONS.notifications}
-              options={STUCK_MINUTES_OPTIONS}
+              options={stuckMinutesOptions()}
               value={String(prefs.stuckMinutes)}
               onChange={(value) => updateNotifications({ stuckMinutes: Number(value) })}
             />
@@ -147,26 +148,26 @@ export function Settings() {
           {prefs.enabled ? (
             <Choice
               colors={colors}
-              title="Quiet hours"
+              title={t`Quiet hours`}
               icon={ICONS.idle}
-              options={QUIET_HOURS_OPTIONS}
+              options={quietHoursOptions()}
               value={quietHoursValue(prefs.quietHours)}
               onChange={(value) => updateNotifications({ quietHours: parseQuietHoursValue(value) })}
             />
           ) : null}
         </Section>
-        <Section colors={colors} title="Device view" footer={VIDEO_QUALITY_FOOTER}>
+        <Section colors={colors} title={t`Device view`} footer={videoQualityFooter()}>
           <Choice
             colors={colors}
-            title="Video quality"
+            title={t`Video quality`}
             icon={ICONS.video}
-            options={VIDEO_QUALITY_OPTIONS}
+            options={videoQualityOptions()}
             value={videoQuality}
             onChange={setVideoQuality}
           />
         </Section>
         {connections.length > 0 ? (
-          <Section colors={colors} title="Machines" footer={anyReadOnly ? READ_ONLY_FOOTER : undefined}>
+          <Section colors={colors} title={t`Machines`} footer={anyReadOnly ? readOnlyFooter() : undefined}>
             {connections.map(({ mac, state, missing, connection }) => {
               const scope = pairingScope(state);
               return (
@@ -176,7 +177,11 @@ export function Settings() {
                   title={mac.name}
                   icon={ICONS.machine}
                   value={
-                    scope === 'control' ? 'Can control' : scope === 'read' ? 'Read-only' : describeState(state, missing)
+                    scope === 'control'
+                      ? t`Can control`
+                      : scope === 'read'
+                        ? t`Read-only`
+                        : describeState(state, missing)
                   }
                   valueColor={scope === 'read' ? colors.warning : undefined}
                   onPress={() =>
@@ -190,7 +195,7 @@ export function Settings() {
           </Section>
         ) : null}
         {connections.some(({ state }) => pairingScope(state) === 'control') ? (
-          <Section colors={colors} title="Replay" footer={REPLAY_FOOTER}>
+          <Section colors={colors} title={t`Replay`} footer={replayFooter()}>
             {connections
               .filter(({ state }) => pairingScope(state) === 'control')
               .map(({ mac, connection }) => (
@@ -198,11 +203,11 @@ export function Settings() {
               ))}
           </Section>
         ) : null}
-        <Section colors={colors} title="More">
-          <Row colors={colors} title="About Stim" icon={ICONS.about} onPress={() => router.push('/about')} />
+        <Section colors={colors} title={t`More`}>
+          <Row colors={colors} title={t`About Stim`} icon={ICONS.about} onPress={() => router.push('/about')} />
           <Row
             colors={colors}
-            title="Open source licenses"
+            title={t`Open source licenses`}
             icon={ICONS.about}
             onPress={() => router.push('/licenses')}
           />
@@ -230,9 +235,9 @@ function RecordingRow({
   return (
     <Row
       colors={colors}
-      title={`Record on ${name}`}
+      title={t`Record on ${name}`}
       icon={ICONS.video}
-      value={setting.fromEnvironment ? 'Set by STIM_RECORDING on the Mac' : (setting.error ?? undefined)}
+      value={setting.fromEnvironment ? t`Set by STIM_RECORDING on the Mac` : (setting.error ?? undefined)}
       valueColor={setting.error ? colors.error : undefined}
       onPress={() => !locked && setting.set(!setting.enabled)}
       trailing={

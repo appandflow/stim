@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -37,8 +39,12 @@ export function WorkspaceResources({ path }: { path: string }) {
   if (!env) {
     return (
       <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-        <Text variant="title">Status</Text>
-        <Text tone="secondary">This workspace is no longer in the status.</Text>
+        <Text variant="title">
+          <Trans>Status</Trans>
+        </Text>
+        <Text tone="secondary">
+          <Trans>This workspace is no longer in the status.</Trans>
+        </Text>
       </View>
     );
   }
@@ -48,16 +54,21 @@ export function WorkspaceResources({ path }: { path: string }) {
   const rows = processRows(env, devices, status?.machine);
   const series = workspaceSeries(history, path);
   const free = workspaceVolumeFree(machineUsage);
+  const minutes = series?.minutes ?? 0;
+  const peakCpu = series?.peakCpuPercent == null ? null : formatCpu(series.peakCpuPercent);
+  const freeSpace = free === null ? '' : formatBytes(free);
   const diskNote = [
     diskBreakdown(env),
-    free === null ? null : `The Mac volume that holds workspaces has ${formatBytes(free)} free.`,
+    free === null ? null : t`The Mac volume that holds workspaces has ${freeSpace} free.`,
   ]
     .filter(Boolean)
     .join(' ');
   return (
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
       <View style={styles.titles}>
-        <Text variant="title">Status</Text>
+        <Text variant="title">
+          <Trans>Status</Trans>
+        </Text>
         <Text variant="callout" weight="semibold" tone={stage.tone}>
           {stage.label}
           {stage.subtitle ? (
@@ -67,40 +78,40 @@ export function WorkspaceResources({ path }: { path: string }) {
           ) : null}
         </Text>
         <Text variant="footnote" tone="secondary">
-          {series && series.minutes > 0 ? `This workspace \u00B7 last ${series.minutes} min` : 'This workspace'}
+          {series && series.minutes > 0 ? t`This workspace \u00B7 last ${minutes} min` : t`This workspace`}
         </Text>
       </View>
       <View style={styles.tiles}>
         <Tile
-          label="CPU"
+          label={t`CPU`}
           value={usage.cpuPercent === null ? '\u2014' : formatCpu(usage.cpuPercent)}
           bars={series?.cpuPercent ?? []}
-          note={series?.peakCpuPercent == null ? null : `peak ${formatCpu(series.peakCpuPercent)}`}
+          note={peakCpu === null ? null : t`peak ${peakCpu}`}
         />
         <Tile
-          label="Memory"
+          label={t`Memory`}
           value={usage.memoryMb === null ? '\u2014' : formatMemoryMb(usage.memoryMb)}
           bars={series?.memoryMb ?? []}
           note={series?.memoryChangeMb == null ? null : memoryChange(series.memoryChangeMb)}
         />
         <Tile
-          label="Disk"
+          label={t`Disk`}
           value={usage.diskBytes === null ? '\u2014' : formatBytes(usage.diskBytes)}
           bars={[]}
-          note={free === null ? null : `${formatBytes(free)} free`}
+          note={free === null ? null : t`${freeSpace} free`}
         />
       </View>
       {rows.length ? (
         <ListSection>
           <View style={styles.tableRow}>
             <Text variant="caption" tone="tertiary" style={styles.grow}>
-              Process
+              <Trans>Process</Trans>
             </Text>
             <Text variant="caption" tone="tertiary" style={styles.cpu}>
-              CPU
+              <Trans>CPU</Trans>
             </Text>
             <Text variant="caption" tone="tertiary" style={styles.memory}>
-              Memory
+              <Trans>Memory</Trans>
             </Text>
           </View>
           {rows.map((row) => (
@@ -119,7 +130,7 @@ export function WorkspaceResources({ path }: { path: string }) {
         </ListSection>
       ) : (
         <Text variant="footnote" tone="secondary">
-          Nothing in this workspace is using CPU or memory now.
+          <Trans>Nothing in this workspace is using CPU or memory now.</Trans>
         </Text>
       )}
       {diskNote ? (

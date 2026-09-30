@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -31,18 +33,21 @@ export function AgentFeed({
 }) {
   const actions = useAgentActions(workspace, slot, deviceId, KEPT);
   const shown = at === undefined ? [] : actionsAt(actions, at).slice(0, ROWS);
+  const list = shown
+    .map(({ record }) => {
+      const { msg } = record;
+      const time = clockTime(record.ts);
+      return t`${msg}, ${time}`;
+    })
+    .join('; ');
+  const label =
+    at === undefined ? t`Agent actions, loading` : shown.length ? t`Agent actions: ${list}` : t`No agent action yet`;
   return (
     <Touch
       feedback="opacity"
       onPress={onOpen}
-      accessibilityLabel={
-        at === undefined
-          ? 'Agent actions, loading'
-          : shown.length
-            ? `Agent actions: ${shown.map(({ record }) => `${record.msg}, ${clockTime(record.ts)}`).join('; ')}`
-            : 'No agent action yet'
-      }
-      accessibilityHint="Shows every agent action on this device"
+      accessibilityLabel={label}
+      accessibilityHint={t`Shows every agent action on this device`}
       style={styles.root}
     >
       {shown.length ? (
@@ -76,7 +81,11 @@ export function AgentFeed({
         })
       ) : at === undefined ? null : (
         <Text variant="caption" maxFontSizeMultiplier={1.2} style={styles.empty}>
-          {at === null ? 'No agent action on this device yet.' : 'No agent action loaded before this moment.'}
+          {at === null ? (
+            <Trans>No agent action on this device yet.</Trans>
+          ) : (
+            <Trans>No agent action loaded before this moment.</Trans>
+          )}
         </Text>
       )}
     </Touch>

@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useRef, useState, type ReactNode } from 'react';
@@ -63,14 +65,16 @@ export function DeviceTile({
       {tildeHome(warning, home)}
     </Text>
   ));
+  const leaseLeft = device.leaseExpiresAt ? formatDuration(Math.max(0, Date.parse(device.leaseExpiresAt) - now)) : '';
   const leasePills = device.physical
     ? [
-        <Pill key="physical">Physical</Pill>,
-        device.leaseExpiresAt ? (
-          <Pill key="lease">{`Leased \u00B7 ${formatDuration(Math.max(0, Date.parse(device.leaseExpiresAt) - now))} left`}</Pill>
-        ) : null,
+        <Pill key="physical">
+          <Trans>Physical</Trans>
+        </Pill>,
+        device.leaseExpiresAt ? <Pill key="lease">{t`Leased \u00B7 ${leaseLeft} left`}</Pill> : null,
       ]
     : [];
+  const { name: deviceName, state: deviceState } = device;
   const header = (
     <View style={styles.header}>
       <Text variant="callout" weight="semibold" numberOfLines={1} style={styles.name}>
@@ -88,7 +92,7 @@ export function DeviceTile({
       <Card>
         {header}
         <Text variant="footnote" tone="tertiary" style={styles.stateLine}>
-          {device.platform === 'web' ? 'Closed' : `Not running \u00B7 ${device.state}`}
+          {device.platform === 'web' ? t`Closed` : t`Not running \u00B7 ${deviceState}`}
         </Text>
         {leasePills.length ? <View style={styles.badges}>{leasePills}</View> : null}
         {notes.length ? <View style={styles.notes}>{notes}</View> : null}
@@ -99,18 +103,20 @@ export function DeviceTile({
     ...leasePills,
     appClosed && !frame ? (
       <Pill key="closed" tone="error">
-        App closed
+        <Trans>App closed</Trans>
       </Pill>
     ) : null,
     device.page?.error ? (
       <Pill key="page" tone="warning">
-        Page failed to load
+        <Trans>Page failed to load</Trans>
       </Pill>
     ) : null,
-    streams && frame?.posture ? <Pill key="posture">{frame.posture === 'folded' ? 'Folded' : 'Unfolded'}</Pill> : null,
+    streams && frame?.posture ? (
+      <Pill key="posture">{frame.posture === 'folded' ? t`Folded` : t`Unfolded`}</Pill>
+    ) : null,
     streams && delayed ? (
       <Pill key="delayed" tone="warning">
-        {delayedReason ? 'Screen paused' : 'Screen updates delayed'}
+        {delayedReason ? t`Screen paused` : t`Screen updates delayed`}
       </Pill>
     ) : null,
   ].filter(Boolean);
@@ -120,9 +126,9 @@ export function DeviceTile({
   const placeholder = build ? (
     <BuildPlaceholder name={platformName(build.platform)} build={build} />
   ) : noApp ? (
-    <Placeholder title="No app installed" subtitle="Fix the build and run it again" />
+    <Placeholder title={t`No app installed`} subtitle={t`Fix the build and run it again`} />
   ) : !streams ? (
-    <Placeholder title="No live screen" subtitle={unservedReason(device)} />
+    <Placeholder title={t`No live screen`} subtitle={unservedReason(device)} />
   ) : null;
   return (
     <Card>
@@ -143,7 +149,11 @@ export function DeviceTile({
             <Touch
               ref={thumbnail}
               onPress={() => mac && openDeviceViewer(thumbnail.current, target, frame)}
-              accessibilityLabel={`Open the live screen of ${device.name}${appClosed ? ', app closed' : ''}`}
+              accessibilityLabel={
+                appClosed
+                  ? t`Open the live screen of ${deviceName}, app closed`
+                  : t`Open the live screen of ${deviceName}`
+              }
             >
               <Image
                 source={{ uri: `data:${frame.mime};base64,${frame.data}` }}
@@ -153,19 +163,19 @@ export function DeviceTile({
                 ]}
                 contentFit="contain"
                 transition={0}
-                accessibilityLabel={`Latest frame of ${device.name}`}
+                accessibilityLabel={t`Latest frame of ${deviceName}`}
               />
               {appClosed && !zoomedAway ? (
                 <View style={styles.closed} pointerEvents="none">
                   <Text variant="footnote" weight="semibold" style={styles.closedText}>
-                    App closed
+                    <Trans>App closed</Trans>
                   </Text>
                 </View>
               ) : null}
             </Touch>
           ) : (
             <Text variant="footnote" style={styles.waiting}>
-              {error ?? 'Waiting for frames'}
+              {error ?? t`Waiting for frames`}
             </Text>
           )}
         </View>
@@ -215,7 +225,7 @@ function Placeholder({ title, subtitle, children }: { title: string; subtitle?: 
 function BuildPlaceholder({ name, build }: { name: string; build: BuildReport }) {
   const { phase, counts } = currentPhaseLabel(build);
   return (
-    <Placeholder title={`Waiting for the ${name} build`} subtitle={[phase, counts].filter(Boolean).join(' \u00B7 ')} />
+    <Placeholder title={t`Waiting for the ${name} build`} subtitle={[phase, counts].filter(Boolean).join(' \u00B7 ')} />
   );
 }
 
@@ -223,7 +233,7 @@ export function WarmingPlaceholder({ subtitle }: { subtitle: string | null }) {
   return (
     <Card>
       <View style={styles.warming}>
-        <Placeholder title="Warming the workspace" subtitle={subtitle ?? undefined} />
+        <Placeholder title={t`Warming the workspace`} subtitle={subtitle ?? undefined} />
       </View>
     </Card>
   );
@@ -236,6 +246,8 @@ function AgentRow({ env, device, deviceId }: { env: EnvironmentState; device: De
   const now = useNow(15_000);
   const [latest] = useAgentActions(env.path, device.slot, deviceId, 1);
   const row = agentRow(device.activity, latest ? { ts: latest.record.ts, msg: latest.record.msg } : null, now);
+  const tool = row.tool ?? t`No agent`;
+  const { text } = row;
   return (
     <Touch
       feedback="row"
@@ -245,12 +257,12 @@ function AgentRow({ env, device, deviceId }: { env: EnvironmentState; device: De
           params: { id: macId, path: env.path, platform: device.platform, slot: device.slot, device: deviceId },
         })
       }
-      accessibilityLabel={`${row.tool ?? 'No agent'}, ${row.text}`}
-      accessibilityHint="Shows the agent actions on this device"
+      accessibilityLabel={t`${tool}, ${text}`}
+      accessibilityHint={t`Shows the agent actions on this device`}
       style={styles.agent}
     >
       <Text variant="footnote" weight="semibold" tone={row.tool ? 'brand' : 'tertiary'}>
-        {row.tool ?? 'No agent'}
+        {tool}
       </Text>
       <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.agentText}>
         {row.text}

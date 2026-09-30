@@ -6,7 +6,7 @@ import {
   LONG_GAP_MS,
   markerSeek,
   positionOf,
-  shortDuration,
+  replayDuration,
   stepFrom,
   timeAt,
   WINDOW_STEP_MS,
@@ -112,7 +112,7 @@ describe('the replay timeline', () => {
   });
 
   it('names durations in their largest unit', () => {
-    expect([40_000, 14 * MINUTE, 2 * HOUR, 72 * HOUR].map(shortDuration)).toEqual(['40s', '14m', '2h', '3d']);
+    expect([40_000, 14 * MINUTE, 2 * HOUR, 72 * HOUR].map(replayDuration)).toEqual(['40s', '14m', '2h', '3d']);
   });
 
   it('steps to the next or previous agent action, skipping errors and the action it stands on', () => {

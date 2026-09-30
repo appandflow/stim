@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { useEffect } from 'react';
 import { Alert, AppState } from 'react-native';
 import * as Updates from 'expo-updates';
@@ -17,13 +18,16 @@ export function useAppUpdate(): AppUpdateState {
 
 /** Asks before restarting into the downloaded update, and reports a restart that fails. */
 export function confirmRestartToUpdate(): void {
-  Alert.alert('Restart to update?', 'Stim restarts to apply the new version.', [
-    { text: 'Cancel', style: 'cancel' },
+  Alert.alert(t`Restart to update?`, t`Stim restarts to apply the new version.`, [
+    { text: t`Cancel`, style: 'cancel' },
     {
-      text: 'Restart',
+      text: t`Restart`,
       onPress: () => {
         Updates.reloadAsync().catch((error: unknown) =>
-          Alert.alert('Could not restart', error instanceof Error ? error.message : 'Try closing and reopening Stim.'),
+          Alert.alert(
+            t`Could not restart`,
+            error instanceof Error ? error.message : t`Try closing and reopening Stim.`,
+          ),
         );
       },
     },
