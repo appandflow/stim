@@ -19,17 +19,15 @@ export interface DrawerStatus {
   macId: string | null;
 }
 
-export const UPDATE_READY_TEXT = 'Update ready: restart to apply';
-
 const unreachableText = (machine: DrawerMachine): string =>
   machine.state.kind === 'waiting' ? `Reconnecting to ${machine.name}\u2026` : `Disconnected from ${machine.name}`;
 
 /**
  * The drawer footer's one status line. Highest priority first: a paired machine that's disconnected or
- * reconnecting, a machine critically low on disk, a downloaded update waiting for a restart, a machine getting
+ * reconnecting, a machine critically low on disk, a machine getting
  * low on disk, or else `normalText` (the app's version).
  */
-export function drawerStatus(machines: DrawerMachine[], updateReady: boolean, normalText: string): DrawerStatus {
+export function drawerStatus(machines: DrawerMachine[], normalText: string): DrawerStatus {
   const unreachable = machines.find(
     (m) => !m.missing && (m.state.kind === 'waiting' || m.state.kind === 'refused' || m.state.kind === 'closed'),
   );
@@ -37,8 +35,6 @@ export function drawerStatus(machines: DrawerMachine[], updateReady: boolean, no
 
   const critical = machines.find((m) => m.diskTone === 'critical');
   if (critical) return { text: `${critical.name}: low disk`, tone: 'critical', macId: critical.id };
-
-  if (updateReady) return { text: UPDATE_READY_TEXT, tone: 'normal', macId: null };
 
   const warn = machines.find((m) => m.diskTone === 'warn');
   if (warn) return { text: `${warn.name}: low disk`, tone: 'warn', macId: warn.id };

@@ -11,12 +11,12 @@ import { Icon, type IconName } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { useAppUpdate } from '@/hooks/app-update';
+import { confirmRestartToUpdate, useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
 import { useMacs } from '@/hooks/mac-connection';
 import { useRecents } from '@/hooks/recents';
-import { drawerStatus, UPDATE_READY_TEXT, type DrawerMachine } from '@/lib/drawer-status';
+import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
 import { machineStats } from '@/lib/home';
 import { isShownLive, workspaceTitleAt } from '@/lib/workspaces';
 import { About } from '@/screens/about';
@@ -60,7 +60,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const versionText = `Stim ${Constants.expoConfig?.version ?? ''}${
     Constants.nativeBuildVersion ? ` (${Constants.nativeBuildVersion})` : ''
   }`;
-  const status = drawerStatus(machines, update.ready, versionText);
+  const status = drawerStatus(machines, versionText);
   const statusTone = status.tone === 'critical' ? 'error' : status.tone === 'warn' ? 'warning' : 'secondary';
 
   return (
@@ -106,6 +106,9 @@ export function Menu({ onClose }: { onClose: () => void }) {
           />
         ) : null}
         <NavRow icon="plus" title="Pair a machine" selected={false} onPress={() => go('/pair')} />
+        {update.ready ? (
+          <NavRow icon="arrow.clockwise" title="Restart to update" selected={false} onPress={confirmRestartToUpdate} />
+        ) : null}
         {recentRows.length > 0 ? (
           <>
             <Text variant="callout" weight="medium" tone="secondary" style={styles.sectionTitle}>
@@ -152,7 +155,6 @@ export function Menu({ onClose }: { onClose: () => void }) {
             </Text>
           </View>
           <View style={styles.footerStatusRow}>
-            {status.text === UPDATE_READY_TEXT ? <View style={styles.updateDot} /> : null}
             <Text variant="footnote" tone={statusTone} numberOfLines={1} style={styles.grow}>
               {status.text}
             </Text>
@@ -296,5 +298,4 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.primary,
   },
   countText: { color: theme.colors.onPrimary, fontVariant: ['tabular-nums'] },
-  updateDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
 }));

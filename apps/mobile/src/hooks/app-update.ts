@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AppState } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import * as Updates from 'expo-updates';
 
 import { updateCheckDue } from '@/lib/update-check';
@@ -13,6 +13,21 @@ export interface AppUpdateState {
 export function useAppUpdate(): AppUpdateState {
   const { isUpdatePending } = Updates.useUpdates();
   return { ready: isUpdatePending };
+}
+
+/** Asks before restarting into the downloaded update, and reports a restart that fails. */
+export function confirmRestartToUpdate(): void {
+  Alert.alert('Restart to update?', 'Stim restarts to apply the new version.', [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Restart',
+      onPress: () => {
+        Updates.reloadAsync().catch((error: unknown) =>
+          Alert.alert('Could not restart', error instanceof Error ? error.message : 'Try closing and reopening Stim.'),
+        );
+      },
+    },
+  ]);
 }
 
 async function downloadAvailableUpdate(): Promise<void> {
