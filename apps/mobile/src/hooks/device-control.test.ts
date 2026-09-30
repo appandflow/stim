@@ -35,6 +35,7 @@ test('ends a control session that begins after the screen unmounted', async () =
     connection: connection as unknown as StimConnection,
     state: {
       kind: 'open',
+      protocol: 1,
       server: { name: 'stim-server', version: '1', stim: '1' },
       actions: null,
       capabilities: ['control'],

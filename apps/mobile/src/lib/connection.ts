@@ -19,6 +19,8 @@ export type ConnectionState =
   | {
       kind: 'open';
       server: Methods['hello']['result']['server'];
+      /** The protocol version the server answered `hello` with. */
+      protocol: number;
       actions: ActionName[] | null;
       capabilities: string[];
       /** What the server serves beyond the base protocol, such as `physical-android`. */
@@ -207,6 +209,7 @@ export class StimConnection {
           this.options.onState?.({
             kind: 'open',
             server: hello.server,
+            protocol: hello.protocol,
             actions: hello.actions ?? null,
             capabilities: hello.capabilities,
             features: hello.features ?? [],

@@ -72,7 +72,7 @@ function RootLayoutContent() {
       border: colors.border,
     },
   };
-  const sheet = (detents: number[]) =>
+  const sheet = (detents: number[] | 'fitToContents') =>
     ({
       presentation: 'formSheet',
       headerShown: false,
@@ -103,7 +103,7 @@ function RootLayoutContent() {
                   >
                     <Stack.Screen name="index" options={{ title: t`Stim` }} />
                     <Stack.Screen name="filters" options={sheet([0.6, 1])} />
-                    <Stack.Screen name="about" options={sheet([0.5, 1])} />
+                    <Stack.Screen name="about" options={sheet(Platform.OS === 'ios' ? 'fitToContents' : [0.65, 1])} />
                     <Stack.Screen
                       name="settings"
                       options={{

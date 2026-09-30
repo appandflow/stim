@@ -1,60 +1,189 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
+import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
+import { Image } from 'expo-image';
+import * as Linking from 'expo-linking';
+import { useRouter } from 'expo-router';
 import * as Updates from 'expo-updates';
-import { View } from 'react-native';
+import { useState } from 'react';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Button } from '@/components/button';
+import { ListRow, ListSection } from '@/components/list';
 import { ScrollView } from '@/components/lists';
 import { describeState } from '@/components/mac-chip';
 import { Text } from '@/components/text';
 import { useMacs, type PairedConnection } from '@/hooks/machines';
+import { formatDateTime } from '@/intl/format';
+import {
+  bugReportUrl,
+  plainState,
+  diagnosticText,
+  shortId,
+  versionWithBuild,
+  type AboutApp,
+  type AboutDevice,
+  type AboutMachine,
+} from '@/lib/about';
+import { LICENSES } from '@/lib/licenses';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 
-export function About() {
+const ICON = require('@/assets/images/icon-ios.png');
+
+/** The generated list starts with Stim's own license. */
+const STIM_LICENSE = 0;
+
+const WEBSITE = 'https://stim.appandflow.com';
+const REPOSITORY = 'https://github.com/appandflow/stim';
+const APP_AND_FLOW = 'https://appandflow.com';
+
+function appInfo(): AboutApp {
+  return {
+    version: Constants.expoConfig?.version ?? '',
+    build: Constants.nativeBuildVersion ?? null,
+    platform: Platform.OS,
+    runtimeVersion: Updates.runtimeVersion,
+    channel: Updates.channel,
+    updateId: Updates.updateId,
+    updatedAt: Updates.createdAt,
+    embedded: Updates.isEmbeddedLaunch,
+    protocol: PROTOCOL_VERSION,
+  };
+}
+
+function deviceInfo(): AboutDevice {
+  return {
+    os: Platform.OS,
+    osVersion: String(Platform.Version),
+    model: (Platform.OS === 'android' ? Platform.constants.Model : Constants.platform?.ios?.model) || null,
+    locale: Intl.DateTimeFormat().resolvedOptions().locale,
+  };
+}
+
+function machineInfo({ mac, state, missing }: PairedConnection): AboutMachine {
+  if (state.kind !== 'open')
+    return { name: mac.name, detail: { state: describeState(state, missing), plain: plainState(state, missing) } };
+  return {
+    name: mac.name,
+    detail: { stim: state.server.stim, server: state.server.version, protocol: state.protocol },
+  };
+}
+
+export function About({ onClose }: { onClose?: () => void }) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const { connections } = useMacs();
-  const version = Constants.expoConfig?.version ?? '';
-  const update = Updates.isEmbeddedLaunch || !Updates.updateId ? t`embedded` : Updates.updateId;
+  const [copied, setCopied] = useState(false);
+  const app = appInfo();
+
+  const version = versionWithBuild(app);
+  const published = app.updatedAt ? formatDateTime(app.updatedAt, { dateStyle: 'medium', timeStyle: 'short' }) : null;
+  const builtIn = app.embedded || !app.updateId;
+  const copy = () =>
+    void Clipboard.setStringAsync(diagnosticText(app, connections.map(machineInfo), deviceInfo())).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  const open = (url: string) => void Linking.openURL(url);
   return (
     <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: theme.colors.background }}>
-      <Text variant="title">
-        <Trans>About</Trans>
-      </Text>
-      <View style={styles.group}>
-        <Text variant="body" weight="medium">
-          <Trans>
-            Stim for phones {version} \u00B7 protocol {PROTOCOL_VERSION}
-          </Trans>
+      <View style={styles.header}>
+        <Image source={ICON} style={styles.icon} accessibilityIgnoresInvertColors />
+        <Text variant="title">
+          <Trans>Stim</Trans>
         </Text>
-        <Text variant="footnote" tone="secondary">
-          <Trans>Update {update}</Trans>
+        <Text variant="callout" tone="secondary" selectable>
+          <Trans>Version {version}</Trans>
         </Text>
-        {connections.map((c) => (
-          <Text key={c.mac.id} variant="footnote" tone="secondary">
-            {connectionLine(c)}
-          </Text>
-        ))}
       </View>
+      <ListSection
+        title={t`This phone`}
+        action={
+          <Button
+            variant="plain"
+            size="small"
+            title={copied ? t`Copied` : t`Copy`}
+            accessibilityLabel={copied ? t`Copied` : t`Copy versions`}
+            onPress={copy}
+          />
+        }
+      >
+        {app.runtimeVersion ? <ListRow title={t`Runtime`} value={shortId(app.runtimeVersion)} /> : null}
+        {app.channel ? <ListRow title={t`Channel`} value={app.channel} /> : null}
+        <ListRow
+          title={t`Update`}
+          value={builtIn ? t`Built-in` : shortId(app.updateId ?? '')}
+          subtitle={!builtIn && published ? t`Published ${published}` : undefined}
+        />
+        <ListRow title={t`Protocol`} value={String(app.protocol)} />
+      </ListSection>
+      {connections.length > 0 ? (
+        <ListSection title={t`Machines`}>
+          {connections.map((connection) => {
+            const { name, detail } = machineInfo(connection);
+            return 'stim' in detail ? (
+              <MachineRow key={connection.mac.id} name={name} stim={detail.stim} server={detail.server} />
+            ) : (
+              <ListRow
+                key={connection.mac.id}
+                title={name}
+                value={detail.state}
+                valueTone={connection.state.kind === 'refused' ? 'warning' : 'secondary'}
+              />
+            );
+          })}
+        </ListSection>
+      ) : null}
+      <ListSection>
+        <ListRow
+          title={t`Report a bug`}
+          accessory="chevron"
+          onPress={() => open(bugReportUrl(app, connections.map(machineInfo), deviceInfo()))}
+        />
+        <ListRow title={t`Website`} accessory="chevron" onPress={() => open(WEBSITE)} />
+        <ListRow title={t`GitHub`} accessory="chevron" onPress={() => open(REPOSITORY)} />
+        <ListRow
+          title={t`License`}
+          value={LICENSES[STIM_LICENSE].license}
+          accessory="chevron"
+          onPress={() => {
+            onClose?.();
+            router.push({ pathname: '/license', params: { index: String(STIM_LICENSE) } });
+          }}
+        />
+        <ListRow
+          title={t`Open source licenses`}
+          accessory="chevron"
+          onPress={() => {
+            onClose?.();
+            router.push('/licenses');
+          }}
+        />
+        <ListRow title={t`Made by App&Flow`} accessory="chevron" onPress={() => open(APP_AND_FLOW)} />
+      </ListSection>
     </ScrollView>
   );
 }
 
-function connectionLine({ mac: { name }, state, missing }: PairedConnection): string {
-  if (state.kind !== 'open') return `${name}: ${describeState(state, missing)}`;
-  const { stim, version } = state.server;
-  return t`${name}: stim ${stim} \u00B7 server ${version}`;
+function MachineRow({ name, stim, server }: { name: string; stim: string; server: string }) {
+  return <ListRow title={name} subtitle={t`stim ${stim} \u00B7 server ${server}`} />;
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: { padding: theme.space.xxl, paddingTop: theme.space.huge, gap: theme.space.xl },
-  group: {
-    borderRadius: theme.radius.card,
+  container: {
+    padding: theme.space.xxl,
+    paddingTop: theme.space.xxxl,
+    paddingBottom: theme.space.huge,
+    gap: theme.space.xl,
+  },
+  header: { alignItems: 'center', gap: theme.space.xs },
+  icon: {
+    width: 64,
+    height: 64,
+    marginBottom: theme.space.md,
+    borderRadius: theme.radius.sheet,
     borderCurve: 'continuous',
-    borderWidth: 1,
-    padding: theme.space.xl,
-    gap: theme.space.sm,
-    backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.border,
   },
 }));

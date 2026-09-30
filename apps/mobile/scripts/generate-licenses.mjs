@@ -94,7 +94,8 @@ function generate() {
     return textIndex.get(text);
   };
 
-  const stim = { name: 'Stim', version: read(join(app, 'package.json')).version, license: 'MIT' };
+  const { version, license } = read(join(app, 'package.json'));
+  const stim = { name: 'Stim', version, license };
   const packages = [
     {
       ...stim,

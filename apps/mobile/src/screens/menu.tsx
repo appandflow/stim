@@ -195,7 +195,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
             accessibilityLabel={t`Close About`}
           />
           <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
-            <About />
+            <About onClose={() => setAboutOpen(false)} />
           </View>
         </Modal>
       ) : null}
@@ -298,7 +298,7 @@ const styles = StyleSheet.create((theme) => ({
   footerStatusRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   scrim: { flex: 1, backgroundColor: theme.colors.scrim },
   sheet: {
-    height: '50%',
+    maxHeight: '85%',
     borderTopLeftRadius: theme.radius.sheet,
     borderTopRightRadius: theme.radius.sheet,
     overflow: 'hidden',

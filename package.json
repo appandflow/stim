@@ -2,6 +2,7 @@
   "name": "stim-monorepo",
   "private": true,
   "description": "Workspace root. The published packages live in packages/.",
+  "license": "MIT",
   "workspaces": [
     "packages/*"
   ],

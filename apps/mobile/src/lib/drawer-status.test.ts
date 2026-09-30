@@ -5,6 +5,7 @@ const machine = (patch: Partial<DrawerMachine> = {}): DrawerMachine => ({
   name: 'MacBook Pro',
   state: {
     kind: 'open',
+    protocol: 1,
     server: { home: null, stim: '1', version: '1' } as never,
     actions: null,
     capabilities: [],

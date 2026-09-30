@@ -7,6 +7,7 @@ import type { EnvironmentState, MachineUsage, StatusPayload } from '@/protocol/t
 const NOW = Date.parse('2026-09-26T12:00:00Z');
 const OPEN: ConnectionState = {
   kind: 'open',
+  protocol: 1,
   server: { name: 'm', version: '1', stim: '1' },
   actions: null,
   capabilities: [],
