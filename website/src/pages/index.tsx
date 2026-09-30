@@ -11,6 +11,8 @@ import ThemeSwitch from '@site/src/components/ThemeSwitch';
 import { canTilt } from '../components/canTilt';
 import styles from './index.module.css';
 
+const desktopDownloadUrl = 'https://github.com/appandflow/stim/releases/download/desktop-latest/Stim.dmg';
+
 function tapIllustration({ currentTarget, clientX, clientY, detail }: MouseEvent<HTMLButtonElement>) {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
@@ -70,6 +72,7 @@ export default function Home(): ReactNode {
           </Link>
           <Link to="/docs/getting-started">Docs</Link>
           <Link to="/benchmarks">Benchmarks</Link>
+          <Link to="/docs/desktop#download">Download</Link>
           <a href="https://github.com/appandflow/stim" aria-label="Stim on GitHub">
             GitHub
           </a>
@@ -84,9 +87,18 @@ export default function Home(): ReactNode {
               done.
             </p>
             <div className={styles.actions}>
-              <Link className={styles.primaryButton} to="/docs/getting-started">
-                Get started
-              </Link>
+              <div className={styles.buttons}>
+                <Link className={styles.primaryButton} to="/docs/getting-started">
+                  Get started
+                </Link>
+                <a className={styles.secondaryButton} href={desktopDownloadUrl}>
+                  Download for Mac
+                </a>
+              </div>
+              <p className={styles.downloadNote}>
+                Stim Desktop &middot; macOS 14+ &middot; Apple silicon &amp; Intel &middot;{' '}
+                <Link to="/docs/desktop#download">Details</Link>
+              </p>
               <div className={styles.install}>
                 <StimInstallTabs />
               </div>

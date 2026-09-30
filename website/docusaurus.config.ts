@@ -85,6 +85,7 @@ const config: Config = {
           label: 'Docs',
         },
         { to: '/benchmarks', label: 'Benchmarks', position: 'left' },
+        { to: '/docs/desktop#download', label: 'Download', position: 'left' },
         { to: '/docs/changelog', label: 'Changelog', position: 'left' },
         {
           href: 'https://www.npmjs.com/package/stim',
@@ -107,6 +108,7 @@ const config: Config = {
             { label: 'Getting started', to: '/docs/getting-started' },
             { label: 'Commands', to: '/docs/commands' },
             { label: 'Worktrees', to: '/docs/worktrees' },
+            { label: 'Download for Mac', to: '/docs/desktop#download' },
           ],
         },
         {
