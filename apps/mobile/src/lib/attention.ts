@@ -1,8 +1,10 @@
+import { t } from '@lingui/core/macro';
+
 import { formatDuration } from '@/intl/format';
 import type { ConnectionState } from '@/lib/connection';
 import { needsAttention } from '@/lib/needs-attention';
 import { tildeHome } from '@/lib/paths';
-import { repositoryRoots, workspaceTitle } from '@/lib/workspaces';
+import { repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
 import type { MachineUsage, StatusPayload } from '@/protocol/types';
 
 export interface AttentionMachine {
@@ -40,16 +42,20 @@ function machineItem(mac: AttentionMachine, now: number): HomeAttentionItem | nu
     target: { kind: 'machine', macId: mac.id } as const,
     key: `${mac.id}\noffline`,
   };
-  if (mac.missing) return { ...base, severity: 'error', detail: 'Not paired: pair again' };
+  if (mac.missing) return { ...base, severity: 'error', detail: t`Not paired: pair again` };
   const { state } = mac;
   if (state.kind === 'refused') {
-    const fix = state.code === 'protocol-unsupported' ? 'needs an update' : 'pair again';
-    return { ...base, severity: 'error', detail: `Refused the connection: ${fix}` };
+    const detail =
+      state.code === 'protocol-unsupported'
+        ? t`Refused the connection: needs an update`
+        : t`Refused the connection: pair again`;
+    return { ...base, severity: 'error', detail };
   }
   if (state.kind === 'open' || (state.kind === 'connecting' && mac.disconnectedAt === null)) return null;
   const lastSeenAt = mac.seenAt ?? mac.disconnectedAt;
-  const seen = lastSeenAt === null ? '' : ` \u00B7 last seen ${formatDuration(now - lastSeenAt)} ago`;
-  return { ...base, severity: 'warning', detail: `Offline${seen}` };
+  if (lastSeenAt === null) return { ...base, severity: 'warning', detail: t`Offline` };
+  const ago = formatDuration(now - lastSeenAt);
+  return { ...base, severity: 'warning', detail: t`Offline \u00B7 last seen ${ago} ago` };
 }
 
 const SEVERITY_RANK = { error: 0, warning: 1 };

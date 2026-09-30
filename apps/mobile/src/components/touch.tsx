@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { useState } from 'react';
 import { Platform } from 'react-native';
 import { EaseView, type Transition } from 'react-native-ease';
@@ -129,7 +130,7 @@ function feedbackProps(feedback: TouchFeedback, theme: Theme): Partial<Touchable
 function stateValue(role: TouchProps['accessibilityRole'], state: TouchProps['accessibilityState']) {
   if (Platform.OS !== 'ios' || !state) return undefined;
   if (role === 'switch' && typeof state.checked === 'boolean') return { text: state.checked ? '1' : '0' };
-  return state.expanded ? { text: 'expanded' } : undefined;
+  return state.expanded ? { text: t`expanded` } : undefined;
 }
 
 /** Gesture Handler's `Touchable` with the app's press feedback, exposed to assistive technology as one button. */

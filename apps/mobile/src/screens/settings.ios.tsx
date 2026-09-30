@@ -15,6 +15,7 @@ import {
   tag,
   tint,
 } from '@expo/ui/swift-ui/modifiers';
+import { t } from '@lingui/core/macro';
 import { router } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import type { SFSymbol } from 'sf-symbols-typescript';
@@ -30,19 +31,19 @@ import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope, type StimConnection } from '@/lib/connection';
 import {
-  APPEARANCE_OPTIONS,
-  NOTIFICATIONS_FOOTER,
-  NOTIFY_CATEGORY_LABELS,
-  NOTIFY_LEVEL_OPTIONS,
-  HOME_VIEW_OPTIONS,
+  appearanceOptions,
+  homeViewOptions,
+  notificationsFooter,
+  notifyCategoryLabel,
+  notifyLevelOptions,
   parseQuietHoursValue,
-  QUIET_HOURS_OPTIONS,
+  quietHoursOptions,
   quietHoursValue,
-  STUCK_MINUTES_OPTIONS,
-  READ_ONLY_FOOTER,
-  REPLAY_FOOTER,
-  VIDEO_QUALITY_FOOTER,
-  VIDEO_QUALITY_OPTIONS,
+  readOnlyFooter,
+  replayFooter,
+  stuckMinutesOptions,
+  videoQualityFooter,
+  videoQualityOptions,
   type Option,
 } from '@/lib/settings-options';
 import type { Theme } from '@/design/theme';
@@ -60,23 +61,23 @@ export function Settings() {
   return (
     <Host style={{ flex: 1 }}>
       <Form modifiers={[scrollContentBackground('hidden'), background(colors.background), tint(colors.primary)]}>
-        <Section title="Appearance">
+        <Section title={t`Appearance`}>
           <Choice
             colors={colors}
-            title="Appearance"
+            title={t`Appearance`}
             symbol="circle.lefthalf.filled"
-            options={APPEARANCE_OPTIONS}
+            options={appearanceOptions()}
             value={appearance}
             onChange={setAppearance}
             modifiers={rowModifiers}
           />
         </Section>
-        <Section title="Home">
+        <Section title={t`Home`}>
           <Choice
             colors={colors}
-            title="Home view"
+            title={t`Home view`}
             symbol="house"
-            options={HOME_VIEW_OPTIONS}
+            options={homeViewOptions()}
             value={view}
             onChange={setView}
             modifiers={rowModifiers}
@@ -86,23 +87,23 @@ export function Settings() {
             onIsOnChange={(show) => update({ activity: show ? 'all' : 'live' })}
             modifiers={rowModifiers}
           >
-            <RowLabel colors={colors} title="Show idle workspaces" symbol="moon.zzz" />
+            <RowLabel colors={colors} title={t`Show idle workspaces`} symbol="moon.zzz" />
           </Toggle>
         </Section>
         <NotificationsSection colors={colors} value={notifications} modifiers={rowModifiers} />
-        <Section title="Device view" footer={<Text>{VIDEO_QUALITY_FOOTER}</Text>}>
+        <Section title={t`Device view`} footer={<Text>{videoQualityFooter()}</Text>}>
           <Choice
             colors={colors}
-            title="Video quality"
+            title={t`Video quality`}
             symbol="video"
-            options={VIDEO_QUALITY_OPTIONS}
+            options={videoQualityOptions()}
             value={videoQuality}
             onChange={setVideoQuality}
             modifiers={rowModifiers}
           />
         </Section>
         {connections.length > 0 ? (
-          <Section title="Machines" footer={anyReadOnly ? <Text>{READ_ONLY_FOOTER}</Text> : undefined}>
+          <Section title={t`Machines`} footer={anyReadOnly ? <Text>{readOnlyFooter()}</Text> : undefined}>
             {connections.map(({ mac, state, missing, connection }) => {
               const scope = pairingScope(state);
               return (
@@ -112,7 +113,11 @@ export function Settings() {
                   title={mac.name}
                   symbol="laptopcomputer"
                   value={
-                    scope === 'control' ? 'Can control' : scope === 'read' ? 'Read-only' : describeState(state, missing)
+                    scope === 'control'
+                      ? t`Can control`
+                      : scope === 'read'
+                        ? t`Read-only`
+                        : describeState(state, missing)
                   }
                   valueColor={scope === 'read' ? colors.warning : undefined}
                   onPress={() =>
@@ -127,7 +132,7 @@ export function Settings() {
           </Section>
         ) : null}
         {connections.some(({ state }) => pairingScope(state) === 'control') ? (
-          <Section title="Replay" footer={<Text>{REPLAY_FOOTER}</Text>}>
+          <Section title={t`Replay`} footer={<Text>{replayFooter()}</Text>}>
             {connections
               .filter(({ state }) => pairingScope(state) === 'control')
               .map(({ mac, connection }) => (
@@ -141,17 +146,17 @@ export function Settings() {
               ))}
           </Section>
         ) : null}
-        <Section title="More">
+        <Section title={t`More`}>
           <LinkRow
             colors={colors}
-            title="About Stim"
+            title={t`About Stim`}
             symbol="info.circle"
             onPress={() => router.push('/about')}
             modifiers={rowModifiers}
           />
           <LinkRow
             colors={colors}
-            title="Open source licenses"
+            title={t`Open source licenses`}
             symbol="doc.text"
             onPress={() => router.push('/licenses')}
             modifiers={rowModifiers}
@@ -186,22 +191,22 @@ function NotificationsSection({
   const setLevel = (category: OversightCategory, level: NotifyLevel) =>
     update({ levels: { ...prefs.levels, [category]: level } });
   return (
-    <Section title="Notifications" footer={<Text>{NOTIFICATIONS_FOOTER}</Text>}>
+    <Section title={t`Notifications`} footer={<Text>{notificationsFooter()}</Text>}>
       <Toggle
         isOn={prefs.enabled}
         onIsOnChange={(on) => (on ? void enable() : update({ enabled: false }))}
         modifiers={modifiers}
       >
-        <RowLabel colors={colors} title="Notify when something needs attention" symbol="bell.badge" />
+        <RowLabel colors={colors} title={t`Notify when something needs attention`} symbol="bell.badge" />
       </Toggle>
       {prefs.enabled
         ? NOTIFY_CATEGORIES.map((category) => (
             <Choice
               key={category}
               colors={colors}
-              title={NOTIFY_CATEGORY_LABELS[category]}
+              title={notifyCategoryLabel(category)}
               symbol={CATEGORY_SYMBOLS[category]}
-              options={NOTIFY_LEVEL_OPTIONS}
+              options={notifyLevelOptions()}
               value={prefs.levels[category]}
               onChange={(level) => setLevel(category, level)}
               modifiers={modifiers}
@@ -211,9 +216,9 @@ function NotificationsSection({
       {prefs.enabled && prefs.levels.stuck !== 'off' ? (
         <Choice
           colors={colors}
-          title="Stuck after"
+          title={t`Stuck after`}
           symbol="timer"
-          options={STUCK_MINUTES_OPTIONS}
+          options={stuckMinutesOptions()}
           value={String(prefs.stuckMinutes)}
           onChange={(value) => update({ stuckMinutes: Number(value) })}
           modifiers={modifiers}
@@ -222,9 +227,9 @@ function NotificationsSection({
       {prefs.enabled ? (
         <Choice
           colors={colors}
-          title="Quiet hours"
+          title={t`Quiet hours`}
           symbol="moon"
-          options={QUIET_HOURS_OPTIONS}
+          options={quietHoursOptions()}
           value={quietHoursValue(prefs.quietHours)}
           onChange={(value) => update({ quietHours: parseQuietHoursValue(value) })}
           modifiers={modifiers}
@@ -247,11 +252,12 @@ function RecordingToggle({
 }) {
   const setting = useRecordingSetting(connection);
   if (setting.enabled === null) return null;
+  const { error } = setting;
   const title = setting.fromEnvironment
-    ? `Record on ${name} (set by STIM_RECORDING)`
-    : setting.error
-      ? `Record on ${name}: ${setting.error}`
-      : `Record on ${name}`;
+    ? t`Record on ${name} (set by STIM_RECORDING)`
+    : error
+      ? t`Record on ${name}: ${error}`
+      : t`Record on ${name}`;
   return (
     <Toggle
       isOn={setting.enabled}

@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -50,13 +52,14 @@ import { useDeviceStream } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
 import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
-import { grantCommand, READ_ONLY_REASON, allowControlSteps } from '@/components/read-only';
+import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl, useMacConnection, useStatus } from '@/hooks/mac-connection';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
 import { buildTimeline } from '@/lib/replay';
 import { aspectOf, liftAbove } from '@/lib/zoom';
-import { devicesOf, shortUrl, streamsFrames, unservedReason, workspaceTitleAt } from '@/lib/workspaces';
+import { workspaceTitleAt } from '@/lib/workspace-names';
+import { devicesOf, shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
 import type { DevicePlatform, DevicePosture, InputButton, ReplayRate, RotateDirection } from '@/protocol/types';
 
 const LIVE_FPS = 60;
@@ -81,11 +84,20 @@ const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | nul
   dataSaver: { fps: DATA_SAVER_FPS, maxEdge: DATA_SAVER_MAX_EDGE, video: [] },
 };
 
-const POSTURE_LABELS: Record<DevicePosture, string> = {
-  folded: 'Fold',
-  'half-open': 'Half open',
-  unfolded: 'Unfold',
-};
+function postureLabel(posture: DevicePosture): string {
+  switch (posture) {
+    case 'folded':
+      return t`Fold`;
+    case 'half-open':
+      return t`Half open`;
+    case 'unfolded':
+      return t`Unfold`;
+  }
+}
+
+function orientationName(orientation: 'landscape' | 'portrait'): string {
+  return orientation === 'landscape' ? t`landscape` : t`portrait`;
+}
 
 export function DeviceView({
   workspace,
@@ -228,13 +240,15 @@ export function DeviceView({
   const [rotating, setRotating] = useState<'landscape' | 'portrait' | null>(null);
   if (rotating && orientation && orientation !== rotating) {
     setRotating(null);
-    setRotateNote({ text: `Rotated to ${orientation}`, turned: true });
+    const name = orientationName(orientation);
+    setRotateNote({ text: t`Rotated to ${name}`, turned: true });
   }
   useEffect(() => {
     if (!rotating) return;
     const timer = setTimeout(() => {
+      const name = orientationName(rotating);
       setRotateNote({
-        text: `The screen stayed in ${rotating}. The app in front may not support rotating.`,
+        text: t`The screen stayed in ${name}. The app in front may not support rotating.`,
         turned: false,
       });
       setRotating(null);
@@ -282,19 +296,21 @@ export function DeviceView({
     },
   };
 
-  const takeOver = () =>
+  const takeOver = () => {
+    const driverName = driver ?? t`Another client`;
     Alert.alert(
-      'Take over this device?',
-      `${driver ?? 'Another client'} is driving it. Your touches and keys can interfere with its work.`,
+      t`Take over this device?`,
+      t`${driverName} is driving it. Your touches and keys can interfere with its work.`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t`Cancel`, style: 'cancel' },
         {
-          text: 'Take over',
+          text: t`Take over`,
           style: 'destructive',
           onPress: () => control.begin(true),
         },
       ],
     );
+  };
   const seek = (at: number, rate: ReplayRate) => {
     if (controlling) control.end();
     if (!running && replayStart === null) setStartAt(at);
@@ -318,14 +334,14 @@ export function DeviceView({
     setMoving(posture);
     control
       .posture(posture)
-      .catch((cause: Error) => Alert.alert('Posture not changed', cause.message))
+      .catch((cause: Error) => Alert.alert(t`Posture not changed`, cause.message))
       .finally(() => setMoving(null));
   };
   const readOnlyBanner = readOnly ? (
     <View style={styles.banner(true)}>
       <View style={styles.bannerBody}>
         <Text weight="semibold" style={styles.mediaText}>
-          {READ_ONLY_REASON}
+          {readOnlyReason()}
         </Text>
         <Text variant="footnote" style={styles.mediaText}>
           {allowControlSteps(mac?.name, deviceId)}
@@ -333,13 +349,13 @@ export function DeviceView({
         <View style={styles.bannerActions}>
           {deviceId ? (
             <Button
-              title={copied ? 'Copied' : 'Copy command'}
+              title={copied ? t`Copied` : t`Copy command`}
               variant="plain"
               size="small"
               onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
             />
           ) : null}
-          <Button title="Reconnect" variant="plain" size="small" onPress={() => connection?.reconnect()} />
+          <Button title={t`Reconnect`} variant="plain" size="small" onPress={() => connection?.reconnect()} />
         </View>
       </View>
     </View>
@@ -378,23 +394,23 @@ export function DeviceView({
     controlling || readOnly ? (
       <>
         {controlling && overlayControls && !controls.shown ? (
-          <ToolButton label="Replay" onPress={controls.reveal} />
+          <ToolButton label={t`Replay`} onPress={controls.reveal} />
         ) : null}
         <ToolButton
-          label={typing ? 'Hide keyboard' : 'Keyboard'}
+          label={typing ? t`Hide keyboard` : t`Keyboard`}
           disabled={readOnly}
           onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
         />
-        {platform !== 'web' ? <ToolButton label="Home" disabled={readOnly} onPress={() => press('home')} /> : null}
-        {platform !== 'ios' ? <ToolButton label="Back" disabled={readOnly} onPress={() => press('back')} /> : null}
+        {platform !== 'web' ? <ToolButton label={t`Home`} disabled={readOnly} onPress={() => press('home')} /> : null}
+        {platform !== 'ios' ? <ToolButton label={t`Back`} disabled={readOnly} onPress={() => press('back')} /> : null}
         {platform === 'android' ? (
-          <ToolButton label="Apps" disabled={readOnly} onPress={() => press('app-switch')} />
+          <ToolButton label={t`Apps`} disabled={readOnly} onPress={() => press('app-switch')} />
         ) : null}
-        {platform !== 'web' ? <ToolButton label="Lock" disabled={readOnly} onPress={() => press('lock')} /> : null}
+        {platform !== 'web' ? <ToolButton label={t`Lock`} disabled={readOnly} onPress={() => press('lock')} /> : null}
         {(platform === 'android' && !physical) || (platform === 'ios' && !postures.length && !shown) ? (
           <>
-            <ToolButton label="Rotate left" disabled={readOnly} onPress={() => rotate('left')} />
-            <ToolButton label="Rotate right" disabled={readOnly} onPress={() => rotate('right')} />
+            <ToolButton label={t`Rotate left`} disabled={readOnly} onPress={() => rotate('left')} />
+            <ToolButton label={t`Rotate right`} disabled={readOnly} onPress={() => rotate('right')} />
           </>
         ) : null}
         {postures
@@ -402,7 +418,7 @@ export function DeviceView({
           .map((posture) => (
             <ToolButton
               key={posture}
-              label={moving === posture ? 'Moving...' : POSTURE_LABELS[posture]}
+              label={moving === posture ? t`Moving...` : postureLabel(posture)}
               disabled={moving !== null}
               onPress={() => move(posture)}
             />
@@ -425,8 +441,10 @@ export function DeviceView({
   ) : null;
   const model = device?.page
     ? shortUrl(device.page.url)
-    : (device?.model ?? (platform === 'ios' ? 'iOS Simulator' : platform === 'web' ? 'Web' : 'Android Emulator'));
+    : (device?.model ?? (platform === 'ios' ? t`iOS Simulator` : platform === 'web' ? t`Web` : t`Android Emulator`));
   const title = workspaceTitleAt(workspace, status);
+  const subtitle = platform === 'web' ? t`Web \u00B7 ${model}` : t`${model} \u00B7 ${slot}`;
+  const scrubHint = t`Scrub below to replay what it recorded.`;
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -464,9 +482,13 @@ export function DeviceView({
                 {stream.delayed || replayOff ? (
                   <View style={styles.chips}>
                     {stream.delayed ? (
-                      <Pill tone="warning">{stream.delayedReason ?? 'Screen updates delayed'}</Pill>
+                      <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
                     ) : null}
-                    {replayOff ? <Pill>Replay off</Pill> : null}
+                    {replayOff ? (
+                      <Pill>
+                        <Trans>Replay off</Trans>
+                      </Pill>
+                    ) : null}
                   </View>
                 ) : null}
                 <View style={landscape ? styles.row : styles.root}>
@@ -478,8 +500,8 @@ export function DeviceView({
                   >
                     {streams ? null : (
                       <Text style={styles.placeholder}>
-                        {device?.running ? unservedReason(device) : (device?.state ?? 'This device is not running.')}
-                        {canReplay ? ' Scrub below to replay what it recorded.' : ''}
+                        {device?.running ? unservedReason(device) : (device?.state ?? t`This device is not running.`)}
+                        {canReplay ? ` ${scrubHint}` : ''}
                       </Text>
                     )}
                   </View>
@@ -548,7 +570,7 @@ export function DeviceView({
                   keyboardHeight.set(withTiming(0, { duration: 200 }));
                   zoom.close();
                 }}
-                accessibilityLabel="Close"
+                accessibilityLabel={t`Close`}
                 hitSlop={10}
               >
                 <Icon name="xmark" size={22} color={theme.media.text} />
@@ -567,13 +589,13 @@ export function DeviceView({
                 </Text>
                 <View style={styles.subtitleRow}>
                   <Text variant="caption" style={styles.subtitle} numberOfLines={1}>
-                    {platform === 'web' ? `Web \u00B7 ${model}` : `${model} \u00B7 ${slot}`}
+                    {subtitle}
                   </Text>
                   {range?.recording && !replayOff ? (
-                    <View style={styles.driver} accessible accessibilityLabel="Recording for replay">
+                    <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
                       <View style={styles.recordingDot} />
                       <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
-                        Recording
+                        <Trans>Recording</Trans>
                       </Text>
                     </View>
                   ) : null}
@@ -581,7 +603,7 @@ export function DeviceView({
                     <View
                       style={styles.driver}
                       accessible
-                      accessibilityLabel={controlling ? `Also driven by ${driver}` : `Driven by ${driver}`}
+                      accessibilityLabel={controlling ? t`Also driven by ${driver}` : t`Driven by ${driver}`}
                     >
                       <View style={styles.driverDot} />
                       <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
@@ -666,7 +688,7 @@ export function DeviceView({
             <TextInput
               ref={keyboard}
               style={styles.typed}
-              placeholder="Type on the device"
+              placeholder={t`Type on the device`}
               placeholderTextColor={withAlpha(theme.media.text, theme.opacity.disabled)}
               value={typed}
               autoCapitalize="none"
@@ -689,11 +711,11 @@ export function DeviceView({
               }}
               onFocus={() => setTyping(true)}
               onBlur={() => setTyping(false)}
-              accessibilityLabel="Type on the device"
+              accessibilityLabel={t`Type on the device`}
             />
             <Touch onPress={() => keyboard.current?.blur()} hitSlop={8}>
               <Text weight="semibold" tone="brand">
-                Done
+                <Trans>Done</Trans>
               </Text>
             </Touch>
           </Animated.View>
@@ -714,15 +736,16 @@ function Banner({
   readOnly: boolean;
   onTakeOver: () => void;
 }) {
+  const ended = control.kind === 'off' ? control.ended : undefined;
   const message =
     control.kind === 'busy'
       ? control.message
       : control.kind === 'failed'
         ? control.message
-        : control.kind === 'off' && control.ended
-          ? `Control ended. ${control.ended}`
+        : ended
+          ? t`Control ended. ${ended}`
           : control.kind === 'starting'
-            ? 'Starting control...'
+            ? t`Starting control...`
             : null;
   if (!message) return null;
   const offer = (canTakeOver || readOnly) && control.kind === 'busy';
@@ -736,12 +759,12 @@ function Banner({
           onPress={onTakeOver}
           disabled={readOnly}
           defaultOpacity={readOnly ? 0.6 : 1}
-          accessibilityHint={readOnly ? READ_ONLY_REASON : undefined}
+          accessibilityHint={readOnly ? readOnlyReason() : undefined}
           style={styles.bannerButton}
           hitSlop={6}
         >
           <Text weight="semibold" tone="brand" style={readOnly && styles.mutedAction}>
-            Take over
+            <Trans>Take over</Trans>
           </Text>
         </Touch>
       ) : null}
@@ -757,14 +780,14 @@ function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boole
       disabled={disabled}
       defaultOpacity={disabled ? theme.opacity.disabled : 1}
       accessibilityRole="switch"
-      accessibilityLabel="Control"
+      accessibilityLabel={t`Control`}
       accessibilityState={{ checked: on, disabled }}
       hitSlop={7}
       style={styles.control(on)}
     >
       {on ? <Icon name="checkmark" size={13} color={theme.colors.onPrimary} /> : null}
       <Text weight="semibold" style={styles.controlText(on)}>
-        Control
+        <Trans>Control</Trans>
       </Text>
     </Touch>
   );

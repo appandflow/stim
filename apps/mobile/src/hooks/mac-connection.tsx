@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import Constants from 'expo-constants';
 import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
@@ -368,7 +369,7 @@ export function useAction(workspace: string): WorkspaceActions {
   const [pending, setPending] = useState<ActionName | null>(null);
   const run = useCallback(
     async (action: ActionName, options: { platform?: ReloadPlatform } = {}) => {
-      if (!connection) return 'Not connected.';
+      if (!connection) return t`Not connected.`;
       const params: ActionParams =
         action === 'reload'
           ? { action, workspace, ...(options.platform ? { platform: options.platform } : {}) }
@@ -543,7 +544,7 @@ export function useDeviceControl(
   const [held, setHeld] = useState<HeldState>({ kind: 'off' });
   const state: ControlState =
     held.kind === 'on' && 'link' in held && held.link !== link
-      ? { kind: 'off', ended: 'The connection dropped.' }
+      ? { kind: 'off', ended: t`The connection dropped.` }
       : held;
   const session = state.kind === 'on' ? state.session : null;
   const mounted = useRef(true);

@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import type { HomeView } from '@/hooks/home-filters';
 import type { NotifyLevel, QuietHours } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
@@ -8,59 +10,69 @@ export interface Option<T extends string> {
   label: string;
 }
 
-export const APPEARANCE_OPTIONS: Option<Appearance>[] = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
+export const appearanceOptions = (): Option<Appearance>[] => [
+  { value: 'system', label: t`System` },
+  { value: 'light', label: t`Light` },
+  { value: 'dark', label: t`Dark` },
 ];
 
-export const HOME_VIEW_OPTIONS: Option<HomeView>[] = [
-  { value: 'workspaces', label: 'Workspaces' },
-  { value: 'devices', label: 'Devices' },
-  { value: 'machines', label: 'Machines' },
+export const homeViewOptions = (): Option<HomeView>[] => [
+  { value: 'workspaces', label: t`Workspaces` },
+  { value: 'devices', label: t`Devices` },
+  { value: 'machines', label: t`Machines` },
 ];
 
-export const VIDEO_QUALITY_OPTIONS: Option<VideoQuality>[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'high', label: 'High' },
-  { value: 'dataSaver', label: 'Data saver' },
+export const videoQualityOptions = (): Option<VideoQuality>[] => [
+  { value: 'auto', label: t`Auto` },
+  { value: 'high', label: t`High` },
+  { value: 'dataSaver', label: t`Data saver` },
 ];
 
 export const labelOf = <T extends string>(options: Option<T>[], value: T): string =>
   options.find((option) => option.value === value)?.label ?? options[0].label;
 
-export const VIDEO_QUALITY_FOOTER = 'Data saver sends still frames instead of video.';
+export const videoQualityFooter = (): string => t`Data saver sends still frames instead of video.`;
 
-export const READ_ONLY_FOOTER =
-  "A read-only machine can't be controlled from this phone. Tap it to see how to allow control.";
+export const readOnlyFooter = (): string =>
+  t`A read-only machine can't be controlled from this phone. Tap it to see how to allow control.`;
 
-export const REPLAY_FOOTER = 'A Mac keeps the last 15 minutes of device screens. Turning this off deletes them.';
+export const replayFooter = (): string =>
+  t`A Mac keeps the last 15 minutes of device screens. Turning this off deletes them.`;
 
-export const NOTIFY_CATEGORY_LABELS: Record<OversightCategory, string> = {
-  started: 'Work started',
-  stuck: 'Agent looks stuck',
-  looping: 'Agent repeats the same failure',
-  finished: 'Work finished or PR ready',
-  machine: 'Machine in trouble',
-  control: 'Someone takes over your device',
-};
+export function notifyCategoryLabel(category: OversightCategory): string {
+  switch (category) {
+    case 'started':
+      return t`Work started`;
+    case 'stuck':
+      return t`Agent looks stuck`;
+    case 'looping':
+      return t`Agent repeats the same failure`;
+    case 'finished':
+      return t`Work finished or PR ready`;
+    case 'machine':
+      return t`Machine in trouble`;
+    case 'control':
+      return t`Someone takes over your device`;
+  }
+}
 
-export const NOTIFY_LEVEL_OPTIONS: Option<NotifyLevel>[] = [
-  { value: 'alert', label: 'Alert' },
-  { value: 'silent', label: 'Silent' },
-  { value: 'off', label: 'Off' },
+export const notifyLevelOptions = (): Option<NotifyLevel>[] => [
+  { value: 'alert', label: t`Alert` },
+  { value: 'silent', label: t`Silent` },
+  { value: 'off', label: t`Off` },
 ];
 
-export const STUCK_MINUTES_OPTIONS: Option<string>[] = [5, 10, 15, 30, 60].map((minutes) => ({
-  value: String(minutes),
-  label: `${minutes} min`,
-}));
+export const stuckMinutesOptions = (): Option<string>[] =>
+  [5, 10, 15, 30, 60].map((minutes) => ({
+    value: String(minutes),
+    label: t`${minutes} min`,
+  }));
 
-export const QUIET_HOURS_OPTIONS: Option<string>[] = [
-  { value: 'off', label: 'Off' },
-  { value: '1320-420', label: '10 PM to 7 AM' },
-  { value: '1380-480', label: '11 PM to 8 AM' },
-  { value: '0-480', label: 'Midnight to 8 AM' },
+export const quietHoursOptions = (): Option<string>[] => [
+  { value: 'off', label: t`Off` },
+  { value: '1320-420', label: t`10 PM to 7 AM` },
+  { value: '1380-480', label: t`11 PM to 8 AM` },
+  { value: '0-480', label: t`Midnight to 8 AM` },
 ];
 
 export const quietHoursValue = (quietHours: QuietHours | null): string =>
@@ -73,4 +85,4 @@ export function parseQuietHoursValue(value: string): QuietHours | null {
     : null;
 }
 
-export const NOTIFICATIONS_FOOTER = 'Background notifications need an iPhone and a Mac that sends push.';
+export const notificationsFooter = (): string => t`Background notifications need an iPhone and a Mac that sends push.`;

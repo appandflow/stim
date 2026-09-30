@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { Image } from 'expo-image';
 import { memo, useEffect, useRef } from 'react';
 import { View, type ViewInstance } from 'react-native';
@@ -61,12 +63,12 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     physical: device.physical,
   };
   const zoomedAway = useZoomedAway(zoomKey(target));
+  const { model } = device;
+  const { macName } = item;
+  const tileLabel = t`${model}, ${where}, on ${macName}`;
+  const openLabel = t`Open the live screen of ${model}`;
   return (
-    <Card
-      onPress={() => onOpen(item, false)}
-      accessibilityLabel={`${device.model}, ${where}, on ${item.macName}`}
-      style={[styles.tile, wide && styles.wide]}
-    >
+    <Card onPress={() => onOpen(item, false)} accessibilityLabel={tileLabel} style={[styles.tile, wide && styles.wide]}>
       {/*
         Fabric hoists the children of a View with only a background into the Card, a Gesture Handler button on iOS.
         The button keeps its underlay CALayer at sublayer index 0, and UIKit's insertSubview:atIndex: counts that
@@ -78,7 +80,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           <Touch
             ref={thumbnail}
             onPress={() => openDeviceViewer(thumbnail.current, target, frame)}
-            accessibilityLabel={`Open the live screen of ${device.model}`}
+            accessibilityLabel={openLabel}
             style={{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }}
           >
             <Image
@@ -90,7 +92,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
           </Touch>
         ) : (
           <Text variant="caption" tone="tertiary" style={styles.placeholder}>
-            {streams ? (error ?? 'Waiting for a frame') : unservedReason(device)}
+            {streams ? (error ?? t`Waiting for a frame`) : unservedReason(device)}
           </Text>
         )}
       </View>
@@ -124,8 +126,16 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         </View>
         <View style={styles.badge}>
           <ActivityChip activity={device.activity} />
-          {device.physical ? <Pill>Physical</Pill> : null}
-          {device.page?.error ? <Pill tone="warning">Page failed to load</Pill> : null}
+          {device.physical ? (
+            <Pill>
+              <Trans>Physical</Trans>
+            </Pill>
+          ) : null}
+          {device.page?.error ? (
+            <Pill tone="warning">
+              <Trans>Page failed to load</Trans>
+            </Pill>
+          ) : null}
         </View>
       </View>
     </Card>

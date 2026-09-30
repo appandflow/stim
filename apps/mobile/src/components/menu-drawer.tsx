@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { usePathname } from 'expo-router';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BackHandler, Platform } from 'react-native';
@@ -41,7 +42,7 @@ export function MenuDrawer({ children }: { children: ReactNode }) {
         style={{ backgroundColor: theme.colors.sidebar }}
         drawerStyle={{ width: '80%', backgroundColor: theme.colors.sidebar }}
         overlayStyle={styles.overlay}
-        overlayAccessibilityLabel="Close menu"
+        overlayAccessibilityLabel={t`Close menu`}
         renderDrawerContent={() => <Menu onClose={() => setOpen(false)} />}
       >
         <SceneCard>{children}</SceneCard>

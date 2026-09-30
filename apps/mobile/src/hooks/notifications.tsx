@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
@@ -46,11 +47,11 @@ Notifications.setNotificationHandler({
 async function createChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(CHANNEL, {
-    name: 'Alerts',
+    name: t`Alerts`,
     importance: AndroidImportance.HIGH,
   });
   await Notifications.setNotificationChannelAsync(QUIET_CHANNEL, {
-    name: 'Silent',
+    name: t`Silent`,
     importance: AndroidImportance.LOW,
   });
 }
@@ -96,11 +97,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     if (!permission.granted && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
     if (!permission.granted) {
       Alert.alert(
-        'Notifications are off for Stim',
-        'Allow them in Settings to get notified when something needs attention.',
+        t`Notifications are off for Stim`,
+        t`Allow them in Settings to get notified when something needs attention.`,
         [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+          { text: t`Not now`, style: 'cancel' },
+          { text: t`Open Settings`, onPress: () => void Linking.openSettings() },
         ],
       );
       return;

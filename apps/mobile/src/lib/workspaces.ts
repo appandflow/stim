@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import type {
   AndroidState,
   BuildReport,
@@ -8,111 +10,8 @@ import type {
   PhysicalDeviceState,
   SimState,
   StatusIssue,
-  StatusPayload,
   WebBrowserState,
 } from '@/protocol/types';
-
-export interface WorkspaceNames {
-  title: string;
-  subtitle: string;
-}
-
-/** Same naming as apps/desktop PathNames: a worktree is named after its folder under `.worktrees`/`worktrees`. */
-function workspaceNames(path: string): WorkspaceNames {
-  const parts = path.split('/').filter(Boolean);
-  for (const marker of ['.worktrees', 'worktrees']) {
-    const i = parts.lastIndexOf(marker);
-    if (i >= 0 && i + 1 < parts.length) {
-      const name = parts[i + 1];
-      const last = parts[parts.length - 1];
-      return { title: name, subtitle: last === name ? (i > 0 ? parts[i - 1] : '') : last };
-    }
-  }
-  return { title: parts[parts.length - 1] ?? path, subtitle: parts.length > 1 ? parts[parts.length - 2] : '' };
-}
-
-export interface ProjectRef {
-  /** The repository root, like apps/desktop, which asks git for the common directory. */
-  key: string;
-  name: string;
-}
-
-const basename = (path: string) => path.split('/').filter(Boolean).pop() ?? path;
-
-/** The repository a `.worktrees/<name>` or `.claude/worktrees/<name>` checkout belongs to. */
-function worktreeRoot(path: string): string | null {
-  const parts = path.split('/');
-  for (let i = parts.length - 2; i > 0; i--) {
-    if (parts[i] === '.worktrees') return parts.slice(0, i).join('/');
-    if (parts[i] === 'worktrees' && parts[i - 1] === '.claude') return parts.slice(0, i - 1).join('/');
-  }
-  return null;
-}
-
-/** The parents of the payload's worktrees, and every other checkout, which can hold a nested app. */
-export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'unprovisionedWorktrees'>): string[] {
-  const roots = new Set<string>();
-  for (const { path, worktree } of payload.environments) {
-    roots.add(worktreeRoot(path) ?? worktree?.repository ?? path);
-  }
-  for (const { path, repository } of payload.unprovisionedWorktrees ?? []) {
-    const root = worktreeRoot(path) ?? repository;
-    if (root) roots.add(root);
-  }
-  return [...roots];
-}
-
-/**
- * The phone cannot run git, so a checkout joins the outermost known root that contains it, and is its
- * own project otherwise.
- */
-export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): ProjectRef {
-  const own = worktreeRoot(env.path) ?? env.worktree?.repository;
-  const root =
-    own ??
-    roots
-      .filter((r) => env.path === r || env.path.startsWith(`${r}/`))
-      .reduce<string | null>((best, r) => (best === null || r.length < best.length ? r : best), null) ??
-    env.path;
-  return { key: root, name: basename(root) };
-}
-
-/** The `.worktrees/<name>` or `.claude/worktrees/<name>` folder holding `path`. */
-function markedCheckout(path: string): string | null {
-  const parts = path.split('/');
-  for (let i = parts.length - 2; i > 0; i--) {
-    if (parts[i] === '.worktrees' || (parts[i] === 'worktrees' && parts[i - 1] === '.claude')) {
-      return parts.slice(0, i + 2).join('/');
-    }
-  }
-  return null;
-}
-
-/** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */
-export function pathInCheckout(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string | null {
-  const checkout = markedCheckout(env.path) ?? env.worktree?.path ?? projectOf(env, roots).key;
-  return env.path.startsWith(`${checkout}/`) ? env.path.slice(checkout.length + 1) : null;
-}
-
-/**
- * A workspace's name: its worktree's branch, else the worktree's folder, else the project for a main checkout.
- * `stim status` reports worktree facts only for linked worktrees, so a nested app in a repository with no known
- * worktree is its own project and is named after its folder.
- */
-export function workspaceTitle(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string {
-  if (env.worktree?.branch) return env.worktree.branch;
-  const checkout = env.worktree?.path ?? markedCheckout(env.path);
-  return checkout ? basename(checkout) : projectOf(env, roots).name;
-}
-
-/** `workspaceTitle` of the workspace at `path` in `status`, or a name from the path alone when status lacks it. */
-export function workspaceTitleAt(
-  path: string,
-  status: Pick<StatusPayload, 'environments' | 'unprovisionedWorktrees'> | null | undefined,
-): string {
-  const env = status?.environments.find((e) => e.path === path);
-  return env && status ? workspaceTitle(env, repositoryRoots(status)) : workspaceNames(path).title;
-}
 
 export function isActive(env: EnvironmentState): boolean {
   return (
@@ -172,13 +71,13 @@ export function streamsFrames(device: ServedDevice, features: readonly string[] 
 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */
 export function unservedReason(device: ServedDevice): string {
-  if (!device.physical) return 'Frames are only served for devices Stim owns.';
+  if (!device.physical) return t`Frames are only served for devices Stim owns.`;
   if (!device.running) return device.state;
-  return "Update stim-server on the Mac to see this device's screen.";
+  return t`Update stim-server on the Mac to see this device's screen.`;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {
-  const model = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(sim.name ?? '')?.[1] ?? 'iOS Simulator';
+  const model = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(sim.name ?? '')?.[1] ?? t`iOS Simulator`;
   return {
     platform: 'ios',
     slot,
@@ -200,9 +99,9 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     platform: 'android',
     slot,
     id: avd.serial ?? null,
-    name: avd.name ?? avd.serial ?? 'Android device',
-    model: avd.physical ? 'Android device' : 'Android Emulator',
-    state: avd.state ?? 'unknown',
+    name: avd.name ?? avd.serial ?? t`Android device`,
+    model: avd.physical ? t`Android device` : t`Android Emulator`,
+    state: avd.state ?? t`unknown`,
     running: avd.state === 'detected',
     owned: avd.owned,
     physical: avd.physical,
@@ -218,7 +117,7 @@ function physicalDevice(device: PhysicalDeviceState): DeviceRef {
     slot: device.slot,
     id: device.id,
     name: device.name ?? device.id,
-    model: device.model ?? (device.platform === 'ios' ? 'iOS device' : 'Android device'),
+    model: device.model ?? (device.platform === 'ios' ? t`iOS device` : t`Android device`),
     state: device.connection,
     running: device.connection === 'connected',
     owned: false,
@@ -234,27 +133,27 @@ function webDevice(web: WebBrowserState): DeviceRef {
     slot: 'default',
     id: web.targetId ?? null,
     name: shortUrl(url),
-    model: 'Web',
-    state: web.running ? 'running' : 'closed',
+    model: t`Web`,
+    state: web.running ? t`running` : t`closed`,
     running: web.running,
     owned: true,
     physical: false,
     activity: web.activity,
     page: {
       url,
-      error: web.running && web.page?.state === 'failed' ? (web.page.error ?? 'The page failed to load.') : null,
+      error: web.running && web.page?.state === 'failed' ? (web.page.error ?? t`The page failed to load.`) : null,
     },
   };
 }
 
 export function platformName(platform: DevicePlatform): string {
-  return platform === 'ios' ? 'iOS' : platform === 'web' ? 'Web' : 'Android';
+  return platform === 'ios' ? 'iOS' : platform === 'web' ? t`Web` : t`Android`;
 }
 
 export function deviceSource(device: DeviceRef): string {
-  if (device.platform === 'web') return 'Chrome';
-  if (device.platform === 'ios') return device.physical ? 'iOS device' : 'iOS Simulator';
-  return device.physical ? 'Android device' : 'Android Emulator';
+  if (device.platform === 'web') return t`Chrome`;
+  if (device.platform === 'ios') return device.physical ? t`iOS device` : t`iOS Simulator`;
+  return device.physical ? t`Android device` : t`Android Emulator`;
 }
 
 export function shortUrl(url: string): string {
@@ -342,6 +241,8 @@ export interface AttentionGroup {
   items: AttentionItem[];
 }
 
+const slotMessage = (slot: string, message: string) => t`${slot}: ${message}`;
+
 const shellQuote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 
 /**
@@ -356,7 +257,7 @@ export function attentionGroups(environments: EnvironmentState[]): AttentionGrou
             ? []
             : [
                 {
-                  message: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
+                  message: issue.slot ? slotMessage(issue.slot, issue.message) : issue.message,
                   severity: issue.severity,
                   remedy: issue.remedy,
                   command: `cd ${shellQuote(issue.workspace)} && ${issue.remedy}`,

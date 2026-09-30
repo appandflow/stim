@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
@@ -15,8 +17,8 @@ import { Touch } from '@/components/touch';
 import { useMacConnection, useLogs, useStatus, type LogsChange } from '@/hooks/mac-connection';
 import {
   appendRecords,
+  chipLabel,
   chipOf,
-  CHIPS,
   copyText,
   expoContext,
   groupRecords,
@@ -35,11 +37,9 @@ import {
   type LogFilterState,
   type Severity,
 } from '@/lib/logs';
-import { workspaceTitleAt } from '@/lib/workspaces';
+import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
-
-const CHIP_LABEL = Object.fromEntries(CHIPS.map((c) => [c.chip, c.label])) as Record<LogChip, string>;
 
 export function Logs({
   path,
@@ -106,7 +106,8 @@ export function Logs({
     try {
       new RegExp(grepDraft);
     } catch (e) {
-      return setProblem(`Invalid search: ${(e as Error).message}`);
+      const { message } = e as Error;
+      return setProblem(t`Invalid search: ${message}`);
     }
     setProblem(null);
     update({ grep: grepDraft });
@@ -147,22 +148,22 @@ export function Logs({
   return (
     <View style={styles.screen}>
       <Stack.Screen
-        options={{ headerTitle: () => <HeaderTitle title="Logs" subtitle={workspaceTitleAt(path, status)} /> }}
+        options={{ headerTitle: () => <HeaderTitle title={t`Logs`} subtitle={workspaceTitleAt(path, status)} /> }}
       />
       <ConnectionBanner state={state} />
       <View style={styles.filters}>
         <MetroLine metro={env?.metro} bundleMs={bundleMs} />
         <View style={styles.row}>
-          <Toggle label="All" on={filter.severity === 'all'} onPress={severity('all')} />
+          <Toggle label={t`All`} on={filter.severity === 'all'} onPress={severity('all')} />
           <Toggle
-            label="Errors"
+            label={t`Errors`}
             count={env?.logs?.errorsSinceMarker}
             countTone="error"
             on={filter.severity === 'errors'}
             onPress={severity('errors')}
           />
           <Toggle
-            label="Warnings"
+            label={t`Warnings`}
             count={warnings}
             countTone="warning"
             on={filter.severity === 'warnings'}
@@ -176,7 +177,7 @@ export function Logs({
               return (
                 <Toggle
                   key={chip}
-                  label={CHIP_LABEL[chip]}
+                  label={chipLabel(chip)}
                   icon={
                     chip === 'ios' || chip === 'android' || chip === 'web' ? (
                       <PlatformLogo
@@ -195,7 +196,7 @@ export function Logs({
         ) : null}
         {slots.length > 1 ? (
           <View style={styles.row}>
-            <Toggle label="All slots" on={active.slot === null} onPress={() => update({ slot: null })} />
+            <Toggle label={t`All slots`} on={active.slot === null} onPress={() => update({ slot: null })} />
             {slots.map((slot) => (
               <Toggle key={slot} label={slot} on={active.slot === slot} onPress={() => update({ slot })} />
             ))}
@@ -206,12 +207,12 @@ export function Logs({
           onChangeText={setGrepDraft}
           onSubmitEditing={applyGrep}
           onBlur={applyGrep}
-          placeholder="Search (regular expression)"
+          placeholder={t`Search (regular expression)`}
           placeholderTextColor={theme.colors.tertiary}
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="search"
-          accessibilityLabel="Search logs"
+          accessibilityLabel={t`Search logs`}
           style={styles.search}
         />
         {problem ? (
@@ -241,7 +242,7 @@ export function Logs({
         }}
         ListEmptyComponent={
           <Text tone="tertiary" style={styles.empty}>
-            No records match these filters.
+            <Trans>No records match these filters.</Trans>
           </Text>
         }
         renderItem={({ item }) => {
@@ -267,7 +268,7 @@ export function Logs({
           style={styles.jump}
         >
           <Text weight="semibold" tone="onBrand">
-            Jump to latest
+            <Trans>Jump to latest</Trans>
           </Text>
         </Touch>
       ) : null}
@@ -278,13 +279,17 @@ export function Logs({
 function MetroLine({ metro, bundleMs }: { metro: EnvironmentState['metro']; bundleMs: number | null }) {
   const { theme } = useUnistyles();
   if (!metro) return null;
-  const parts = [metro.running ? 'running' : 'stopped'];
-  if (bundleMs !== null) parts.push(`last bundle ${(bundleMs / 1000).toFixed(1)}s`);
+  const { port } = metro;
+  const parts = [metro.running ? t`running` : t`stopped`];
+  if (bundleMs !== null) {
+    const seconds = (bundleMs / 1000).toFixed(1);
+    parts.push(t`last bundle ${seconds}s`);
+  }
   return (
     <View style={styles.metro}>
       <StatusDot color={metro.running ? theme.colors.success : theme.colors.tertiary} filled={metro.running} />
       <Text variant="footnote" weight="semibold">
-        Metro :{metro.port}
+        <Trans>Metro :{port}</Trans>
       </Text>
       <Text variant="footnote" tone="secondary" numberOfLines={1} style={styles.shrink}>
         {parts.join(' \u00B7 ')}
@@ -323,20 +328,23 @@ const LogRow = memo(function LogRow({
     () => (expanded ? null : stackPreview(record.stack, workspace, home)),
     [expanded, record.stack, workspace, home],
   );
+  const hidden = preview?.hidden ?? 0;
+  const hiddenFrames = preview?.hiddenFramework ? t`+${hidden} framework frames` : t`+${hidden} more frames`;
   const [copied, setCopied] = useState(false);
+  const records = plural(entry.related.length + 1, { one: '# record', other: '# records' });
   return (
     <Touch feedback="row" onPress={() => onToggle(entry, expanded)} accessibilityRole="none" style={styles.logRow}>
       <View style={styles.meta}>
         <StatusDot color={levelColor(theme, record.level)} />
         <View style={styles.tag}>
           <Text variant="caption2" tone="secondary">
-            {chip ? CHIP_LABEL[chip] : record.src}
+            {chip ? chipLabel(chip) : record.src}
           </Text>
         </View>
         <Text variant="caption2" tone="tertiary" numberOfLines={1} style={styles.shrink}>
           {time}
           {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''}
-          {entry.related.length > 0 ? ` \u00B7 ${entry.related.length + 1} records` : ''}
+          {entry.related.length > 0 ? ` \u00B7 ${records}` : ''}
         </Text>
       </View>
       <Text
@@ -369,7 +377,7 @@ const LogRow = memo(function LogRow({
           ))}
           {preview.hidden > 0 ? (
             <Text variant="caption2" tone="tertiary">
-              +{preview.hidden} {preview.hiddenFramework ? 'framework frames' : 'more frames'}
+              {hiddenFrames}
             </Text>
           ) : null}
         </View>
@@ -387,20 +395,20 @@ const LogRow = memo(function LogRow({
         <View style={styles.actions}>
           <Touch
             onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
-            accessibilityLabel="Copy message and location"
+            accessibilityLabel={t`Copy message and location`}
             style={styles.action}
           >
             <Text weight="semibold" tone="brand">
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? t`Copied` : t`Copy`}
             </Text>
           </Touch>
           <Touch
             onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
-            accessibilityLabel="Share entry"
+            accessibilityLabel={t`Share entry`}
             style={styles.action}
           >
             <Text weight="semibold" tone="brand">
-              Share
+              <Trans>Share</Trans>
             </Text>
           </Touch>
         </View>

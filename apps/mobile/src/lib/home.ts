@@ -1,14 +1,7 @@
-import {
-  deviceKey,
-  devicesOf,
-  isShownLive,
-  orderDevices,
-  pathInCheckout,
-  projectOf,
-  repositoryRoots,
-  workspaceTitle,
-  type DeviceRef,
-} from '@/lib/workspaces';
+import { t } from '@lingui/core/macro';
+
+import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
+import { deviceKey, devicesOf, isShownLive, orderDevices, type DeviceRef } from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
 
 export interface MacSnapshot {
@@ -228,19 +221,22 @@ export function machineStats(usage: MachineUsage | null): MachineStat[] {
   const cpuUsage = usage.cpu?.usage;
   if (typeof cpuUsage === 'number') {
     const fraction = cpuUsage;
+    const percent = Math.round(fraction * 100);
     stats.push({
       kind: 'cpu',
-      label: 'CPU',
-      value: `${Math.round(fraction * 100)}%`,
+      label: t`CPU`,
+      value: t`${percent}%`,
       tone: cpuTone(fraction),
     });
   }
   const used = usage.memory.usedBytes;
   if (typeof used === 'number') {
+    const usedGb = Math.round(memoryGb(used));
+    const totalGb = Math.round(memoryGb(usage.memory.totalBytes));
     stats.push({
       kind: 'memory',
-      label: 'RAM',
-      value: `${Math.round(memoryGb(used))}/${Math.round(memoryGb(usage.memory.totalBytes))} GB`,
+      label: t`RAM`,
+      value: t`${usedGb}/${totalGb} GB`,
       tone: usage.memory.pressure === 'critical' ? 'critical' : usage.memory.pressure === 'warning' ? 'warn' : 'normal',
     });
   }
@@ -249,10 +245,11 @@ export function machineStats(usage: MachineUsage | null): MachineStat[] {
     null,
   );
   if (lowest !== null) {
+    const freeGb = Math.round(lowest / 1e9);
     stats.push({
       kind: 'disk',
-      label: 'Disk',
-      value: `${Math.round(lowest / 1e9)} GB free`,
+      label: t`Disk`,
+      value: t`${freeGb} GB free`,
       tone: diskTone(lowest),
     });
   }
@@ -299,29 +296,39 @@ export function usageCharts(samples: UsageSample[], usage: MachineUsage | null):
   const metrics: Metric[] = [
     {
       kind: 'cpu',
-      label: 'CPU',
+      label: t`CPU`,
       read: (s) => s.cpu,
       fraction: (v) => v,
       tone: cpuTone,
-      format: (v) => `${Math.round(v * 100)}%`,
+      format: (v) => {
+        const percent = Math.round(v * 100);
+        return t`${percent}%`;
+      },
     },
     {
       kind: 'memory',
-      label: 'RAM',
+      label: t`RAM`,
       read: (s) => s.memoryUsedBytes,
       fraction: (v) => v / memoryTotal,
       tone: (_, s) => pressureTone(s.memoryPressure ?? 0),
-      format: (v) => `${Math.round(memoryGb(v))}/${Math.round(memoryGb(memoryTotal))} GB`,
+      format: (v) => {
+        const usedGb = Math.round(memoryGb(v));
+        const totalGb = Math.round(memoryGb(memoryTotal));
+        return t`${usedGb}/${totalGb} GB`;
+      },
     },
     ...(diskTotal
       ? [
           {
             kind: 'disk' as const,
-            label: 'Disk free',
+            label: t`Disk free`,
             read: (s: UsageSample) => s.diskFreeBytes,
             fraction: (v: number) => v / diskTotal,
             tone: diskTone,
-            format: (v: number) => `${Math.round(v / 1e9)} GB`,
+            format: (v: number) => {
+              const gb = Math.round(v / 1e9);
+              return t`${gb} GB`;
+            },
           },
         ]
       : []),
@@ -364,19 +371,23 @@ export interface BudgetRow {
   value: string;
 }
 
-const BUDGETS: { key: string; label: string; describe: (value: number | null) => string }[] = [
+const budgets = (): { key: string; label: string; describe: (value: number | null) => string }[] => [
   {
     key: 'budget.minFreeDiskGb',
-    label: 'Reclaims disk',
-    describe: (v) => (v ? `below ${v} GB free` : 'only below the hard floor'),
+    label: t`Reclaims disk`,
+    describe: (v) => (v ? t`below ${v} GB free` : t`only below the hard floor`),
   },
-  { key: 'budget.hardFloorDiskGb', label: 'Refuses to run', describe: (v) => (v ? `below ${v} GB free` : 'never') },
+  {
+    key: 'budget.hardFloorDiskGb',
+    label: t`Refuses to run`,
+    describe: (v) => (v ? t`below ${v} GB free` : t`never`),
+  },
   {
     key: 'budget.maxCommittedMemoryGb',
-    label: 'Memory budget',
-    describe: (v) => (v === null ? '60% of memory' : v === 0 ? 'off' : `${v} GB`),
+    label: t`Memory budget`,
+    describe: (v) => (v === null ? t`60% of memory` : v === 0 ? t`off` : t`${v} GB`),
   },
-  { key: 'budget.maxLiveWorkspaces', label: 'Live workspaces', describe: (v) => (v ? String(v) : 'no limit') },
+  { key: 'budget.maxLiveWorkspaces', label: t`Live workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
 ];
 
 /** The budget rows of a `stim settings --json` payload; settings the Mac does not list are left out. */
@@ -388,8 +399,10 @@ export function budgetRows(settings: Record<string, unknown> | null): BudgetRow[
     const { key, value } = entry as { key?: unknown; value?: unknown };
     if (typeof key === 'string') values.set(key, typeof value === 'number' ? value : null);
   }
-  return BUDGETS.filter((b) => values.has(b.key)).map((b) => ({
-    label: b.label,
-    value: b.describe(values.get(b.key) ?? null),
-  }));
+  return budgets()
+    .filter((b) => values.has(b.key))
+    .map((b) => ({
+      label: b.label,
+      value: b.describe(values.get(b.key) ?? null),
+    }));
 }

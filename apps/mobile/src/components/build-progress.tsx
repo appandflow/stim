@@ -1,3 +1,4 @@
+import { plural, t } from '@lingui/core/macro';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -20,13 +21,23 @@ export function BuildProgressBar({
   const progress = buildProgress(build, frozenAt ?? ticking);
   const elapsed = clockDuration(progress.elapsedMs);
   const timing = build.expectedMs && progress.remaining ? `${elapsed} / ~${clockDuration(build.expectedMs)}` : elapsed;
-  const platform = build.platform === 'ios' ? 'iOS' : 'Android';
+  const platform = build.platform === 'ios' ? 'iOS' : t`Android`;
+  const { slot, basis } = build;
+  const building = slot === 'default' ? t`Building ${platform}` : t`Building ${platform} \u00B7 ${slot}`;
   const outcome = outcomeLabel(build);
+  const kind = build.outcome;
+  const { remaining } = progress;
+  const median = remaining
+    ? plural(basis, {
+        one: `${remaining} \u00B7 median of # ${kind} run`,
+        other: `${remaining} \u00B7 median of # ${kind} runs`,
+      })
+    : null;
   return (
     <View style={styles.container}>
       <View style={styles.row}>
         <Text variant="footnote" style={styles.label} numberOfLines={1}>
-          {compact ? '' : `Building ${platform}${build.slot === 'default' ? '' : ` \u00B7 ${build.slot}`}  `}
+          {compact ? '' : `${building}  `}
           <Text variant="caption" tone="brand" mono>
             {build.phase}
           </Text>
@@ -45,9 +56,9 @@ export function BuildProgressBar({
           ]}
         />
       </View>
-      {progress.remaining ? (
+      {median ? (
         <Text variant="caption2" tone="tertiary" style={styles.remaining} numberOfLines={1}>
-          {`${progress.remaining} \u00B7 median of ${build.basis} ${build.outcome} run${build.basis === 1 ? '' : 's'}`}
+          {median}
         </Text>
       ) : null}
     </View>

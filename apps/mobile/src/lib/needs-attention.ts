@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import { formatBytes } from '@/intl/format';
 import type { DeviceActivity, EnvironmentState, LastBuild } from '@/protocol/types';
 
@@ -29,37 +31,47 @@ export interface NeedsAttentionInput {
 
 const PERSON_ISSUES = new Set(['port-not-ours', 'supervisor-unverified', 'browser-unverified', 'avd-unchecked']);
 
-const SIGNING_CODES = new Set([
-  'STIM_NO_SIGNING_IDENTITY',
-  'STIM_CODESIGN_FAILED',
-  'STIM_NO_PROFILE',
-  'STIM_PROFILE_MISMATCH',
-]);
+const isSigningCode = (code: string) =>
+  ['STIM_NO_SIGNING_IDENTITY', 'STIM_CODESIGN_FAILED', 'STIM_NO_PROFILE', 'STIM_PROFILE_MISMATCH'].includes(code);
 
 const DISK_FLOOR_BYTES = 5e9;
 const LOOP_COUNT = 3;
 const STALE_MS = 24 * 60 * 60 * 1000;
 const WORK_EVIDENCE = ['agent-action', 'metro-bundle', 'workspace-use'];
 
-const LANGUAGES: Record<string, string> = {
-  swift: 'Swift',
-  m: 'Objective-C',
-  mm: 'Objective-C++',
-  kt: 'Kotlin',
-  java: 'Java',
-  c: 'C',
-  cc: 'C++',
-  cpp: 'C++',
-  h: 'C',
-  hpp: 'C++',
-  js: 'JavaScript',
-  ts: 'TypeScript',
-  tsx: 'TypeScript',
-  gradle: 'Gradle',
-  kts: 'Gradle',
-};
+function languageOf(extension: string): string | undefined {
+  switch (extension) {
+    case 'swift':
+      return t`Swift`;
+    case 'm':
+      return t`Objective-C`;
+    case 'mm':
+      return t`Objective-C++`;
+    case 'kt':
+      return t`Kotlin`;
+    case 'java':
+      return t`Java`;
+    case 'c':
+    case 'h':
+      return t`C`;
+    case 'cc':
+    case 'cpp':
+    case 'hpp':
+      return t`C++`;
+    case 'js':
+      return t`JavaScript`;
+    case 'ts':
+    case 'tsx':
+      return t`TypeScript`;
+    case 'gradle':
+    case 'kts':
+      return t`Gradle`;
+    default:
+      return undefined;
+  }
+}
 
-const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : 'Android');
+const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : t`Android`);
 const basename = (path: string) => path.split('/').findLast(Boolean) ?? path;
 const time = (text: string | null | undefined) => (text ? Date.parse(text) : Number.NaN);
 
@@ -70,14 +82,15 @@ function signingItem(
   now: number,
 ): NeedsAttentionItem | null {
   const code = build.errorCode ?? '';
-  if (!SIGNING_CODES.has(code)) return null;
+  if (!isSigningCode(code)) return null;
   if (!env.live && !(now - time(build.finishedAt ?? build.startedAt) < STALE_MS)) return null;
+  const name = platformName(platform);
   return {
     id: `run-${platform}:${env.path}`,
     category: 'attention',
     severity: 'error',
     workspace: env.path,
-    body: `${platformName(platform)} signing or provisioning failed (${code})`,
+    body: t`${name} signing or provisioning failed (${code})`,
     remedy: null,
   };
 }
@@ -103,10 +116,18 @@ function loopItem(env: EnvironmentState, platform: 'ios' | 'android', now: numbe
   let body: string;
   if (cause.at) {
     const file = basename(cause.at.file!);
-    const language = LANGUAGES[file.split('.').at(-1)?.toLowerCase() ?? ''];
-    body = `Same ${language ? `${language} ` : `${name} build `}error ${count}x at ${file}:${cause.at.line}`;
-  } else if (head.errorCode === 'STIM_LAUNCH_FAILED') body = `App failed to launch on ${name} ${count}x in a row`;
-  else body = `${name} build failed ${count}x in a row${head.errorCode ? ` (${head.errorCode})` : ''}`;
+    const language = languageOf(file.split('.').at(-1)?.toLowerCase() ?? '');
+    const line = String(cause.at.line);
+    body = language
+      ? t`Same ${language} error ${count}x at ${file}:${line}`
+      : t`Same ${name} build error ${count}x at ${file}:${line}`;
+  } else if (head.errorCode === 'STIM_LAUNCH_FAILED') body = t`App failed to launch on ${name} ${count}x in a row`;
+  else {
+    const { errorCode } = head;
+    body = errorCode
+      ? t`${name} build failed ${count}x in a row (${errorCode})`
+      : t`${name} build failed ${count}x in a row`;
+  }
   return {
     id: `looping-${platform}:${env.path}`,
     category: 'looping',
@@ -128,17 +149,17 @@ function devicesOf(env: EnvironmentState): Device[] {
   const out: Device[] = [];
   const add = (ios?: EnvironmentState['ios'], android?: EnvironmentState['android']) => {
     if (ios) {
-      const model = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(ios.name ?? '')?.[1] ?? 'iOS Simulator';
+      const model = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(ios.name ?? '')?.[1] ?? t`iOS Simulator`;
       out.push({ model, running: ios.state === 'Booted', activity: ios.activity, web: false });
     }
     if (android) {
-      const model = android.physical ? 'Android device' : 'Android Emulator';
+      const model = android.physical ? t`Android device` : t`Android Emulator`;
       out.push({ model, running: android.state === 'detected', activity: android.activity, web: false });
     }
   };
   add(env.ios, env.android);
   for (const slot of env.slots ?? []) add(slot.ios, slot.android);
-  if (env.web) out.push({ model: 'Chrome', running: env.web.running, activity: env.web.activity, web: true });
+  if (env.web) out.push({ model: t`Chrome`, running: env.web.running, activity: env.web.activity, web: true });
   return out;
 }
 
@@ -171,13 +192,16 @@ function stuckItem(env: EnvironmentState, input: NeedsAttentionInput): NeedsAtte
   const newest = [env.lastBuilds?.ios, env.lastBuilds?.android]
     .filter((b): b is LastBuild => b !== undefined)
     .reduce<LastBuild | null>((a, b) => (a === null || time(b.startedAt) > time(a.startedAt) ? b : a), null);
-  const after = newest?.status === 'ok' ? ` after a green ${platformName(newest.platform)} build` : '';
+  const { model } = driven;
+  const green = newest?.status === 'ok' ? platformName(newest.platform) : null;
   return {
     id: `stuck:${env.path}`,
     category: 'stuck',
     severity: 'warning',
     workspace: env.path,
-    body: `No agent activity for ${minutes} min${after}; ${driven.model} still up`,
+    body: green
+      ? t`No agent activity for ${minutes} min after a green ${green} build; ${model} still up`
+      : t`No agent activity for ${minutes} min; ${model} still up`,
     remedy: null,
   };
 }
@@ -186,12 +210,13 @@ function workspaceItems(env: EnvironmentState, input: NeedsAttentionInput): Need
   const items: NeedsAttentionItem[] = [];
   for (const issue of env.issues ?? []) {
     if (issue.severity === 'info' || !PERSON_ISSUES.has(issue.code)) continue;
+    const { slot, message } = issue;
     items.push({
       id: `issue-${issue.code}-${issue.slot ?? 'default'}:${env.path}`,
       category: 'attention',
       severity: issue.severity,
       workspace: env.path,
-      body: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
+      body: slot ? t`${slot}: ${message}` : message,
       remedy: issue.remedy,
     });
   }
@@ -205,12 +230,13 @@ function workspaceItems(env: EnvironmentState, input: NeedsAttentionInput): Need
   for (const device of env.physicalDevices ?? []) {
     if (!(time(device.lease.expiresAt) <= input.now)) continue;
     const slot = device.slot === 'default' ? '' : ` --slot ${device.slot}`;
+    const leased = device.name ?? device.model ?? device.id;
     items.push({
       id: `lease-${device.platform}-${device.slot}:${env.path}`,
       category: 'attention',
       severity: 'warning',
       workspace: env.path,
-      body: `Lease on ${device.name ?? device.model ?? device.id} expired`,
+      body: t`Lease on ${leased} expired`,
       remedy: `stim device unlock ${device.platform}${slot}`,
     });
   }
@@ -218,12 +244,13 @@ function workspaceItems(env: EnvironmentState, input: NeedsAttentionInput): Need
   for (const session of env.remoteDevices ?? []) {
     const started = time(session.startedAt);
     if (driven || !(input.now - started >= input.easSessionMinutes * 60_000)) continue;
+    const minutes = Math.floor((input.now - started) / 60_000);
     items.push({
       id: `eas-${session.sessionId}:${env.path}`,
       category: 'attention',
       severity: 'warning',
       workspace: env.path,
-      body: `EAS session running for ${Math.floor((input.now - started) / 60_000)} min with no agent; billed while it runs`,
+      body: t`EAS session running for ${minutes} min with no agent; billed while it runs`,
       remedy: 'stim stop',
     });
   }
@@ -243,6 +270,7 @@ export function needsAttention(input: NeedsAttentionInput): NeedsAttentionItem[]
     null,
   );
   if (lowest !== null && lowest !== undefined && lowest < DISK_FLOOR_BYTES) {
+    const free = formatBytes(lowest);
     ranked.push({
       scope: 0,
       item: {
@@ -250,7 +278,7 @@ export function needsAttention(input: NeedsAttentionInput): NeedsAttentionItem[]
         category: 'machine',
         severity: 'error',
         workspace: null,
-        body: `${formatBytes(lowest)} free, below Stim's floor`,
+        body: t`${free} free, below Stim's floor`,
         remedy: null,
       },
     });

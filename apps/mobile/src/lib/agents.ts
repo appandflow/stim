@@ -1,8 +1,10 @@
+import { t } from '@lingui/core/macro';
+
 import type { AgentSession, EnvironmentState } from '@/protocol/types';
 
 /** The tool's product name; a tool this app does not know is shown by its raw name. */
 export function toolName(tool: string): string {
-  return tool === 'codex' ? 'Codex' : tool === 'claude-code' ? 'Claude Code' : tool;
+  return tool === 'codex' ? t`Codex` : tool === 'claude-code' ? t`Claude Code` : tool;
 }
 
 const startedAtOf = (agent: AgentSession) => {
@@ -37,7 +39,9 @@ export function agentName(agent: AgentSession): string {
 export function agentsSummary(sessions: AgentSession[]): string | null {
   const [first, ...rest] = sessions;
   if (!first) return null;
-  return rest.length ? `${agentLabel(first)} +${rest.length}` : agentLabel(first);
+  const label = agentLabel(first);
+  const others = rest.length;
+  return others ? t`${label} +${others}` : label;
 }
 
 /** The session's https link for other devices, which opens it in the Claude app or a browser; any other scheme is ignored. */

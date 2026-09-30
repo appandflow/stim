@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+
 import type { AttentionMachine } from '@/lib/attention';
 import {
   DEFAULT_STUCK_MINUTES,
@@ -187,8 +189,8 @@ export function localNotifications(
       notifications: [
         {
           id: 'summary',
-          title: 'Stim',
-          body: `${due.length} things need a look`,
+          title: t`Stim`,
+          body: plural(due.length, { one: '# thing needs a look', other: '# things need a look' }),
           quiet: due.every((n) => n.quiet),
           thread: null,
           data: { ref: '', target: 'home' },

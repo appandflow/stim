@@ -13,81 +13,740 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#: src/screens/build-details.tsx
+msgid "  ~{estimated}"
+msgstr "  ~{estimated}"
+
+#: src/components/remote-tile.tsx
+msgid " · running {running}"
+msgstr " · running {running}"
+
+#: src/components/read-only.tsx
+msgid " (`stim-server devices` lists this phone's id)"
+msgstr " (`stim-server devices` lists this phone's id)"
+
+#: src/components/device-screen.tsx
+msgid " (asked {fps}fps/{edge}px)"
+msgstr " (asked {fps}fps/{edge}px)"
+
+#: src/lib/format.ts
+#: src/lib/format.ts
+msgid " (cache reads off)"
+msgstr " (cache reads off)"
+
+#: src/screens/build-details.tsx
+msgid " est."
+msgstr " est."
+
+#: src/lib/format.ts
+msgid ", {summary}"
+msgstr ", {summary}"
+
+#: src/lib/format.ts
+msgid ", generates the native dir"
+msgstr ", generates the native dir"
+
+#: src/screens/mac-status.tsx
+msgid ", over comfortable capacity"
+msgstr ", over comfortable capacity"
+
+#: src/lib/format.ts
+msgid ", regenerates the native dir"
+msgstr ", regenerates the native dir"
+
+#: src/lib/format.ts
+msgid ": {summary}"
+msgstr ": {summary}"
+
+#. placeholder {0}: actions.length
+#: src/screens/agent-actions.tsx
+msgid "{0, plural, one {# action} other {# actions}}"
+msgstr "{0, plural, one {# action} other {# actions}}"
+
 #. placeholder {0}: env.warnings.length
 #: src/components/workspace-row.tsx
 msgid "{0, plural, one {# issue} other {# issues}}"
 msgstr "{0, plural, one {# issue} other {# issues}}"
+
+#. placeholder {0}: capacity.liveCount
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {# live workspace} other {# live workspaces}}"
+msgstr "{0, plural, one {# live workspace} other {# live workspaces}}"
+
+#. placeholder {0}: owner.processes
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {# process} other {# processes}}"
+msgstr "{0, plural, one {# process} other {# processes}}"
+
+#. placeholder {0}: entry.related.length + 1
+#: src/screens/logs.tsx
+msgid "{0, plural, one {# record} other {# records}}"
+msgstr "{0, plural, one {# record} other {# records}}"
+
+#. placeholder {0}: due.length
+#: src/lib/notifications.ts
+msgid "{0, plural, one {# thing needs a look} other {# things need a look}}"
+msgstr "{0, plural, one {# thing needs a look} other {# things need a look}}"
 
 #. placeholder {0}: env.warnings.length
 #: src/components/workspace-row.tsx
 msgid "{0, plural, one {# warning} other {# warnings}}"
 msgstr "{0, plural, one {# warning} other {# warnings}}"
 
+#. placeholder {0}: runtime.deviceCount
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {1 device} other {# devices}}"
+msgstr "{0, plural, one {1 device} other {# devices}}"
+
+#. placeholder {0}: sessions.length
+#: src/screens/workspace-work.tsx
+msgid "{0, plural, one {Agent session} other {Agent sessions}}"
+msgstr "{0, plural, one {Agent session} other {Agent sessions}}"
+
+#. placeholder {0}: row.deviceCount
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {device {deviceSize}} other {# devices {deviceSize}}}"
+msgstr "{0, plural, one {device {deviceSize}} other {# devices {deviceSize}}}"
+
+#. placeholder {0}: plan.basis
+#: src/lib/format.ts
+msgid "{0, plural, one {Median of # {outcome} run} other {Median of # {outcome} runs}}"
+msgstr "{0, plural, one {Median of # {outcome} run} other {Median of # {outcome} runs}}"
+
+#: src/lib/format.ts
+#: src/lib/format.ts
+msgid "{age} ago"
+msgstr "{age} ago"
+
+#: src/components/git-indicator.tsx
+#: src/lib/format.ts
+msgid "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
+msgstr "{ahead, plural, one {# commit not pushed} other {# commits not pushed}}"
+
+#: src/components/build-progress.tsx
+msgid "{basis, plural, one {{remaining} · median of # {kind} run} other {{remaining} · median of # {kind} runs}}"
+msgstr "{basis, plural, one {{remaining} · median of # {kind} run} other {{remaining} · median of # {kind} runs}}"
+
+#: src/components/git-indicator.tsx
+#: src/lib/format.ts
+msgid "{behind, plural, one {# commit behind the upstream} other {# commits behind the upstream}}"
+msgstr "{behind, plural, one {# commit behind the upstream} other {# commits behind the upstream}}"
+
+#: src/lib/format.ts
+msgid "{cacheHit} cache hit"
+msgstr "{cacheHit} cache hit"
+
+#: src/screens/mac-status.tsx
+msgid "{count, plural, one {# worktree} other {# worktrees}}"
+msgstr "{count, plural, one {# worktree} other {# worktrees}}"
+
+#: src/screens/mac-status.tsx
+msgid "{count} unused"
+msgstr "{count} unused"
+
+#: src/screens/mac-status.tsx
+msgid "{cpu} CPU"
+msgstr "{cpu} CPU"
+
 #: src/intl/format.ts
+#: src/lib/replay.ts
 msgid "{days}d"
 msgstr "{days}d"
 
+#: src/lib/machine-report.ts
+msgid "{days}d ago"
+msgstr "{days}d ago"
+
+#: src/lib/workspace-view.ts
+msgid "{done} of {total} {unit}"
+msgstr "{done} of {total} {unit}"
+
+#: src/screens/device-view.tsx
+msgid "{driverName} is driving it. Your touches and keys can interfere with its work."
+msgstr "{driverName} is driving it. Your touches and keys can interfere with its work."
+
+#: src/screens/mac-status.tsx
+msgid "{duration} saved"
+msgstr "{duration} saved"
+
+#: src/components/workspace-cards.tsx
+msgid "{elapsed} of {estimate}"
+msgstr "{elapsed} of {estimate}"
+
+#: src/components/workspace-cards.tsx
+msgid "{errors, plural, one { error} other { errors}}"
+msgstr "{errors, plural, one { error} other { errors}}"
+
+#: src/components/workspace-cards.tsx
 #: src/components/workspace-row.tsx
+#: src/lib/workspace-view.ts
 msgid "{errors, plural, one {# error} other {# errors}}"
 msgstr "{errors, plural, one {# error} other {# errors}}"
 
+#: src/screens/mac-status.tsx
+msgid "{failed} failed"
+msgstr "{failed} failed"
+
+#: src/lib/workspace-view.ts
+msgid "{failing} failing"
+msgstr "{failing} failing"
+
+#: src/components/replay-bar.tsx
+msgid "{frameLabel} · end"
+msgstr "{frameLabel} · end"
+
+#: src/lib/needs-attention.ts
+msgid "{free} free, below Stim's floor"
+msgstr "{free} free, below Stim's floor"
+
+#: src/lib/home.ts
+msgid "{freeGb} GB free"
+msgstr "{freeGb} GB free"
+
+#: src/screens/workspace-resources.tsx
+msgid "{freeSpace} free"
+msgstr "{freeSpace} free"
+
 #: src/intl/format.ts
 #: src/intl/format.ts
 #: src/intl/format.ts
+#: src/lib/home.ts
 msgid "{gb} GB"
 msgstr "{gb} GB"
 
+#: src/screens/build-details.tsx
+msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
+msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
+
+#: src/screens/home.tsx
+msgid "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
+msgstr "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
+
 #: src/intl/format.ts
+#: src/lib/replay.ts
 msgid "{hours}h"
 msgstr "{hours}h"
+
+#: src/lib/machine-report.ts
+msgid "{hours}h ago"
+msgstr "{hours}h ago"
 
 #: src/intl/format.ts
 msgid "{hours}h{rest}m"
 msgstr "{hours}h{rest}m"
 
+#: src/lib/machine-report.ts
+msgid "{idleDays, plural, one {Not used for # day; rebuilt on the next run} other {Not used for # days; rebuilt on the next run}}"
+msgstr "{idleDays, plural, one {Not used for # day; rebuilt on the next run} other {Not used for # days; rebuilt on the next run}}"
+
 #: src/intl/format.ts
 msgid "{kb} KB"
 msgstr "{kb} KB"
+
+#: src/screens/agent-actions.tsx
+msgid "{label} · {count}"
+msgstr "{label} · {count}"
+
+#: src/lib/workspace-view.ts
+msgid "{label} · {slot}"
+msgstr "{label} · {slot}"
+
+#: src/lib/agents.ts
+msgid "{label} +{others}"
+msgstr "{label} +{others}"
+
+#: src/components/usage-charts.tsx
+msgid "{label} over the last hour, now {value}"
+msgstr "{label} over the last hour, now {value}"
+
+#: src/screens/build-details.tsx
+msgid "{label}, building"
+msgstr "{label}, building"
+
+#: src/screens/mac-status.tsx
+msgid "{live} · Stim holds {held} of {total} GB{over}"
+msgstr "{live} · Stim holds {held} of {total} GB{over}"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} busy"
+msgstr "{machine} busy"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} failed"
+msgstr "{machine} failed"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} low on disk"
+msgstr "{machine} low on disk"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} missing SDK"
+msgstr "{machine} missing SDK"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} no less loaded"
+msgstr "{machine} no less loaded"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} on another Stim build"
+msgstr "{machine} on another Stim build"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} too old"
+msgstr "{machine} too old"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} toolchain differs"
+msgstr "{machine} toolchain differs"
+
+#: src/screens/menu.tsx
+msgid "{machineCount, plural, one {# machine, {statusText}} other {# machines, {statusText}}}"
+msgstr "{machineCount, plural, one {# machine, {statusText}} other {# machines, {statusText}}}"
 
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
 
+#: src/lib/settings-options.ts
+#: src/screens/mac-status.tsx
+msgid "{minutes} min"
+msgstr "{minutes} min"
+
 #: src/intl/format.ts
+#: src/lib/replay.ts
 msgid "{minutes}m"
 msgstr "{minutes}m"
+
+#: src/lib/machine-report.ts
+msgid "{minutes}m ago"
+msgstr "{minutes}m ago"
+
+#: src/screens/mac-status.tsx
+msgid "{minutesLeft} min left"
+msgstr "{minutesLeft} min left"
+
+#: src/screens/device-view.tsx
+msgid "{model} · {slot}"
+msgstr "{model} · {slot}"
+
+#: src/components/device-grid-tile.tsx
+msgid "{model}, {where}, on {macName}"
+msgstr "{model}, {where}, on {macName}"
+
+#: src/components/attention-strip.tsx
+msgid "{more} more"
+msgstr "{more} more"
+
+#: src/lib/workspace-view.ts
+msgid "{msg} · {elapsed} ago"
+msgstr "{msg} · {elapsed} ago"
+
+#: src/components/agent-feed.tsx
+msgid "{msg}, {time}"
+msgstr "{msg}, {time}"
+
+#: src/screens/workspace-work.tsx
+msgid "{n, plural, one {# commit} other {# commits}}"
+msgstr "{n, plural, one {# commit} other {# commits}}"
+
+#: src/screens/workspace-work.tsx
+msgid "{n, plural, one {# file} other {# files}}"
+msgstr "{n, plural, one {# file} other {# files}}"
+
+#: src/lib/format.ts
+msgid "{n, plural, one {# hour} other {# hours}}"
+msgstr "{n, plural, one {# hour} other {# hours}}"
+
+#: src/lib/format.ts
+msgid "{n, plural, one {# minute} other {# minutes}}"
+msgstr "{n, plural, one {# minute} other {# minutes}}"
+
+#: src/screens/agent-actions.tsx
+msgid "{name} · {tool}"
+msgstr "{name} · {tool}"
+
+#: src/lib/workspace-view.ts
+msgid "{name} · last build {list}"
+msgstr "{name} · last build {list}"
+
+#: src/lib/workspace-view.ts
+msgid "{name} · last build failed"
+msgstr "{name} · last build failed"
+
+#: src/lib/workspace-view.ts
+msgid "{name} · last build failed, {since} ago"
+msgstr "{name} · last build failed, {since} ago"
+
+#: src/lib/workspace-view.ts
+msgid "{name} · no build recorded"
+msgstr "{name} · no build recorded"
+
+#: src/lib/needs-attention.ts
+msgid "{name} build failed {count}x in a row"
+msgstr "{name} build failed {count}x in a row"
+
+#: src/lib/needs-attention.ts
+msgid "{name} build failed {count}x in a row ({errorCode})"
+msgstr "{name} build failed {count}x in a row ({errorCode})"
+
+#: src/lib/workspace-view.ts
+msgid "{name} checking the next build"
+msgstr "{name} checking the next build"
+
+#: src/lib/workspace-view.ts
+msgid "{name} last build {cache}"
+msgstr "{name} last build {cache}"
+
+#: src/lib/workspace-view.ts
+msgid "{name} last build {took}, {cache}"
+msgstr "{name} last build {took}, {cache}"
+
+#: src/lib/workspace-view.ts
+msgid "{name} last build failed"
+msgstr "{name} last build failed"
+
+#: src/lib/workspace-view.ts
+msgid "{name} next build {cache}"
+msgstr "{name} next build {cache}"
+
+#: src/lib/workspace-view.ts
+msgid "{name} next build about {took}, {cache}"
+msgstr "{name} next build about {took}, {cache}"
+
+#: src/lib/workspace-view.ts
+msgid "{name} no build"
+msgstr "{name} no build"
+
+#: src/lib/needs-attention.ts
+msgid "{name} signing or provisioning failed ({code})"
+msgstr "{name} signing or provisioning failed ({code})"
+
+#: src/lib/workspace-view.ts
+msgid "{name} simulator"
+msgstr "{name} simulator"
+
+#: src/components/mac-chip.tsx
+msgid "{name}, {detail}"
+msgstr "{name}, {detail}"
+
+#: src/screens/mac-status.tsx
+msgid "{name}, {worktrees}"
+msgstr "{name}, {worktrees}"
+
+#: src/lib/format.ts
+msgid "{name}, driven by {tool}"
+msgstr "{name}, driven by {tool}"
+
+#: src/lib/format.ts
+msgid "{name}, driven by {tool} for {spoken}"
+msgstr "{name}, driven by {tool} for {spoken}"
+
+#: src/lib/drawer-status.ts
+msgid "{name}: low disk"
+msgstr "{name}: low disk"
 
 #: src/screens/about.tsx
 msgid "{name}: stim {stim} · server {version}"
 msgstr "{name}: stim {stim} · server {version}"
 
+#: src/lib/format.ts
+msgid "{names} · {duration}"
+msgstr "{names} · {duration}"
+
+#: src/lib/workspace-view.ts
+msgid "{passing} passing"
+msgstr "{passing} passing"
+
+#: src/lib/machine-report.ts
+msgid "{path} is gone"
+msgstr "{path} is gone"
+
+#: src/lib/workspace-view.ts
+msgid "{pending} pending"
+msgstr "{pending} pending"
+
+#: src/lib/home.ts
+#: src/lib/home.ts
+msgid "{percent}%"
+msgstr "{percent}%"
+
+#: src/screens/mac-status.tsx
+msgid "{percent}% cache hits"
+msgstr "{percent}% cache hits"
+
+#: src/lib/workspace-view.ts
+msgid "{platform} · {since} ago"
+msgstr "{platform} · {since} ago"
+
+#: src/lib/workspace-view.ts
+msgid "{platform} · started {since} ago"
+msgstr "{platform} · started {since} ago"
+
+#: src/lib/workspace-view.ts
+msgid "{platform} app closed"
+msgstr "{platform} app closed"
+
+#: src/lib/workspace-view.ts
+msgid "{platform} build"
+msgstr "{platform} build"
+
+#: src/components/connection-banner.tsx
+msgid "{reason} Pair this machine again from Stim Desktop."
+msgstr "{reason} Pair this machine again from Stim Desktop."
+
+#: src/components/connection-banner.tsx
+msgid "{reason} Retrying in {seconds}s."
+msgstr "{reason} Retrying in {seconds}s."
+
+#: src/components/connection-banner.tsx
+msgid "{reason} Update this app or the Stim server on the machine."
+msgstr "{reason} Update this app or the Stim server on the machine."
+
+#: src/screens/workspace-detail.tsx
+msgid "{rest} and {last} are running."
+msgstr "{rest} and {last} are running."
+
+#: src/screens/mac-status.tsx
+msgid "{runs, plural, one {# run} other {# runs}}"
+msgstr "{runs, plural, one {# run} other {# runs}}"
+
+#: src/lib/replay.ts
+msgid "{seconds}s"
+msgstr "{seconds}s"
+
 #: src/intl/format.ts
 msgid "{secs}s"
 msgstr "{secs}s"
+
+#: src/lib/workspace-view.ts
+msgid "{since} ago"
+msgstr "{since} ago"
+
+#: src/lib/needs-attention.ts
+#: src/lib/workspaces.ts
+msgid "{slot}: {message}"
+msgstr "{slot}: {message}"
+
+#: src/components/replay-bar.tsx
+msgid "{speed}x"
+msgstr "{speed}x"
+
+#: src/lib/logs.ts
+msgid "{src} {level} at {time} in {workspace}"
+msgstr "{src} {level} at {time} in {workspace}"
+
+#: src/lib/workspace-view.ts
+msgid "{step} · {since}"
+msgstr "{step} · {since}"
+
+#: src/lib/workspace-view.ts
+msgid "{stopped} ago"
+msgstr "{stopped} ago"
 
 #: src/intl/format.ts
 msgid "{tb} TB"
 msgstr "{tb} TB"
 
+#: src/screens/mac-status.tsx
+msgid "{tenths} h"
+msgstr "{tenths} h"
+
+#: src/screens/build-details.tsx
+msgid "{text}. Shows why."
+msgstr "{text}. Shows why."
+
+#: src/lib/replay.ts
+msgid "{time} · {age} ago"
+msgstr "{time} · {age} ago"
+
+#: src/screens/agent-actions.tsx
+msgid "{time}, {msg}"
+msgstr "{time}, {msg}"
+
+#: src/screens/mac-status.tsx
+msgid "{title} — {remedy}"
+msgstr "{title} — {remedy}"
+
 #: src/screens/inbox.tsx
 msgid "{title}, {body}, {detail}, {ago} ago"
 msgstr "{title}, {body}, {detail}, {ago} ago"
+
+#: src/screens/menu.tsx
+msgid "{title}, {count} unread"
+msgstr "{title}, {count} unread"
+
+#: src/components/workspace-cards.tsx
+msgid "{title}, {phaseText}, {timing}"
+msgstr "{title}, {phaseText}, {timing}"
+
+#: src/screens/menu.tsx
+msgid "{title}, live"
+msgstr "{title}, live"
+
+#: src/components/replay-bar.tsx
+msgid "{title}: {label}"
+msgstr "{title}: {label}"
+
+#: src/components/device-tile.tsx
+msgid "{tool}, {text}"
+msgstr "{tool}, {text}"
+
+#: src/lib/format.ts
+msgid "{uncommitted, plural, one {# uncommitted change} other {# uncommitted changes}}"
+msgstr "{uncommitted, plural, one {# uncommitted change} other {# uncommitted changes}}"
+
+#: src/lib/workspace-view.ts
+msgid "{uncommitted} changed"
+msgstr "{uncommitted} changed"
+
+#: src/components/git-indicator.tsx
+msgid "{uncommitted} uncommitted"
+msgstr "{uncommitted} uncommitted"
+
+#: src/lib/home.ts
+#: src/lib/home.ts
+msgid "{usedGb}/{totalGb} GB"
+msgstr "{usedGb}/{totalGb} GB"
+
+#: src/lib/home.ts
+msgid "{v} GB"
+msgstr "{v} GB"
+
+#: src/lib/workspace-view.ts
+msgid "{what} → built here"
+msgstr "{what} → built here"
+
+#: src/screens/mac-status.tsx
+msgid "{whole} h"
+msgstr "{whole} h"
 
 #: src/intl/format.ts
 msgid "{whole} MB"
 msgstr "{whole} MB"
 
+#: src/screens/mac-status.tsx
+msgid "{worktrees} · {location}"
+msgstr "{worktrees} · {location}"
+
+#: src/components/git-indicator.tsx
+msgid "↑{ahead} unpushed"
+msgstr "↑{ahead} unpushed"
+
+#: src/components/git-indicator.tsx
+msgid "↓{behind} behind"
+msgstr "↓{behind} behind"
+
+#: src/screens/logs.tsx
+msgid "+{hidden} framework frames"
+msgstr "+{hidden} framework frames"
+
+#: src/screens/logs.tsx
+msgid "+{hidden} more frames"
+msgstr "+{hidden} more frames"
+
+#: src/components/agent-sessions.tsx
+msgid "+{others}"
+msgstr "+{others}"
+
 #: src/intl/format.ts
 msgid "<1m"
 msgstr "<1m"
+
+#: src/lib/settings-options.ts
+msgid "10 PM to 7 AM"
+msgstr "10 PM to 7 AM"
+
+#: src/lib/settings-options.ts
+msgid "11 PM to 8 AM"
+msgstr "11 PM to 8 AM"
+
+#: src/components/usage-charts.tsx
+msgid "60 min ago"
+msgstr "60 min ago"
+
+#: src/lib/home.ts
+msgid "60% of memory"
+msgstr "60% of memory"
+
+#: src/lib/settings-options.ts
+msgid "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
+msgstr "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
+
+#: src/lib/settings-options.ts
+msgid "A read-only machine can't be controlled from this phone. Tap it to see how to allow control."
+msgstr "A read-only machine can't be controlled from this phone. Tap it to see how to allow control."
+
+#: src/lib/machine-report.ts
+msgid "A removed workspace"
+msgstr "A removed workspace"
+
+#: src/lib/machine-report.ts
+#: src/lib/machine-report.ts
+#: src/lib/machine-report.ts
+msgid "a workspace"
+msgstr "a workspace"
 
 #: src/screens/about.tsx
 msgid "About"
 msgstr "About"
 
+#: src/lib/format.ts
+msgid "about {minutesLeft} min left"
+msgstr "about {minutesLeft} min left"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "About Stim"
+msgstr "About Stim"
+
+#: src/screens/agent-actions.tsx
+msgid "active"
+msgstr "active"
+
+#: src/lib/format.ts
+msgid "Activity unknown"
+msgstr "Activity unknown"
+
+#: src/lib/logs.ts
+#: src/lib/replay.ts
+#: src/lib/workspace-view.ts
+#: src/screens/agent-actions.tsx
+msgid "Agent"
+msgstr "Agent"
+
+#: src/components/agent-feed.tsx
+msgid "Agent actions, loading"
+msgstr "Agent actions, loading"
+
+#: src/components/agent-feed.tsx
+msgid "Agent actions: {list}"
+msgstr "Agent actions: {list}"
+
+#: src/lib/settings-options.ts
+msgid "Agent looks stuck"
+msgstr "Agent looks stuck"
+
+#: src/lib/settings-options.ts
+msgid "Agent repeats the same failure"
+msgstr "Agent repeats the same failure"
+
+#: src/screens/workspace-work.tsx
+msgid "Ahead"
+msgstr "Ahead"
+
+#: src/lib/settings-options.ts
+msgid "Alert"
+msgstr "Alert"
+
+#: src/hooks/notifications.tsx
+msgid "Alerts"
+msgstr "Alerts"
+
+#: src/lib/logs.ts
 #: src/screens/filters.tsx
 #: src/screens/filters.tsx
 #: src/screens/filters.tsx
+#: src/screens/logs.tsx
 msgid "All"
 msgstr "All"
 
@@ -99,17 +758,780 @@ msgstr "All categories"
 msgid "All machines"
 msgstr "All machines"
 
+#: src/screens/logs.tsx
+msgid "All slots"
+msgstr "All slots"
+
+#: src/screens/pair.tsx
+msgid "Allow camera"
+msgstr "Allow camera"
+
+#: src/screens/mac-status.tsx
+msgid "Allow control"
+msgstr "Allow control"
+
+#: src/screens/workspace-detail.tsx
+msgid "Allow control..."
+msgstr "Allow control..."
+
+#: src/hooks/notifications.tsx
+msgid "Allow them in Settings to get notified when something needs attention."
+msgstr "Allow them in Settings to get notified when something needs attention."
+
+#: src/screens/device-view.tsx
+msgid "Also driven by {driver}"
+msgstr "Also driven by {driver}"
+
+#: src/lib/format.ts
+#: src/lib/format.ts
+msgid "an unknown tool"
+msgstr "an unknown tool"
+
+#: src/components/workspace-cards.tsx
+msgid "and {more} more"
+msgstr "and {more} more"
+
+#: src/components/build-progress.tsx
+#: src/lib/logs.ts
+#: src/lib/needs-attention.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspaces.ts
+#: src/screens/mac-status.tsx
+msgid "Android"
+msgstr "Android"
+
+#: src/lib/machine-report.ts
+msgid "Android {version} · {variant}"
+msgstr "Android {version} · {variant}"
+
+#: src/lib/needs-attention.ts
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+msgid "Android device"
+msgstr "Android device"
+
+#: src/lib/workspace-view.ts
+msgid "Android emulator"
+msgstr "Android emulator"
+
+#: src/lib/needs-attention.ts
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+#: src/screens/device-view.tsx
+msgid "Android Emulator"
+msgstr "Android Emulator"
+
+#: src/lib/build-machines.ts
+msgid "Android platform missing"
+msgstr "Android platform missing"
+
+#: src/screens/device-view.tsx
+msgid "Another client"
+msgstr "Another client"
+
+#: src/lib/machine-report.ts
+msgid "Another Stim home"
+msgstr "Another Stim home"
+
+#: src/lib/logs.ts
+msgid "App"
+msgstr "App"
+
+#: src/components/device-tile.tsx
+#: src/components/device-tile.tsx
+msgid "App closed"
+msgstr "App closed"
+
+#: src/lib/needs-attention.ts
+msgid "App failed to launch on {name} {count}x in a row"
+msgstr "App failed to launch on {name} {count}x in a row"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+#: src/screens/settings.tsx
+msgid "Appearance"
+msgstr "Appearance"
+
+#: src/lib/build-machines.ts
+#: src/screens/workspace-work.tsx
+msgid "Approved"
+msgstr "Approved"
+
+#: src/screens/device-view.tsx
+msgid "Apps"
+msgstr "Apps"
+
+#: src/lib/settings-options.ts
+msgid "Auto"
+msgstr "Auto"
+
+#: src/screens/device-view.tsx
+msgid "Back"
+msgstr "Back"
+
+#: src/lib/settings-options.ts
+msgid "Background notifications need an iPhone and a Mac that sends push."
+msgstr "Background notifications need an iPhone and a Mac that sends push."
+
+#: src/screens/workspace-work.tsx
+msgid "Behind"
+msgstr "Behind"
+
+#: src/lib/home.ts
+#: src/lib/home.ts
+msgid "below {v} GB free"
+msgstr "below {v} GB free"
+
+#: src/components/remote-tile.tsx
+msgid "billable"
+msgstr "billable"
+
+#: src/lib/workspace-view.ts
+msgid "Branch"
+msgstr "Branch"
+
+#: src/screens/mac-status.tsx
+msgid "Budgets"
+msgstr "Budgets"
+
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+#: src/lib/logs.ts
+#: src/lib/workspace-view.ts
+#: src/screens/build-details.tsx
+msgid "Build"
+msgstr "Build"
+
+#: src/lib/workspace-view.ts
+msgid "Build failed"
+msgstr "Build failed"
+
+#: src/screens/mac-status.tsx
+msgid "Build machines"
+msgstr "Build machines"
+
+#: src/lib/workspace-view.ts
+msgid "build output {build}"
+msgstr "build output {build}"
+
+#: src/lib/machine-report.ts
+msgid "Build outputs of {workspace}"
+msgstr "Build outputs of {workspace}"
+
+#: src/lib/build-machines.ts
+msgid "Build-tools missing"
+msgstr "Build-tools missing"
+
+#: src/components/workspace-cards.tsx
+msgid "Build: {spoken}"
+msgstr "Build: {spoken}"
+
+#: src/components/workspace-cards.tsx
+msgid "Build: {what}, {phase}, {timing}"
+msgstr "Build: {what}, {phase}, {timing}"
+
+#: src/lib/workspace-view.ts
+msgid "Building"
+msgstr "Building"
+
+#: src/components/workspace-cards.tsx
+msgid "building {name}"
+msgstr "building {name}"
+
+#: src/components/workspace-cards.tsx
+msgid "Building {name}"
+msgstr "Building {name}"
+
+#: src/components/workspace-cards.tsx
+msgid "building {name} on {host}"
+msgstr "building {name} on {host}"
+
+#: src/components/workspace-cards.tsx
+msgid "Building {name} on {host}"
+msgstr "Building {name} on {host}"
+
+#: src/components/build-progress.tsx
+msgid "Building {platform}"
+msgstr "Building {platform}"
+
+#: src/components/build-progress.tsx
+msgid "Building {platform} · {slot}"
+msgstr "Building {platform} · {slot}"
+
+#: src/lib/format.ts
+#: src/lib/format.ts
+msgid "Built on {machine}"
+msgstr "Built on {machine}"
+
+#: src/lib/workspace-view.ts
+msgid "Bundle failed"
+msgstr "Bundle failed"
+
+#: src/lib/workspace-view.ts
+msgid "Bundle failed · {since} ago"
+msgstr "Bundle failed · {since} ago"
+
+#: src/lib/workspace-view.ts
+msgid "Bundled in {seconds}s"
+msgstr "Bundled in {seconds}s"
+
+#: src/lib/workspace-view.ts
+msgid "Bundling"
+msgstr "Bundling"
+
+#: src/lib/workspace-view.ts
+msgid "Bundling · {percent}%"
+msgstr "Bundling · {percent}%"
+
+#: src/lib/build-machines.ts
+msgid "Busy"
+msgstr "Busy"
+
+#: src/lib/build-machines.ts
+msgid "Busy (load {load}/core)"
+msgstr "Busy (load {load}/core)"
+
+#: src/lib/needs-attention.ts
+msgid "C"
+msgstr "C"
+
+#: src/lib/needs-attention.ts
+msgid "C++"
+msgstr "C++"
+
+#: src/lib/format.ts
+msgid "Cache hit"
+msgstr "Cache hit"
+
+#: src/lib/format.ts
+msgid "Cache hit ({cacheHit})"
+msgstr "Cache hit ({cacheHit})"
+
+#: src/lib/format.ts
+msgid "cache hit (local)"
+msgstr "cache hit (local)"
+
+#: src/lib/format.ts
+msgid "Cache hit (local){took}"
+msgstr "Cache hit (local){took}"
+
+#: src/lib/format.ts
+msgid "cache hit (remote)"
+msgstr "cache hit (remote)"
+
+#: src/lib/format.ts
+msgid "Cache hit (remote){took}"
+msgstr "Cache hit (remote){took}"
+
+#: src/lib/workspace-view.ts
+msgid "Cache lookup"
+msgstr "Cache lookup"
+
+#: src/screens/build-details.tsx
+msgid "cache miss, {miss}"
+msgstr "cache miss, {miss}"
+
+#: src/components/workspace-cards.tsx
+msgid "Cache miss: {miss}"
+msgstr "Cache miss: {miss}"
+
+#: src/lib/format.ts
+msgid "cache reads off"
+msgstr "cache reads off"
+
+#: src/screens/mac-status.tsx
+msgid "Caches"
+msgstr "Caches"
+
+#: src/components/read-only.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Can control"
+msgstr "Can control"
+
+#: src/hooks/app-update.ts
+#: src/screens/device-view.tsx
+#: src/screens/mac-list.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/lib/format.ts
+msgid "Cancelled"
+msgstr "Cancelled"
+
+#: src/screens/mac-status.tsx
+msgid "Cannot check build machines: {machinesError}"
+msgstr "Cannot check build machines: {machinesError}"
+
+#: src/screens/build-details.tsx
+msgid "Cannot plan: {planMessage}"
+msgstr "Cannot plan: {planMessage}"
+
+#: src/lib/connection.ts
+msgid "Cannot reach {endpoint}. Check that Tailscale is connected on this phone."
+msgstr "Cannot reach {endpoint}. Check that Tailscale is connected on this phone."
+
+#: src/lib/build-machines.ts
+msgid "Cannot take builds"
+msgstr "Cannot take builds"
+
 #: src/screens/inbox.tsx
 msgid "Category"
 msgstr "Category"
+
+#: src/screens/home.tsx
+msgid "Change the filters to see more workspaces."
+msgstr "Change the filters to see more workspaces."
+
+#: src/screens/workspace-work.tsx
+msgid "Changed"
+msgstr "Changed"
+
+#: src/screens/workspace-work.tsx
+msgid "Changes requested"
+msgstr "Changes requested"
+
+#: src/screens/build-details.tsx
+msgid "Check again"
+msgstr "Check again"
+
+#: src/lib/build-machines.ts
+msgid "check its stim-server"
+msgstr "check its stim-server"
+
+#: src/screens/build-details.tsx
+msgid "Check the next {name} build again"
+msgstr "Check the next {name} build again"
+
+#: src/screens/build-details.tsx
+msgid "Checked {checkedAge} ago"
+msgstr "Checked {checkedAge} ago"
+
+#: src/screens/workspace-work.tsx
+msgid "Checked {sinceChecked} ago"
+msgstr "Checked {sinceChecked} ago"
+
+#: src/screens/build-details.tsx
+msgid "Checked after the running build."
+msgstr "Checked after the running build."
+
+#: src/screens/mac-status.tsx
+msgid "Checking build machines\\u2026"
+msgstr "Checking build machines\\u2026"
+
+#: src/screens/build-details.tsx
+msgid "Checking the next build…"
+msgstr "Checking the next build…"
+
+#: src/lib/workspace-view.ts
+msgid "Checking…"
+msgstr "Checking…"
+
+#: src/screens/workspace-work.tsx
+msgid "Checks"
+msgstr "Checks"
+
+#: src/lib/workspace-view.ts
+msgid "checks failing"
+msgstr "checks failing"
+
+#: src/lib/workspace-view.ts
+msgid "checks passing"
+msgstr "checks passing"
+
+#: src/lib/workspace-view.ts
+msgid "checks pending"
+msgstr "checks pending"
+
+#: src/lib/needs-attention.ts
+#: src/lib/workspaces.ts
+msgid "Chrome"
+msgstr "Chrome"
+
+#: src/lib/workspace-view.ts
+msgid "Chrome (web)"
+msgstr "Chrome (web)"
+
+#: src/components/workspace-cards.tsx
+msgid "CI failing"
+msgstr "CI failing"
+
+#: src/components/remote-tile.tsx
+msgid "Claim unknown"
+msgstr "Claim unknown"
+
+#: src/components/remote-tile.tsx
+msgid "Claimed by this workspace"
+msgstr "Claimed by this workspace"
+
+#: src/lib/agents.ts
+msgid "Claude Code"
+msgstr "Claude Code"
+
+#: src/screens/device-view.tsx
+#: src/screens/pair.tsx
+msgid "Close"
+msgstr "Close"
+
+#: src/screens/menu.tsx
+msgid "Close About"
+msgstr "Close About"
+
+#: src/components/menu-drawer.tsx
+msgid "Close menu"
+msgstr "Close menu"
+
+#: src/lib/workspaces.ts
+msgid "closed"
+msgstr "closed"
+
+#: src/components/device-tile.tsx
+#: src/screens/workspace-work.tsx
+msgid "Closed"
+msgstr "Closed"
+
+#: src/lib/build-machines.ts
+msgid "CocoaPods differs"
+msgstr "CocoaPods differs"
+
+#: src/lib/agents.ts
+msgid "Codex"
+msgstr "Codex"
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "cold"
+msgstr "cold"
+
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+msgid "Cold build"
+msgstr "Cold build"
+
+#: src/lib/format.ts
+msgid "cold build{off}{native}{why}"
+msgstr "cold build{off}{native}{why}"
+
+#: src/components/collapsible-section.tsx
+msgid "Collapses the section"
+msgstr "Collapses the section"
+
+#: src/screens/build-details.tsx
+msgid "Compared with {fingerprint}, the last build in this workspace."
+msgstr "Compared with {fingerprint}, the last build in this workspace."
+
+#: src/screens/build-details.tsx
+msgid "Compared with {fingerprint}, the last build of this project in another worktree."
+msgstr "Compared with {fingerprint}, the last build of this project in another worktree."
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "Compile"
+msgstr "Compile"
+
+#: src/lib/workspace-view.ts
+msgid "Compiling"
+msgstr "Compiling"
+
+#: src/lib/workspace-view.ts
+msgid "Configuring"
+msgstr "Configuring"
+
+#: src/components/mac-chip.tsx
+msgid "Connected"
+msgstr "Connected"
+
+#: src/components/connection-banner.tsx
+#: src/components/mac-chip.tsx
+msgid "Connecting"
+msgstr "Connecting"
+
+#: src/lib/connection.ts
+msgid "Connection closed."
+msgstr "Connection closed."
+
+#: src/lib/connection.ts
+msgid "Connection lost."
+msgstr "Connection lost."
+
+#: src/screens/device-view.tsx
+#: src/screens/device-view.tsx
+msgid "Control"
+msgstr "Control"
+
+#: src/screens/device-view.tsx
+msgid "Control ended. {ended}"
+msgstr "Control ended. {ended}"
+
+#: src/screens/device-view.tsx
+#: src/screens/home.tsx
+#: src/screens/logs.tsx
+msgid "Copied"
+msgstr "Copied"
+
+#: src/screens/home.tsx
+#: src/screens/logs.tsx
+#: src/screens/mac-status.tsx
+msgid "Copy"
+msgstr "Copy"
+
+#: src/components/read-only.tsx
+#: src/screens/device-view.tsx
+#: src/screens/mac-status.tsx
+msgid "Copy command"
+msgstr "Copy command"
+
+#: src/screens/logs.tsx
+msgid "Copy message and location"
+msgstr "Copy message and location"
+
+#: src/screens/workspace-detail.tsx
+msgid "Copy path"
+msgstr "Copy path"
+
+#: src/screens/home.tsx
+msgid "Copy prompt: {prompt}"
+msgstr "Copy prompt: {prompt}"
+
+#: src/lib/workspace-view.ts
+msgid "copying ignored files"
+msgstr "copying ignored files"
+
+#: src/lib/workspace-view.ts
+msgid "Copying resources"
+msgstr "Copying resources"
+
+#: src/hooks/app-update.ts
+msgid "Could not restart"
+msgstr "Could not restart"
+
+#: src/components/workspace-cards.tsx
+#: src/lib/home.ts
+#: src/lib/home.ts
+#: src/screens/workspace-resources.tsx
+#: src/screens/workspace-resources.tsx
+msgid "CPU"
+msgstr "CPU"
+
+#: src/screens/mac-status.tsx
+msgid "CPU and memory"
+msgstr "CPU and memory"
+
+#: src/lib/replay.ts
+msgid "Crash"
+msgstr "Crash"
+
+#: src/lib/machine-report.ts
+msgid "Created by this Stim home; no workspace uses it"
+msgstr "Created by this Stim home; no workspace uses it"
+
+#: src/lib/settings-options.ts
+msgid "Dark"
+msgstr "Dark"
+
+#: src/lib/machine-report.ts
+msgid "Data of a removed workspace"
+msgstr "Data of a removed workspace"
+
+#: src/lib/settings-options.ts
+msgid "Data saver"
+msgstr "Data saver"
+
+#: src/lib/settings-options.ts
+msgid "Data saver sends still frames instead of video."
+msgstr "Data saver sends still frames instead of video."
+
+#: src/lib/workspace-view.ts
+msgid "Dependencies"
+msgstr "Dependencies"
+
+#: src/lib/machine-report.ts
+#: src/lib/workspace-view.ts
+#: src/screens/mac-status.tsx
+msgid "Device"
+msgstr "Device"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Device view"
+msgstr "Device view"
+
+#: src/lib/settings-options.ts
+#: src/screens/home.tsx
+#: src/screens/menu.tsx
+#: src/screens/workspace-detail.tsx
+msgid "Devices"
+msgstr "Devices"
+
+#: src/lib/workspace-view.ts
+msgid "Dexing"
+msgstr "Dexing"
+
+#: src/lib/build-machines.ts
+msgid "Different Mac"
+msgstr "Different Mac"
+
+#: src/components/connection-banner.tsx
+#: src/components/mac-chip.tsx
+msgid "Disconnected"
+msgstr "Disconnected"
+
+#: src/lib/drawer-status.ts
+msgid "Disconnected from {name}"
+msgstr "Disconnected from {name}"
+
+#: src/components/workspace-cards.tsx
+msgid "disk"
+msgstr "disk"
+
+#: src/lib/home.ts
+#: src/screens/mac-status.tsx
+#: src/screens/workspace-resources.tsx
+msgid "Disk"
+msgstr "Disk"
+
+#: src/screens/mac-status.tsx
+msgid "Disk details are unavailable: {message}"
+msgstr "Disk details are unavailable: {message}"
+
+#: src/lib/home.ts
+msgid "Disk free"
+msgstr "Disk free"
+
+#: src/screens/mac-status.tsx
+msgid "Disk use by category"
+msgstr "Disk use by category"
+
+#: src/lib/workspace-view.ts
+msgid "Disk: {list}."
+msgstr "Disk: {list}."
+
+#: src/screens/device-view.tsx
+msgid "Done"
+msgstr "Done"
+
+#: src/lib/workspace-view.ts
+msgid "Download"
+msgstr "Download"
+
+#: src/screens/workspace-work.tsx
+msgid "Draft"
+msgstr "Draft"
+
+#: src/screens/device-view.tsx
+msgid "Driven by {driver}"
+msgstr "Driven by {driver}"
+
+#: src/lib/format.ts
+msgid "Driven by {tool}"
+msgstr "Driven by {tool}"
+
+#: src/lib/format.ts
+msgid "Driven by {tool} · {duration}"
+msgstr "Driven by {tool} · {duration}"
+
+#: src/screens/agent-actions.tsx
+msgid "driving {driving}"
+msgstr "driving {driving}"
+
+#: src/screens/mac-status.tsx
+msgid "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
+msgstr "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
+
+#: src/screens/mac-status.tsx
+msgid "Each process counts in one row. Resident memory counts shared memory once per process, so simulators read high."
+msgstr "Each process counts in one row. Resident memory counts shared memory once per process, so simulators read high."
 
 #: src/components/workspace-row.tsx
 msgid "EAS session"
 msgstr "EAS session"
 
+#: src/lib/needs-attention.ts
+msgid "EAS session running for {minutes} min with no agent; billed while it runs"
+msgstr "EAS session running for {minutes} min with no agent; billed while it runs"
+
+#: src/components/remote-tile.tsx
+msgid "EAS Simulator"
+msgstr "EAS Simulator"
+
+#: src/components/remote-tile.tsx
+msgid "EAS Simulator · {platformLabel}"
+msgstr "EAS Simulator · {platformLabel}"
+
 #: src/screens/about.tsx
 msgid "embedded"
 msgstr "embedded"
+
+#: src/lib/workspace-view.ts
+msgid "Emulator"
+msgstr "Emulator"
+
+#: src/screens/pair.tsx
+msgid "Endpoint"
+msgstr "Endpoint"
+
+#: src/screens/pair.tsx
+msgid "Enter the endpoint and token instead"
+msgstr "Enter the endpoint and token instead"
+
+#: src/lib/pairing.ts
+msgid "Enter the pairing token Stim Desktop shows."
+msgstr "Enter the pairing token Stim Desktop shows."
+
+#: src/lib/replay.ts
+msgid "Error"
+msgstr "Error"
+
+#: src/components/attention-strip.tsx
+msgid "Error: {title} on {macName}, {detail}"
+msgstr "Error: {title} on {macName}, {detail}"
+
+#: src/screens/logs.tsx
+msgid "Errors"
+msgstr "Errors"
+
+#: src/lib/workspace-view.ts
+msgid "est."
+msgstr "est."
+
+#: src/lib/workspace-view.ts
+msgid "est. {cache}"
+msgstr "est. {cache}"
+
+#: src/components/touch.tsx
+msgid "expanded"
+msgstr "expanded"
+
+#: src/components/collapsible-section.tsx
+msgid "Expands the section"
+msgstr "Expands the section"
+
+#: src/screens/mac-status.tsx
+msgid "Expired"
+msgstr "Expired"
+
+#: src/lib/logs.ts
+#: src/lib/workspace-view.ts
+msgid "Failed"
+msgstr "Failed"
+
+#: src/lib/format.ts
+msgid "Failed ({code})"
+msgstr "Failed ({code})"
+
+#: src/lib/format.ts
+msgid "Failed ({code}){took}"
+msgstr "Failed ({code}){took}"
+
+#: src/screens/home.tsx
+msgid "Filter"
+msgstr "Filter"
 
 #: src/screens/inbox.tsx
 msgid "Filter and mark read"
@@ -123,6 +1545,87 @@ msgstr "Filters"
 msgid "Filters are saved on this phone."
 msgstr "Filters are saved on this phone."
 
+#: src/screens/build-details.tsx
+msgid "fingerprint {fingerprint}"
+msgstr "fingerprint {fingerprint}"
+
+#: src/screens/build-details.tsx
+msgid "finished {finishedAt}"
+msgstr "finished {finishedAt}"
+
+#: src/components/device-tile.tsx
+msgid "Fix the build and run it again"
+msgstr "Fix the build and run it again"
+
+#: src/screens/device-view.tsx
+msgid "Fold"
+msgstr "Fold"
+
+#: src/components/device-tile.tsx
+msgid "Folded"
+msgstr "Folded"
+
+#: src/lib/machine-report.ts
+msgid "Folder gone"
+msgstr "Folder gone"
+
+#: src/screens/mac-list.tsx
+#: src/screens/mac-list.tsx
+msgid "Forget"
+msgstr "Forget"
+
+#: src/screens/mac-list.tsx
+msgid "Forget {name}"
+msgstr "Forget {name}"
+
+#: src/screens/mac-list.tsx
+msgid "Forget {name}?"
+msgstr "Forget {name}?"
+
+#: src/lib/workspaces.ts
+msgid "Frames are only served for devices Stim owns."
+msgstr "Frames are only served for devices Stim owns."
+
+#: src/screens/mac-status.tsx
+msgid "free"
+msgstr "free"
+
+#: src/screens/mac-status.tsx
+msgid "free on {mount} of {totalSize}"
+msgstr "free on {mount} of {totalSize}"
+
+#: src/lib/build-machines.ts
+msgid "free space there"
+msgstr "free space there"
+
+#: src/lib/format.ts
+msgid "From {provider}. {runs}"
+msgstr "From {provider}. {runs}"
+
+#: src/screens/pair.tsx
+msgid "From Pair a phone in Stim Desktop"
+msgstr "From Pair a phone in Stim Desktop"
+
+#: src/screens/workspace-work.tsx
+msgid "Git"
+msgstr "Git"
+
+#: src/components/replay-bar.tsx
+msgid "Go live"
+msgstr "Go live"
+
+#: src/lib/needs-attention.ts
+msgid "Gradle"
+msgstr "Gradle"
+
+#: src/components/device-screen.tsx
+msgid "H.264 {rate} fps {bitrate} kbps {latency} ms{asked}"
+msgstr "H.264 {rate} fps {bitrate} kbps {latency} ms{asked}"
+
+#: src/screens/device-view.tsx
+msgid "Half open"
+msgstr "Half open"
+
 #: src/screens/filters.tsx
 msgid "Has errors"
 msgstr "Has errors"
@@ -131,27 +1634,308 @@ msgstr "Has errors"
 msgid "Has remote sessions"
 msgstr "Has remote sessions"
 
+#: src/components/workspace-cards.tsx
+msgid "healthy"
+msgstr "healthy"
+
+#: src/screens/mac-status.tsx
+msgid "Held outside a listed workspace"
+msgstr "Held outside a listed workspace"
+
+#: src/screens/device-view.tsx
+msgid "Hide keyboard"
+msgstr "Hide keyboard"
+
+#: src/screens/pair.tsx
+msgid "Hide token"
+msgstr "Hide token"
+
+#: src/lib/settings-options.ts
+msgid "High"
+msgstr "High"
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "hit"
+msgstr "hit"
+
+#: src/screens/device-view.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Home"
+msgstr "Home"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Home view"
+msgstr "Home view"
+
+#: src/screens/mac-status.tsx
+msgid "idle"
+msgstr "idle"
+
+#: src/lib/format.ts
 #: src/screens/filters.tsx
+#: src/screens/home.tsx
 msgid "Idle"
 msgstr "Idle"
+
+#: src/lib/format.ts
+msgid "Idle {duration}"
+msgstr "Idle {duration}"
+
+#: src/lib/workspace-view.ts
+msgid "idle {idle}"
+msgstr "idle {idle}"
+
+#: src/screens/home.tsx
+msgid "In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
+msgstr "In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
+
+#: src/lib/workspace-view.ts
+msgid "Install"
+msgstr "Install"
+
+#: src/lib/build-machines.ts
+msgid "install Bundler there"
+msgstr "install Bundler there"
+
+#: src/lib/build-machines.ts
+#: src/lib/build-machines.ts
+#: src/lib/build-machines.ts
+msgid "install it with sdkmanager there"
+msgstr "install it with sdkmanager there"
+
+#: src/lib/build-machines.ts
+msgid "install one there"
+msgstr "install one there"
+
+#: src/lib/build-machines.ts
+msgid "install the iOS runtime there"
+msgstr "install the iOS runtime there"
+
+#: src/lib/build-machines.ts
+msgid "install the same CocoaPods there"
+msgstr "install the same CocoaPods there"
+
+#: src/lib/workspace-view.ts
+msgid "installing dependencies"
+msgstr "installing dependencies"
+
+#: src/lib/format.ts
+msgid "Interrupted"
+msgstr "Interrupted"
+
+#: src/screens/logs.tsx
+msgid "Invalid search: {message}"
+msgstr "Invalid search: {message}"
+
+#: src/lib/machine-report.ts
+#: src/lib/workspace-view.ts
+msgid "iOS {version}"
+msgstr "iOS {version}"
+
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+msgid "iOS device"
+msgstr "iOS device"
+
+#: src/lib/needs-attention.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+#: src/screens/device-view.tsx
+msgid "iOS Simulator"
+msgstr "iOS Simulator"
+
+#: src/lib/machine-report.ts
+msgid "Its pull request is finished"
+msgstr "Its pull request is finished"
+
+#: src/lib/machine-report.ts
+msgid "Its workspace has not been used for a while"
+msgstr "Its workspace has not been used for a while"
+
+#: src/lib/machine-report.ts
+msgid "Its workspace was removed; stim gc --delete deletes it with the workspace data"
+msgstr "Its workspace was removed; stim gc --delete deletes it with the workspace data"
+
+#: src/lib/needs-attention.ts
+msgid "Java"
+msgstr "Java"
+
+#: src/lib/needs-attention.ts
+msgid "JavaScript"
+msgstr "JavaScript"
+
+#: src/lib/build-machines.ts
+msgid "JDK differs"
+msgstr "JDK differs"
+
+#: src/components/device-screen.tsx
+msgid "JPEG{asked}"
+msgstr "JPEG{asked}"
+
+#: src/screens/logs.tsx
+msgid "Jump to latest"
+msgstr "Jump to latest"
+
+#: src/lib/machine-report.ts
+msgid "just now"
+msgstr "just now"
+
+#: src/screens/device-view.tsx
+msgid "Keyboard"
+msgstr "Keyboard"
+
+#: src/lib/needs-attention.ts
+msgid "Kotlin"
+msgstr "Kotlin"
+
+#: src/screens/device-view.tsx
+msgid "landscape"
+msgstr "landscape"
+
+#: src/screens/build-details.tsx
+msgid "Last build"
+msgstr "Last build"
+
+#: src/screens/logs.tsx
+msgid "last bundle {seconds}s"
+msgstr "last bundle {seconds}s"
 
 #: src/components/workspace-row.tsx
 msgid "Last seen {seen} ago"
 msgstr "Last seen {seen} ago"
 
+#: src/components/device-tile.tsx
+msgid "Latest frame of {deviceName}"
+msgstr "Latest frame of {deviceName}"
+
+#: src/lib/workspace-view.ts
+msgid "Launch"
+msgstr "Launch"
+
+#: src/lib/needs-attention.ts
+msgid "Lease on {leased} expired"
+msgstr "Lease on {leased} expired"
+
+#: src/components/device-tile.tsx
+msgid "Leased · {leaseLeft} left"
+msgstr "Leased · {leaseLeft} left"
+
+#: src/screens/mac-status.tsx
+msgid "Leased devices"
+msgstr "Leased devices"
+
+#: src/lib/format.ts
+msgid "less than a minute"
+msgstr "less than a minute"
+
+#: src/lib/settings-options.ts
+msgid "Light"
+msgstr "Light"
+
+#: src/lib/format.ts
+msgid "Likely cache hit"
+msgstr "Likely cache hit"
+
+#: src/lib/format.ts
+msgid "Likely cold"
+msgstr "Likely cold"
+
+#: src/lib/workspace-view.ts
+msgid "Linking"
+msgstr "Linking"
+
+#: src/screens/mac-status.tsx
+msgid "live"
+msgstr "live"
+
+#: src/components/replay-bar.tsx
+#: src/components/replay-bar.tsx
+#: src/components/replay-bar.tsx
 #: src/screens/filters.tsx
+#: src/screens/home.tsx
 msgid "Live"
 msgstr "Live"
+
+#: src/screens/build-details.tsx
+msgid "Live output"
+msgstr "Live output"
+
+#: src/components/device-screen.tsx
+msgid "Live screen of {label}"
+msgstr "Live screen of {label}"
+
+#: src/lib/home.ts
+msgid "Live workspaces"
+msgstr "Live workspaces"
+
+#: src/components/replay-bar.tsx
+msgid "Live, device stopped"
+msgstr "Live, device stopped"
+
+#: src/components/mac-chip.tsx
+#: src/components/mac-chip.tsx
+msgid "Loading"
+msgstr "Loading"
+
+#: src/components/replay-bar.tsx
+msgid "Loading..."
+msgstr "Loading..."
+
+#: src/screens/device-view.tsx
+msgid "Lock"
+msgstr "Lock"
+
+#: src/app/_layout.tsx
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+#: src/screens/logs.tsx
+#: src/screens/workspace-detail.tsx
+msgid "Logs"
+msgstr "Logs"
+
+#: src/screens/mac-status.tsx
+msgid "logs {logs}"
+msgstr "logs {logs}"
+
+#: src/lib/machine-report.ts
+msgid "Logs of {workspace}"
+msgstr "Logs of {workspace}"
+
+#: src/lib/format.ts
+msgid "longer than usual"
+msgstr "longer than usual"
+
+#: src/lib/build-machines.ts
+msgid "Low on disk"
+msgstr "Low on disk"
 
 #: src/screens/inbox.tsx
 msgid "Machine"
 msgstr "Machine"
 
+#: src/lib/settings-options.ts
+msgid "Machine in trouble"
+msgstr "Machine in trouble"
+
 #: src/screens/rename.tsx
 msgid "Machine name"
 msgstr "Machine name"
 
+#: src/screens/workspace-detail.tsx
+msgid "Machine status"
+msgstr "Machine status"
+
+#: src/lib/settings-options.ts
 #: src/screens/filters.tsx
+#: src/screens/home.tsx
+#: src/screens/home.tsx
+#: src/screens/menu.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
 msgid "Machines"
 msgstr "Machines"
 
@@ -159,82 +1943,1524 @@ msgstr "Machines"
 msgid "Mark all read"
 msgstr "Mark all read"
 
+#: src/screens/mac-status.tsx
+msgid "Measured {measured}"
+msgstr "Measured {measured}"
+
+#: src/screens/mac-status.tsx
+msgid "Measuring…"
+msgstr "Measuring…"
+
+#: src/components/workspace-cards.tsx
+msgid "memory"
+msgstr "memory"
+
+#: src/screens/workspace-resources.tsx
+#: src/screens/workspace-resources.tsx
+msgid "Memory"
+msgstr "Memory"
+
+#: src/lib/home.ts
+msgid "Memory budget"
+msgstr "Memory budget"
+
+#: src/screens/home.tsx
+msgid "Menu"
+msgstr "Menu"
+
+#: src/screens/home.tsx
+msgid "Menu, {unread} unread notifications"
+msgstr "Menu, {unread} unread notifications"
+
+#: src/components/git-indicator.tsx
+#: src/components/git-indicator.tsx
+msgid "merged"
+msgstr "merged"
+
+#: src/screens/workspace-work.tsx
+msgid "Merged"
+msgstr "Merged"
+
+#: src/screens/workspace-work.tsx
+msgid "Merged into"
+msgstr "Merged into"
+
+#: src/lib/machine-report.ts
+#: src/lib/machine-report.ts
+msgid "Merged into {branch}"
+msgstr "Merged into {branch}"
+
+#: src/lib/format.ts
+#: src/lib/workspace-view.ts
+msgid "merged into {mergedInto}"
+msgstr "merged into {mergedInto}"
+
+#: src/components/workspace-cards.tsx
+#: src/lib/logs.ts
+#: src/lib/workspace-view.ts
+msgid "Metro"
+msgstr "Metro"
+
 #: src/components/workspace-row.tsx
 msgid "Metro "
 msgstr "Metro "
+
+#: src/screens/logs.tsx
+msgid "Metro :{port}"
+msgstr "Metro :{port}"
+
+#: src/components/workspace-cards.tsx
+msgid "Metro {metroState}"
+msgstr "Metro {metroState}"
+
+#: src/lib/settings-options.ts
+msgid "Midnight to 8 AM"
+msgstr "Midnight to 8 AM"
+
+#: src/lib/format.ts
+msgid "miss: {summary}"
+msgstr "miss: {summary}"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+#: src/screens/workspace-detail.tsx
+msgid "More"
+msgstr "More"
+
+#: src/screens/device-view.tsx
+msgid "Moving..."
+msgstr "Moving..."
 
 #: src/screens/inbox.tsx
 msgid "Muted"
 msgstr "Muted"
 
+#: src/screens/pair.tsx
+msgid "Name this machine"
+msgstr "Name this machine"
+
+#: src/screens/mac-status.tsx
+msgid "Native builds"
+msgstr "Native builds"
+
+#: src/lib/build-machines.ts
+msgid "NDK missing"
+msgstr "NDK missing"
+
+#: src/components/mac-chip.tsx
+msgid "Needs an update"
+msgstr "Needs an update"
+
+#: src/screens/mac-status.tsx
+msgid "Needs attention"
+msgstr "Needs attention"
+
+#: src/lib/home.ts
+msgid "never"
+msgstr "never"
+
+#: src/components/replay-bar.tsx
+msgid "Next agent action"
+msgstr "Next agent action"
+
+#: src/screens/build-details.tsx
+msgid "Next build"
+msgstr "Next build"
+
+#: src/screens/build-details.tsx
+msgid "Next build: {next}"
+msgstr "Next build: {next}"
+
+#: src/screens/build-details.tsx
+msgid "Next build: {next}, about {estimated}"
+msgstr "Next build: {next}, about {estimated}"
+
+#: src/screens/build-details.tsx
+msgid "Next: {next}"
+msgstr "Next: {next}"
+
+#: src/screens/build-details.tsx
+msgid "No {name} build recorded."
+msgstr "No {name} build recorded."
+
+#: src/lib/format.ts
+msgid "No {outcome} run of this project recorded yet"
+msgstr "No {outcome} run of this project recorded yet"
+
+#: src/lib/workspace-view.ts
+msgid "no action yet"
+msgstr "no action yet"
+
+#: src/components/device-tile.tsx
+#: src/screens/agent-actions.tsx
+msgid "No agent"
+msgstr "No agent"
+
+#: src/components/agent-feed.tsx
+msgid "No agent action loaded before this moment."
+msgstr "No agent action loaded before this moment."
+
+#: src/components/agent-feed.tsx
+#: src/screens/agent-actions.tsx
+msgid "No agent action on this device yet."
+msgstr "No agent action on this device yet."
+
+#: src/components/agent-feed.tsx
+msgid "No agent action yet"
+msgstr "No agent action yet"
+
+#: src/lib/needs-attention.ts
+msgid "No agent activity for {minutes} min after a green {green} build; {model} still up"
+msgstr "No agent activity for {minutes} min after a green {green} build; {model} still up"
+
+#: src/lib/needs-attention.ts
+msgid "No agent activity for {minutes} min; {model} still up"
+msgstr "No agent activity for {minutes} min; {model} still up"
+
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+msgid "No agent session"
+msgstr "No agent session"
+
+#: src/lib/build-machines.ts
+msgid "No Android SDK"
+msgstr "No Android SDK"
+
+#: src/components/device-tile.tsx
+msgid "No app installed"
+msgstr "No app installed"
+
+#: src/lib/workspace-view.ts
+msgid "No build"
+msgstr "No build"
+
+#: src/lib/build-machines.ts
+msgid "No Bundler"
+msgstr "No Bundler"
+
+#: src/lib/workspace-view.ts
+msgid "No checks"
+msgstr "No checks"
+
+#: src/screens/workspace-detail.tsx
+msgid "No device in this workspace yet."
+msgstr "No device in this workspace yet."
+
+#: src/screens/mac-status.tsx
+msgid "No device recordings are kept."
+msgstr "No device recordings are kept."
+
+#: src/screens/home.tsx
+msgid "No device running"
+msgstr "No device running"
+
+#: src/components/workspace-cards.tsx
+msgid "no git state"
+msgstr "no git state"
+
+#: src/components/workspace-cards.tsx
+msgid "No git state"
+msgstr "No git state"
+
+#: src/lib/home.ts
+msgid "no limit"
+msgstr "no limit"
+
+#: src/components/device-tile.tsx
+msgid "No live screen"
+msgstr "No live screen"
+
+#: src/screens/home.tsx
+msgid "No live workspaces"
+msgstr "No live workspaces"
+
+#: src/components/workspace-cards.tsx
+msgid "No logs yet"
+msgstr "No logs yet"
+
+#: src/screens/home.tsx
+msgid "No machine connected"
+msgstr "No machine connected"
+
+#: src/screens/home.tsx
+msgid "No machine paired"
+msgstr "No machine paired"
+
 #: src/screens/inbox.tsx
 msgid "No notifications"
 msgstr "No notifications"
 
+#: src/screens/logs.tsx
+msgid "No records match these filters."
+msgstr "No records match these filters."
+
+#: src/screens/mac-status.tsx
+msgid "No shared cache was found."
+msgstr "No shared cache was found."
+
+#: src/screens/mac-status.tsx
+msgid "No simulator or emulator is listed."
+msgstr "No simulator or emulator is listed."
+
+#: src/lib/build-machines.ts
+msgid "No simulator runtime"
+msgstr "No simulator runtime"
+
+#: src/screens/mac-status.tsx
+msgid "No simulator runtime or Android system image is installed."
+msgstr "No simulator runtime or Android system image is installed."
+
+#: src/screens/mac-status.tsx
+msgid "No simulator, emulator, dev server or build is running."
+msgstr "No simulator, emulator, dev server or build is running."
+
+#: src/screens/mac-status.tsx
+msgid "No Stim disk budget set"
+msgstr "No Stim disk budget set"
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "no upstream"
+msgstr "no upstream"
+
+#: src/screens/mac-status.tsx
+msgid "node_modules {nodeModules}"
+msgstr "node_modules {nodeModules}"
+
+#: src/lib/workspace-view.ts
+msgid "node_modules {nodeModules} of it"
+msgstr "node_modules {nodeModules} of it"
+
 #: src/intl/format.ts
+#: src/screens/workspace-work.tsx
 msgid "None"
 msgstr "None"
 
+#: src/lib/build-machines.ts
+msgid "Not a git checkout"
+msgstr "Not a git checkout"
+
+#: src/lib/build-machines.ts
+msgid "Not a tailnet name"
+msgstr "Not a tailnet name"
+
+#: src/lib/build-machines.ts
+msgid "Not answering"
+msgstr "Not answering"
+
+#: src/lib/build-machines.ts
+msgid "Not asked"
+msgstr "Not asked"
+
+#: src/lib/workspace-view.ts
+msgid "Not bundled yet"
+msgstr "Not bundled yet"
+
+#: src/screens/build-details.tsx
+msgid "Not checked yet."
+msgstr "Not checked yet."
+
+#: src/components/remote-tile.tsx
+msgid "Not claimed"
+msgstr "Not claimed"
+
+#: src/hooks/mac-connection.tsx
+#: src/lib/connection.ts
+msgid "Not connected."
+msgstr "Not connected."
+
+#: src/lib/machine-report.ts
+msgid "Not in use; rebuilt on the next run"
+msgstr "Not in use; rebuilt on the next run"
+
+#: src/components/workspace-cards.tsx
+msgid "Not measured"
+msgstr "Not measured"
+
+#: src/hooks/notifications.tsx
+msgid "Not now"
+msgstr "Not now"
+
+#: src/lib/build-machines.ts
+msgid "Not on the tailnet"
+msgstr "Not on the tailnet"
+
+#: src/components/mac-chip.tsx
+msgid "Not paired"
+msgstr "Not paired"
+
+#: src/lib/attention.ts
+msgid "Not paired: pair again"
+msgstr "Not paired: pair again"
+
+#: src/components/device-tile.tsx
+msgid "Not running · {deviceState}"
+msgstr "Not running · {deviceState}"
+
+#: src/screens/mac-status.tsx
+msgid "Not Stim's"
+msgstr "Not Stim's"
+
+#: src/lib/machine-report.ts
+msgid "Not warmed"
+msgstr "Not warmed"
+
+#: src/screens/workspace-resources.tsx
+msgid "Nothing in this workspace is using CPU or memory now."
+msgstr "Nothing in this workspace is using CPU or memory now."
+
+#: src/screens/workspace-detail.tsx
+msgid "Nothing is running. Ask your agent to run the app."
+msgstr "Nothing is running. Ask your agent to run the app."
+
+#: src/screens/home.tsx
 #: src/screens/inbox.tsx
 msgid "Nothing matches the filters"
 msgstr "Nothing matches the filters"
 
+#: src/screens/home.tsx
+msgid "Nothing running"
+msgstr "Nothing running"
+
+#: src/screens/mac-status.tsx
+msgid "Nothing Stim tracks is using CPU or memory."
+msgstr "Nothing Stim tracks is using CPU or memory."
+
+#: src/lib/workspace-view.ts
+msgid "nothing yet"
+msgstr "nothing yet"
+
+#: src/app/_layout.tsx
+#: src/screens/menu.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Notifications"
+msgstr "Notifications"
+
+#: src/hooks/notifications.tsx
+msgid "Notifications are off for Stim"
+msgstr "Notifications are off for Stim"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Notify when something needs attention"
+msgstr "Notify when something needs attention"
+
+#: src/components/usage-charts.tsx
+msgid "now"
+msgstr "now"
+
+#: src/screens/mac-status.tsx
+msgid "Now"
+msgstr "Now"
+
+#: src/lib/needs-attention.ts
+msgid "Objective-C"
+msgstr "Objective-C"
+
+#: src/lib/needs-attention.ts
+msgid "Objective-C++"
+msgstr "Objective-C++"
+
+#: src/screens/build-details.tsx
+msgid "of {estimate}"
+msgstr "of {estimate}"
+
+#: src/lib/home.ts
+msgid "off"
+msgstr "off"
+
+#: src/lib/settings-options.ts
+#: src/lib/settings-options.ts
+msgid "Off"
+msgstr "Off"
+
 #: src/components/workspace-row.tsx
+#: src/lib/attention.ts
 msgid "Offline"
 msgstr "Offline"
 
+#: src/lib/attention.ts
+msgid "Offline · last seen {ago} ago"
+msgstr "Offline · last seen {ago} ago"
+
+#: src/components/mac-chip.tsx
+msgid "Offline · retrying in {seconds}s"
+msgstr "Offline · retrying in {seconds}s"
+
+#: src/lib/workspace-view.ts
+msgid "offload skipped"
+msgstr "offload skipped"
+
+#: src/components/read-only.tsx
+msgid "OK"
+msgstr "OK"
+
+#: src/lib/workspace-view.ts
+msgid "on {machine}"
+msgstr "on {machine}"
+
+#: src/screens/build-details.tsx
+msgid "on {remoteHost}"
+msgstr "on {remoteHost}"
+
+#: src/components/read-only.tsx
+msgid "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run `{command}`{lookup}. Then reconnect."
+msgstr "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run `{command}`{lookup}. Then reconnect."
+
+#: src/lib/home.ts
+msgid "only below the hard floor"
+msgstr "only below the hard floor"
+
+#: src/screens/workspace-work.tsx
+msgid "Open"
+msgstr "Open"
+
+#: src/screens/workspace-work.tsx
+msgid "Open in GitHub"
+msgstr "Open in GitHub"
+
+#: src/screens/agent-actions.tsx
+msgid "Open in logs"
+msgstr "Open in logs"
+
+#: src/screens/license.tsx
+msgid "Open repository"
+msgstr "Open repository"
+
+#: src/hooks/notifications.tsx
+msgid "Open Settings"
+msgstr "Open Settings"
+
+#: src/app/_layout.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Open source licenses"
+msgstr "Open source licenses"
+
+#: src/components/device-tile.tsx
+msgid "Open the live screen of {deviceName}"
+msgstr "Open the live screen of {deviceName}"
+
+#: src/components/device-tile.tsx
+msgid "Open the live screen of {deviceName}, app closed"
+msgstr "Open the live screen of {deviceName}, app closed"
+
+#: src/components/device-grid-tile.tsx
+msgid "Open the live screen of {model}"
+msgstr "Open the live screen of {model}"
+
+#: src/components/workspace-cards.tsx
+msgid "Opens the logs"
+msgstr "Opens the logs"
+
+#: src/components/agent-sessions.tsx
+msgid "Opens the session in the Claude app or on claude.ai"
+msgstr "Opens the session in the Claude app or on claude.ai"
+
+#: src/screens/agent-actions.tsx
+msgid "Opens this action in the agent log"
+msgstr "Opens this action in the agent log"
+
+#: src/lib/build-machines.ts
+msgid "Other CPU"
+msgstr "Other CPU"
+
+#: src/lib/machine-report.ts
+msgid "Other simulators and AVDs"
+msgstr "Other simulators and AVDs"
+
+#: src/screens/mac-status.tsx
+msgid "outputs {outputs}"
+msgstr "outputs {outputs}"
+
+#: src/lib/machine-report.ts
+msgid "Over the cap; each log keeps its newest 8 MiB"
+msgstr "Over the cap; each log keeps its newest 8 MiB"
+
+#: src/lib/workspace-view.ts
+msgid "Packaging"
+msgstr "Packaging"
+
+#: src/components/device-grid-tile.tsx
+#: src/components/device-tile.tsx
+msgid "Page failed to load"
+msgstr "Page failed to load"
+
+#: src/screens/pair.tsx
+msgid "Pair"
+msgstr "Pair"
+
+#: src/app/_layout.tsx
+#: src/screens/home.tsx
+#: src/screens/home.tsx
+#: src/screens/home.tsx
+#: src/screens/menu.tsx
+msgid "Pair a machine"
+msgstr "Pair a machine"
+
+#: src/components/mac-chip.tsx
+msgid "Pair again"
+msgstr "Pair again"
+
+#: src/screens/pair.tsx
+msgid "Paired"
+msgstr "Paired"
+
+#: src/screens/pair.tsx
+msgid "Pairing token"
+msgstr "Pairing token"
+
+#: src/screens/pair.tsx
+msgid "Pairing with {connectingTo}"
+msgstr "Pairing with {connectingTo}"
+
+#: src/lib/machine-report.ts
+msgid "Parked emulator, kept for reuse"
+msgstr "Parked emulator, kept for reuse"
+
+#: src/lib/machine-report.ts
+msgid "Parked simulator, kept for reuse"
+msgstr "Parked simulator, kept for reuse"
+
+#: src/components/replay-bar.tsx
+msgid "Pause"
+msgstr "Pause"
+
+#: src/screens/workspace-resources.tsx
+msgid "peak {peakCpu}"
+msgstr "peak {peakCpu}"
+
+#: src/components/device-grid-tile.tsx
+#: src/components/device-tile.tsx
+msgid "Physical"
+msgstr "Physical"
+
+#: src/components/replay-bar.tsx
+msgid "Play"
+msgstr "Play"
+
+#: src/components/replay-bar.tsx
+msgid "Playback speed {speed}x"
+msgstr "Playback speed {speed}x"
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "Pods"
+msgstr "Pods"
+
+#: src/screens/device-view.tsx
+msgid "portrait"
+msgstr "portrait"
+
+#: src/screens/device-view.tsx
+msgid "Posture not changed"
+msgstr "Posture not changed"
+
+#: src/lib/workspace-view.ts
+msgid "PR #{number}"
+msgstr "PR #{number}"
+
+#: src/lib/machine-report.ts
+msgid "PR #{number} merged"
+msgstr "PR #{number} merged"
+
+#: src/lib/machine-report.ts
+msgid "PR #{number} open"
+msgstr "PR #{number} open"
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "Prebuild"
+msgstr "Prebuild"
+
+#: src/lib/workspace-view.ts
+msgid "Prepare"
+msgstr "Prepare"
+
+#: src/components/replay-bar.tsx
+msgid "Previous agent action"
+msgstr "Previous agent action"
+
+#: src/screens/workspace-resources.tsx
+msgid "Process"
+msgstr "Process"
+
 #: src/screens/filters.tsx
+#: src/screens/mac-status.tsx
 msgid "Projects"
 msgstr "Projects"
 
+#: src/screens/workspace-work.tsx
+msgid "Pull request"
+msgstr "Pull request"
+
+#: src/lib/workspace-view.ts
+msgid "Pull request {number}, closed"
+msgstr "Pull request {number}, closed"
+
+#: src/lib/workspace-view.ts
+msgid "Pull request {number}, draft"
+msgstr "Pull request {number}, draft"
+
+#: src/lib/workspace-view.ts
+msgid "Pull request {number}, merged"
+msgstr "Pull request {number}, merged"
+
+#: src/lib/workspace-view.ts
+msgid "Pull request {number}, open"
+msgstr "Pull request {number}, open"
+
 #: src/screens/inbox.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
 msgid "Quiet hours"
 msgstr "Quiet hours"
 
+#: src/lib/home.ts
+#: src/lib/home.ts
+msgid "RAM"
+msgstr "RAM"
+
+#: src/components/read-only.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Read-only"
+msgstr "Read-only"
+
+#: src/screens/mac-status.tsx
+msgid "Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim."
+msgstr "Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim."
+
 #: src/components/workspace-row.tsx
 #: src/components/workspace-row.tsx
+#: src/lib/build-machines.ts
+#: src/lib/workspace-view.ts
 msgid "Ready"
 msgstr "Ready"
+
+#: src/screens/build-details.tsx
+msgid "Recent builds"
+msgstr "Recent builds"
+
+#: src/screens/menu.tsx
+msgid "Recent workspaces"
+msgstr "Recent workspaces"
+
+#: src/lib/home.ts
+msgid "Reclaims disk"
+msgstr "Reclaims disk"
+
+#: src/components/read-only.tsx
+#: src/screens/device-view.tsx
+msgid "Reconnect"
+msgstr "Reconnect"
+
+#: src/lib/drawer-status.ts
+msgid "Reconnecting to {name}…"
+msgstr "Reconnecting to {name}…"
+
+#: src/lib/connection.ts
+msgid "Reconnecting."
+msgstr "Reconnecting."
+
+#: src/lib/machine-report.ts
+msgid "Record of a deleted folder"
+msgstr "Record of a deleted folder"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Record on {name}"
+msgstr "Record on {name}"
+
+#: src/screens/settings.ios.tsx
+msgid "Record on {name} (set by STIM_RECORDING)"
+msgstr "Record on {name} (set by STIM_RECORDING)"
+
+#: src/screens/settings.ios.tsx
+msgid "Record on {name}: {error}"
+msgstr "Record on {name}: {error}"
+
+#: src/screens/device-view.tsx
+msgid "Recording"
+msgstr "Recording"
+
+#: src/screens/device-view.tsx
+msgid "Recording for replay"
+msgstr "Recording for replay"
+
+#: src/components/replay-bar.tsx
+msgid "Recording timeline"
+msgstr "Recording timeline"
+
+#: src/screens/mac-status.tsx
+msgid "Recordings"
+msgstr "Recordings"
+
+#: src/lib/attention.ts
+msgid "Refused the connection: needs an update"
+msgstr "Refused the connection: needs an update"
+
+#: src/lib/attention.ts
+msgid "Refused the connection: pair again"
+msgstr "Refused the connection: pair again"
+
+#: src/lib/home.ts
+msgid "Refuses to run"
+msgstr "Refuses to run"
+
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
+msgid "Reload"
+msgstr "Reload"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reload which app?"
+msgstr "Reload which app?"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reloaded"
+msgstr "Reloaded"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reloaded the {name} app"
+msgstr "Reloaded the {name} app"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reloaded the web page"
+msgstr "Reloaded the web page"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reloading"
+msgstr "Reloading"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reloading the {name} app"
+msgstr "Reloading the {name} app"
+
+#: src/screens/workspace-detail.tsx
+msgid "Reloading the web page"
+msgstr "Reloading the web page"
+
+#: src/screens/mac-list.tsx
+msgid "Rename"
+msgstr "Rename"
+
+#: src/screens/mac-list.tsx
+msgid "Rename {name}"
+msgstr "Rename {name}"
+
+#: src/app/_layout.tsx
+msgid "Rename machine"
+msgstr "Rename machine"
+
+#: src/screens/device-view.tsx
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Replay"
+msgstr "Replay"
+
+#: src/screens/device-view.tsx
+msgid "Replay off"
+msgstr "Replay off"
 
 #: src/screens/filters.tsx
 msgid "Reset"
 msgstr "Reset"
 
+#: src/components/workspace-cards.tsx
+msgid "resources not measured"
+msgstr "resources not measured"
+
+#: src/hooks/app-update.ts
+msgid "Restart"
+msgstr "Restart"
+
+#: src/screens/menu.tsx
+msgid "Restart to update"
+msgstr "Restart to update"
+
+#: src/hooks/app-update.ts
+msgid "Restart to update?"
+msgstr "Restart to update?"
+
+#: src/screens/workspace-work.tsx
+msgid "Review"
+msgstr "Review"
+
+#: src/screens/workspace-work.tsx
+msgid "Review required"
+msgstr "Review required"
+
+#: src/lib/build-machines.ts
+msgid "Revoked"
+msgstr "Revoked"
+
+#: src/screens/device-view.tsx
+msgid "Rotate left"
+msgstr "Rotate left"
+
+#: src/screens/device-view.tsx
+msgid "Rotate right"
+msgstr "Rotate right"
+
+#: src/screens/device-view.tsx
+msgid "Rotated to {name}"
+msgstr "Rotated to {name}"
+
+#: src/lib/build-machines.ts
+msgid "run Stim from a git checkout"
+msgstr "run Stim from a git checkout"
+
+#: src/lib/workspaces.ts
+#: src/screens/logs.tsx
+msgid "running"
+msgstr "running"
+
+#: src/lib/workspace-view.ts
+msgid "Running"
+msgstr "Running"
+
+#: src/lib/workspace-view.ts
+msgid "Running scripts"
+msgstr "Running scripts"
+
+#: src/lib/machine-report.ts
+#: src/screens/mac-status.tsx
+msgid "Runtimes and system images"
+msgstr "Runtimes and system images"
+
+#: src/screens/mac-status.tsx
+msgid "Safe to free now"
+msgstr "Safe to free now"
+
+#: src/lib/needs-attention.ts
+msgid "Same {language} error {count}x at {file}:{line}"
+msgstr "Same {language} error {count}x at {file}:{line}"
+
+#: src/lib/needs-attention.ts
+msgid "Same {name} build error {count}x at {file}:{line}"
+msgstr "Same {name} build error {count}x at {file}:{line}"
+
+#: src/screens/pair.tsx
 #: src/screens/rename.tsx
 msgid "Save"
 msgstr "Save"
+
+#: src/screens/pair.tsx
+msgid "Scan a QR code instead"
+msgstr "Scan a QR code instead"
+
+#: src/components/device-tile.tsx
+msgid "Screen paused"
+msgstr "Screen paused"
+
+#: src/components/device-tile.tsx
+#: src/screens/device-view.tsx
+msgid "Screen updates delayed"
+msgstr "Screen updates delayed"
+
+#: src/screens/device-view.tsx
+msgid "Scrub below to replay what it recorded."
+msgstr "Scrub below to replay what it recorded."
+
+#: src/screens/logs.tsx
+msgid "Search (regular expression)"
+msgstr "Search (regular expression)"
+
+#: src/screens/logs.tsx
+msgid "Search logs"
+msgstr "Search logs"
+
+#: src/lib/build-machines.ts
+#: src/lib/build-machines.ts
+msgid "select the same Xcode on both"
+msgstr "select the same Xcode on both"
+
+#: src/screens/settings.tsx
+msgid "Set by STIM_RECORDING on the Mac"
+msgstr "Set by STIM_RECORDING on the Mac"
+
+#: src/app/_layout.tsx
+#: src/screens/menu.tsx
+msgid "Settings"
+msgstr "Settings"
+
+#: src/screens/logs.tsx
+msgid "Share"
+msgstr "Share"
+
+#: src/screens/logs.tsx
+msgid "Share entry"
+msgstr "Share entry"
+
+#: src/screens/mac-status.tsx
+msgid "Shared by the machine"
+msgstr "Shared by the machine"
+
+#: src/screens/mac-status.tsx
+msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
+msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
 
 #: src/screens/filters.tsx
 msgid "Show"
 msgstr "Show"
 
+#: src/screens/home.tsx
+msgid "Show all"
+msgstr "Show all"
+
+#: src/lib/sections.ts
+msgid "Show all {count}"
+msgstr "Show all {count}"
+
+#: src/components/collapsible-section.tsx
+msgid "Show all {count} {title}"
+msgstr "Show all {count} {title}"
+
+#: src/screens/workspace-detail.tsx
+msgid "Show errors"
+msgstr "Show errors"
+
+#: src/components/attention-strip.tsx
+#: src/lib/sections.ts
+msgid "Show fewer"
+msgstr "Show fewer"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Show idle workspaces"
+msgstr "Show idle workspaces"
+
+#: src/components/collapsible-section.tsx
+msgid "Show the first 10 {title}"
+msgstr "Show the first 10 {title}"
+
+#: src/screens/pair.tsx
+msgid "Show token"
+msgstr "Show token"
+
+#: src/components/agent-feed.tsx
+msgid "Shows every agent action on this device"
+msgstr "Shows every agent action on this device"
+
+#: src/components/device-tile.tsx
+msgid "Shows the agent actions on this device"
+msgstr "Shows the agent actions on this device"
+
+#: src/components/workspace-cards.tsx
+msgid "Shows the agent sessions and the branch"
+msgstr "Shows the agent sessions and the branch"
+
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+msgid "Shows the build"
+msgstr "Shows the build"
+
+#: src/components/workspace-cards.tsx
+msgid "Shows the builds"
+msgstr "Shows the builds"
+
+#: src/components/workspace-cards.tsx
+msgid "Shows the status and what this workspace uses"
+msgstr "Shows the status and what this workspace uses"
+
+#: src/lib/workspace-view.ts
+msgid "Signing"
+msgstr "Signing"
+
+#: src/hooks/notifications.tsx
+#: src/lib/settings-options.ts
+msgid "Silent"
+msgstr "Silent"
+
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+msgid "Simulator"
+msgstr "Simulator"
+
+#: src/lib/build-machines.ts
+msgid "Simulator SDK differs"
+msgstr "Simulator SDK differs"
+
+#: src/screens/mac-status.tsx
+msgid "Simulators and emulators"
+msgstr "Simulators and emulators"
+
+#: src/screens/home.tsx
+msgid "Simulators and emulators appear here while they run, on every paired machine the filters keep."
+msgstr "Simulators and emulators appear here while they run, on every paired machine the filters keep."
+
+#: src/lib/format.ts
+msgid "slot {slot}"
+msgstr "slot {slot}"
+
+#: src/lib/settings-options.ts
+msgid "Someone takes over your device"
+msgstr "Someone takes over your device"
+
+#: src/app/_layout.tsx
+msgid "Something went wrong"
+msgstr "Something went wrong"
+
+#: src/lib/machine-report.ts
+msgid "Stale {idleDays}d"
+msgstr "Stale {idleDays}d"
+
+#: src/screens/build-details.tsx
+msgid "started {startedAge} ago"
+msgstr "started {startedAge} ago"
+
+#: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
+msgid "Started {startedAt}"
+msgstr "Started {startedAt}"
+
+#: src/screens/device-view.tsx
+msgid "Starting control..."
+msgstr "Starting control..."
+
+#: src/screens/workspace-work.tsx
+msgid "State"
+msgstr "State"
+
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+#: src/screens/workspace-resources.tsx
+#: src/screens/workspace-resources.tsx
+msgid "Status"
+msgstr "Status"
+
+#: src/app/_layout.tsx
+#: src/lib/notifications.ts
+#: src/screens/home.tsx
+#: src/screens/mac-status.tsx
+#: src/screens/menu.tsx
+msgid "Stim"
+msgstr "Stim"
+
+#: src/lib/machine-report.ts
+msgid "Stim · {name}"
+msgstr "Stim · {name}"
+
+#: src/lib/machine-report.ts
+msgid "Stim · {name} ({slot})"
+msgstr "Stim · {name} ({slot})"
+
+#: src/lib/machine-report.ts
+msgid "Stim · {title}"
+msgstr "Stim · {title}"
+
+#: src/lib/machine-report.ts
+msgid "Stim · no workspace"
+msgstr "Stim · no workspace"
+
+#: src/lib/machine-report.ts
+msgid "Stim · parked"
+msgstr "Stim · parked"
+
+#: src/screens/mac-status.tsx
+msgid "stim {stim} · server {version}"
+msgstr "stim {stim} · server {version}"
+
+#: src/screens/menu.tsx
+msgid "Stim {version}"
+msgstr "Stim {version}"
+
+#: src/screens/menu.tsx
+msgid "Stim {version} ({build})"
+msgstr "Stim {version} ({build})"
+
+#: src/screens/mac-status.tsx
+msgid "Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio."
+msgstr "Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio."
+
+#: src/screens/mac-status.tsx
+msgid "Stim budget {budgetSize} free"
+msgstr "Stim budget {budgetSize} free"
+
+#: src/lib/build-machines.ts
+msgid "Stim build differs"
+msgstr "Stim build differs"
+
+#: src/lib/machine-report.ts
+msgid "Stim caches and outputs"
+msgstr "Stim caches and outputs"
+
+#: src/screens/pair.tsx
+msgid "Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
+msgstr "Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
+
+#: src/lib/machine-report.ts
+msgid "Stim devices"
+msgstr "Stim devices"
+
 #: src/screens/about.tsx
 msgid "Stim for phones {version} \\u00B7 protocol {PROTOCOL_VERSION}"
 msgstr "Stim for phones {version} \\u00B7 protocol {PROTOCOL_VERSION}"
+
+#: src/screens/mac-status.tsx
+msgid "stim gc did not answer: {gcError}"
+msgstr "stim gc did not answer: {gcError}"
+
+#: src/screens/mac-status.tsx
+msgid "stim gc found nothing to free."
+msgstr "stim gc found nothing to free."
+
+#: src/screens/pair.tsx
+msgid "Stim needs the camera to scan the pairing QR code."
+msgstr "Stim needs the camera to scan the pairing QR code."
+
+#: src/screens/mac-status.tsx
+msgid "Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac."
+msgstr "Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac."
+
+#: src/screens/workspace-work.tsx
+msgid "Stim reports no git state for this workspace."
+msgstr "Stim reports no git state for this workspace."
+
+#: src/hooks/app-update.ts
+msgid "Stim restarts to apply the new version."
+msgstr "Stim restarts to apply the new version."
+
+#: src/screens/workspace-detail.tsx
+msgid "stim status no longer lists {displayPath}."
+msgstr "stim status no longer lists {displayPath}."
+
+#: src/screens/mac-status.tsx
+msgid "stim status reports no workspaces."
+msgstr "stim status reports no workspaces."
+
+#: src/screens/workspace-detail.tsx
+msgid "Stim stops Metro and shuts down this workspace's simulators and emulators."
+msgstr "Stim stops Metro and shuts down this workspace's simulators and emulators."
+
+#: src/lib/machine-report.ts
+msgid "Stim workspace directory"
+msgstr "Stim workspace directory"
+
+#: src/screens/mac-status.tsx
+msgid "Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details."
+msgstr "Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details."
+
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
+msgid "Stop"
+msgstr "Stop"
+
+#: src/screens/workspace-detail.tsx
+msgid "Stop {title}?"
+msgstr "Stop {title}?"
+
+#: src/components/workspace-cards.tsx
+#: src/screens/logs.tsx
+msgid "stopped"
+msgstr "stopped"
+
+#: src/lib/workspace-view.ts
+msgid "Stopped"
+msgstr "Stopped"
+
+#: src/screens/workspace-detail.tsx
+msgid "Stopped {title}"
+msgstr "Stopped {title}"
+
+#: src/screens/build-details.tsx
+msgid "stopped in {phase}"
+msgstr "stopped in {phase}"
+
+#: src/screens/workspace-detail.tsx
+msgid "Stopping {title}"
+msgstr "Stopping {title}"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Stuck after"
+msgstr "Stuck after"
 
 #: src/components/workspace-row.tsx
 msgid "supervisor unhealthy"
 msgstr "supervisor unhealthy"
 
+#: src/lib/needs-attention.ts
+msgid "Swift"
+msgstr "Swift"
+
+#: src/lib/workspace-view.ts
+msgid "Sync"
+msgstr "Sync"
+
+#: src/lib/settings-options.ts
+msgid "System"
+msgstr "System"
+
+#: src/lib/build-machines.ts
+msgid "Tailscale is off"
+msgstr "Tailscale is off"
+
+#: src/screens/device-view.tsx
+#: src/screens/device-view.tsx
+msgid "Take over"
+msgstr "Take over"
+
+#: src/screens/device-view.tsx
+msgid "Take over this device?"
+msgstr "Take over this device?"
+
+#: src/screens/home.tsx
+msgid "Tap a prompt to copy it for your coding agent."
+msgstr "Tap a prompt to copy it for your coding agent."
+
+#: src/lib/format.ts
+msgid "the cache provider"
+msgstr "the cache provider"
+
+#: src/screens/home.tsx
+msgid "The chips above show why each machine is offline."
+msgstr "The chips above show why each machine is offline."
+
+#: src/hooks/mac-connection.tsx
+msgid "The connection dropped."
+msgstr "The connection dropped."
+
+#: src/lib/pairing.ts
+msgid "The endpoint is not a ws:// or wss:// URL."
+msgstr "The endpoint is not a ws:// or wss:// URL."
+
+#: src/lib/pairing.ts
+msgid "The endpoint must start with wss://."
+msgstr "The endpoint must start with wss://."
+
+#: src/components/read-only.tsx
+msgid "the Mac"
+msgstr "the Mac"
+
+#: src/screens/workspace-resources.tsx
+msgid "The Mac volume that holds workspaces has {freeSpace} free."
+msgstr "The Mac volume that holds workspaces has {freeSpace} free."
+
+#: src/lib/workspaces.ts
+msgid "The page failed to load."
+msgstr "The page failed to load."
+
+#: src/screens/build-details.tsx
+msgid "The run ended without recording a result; the next run in this workspace recorded it."
+msgstr "The run ended without recording a result; the next run in this workspace recorded it."
+
+#: src/screens/device-view.tsx
+msgid "The screen stayed in {name}. The app in front may not support rotating."
+msgstr "The screen stayed in {name}. The app in front may not support rotating."
+
+#: src/lib/connection.ts
+msgid "The server did not issue a device token."
+msgstr "The server did not issue a device token."
+
+#: src/screens/device-view.tsx
+msgid "This device is not running."
+msgstr "This device is not running."
+
+#: src/screens/mac-status.tsx
+msgid "This machine is not paired."
+msgstr "This machine is not paired."
+
+#: src/screens/license.tsx
+msgid "This package does not include a license file."
+msgstr "This package does not include a license file."
+
+#: src/lib/pairing.ts
+msgid "This pairing code needs a newer version of the app."
+msgstr "This pairing code needs a newer version of the app."
+
+#: src/components/read-only.tsx
+msgid "This phone is read-only"
+msgstr "This phone is read-only"
+
+#: src/screens/mac-status.tsx
+msgid "This phone is read-only: it cannot reload or stop workspaces, or control devices."
+msgstr "This phone is read-only: it cannot reload or stop workspaces, or control devices."
+
+#: src/screens/mac-list.tsx
+msgid "This phone stops connecting to it. Pair again from Stim Desktop to undo."
+msgstr "This phone stops connecting to it. Pair again from Stim Desktop to undo."
+
+#: src/lib/pairing.ts
+#: src/lib/pairing.ts
+#: src/lib/pairing.ts
+msgid "This QR code is not a Stim pairing code."
+msgstr "This QR code is not a Stim pairing code."
+
+#: src/screens/workspace-resources.tsx
+msgid "This workspace"
+msgstr "This workspace"
+
+#: src/screens/workspace-resources.tsx
+msgid "This workspace · last {minutes} min"
+msgstr "This workspace · last {minutes} min"
+
+#: src/screens/workspace-resources.tsx
+msgid "This workspace is no longer in the status."
+msgstr "This workspace is no longer in the status."
+
 #: src/lib/inbox.ts
 msgid "Today"
 msgstr "Today"
+
+#: src/app/_layout.tsx
+msgid "Try again"
+msgstr "Try again"
+
+#: src/hooks/app-update.ts
+msgid "Try closing and reopening Stim."
+msgstr "Try closing and reopening Stim."
+
+#: src/screens/device-view.tsx
+#: src/screens/device-view.tsx
+msgid "Type on the device"
+msgstr "Type on the device"
+
+#: src/lib/needs-attention.ts
+msgid "TypeScript"
+msgstr "TypeScript"
+
+#: src/lib/format.ts
+msgid "under a minute left"
+msgstr "under a minute left"
+
+#: src/screens/mac-status.tsx
+msgid "Under the {budgetSize} Stim budget"
+msgstr "Under the {budgetSize} Stim budget"
+
+#: src/screens/device-view.tsx
+msgid "Unfold"
+msgstr "Unfold"
+
+#: src/components/device-tile.tsx
+msgid "Unfolded"
+msgstr "Unfolded"
+
+#: src/components/workspace-cards.tsx
+msgid "unhealthy"
+msgstr "unhealthy"
+
+#: src/lib/workspaces.ts
+msgid "unknown"
+msgstr "unknown"
+
+#: src/lib/build-machines.ts
+msgid "Unknown"
+msgstr "Unknown"
+
+#: src/lib/format.ts
+msgid "unknown tool"
+msgstr "unknown tool"
+
+#: src/lib/build-machines.ts
+msgid "Unreachable"
+msgstr "Unreachable"
 
 #: src/screens/inbox.tsx
 msgid "Unread, {title}, {body}, {detail}, {ago} ago"
 msgstr "Unread, {title}, {body}, {detail}, {ago} ago"
 
+#: src/screens/workspace-work.tsx
+msgid "Untracked"
+msgstr "Untracked"
+
+#: src/screens/mac-status.tsx
+msgid "Unused"
+msgstr "Unused"
+
+#: src/lib/workspace-view.ts
+msgid "up {up}"
+msgstr "up {up}"
+
+#: src/lib/workspace-view.ts
+msgid "up to date"
+msgstr "up to date"
+
+#: src/components/workspace-cards.tsx
+msgid "Up to date"
+msgstr "Up to date"
+
 #: src/screens/about.tsx
 msgid "Update {update}"
 msgstr "Update {update}"
+
+#: src/screens/mac-status.tsx
+msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
+msgstr "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
+
+#: src/lib/workspaces.ts
+msgid "Update stim-server on the Mac to see this device's screen."
+msgstr "Update stim-server on the Mac to see this device's screen."
 
 #: src/screens/inbox.tsx
 msgid "Update stim-server on your Macs to keep a history of their notifications."
 msgstr "Update stim-server on your Macs to keep a history of their notifications."
 
+#: src/lib/build-machines.ts
+msgid "update the build machine"
+msgstr "update the build machine"
+
+#: src/screens/workspace-work.tsx
+msgid "Upstream"
+msgstr "Upstream"
+
+#: src/lib/workspace-view.ts
+msgid "USB"
+msgstr "USB"
+
+#: src/lib/build-machines.ts
+msgid "use a Mac with the same CPU"
+msgstr "use a Mac with the same CPU"
+
+#: src/lib/build-machines.ts
+msgid "use the same JDK there"
+msgstr "use the same JDK there"
+
+#: src/lib/machine-report.ts
+msgid "used {ago}"
+msgstr "used {ago}"
+
+#: src/screens/settings.ios.tsx
+#: src/screens/settings.tsx
+msgid "Video quality"
+msgstr "Video quality"
+
+#: src/lib/workspace-view.ts
+msgid "Wait"
+msgstr "Wait"
+
+#: src/components/device-grid-tile.tsx
+msgid "Waiting for a frame"
+msgstr "Waiting for a frame"
+
+#: src/lib/build-machines.ts
+msgid "Waiting for approval"
+msgstr "Waiting for approval"
+
+#: src/components/device-screen.tsx
+#: src/components/device-tile.tsx
+msgid "Waiting for frames"
+msgstr "Waiting for frames"
+
+#: src/components/device-tile.tsx
+msgid "Waiting for the {name} build"
+msgstr "Waiting for the {name} build"
+
+#: src/lib/workspace-view.ts
+msgid "warmed {since} ago"
+msgstr "warmed {since} ago"
+
 #: src/components/workspace-row.tsx
+#: src/lib/workspace-view.ts
 msgid "Warming"
 msgstr "Warming"
+
+#: src/components/device-tile.tsx
+msgid "Warming the workspace"
+msgstr "Warming the workspace"
 
 #: src/components/workspace-row.tsx
 msgid "Warming…"
@@ -244,14 +3470,85 @@ msgstr "Warming…"
 msgid "Warming… {warmStep}"
 msgstr "Warming… {warmStep}"
 
+#: src/components/attention-strip.tsx
+msgid "Warning: {title} on {macName}, {detail}"
+msgstr "Warning: {title} on {macName}, {detail}"
+
+#: src/screens/logs.tsx
+msgid "Warnings"
+msgstr "Warnings"
+
+#: src/lib/logs.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
+#: src/screens/device-view.tsx
+msgid "Web"
+msgstr "Web"
+
+#: src/screens/device-view.tsx
+msgid "Web · {model}"
+msgstr "Web · {model}"
+
 #: src/screens/inbox.tsx
 msgid "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
 msgstr "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
+
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+#: src/screens/workspace-work.tsx
+msgid "Work"
+msgstr "Work"
+
+#: src/lib/settings-options.ts
+msgid "Work finished or PR ready"
+msgstr "Work finished or PR ready"
+
+#: src/lib/settings-options.ts
+msgid "Work started"
+msgstr "Work started"
+
+#: src/app/_layout.tsx
+msgid "Workspace"
+msgstr "Workspace"
 
 #: src/components/workspace-row.tsx
 msgid "Workspace {title} on {macName}"
 msgstr "Workspace {title} on {macName}"
 
+#: src/screens/workspace-detail.tsx
+msgid "Workspace not found"
+msgstr "Workspace not found"
+
+#: src/lib/settings-options.ts
+#: src/screens/menu.tsx
+msgid "Workspaces"
+msgstr "Workspaces"
+
+#: src/screens/home.tsx
+msgid "Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine."
+msgstr "Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine."
+
+#: src/lib/machine-report.ts
+msgid "Worktree {name}"
+msgstr "Worktree {name}"
+
+#: src/lib/workspace-view.ts
+msgid "worktree {worktree}"
+msgstr "worktree {worktree}"
+
+#: src/lib/format.ts
+msgid "would refuse ({code})"
+msgstr "would refuse ({code})"
+
+#: src/lib/build-machines.ts
+msgid "Xcode differs"
+msgstr "Xcode differs"
+
 #: src/lib/inbox.ts
 msgid "Yesterday"
 msgstr "Yesterday"
+
+#: src/lib/machine-report.ts
+msgid "Yours"
+msgstr "Yours"

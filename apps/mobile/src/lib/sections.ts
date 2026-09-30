@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 /** Rows a capped section shows before "Show all", as on Stim Desktop's Machine page. */
 const SECTION_LIMIT = 10;
 
@@ -28,7 +30,7 @@ export function sectionRows<T>(
   limit = SECTION_LIMIT,
 ): { shown: T[]; toggle: string | null } {
   if (rows.length <= limit) return { shown: [...rows], toggle: null };
-  return showAll
-    ? { shown: [...rows], toggle: 'Show fewer' }
-    : { shown: rows.slice(0, limit), toggle: `Show all ${rows.length}` };
+  if (showAll) return { shown: [...rows], toggle: t`Show fewer` };
+  const count = rows.length;
+  return { shown: rows.slice(0, limit), toggle: t`Show all ${count}` };
 }

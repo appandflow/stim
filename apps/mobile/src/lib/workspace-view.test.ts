@@ -75,21 +75,25 @@ describe('workspaceStage', () => {
   it('names each stage the workspace screen shows, with its subtitle', () => {
     const stage = (e: EnvironmentState) => workspaceStage(e, devicesOf(e), NOW);
     expect(stage(env({ supervisor: { pid: 1, mode: null, startedAt: iso(42 * MIN), healthy: true } }))).toEqual({
+      kind: 'running',
       label: 'Running',
       tone: 'success',
       subtitle: 'up 42m',
     });
     expect(stage(env({ build: build() }))).toEqual({
+      kind: 'building',
       label: 'Building',
       tone: 'brand',
       subtitle: 'iOS \u00B7 started 1m ago',
     });
     expect(stage(env({ lastBuilds: { ios: last({ status: 'failed', finishedAt: iso(3 * MIN) }) } }))).toMatchObject({
+      kind: 'build-failed',
       label: 'Build failed',
       tone: 'error',
       subtitle: 'iOS \u00B7 3m ago',
     });
     expect(stage(env({ live: false, phase: 'warming', warmStep: 'refresh', phaseSince: iso(2 * MIN) }))).toMatchObject({
+      kind: 'warming',
       label: 'Warming',
       subtitle: 'installing dependencies \u00B7 2m',
     });
@@ -101,7 +105,7 @@ describe('workspaceStage', () => {
           metro: { port: 8084, running: false, pid: null, lastStop: { reason: 'idle', at: iso(120 * MIN) } },
         }),
       ),
-    ).toEqual({ label: 'Stopped', tone: 'tertiary', subtitle: '2h ago' });
+    ).toEqual({ kind: 'stopped', label: 'Stopped', tone: 'tertiary', subtitle: '2h ago' });
   });
 
   it('turns a running workspace red for log errors or an app that closed', () => {
@@ -110,6 +114,7 @@ describe('workspaceStage', () => {
       ios: { ...booted, app: { id: 'a', state: 'stopped' } },
     });
     expect(workspaceStage(crashed, devicesOf(crashed), NOW)).toEqual({
+      kind: 'running',
       label: 'Running',
       tone: 'error',
       subtitle: '3 errors \u00B7 iOS app closed',

@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
@@ -80,8 +82,8 @@ export function Home() {
     const live = shown.filter((item) => isShownLive(item.env));
     const idle = shown.filter((item) => !isShownLive(item.env));
     return [
-      { title: 'Live', data: live },
-      { title: 'Idle', data: idle },
+      { title: t`Live`, data: live },
+      { title: t`Idle`, data: idle },
     ].filter((s) => s.data.length > 0);
   }, [shown]);
   const now = useNow(30_000);
@@ -109,10 +111,10 @@ export function Home() {
                 tintColor={theme.colors.primary}
                 style={styles.wordmark}
                 contentFit="contain"
-                accessibilityLabel="Stim"
+                accessibilityLabel={t`Stim`}
               />
             ) : (
-              <Text variant="headline">{view === 'devices' ? 'Devices' : 'Machines'}</Text>
+              <Text variant="headline">{view === 'devices' ? t`Devices` : t`Machines`}</Text>
             ),
         }}
       />
@@ -120,7 +122,7 @@ export function Home() {
         <Stack.Toolbar.Button
           icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
           tintColor={theme.colors.text}
-          accessibilityLabel={unread > 0 ? `Menu, ${unread} unread notifications` : 'Menu'}
+          accessibilityLabel={unread > 0 ? t`Menu, ${unread} unread notifications` : t`Menu`}
           onPress={menu.open}
         >
           {unread > 0 ? (
@@ -136,7 +138,7 @@ export function Home() {
             icon={Platform.OS === 'ios' ? 'plus' : PLUS_ICON}
             iconRenderingMode="template"
             tintColor={theme.colors.text}
-            accessibilityLabel="Pair a machine"
+            accessibilityLabel={t`Pair a machine`}
             onPress={() => router.push('/pair')}
           />
         ) : (
@@ -144,7 +146,7 @@ export function Home() {
             icon={Platform.OS === 'ios' ? 'line.3.horizontal.decrease' : FUNNEL_ICON}
             iconRenderingMode="template"
             tintColor={theme.colors.text}
-            accessibilityLabel="Filter"
+            accessibilityLabel={t`Filter`}
             onPress={() => router.push('/filters')}
           >
             {filtersActive(filters, macIds, projectNames(items)) ? (
@@ -161,10 +163,10 @@ export function Home() {
       <View style={styles.screen}>
         {header}
         <EmptyState
-          title="No machine paired"
-          message="In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale."
+          title={t`No machine paired`}
+          message={t`In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale.`}
         >
-          <Button title="Pair a machine" onPress={() => router.push('/pair')} style={styles.primaryButton} />
+          <Button title={t`Pair a machine`} onPress={() => router.push('/pair')} style={styles.primaryButton} />
         </EmptyState>
       </View>
     );
@@ -179,9 +181,9 @@ export function Home() {
     <View>
       <View style={styles.sectionHeader}>
         <Text variant="body" weight="medium" tone="tertiary">
-          Machines
+          <Trans>Machines</Trans>
         </Text>
-        <Touch onPress={() => router.push('/pair')} accessibilityLabel="Pair a machine" hitSlop={10}>
+        <Touch onPress={() => router.push('/pair')} accessibilityLabel={t`Pair a machine`} hitSlop={10}>
           <Icon name="plus" size={22} color={theme.colors.text} />
         </Touch>
       </View>
@@ -266,8 +268,10 @@ export function Home() {
           filters.activity === 'live' && hiddenByActivity > 0 ? (
             <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
               <Text tone="secondary">
-                {`${hiddenByActivity} idle ${hiddenByActivity === 1 ? 'workspace' : 'workspaces'} hidden. `}
-                <Text tone="brand">Show all</Text>
+                {plural(hiddenByActivity, { one: '# idle workspace hidden.', other: '# idle workspaces hidden.' })}{' '}
+                <Text tone="brand">
+                  <Trans>Show all</Trans>
+                </Text>
               </Text>
             </Touch>
           ) : undefined
@@ -311,9 +315,11 @@ function HomeEmpty({
     return (
       <View style={styles.empty}>
         <StimJar playing={focused} />
-        <Text variant="headline">No device running</Text>
+        <Text variant="headline">
+          <Trans>No device running</Trans>
+        </Text>
         <Text tone="secondary" style={styles.emptyMessage}>
-          Simulators and emulators appear here while they run, on every paired machine the filters keep.
+          <Trans>Simulators and emulators appear here while they run, on every paired machine the filters keep.</Trans>
         </Text>
       </View>
     );
@@ -322,21 +328,23 @@ function HomeEmpty({
     return (
       <View style={styles.empty}>
         <StimJar playing={focused} />
-        <Text variant="headline">No live workspaces</Text>
+        <Text variant="headline">
+          <Trans>No live workspaces</Trans>
+        </Text>
         <Text tone="secondary" style={styles.emptyMessage}>
-          Tap a prompt to copy it for your coding agent.
+          <Trans>Tap a prompt to copy it for your coding agent.</Trans>
         </Text>
         <View style={styles.prompts}>
           {prompts.map((prompt) => (
             <Card
               key={prompt}
               onPress={() => void Clipboard.setStringAsync(prompt).then(() => setCopied(prompt))}
-              accessibilityLabel={`Copy prompt: ${prompt}`}
+              accessibilityLabel={t`Copy prompt: ${prompt}`}
               style={styles.prompt}
             >
               <Text style={styles.promptText}>{prompt}</Text>
               <Text variant="footnote" weight="semibold" tone="brand">
-                {copied === prompt ? 'Copied' : 'Copy'}
+                {copied === prompt ? t`Copied` : t`Copy`}
               </Text>
             </Card>
           ))}
@@ -349,17 +357,17 @@ function HomeEmpty({
       <StimJar playing={focused} />
       <Text variant="headline">
         {items
-          ? 'Nothing matches the filters'
+          ? t`Nothing matches the filters`
           : connections.some((c) => c.state.kind === 'open')
-            ? 'Nothing running'
-            : 'No machine connected'}
+            ? t`Nothing running`
+            : t`No machine connected`}
       </Text>
       <Text tone="secondary" style={styles.emptyMessage}>
         {items
-          ? 'Change the filters to see more workspaces.'
+          ? t`Change the filters to see more workspaces.`
           : !connections.some((c) => c.state.kind === 'open')
-            ? 'The chips above show why each machine is offline.'
-            : 'Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.'}
+            ? t`The chips above show why each machine is offline.`
+            : t`Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine.`}
       </Text>
     </View>
   );

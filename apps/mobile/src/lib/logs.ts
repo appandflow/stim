@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import { relativeTo, tildeHome } from '@/lib/paths';
 import type { EnvironmentState, LogFilter, LogRecord, LogSource, StackFrame } from '@/protocol/types';
 
@@ -7,15 +9,34 @@ import type { EnvironmentState, LogFilter, LogRecord, LogSource, StackFrame } fr
  */
 export type LogChip = 'metro' | 'client' | 'ios' | 'android' | 'web' | 'build' | 'agent';
 
-export const CHIPS: { chip: LogChip; label: string; source: LogSource }[] = [
-  { chip: 'metro', label: 'Metro', source: 'metro' },
-  { chip: 'client', label: 'App', source: 'client' },
-  { chip: 'ios', label: 'iOS', source: 'device' },
-  { chip: 'android', label: 'Android', source: 'device' },
-  { chip: 'web', label: 'Web', source: 'device' },
-  { chip: 'build', label: 'Build', source: 'build' },
-  { chip: 'agent', label: 'Agent', source: 'agent' },
+const CHIPS: { chip: LogChip; source: LogSource }[] = [
+  { chip: 'metro', source: 'metro' },
+  { chip: 'client', source: 'client' },
+  { chip: 'ios', source: 'device' },
+  { chip: 'android', source: 'device' },
+  { chip: 'web', source: 'device' },
+  { chip: 'build', source: 'build' },
+  { chip: 'agent', source: 'agent' },
 ];
+
+export function chipLabel(chip: LogChip): string {
+  switch (chip) {
+    case 'metro':
+      return t`Metro`;
+    case 'client':
+      return t`App`;
+    case 'ios':
+      return 'iOS';
+    case 'android':
+      return t`Android`;
+    case 'web':
+      return t`Web`;
+    case 'build':
+      return t`Build`;
+    case 'agent':
+      return t`Agent`;
+  }
+}
 
 const DEVICE_CHIPS: LogChip[] = ['ios', 'android', 'web'];
 const SOURCE_COUNT = new Set(CHIPS.map((c) => c.source)).size;
@@ -417,7 +438,8 @@ export function shareText(view: EntryView, entry: LogEntry, workspace: string): 
   const parts = [copyText(view)];
   if (view.codeFrame.length > 0) parts.push(view.codeFrame.join('\n'));
   if (view.details.length > 0) parts.push(view.details.join('\n'));
-  parts.push(`${entry.lead.src} ${entry.lead.level} at ${time} in ${workspace}`);
+  const { src, level } = entry.lead;
+  parts.push(t`${src} ${level} at ${time} in ${workspace}`);
   return parts.join('\n\n');
 }
 
@@ -467,8 +489,8 @@ export function agentFilterOptions(actions: AgentAction[]): AgentFilterOption[] 
   }
   const commands = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 2);
   return [
-    { filter: { kind: 'all' }, label: 'All', count: actions.length },
-    ...(failed ? [{ filter: { kind: 'failed' } as const, label: 'Failed', count: failed }] : []),
+    { filter: { kind: 'all' }, label: t`All`, count: actions.length },
+    ...(failed ? [{ filter: { kind: 'failed' } as const, label: t`Failed`, count: failed }] : []),
     ...commands.map(([command, count]) => ({ filter: { kind: 'command', command } as const, label: command, count })),
   ];
 }

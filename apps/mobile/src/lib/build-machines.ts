@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro';
+
 import { machineName } from '@/lib/format';
 import type { BuildMachineReport } from '@/protocol/types';
 
@@ -9,38 +11,70 @@ export interface MachineReadiness {
   tone: 'success' | 'warning' | 'error' | 'tertiary';
 }
 
-const STATES: Record<string, { title: string; tone: MachineReadiness['tone'] }> = {
-  approved: { title: 'Approved', tone: 'success' },
-  pending: { title: 'Waiting for approval', tone: 'warning' },
-  'not-asked': { title: 'Not asked', tone: 'tertiary' },
-  revoked: { title: 'Revoked', tone: 'error' },
-  'node-changed': { title: 'Different Mac', tone: 'error' },
-  'not-on-tailnet': { title: 'Not on the tailnet', tone: 'warning' },
-  'tailscale-off': { title: 'Tailscale is off', tone: 'warning' },
-  unreachable: { title: 'Unreachable', tone: 'warning' },
-  invalid: { title: 'Not a tailnet name', tone: 'error' },
-};
+type State = { title: string; tone: MachineReadiness['tone'] };
 
-const SDK_REMEDY = 'install it with sdkmanager there';
+function pairingState(state: string): State {
+  switch (state) {
+    case 'approved':
+      return { title: t`Approved`, tone: 'success' };
+    case 'pending':
+      return { title: t`Waiting for approval`, tone: 'warning' };
+    case 'not-asked':
+      return { title: t`Not asked`, tone: 'tertiary' };
+    case 'revoked':
+      return { title: t`Revoked`, tone: 'error' };
+    case 'node-changed':
+      return { title: t`Different Mac`, tone: 'error' };
+    case 'not-on-tailnet':
+      return { title: t`Not on the tailnet`, tone: 'warning' };
+    case 'tailscale-off':
+      return { title: t`Tailscale is off`, tone: 'warning' };
+    case 'unreachable':
+      return { title: t`Unreachable`, tone: 'warning' };
+    case 'invalid':
+      return { title: t`Not a tailnet name`, tone: 'error' };
+    default:
+      return { title: t`Unknown`, tone: 'tertiary' };
+  }
+}
 
 /** The short title and remedy of each `stim doctor` build-machine reason code; `busy` is built from the load. */
-const PROBLEMS: Record<string, [string, string | null]> = {
-  unreachable: ['Not answering', 'check its stim-server'],
-  checkout: ['Not a git checkout', 'run Stim from a git checkout'],
-  'stim-build': ['Stim build differs', 'update the build machine'],
-  arch: ['Other CPU', 'use a Mac with the same CPU'],
-  xcode: ['Xcode differs', 'select the same Xcode on both'],
-  'simulator-sdk': ['Simulator SDK differs', 'select the same Xcode on both'],
-  cocoapods: ['CocoaPods differs', 'install the same CocoaPods there'],
-  bundler: ['No Bundler', 'install Bundler there'],
-  runtime: ['No simulator runtime', 'install the iOS runtime there'],
-  jdk: ['JDK differs', 'use the same JDK there'],
-  'android-sdk': ['No Android SDK', 'install one there'],
-  ndk: ['NDK missing', SDK_REMEDY],
-  'build-tools': ['Build-tools missing', SDK_REMEDY],
-  'compile-sdk': ['Android platform missing', SDK_REMEDY],
-  disk: ['Low on disk', 'free space there'],
-};
+function knownProblem(code: string): [string, string | null] | undefined {
+  switch (code) {
+    case 'unreachable':
+      return [t`Not answering`, t`check its stim-server`];
+    case 'checkout':
+      return [t`Not a git checkout`, t`run Stim from a git checkout`];
+    case 'stim-build':
+      return [t`Stim build differs`, t`update the build machine`];
+    case 'arch':
+      return [t`Other CPU`, t`use a Mac with the same CPU`];
+    case 'xcode':
+      return [t`Xcode differs`, t`select the same Xcode on both`];
+    case 'simulator-sdk':
+      return [t`Simulator SDK differs`, t`select the same Xcode on both`];
+    case 'cocoapods':
+      return [t`CocoaPods differs`, t`install the same CocoaPods there`];
+    case 'bundler':
+      return [t`No Bundler`, t`install Bundler there`];
+    case 'runtime':
+      return [t`No simulator runtime`, t`install the iOS runtime there`];
+    case 'jdk':
+      return [t`JDK differs`, t`use the same JDK there`];
+    case 'android-sdk':
+      return [t`No Android SDK`, t`install one there`];
+    case 'ndk':
+      return [t`NDK missing`, t`install it with sdkmanager there`];
+    case 'build-tools':
+      return [t`Build-tools missing`, t`install it with sdkmanager there`];
+    case 'compile-sdk':
+      return [t`Android platform missing`, t`install it with sdkmanager there`];
+    case 'disk':
+      return [t`Low on disk`, t`free space there`];
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Whether a build machine takes builds now: "Ready", or the first reason `stim doctor` gave with its remedy, such
@@ -50,23 +84,23 @@ const PROBLEMS: Record<string, [string, string | null]> = {
 export function machineReadiness(report: BuildMachineReport): MachineReadiness {
   const id = report.machine;
   const name = machineName(id);
-  const state = STATES[report.state] ?? { title: 'Unknown', tone: 'tertiary' as const };
+  const state = pairingState(report.state);
   if (report.state !== 'approved' || report.offloadable === undefined) {
     return { id, name, ...state, remedy: null };
   }
-  if (report.offloadable) return { id, name, title: 'Ready', tone: 'success', remedy: null };
+  if (report.offloadable) return { id, name, title: t`Ready`, tone: 'success', remedy: null };
   const first = report.problems?.[0];
   if (first?.code === 'busy') {
     const load = report.capacity?.loadPerCore;
     return {
       id,
       name,
-      title: typeof load === 'number' ? `Busy (load ${load}/core)` : 'Busy',
+      title: typeof load === 'number' ? t`Busy (load ${load}/core)` : t`Busy`,
       tone: 'warning',
       remedy: null,
     };
   }
-  const known = first ? PROBLEMS[first.code] : undefined;
+  const known = first ? knownProblem(first.code) : undefined;
   if (known) {
     return {
       id,
@@ -76,5 +110,5 @@ export function machineReadiness(report: BuildMachineReport): MachineReadiness {
       tone: first!.code === 'unreachable' ? 'warning' : 'error',
     };
   }
-  return { id, name, title: report.reasons?.[0] ?? 'Cannot take builds', remedy: null, tone: 'error' };
+  return { id, name, title: report.reasons?.[0] ?? t`Cannot take builds`, remedy: null, tone: 'error' };
 }

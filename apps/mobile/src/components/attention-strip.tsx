@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { useState } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -26,12 +27,17 @@ export function AttentionStrip({
     <View style={styles.card}>
       {shown.map((item, index) => {
         const tone = item.severity === 'error' ? 'error' : 'warning';
+        const { title, macName, detail } = item;
+        const label =
+          item.severity === 'error'
+            ? t`Error: ${title} on ${macName}, ${detail}`
+            : t`Warning: ${title} on ${macName}, ${detail}`;
         return (
           <Touch
             key={item.key}
             feedback="row"
             onPress={() => onOpen(item)}
-            accessibilityLabel={`${item.severity === 'error' ? 'Error' : 'Warning'}: ${item.title} on ${item.macName}, ${item.detail}`}
+            accessibilityLabel={label}
             style={[styles.row, index > 0 && styles.divider]}
           >
             <View style={styles.dot(tone)} />
@@ -50,7 +56,7 @@ export function AttentionStrip({
       {more > 0 || expanded ? (
         <Touch feedback="row" onPress={() => setExpanded(!expanded)} style={[styles.row, styles.divider]}>
           <Text variant="footnote" weight="medium" tone="brand">
-            {expanded ? 'Show fewer' : `${more} more`}
+            {expanded ? t`Show fewer` : t`${more} more`}
           </Text>
         </Touch>
       ) : null}

@@ -115,27 +115,19 @@
   },
   "overrides": [
     {
-      "files": [
-        "src/intl/**",
-        "src/lib/inbox.ts",
-        "src/screens/about.tsx",
-        "src/screens/filters.tsx",
-        "src/screens/inbox.tsx",
-        "src/screens/rename.tsx",
-        "src/components/workspace-row.tsx"
-      ],
+      "files": ["src/**/*.ts", "src/**/*.tsx"],
       "rules": {
         "lingui/no-unlocalized-strings": [
           "error",
           {
-            "ignore": ["^(?![A-Z])\\S+$"],
+            "ignore": ["^(?![A-Z])\\S+$", "^(stim|stim-server|cd|at) "],
             "ignoreNames": [
               {
                 "regex": {
                   "pattern": "^(variant|tone|weight|feedback|placement|iconRenderingMode|ellipsizeMode|returnKeyType|keyExtractor|name|icon|key|size|testID)$"
                 }
               },
-              { "regex": { "pattern": "[Ss]tyle$" } }
+              { "regex": { "pattern": "([Ss]tyle|Color|[Ss]hadow|Image|^command|^remedy|^[A-Z][A-Z0-9_]*)$" } }
             ],
             "ignoreFunctions": [
               "require",
@@ -165,7 +157,18 @@
       }
     },
     {
-      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/design/**",
+        "src/lib/agent-prompts.ts",
+        "src/lib/oversight.ts",
+        "src/screens/gallery.tsx",
+        "src/components/icon.tsx",
+        "src/components/agent-icon.tsx",
+        "src/components/platform-glyph.tsx",
+        "src/components/platform-logo.tsx"
+      ],
       "rules": { "lingui/no-unlocalized-strings": "off" }
     },
     {

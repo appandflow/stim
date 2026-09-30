@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import * as Linking from 'expo-linking';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -14,24 +16,35 @@ import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
-import { workspaceTitleAt } from '@/lib/workspaces';
+import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { PullRequestFacts } from '@/protocol/types';
 
-const commits = (n: number) => `${n} ${n === 1 ? 'commit' : 'commits'}`;
-const files = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+const commits = (n: number) => plural(n, { one: '# commit', other: '# commits' });
+const files = (n: number) => plural(n, { one: '# file', other: '# files' });
 
-const STATE_NAME: Record<PullRequestFacts['state'], string> = {
-  open: 'Open',
-  draft: 'Draft',
-  merged: 'Merged',
-  closed: 'Closed',
-};
+function stateName(state: PullRequestFacts['state']): string {
+  switch (state) {
+    case 'open':
+      return t`Open`;
+    case 'draft':
+      return t`Draft`;
+    case 'merged':
+      return t`Merged`;
+    case 'closed':
+      return t`Closed`;
+  }
+}
 
-const REVIEW_NAME: Record<NonNullable<PullRequestFacts['reviewDecision']>, string> = {
-  approved: 'Approved',
-  'changes-requested': 'Changes requested',
-  'review-required': 'Review required',
-};
+function reviewName(decision: NonNullable<PullRequestFacts['reviewDecision']>): string {
+  switch (decision) {
+    case 'approved':
+      return t`Approved`;
+    case 'changes-requested':
+      return t`Changes requested`;
+    case 'review-required':
+      return t`Review required`;
+  }
+}
 
 export function WorkspaceWork({ path }: { path: string }) {
   const { theme } = useUnistyles();
@@ -45,6 +58,7 @@ export function WorkspaceWork({ path }: { path: string }) {
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const checks = pr ? checksTone(pr.checks) : null;
   const checkedAt = pr ? Date.parse(pr.checkedAt) : NaN;
+  const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
   return (
     <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container}>
       <View style={styles.titles}>
@@ -52,54 +66,65 @@ export function WorkspaceWork({ path }: { path: string }) {
           {worktree?.branch ?? workspaceTitleAt(path, status)}
         </Text>
         <Text variant="footnote" tone="secondary">
-          Work
+          <Trans>Work</Trans>
         </Text>
       </View>
       {sessions.length ? (
-        <ListSection title={sessions.length === 1 ? 'Agent session' : 'Agent sessions'} bare={onlyAgentHasLink}>
+        <ListSection
+          title={plural(sessions.length, { one: 'Agent session', other: 'Agent sessions' })}
+          bare={onlyAgentHasLink}
+        >
           {sessions.map((agent) => (
             <AgentSessionRow key={`${agent.tool}:${agent.sessionId}`} agent={agent} card={onlyAgentHasLink} />
           ))}
         </ListSection>
       ) : null}
       {git ? (
-        <ListSection title="Git">
-          <ListRow title="Upstream" value={git.upstream ?? 'None'} valueTone={git.upstream ? 'default' : 'tertiary'} />
-          <ListRow title="Ahead" value={git.ahead === null ? '\u2014' : commits(git.ahead)} />
-          <ListRow title="Behind" value={git.behind === null ? '\u2014' : commits(git.behind)} />
-          <ListRow title="Changed" value={files(git.changed)} valueTone={git.changed ? 'warning' : 'default'} />
-          <ListRow title="Untracked" value={files(git.untracked)} valueTone={git.untracked ? 'warning' : 'default'} />
-          {git.mergedInto ? <ListRow title="Merged into" value={git.mergedInto} valueTone="brand" /> : null}
+        <ListSection title={t`Git`}>
+          <ListRow
+            title={t`Upstream`}
+            value={git.upstream ?? t`None`}
+            valueTone={git.upstream ? 'default' : 'tertiary'}
+          />
+          <ListRow title={t`Ahead`} value={git.ahead === null ? '\u2014' : commits(git.ahead)} />
+          <ListRow title={t`Behind`} value={git.behind === null ? '\u2014' : commits(git.behind)} />
+          <ListRow title={t`Changed`} value={files(git.changed)} valueTone={git.changed ? 'warning' : 'default'} />
+          <ListRow
+            title={t`Untracked`}
+            value={files(git.untracked)}
+            valueTone={git.untracked ? 'warning' : 'default'}
+          />
+          {git.mergedInto ? <ListRow title={t`Merged into`} value={git.mergedInto} valueTone="brand" /> : null}
         </ListSection>
       ) : (
         <Text variant="footnote" tone="secondary">
-          Stim reports no git state for this workspace.
+          <Trans>Stim reports no git state for this workspace.</Trans>
         </Text>
       )}
       {pr ? (
-        <ListSection title="Pull request">
+        <ListSection title={t`Pull request`}>
           <View style={styles.pr}>
             <Text variant="callout" weight="semibold">
               {`#${pr.number} ${pr.title}`}
             </Text>
           </View>
-          <ListRow title="State" value={STATE_NAME[pr.state]} />
+          <ListRow title={t`State`} value={stateName(pr.state)} />
           {pr.checks ? (
             <ListRow
-              title="Checks"
+              title={t`Checks`}
               value={checksSummary(pr.checks) ?? undefined}
               accessory={checks ? <StatusDot color={chipColor(checks, theme.colors)} /> : undefined}
             />
           ) : null}
-          {pr.reviewDecision ? <ListRow title="Review" value={REVIEW_NAME[pr.reviewDecision]} /> : null}
+          {pr.reviewDecision ? <ListRow title={t`Review`} value={reviewName(pr.reviewDecision)} /> : null}
         </ListSection>
       ) : null}
       {pr ? (
         <>
-          <Button title="Open in GitHub" onPress={() => void Linking.openURL(pr.url)} />
+          <Button title={t`Open in GitHub`} onPress={() => void Linking.openURL(pr.url)} />
           {Number.isFinite(checkedAt) ? (
             <Text variant="footnote" tone="tertiary" style={styles.center}>
-              {`Checked ${formatDuration(Math.max(0, now - checkedAt))} ago`}
+              {t`Checked ${sinceChecked} ago`}
             </Text>
           ) : null}
         </>

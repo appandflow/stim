@@ -1,3 +1,5 @@
+import { Trans } from '@lingui/react/macro';
+import { t } from '@lingui/core/macro';
 import { useEffect, useRef, useState } from 'react';
 import { View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -9,8 +11,8 @@ import type { Replay } from '@/hooks/device-stream';
 import {
   adjacentAction,
   buildTimeline,
-  MARKER_TITLES,
   markerSeek,
+  markerTitle,
   positionOf,
   replayLabel,
   stepFrom,
@@ -88,20 +90,21 @@ export function ReplayBar({
   if (at !== null && at !== lastAt) setLastAt(at);
   if (replay === null && lastAt !== null) setLastAt(null);
   const isLive = replay === null && canGoLive;
+  const liveLabel = isLive ? t`Live` : canGoLive ? t`Go live` : t`Live, device stopped`;
   const livePill = (
     <Touch
       onPress={onLive}
       disabled={!replay || !canGoLive}
       defaultOpacity={canGoLive ? 1 : theme.opacity.disabled}
       accessibilityRole="button"
-      accessibilityLabel={isLive ? 'Live' : canGoLive ? 'Go live' : 'Live, device stopped'}
+      accessibilityLabel={liveLabel}
       accessibilityState={{ selected: isLive, disabled: !replay || !canGoLive }}
       style={styles.live(isLive)}
       hitSlop={6}
     >
       <View style={styles.liveDot(isLive)} />
       <Text variant="caption" weight="semibold" style={styles.liveText(isLive)}>
-        Live
+        <Trans>Live</Trans>
       </Text>
     </Touch>
   );
@@ -205,6 +208,10 @@ export function ReplayBar({
     }
   };
 
+  const frameLabel = labelAt === null ? null : replayLabel(labelAt, now);
+  const timeLabel =
+    frameLabel === null ? t`Loading...` : replay?.ended && target === null ? t`${frameLabel} \u00B7 end` : frameLabel;
+
   return (
     <View style={styles.root}>
       <View style={styles.controls}>
@@ -213,7 +220,7 @@ export function ReplayBar({
           onPress={() => previousAction && step(previousAction)}
           disabled={!previousAction}
           accessibilityRole="button"
-          accessibilityLabel="Previous agent action"
+          accessibilityLabel={t`Previous agent action`}
           accessibilityState={{ disabled: !previousAction }}
           defaultOpacity={previousAction ? 1 : theme.opacity.disabled}
           style={styles.round}
@@ -224,7 +231,7 @@ export function ReplayBar({
         <Touch
           onPress={togglePlay}
           accessibilityRole="button"
-          accessibilityLabel={showsPause ? 'Pause' : 'Play'}
+          accessibilityLabel={showsPause ? t`Pause` : t`Play`}
           style={styles.round}
           hitSlop={4}
         >
@@ -236,7 +243,7 @@ export function ReplayBar({
           onPress={() => nextAction && step(nextAction)}
           disabled={!nextAction}
           accessibilityRole="button"
-          accessibilityLabel="Next agent action"
+          accessibilityLabel={t`Next agent action`}
           accessibilityState={{ disabled: !nextAction }}
           defaultOpacity={nextAction ? 1 : theme.opacity.disabled}
           style={styles.round}
@@ -248,7 +255,7 @@ export function ReplayBar({
           onPress={toggleSpeed}
           disabled={isLive}
           accessibilityRole="button"
-          accessibilityLabel={`Playback speed ${speed}x`}
+          accessibilityLabel={t`Playback speed ${speed}x`}
           accessibilityElementsHidden={isLive}
           importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
           defaultOpacity={isLive ? 0 : 1}
@@ -256,15 +263,13 @@ export function ReplayBar({
           hitSlop={4}
         >
           <Text variant="caption" weight="semibold" style={styles.mediaText}>
-            {`${speed}x`}
+            {t`${speed}x`}
           </Text>
         </Touch>
       </View>
       {replay ? (
         <Text variant="caption" style={styles.time} numberOfLines={1}>
-          {labelAt === null
-            ? 'Loading...'
-            : `${replayLabel(labelAt, now)}${replay.ended && target === null ? ' \u00B7 end' : ''}`}
+          {timeLabel}
         </Text>
       ) : null}
       <View
@@ -292,7 +297,7 @@ export function ReplayBar({
             pointerEvents="none"
             accessible
             accessibilityRole="button"
-            accessibilityLabel={`${MARKER_TITLES[marker.kind]}: ${marker.label}`}
+            accessibilityLabel={markerLabel(marker)}
             accessibilityActions={[{ name: 'activate' }]}
             onAccessibilityAction={() => seekTo(markerSeek(track, marker), 0)}
             style={[styles.markerHit, { left: positionOf(track, marker.at) * width - 6 }]}
@@ -317,8 +322,8 @@ export function ReplayBar({
           style={[styles.thumb, { left: position * width - 7 }]}
           accessible
           accessibilityRole="adjustable"
-          accessibilityLabel="Recording timeline"
-          accessibilityValue={{ text: at !== null ? replayLabel(at, now) : 'Live' }}
+          accessibilityLabel={t`Recording timeline`}
+          accessibilityValue={{ text: at !== null ? replayLabel(at, now) : t`Live` }}
           accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
           onAccessibilityAction={(event) => {
             const step = event.nativeEvent.actionName === 'increment' ? 0.05 : -0.05;
@@ -328,6 +333,12 @@ export function ReplayBar({
       </View>
     </View>
   );
+}
+
+function markerLabel(marker: ReplayMarker): string {
+  const title = markerTitle(marker.kind);
+  const { label } = marker;
+  return t`${title}: ${label}`;
 }
 
 const styles = StyleSheet.create((theme) => ({

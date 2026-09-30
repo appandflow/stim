@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import * as Linking from 'expo-linking';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -29,6 +30,7 @@ export function AgentSessionLine({
   const { theme } = useUnistyles();
   const [agent, ...rest] = sessions;
   if (!agent) return null;
+  const others = rest.length;
   return (
     <View style={styles.row}>
       <AgentIcon tool={agent.tool} size={theme.typography[variant].fontSize ?? 13} color={theme.colors.secondary} />
@@ -37,7 +39,7 @@ export function AgentSessionLine({
       </Text>
       {rest.length ? (
         <Text variant={variant} tone="tertiary" style={styles.fixed}>
-          {`+${rest.length}`}
+          {t`+${others}`}
         </Text>
       ) : null}
     </View>
@@ -78,7 +80,7 @@ export function AgentSessionRow({ agent, card = false }: { agent: AgentSession; 
     );
   }
   const open = () => void Linking.openURL(url);
-  const hint = 'Opens the session in the Claude app or on claude.ai';
+  const hint = t`Opens the session in the Claude app or on claude.ai`;
   if (card) {
     return (
       <Card
