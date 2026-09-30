@@ -37,6 +37,13 @@ struct WallView: View {
                 openLogs: { openLogs(env.path) }
               )
               .onTapGesture { selection = .environment(env.path) }
+              .focusable()
+              .onKeyPress(.return) {
+                selection = .environment(env.path)
+                return .handled
+              }
+              .accessibilityAddTraits(.isButton)
+              .accessibilityAction { selection = .environment(env.path) }
               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: Space.xl) {
                   ForEach(env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }) { device in

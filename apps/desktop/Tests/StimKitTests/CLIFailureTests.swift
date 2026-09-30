@@ -158,3 +158,9 @@ struct CLIFailureTests {
     return path
   }
 }
+
+@Test func stimHomeFollowsTheCLIEnvironment() {
+  #expect(StimCLI(environment: ["PATH": "/bin", "STIM_HOME": "/tmp/other-home"]).stimHome == "/tmp/other-home")
+  #expect(StimCLI(environment: ["PATH": "/bin", "STIM_HOME": ""]).stimHome == "\(NSHomeDirectory())/.stim")
+  #expect(StimCLI(environment: ["PATH": "/bin"]).stimHome == "\(NSHomeDirectory())/.stim")
+}
