@@ -32,6 +32,7 @@ const PROBLEMS: Record<string, [string, string | null]> = {
   xcode: ['Xcode differs', 'select the same Xcode on both'],
   'simulator-sdk': ['Simulator SDK differs', 'select the same Xcode on both'],
   cocoapods: ['CocoaPods differs', 'install the same CocoaPods there'],
+  bundler: ['No Bundler', 'install Bundler there'],
   runtime: ['No simulator runtime', 'install the iOS runtime there'],
   jdk: ['JDK differs', 'use the same JDK there'],
   'android-sdk': ['No Android SDK', 'install one there'],

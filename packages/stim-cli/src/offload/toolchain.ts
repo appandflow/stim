@@ -33,7 +33,6 @@ export interface AndroidRequirements {
 
 /** A build machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends IosToolchain {
-  /** `bundle --version`, which runs pods for a project whose Gemfile.lock resolves cocoapods. */
   bundler: string | null;
   runtimes: string[];
   jdk: string | null;
@@ -46,7 +45,6 @@ export type BuildTarget =
       platform: 'ios';
       local: IosToolchain;
       runtime: string | null;
-      /** The project's Gemfile.lock resolves cocoapods, so both Macs run the CocoaPods it pins through bundler. */
       cocoapodsPinned: boolean;
     }
   | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements };

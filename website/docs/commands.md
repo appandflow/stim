@@ -125,8 +125,7 @@ CocoaPods differ, it has no Bundler for a project whose `Gemfile.lock` pins
 CocoaPods (its own CocoaPods version does not matter then), or it has no
 iPhone simulator on the runtime `stim ios` builds for here; for Android (with
 `--platform android`, or an app with `android/` or Expo) its JDK major differs
-or its SDK lacks the NDK,
-build-tools or compile platform; its worker volume has less than 10 GB free;
+or its SDK lacks the NDK, build-tools or compile platform; its worker volume has less than 10 GB free;
 or it is busy. Busy and no answer are notes; the
 others cost time. In `--json` such a machine also carries `offloadable`,
 `reasons`, `problems` (each reason with its finding code), and `capacity`,
