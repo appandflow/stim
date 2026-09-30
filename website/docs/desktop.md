@@ -164,6 +164,14 @@ the action that frees a row sits next to it.
   runs it.
 - **Other tools** shows Xcode DerivedData, Gradle caches and `~/Library/Caches`
   for information.
+- **Processes** lists what uses the Mac's memory and CPU now. The Watchman,
+  Gradle daemon and Kotlin daemon rows have **Reclaim memory**, which asks you
+  first and then runs `stim gc --delete --cache watchman` or
+  `--cache gradle-daemons` in the activity sheet. gc stops a process only when
+  it proves nothing uses it, such as a Metro server that watches through
+  Watchman or a running build. When it keeps one, the row says why and the
+  button stays disabled. It needs a `stim` whose `stim gc --json` has a Memory
+  section.
 
 The device, runtime and system image lists need a `stim` whose `stim gc --json`
 reports an inventory.

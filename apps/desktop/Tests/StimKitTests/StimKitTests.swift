@@ -695,6 +695,20 @@ import Testing
     #expect(outcome.failures == 1)
   }
 
+  @Test func namesWatchmanAndDaemonResultsInsteadOfCallingThemStaleRecords() throws {
+    let json = """
+      {"mode":"delete","failures":0,"sections":{},"results":[
+        {"kind":"watchmanRoot","status":"done","label":"/gone/worktree","id":null,"bytes":null,"detail":"directory is gone"},
+        {"kind":"watchman","status":"done","label":"watchman (pid 41)","id":"41","bytes":4456448000,"detail":null},
+        {"kind":"gradleDaemon","status":"done","label":"Gradle daemon (pid 52)","id":"52","bytes":393216000,"detail":null},
+        {"kind":"kotlinDaemon","status":"kept","label":"Kotlin daemon (pid 53)","id":"53","bytes":370000000,"detail":"a Gradle daemon is busy"}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.headline == "Freed 4.85 GB \u{00B7} Stopped 2 helper processes \u{00B7} Removed 1 stale watchman root")
+    #expect(outcome.kept.map(\.detail) == ["a Gradle daemon is busy"])
+  }
+
   @Test func keepsDistinctEntriesThatShareALabelAndSkipsNotesOnAnIdleRun() throws {
     let json = """
       {"mode":"dry-run","idle":3600000,"failures":0,"sections":{

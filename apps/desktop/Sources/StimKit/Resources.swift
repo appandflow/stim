@@ -376,6 +376,10 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var workspaceLogs: [WorkspaceLogs]?
     public var workspaceBuildOutputs: [BuildOutputs]?
     public var caches: [Cache]?
+    /// Watchman and Gradle/Kotlin daemon processes; nil from a CLI that predates the memory report.
+    public var memory: [MemoryProcess]?
+    public var watchmanRoots: [WatchmanRoot]?
+    public var memoryNotices: [MemoryNotice]?
   }
 
   public var sections: Sections

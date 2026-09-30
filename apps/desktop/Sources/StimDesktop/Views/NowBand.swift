@@ -5,10 +5,13 @@ import SwiftUI
 struct NowBand: View {
   @ObservedObject var status: StatusStore
   var metrics: MetricsStore
+  var gc: GcReportStore
   @EnvironmentObject private var actions: ActionCenter
+  @State private var reclaiming: (title: String, offer: GcReport.MemoryReclaim)?
 
   private static let valueWidth: CGFloat = 64
   private static let actionWidth: CGFloat = 88
+  private static let reclaimWidth: CGFloat = 124
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
@@ -18,7 +21,9 @@ struct NowBand: View {
         VStack(spacing: Space.md) { tiles }
       }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
-        let actionWidth = machine.owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
+        let actionWidth =
+          machine.owners.contains { GcReport.reclaim(for: $0, in: gc.report) != nil }
+          ? Self.reclaimWidth : machine.owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
         CollapsibleSection("machine.processes", title: "Processes", items: machine.ranked) { shown in
           Text(
             machine.memorySource == .footprint
@@ -49,6 +54,17 @@ struct NowBand: View {
           .font(.stim(.callout))
           .foregroundStyle(Palette.secondary)
       }
+    }
+    .confirmationDialog(
+      "Reclaim memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
+      titleVisibility: .visible, presenting: reclaiming
+    ) { item in
+      Button("Run stim gc --delete --cache \(item.offer.cacheKind)", role: .destructive) {
+        actions.run(
+          "Reclaim \(item.title) memory", item.offer.command(cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
+      }
+    } message: { item in
+      Text(item.offer.consequence)
     }
   }
 
@@ -95,6 +111,13 @@ struct NowBand: View {
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(owner.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text(ownerLine(owner)).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
+        if let reason = GcReport.reclaim(for: owner, in: gc.report)?.unavailableReason {
+          Text("Kept: \(abbreviatingHome(reason))")
+            .font(.stim(.caption))
+            .foregroundStyle(Palette.tertiary)
+            .lineLimit(2)
+            .help(abbreviatingHome(reason))
+        }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       Text(formatPercent(owner.cpuPercent))
@@ -120,6 +143,14 @@ struct NowBand: View {
           ? "stim stop: stops this workspace's dev server and its devices"
           : "stim stop --slot \(owner.slot ?? "default"): stops every device in this slot, keeping the shared server and other slots running"
       )
+    } else if let offer = GcReport.reclaim(for: owner, in: gc.report) {
+      Button(offer.title) { reclaiming = (owner.name, offer) }
+        .buttonStyle(.stim())
+        .fixedSize()
+        .disabled(!offer.isAvailable || actions.active(for: ActionCenter.machineKey) != nil)
+        .help(
+          offer.unavailableReason.map { "Kept: \(abbreviatingHome($0))" }
+            ?? "stim gc --delete --cache \(offer.cacheKind): stops only what gc proves unused")
     } else {
       Color.clear.frame(height: 1)
     }
