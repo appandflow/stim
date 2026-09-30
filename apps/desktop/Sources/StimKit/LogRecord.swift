@@ -75,6 +75,25 @@ public struct LogRecord: Decodable, Sendable {
     return text
   }
 
+  /// What VoiceOver reads for a log row: level, source, slot, time and message, then how many records the row
+  /// groups when it groups more than one. `source` and `title` are the row's displayed source name and message.
+  public func accessibilityLabel(source: String, title: String, recordCount: Int = 1) -> String {
+    let level =
+      switch level {
+      case .debug: "Debug"
+      case .info: "Info"
+      case .warn: "Warning"
+      case .error: "Error"
+      case .fatal: "Fatal"
+      }
+    var parts = [level, source]
+    if let slot { parts.append("slot \(slot)") }
+    parts.append(date.formatted(Self.timeFormat))
+    parts.append(title)
+    if recordCount > 1 { parts.append(countLabel(recordCount, "record")) }
+    return parts.joined(separator: ", ")
+  }
+
   public static let timeFormat = Date.VerbatimFormatStyle(
     format: """
       \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits):\(second: .twoDigits)\
