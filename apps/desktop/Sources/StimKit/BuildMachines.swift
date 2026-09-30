@@ -39,17 +39,11 @@ public enum Tailnet {
     var environment = environment
     let candidates = [resolveExecutable("tailscale", override: nil, environment: &environment), appBinary]
     for binary in candidates.compactMap({ $0 }) where FileManager.default.isExecutableFile(atPath: binary) {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: binary)
-      process.arguments = ["status", "--json"]
-      process.environment = environment
-      let out = Pipe()
-      process.standardOutput = out
-      process.standardError = FileHandle.nullDevice
-      guard (try? process.run()) != nil else { continue }
-      let data = out.fileHandleForReading.readDataToEndOfFile()
-      process.waitUntilExit()
-      if process.terminationStatus == 0 { return data }
+      if let result = try? ProcessRequest(binary, ["status", "--json"], environment: environment).runBlocking(),
+        result.status == 0
+      {
+        return result.stdout
+      }
     }
     return nil
   }

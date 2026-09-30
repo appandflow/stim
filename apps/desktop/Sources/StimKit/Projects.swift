@@ -30,17 +30,10 @@ public struct Project: Hashable, Identifiable, Sendable {
   }
 
   public static func resolve(workspace path: String) -> Project {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = ["-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"]
-    let out = Pipe()
-    process.standardOutput = out
-    process.standardError = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return Project(fallbackFor: path) }
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    let dir = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard process.terminationStatus == 0, dir.hasPrefix("/") else { return Project(fallbackFor: path) }
+    let request = ProcessRequest("/usr/bin/git", ["-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"])
+    guard let result = try? request.runBlocking(), result.status == 0 else { return Project(fallbackFor: path) }
+    let dir = result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard dir.hasPrefix("/") else { return Project(fallbackFor: path) }
     return Project(gitCommonDir: (dir as NSString).resolvingSymlinksInPath)
   }
 }
@@ -63,17 +56,10 @@ public func parseRemoteRepo(_ url: String) -> String? {
 /// "owner/name" of every git remote configured at `path`, lowercased. `git remote -v` (not `git config
 /// --get-regexp`) so a pushurl and an `insteadOf` rewrite both count.
 public func localRemoteRepos(at path: String) -> Set<String> {
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-  process.arguments = ["-C", path, "remote", "-v"]
-  let out = Pipe()
-  process.standardOutput = out
-  process.standardError = FileHandle.nullDevice
-  guard (try? process.run()) != nil else { return [] }
-  let data = out.fileHandleForReading.readDataToEndOfFile()
-  process.waitUntilExit()
-  guard process.terminationStatus == 0 else { return [] }
-  let text = String(decoding: data, as: UTF8.self)
+  guard let result = try? ProcessRequest("/usr/bin/git", ["-C", path, "remote", "-v"]).runBlocking(),
+    result.status == 0
+  else { return [] }
+  let text = result.stdoutText
   var repos = Set<String>()
   for line in text.split(separator: "\n") {
     let fields = line.split(separator: "\t", maxSplits: 1)
@@ -87,17 +73,11 @@ public func localRemoteRepos(at path: String) -> Set<String> {
 
 /// The branch checked out at `path`, or nil for a detached HEAD or a path git cannot read.
 public func currentBranch(at path: String) -> String? {
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-  process.arguments = ["-C", path, "branch", "--show-current"]
-  let out = Pipe()
-  process.standardOutput = out
-  process.standardError = FileHandle.nullDevice
-  guard (try? process.run()) != nil else { return nil }
-  let data = out.fileHandleForReading.readDataToEndOfFile()
-  process.waitUntilExit()
-  let branch = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-  return process.terminationStatus == 0 && !branch.isEmpty ? branch : nil
+  guard let result = try? ProcessRequest("/usr/bin/git", ["-C", path, "branch", "--show-current"]).runBlocking(),
+    result.status == 0
+  else { return nil }
+  let branch = result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+  return branch.isEmpty ? nil : branch
 }
 
 /// A project in the sidebar and how many of its workspaces are live. `total`

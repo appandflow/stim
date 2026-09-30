@@ -11,26 +11,12 @@ public enum LoginShell {
   public static func environment(shell: String = "/bin/zsh", timeout: TimeInterval = 10) async -> [String: String]? {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent("stim-login-env-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: file) }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: shell)
-    process.arguments = ["-lic", "command env -0 > \"$1\"", "zsh", file.path]
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
-    await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-      process.terminationHandler = { _ in done.resume() }
-      do {
-        try process.run()
-        // An interactive zsh ignores SIGTERM, so only SIGKILL stops a profile that never returns.
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-          if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        }
-      } catch {
-        process.terminationHandler = nil
-        done.resume()
-      }
-    }
-    guard process.terminationReason == .exit, let data = try? Data(contentsOf: file) else { return nil }
+    var request = ProcessRequest(
+      shell, ["-lic", "command env -0 > \"$1\"", "zsh", file.path], timeout: timeout)
+    request.timeoutSignal = SIGKILL
+    guard let result = try? await request.run(), result.exited, !result.timedOut,
+      let data = try? Data(contentsOf: file)
+    else { return nil }
     let environment = parseEnvironment(data)
     return environment.isEmpty ? nil : environment
   }
