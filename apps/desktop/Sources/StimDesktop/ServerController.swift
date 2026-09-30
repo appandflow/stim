@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import StimKit
 
@@ -27,6 +28,14 @@ final class ServerController: ObservableObject {
   private var devicesEpoch = 0
 
   static let devicesInterval: Duration = .seconds(10)
+  static let inactiveDevicesInterval: Duration = .seconds(60)
+
+  private lazy var devicesPoller = ActivityPoller(
+    active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApp.isActive },
+    tick: { [weak self] in
+      guard let self, isRunning else { return }
+      reloadDevices()
+    })
 
   var port: Int {
     let port = UserDefaults.standard.integer(forKey: AppPreferences.Key.stimServerPort)
@@ -51,11 +60,11 @@ final class ServerController: ObservableObject {
   func configure(environment: Task<[String: String], Never>) {
     self.environment = environment
     if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
-    Task {
-      while !Task.isCancelled {
-        try? await Task.sleep(for: Self.devicesInterval)
-        if isRunning { reloadDevices() }
-      }
+    devicesPoller.start()
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.devicesPoller.activate() }
     }
   }
 
