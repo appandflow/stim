@@ -507,14 +507,15 @@ deleted it instead`.
 
 Adoption gives the new workspace a clean app state without reinstalling. It
 resets privacy grants and the keychain, uninstalls every other user app, and
-clears the workspace app's data: on iOS it deletes the app's preferences and
-empties its data container, and on Android it runs `pm clear`. It does this on
-every adoption, whichever workspace parked the device. An iOS expo-dev-client
-app keeps only the preferences that hide the Expo dev menu and its Tools
-button, so the menu stays off when an agent or a crash relaunches the app.
-Stim then compares the installed app with the requested build byte for byte
-and skips the install when they match, so a new worktree running the same build as the parked
-device boots it warm and launches without copying the app. App-group
+clears the workspace app's data: on iOS it empties the app's data container
+and resets its preferences, and on Android it runs `pm clear`. It does this on
+every adoption, whichever workspace parked the device. The reset preferences
+of an iOS expo-dev-client app hold only the two that hide the Expo dev menu and
+its Tools button, so the menu stays off when an agent or a crash relaunches
+the app. Stim then compares the installed app with the requested build byte
+for byte and skips the install when they match, so a new worktree running the
+same build as the parked device boots it warm and launches without copying the
+app. App-group
 containers, photos, the pasteboard and Simulator settings are not cleared.
 
 Android adoption requires the same system image, disk size and AVD creation
