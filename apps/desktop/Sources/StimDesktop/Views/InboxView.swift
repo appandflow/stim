@@ -135,6 +135,11 @@ private struct InboxRow: View {
     .padding(.vertical, Space.lg)
     .hoverHighlight(radius: 0)
     .onTapGesture(perform: open)
+    .focusable()
+    .onKeyPress(keys: [.return, .space]) { _ in
+      open()
+      return .handled
+    }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       "\(entry.read ? "" : "Unread, ")\(entry.category.label), \(entry.title), \(entry.body), \(detail)"
