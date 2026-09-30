@@ -33,6 +33,7 @@ export interface AndroidRequirements {
 
 /** A build machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends IosToolchain {
+  bundler: string | null;
   runtimes: string[];
   jdk: string | null;
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
@@ -40,7 +41,12 @@ export interface WorkerToolchain extends IosToolchain {
 
 /** The build a machine is asked to take, with this Mac's side of the toolchain comparison. */
 export type BuildTarget =
-  | { platform: 'ios'; local: IosToolchain; runtime: string | null }
+  | {
+      platform: 'ios';
+      local: IosToolchain;
+      runtime: string | null;
+      cocoapodsPinned: boolean;
+    }
   | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
@@ -145,7 +151,13 @@ export function workerToolchain(): WorkerToolchain {
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
-  return { ...iosToolchain(), runtimes: iphoneRuntimes(listed), jdk: localJdk(), androidSdk: sdkPackages() };
+  return {
+    ...iosToolchain(),
+    bundler: quiet('bundle', ['--version'])?.trim() || null,
+    runtimes: iphoneRuntimes(listed),
+    jdk: localJdk(),
+    androidSdk: sdkPackages(),
+  };
 }
 
 /** The API level of an SDK `platforms/` directory: `android-37.0` and `android-37` are both 37. */
@@ -161,6 +173,7 @@ export interface OffloadProblem {
     | 'xcode'
     | 'simulator-sdk'
     | 'cocoapods'
+    | 'bundler'
     | 'runtime'
     | 'jdk'
     | 'android-sdk'
@@ -213,7 +226,11 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
   if (!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) {
     out.push({ code: 'simulator-sdk', reason: `simulator SDK ${worker.simulatorSdk} there, ${ios.simulatorSdk} here` });
   }
-  if (worker.cocoapods !== ios.cocoapods) {
+  if (target.cocoapodsPinned) {
+    if (!worker.bundler) {
+      out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
+    }
+  } else if (worker.cocoapods !== ios.cocoapods) {
     out.push({ code: 'cocoapods', reason: `CocoaPods ${worker.cocoapods} there, ${ios.cocoapods} here` });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {

@@ -519,8 +519,9 @@ Stim connects to a named Mac only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
 machine's pairing state and, for an approved machine, asks it for one build
 offer and lists every reason it would not take this app's iOS build: no
-answer, another Stim build, CPU, Xcode, simulator SDK or CocoaPods, no iPhone
-simulator on the runtime \`stim ios\` builds for here, low disk, or busy.
+answer, another Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
+Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
+the runtime \`stim ios\` builds for here, low disk, or busy.
 
 \`offload.mode\` decides where an iOS simulator Debug build or an Android
 emulator debug build compiles:
@@ -551,8 +552,11 @@ build and CPU match this Mac exactly, with enough disk, that does not decline,
 preferring the one that already holds this repository, then the least loaded,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.
-For iOS the machine's Xcode, simulator SDK and CocoaPods must match, and it
-needs an iPhone simulator on the target runtime. For Android its JDK major
+For iOS the machine's Xcode and simulator SDK must match, and it needs an
+iPhone simulator on the target runtime. Its CocoaPods must match too, unless
+the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
+bundler, so the machine needs only Bundler on its stim-server PATH and
+installs the pinned gems itself on the first build. For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
