@@ -93,19 +93,21 @@ function RootLayoutContent() {
                       headerTintColor: colors.primary,
                       headerTitleStyle: { color: colors.text },
                       headerBackButtonDisplayMode: 'minimal',
+                      headerShadowVisible: false,
                     }}
                   >
-                    <Stack.Screen name="index" options={{ title: 'Stim', headerShadowVisible: false }} />
+                    <Stack.Screen name="index" options={{ title: 'Stim' }} />
                     <Stack.Screen name="filters" options={sheet([0.6, 1])} />
                     <Stack.Screen name="about" options={sheet([0.5, 1])} />
                     <Stack.Screen
                       name="settings"
                       options={{
                         title: 'Settings',
-                        headerLargeTitle: true,
-                        contentStyle: { backgroundColor: colors.grouped },
                         ...(Platform.OS === 'android'
-                          ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
+                          ? {
+                              contentStyle: { backgroundColor: colors.grouped },
+                              headerStyle: { backgroundColor: colors.grouped },
+                            }
                           : null),
                       }}
                     />
@@ -113,10 +115,7 @@ function RootLayoutContent() {
                     <Stack.Screen name="pair" options={{ title: 'Pair a machine', presentation: 'modal' }} />
                     <Stack.Screen name="rename" options={{ title: 'Rename machine', presentation: 'modal' }} />
                     <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-                    <Stack.Screen
-                      name="mac/[id]/workspace"
-                      options={{ title: 'Workspace', headerShadowVisible: false }}
-                    />
+                    <Stack.Screen name="mac/[id]/workspace" options={{ title: 'Workspace' }} />
                     <Stack.Screen name="mac/[id]/logs" options={{ title: 'Logs' }} />
                     <Stack.Screen
                       name="mac/[id]/device"

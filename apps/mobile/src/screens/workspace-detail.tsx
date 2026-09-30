@@ -1,6 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useRouter } from 'expo-router';
-import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform as OS, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -9,6 +8,7 @@ import { ActionToast, type Toast } from '@/components/action-toast';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile, WarmingPlaceholder } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
+import { HeaderTitle } from '@/components/header-title';
 import { SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
 import { explainReadOnly, READ_ONLY_REASON } from '@/components/read-only';
@@ -128,8 +128,6 @@ export function WorkspaceDetail({ path }: { path: string }) {
     <>
       <Stack.Screen
         options={{
-          headerTransparent: OS.OS === 'ios',
-          headerBlurEffect: 'systemChromeMaterial',
           headerTitle: () => (
             <HeaderTitle title={title} subtitle={[project, inCheckout, mac?.name].filter(Boolean).join(' \u00B7 ')} />
           ),
@@ -309,38 +307,20 @@ export function WorkspaceDetail({ path }: { path: string }) {
 }
 
 function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (height: number) => void }) {
-  const headerHeight = useHeaderHeight();
   return (
     <View
       pointerEvents="box-none"
       onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
-      style={[styles.pinned, { top: OS.OS === 'ios' ? headerHeight : 0 }]}
+      style={styles.pinned}
     >
       <ConnectionBanner state={state} />
     </View>
   );
 }
 
-function HeaderTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <View style={styles.headerTitle}>
-      <Text variant="headline" numberOfLines={1} ellipsizeMode="middle" maxFontSizeMultiplier={1.3}>
-        {title}
-      </Text>
-      {subtitle ? (
-        <Text variant="caption" tone="secondary" style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-          {subtitle}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create((theme) => ({
-  headerTitle: { alignItems: 'center', maxWidth: 240 },
-  subtitle: { marginTop: 1 },
   loading: { marginTop: 48 },
-  pinned: { position: 'absolute', left: 0, right: 0 },
+  pinned: { position: 'absolute', top: 0, left: 0, right: 0 },
   container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
   warning: {
     padding: theme.space.md,

@@ -85,7 +85,7 @@ export function Pair() {
       <Stack.Screen
         options={{
           headerLeft: () => (
-            <IconButton icon="xmark" tone="brand" accessibilityLabel="Close" onPress={() => router.dismiss()} />
+            <IconButton icon="xmark" tone="default" accessibilityLabel="Close" onPress={() => router.dismiss()} />
           ),
         }}
       />
@@ -167,10 +167,12 @@ function Scanner({ onScanned }: { onScanned: (result: BarcodeScanningResult) => 
   if (!permission.granted) {
     return (
       <View style={[styles.camera, styles.cameraMessage]}>
-        <Text variant="footnote" tone="secondary" style={styles.centered}>
-          Stim needs the camera to scan the pairing QR code.
-        </Text>
-        {permission.canAskAgain ? <Button title="Allow camera" onPress={requestPermission} /> : null}
+        <View style={styles.cameraBody}>
+          <Text variant="footnote" tone="secondary" style={styles.centered}>
+            Stim needs the camera to scan the pairing QR code.
+          </Text>
+          {permission.canAskAgain ? <Button title="Allow camera" onPress={requestPermission} /> : null}
+        </View>
       </View>
     );
   }
@@ -238,13 +240,8 @@ const styles = StyleSheet.create((theme) => ({
   container: { padding: theme.space.xxl, gap: theme.space.xl },
   camera: { width: '100%', aspectRatio: 1, borderRadius: theme.radius.card, overflow: 'hidden' },
   cameraPending: { backgroundColor: theme.media.screen },
-  cameraMessage: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: theme.space.lg,
-    padding: theme.space.xxl,
-    backgroundColor: theme.colors.raised,
-  },
+  cameraMessage: { alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.raised },
+  cameraBody: { alignSelf: 'stretch', gap: theme.space.lg, paddingHorizontal: theme.space.xxl },
   form: { gap: theme.space.lg },
   field: { gap: theme.space.sm },
   inputRow: {

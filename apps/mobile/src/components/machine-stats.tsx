@@ -42,7 +42,7 @@ export function MachineStatsRow({ usage, large }: { usage: MachineUsage | null; 
 }
 
 const styles = StyleSheet.create((theme) => ({
-  row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.md, rowGap: 2 },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   value: { fontVariant: ['tabular-nums'] },
 }));

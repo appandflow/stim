@@ -19,6 +19,14 @@ export function shortDuration(ms: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+export function coarseDuration(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return '<1m';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+
 export function clockDuration(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(seconds / 60);

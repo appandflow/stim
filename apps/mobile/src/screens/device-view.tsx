@@ -811,7 +811,14 @@ const styles = StyleSheet.create((theme) => ({
   titles: { flex: 1, alignItems: 'center' },
   mediaText: { color: theme.media.text },
   subtitle: { color: theme.media.textTertiary, flexShrink: 1 },
-  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md, maxWidth: '100%' },
+  subtitleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    columnGap: theme.space.md,
+    maxWidth: '100%',
+  },
   driver: {
     flexDirection: 'row',
     alignItems: 'center',
