@@ -21,16 +21,13 @@ private struct IconButtonBody: View {
   var tint: Color
   var active: Bool
   @Environment(\.isEnabled) private var isEnabled
-  @State private var hovering = false
 
   var body: some View {
     configuration.label
       .foregroundStyle(tint)
       .frame(minWidth: 26, minHeight: 24)
-      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(hovering || active ? Palette.raised : .clear))
-      .contentShape(Rectangle())
+      .hoverHighlight(selected: active)
       .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : Opacity.disabled)
-      .onHover { hovering = $0 }
   }
 }
 

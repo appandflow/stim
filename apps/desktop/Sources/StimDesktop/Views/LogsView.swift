@@ -84,7 +84,7 @@ struct LogsView: View {
         } label: {
           ToggleChip(on: on, tone: .brand) { Text(Self.title(source)) }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow())
         .help(Self.help(source))
       }
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
@@ -113,7 +113,7 @@ struct LogsView: View {
           Text("Errors only")
         }
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.hoverRow())
       .help("stim logs --errors: errors and fatals since the last marker")
       TextField("Search (regular expression)", text: $search)
         .textFieldStyle(.roundedBorder)

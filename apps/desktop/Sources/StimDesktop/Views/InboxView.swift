@@ -113,7 +113,6 @@ struct InboxView: View {
 private struct InboxRow: View {
   var entry: InboxEntry
   var open: () -> Void
-  @State private var hovering = false
 
   var body: some View {
     HStack(alignment: .center, spacing: Space.lg) {
@@ -134,10 +133,8 @@ private struct InboxRow: View {
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.lg)
-    .background(hovering ? Palette.accent.opacity(Opacity.subtle / 2) : .clear)
-    .contentShape(Rectangle())
+    .hoverHighlight(radius: 0)
     .onTapGesture(perform: open)
-    .onHover { hovering = $0 }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       "\(entry.read ? "" : "Unread, ")\(entry.category.label), \(entry.title), \(entry.body), \(detail)"
