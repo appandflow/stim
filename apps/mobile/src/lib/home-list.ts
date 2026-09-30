@@ -239,16 +239,20 @@ export function rowLabel({
   const phase = build ? currentPhaseLabel(build) : null;
   const running = orderDevices(devicesOf(env)).filter((d) => d.running);
   const devices = running.map((d) => {
-    const name = kindName(d);
+    const kind = kindName(d);
+    const { slot } = d;
+    const name = slot === 'default' ? kind : t`${kind} slot ${slot}`;
     const activity = activityLabel(d.activity, now);
-    return activity ? t`${name}, ${activity}` : name;
+    return activity ? t`${name}, ${activity}` : t`${name} running`;
   });
   const { remote } = rowDevices(env, now);
   return [
     item.title,
     build && status.kind === 'building'
       ? [buildLabel(build, now), phase?.counts].filter(Boolean).join(', ')
-      : status.label,
+      : status.kind === 'driven'
+        ? null
+        : status.label,
     isSettingUp(env) && env.phase === 'warming' ? warmStepText(env) : null,
     agentsSummary(sessions),
     ...problems.map((p) => p.text),

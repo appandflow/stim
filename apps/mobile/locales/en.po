@@ -232,6 +232,10 @@ msgstr "{idleDays, plural, one {Not used for # day; rebuilt on the next run} oth
 msgid "{kb} KB"
 msgstr "{kb} KB"
 
+#: src/lib/home-list.ts
+msgid "{kind} slot {slot}"
+msgstr "{kind} slot {slot}"
+
 #: src/screens/agent-actions.tsx
 msgid "{label} · {count}"
 msgstr "{label} · {count}"
@@ -422,6 +426,10 @@ msgstr "{name} next build about {took}, {cache}"
 #: src/lib/workspace-view.ts
 msgid "{name} no build"
 msgstr "{name} no build"
+
+#: src/lib/home-list.ts
+msgid "{name} running"
+msgstr "{name} running"
 
 #: src/lib/needs-attention.ts
 msgid "{name} signing or provisioning failed ({code})"

@@ -217,6 +217,19 @@ describe('rowLabel', () => {
     expect(label(true)).toMatch(/, on Mac mini$/);
   });
 
+  it('speaks a driven workspace once, through its devices, with their slots', () => {
+    const e = env('/w', {
+      live: true,
+      ios: booted(driven('agent-device', 5 * MIN)),
+      slots: [{ slot: 'ipad', ios: booted() }],
+    });
+    const row = item('stim', 'feat/z', e);
+    const status = rowStatus(e, NOW, null);
+    expect(
+      rowLabel({ item: row, now: NOW, status, problems: [], sessions: [], folder: false, showsMachine: false }),
+    ).toBe('feat/z, iOS, driven by agent-device for 5 minutes, iOS slot ipad running');
+  });
+
   it('speaks the warming step and remote EAS sessions', () => {
     const e = env('/w', { remoteDevices: [{}, {}] } as Partial<EnvironmentState>);
     const status = rowStatus(e, NOW, null);
