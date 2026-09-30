@@ -19,18 +19,19 @@ function replay(lines: string[]) {
 describe('xcodebuild output', () => {
   const lines = fixtureLines('xcodebuild-progress.txt');
 
-  test('counts distinct targets against the dependency graph total and follows the step', () => {
+  test('counts the targets xcodebuild finished against the dependency graph total and follows the step', () => {
     const { details, final } = replay(lines);
     const at = (prefix: string) => details[lines.findIndex((line) => line.startsWith(prefix))]!;
 
     expect(at('ComputeTargetDependencyGraph')).toMatchObject({ step: 'configure', done: null, total: null });
     expect(at('note: Target dependency graph')).toMatchObject({ unit: 'targets', done: 0, total: 237 });
-    expect(at('PhaseScriptExecution')).toMatchObject({ step: 'script', done: 1 });
+    expect(at('PhaseScriptExecution')).toMatchObject({ step: 'script', done: 0 });
     expect(at('PhaseScriptExecution').line).toBe(
       'PhaseScriptExecution [CP-User] [Hermes] Replace Hermes for the right configuration, if needed (hermes-engine)',
     );
     expect(at('CompileC')).toMatchObject({ step: 'compile', line: 'CompileC sqlite3_vers.c (sqlite3)' });
-    expect(at('Libtool')).toMatchObject({ step: 'link', line: 'Libtool sqlite3 (sqlite3)' });
+    expect(at('Libtool')).toMatchObject({ step: 'link', line: 'Libtool sqlite3 (sqlite3)', done: 0 });
+    expect(at('Touch')).toMatchObject({ step: 'link', line: 'Libtool sqlite3 (sqlite3)', done: 1 });
     expect(at('CompileAssetCatalogVariant')).toMatchObject({
       step: 'resources',
       line: 'CompileAssetCatalogVariant Assets.xcassets (expo-dev-menu-EXDevMenu)',
@@ -39,7 +40,7 @@ describe('xcodebuild output', () => {
     expect(final).toEqual({
       step: 'sign',
       unit: 'targets',
-      done: 5,
+      done: 2,
       total: 237,
       line: 'CodeSign Notifications.debug.dylib (Notifications)',
       updatedAt: '2026-09-27T10:00:00.000Z',
@@ -54,7 +55,7 @@ describe('xcodebuild output', () => {
     parser.push(compile);
     expect(parser.push(warning)).toBe(false);
     expect(parser.push(mkdir)).toBe(true);
-    expect(parser.detail('t')).toMatchObject({ step: 'compile', line: 'CompileC sqlite3_vers.c (sqlite3)', done: 1 });
+    expect(parser.detail('t')).toMatchObject({ step: 'compile', line: 'CompileC sqlite3_vers.c (sqlite3)', done: 0 });
   });
 });
 

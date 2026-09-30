@@ -6,6 +6,11 @@ const XCODE_ACTION = /^([A-Z][A-Za-z]+)\s(.*)\s\(in target '([^']+)' from projec
 const XCODE_CONFIGURE =
   /^(ComputeTargetDependencyGraph|CreateBuildDescription|CreateBuildRequest|Resolve Package Graph|Prepare packages)$/;
 const GRADLE_TASK = /^> Task (:\S+)/;
+/**
+ * xcodebuild actions that end a target's work: a clean build touches each product last, and an incremental build
+ * that touches nothing still signs framework products last. Targets that end any other way are not counted.
+ */
+const XCODE_TARGET_DONE = /^(Touch|RegisterExecutionPolicyException|CodeSign)$/;
 const GRADLE_CONFIGURE = /^> Configure project /;
 
 const XCODE_STEPS: [RegExp, NativeBuildStep][] = [
@@ -61,7 +66,14 @@ function shortXcodeAction(action: string, args: string, target: string): string 
 export type BuildToolLine =
   | { kind: 'total'; unit: 'targets'; total: number }
   | { kind: 'configure' }
-  | { kind: 'unit'; unit: 'targets' | 'tasks'; id: string; step: NativeBuildStep | null; line: string | null };
+  | {
+      kind: 'unit';
+      unit: 'targets' | 'tasks';
+      id: string;
+      step: NativeBuildStep | null;
+      line: string | null;
+      finished: boolean;
+    };
 
 /** What one line of xcodebuild or Gradle output says about the build's progress, or null for any other line. */
 export function parseBuildToolLine(msg: string): BuildToolLine | null {
@@ -78,6 +90,7 @@ export function parseBuildToolLine(msg: string): BuildToolLine | null {
       id: `${project}/${target}`,
       step,
       line: step ? shortXcodeAction(name, args, target) : null,
+      finished: XCODE_TARGET_DONE.test(name),
     };
   }
   const task = GRADLE_TASK.exec(msg);
@@ -89,6 +102,7 @@ export function parseBuildToolLine(msg: string): BuildToolLine | null {
       id: path,
       step: stepOf(path.slice(path.lastIndexOf(':') + 1), GRADLE_STEPS),
       line: clip(`> Task ${path}`),
+      finished: false,
     };
   }
   return null;
@@ -101,8 +115,8 @@ export interface BuildDetailParser {
 }
 
 /**
- * Accumulates a build's tool output into its detail: xcodebuild counts the distinct targets its action lines name
- * against the total its dependency graph note gives; Gradle counts the task lines it printed and has no total.
+ * Accumulates a build's tool output into its detail: xcodebuild counts the distinct targets it finished against the
+ * total its dependency graph note gives; Gradle counts the task lines it printed and has no total.
  */
 export function createBuildDetailParser(): BuildDetailParser {
   let seen = false;
@@ -128,7 +142,7 @@ export function createBuildDetailParser(): BuildDetailParser {
       }
       unit = parsed.unit;
       if (parsed.unit === 'tasks') tasks += 1;
-      else targets.add(parsed.id);
+      else if (parsed.finished) targets.add(parsed.id);
       if (parsed.step) step = parsed.step;
       if (parsed.line) line = parsed.line;
       return true;
