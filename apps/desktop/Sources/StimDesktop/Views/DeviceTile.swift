@@ -14,8 +14,6 @@ struct DeviceTile: View {
   var build: Build? = nil
   var takenOver = false
   var onToggleTakeOver: (() -> Void)? = nil
-  /// False where the workspace header already names the drivers, so a driven tile only says "Driven".
-  var namesDriver = true
   /// The device's replay through stim-server, where the tile offers one.
   var replay: ReplayController? = nil
   /// Whether `replay` shows recorded footage instead of the live screen.
@@ -124,7 +122,9 @@ struct DeviceTile: View {
           }
           Text(device.label).font(.stim(.callout, weight: .semibold))
         }
-        .help([device.label, device.detail].compactMap { $0 }.joined(separator: " "))
+        .help(identity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(identity)
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
@@ -138,7 +138,7 @@ struct DeviceTile: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           if let badge = ActivityBadge(
             device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
-            now: context.date)
+            now: context.date), !badge.isDriven
           {
             activityChip(badge)
               .anchorPreference(key: ActivityChipAnchor.self, value: .bounds) { $0 }
@@ -176,7 +176,6 @@ struct DeviceTile: View {
             }
           }
         }
-        Text(source).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
         if let usage, !usage.isEmpty {
           HStack(spacing: Space.md) { UsageFigures(usage: usage) }
             .font(.stim(.caption))
@@ -379,13 +378,7 @@ struct DeviceTile: View {
     let basis = device.activity.map { "stim status activity: \($0.basis.joined(separator: ", "))" } ?? ""
     switch badge {
     case .driven:
-      Pill(tone: .brand) {
-        StatusDot(color: Palette.primary)
-        Text(namesDriver ? badge.text : "Driven")
-      }
-      .help([badge.text, basis].joined(separator: "\n"))
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel(badge.text)
+      EmptyView()
     case .idle:
       Pill(tone: .neutral) { Text(badge.text) }.help(basis)
     case .unknown:
@@ -524,6 +517,12 @@ struct DeviceTile: View {
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
     }
+  }
+
+  private var identity: String {
+    var parts = [[device.label, device.detail].compactMap { $0 }.joined(separator: " "), source]
+    if let badge = ActivityBadge(device.activity), badge.isDriven { parts.append(badge.text) }
+    return parts.joined(separator: ", ")
   }
 
   @ViewBuilder private var screen: some View {
@@ -813,5 +812,12 @@ private struct DeviceAgentRow: View {
       .frame(width: 380, alignment: .leading)
       .presentationBackground(Palette.surface)
     }
+  }
+}
+
+extension ActivityBadge {
+  fileprivate var isDriven: Bool {
+    if case .driven = self { return true }
+    return false
   }
 }
