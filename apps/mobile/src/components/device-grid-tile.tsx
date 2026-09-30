@@ -76,7 +76,9 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
       onPress={() => onOpen(item, false)}
       accessibilityLabel={tileLabel}
       accessibilityActions={frame ? [{ name: 'live', label: openLabel }] : undefined}
-      onAccessibilityAction={openLive}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'live') openLive();
+      }}
       style={[styles.tile, wide && styles.wide]}
     >
       {/*
