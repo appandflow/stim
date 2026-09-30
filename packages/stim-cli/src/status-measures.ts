@@ -347,7 +347,7 @@ export function createStatusMeasurer({
     const ended = gone.length
       ? recordEndedAgents(states, gone, previous!.discoveredAt, at)
       : { changed: false, failed: false };
-    if (ended.failed) return;
+    if (ended.failed && at - lastFound <= AGENT_CACHE_MAX_AGE_MS) return;
     writeCacheFile(agentSessionsCacheFile(), { discoveredAt: new Date(at).toISOString(), sessions });
     const shown = previous && at - Date.parse(previous.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS;
     if (ended.changed || !shown || JSON.stringify(previous.sessions) !== JSON.stringify(sessions)) updated();
