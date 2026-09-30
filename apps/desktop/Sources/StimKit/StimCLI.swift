@@ -7,7 +7,8 @@ public struct StimCLI: Sendable {
   public enum Failure: LocalizedError {
     case notFound
     case toolNotFound(String)
-    case exited(Int32)
+    /// The exit status and the last lines the process wrote to stderr, empty when it wrote none.
+    case exited(Int32, stderr: String = "")
 
     public var errorDescription: String? {
       switch self {
@@ -15,7 +16,8 @@ public struct StimCLI: Sendable {
         return "Could not find the stim executable. Install it globally, set STIM_BIN, or choose it in Settings."
       case .toolNotFound(let name):
         return "Could not find \(name) on the login shell's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
-      case .exited(let code): return "stim exited with status \(code)."
+      case .exited(let code, let stderr):
+        return stderr.isEmpty ? "stim exited with status \(code)." : "stim exited with status \(code): \(stderr)"
       }
     }
   }
@@ -52,7 +54,7 @@ public struct StimCLI: Sendable {
   /// Cancelling the task terminates the `stim` process and throws `CancellationError`.
   public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
     let run = CancellableRun()
-    let (status, data) = try await withTaskCancellationHandler {
+    let (status, data, stderr) = try await withTaskCancellationHandler {
       try await Task.detached {
         try execute([platform, "--plan", "--json"], cwd: workspace, started: run.started)
       }.value
@@ -62,7 +64,7 @@ public struct StimCLI: Sendable {
     try Task.checkCancellation()
     if status == 0 { return .plan(try JSONDecoder().decode(BuildPlan.self, from: data)) }
     guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
-      throw Failure.exited(status)
+      throw Failure.exited(status, stderr: stderr)
     }
     return .refused(refusal)
   }
@@ -97,23 +99,23 @@ public struct StimCLI: Sendable {
   {
     let args =
       value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
-    let (status, data) = try execute(args + ["--scope", scope.rawValue, "--json"], cwd: cwd)
+    let (status, data, stderr) = try execute(args + ["--scope", scope.rawValue, "--json"], cwd: cwd)
     if status == 0 { return .written(try JSONDecoder().decode(SettingsWritePayload.self, from: data).setting) }
     guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
-      throw Failure.exited(status)
+      throw Failure.exited(status, stderr: stderr)
     }
     return .refused(refusal)
   }
 
   func run(_ args: [String], cwd: String? = nil) throws -> Data {
-    let (status, data) = try execute(args, cwd: cwd)
-    guard status == 0 else { throw Failure.exited(status) }
+    let (status, data, stderr) = try execute(args, cwd: cwd)
+    guard status == 0 else { throw Failure.exited(status, stderr: stderr) }
     return data
   }
 
   private func execute(
     _ args: [String], cwd: String?, started: (Process) throws -> Void = { try $0.run() }
-  ) throws -> (Int32, Data) {
+  ) throws -> (Int32, Data, String) {
     guard let executable else { throw Failure.notFound }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -122,11 +124,17 @@ public struct StimCLI: Sendable {
     process.environment = environment
     let out = Pipe()
     process.standardOutput = out
-    process.standardError = FileHandle.nullDevice
+    let errURL = FileManager.default.temporaryDirectory.appendingPathComponent("stim-stderr-\(UUID().uuidString)")
+    guard FileManager.default.createFile(atPath: errURL.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+    defer { try? FileManager.default.removeItem(at: errURL) }
+    let err = try FileHandle(forWritingTo: errURL)
+    defer { try? err.close() }
+    process.standardError = err
     try started(process)
     let data = out.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    return (process.terminationStatus, data)
+    let stderr = (try? lastBytes(of: errURL, count: 4096)).map { stderrTail(String(decoding: $0, as: UTF8.self)) } ?? ""
+    return (process.terminationStatus, data, stderr)
   }
 
   /// Runs `stim <args>` in `cwd`, reporting output lines as they arrive and
@@ -165,6 +173,20 @@ public struct StimCLI: Sendable {
       executable: executable, arguments: command.arguments, cwd: command.cwd, environment: environment,
       onLine: onLine, onExit: onExit)
   }
+}
+
+func lastBytes(of url: URL, count: UInt64) throws -> Data {
+  let handle = try FileHandle(forReadingFrom: url)
+  defer { try? handle.close() }
+  let end = try handle.seekToEnd()
+  try handle.seek(toOffset: end > count ? end - count : 0)
+  return try handle.readToEnd() ?? Data()
+}
+
+/// The last three non-empty lines of `text`.
+func stderrTail(_ text: String) -> String {
+  text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    .suffix(3).joined(separator: "\n")
 }
 
 /// Starts a process unless the run was already cancelled, and terminates it on cancel.

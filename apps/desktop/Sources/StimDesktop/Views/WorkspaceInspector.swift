@@ -5,7 +5,7 @@ import SwiftUI
 struct Inspector: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
-  var stats: ProjectStats?
+  var stats: Fetched<ProjectStats>
   var machine: MachineUsage?
   var usage: UsageHistory?
   var history: OwnerHistory
@@ -29,12 +29,20 @@ struct Inspector: View {
           AgentSessionsSection(agents: agentSessions)
         }
 
-        if let project = stats?.project, project.ios != nil || project.android != nil {
+        let project = stats.value?.project.flatMap { $0.ios != nil || $0.android != nil ? $0 : nil }
+        if project != nil || stats.error != nil {
           VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Build cache \u{00B7} project")
-            ViewThatFits(in: .horizontal) {
-              HStack(alignment: .top, spacing: Space.md) { statCards(project) }
-              VStack(spacing: Space.md) { statCards(project) }
+            if let error = stats.error {
+              Label("stim stats --json failed: \(error)", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(Palette.warning)
+                .textSelection(.enabled)
+            }
+            if let project {
+              ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: Space.md) { statCards(project) }
+                VStack(spacing: Space.md) { statCards(project) }
+              }
             }
           }
         }

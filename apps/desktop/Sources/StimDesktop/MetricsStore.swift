@@ -47,6 +47,7 @@ final class MetricsStore: ObservableObject {
 
   var gcReport: GcReport? { gc.report }
   var gcRunning: Bool { gc.running }
+  var gcError: String? { gc.error }
 
   func start() {
     guard timer == nil else { return }
