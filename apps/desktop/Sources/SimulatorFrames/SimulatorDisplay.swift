@@ -1,7 +1,6 @@
 import Foundation
 import IOSurface
 import ObjectiveC
-import StimKit
 
 // CoreSimulator and SimulatorKit are private Apple frameworks. These selectors
 // match the SimDisplayIOSurfaceRenderable, SimDisplayRenderable, SimScreen and
@@ -54,10 +53,15 @@ public enum CoreSimulator {
   /// The developer directory `xcode-select -p` reports, or `DEVELOPER_DIR`,
   /// or `/Applications/Xcode.app`, when the selected one has no SimulatorKit.
   public static func selectedDeveloperDir() -> String {
-    guard let result = try? ProcessRequest("/usr/bin/xcode-select", ["-p"]).runBlocking() else {
-      return defaultDeveloperDir
-    }
-    let path = result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+    process.arguments = ["-p"]
+    let out = Pipe()
+    process.standardOutput = out
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return defaultDeveloperDir }
+    let path = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     return FileManager.default.fileExists(atPath: simulatorKitPath(path)) ? path : defaultDeveloperDir
   }
 
