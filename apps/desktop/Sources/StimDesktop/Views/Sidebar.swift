@@ -287,7 +287,9 @@ struct WorkspaceRow: View {
     .sidebarTag(.environment(env.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(
-        kind: .workspace(metroRunning: env.metro?.running == true, platforms: env.runPlatforms),
+        kind: .workspace(
+          metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
+          linkedWorktree: env.worktree != nil),
         path: env.path,
         busy: actions.active(for: env.path) != nil,
         removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),

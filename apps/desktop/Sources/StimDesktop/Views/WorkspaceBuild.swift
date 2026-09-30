@@ -158,7 +158,9 @@ struct WorkspaceActionsButton: View {
     let busy = actions.active(for: env.path) != nil
     Menu {
       WorkspaceActionsMenu(
-        kind: .workspace(metroRunning: env.metro?.running == true, platforms: env.runPlatforms),
+        kind: .workspace(
+          metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
+          linkedWorktree: env.worktree != nil),
         path: env.path,
         busy: busy,
         removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),

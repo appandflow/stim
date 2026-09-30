@@ -3,8 +3,9 @@ import Foundation
 /// The kind of row the shared actions menu renders for. `workspaceMenuItems(for:)` decides the item set from
 /// this alone; runtime specifics such as which external apps are installed are resolved by the caller.
 public enum ActionRowKind: Hashable, Sendable {
-  /// A provisioned workspace, with its dev server's current state and the platforms it can run on.
-  case workspace(metroRunning: Bool, platforms: [String])
+  /// A provisioned workspace, with its dev server's current state and the platforms it can run on. `linkedWorktree`
+  /// is false for the repository's source checkout, which `stim worktree remove` leaves in place.
+  case workspace(metroRunning: Bool, platforms: [String], linkedWorktree: Bool)
   /// A worktree Stim has not registered an environment for.
   case worktree
   /// A project's row in the sidebar, which acts on every live workspace under it.
@@ -34,15 +35,13 @@ public enum WorkspaceMenuItem: Hashable, Sendable {
 /// workspace detail's "..." menu both render this list, so the two never drift apart.
 public func workspaceMenuItems(for kind: ActionRowKind) -> [WorkspaceMenuItem?] {
   switch kind {
-  case .workspace(let metroRunning, let platforms):
+  case .workspace(let metroRunning, let platforms, let linkedWorktree):
     return [
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath, .lastOutput,
       nil,
     ] + platforms.map { .run(platform: $0) } + [
       .reload, metroRunning ? .stopDevServer : .startDevServer, .showLogs,
-      nil,
-      .removeWorktree,
-    ]
+    ] + (linkedWorktree ? [nil, .removeWorktree] : [])
   case .worktree:
     return [
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath,
