@@ -138,7 +138,7 @@ struct DeviceTile: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           if let badge = ActivityBadge(
             device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
-            now: context.date), !badge.isDriven
+            now: context.date), badge.driverTool == nil
           {
             activityChip(badge)
               .anchorPreference(key: ActivityChipAnchor.self, value: .bounds) { $0 }
@@ -521,7 +521,7 @@ struct DeviceTile: View {
 
   private var identity: String {
     var parts = [[device.label, device.detail].compactMap { $0 }.joined(separator: " "), source]
-    if let badge = ActivityBadge(device.activity), badge.isDriven { parts.append(badge.text) }
+    if let tool = ActivityBadge(device.activity)?.driverTool { parts.append("Driven by \(tool)") }
     return parts.joined(separator: ", ")
   }
 
@@ -816,8 +816,8 @@ private struct DeviceAgentRow: View {
 }
 
 extension ActivityBadge {
-  fileprivate var isDriven: Bool {
-    if case .driven = self { return true }
-    return false
+  fileprivate var driverTool: String? {
+    if case .driven(let tool, _) = self { return tool }
+    return nil
   }
 }
