@@ -234,10 +234,11 @@ public enum BuildPlanOutcome: Hashable, Sendable {
 }
 
 extension Build {
-  /// Before prebuild, pods, compile or install, the CLI reports the outcome of the project's previous run.
+  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run. An older stim sends
+  /// no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
   public var outcomeLabel: String? {
     guard let outcome else { return nil }
-    let settled = !["prepare", "cache-lookup", "wait", "device"].contains(phase)
+    let settled = outcomeKnown ?? !["prepare", "cache-lookup", "wait", "device"].contains(phase)
     switch (outcome, settled) {
     case ("hit", true): return "Cache hit"
     case ("hit", false): return "Likely cache hit"

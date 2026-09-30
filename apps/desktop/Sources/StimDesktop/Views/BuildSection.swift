@@ -173,7 +173,7 @@ private struct RunningBuildDetail: View {
   var build: Build
 
   var body: some View {
-    TimelineView(.periodic(from: .now, by: 1)) { context in
+    TimelineView(.buildSeconds(build)) { context in
       let steps = build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)
       let (phase, counts) = build.currentPhaseLabel
       let elapsed = clockDuration(ms: build.progress(at: context.date).elapsedMs)
@@ -187,7 +187,7 @@ private struct RunningBuildDetail: View {
             .font(.stim(.footnote))
             .monospacedDigit()
         }
-        PhaseBar(steps: barSteps(steps))
+        PhaseBar(steps: barSteps(steps), key: build.key)
         if namesPhases(steps) {
           PhaseChecklist(steps: steps)
         }

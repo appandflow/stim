@@ -414,9 +414,21 @@ extension Build {
     }
   }
 
-  /// The phases the reference run entered plus the current one, each done, current or pending.
+  /// Each phase's expected duration: the CLI's plan when it sends one, else the workspace's latest comparable run,
+  /// which is all an older stim offers.
+  func plannedDurations(_ history: [BuildHistoryEntry]) -> [String: Double] {
+    if let plannedPhases {
+      return Dictionary(plannedPhases.map { ($0.phase, $0.expectedMs) }, uniquingKeysWith: { _, last in last })
+    }
+    return referenceRun(history)?.phases ?? [:]
+  }
+
+  /// The build tool's own counts, which only describe `compile`; an older stim also sends them in later phases.
+  var compileDetail: BuildDetail? { phase == "compile" ? detail : nil }
+
+  /// The planned phases plus the current one, each done, current or pending.
   public func phaseSteps(history: [BuildHistoryEntry], now: Date) -> [PhaseStep] {
-    let reference = referenceRun(history)?.phases ?? [:]
+    let reference = plannedDurations(history)
     let currentIndex = PhaseStep.order.firstIndex(of: phase) ?? -1
     let inPhase = parseTimestamp(phaseStartedAt).map { max(0, now.timeIntervalSince($0) * 1000) }
     return PhaseStep.order.enumerated().filter { $0.offset == currentIndex || reference[$0.element] != nil }.map {
@@ -428,14 +440,12 @@ extension Build {
       if i > currentIndex {
         return PhaseStep(phase: step, state: .pending, elapsedMs: nil, expectedMs: expected, fraction: 0)
       }
-      let fraction: Double?
-      if let done = detail?.done, let total = detail?.total, total > 0 {
-        fraction = min(1, Double(done) / Double(total))
-      } else if let expected, expected > 0, let inPhase {
-        fraction = min(0.95, inPhase / expected)
-      } else {
-        fraction = nil
+      let counted = compileDetail.flatMap { detail -> Double? in
+        guard let done = detail.done, let total = detail.total, total > 0 else { return nil }
+        return Double(done) / Double(total)
       }
+      let timed = expected.flatMap { expected in inPhase.flatMap { expected > 0 ? $0 / expected : nil } }
+      let fraction = counted == nil && timed == nil ? nil : min(0.95, max(counted ?? 0, timed ?? 0))
       return PhaseStep(phase: step, state: .current, elapsedMs: inPhase, expectedMs: expected, fraction: fraction)
     }
   }
@@ -446,6 +456,7 @@ extension Build {
       "configure": "Configuring", "compile": "Compiling", "link": "Linking", "resources": "Copying resources",
       "script": "Running scripts", "dex": "Dexing", "package": "Packaging", "sign": "Signing",
     ]
+    let detail = compileDetail
     let name = detail?.step.flatMap { steps[$0] } ?? remote(at: Date()).map(\.phase) ?? PhaseStep.name(phase)
     guard let unit = detail?.unit, let done = detail?.done else { return (name, nil) }
     return (name, detail?.total.map { "\(done) of \($0) \(unit)" } ?? "\(done) \(unit)")
@@ -484,6 +495,33 @@ public func barSteps(_ steps: [PhaseStep]) -> [PhaseStep] {
       phase: phase, state: state, elapsedMs: nil, expectedMs: expected > 0 ? expected : nil, fraction: fraction)
   }
   return groups
+}
+
+/// Each bar segment's share of the bar: its expected duration, at least 18% of the total so a short phase stays visible.
+public func segmentWeights(_ steps: [PhaseStep]) -> [Double] {
+  let total = steps.reduce(0) { $0 + ($1.expectedMs ?? 0) }
+  return steps.map { total > 0 ? max($0.expectedMs ?? 0, total * 0.18) : 1 }
+}
+
+/// How full each bar segment is drawn for the build `key` names. The bar as a whole never moves backwards, even when
+/// the CLI revises its plan once the run knows its outcome: segments fill left to right up to the most the bar
+/// showed, but the current segment stops short of full, and a pending one stays empty.
+public func barFills(_ steps: [PhaseStep], key: String) -> [Double] {
+  guard !steps.isEmpty else { return [] }
+  let weights = segmentWeights(steps)
+  let total = weights.reduce(0, +)
+  let own = steps.map { $0.state == .current ? ($0.fraction ?? 0.1) : ($0.fraction ?? 0) }
+  let reached = zip(own, weights).reduce(0) { $0 + $1.0 * $1.1 } / total
+  let ceiling =
+    steps.firstIndex { $0.state == .current }.map { current in
+      (weights[..<current].reduce(0, +) + 0.95 * weights[current]) / total
+    } ?? zip(steps, weights).filter { $0.0.state == .done }.reduce(0) { $0 + $1.1 } / total
+  var left = min(steadyFraction("\(key)|bar", reached), max(reached, ceiling)) * total
+  return weights.map { weight in
+    let fill = min(1, max(0, left / weight))
+    left -= fill * weight
+    return fill
+  }
 }
 
 /// The last ten minutes of CPU and memory per workspace, from status `machine` owners sampled at `append` time.

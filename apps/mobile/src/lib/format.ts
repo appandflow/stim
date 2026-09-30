@@ -82,10 +82,29 @@ export function drivenLabel(name: string, activity: DeviceActivity, now: number)
 
 export interface BuildProgress {
   elapsedMs: number;
-  /** Elapsed over the median of comparable runs, capped below 1; null without history. */
+  /**
+   * Elapsed over the median of comparable runs, capped below 1, and never below what it was for the same build
+   * before the run revised its estimate; null without history.
+   */
   fraction: number | null;
   remaining: string | null;
 }
+
+const SHOWN_LIMIT = 64;
+const shown = new Map<string, number>();
+
+/** The larger of `fraction` and the largest one returned for `key` so far, so a bar never moves backwards. */
+export function steadyFraction(key: string, fraction: number): number {
+  const value = Math.max(shown.get(key) ?? 0, fraction);
+  shown.delete(key);
+  shown.set(key, value);
+  if (shown.size > SHOWN_LIMIT) shown.delete(shown.keys().next().value!);
+  return value;
+}
+
+/** Identifies one run: a new run in the same slot has a new `startedAt`. */
+export const buildKey = (build: Pick<BuildReport, 'platform' | 'slot' | 'startedAt'>) =>
+  `${build.platform}|${build.slot}|${build.startedAt}`;
 
 export function buildProgress(build: BuildReport, now: number): BuildProgress {
   const started = Date.parse(build.startedAt);
@@ -99,13 +118,17 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
       : remainingMs < 60_000
         ? 'under a minute left'
         : `about ${Math.ceil(remainingMs / 60_000)} min left`;
-  return { elapsedMs, fraction: Math.min(elapsedMs / expected, 0.99), remaining };
+  const fraction = steadyFraction(`${buildKey(build)}|top`, Math.min(elapsedMs / expected, 0.99));
+  return { elapsedMs, fraction, remaining };
 }
 
-/** Before prebuild, pods, compile or install, `stim status` reports the outcome of the project's previous run. */
-export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase'>): string | null {
+/**
+ * Until the run knows its outcome, `stim status` reports the outcome of the project's previous run. An older stim
+ * sends no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
+ */
+export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase' | 'outcomeKnown'>): string | null {
   if (!build.outcome) return null;
-  const settled = !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
+  const settled = build.outcomeKnown ?? !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
   if (build.outcome === 'hit') return settled ? 'Cache hit' : 'Likely cache hit';
   return settled ? 'Cold build' : 'Likely cold';
 }

@@ -296,7 +296,7 @@ struct BuildProgressBar: View {
   var build: Build
 
   var body: some View {
-    TimelineView(.periodic(from: .now, by: 1)) { context in
+    TimelineView(.buildSeconds(build)) { context in
       let progress = build.progress(at: context.date)
       VStack(alignment: .leading, spacing: Space.xs) {
         HStack(spacing: Space.md) {

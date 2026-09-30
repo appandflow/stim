@@ -72,7 +72,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
   const building = env ? runningBuild(env) : null;
   const running = building?.platform === platform ? building : null;
   const { plan, checkedAt, recheck } = useBuildPlan(path, platform, planKey(last), building !== null);
-  const now = useNow(30_000);
+  const now = useNow(building?.platform === platform ? 1000 : 30_000);
   const name = platformName(platform);
   const checking = plan?.kind === 'checking';
   const canCheck = recheck !== null && !checking;
@@ -101,7 +101,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
       </View>
       <PlatformSwitch value={platform} onChange={setPlatform} building={building?.platform ?? null} />
 
-      {running ? <RunningBuild build={running} path={path} history={history} /> : null}
+      {running ? <RunningBuild build={running} path={path} history={history} now={now} /> : null}
 
       {running ? null : (
         <Section title="Last build">
@@ -252,8 +252,17 @@ function PlatformSwitch({
   );
 }
 
-function RunningBuild({ build, path, history }: { build: BuildReport; path: string; history: BuildHistoryEntry[] }) {
-  const now = useNow(1000);
+function RunningBuild({
+  build,
+  path,
+  history,
+  now,
+}: {
+  build: BuildReport;
+  path: string;
+  history: BuildHistoryEntry[];
+  now: number;
+}) {
   const { elapsed, estimate } = buildTiming(build, now);
   const remote = remoteBuild(build, now);
   const output = useBuildOutput(path, build.slot, build.startedAt, OUTPUT_LINES).map((record) => record.msg);

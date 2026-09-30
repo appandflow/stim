@@ -249,12 +249,67 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(namesPhases(try build().phaseSteps(history: history, now: now)))
   }
 
-  @Test func takesProgressFromTheBuildToolCounts() throws {
-    let counted = try build(#","detail":{"step":"compile","unit":"targets","done":45,"total":180}"#)
-    #expect(counted.phaseSteps(history: history, now: now)[3].fraction == 0.25)
+  @Test func movesTheCompilePhaseByTheBuildToolCountsOnlyWhenTheyAreAheadOfTheTimeEstimate() throws {
+    let detail = #","detail":{"step":"compile","unit":"targets","done":45,"total":180}"#
+    let counted = try build(detail)
+    #expect(counted.phaseSteps(history: history, now: now)[3].fraction == 0.5)
+    #expect(
+      try build(detail.replacingOccurrences(of: "45", with: "135")).phaseSteps(history: history, now: now)[3].fraction == 0.75)
+    #expect(try build(detail.replacingOccurrences(of: "45", with: "0")).phaseSteps(history: history, now: now)[3].fraction == 0.5)
     #expect(counted.currentPhaseLabel == ("Compiling", "45 of 180 targets"))
     let tasks = try build(#","detail":{"step":"compile","unit":"tasks","done":45}"#)
     #expect(tasks.currentPhaseLabel.counts == "45 tasks")
+    var signing = try build(detail.replacingOccurrences(of: #""step":"compile""#, with: #""step":"sign""#))
+    signing.phase = "install"
+    #expect(signing.currentPhaseLabel == ("Install", nil))
+  }
+
+  @Test func drawsTheCLIPlannedPhasesInsteadOfTheWorkspaceHistoryWhenTheCLISendsThem() throws {
+    var planned = try build(
+      #","plannedPhases":[{"phase":"prepare","expectedMs":1500},{"phase":"cache-lookup","expectedMs":2000},{"phase":"device","expectedMs":800},{"phase":"install","expectedMs":500},{"phase":"launch","expectedMs":9000}]"#
+    )
+    planned.phase = "cache-lookup"
+    planned.phaseStartedAt = iso(1)
+    planned.outcome = "hit"
+    planned.expectedPhaseMs = 2000
+    let bar = barSteps(planned.phaseSteps(history: [], now: now))
+    #expect(bar.map(\.phase) == ["prepare", "device", "install"])
+    #expect(bar.map(\.state) == [.current, .pending, .pending])
+    #expect(
+      planned.phaseSteps(history: history, now: now).map(\.phase) == ["prepare", "cache-lookup", "device", "install", "launch"])
+  }
+}
+
+@Suite struct BarFillsTests {
+  func step(_ phase: String, _ state: PhaseStep.State, _ expectedMs: Double, _ fraction: Double) -> PhaseStep {
+    PhaseStep(phase: phase, state: state, elapsedMs: nil, expectedMs: expectedMs, fraction: fraction)
+  }
+
+  @Test func fillsDoneSegmentsPartOfTheCurrentOneAndNoneOfThePendingOnes() {
+    let fills = barFills(
+      [step("prepare", .done, 4000, 1), step("compile", .current, 8000, 0.5), step("install", .pending, 8000, 0)],
+      key: "fills-plain")
+    #expect(fills == [1, 0.5, 0])
+    #expect(barFills([], key: "fills-empty") == [])
+  }
+
+  @Test func neverFillsAPendingSegmentWhenNoPhaseIsCurrent() {
+    let key = "fills-no-current"
+    _ = barFills([step("prepare", .done, 4000, 1), step("install", .current, 6000, 0.9)], key: key)
+    #expect(barFills([step("prepare", .done, 4000, 1), step("install", .pending, 6000, 0)], key: key) == [1, 0])
+  }
+
+  @Test func keepsWhatItDrewForTheSameBuildWhenThePlanChangesUpToTheEndOfTheCurrentSegment() {
+    let key = "fills-replan"
+    let round = { (fills: [Double]) in fills.map { ($0 * 100).rounded() / 100 } }
+    #expect(barFills([step("prepare", .current, 4000, 0.9), step("install", .pending, 6000, 0)], key: key) == [0.9, 0])
+    #expect(round(barFills([step("prepare", .current, 4000, 0.2), step("install", .pending, 6000, 0)], key: key)) == [0.9, 0])
+    let coldPlan = [
+      step("prepare", .done, 4000, 1), step("pods", .current, 10_000, 0.02), step("compile", .pending, 60_000, 0),
+      step("install", .pending, 6000, 0),
+    ]
+    #expect(round(barFills(coldPlan, key: key)) == [1, 0.95, 0, 0])
+    #expect(abs(barFills(coldPlan, key: "fills-other-build")[1] - 0.02) < 1e-5)
   }
 }
 

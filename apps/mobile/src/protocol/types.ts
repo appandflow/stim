@@ -82,10 +82,17 @@ export interface BuildReport {
   startedAt: string;
   phaseStartedAt: string;
   outcome: 'hit' | 'cold' | null;
+  /** Whether `outcome` is this run's own rather than the project's latest; absent from an older stim. */
+  outcomeKnown?: boolean;
   expectedMs: number | null;
   expectedPhaseMs: number | null;
   basis: number;
-  /** Present once the build tool printed a recognized line. */
+  /**
+   * The phases runs like this one go through, in order, with each one's median, from the runs behind `expectedMs`;
+   * null without such runs, absent from an older stim.
+   */
+  plannedPhases?: { phase: BuildPhase; expectedMs: number }[] | null;
+  /** Present once the build tool printed a recognized line; a current stim sends it only during `compile`. */
   detail?: BuildDetail;
   /** Present once the run knows why the cache missed. */
   missReason?: BuildMissReason;
@@ -100,9 +107,9 @@ export interface BuildReport {
 export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
 
 /**
- * The build tool's step inside `phase`. `done` and `total` count `unit`s: xcodebuild targets that started work of
- * those in its dependency graph, or Gradle tasks reported so far with a null `total`. `line` is the latest
- * compile, link or task line.
+ * The build tool's step inside `phase`. `done` and `total` count `unit`s: xcodebuild targets it finished (started,
+ * from an older stim) of those in its dependency graph, or Gradle tasks reported so far with a null `total`. `line`
+ * is the latest compile, link or task line.
  */
 export interface BuildDetail {
   step: 'configure' | 'compile' | 'link' | 'resources' | 'script' | 'dex' | 'package' | 'sign' | null;
