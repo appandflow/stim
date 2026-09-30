@@ -6,7 +6,7 @@ import SwiftUI
 
 struct PhonesView: View {
   @ObservedObject var server: ServerController
-  var cli: Task<StimCLI, Never>
+  var settings: MachineSettingsStore
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
@@ -27,7 +27,7 @@ struct PhonesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
 
-      RecordingSection(cli: cli)
+      RecordingSection(settings: settings)
 
       if case .running(let health, _) = server.state, !health.tailscale.isRunning {
         TailscaleSetup(tailscale: health.tailscale, port: server.port, canRestart: server.canRestart) {
@@ -553,11 +553,18 @@ private func copy(_ text: String) {
 
 /// `recording.enabled` in the machine layer: whether stim-server records device screens on this Mac for replay.
 private struct RecordingSection: View {
-  var cli: Task<StimCLI, Never>
-  @State private var entry: SettingEntry?
+  var settings: MachineSettingsStore
   @State private var writing = false
-  @State private var failure: String?
+  @State private var writeFailure: String?
   @State private var confirmingOff = false
+
+  private var entry: SettingEntry? { settings.entry("recording.enabled") }
+
+  private var failure: String? {
+    writeFailure ?? settings.error
+      ?? (settings.payload != nil && entry == nil
+        ? "This stim has no recording.enabled setting; update it to replay devices." : nil)
+  }
 
   private var enabled: Bool { entry?.layer(.machine)?.bool ?? true }
 
@@ -590,7 +597,7 @@ private struct RecordingSection: View {
       .multilineTextAlignment(.leading)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .task { await load() }
+    .task { await settings.refresh() }
     .confirmationDialog("Stop recording device screens?", isPresented: $confirmingOff, titleVisibility: .visible) {
       Button("Turn off and delete recordings", role: .destructive) { write(false) }
     } message: {
@@ -598,31 +605,17 @@ private struct RecordingSection: View {
     }
   }
 
-  private func load() async {
-    let cli = await cli.value
-    let result = await Result.awaiting { try await cli.settings(cwd: NSHomeDirectory()) }
-    guard !Task.isCancelled else { return }
-    switch result {
-    case .success(let payload):
-      entry = payload.entry("recording.enabled")
-      failure = entry == nil ? "This stim has no recording.enabled setting; update it to replay devices." : nil
-    case .failure(let error): failure = error.localizedDescription
-    }
-  }
-
   private func write(_ on: Bool) {
     writing = true
     Task {
-      let cli = await cli.value
-      let result = await Result.awaiting {
-        try await cli.writeSetting("recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory())
-      }
+      let result = await settings.write(
+        "recording.enabled", value: on ? "true" : "false", scope: .machine, cwd: NSHomeDirectory())
       switch result {
-      case .success(.written): failure = nil
-      case .success(.refused(let refusal)): failure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
-      case .failure(let error): failure = error.localizedDescription
+      case .success(.written): writeFailure = nil
+      case .success(.refused(let refusal)):
+        writeFailure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+      case .failure(let error): writeFailure = error.localizedDescription
       }
-      await load()
       writing = false
     }
   }

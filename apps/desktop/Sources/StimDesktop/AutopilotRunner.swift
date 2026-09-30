@@ -27,6 +27,7 @@ final class AutopilotRunner: ObservableObject {
   private let status: StatusStore
   private let actions: ActionCenter
   private let gc: GcReportStore
+  private let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
   private var timer: Timer?
   private var checking = false
@@ -41,10 +42,11 @@ final class AutopilotRunner: ObservableObject {
   private var pullRequestVerdict: (candidates: Set<String>, at: Date, nextEligible: Date?)?
   private var activation: NSObjectProtocol?
 
-  init(status: StatusStore, actions: ActionCenter, gc: GcReportStore, cli: Task<StimCLI, Never>) {
+  init(status: StatusStore, actions: ActionCenter, gc: GcReportStore, settings: MachineSettingsStore, cli: Task<StimCLI, Never>) {
     self.status = status
     self.actions = actions
     self.gc = gc
+    self.settings = settings
     self.cli = cli
     log = AutopilotLog.decode(UserDefaults.standard.data(forKey: AppPreferences.Key.autopilotLog))
   }
@@ -152,13 +154,16 @@ final class AutopilotRunner: ObservableObject {
     let locations = stimDiskLocations(status.payload?.environments ?? [], status: status)
     let budget = budgetAt.map { now.timeIntervalSince($0) < Self.budgetMaxAge } == true ? self.budget : nil
     let gc = gc
-    let cli = cli
+    let machineSettings = settings
     Task.detached(priority: .utility) {
-      let cli = await cli.value
       let volumes = DiskUsage.volumes(for: locations)
       let lowest = volumes.min { $0.freeBytes < $1.freeBytes }
       let free = lowest?.freeBytes
-      let settings = budget == nil ? try? await cli.settings(cwd: NSHomeDirectory()) : nil
+      var settings: SettingsPayload?
+      if budget == nil {
+        await machineSettings.refresh()
+        settings = await machineSettings.payload
+      }
       let limits =
         budget
         ?? settings.map { settings in

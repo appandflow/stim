@@ -115,6 +115,8 @@ struct StimDesktopApp: App {
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
   private let gc: GcReportStore
+  private let machineSettings: MachineSettingsStore
+  private let buildMachines: BuildMachinesModel
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   private let cli: Task<StimCLI, Never>
 
@@ -152,7 +154,10 @@ struct StimDesktopApp: App {
         store.doctorChanged(in: step.cwd)
       }
     }
-    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, cli: cli)
+    let machineSettings = MachineSettingsStore(cli: cli)
+    self.machineSettings = machineSettings
+    self.buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings)
+    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
@@ -166,9 +171,12 @@ struct StimDesktopApp: App {
 
   var body: some Scene {
     WindowGroup("Stim", id: "main") {
-      RootView(cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc)
-        .frame(minWidth: 700, minHeight: 720)
-        .onAppear { notifier.start() }
+      RootView(
+        cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
+        buildMachines: buildMachines
+      )
+      .frame(minWidth: 700, minHeight: 720)
+      .onAppear { notifier.start() }
     }
     .windowToolbarStyle(.unified(showsTitle: false))
     .handlesExternalEvents(matching: [])
@@ -183,7 +191,7 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store).environmentObject(autopilot)
+      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines).environmentObject(autopilot)
     }
 
     MenuBarExtra(isInserted: menuBarExtraInserted) {

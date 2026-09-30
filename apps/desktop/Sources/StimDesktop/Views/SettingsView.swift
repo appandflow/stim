@@ -9,12 +9,14 @@ struct SettingsView: View {
   @State private var workspace: String?
   @AppStorage("settingsTab") private var tab = "app"
   @AppStorage("settingsWorkspace") private var lastWorkspace = ""
-  private let cli: Task<StimCLI, Never>
+  private let machine: MachineSettingsStore
+  private let buildMachines: BuildMachinesModel
 
-  init(cli: Task<StimCLI, Never>, store: StatusStore) {
-    self.cli = cli
+  init(cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel) {
     self.store = store
-    _model = StateObject(wrappedValue: SettingsModel(cli: cli))
+    self.machine = machine
+    self.buildMachines = buildMachines
+    _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
   }
 
   var body: some View {
@@ -22,10 +24,10 @@ struct SettingsView: View {
       AppPreferencesView()
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
-      PhonesView(server: ServerController.shared, cli: cli)
+      PhonesView(server: ServerController.shared, settings: machine)
         .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
         .tag("phones")
-      BuildMachinesView(cli: cli, store: store, workspace: workspace) { model.load(directory: workspace) }
+      BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
         .tabItem { Label("Build Machines", systemImage: "hammer") }
         .tag("build-machines")
       scopeTab(.machine, title: "Machine", icon: "desktopcomputer")
@@ -43,6 +45,9 @@ struct SettingsView: View {
     }
     .onReceive(openRequests.$selectedWorkspace) { path in
       if let path { workspace = path }
+    }
+    .onChange(of: machine.revision) {
+      model.load(directory: workspace)
     }
     .onChange(of: workspace) { _, path in
       lastWorkspace = path ?? ""

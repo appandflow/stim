@@ -14,9 +14,11 @@ final class SettingsModel: ObservableObject {
   @Published private(set) var directory: String?
 
   private let cli: Task<StimCLI, Never>
+  private let machine: MachineSettingsStore
 
-  init(cli: Task<StimCLI, Never>) {
+  init(cli: Task<StimCLI, Never>, machine: MachineSettingsStore) {
     self.cli = cli
+    self.machine = machine
   }
 
   static func id(_ key: String, _ scope: SettingScope) -> String { "\(scope.rawValue):\(key)" }
@@ -61,19 +63,18 @@ final class SettingsModel: ObservableObject {
     }
   }
 
-  /// Runs `stim settings set`, or `unset` for a nil value, then reloads every value.
+  /// Runs `stim settings set`, or `unset` for a nil value, then reloads every value. A machine-scope write goes
+  /// through the machine settings store, whose `revision` makes the window reload.
   func write(_ field: SettingField, scope: SettingScope, value: JSONValue?) {
     let id = Self.id(field.key, scope)
     guard !writing.contains(id) else { return }
     writing.insert(id)
     refusals[id] = nil
-    let cli = cli
+    let machine = machine
     let cwd = directory ?? NSHomeDirectory()
     let argument = value.map(field.argument(for:))
     Task {
-      let result = await Result.awaiting {
-        try await cli.value.writeSetting(field.key, value: argument, scope: scope, cwd: cwd)
-      }
+      let result = await machine.write(field.key, value: argument, scope: scope, cwd: cwd)
       writing.remove(id)
       switch result {
       case .success(.written): break
@@ -82,7 +83,7 @@ final class SettingsModel: ObservableObject {
       case .failure(let error):
         refusals[id] = error.localizedDescription
       }
-      load(directory: directory)
+      if scope != .machine { load(directory: directory) }
     }
   }
 
