@@ -163,9 +163,12 @@ FLAGS
   In --follow mode the marker window is dropped -- every error arriving from
   then on is by definition after the last marker seen.
 
-  \`stim status\` reports the same count per workspace, as
-  logs.errorsSinceMarker: the same query, the same scope, so the two can never
-  disagree about whether this workspace is failing.
+  \`stim status\` reports the errors of the same query and scope per
+  workspace, as logs.errorsSinceMarker, so the two never disagree about
+  whether this workspace is failing. It counts failures as the Stim Desktop and
+  phone logs list them: a Metro bundle failure is one error, although it is a
+  marker line, the error line and a failed bundle response in the log, so the
+  count can be lower than the records this command prints.
 
 THE RECORD
   { ts, src, level, msg } always. ts is epoch milliseconds; src is one of
