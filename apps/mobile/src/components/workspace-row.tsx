@@ -77,6 +77,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
       ]
         .filter(Boolean)
         .join(', ')}
+      accessibilityActions={errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
+      onAccessibilityAction={() => onOpen(item, true)}
       style={styles.row}
     >
       <View style={[styles.lead, offline && styles.dimmed]}>

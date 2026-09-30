@@ -334,64 +334,66 @@ const LogRow = memo(function LogRow({
   const [copied, setCopied] = useState(false);
   const records = plural(entry.related.length + 1, { one: '# record', other: '# records' });
   return (
-    <Touch feedback="row" onPress={() => onToggle(entry, expanded)} accessibilityRole="none" style={styles.logRow}>
-      <View style={styles.meta}>
-        <StatusDot color={levelColor(theme, record.level)} />
-        <View style={styles.tag}>
-          <Text variant="caption2" tone="secondary">
-            {chip ? chipLabel(chip) : record.src}
+    <View style={styles.logRow}>
+      <Touch feedback="row" onPress={() => onToggle(entry, expanded)} accessibilityRole="none" style={styles.logBody}>
+        <View style={styles.meta}>
+          <StatusDot color={levelColor(theme, record.level)} />
+          <View style={styles.tag}>
+            <Text variant="caption2" tone="secondary">
+              {chip ? chipLabel(chip) : record.src}
+            </Text>
+          </View>
+          <Text variant="caption2" tone="tertiary" numberOfLines={1} style={styles.shrink}>
+            {time}
+            {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''}
+            {entry.related.length > 0 ? ` \u00B7 ${records}` : ''}
           </Text>
         </View>
-        <Text variant="caption2" tone="tertiary" numberOfLines={1} style={styles.shrink}>
-          {time}
-          {record.slot && record.slot !== 'default' ? ` \u00B7 ${record.slot}` : ''}
-          {entry.related.length > 0 ? ` \u00B7 ${records}` : ''}
+        <Text
+          variant="footnote"
+          weight={error ? 'medium' : undefined}
+          numberOfLines={expanded ? undefined : 3}
+          selectable={expanded}
+        >
+          {view.title}
         </Text>
-      </View>
-      <Text
-        variant="footnote"
-        weight={error ? 'medium' : undefined}
-        numberOfLines={expanded ? undefined : 3}
-        selectable={expanded}
-      >
-        {view.title}
-      </Text>
-      {view.location ? (
-        <Text variant="caption" weight="semibold" mono numberOfLines={expanded ? undefined : 1} selectable={expanded}>
-          {view.location}
-        </Text>
-      ) : null}
-      {preview ? (
-        <View style={styles.frames}>
-          {preview.frames.map((frame, i) => (
-            <Text
-              key={i}
-              variant="caption2"
-              mono
-              weight={frame.app ? 'semibold' : undefined}
-              tone={frame.app ? 'default' : 'tertiary'}
-              numberOfLines={1}
-              ellipsizeMode="middle"
-            >
-              {[frame.fn, frame.where].filter(Boolean).join('  ')}
-            </Text>
-          ))}
-          {preview.hidden > 0 ? (
-            <Text variant="caption2" tone="tertiary">
-              {hiddenFrames}
-            </Text>
-          ) : null}
-        </View>
-      ) : null}
-      {expanded && view.codeFrame.length > 0 ? (
-        <View style={styles.codeFrame}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <Text variant="caption" mono selectable>
-              {view.codeFrame.join('\n')}
-            </Text>
-          </ScrollView>
-        </View>
-      ) : null}
+        {view.location ? (
+          <Text variant="caption" weight="semibold" mono numberOfLines={expanded ? undefined : 1} selectable={expanded}>
+            {view.location}
+          </Text>
+        ) : null}
+        {preview ? (
+          <View style={styles.frames}>
+            {preview.frames.map((frame, i) => (
+              <Text
+                key={i}
+                variant="caption2"
+                mono
+                weight={frame.app ? 'semibold' : undefined}
+                tone={frame.app ? 'default' : 'tertiary'}
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
+                {[frame.fn, frame.where].filter(Boolean).join('  ')}
+              </Text>
+            ))}
+            {preview.hidden > 0 ? (
+              <Text variant="caption2" tone="tertiary">
+                {hiddenFrames}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+        {expanded && view.codeFrame.length > 0 ? (
+          <View style={styles.codeFrame}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <Text variant="caption" mono selectable>
+                {view.codeFrame.join('\n')}
+              </Text>
+            </ScrollView>
+          </View>
+        ) : null}
+      </Touch>
       {expanded ? (
         <View style={styles.actions}>
           <Touch
@@ -415,11 +417,11 @@ const LogRow = memo(function LogRow({
         </View>
       ) : null}
       {expanded && view.details.length > 0 ? (
-        <Text variant="caption" tone="secondary" mono selectable>
+        <Text variant="caption" tone="secondary" mono selectable style={styles.details}>
           {view.details.join('\n')}
         </Text>
       ) : null}
-    </Touch>
+    </View>
   );
 });
 
@@ -446,12 +448,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   empty: { textAlign: 'center', padding: theme.space.huge },
   logRow: {
-    paddingHorizontal: theme.space.lg,
-    paddingVertical: theme.space.md,
-    gap: theme.space.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.separator,
   },
+  logBody: {
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    gap: theme.space.xs,
+  },
+  details: { paddingHorizontal: theme.space.lg, paddingBottom: theme.space.md },
   meta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   tag: {
     paddingHorizontal: theme.space.sm,
@@ -474,7 +479,12 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface,
     borderColor: theme.colors.border,
   },
-  actions: { flexDirection: 'row', gap: theme.space.md, paddingTop: theme.space.sm },
+  actions: {
+    flexDirection: 'row',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.lg,
+    paddingBottom: theme.space.md,
+  },
   action: {
     borderWidth: 1,
     borderRadius: theme.radius.control,

@@ -68,8 +68,17 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const { macName } = item;
   const tileLabel = t`${model}, ${where}, on ${macName}`;
   const openLabel = t`Open the live screen of ${model}`;
+  const openLive = () => {
+    if (frame) openDeviceViewer(thumbnail.current, target, frame);
+  };
   return (
-    <Card onPress={() => onOpen(item, false)} accessibilityLabel={tileLabel} style={[styles.tile, wide && styles.wide]}>
+    <Card
+      onPress={() => onOpen(item, false)}
+      accessibilityLabel={tileLabel}
+      accessibilityActions={frame ? [{ name: 'live', label: openLabel }] : undefined}
+      onAccessibilityAction={openLive}
+      style={[styles.tile, wide && styles.wide]}
+    >
       {/*
         Fabric hoists the children of a View with only a background into the Card, a Gesture Handler button on iOS.
         The button keeps its underlay CALayer at sublayer index 0, and UIKit's insertSubview:atIndex: counts that
@@ -80,7 +89,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         {frame ? (
           <Touch
             ref={thumbnail}
-            onPress={() => openDeviceViewer(thumbnail.current, target, frame)}
+            onPress={openLive}
             accessibilityLabel={openLabel}
             style={{ height: SCREEN_HEIGHT - 16, maxWidth: '100%', aspectRatio: aspect }}
           >

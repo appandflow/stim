@@ -2962,6 +2962,7 @@ msgstr "Show all {count}"
 msgid "Show all {count} {title}"
 msgstr "Show all {count} {title}"
 
+#: src/components/workspace-row.tsx
 #: src/screens/workspace-detail.tsx
 msgid "Show errors"
 msgstr "Show errors"
