@@ -256,7 +256,7 @@ export interface AgentWorkspace {
   recorded: AgentSession | null;
 }
 
-function agentKey(session: AgentSession): string {
+export function agentKey(session: Pick<AgentSession, 'tool' | 'sessionId'>): string {
   return `${session.tool}:${session.sessionId}`;
 }
 

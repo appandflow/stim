@@ -1,13 +1,20 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
-import { agentSessionsCacheFile, diskUsageCacheDir, pullRequestCacheDir, workspaceBuildDetailFile } from './paths.ts';
+import {
+  agentSessionsCacheFile,
+  diskUsageCacheDir,
+  pullRequestCacheDir,
+  workspaceBuildDetailFile,
+  workspaceEndedAgentsFile,
+} from './paths.ts';
 import {
   AGENT_TOOLS,
   NATIVE_BUILD_STEPS,
   type AgentSession,
   type BuildDetail,
   type DiskMeasure,
+  type EndedAgentSession,
   type WorktreePullRequest,
 } from './status.ts';
 
@@ -135,6 +142,31 @@ export function agentSessionOf(value: unknown): AgentSession | null {
   if (openUrl) session.openUrl = openUrl;
   if (webUrl) session.webUrl = webUrl;
   return session;
+}
+
+/** How long a workspace keeps an agent session after it stopped running. */
+export const ENDED_AGENT_RETENTION_MS: number = 3 * 24 * 60 * 60_000;
+
+/** An ended agent session as Stim wrote it, or null when it is not one. */
+export function endedAgentSessionOf(value: unknown): EndedAgentSession | null {
+  const session = agentSessionOf(value);
+  const endedAt = optionalString((value as Record<string, unknown> | null)?.endedAt);
+  if (!session || !endedAt || !Number.isFinite(Date.parse(endedAt))) return null;
+  const { pid: _pid, ...ended } = session;
+  return { ...ended, endedAt };
+}
+
+/** The workspace's agent sessions that ended within `ENDED_AGENT_RETENTION_MS` of `now`, most recently ended first. */
+export function readEndedAgentSessions(root: string, now: number): EndedAgentSession[] {
+  const entry = readJsonObject(workspaceEndedAgentsFile(root));
+  if (!entry || !Array.isArray(entry.sessions)) return [];
+  return entry.sessions
+    .map(endedAgentSessionOf)
+    .filter(
+      (session): session is EndedAgentSession =>
+        session !== null && now - Date.parse(session.endedAt) <= ENDED_AGENT_RETENTION_MS,
+    )
+    .toSorted((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt));
 }
 
 /** The agent sessions `status --watch` last cached, or null before it cached any. */

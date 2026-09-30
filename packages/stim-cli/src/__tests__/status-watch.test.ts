@@ -129,6 +129,7 @@ test('a log append needs only a log refresh; other state changes need a full one
   expect(statusChange('home', 'build-cache')).toBe(null);
   expect(statusChange('workspace', 'state.json')).toBe('full');
   expect(statusChange('workspace', 'logs')).toBe('full');
+  expect(statusChange('workspace', 'ended-agents.json')).toBe('full');
   expect(statusChange('workspace', 'derived-data')).toBe(null);
   expect(statusChange('workspace', 'state.lock')).toBe(null);
   expect(statusChange('logs', 'device.ndjson')).toBe('light');

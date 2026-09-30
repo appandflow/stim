@@ -39,6 +39,15 @@ export function workspaceBuildDetailFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'build-detail.json');
 }
 
+/** The agent sessions that stopped running in the workspace in the last `ENDED_AGENT_RETENTION_MS`. */
+export function workspaceEndedAgentsFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'ended-agents.json');
+}
+
+export function workspaceEndedAgentsLock(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'ended-agents.lock');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }

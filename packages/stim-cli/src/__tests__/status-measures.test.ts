@@ -1,11 +1,19 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readDiskUsage, readPullRequestCache, type EnvironmentState } from '@stim-cli/core/state';
+import {
+  ENDED_AGENT_RETENTION_MS,
+  readAgentSessionsCache,
+  readDiskUsage,
+  readEndedAgentSessions,
+  readPullRequestCache,
+  type EnvironmentState,
+} from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { applyStatusMeasures, createStatusMeasurer } from '../status-measures.ts';
 import { checkCounts } from '../workspace/pull-request.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const GRAPHQL = readFileSync(new URL('./fixtures/gh-pull-requests-graphql.json', import.meta.url), 'utf-8');
 const HEAD = 'dcce0407269e492928e083695fd7b134e64e7af4';
@@ -129,6 +137,74 @@ test('measures stale folders and pull requests in the background, then status re
   measurer.schedule([state], [state.worktree!]);
   await vi.waitFor(() => expect(readPullRequestCache(app)?.head).toBe(head));
   expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
+});
+
+test('a session that stops running stays listed as ended with its links for 3 days, and running again wins', async () => {
+  clock = Date.now();
+  const firstAt = new Date(clock).toISOString();
+  const sessions = join(home, '.claude', 'sessions');
+  mkdirSync(sessions, { recursive: true });
+  const claude = join(sessions, `${process.pid}.json`);
+  const run = () =>
+    writeFileSync(
+      claude,
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: 'live',
+        cwd: app,
+        name: 'Fix tiles',
+        startedAt: clock,
+        bridgeSessionId: 'session_01abc',
+      }),
+    );
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const discover = async (count: number) => {
+    const before = readAgentSessionsCache()?.discoveredAt;
+    const state = environment();
+    measurer.schedule([state], [state.worktree!]);
+    await vi.waitFor(() => {
+      const cache = readAgentSessionsCache();
+      expect(cache?.discoveredAt).not.toBe(before);
+      expect(cache?.sessions).toHaveLength(count);
+    });
+  };
+  const read = () => {
+    const state = environment();
+    applyStatusMeasures([state], []);
+    return state;
+  };
+
+  run();
+  recordWorkspaceUse(app, new Date(clock), { CLAUDE_CODE_SESSION_ID: 'live' });
+  await discover(1);
+  expect(read().agents?.map((agent) => agent.sessionId)).toEqual(['live']);
+  expect(read().endedAgents).toBeUndefined();
+
+  rmSync(claude);
+  clock += 20_000;
+  await discover(0);
+  const ended = read();
+  expect(ended.agents).toBeUndefined();
+  expect(ended.endedAgents).toEqual([
+    {
+      tool: 'claude-code',
+      sessionId: 'live',
+      title: 'Fix tiles',
+      cwd: realpathSync(app),
+      startedAt: firstAt,
+      lastActiveAt: firstAt,
+      webUrl: 'https://claude.ai/code/session_01abc',
+      endedAt: firstAt,
+    },
+  ]);
+  expect(readEndedAgentSessions(app, Date.parse(firstAt) + ENDED_AGENT_RETENTION_MS + 1)).toEqual([]);
+
+  run();
+  clock += 20_000;
+  await discover(1);
+  const resumed = read();
+  expect(resumed.agents?.map((agent) => agent.sessionId)).toEqual(['live']);
+  expect(resumed.endedAgents).toBeUndefined();
 });
 
 test('a missing gh leaves the pull request unknown', async () => {
