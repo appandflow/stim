@@ -11,7 +11,7 @@ import { Icon, type IconName } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { useAppUpdate } from '@/hooks/app-update';
+import { confirmRestartToUpdate, useAppUpdate } from '@/hooks/app-update';
 import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
 import { useMacs } from '@/hooks/mac-connection';
@@ -137,9 +137,11 @@ export function Menu({ onClose }: { onClose: () => void }) {
           onPress={() =>
             status.macId
               ? go({ pathname: '/mac/[id]', params: { id: status.macId } })
-              : Platform.OS === 'android'
-                ? setAboutOpen(true)
-                : router.push('/about')
+              : status.text === UPDATE_READY_TEXT
+                ? confirmRestartToUpdate()
+                : Platform.OS === 'android'
+                  ? setAboutOpen(true)
+                  : router.push('/about')
           }
           accessibilityLabel={
             connections.length === 1 ? `1 machine, ${status.text}` : `${connections.length} machines, ${status.text}`

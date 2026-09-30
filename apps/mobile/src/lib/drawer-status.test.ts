@@ -66,7 +66,7 @@ describe('drawerStatus', () => {
   it('ranks an update ready above a disk warning', () => {
     const warn = machine({ diskTone: 'warn' });
     expect(drawerStatus([warn], true, 'Stim 0.1.0 (4)')).toEqual({
-      text: 'Update ready: restart to apply',
+      text: 'Restart to update',
       tone: 'normal',
       macId: null,
     });

@@ -894,9 +894,10 @@ This is the `expo-updates` default. A monitor that opens to glance at a build
 should open at once, even on a slow or captive network, and one launch on the
 previous JS changes nothing on the Mac. A resumed process never launches
 again, so the app also checks whenever it returns to the foreground, at most
-once a minute. Once an update has downloaded, an **Update ready** pill
-appears at the bottom of the screen; tapping it restarts into the new JS.
-Nothing restarts the app on its own.
+once a minute. Once an update has downloaded, the menu's footer shows
+**Restart to update** (unless a machine problem outranks it); tapping it asks
+before restarting into the new JS, and a restart that fails says so. Nothing
+restarts the app on its own.
 
 **About** shows the running update's id, or `embedded` when the app runs the
 JS it was built with. Debug builds show `embedded` too.

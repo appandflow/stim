@@ -19,7 +19,7 @@ export interface DrawerStatus {
   macId: string | null;
 }
 
-export const UPDATE_READY_TEXT = 'Update ready: restart to apply';
+export const UPDATE_READY_TEXT = 'Restart to update';
 
 const unreachableText = (machine: DrawerMachine): string =>
   machine.state.kind === 'waiting' ? `Reconnecting to ${machine.name}\u2026` : `Disconnected from ${machine.name}`;
