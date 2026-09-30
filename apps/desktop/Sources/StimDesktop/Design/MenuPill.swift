@@ -35,12 +35,12 @@ struct MenuPill<Value: Hashable>: View {
         Text(options.first { $0.value == selection.wrappedValue }?.title ?? "")
         Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
       }
-      .hoverHighlight()
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
     .fixedSize()
+    .hoverHighlight()
     .accessibilityLabel(label)
   }
 }
