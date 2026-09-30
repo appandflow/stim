@@ -445,10 +445,6 @@ msgstr "{name}, driven by {tool} for {spoken}"
 msgid "{name}: low disk"
 msgstr "{name}: low disk"
 
-#: src/screens/about.tsx
-msgid "{name}: stim {stim} · server {version}"
-msgstr "{name}: stim {stim} · server {version}"
-
 #: src/lib/format.ts
 msgid "{names} · {duration}"
 msgstr "{names} · {duration}"
@@ -685,10 +681,6 @@ msgstr "A removed workspace"
 #: src/lib/machine-report.ts
 msgid "a workspace"
 msgstr "a workspace"
-
-#: src/screens/about.tsx
-msgid "About"
-msgstr "About"
 
 #: src/lib/format.ts
 msgid "about {minutesLeft} min left"
@@ -967,6 +959,10 @@ msgstr "Building {platform} · {slot}"
 msgid "Built on {machine}"
 msgstr "Built on {machine}"
 
+#: src/screens/about.tsx
+msgid "Built-in"
+msgstr "Built-in"
+
 #: src/lib/workspace-view.ts
 msgid "Bundle failed"
 msgstr "Bundle failed"
@@ -1096,6 +1092,10 @@ msgstr "Changed"
 #: src/screens/workspace-work.tsx
 msgid "Changes requested"
 msgstr "Changes requested"
+
+#: src/screens/about.tsx
+msgid "Channel"
+msgstr "Channel"
 
 #: src/screens/build-details.tsx
 msgid "Check again"
@@ -1270,12 +1270,15 @@ msgstr "Control"
 msgid "Control ended. {ended}"
 msgstr "Control ended. {ended}"
 
+#: src/screens/about.tsx
+#: src/screens/about.tsx
 #: src/screens/device-view.tsx
 #: src/screens/home.tsx
 #: src/screens/logs.tsx
 msgid "Copied"
 msgstr "Copied"
 
+#: src/screens/about.tsx
 #: src/screens/home.tsx
 #: src/screens/logs.tsx
 #: src/screens/mac-status.tsx
@@ -1299,6 +1302,10 @@ msgstr "Copy path"
 #: src/screens/home.tsx
 msgid "Copy prompt: {prompt}"
 msgstr "Copy prompt: {prompt}"
+
+#: src/screens/about.tsx
+msgid "Copy versions"
+msgstr "Copy versions"
 
 #: src/lib/workspace-view.ts
 msgid "copying ignored files"
@@ -1465,10 +1472,6 @@ msgstr "EAS Simulator"
 msgid "EAS Simulator · {platformLabel}"
 msgstr "EAS Simulator · {platformLabel}"
 
-#: src/screens/about.tsx
-msgid "embedded"
-msgstr "embedded"
-
 #: src/lib/workspace-view.ts
 msgid "Emulator"
 msgstr "Emulator"
@@ -1610,6 +1613,10 @@ msgstr "From Pair a phone in Stim Desktop"
 #: src/screens/workspace-work.tsx
 msgid "Git"
 msgstr "Git"
+
+#: src/screens/about.tsx
+msgid "GitHub"
+msgstr "GitHub"
 
 #: src/components/replay-bar.tsx
 msgid "Go live"
@@ -1931,6 +1938,7 @@ msgid "Machine status"
 msgstr "Machine status"
 
 #: src/lib/settings-options.ts
+#: src/screens/about.tsx
 #: src/screens/filters.tsx
 #: src/screens/home.tsx
 #: src/screens/home.tsx
@@ -1939,6 +1947,10 @@ msgstr "Machine status"
 #: src/screens/settings.tsx
 msgid "Machines"
 msgstr "Machines"
+
+#: src/screens/about.tsx
+msgid "Made by App&Flow"
+msgstr "Made by App&Flow"
 
 #: src/screens/inbox.tsx
 msgid "Mark all read"
@@ -2434,6 +2446,7 @@ msgid "Open Settings"
 msgstr "Open Settings"
 
 #: src/app/_layout.tsx
+#: src/screens/about.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 msgid "Open source licenses"
@@ -2591,6 +2604,14 @@ msgstr "Process"
 #: src/screens/mac-status.tsx
 msgid "Projects"
 msgstr "Projects"
+
+#: src/screens/about.tsx
+msgid "Protocol"
+msgstr "Protocol"
+
+#: src/screens/about.tsx
+msgid "Published {published}"
+msgstr "Published {published}"
 
 #: src/screens/workspace-work.tsx
 msgid "Pull request"
@@ -2826,6 +2847,10 @@ msgstr "Running"
 msgid "Running scripts"
 msgstr "Running scripts"
 
+#: src/screens/about.tsx
+msgid "Runtime"
+msgstr "Runtime"
+
 #: src/lib/machine-report.ts
 #: src/screens/mac-status.tsx
 msgid "Runtimes and system images"
@@ -3034,6 +3059,7 @@ msgstr "Status"
 
 #: src/app/_layout.tsx
 #: src/lib/notifications.ts
+#: src/screens/about.tsx
 #: src/screens/home.tsx
 #: src/screens/mac-status.tsx
 #: src/screens/menu.tsx
@@ -3059,6 +3085,10 @@ msgstr "Stim · no workspace"
 #: src/lib/machine-report.ts
 msgid "Stim · parked"
 msgstr "Stim · parked"
+
+#: src/screens/about.tsx
+msgid "stim {stim} · server {server}"
+msgstr "stim {stim} · server {server}"
 
 #: src/screens/mac-status.tsx
 msgid "stim {stim} · server {version}"
@@ -3095,10 +3125,6 @@ msgstr "Stim Desktop shows the code under Pair a phone. The phone connects throu
 #: src/lib/machine-report.ts
 msgid "Stim devices"
 msgstr "Stim devices"
-
-#: src/screens/about.tsx
-msgid "Stim for phones {version} \\u00B7 protocol {PROTOCOL_VERSION}"
-msgstr "Stim for phones {version} \\u00B7 protocol {PROTOCOL_VERSION}"
 
 #: src/screens/mac-status.tsx
 msgid "stim gc did not answer: {gcError}"
@@ -3273,6 +3299,10 @@ msgstr "This package does not include a license file."
 msgid "This pairing code needs a newer version of the app."
 msgstr "This pairing code needs a newer version of the app."
 
+#: src/screens/about.tsx
+msgid "This phone"
+msgstr "This phone"
+
 #: src/components/read-only.tsx
 msgid "This phone is read-only"
 msgstr "This phone is read-only"
@@ -3390,8 +3420,8 @@ msgid "Up to date"
 msgstr "Up to date"
 
 #: src/screens/about.tsx
-msgid "Update {update}"
-msgstr "Update {update}"
+msgid "Update"
+msgstr "Update"
 
 #: src/screens/mac-status.tsx
 msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
@@ -3428,6 +3458,10 @@ msgstr "use the same JDK there"
 #: src/lib/machine-report.ts
 msgid "used {ago}"
 msgstr "used {ago}"
+
+#: src/screens/about.tsx
+msgid "Version {version}"
+msgstr "Version {version}"
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -3495,6 +3529,10 @@ msgstr "Web"
 #: src/screens/device-view.tsx
 msgid "Web · {model}"
 msgstr "Web · {model}"
+
+#: src/screens/about.tsx
+msgid "Website"
+msgstr "Website"
 
 #: src/screens/inbox.tsx
 msgid "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."

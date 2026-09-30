@@ -161,6 +161,7 @@
         "**/*.test.ts",
         "**/*.test.tsx",
         "src/design/**",
+        "src/lib/about.ts",
         "src/lib/agent-prompts.ts",
         "src/lib/oversight.ts",
         "src/screens/gallery.tsx",

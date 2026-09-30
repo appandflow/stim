@@ -111,9 +111,13 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   [Inbox](#inbox)) with its unread count, **Pair a machine**, and
   **Recent workspaces**, the workspaces most recently live or opened on this
   phone. The button at the bottom shows the number of
-  paired machines and opens **About**, with the app and server versions, as a
-  sheet over the menu, which stays open when the sheet closes. A tap
-  on home, a swipe left, or Android's back button closes the menu. Pairing scans the QR code Stim Desktop
+  paired machines and opens **About**, with the app version and build, the
+  runtime, channel, update and protocol, each paired machine's stim and server
+  versions, and links to the website, GitHub, the open source licenses and
+  App&Flow, as a sheet sized to its content on iOS over the menu, which stays
+  open when the sheet closes. **Copy** puts every version on the clipboard for a
+  bug report. A tap on home, a swipe left, or Android's back button closes the
+  menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
   in; the token field is masked, with a button that shows it. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
@@ -902,8 +906,9 @@ once a minute. Once an update has downloaded, the menu lists
 before restarting into the new JS, and a restart that fails says so. Nothing
 restarts the app on its own.
 
-**About** shows the running update's id, or `embedded` when the app runs the
-JS it was built with. Debug builds show `embedded` too.
+**About** shows the running update's short id and when it was published, or
+**Built-in** when the app runs the JS it was built with. Debug builds show
+**Built-in** too.
 
 Publish an update by hand from `apps/mobile`:
 
