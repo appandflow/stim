@@ -38,6 +38,7 @@ struct AppPreferencesView: View {
           ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
         .onChange(of: appearance) { _, value in Theme.apply(value) }
       }
 
@@ -177,7 +178,7 @@ struct AppPreferencesView: View {
       Section("Stim executable") {
         HStack {
           TextField("stim on the login shell's PATH", text: $stimExecutable)
-          Button("Choose\u{2026}", action: chooseExecutable)
+          Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
         Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")
           .foregroundStyle(Palette.tertiary)
