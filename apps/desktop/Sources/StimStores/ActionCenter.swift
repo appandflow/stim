@@ -44,7 +44,6 @@ public final class ActionRun: ObservableObject, Identifiable {
     return Result { try GcOutcome(json: stdout) }
   }
 
-  /// True once the run ended in a failure, or a cleanup ran but left failures behind.
   public var needsAttention: Bool {
     if launchError != nil { return true }
     guard let exitStatus else { return false }
@@ -53,8 +52,6 @@ public final class ActionRun: ObservableObject, Identifiable {
     return false
   }
 
-  /// The line a list row shows under the title: the latest progress fact while running, the failed step or
-  /// the summary once it ended.
   public var statusLine: String? {
     if isRunning {
       return progress.last { $0.state != .failed }.map { $0.fact.isEmpty ? $0.label : $0.fact } ?? summary

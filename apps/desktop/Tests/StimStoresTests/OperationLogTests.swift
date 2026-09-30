@@ -72,4 +72,13 @@ struct OperationLogTests {
     #expect(bad.finishedAt != nil && bad.needsAttention)
     #expect(bad.statusLine == "Exited 4")
   }
+
+  @Test func presentingARunThroughTheActionCenterClearsItsAttention() async {
+    let center = ActionCenter(cli: Task { await withCheckedContinuation { (_: CheckedContinuation<StimCLI, Never>) in } })
+    let failed = await start(center.operations, exit: 2)
+    center.operations.finished(failed, viewed: false)
+    #expect(center.operations.attentionCount == 1)
+    center.presented = failed
+    #expect(center.operations.attentionCount == 0)
+  }
 }

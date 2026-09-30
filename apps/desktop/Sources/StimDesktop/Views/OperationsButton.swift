@@ -2,13 +2,11 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// The sidebar footer's operations item. It shows a spinner and the count while runs are in flight and a dot
-/// when a finished one failed and was not opened, and opens a list of the session's recent runs. It observes
-/// only `OperationLog`, so output lines and workspace changes do not redraw it. Hidden until the first run.
 struct OperationsButton: View {
   @ObservedObject var log: OperationLog
   let actions: ActionCenter
   let store: StatusStore
+  var arrowEdge: Edge = .top
   @State private var shown = false
 
   var body: some View {
@@ -36,8 +34,8 @@ struct OperationsButton: View {
       .buttonStyle(.icon(tint: running > 0 ? Palette.accent : Palette.secondary, active: shown))
       .help(Self.tooltip(running: running, attention: attention))
       .accessibilityLabel("Operations")
-      .accessibilityValue(Self.tooltip(running: running, attention: attention))
-      .popover(isPresented: $shown, arrowEdge: .top) {
+      .accessibilityValue(Self.summary(running: running, attention: attention))
+      .popover(isPresented: $shown, arrowEdge: arrowEdge) {
         OperationsList(log: log) { run in
           shown = false
           DispatchQueue.main.async { actions.presented = run }
@@ -45,17 +43,19 @@ struct OperationsButton: View {
           Self.workspaceName(of: run, store: store)
         }
       }
-      .onChange(of: shown) { _, isShown in
-        if isShown { log.markAllSeen() }
-      }
+      .onChange(of: shown) { log.markAllSeen() }
     }
   }
 
-  static func tooltip(running: Int, attention: Int) -> String {
+  static func summary(running: Int, attention: Int) -> String {
     var parts: [String] = []
     if running > 0 { parts.append("\(running) running") }
     if attention > 0 { parts.append("\(attention) failed") }
-    return (parts.isEmpty ? "Recent operations" : parts.joined(separator: ", ")) + " \u{2014} click to show"
+    return parts.isEmpty ? "Recent operations" : parts.joined(separator: ", ")
+  }
+
+  static func tooltip(running: Int, attention: Int) -> String {
+    summary(running: running, attention: attention) + " \u{2014} click to show"
   }
 
   @MainActor static func workspaceName(of run: ActionRun, store: StatusStore) -> String? {

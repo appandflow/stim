@@ -89,6 +89,11 @@ struct RootView: View {
         }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
+          ToolbarItem(placement: .navigation) {
+            if columnVisibility == .detailOnly {
+              OperationsButton(log: actions.operations, actions: actions, store: store, arrowEdge: .bottom)
+            }
+          }
           ToolbarItem(id: summaryItemID, placement: .navigation) {
             MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth)
           }
