@@ -202,7 +202,7 @@ const styles = StyleSheet.create((theme) => ({
   frame: { ...StyleSheet.absoluteFillObject, borderRadius: theme.radius.small },
   placeholder: { textAlign: 'center', paddingHorizontal: theme.space.md },
   meta: { paddingHorizontal: theme.space.sm, paddingVertical: theme.space.md, gap: theme.space.xxs },
-  stale: { paddingHorizontal: theme.space.md, paddingTop: theme.space.md },
+  stale: { paddingHorizontal: theme.space.sm, paddingTop: theme.space.md },
   shrink: { flexShrink: 1 },
   workspace: { flexDirection: 'row', alignItems: 'center' },
   context: { flexShrink: 0, maxWidth: '45%' },
