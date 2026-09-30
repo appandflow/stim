@@ -107,3 +107,88 @@ final class ActivityProgressTests: XCTestCase {
     XCTAssertEqual(ActivityProgress.parse([]), [])
   }
 }
+
+final class ActionOutputTests: XCTestCase {
+  private func fixtureLines() throws -> [String] {
+    let url = Bundle.module.url(forResource: "stim-ios-run", withExtension: "txt", subdirectory: "Fixtures")!
+    return try String(contentsOf: url, encoding: .utf8).components(separatedBy: "\n").filter { !$0.isEmpty }
+  }
+
+  func testIncrementalRowsEqualTheFullParseAfterEveryLine() throws {
+    let lines = try fixtureLines()
+    XCTAssertTrue(ActivityProgress.parse(lines).count > 5)
+    var accumulator = ActivityProgress.Accumulator()
+    for (index, line) in lines.enumerated() {
+      accumulator.append(line)
+      XCTAssertEqual(accumulator.steps, ActivityProgress.parse(Array(lines[...index])))
+    }
+  }
+
+  func testBatchedAppendsGiveTheFullParseWhateverTheBatchSizes() throws {
+    let lines = try fixtureLines().map { OutputLine(.stderr, $0) }
+    for size in [1, 2, 3, 7, lines.count] {
+      var output = ActionOutput(keepsStdout: false)
+      for start in stride(from: 0, to: lines.count, by: size) {
+        output.append(Array(lines[start..<min(start + size, lines.count)]))
+      }
+      XCTAssertEqual(output.steps, ActivityProgress.parse(lines.map(\.text)))
+      XCTAssertEqual(output.lines, lines)
+    }
+  }
+
+  func testKeepsOnlyTheTailButTheWholeStdoutPayload() {
+    let total = ActionOutput.retainedLines * 3 + 17
+    var output = ActionOutput(keepsStdout: true)
+    output.append((0..<total).map { OutputLine($0 % 2 == 0 ? .stdout : .stderr, "line \($0)") })
+    XCTAssertLessThanOrEqual(output.lines.count, 2 * ActionOutput.retainedLines)
+    XCTAssertGreaterThanOrEqual(output.lines.count, ActionOutput.retainedLines)
+    XCTAssertEqual(output.lines.last?.text, "line \(total - 2)")
+    XCTAssertEqual(output.droppedCount + output.lines.count, total / 2)
+    XCTAssertTrue(output.lines.allSatisfy { $0.channel == .stderr })
+    let expected = (0..<total).filter { $0 % 2 == 0 }.map { "line \($0)" }.joined(separator: "\n")
+    XCTAssertEqual(String(decoding: output.stdout, as: UTF8.self), expected)
+  }
+
+  func testDropsStdoutWhenNotAJSONCommand() {
+    var output = ActionOutput(keepsStdout: false)
+    output.append([OutputLine(.stdout, "x")])
+    XCTAssertTrue(output.stdout.isEmpty)
+  }
+
+  func testAppendingLinesStaysLinear() {
+    func seconds(_ count: Int) -> TimeInterval {
+      let lines = (0..<count).map { OutputLine(.stderr, $0 % 10 == 0 ? "  build       still compiling (\($0)s)" : "line \($0)") }
+      let start = Date()
+      var output = ActionOutput(keepsStdout: false)
+      for batch in stride(from: 0, to: count, by: 50) { output.append(Array(lines[batch..<min(batch + 50, count)])) }
+      XCTAssertEqual(output.droppedCount + output.lines.count, count)
+      return Date().timeIntervalSince(start)
+    }
+    _ = seconds(1000)
+    let small = seconds(50_000)
+    let large = seconds(500_000)
+    print("ActionOutput append: 50k lines \(small)s, 500k lines \(large)s")
+    XCTAssertLessThan(large, small * 10 * 3, "10x the lines took more than 3x the linear time")
+  }
+
+  func testBatcherDeliversInOrderInFewBatches() async {
+    let received = LockedBox<[[String]]>([])
+    let batcher = OutputBatcher(interval: 0.05) { batch in received.mutate { $0.append(batch.map(\.text)) } }
+    DispatchQueue.global().async {
+      for index in 0..<1000 { batcher.receive(OutputLine(.stdout, "\(index)")) }
+    }
+    try? await Task.sleep(for: .milliseconds(500))
+    await MainActor.run { batcher.flush() }
+    let batches = received.value
+    XCTAssertEqual(batches.flatMap { $0 }, (0..<1000).map(String.init))
+    XCTAssertLessThan(batches.count, 50)
+  }
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Value
+  init(_ value: Value) { stored = value }
+  var value: Value { lock.withLock { stored } }
+  func mutate(_ change: (inout Value) -> Void) { lock.withLock { change(&stored) } }
+}

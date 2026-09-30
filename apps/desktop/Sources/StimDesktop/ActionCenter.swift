@@ -10,7 +10,7 @@ final class ActionRun: ObservableObject, Identifiable {
   let steps: [StimCommand]
   let key: String
   let startedAt = Date()
-  @Published private(set) var lines: [OutputLine] = []
+  @Published private(set) var output: ActionOutput
   @Published private(set) var exitStatus: Int32?
   @Published private(set) var launchError: String?
 
@@ -18,15 +18,19 @@ final class ActionRun: ObservableObject, Identifiable {
     self.title = title
     self.steps = steps
     self.key = key
+    output = ActionOutput(keepsStdout: steps.count == 1 && steps[0].arguments.contains("--json"))
   }
+
+  var lines: [OutputLine] { output.lines }
+
+  var progress: [ProgressStep] { output.steps }
 
   var command: StimCommand { steps[0] }
 
   var isRunning: Bool { exitStatus == nil && launchError == nil }
 
-  var stdout: Data {
-    Data(lines.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n").utf8)
-  }
+  /// The whole stdout of a single `--json` command; empty for any other run.
+  var stdout: Data { output.stdout }
 
   /// What a finished `gc --delete --json` or `gc --idle --json` run did, or nil for any other command.
   var gcOutcome: Result<GcOutcome, Error>? {
@@ -53,19 +57,19 @@ final class ActionRun: ObservableObject, Identifiable {
   private func start(step: Int, cli: StimCLI, worst: Int32, onFinish: @escaping @MainActor () -> Void) {
     let command = steps[step]
     if steps.count > 1 {
-      lines.append(OutputLine(.stderr, "$ \(([command.program] + command.arguments).joined(separator: " "))"))
+      output.append([OutputLine(.stderr, "$ \(([command.program] + command.arguments).joined(separator: " "))")])
     }
-    // ProcessStream calls back on background queues in order; the main queue
-    // keeps that order, where unstructured Tasks would not.
+    // ProcessStream calls back on background queues in order; the batcher hands
+    // the lines to the main queue in that order, one batch per 100 ms.
+    let batcher = OutputBatcher { [weak self] batch in self?.output.append(batch) }
     do {
       try cli.stream(
         command,
-        onLine: { line in
-          DispatchQueue.main.async { MainActor.assumeIsolated { self.lines.append(line) } }
-        },
+        onLine: { line in batcher.receive(line) },
         onExit: { status in
           DispatchQueue.main.async {
             MainActor.assumeIsolated {
+              batcher.flush()
               let worst = worst != 0 ? worst : status
               if step + 1 < self.steps.count {
                 self.start(step: step + 1, cli: cli, worst: worst, onFinish: onFinish)

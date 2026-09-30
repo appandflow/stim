@@ -1,0 +1,37 @@
+  carry       copied .claude/settings.local.json, .pnpm-store, CLAUDE.local.md, +21 from /Users/dev/Developer/stim
+  carry       carried node_modules was installed from a different pnpm-lock.yaml than the pnpm-lock.yaml on disk here. node_modules is gitignored and cloned from the source checkout; pnpm-lock.yaml is tracked, so the two can disagree. Run `cd '/Users/dev/Developer/stim-1982' && pnpm install` before building, or pod install and native builds see the wrong package versions.
+  carry       complete: 24 ignored entries copied, 0 kept, 0 failed
+Open in Stim Desktop: stim-desktop://workspace?path=/Users/dev/Developer/stim-1982/apps/mobile
+exit 0
+  metro       starting on port 8085 (expo-child, supervisor pid 22592)
+OK: dev server on port 8085, supervisor pid 22592 (expo-child) (2.8s)
+  logs        /Users/dev/.stim/workspaces/mobile--c6d6db67313a95ef/logs
+Open in Stim Desktop: stim-desktop://workspace?path=/Users/dev/Developer/stim-1982/apps/mobile
+exit 0
+  memory      macOS reports warning host memory pressure. Simulator processes can stall even when the device is Booted. Free memory before retrying: use `stim stop` only in workspaces you own, and ask before closing other apps or devices. For parallel iOS work, consider a reviewed SimSlim profile (`stim guide lifecycle simslim`). This observation does not establish an OOM crash.
+  device      booting stim-1982-mobile (iPhone 18 Pro 27.0) (A1B34E29-5BF8-4449-9CB0-10BF8FBB685A)
+  fingerprint 37e766.. hit (3.6s)
+  device      resetting privacy grants and the keychain on A1B34E29-5BF8-4449-9CB0-10BF8FBB685A
+  device      stim-1982-mobile (iPhone 18 Pro 27.0) (A1B3..) adopted (8.6s)
+  install     removed com.callstack.agentdevice.runner.uitests.xctrunner, left by the previous workspace
+  install     cleared com.appandflow.stim data left by the previous workspace
+  install     unchanged (stim-1982-mobile (iPhone 18 Pro 27.0) already has this build) (851ms)
+  launch      com.appandflow.stim (13.8s)
+  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (9.3s total)
+  launch      17 general device error-level records (not confirmed app errors); inspect with stim logs --errors --source device
+OK: com.appandflow.stim on stim-1982-mobile (iPhone 18 Pro 27.0) (A1B3..), Metro port 8085 (from cache, 45.5s)
+  device      stim-1982-mobile (iPhone 18 Pro 27.0) (A1B34E29-5BF8-4449-9CB0-10BF8FBB685A)
+  app         com.appandflow.stim
+  metro       running on port 8085
+  cache       from cache
+  compilation cache not run; artifact cache supplied the app
+  logs        /Users/dev/.stim/workspaces/mobile--c6d6db67313a95ef/logs
+Open in Stim Desktop: stim-desktop://workspace?path=/Users/dev/Developer/stim-1982/apps/mobile&platform=ios
+exit 0
+  stop        sending SIGTERM to supervisor process group 22592
+  stop        supervisor pid 22592
+  stop        collector ios pid 27043
+  device      shut down stim-1982-mobile (iPhone 18 Pro 27.0)
+  port        released 8085
+Stopped: supervisor pid 22592 stopped, 1 collector stopped, ios stim-1982-mobile (iPhone 18 Pro 27.0) shut down, port 8085 freed (/Users/dev/Developer/stim-1982/apps/mobile)
+exit 0
