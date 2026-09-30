@@ -78,6 +78,20 @@
               }.buttonStyle(.icon(active: true))
             }
           }
+          section("Hover rows") {
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              ForEach(["Hover row", "Selected row", "Disabled row"], id: \.self) { title in
+                Button {
+                } label: {
+                  Text(title).padding(.horizontal, Space.md).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                }
+                .buttonStyle(.hoverRow(selected: title == "Selected row"))
+                .disabled(title == "Disabled row")
+              }
+              Text("Row with a tap gesture").padding(.horizontal, Space.md).frame(minHeight: 28).hoverHighlight()
+            }
+            .frame(width: 240)
+          }
           section("Pills") {
             ForEach(Pill<Text>.Size.allCases, id: \.self) { size in
               FlowLayout(spacing: Space.sm, lineSpacing: Space.sm) {

@@ -43,9 +43,8 @@ struct CollapsibleSection<Item, Accessory: View, Content: View>: View {
             Text(title).font(.stim(.headline))
             Text("\(items.count)").foregroundStyle(Palette.tertiary)
           }
-          .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(outset: Space.xs))
         .help(collapsed ? "Expand \(title)" : "Collapse \(title)")
         .accessibilityLabel("\(title), \(items.count)")
         .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
@@ -55,7 +54,7 @@ struct CollapsibleSection<Item, Accessory: View, Content: View>: View {
         content(showsAll || !capped ? items[...] : items.prefix(Self.limit))
         if capped, items.count > Self.limit {
           Button(showsAll ? "Show fewer" : "Show all \(items.count)") { showsAll.toggle() }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverRow(outset: Space.xs))
             .foregroundStyle(Palette.primary)
             .help(showsAll ? "Show only the first \(Self.limit)" : "Show all \(items.count) rows")
             .accessibilityLabel(

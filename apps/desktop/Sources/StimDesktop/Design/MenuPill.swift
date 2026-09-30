@@ -14,7 +14,6 @@ struct MenuPill<Value: Hashable>: View {
   var options: [MenuPillOption<Value>]
   var tone: Tone = .brand
   var isActive = false
-  @State private var hovering = false
 
   var body: some View {
     Menu {
@@ -36,14 +35,12 @@ struct MenuPill<Value: Hashable>: View {
         Text(options.first { $0.value == selection.wrappedValue }?.title ?? "")
         Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
       }
-      .opacity(hovering ? 0.8 : 1)
-      .contentShape(Rectangle())
+      .hoverHighlight()
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
     .fixedSize()
     .accessibilityLabel(label)
-    .onHover { hovering = $0 }
   }
 }

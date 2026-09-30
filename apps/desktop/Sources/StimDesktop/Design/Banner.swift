@@ -26,7 +26,7 @@ struct Banner<Content: View, Trailing: View>: View {
         Button(action: onDismiss) {
           Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.tertiary)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(outset: Space.xs))
         .help("Dismiss")
         .accessibilityLabel("Dismiss")
       }
