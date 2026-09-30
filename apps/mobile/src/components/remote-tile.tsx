@@ -5,7 +5,7 @@ import { Card } from '@/components/card';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { useNow } from '@/hooks/use-now';
-import { shortDuration } from '@/lib/format';
+import { formatDuration } from '@/intl/format';
 import type { RemoteDeviceState } from '@/protocol/types';
 
 export function RemoteTile({ session }: { session: RemoteDeviceState }) {
@@ -30,7 +30,7 @@ export function RemoteTile({ session }: { session: RemoteDeviceState }) {
             : session.state === 'unclaimed'
               ? 'Not claimed'
               : 'Claim unknown'}
-          {Number.isFinite(started) ? ` \u00B7 running ${shortDuration(now - started)}` : ''}
+          {Number.isFinite(started) ? ` \u00B7 running ${formatDuration(now - started)}` : ''}
         </Text>
       </View>
     </Card>

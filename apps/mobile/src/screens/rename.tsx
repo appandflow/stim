@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { TextInput, View } from 'react-native';
@@ -28,12 +29,12 @@ export function Rename({ id }: { id: string }) {
         value={name}
         onChangeText={setName}
         autoFocus
-        accessibilityLabel="Machine name"
+        accessibilityLabel={t`Machine name`}
         onSubmitEditing={save}
         returnKeyType="done"
         style={styles.input}
       />
-      <Button title="Save" onPress={save} />
+      <Button title={t`Save`} onPress={save} />
     </View>
   );
 }

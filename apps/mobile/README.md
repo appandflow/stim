@@ -996,11 +996,43 @@ generator prints the packages that still have none.
 differs; the Mobile workflow runs it. The page is JavaScript and JSON only, so
 it changes no native fingerprint and ships over the air.
 
+## Localization
+
+The app is localized with [Lingui](https://lingui.dev) 5. Its messages are English only
+for now: the source locale `en` has no translations. Mark every string a person
+reads: `<Trans>` for text in JSX, `t` from `@lingui/core/macro` for props and
+strings built outside JSX, including in `src/lib`, and `<Plural>` or `plural`
+for counts. `@lingui/babel-plugin-lingui-macro` compiles the macros, and
+`src/intl/i18n.ts` loads the compiled catalog before the router, so a `t` at a
+module's top level also works. Jest loads the same file through `setupFiles`.
+
+`pnpm run intl:extract` writes the messages to `locales/en.po`, and
+`pnpm run intl:compile` compiles them to `locales/en.ts`, which the app
+imports. Commit both after changing a message: `pnpm run intl:check` runs the
+two and fails when either file changes, and CI runs it. The catalogs live
+outside `src` because the extracted messages carry the non-ASCII characters
+that `src` writes as `\uXXXX` escapes.
+
+Dates, numbers, sizes and durations go through `src/intl/format.ts`
+(`formatDateTime`, `formatDuration`, `formatBytes`, `formatSize`,
+`formatMemoryMb`); they format for the device's region. Hermes has no
+`Intl.PluralRules` or `Intl.Locale`, so `src/intl/polyfills.ts` loads the
+formatjs polyfills with English plural rules only; each installs only when the
+API is missing. Hermes on iOS also rounds half to even and ignores
+`style: 'unit'`, so sizes round with `toFixed` and carry their unit in the
+message. `lib/oversight.ts` stays unlocalized, byte for byte the same as
+`packages/server`'s.
+
+The `lingui/no-unlocalized-strings` lint rule, through oxlint's `jsPlugins`,
+fails on an unmarked string in the files `.oxlintrc.json` lists; a migrated
+file joins that list.
+
 ## Checks
 
 ```bash
 pnpm run format:check
 pnpm run lint
+pnpm run intl:check
 pnpm run typecheck
 pnpm test
 pnpm run licenses:check

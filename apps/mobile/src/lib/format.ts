@@ -1,3 +1,4 @@
+import { formatDuration } from '@/intl/format';
 import type {
   BuildHistoryEntry,
   BuildPlan,
@@ -8,24 +9,6 @@ import type {
 } from '@/protocol/types';
 
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
-
-/** The `h`/`m` form apps/desktop uses on activity badges. */
-export function shortDuration(ms: number): string {
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return '<1m';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return minutes % 60 === 0 ? `${hours}h` : `${hours}h${String(minutes % 60).padStart(2, '0')}m`;
-  return `${Math.floor(hours / 24)}d`;
-}
-
-export function coarseDuration(ms: number): string {
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return '<1m';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
-}
 
 export function clockDuration(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -48,14 +31,14 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
       const tool = activity.driver?.tool ?? 'an unknown tool';
       const since = activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
       const text = Number.isFinite(since)
-        ? `Driven by ${tool} \u00B7 ${shortDuration(Math.max(0, now - since))}`
+        ? `Driven by ${tool} \u00B7 ${formatDuration(Math.max(0, now - since))}`
         : `Driven by ${tool}`;
       return { kind: 'driven', text };
     }
     case 'idle': {
       const last = activity.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN;
       if (Number.isFinite(last) && now - last < ACTIVE_WINDOW_MS) return null;
-      return { kind: 'idle', text: Number.isFinite(last) ? `Idle ${shortDuration(Math.max(0, now - last))}` : 'Idle' };
+      return { kind: 'idle', text: Number.isFinite(last) ? `Idle ${formatDuration(Math.max(0, now - last))}` : 'Idle' };
     }
     case 'unknown':
       return { kind: 'unknown', text: 'Activity unknown' };
@@ -75,7 +58,7 @@ export function driversSummary(activities: (DeviceActivity | undefined)[], now: 
   const starts = driven.map((a) => (a.driver?.since ? Date.parse(a.driver.since) : NaN)).filter(Number.isFinite);
   const latest = starts.length ? Math.max(...starts) : NaN;
   return Number.isFinite(latest)
-    ? `${tools.join(', ')} \u00B7 ${shortDuration(Math.max(0, now - latest))}`
+    ? `${tools.join(', ')} \u00B7 ${formatDuration(Math.max(0, now - latest))}`
     : tools.join(', ');
 }
 
@@ -130,7 +113,7 @@ export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase'>): str
 export function lastBuildSummary(last: LastBuild, now: number, withReason = true): string {
   const ended = Date.parse(last.finishedAt ?? last.startedAt);
   const took = `${last.durationMs === null ? '' : ` \u00B7 ${clockDuration(last.durationMs)}`}${
-    Number.isNaN(ended) ? '' : ` \u00B7 ${shortDuration(now - ended)} ago`
+    Number.isNaN(ended) ? '' : ` \u00B7 ${formatDuration(now - ended)} ago`
   }`;
   if (last.status !== 'ok') return `Failed (${last.errorCode ?? 'error'})${took}`;
   if (last.cacheHit === 'local') return `Cache hit (local)${took}`;
@@ -174,7 +157,7 @@ export function historyDetail(entry: BuildHistoryEntry, now: number): string {
   const at = Date.parse(entry.finishedAt ?? entry.startedAt);
   return [
     cache,
-    Number.isNaN(at) ? null : `${shortDuration(Math.max(0, now - at))} ago`,
+    Number.isNaN(at) ? null : `${formatDuration(Math.max(0, now - at))} ago`,
     entry.slot === 'default' ? null : `slot ${entry.slot}`,
   ]
     .filter(Boolean)

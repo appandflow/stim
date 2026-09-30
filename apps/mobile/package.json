@@ -15,10 +15,17 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "format": "oxfmt .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "intl:extract": "lingui extract --clean",
+    "intl:compile": "lingui compile",
+    "intl:check": "pnpm run intl:extract && pnpm run intl:compile && git diff --exit-code -- locales"
   },
   "dependencies": {
     "@expo/ui": "~58.0.7",
+    "@formatjs/intl-locale": "5.3.12",
+    "@formatjs/intl-pluralrules": "6.3.15",
+    "@lingui/core": "5.9.5",
+    "@lingui/react": "5.9.5",
     "@sentry/react-native": "8.28.0",
     "expo": "~58.0.0-preview.7",
     "expo-camera": "~58.0.3",
@@ -53,6 +60,9 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@lingui/babel-plugin-lingui-macro": "5.9.5",
+    "@lingui/cli": "5.9.5",
+    "@lingui/format-po": "5.9.5",
     "@react-native/metro-config": "0.88.0-rc.1",
     "@testing-library/react-native": "14.0.1",
     "@types/jest": "^29.5.14",
@@ -60,6 +70,7 @@
     "@types/ws": "^8.18.1",
     "babel-preset-expo": "~58.0.4",
     "eslint-plugin-expo": "^1.2.0",
+    "eslint-plugin-lingui": "0.16.0",
     "jest": "~29.7.0",
     "jest-expo": "~58.0.3",
     "oxfmt": "0.65.0",
@@ -75,6 +86,9 @@
       "^@/assets/(.*)$": "<rootDir>/assets/$1"
     },
     "preset": "jest-expo",
+    "setupFiles": [
+      "<rootDir>/src/intl/i18n.ts"
+    ],
     "testPathIgnorePatterns": [
       "/node_modules/",
       "/mock-server/"

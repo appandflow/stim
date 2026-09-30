@@ -15,18 +15,9 @@ import { useNow } from '@/hooks/use-now';
 import { useFrame, useMacConnection } from '@/hooks/mac-connection';
 import { usageLabel } from '@/components/workspace-cards';
 import { useAgentActions } from '@/hooks/workspace-logs';
-import { formatBytes } from '@/lib/home';
-import { shortDuration } from '@/lib/format';
+import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
 import { tildeHome } from '@/lib/paths';
-import {
-  agentRow,
-  appPresence,
-  currentPhaseLabel,
-  deviceTitle,
-  formatCpu,
-  formatMemoryMb,
-  type Usage,
-} from '@/lib/workspace-view';
+import { agentRow, appPresence, currentPhaseLabel, deviceTitle, formatCpu, type Usage } from '@/lib/workspace-view';
 import { platformName, runningBuild, streamsFrames, unservedReason, type DeviceRef } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
@@ -76,7 +67,7 @@ export function DeviceTile({
     ? [
         <Pill key="physical">Physical</Pill>,
         device.leaseExpiresAt ? (
-          <Pill key="lease">{`Leased \u00B7 ${shortDuration(Math.max(0, Date.parse(device.leaseExpiresAt) - now))} left`}</Pill>
+          <Pill key="lease">{`Leased \u00B7 ${formatDuration(Math.max(0, Date.parse(device.leaseExpiresAt) - now))} left`}</Pill>
         ) : null,
       ]
     : [];

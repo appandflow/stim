@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro';
 import { Stack, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Linking, Platform, RefreshControl, View } from 'react-native';
@@ -13,7 +14,7 @@ import type { Theme } from '@/design/theme';
 import { useInbox } from '@/hooks/inbox';
 import { usePairedMacs } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
-import { coarseDuration } from '@/lib/format';
+import { formatDuration } from '@/intl/format';
 import { byDay, itemData, type InboxFilters, type InboxItem } from '@/lib/inbox';
 import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
@@ -47,7 +48,9 @@ function categoryColor(theme: Theme, category: OversightCategory): string {
   }
 }
 
-const SUPPRESSED_TEXT = { muted: 'Muted', 'quiet-hours': 'Quiet hours' } as const;
+function suppressedText(suppressed: NonNullable<InboxItem['suppressed']>): string {
+  return suppressed === 'muted' ? t`Muted` : t`Quiet hours`;
+}
 
 export function Inbox() {
   const { theme } = useUnistyles();
@@ -80,14 +83,14 @@ export function Inbox() {
           icon={Platform.OS === 'ios' ? 'line.3.horizontal.decrease' : FUNNEL_ICON}
           iconRenderingMode="template"
           tintColor={theme.colors.text}
-          accessibilityLabel="Filter and mark read"
+          accessibilityLabel={t`Filter and mark read`}
         >
           <Stack.Toolbar.MenuAction icon="checkmark.circle" disabled={inbox.unread === 0} onPress={inbox.markAllRead}>
-            Mark all read
+            {t`Mark all read`}
           </Stack.Toolbar.MenuAction>
-          <Stack.Toolbar.Menu inline title="Category">
+          <Stack.Toolbar.Menu inline title={t`Category`}>
             <Stack.Toolbar.MenuAction isOn={category === null} onPress={() => setCategory(null)}>
-              All categories
+              {t`All categories`}
             </Stack.Toolbar.MenuAction>
             {NOTIFY_CATEGORIES.map((value) => (
               <Stack.Toolbar.MenuAction key={value} isOn={category === value} onPress={() => setCategory(value)}>
@@ -96,9 +99,9 @@ export function Inbox() {
             ))}
           </Stack.Toolbar.Menu>
           {showMacs ? (
-            <Stack.Toolbar.Menu inline title="Machine">
+            <Stack.Toolbar.Menu inline title={t`Machine`}>
               <Stack.Toolbar.MenuAction isOn={macId === null} onPress={() => setMacId(null)}>
-                All machines
+                {t`All machines`}
               </Stack.Toolbar.MenuAction>
               {(macs ?? []).map((mac) => (
                 <Stack.Toolbar.MenuAction key={mac.id} isOn={macId === mac.id} onPress={() => setMacId(mac.id)}>
@@ -127,11 +130,11 @@ export function Inbox() {
         renderItem={({ item }) => <InboxRow item={item} now={now} onPress={open} />}
         ListEmptyComponent={
           <EmptyState
-            title={category || macId ? 'Nothing matches the filters' : 'No notifications'}
+            title={category || macId ? t`Nothing matches the filters` : t`No notifications`}
             message={
               inbox.supported
-                ? 'What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days.'
-                : 'Update stim-server on your Macs to keep a history of their notifications.'
+                ? t`What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days.`
+                : t`Update stim-server on your Macs to keep a history of their notifications.`
             }
           />
         }
@@ -143,14 +146,17 @@ export function Inbox() {
 function InboxRow({ item, now, onPress }: { item: InboxItem; now: number; onPress: (item: InboxItem) => void }) {
   const { theme } = useUnistyles();
   const label = NOTIFY_CATEGORY_LABELS[item.category];
-  const ago = coarseDuration(Math.max(0, now - Date.parse(item.at)));
+  const ago = formatDuration(Math.max(0, now - Date.parse(item.at)), { coarse: true });
   const machine = item.target.kind === 'machine';
   const detail = [label, machine ? null : item.macName].filter(Boolean).join(' \u00B7 ');
+  const { title, body } = item;
   return (
     <Touch
       feedback="row"
       onPress={() => onPress(item)}
-      accessibilityLabel={`${item.read ? '' : 'Unread, '}${item.title}, ${item.body}, ${detail}, ${ago} ago`}
+      accessibilityLabel={
+        item.read ? t`${title}, ${body}, ${detail}, ${ago} ago` : t`Unread, ${title}, ${body}, ${detail}, ${ago} ago`
+      }
       style={styles.row}
     >
       <View style={styles.iconWell(categoryColor(theme, item.category))}>
@@ -177,7 +183,7 @@ function InboxRow({ item, now, onPress }: { item: InboxItem; now: number; onPres
         </Text>
         <Text variant="caption" tone="tertiary" numberOfLines={1}>
           {detail}
-          {item.suppressed ? ` \u00B7 ${SUPPRESSED_TEXT[item.suppressed]}` : ''}
+          {item.suppressed ? ` \u00B7 ${suppressedText(item.suppressed)}` : ''}
         </Text>
       </View>
     </Touch>

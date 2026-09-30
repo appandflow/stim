@@ -14,20 +14,18 @@ import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
+import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
 import { agentLabel } from '@/lib/agents';
 import { buildProgress, clockDuration } from '@/lib/format';
-import { formatBytes } from '@/lib/home';
 import {
   barSteps,
   currentPhaseLabel,
   formatCpu,
-  formatMemoryMb,
   namesPhases,
   otherPlatformLine,
   phaseName,
   phaseSteps,
   remoteBuild,
-  sinceLabel,
   type BuildLine,
   type BundleLine,
   type ChipTone,
@@ -449,7 +447,7 @@ export function BuildInProgressCard({
   const other = otherPlatformLine(env, build.platform, now);
   const miss = build.missReason?.summary;
   const remote = remoteBuild(build, now);
-  const detail = remote?.phaseElapsedMs != null ? sinceLabel(remote.phaseElapsedMs) : counts;
+  const detail = remote?.phaseElapsedMs != null ? formatDuration(remote.phaseElapsedMs, { seconds: true }) : counts;
   return (
     <Card
       onPress={onPress}

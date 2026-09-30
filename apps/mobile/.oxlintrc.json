@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "react", "import", "oxc", "unicorn"],
-  "jsPlugins": ["eslint-plugin-expo"],
+  "jsPlugins": ["eslint-plugin-expo", "eslint-plugin-lingui"],
   "categories": {
     "correctness": "error"
   },
@@ -13,7 +13,7 @@
   "globals": {
     "__DEV__": "readonly"
   },
-  "ignorePatterns": ["node_modules/**", "ios/**", "android/**", ".expo/**", "dist/**"],
+  "ignorePatterns": ["node_modules/**", "ios/**", "android/**", ".expo/**", "dist/**", "locales/**"],
   "rules": {
     "eqeqeq": ["warn", "smart"],
     "no-empty-character-class": "warn",
@@ -106,9 +106,51 @@
     "react/rule-suppression": "error",
     "expo/no-dynamic-env-var": "error",
     "expo/no-env-var-destructuring": "error",
-    "expo/use-dom-exports": "error"
+    "expo/use-dom-exports": "error",
+    "lingui/no-expression-in-message": "error",
+    "lingui/no-single-tag-to-translate": "error",
+    "lingui/no-single-variables-to-translate": "error",
+    "lingui/no-trans-inside-trans": "error",
+    "lingui/t-call-in-function": "error"
   },
   "overrides": [
+    {
+      "files": [
+        "src/intl/**",
+        "src/lib/inbox.ts",
+        "src/screens/about.tsx",
+        "src/screens/filters.tsx",
+        "src/screens/inbox.tsx",
+        "src/screens/rename.tsx",
+        "src/components/workspace-row.tsx"
+      ],
+      "rules": {
+        "lingui/no-unlocalized-strings": [
+          "error",
+          {
+            "ignore": ["^(?![A-Z])\\S+$"],
+            "ignoreNames": [
+              {
+                "regex": {
+                  "pattern": "^(variant|tone|weight|feedback|placement|iconRenderingMode|ellipsizeMode|returnKeyType|keyExtractor|name|icon|key|size|testID)$"
+                }
+              },
+              { "regex": { "pattern": "[Ss]tyle$" } }
+            ],
+            "ignoreFunctions": [
+              "require",
+              "console.*",
+              "Error",
+              "*.join",
+              "*.includes",
+              "*.startsWith",
+              "*.endsWith",
+              "Date.parse"
+            ]
+          }
+        ]
+      }
+    },
     {
       "files": ["**/*.ts", "**/*.tsx"],
       "rules": {
@@ -121,6 +163,10 @@
           }
         ]
       }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "rules": { "lingui/no-unlocalized-strings": "off" }
     },
     {
       "files": ["**/*.js", "**/*.mjs", "**/*.cjs", "app.config.ts", "scripts/**", "mock-server/**", "plugins/**"],

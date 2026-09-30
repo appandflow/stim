@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -44,9 +46,11 @@ export const ErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RootErrorBoundar
 
 export default function RootLayout() {
   return (
-    <SettingsProvider>
-      <RootLayoutContent />
-    </SettingsProvider>
+    <I18nProvider i18n={i18n}>
+      <SettingsProvider>
+        <RootLayoutContent />
+      </SettingsProvider>
+    </I18nProvider>
   );
 }
 

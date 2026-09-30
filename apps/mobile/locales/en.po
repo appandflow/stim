@@ -1,0 +1,257 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-09-30 08:04-0400\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en\n"
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Plural-Forms: \n"
+
+#. placeholder {0}: env.warnings.length
+#: src/components/workspace-row.tsx
+msgid "{0, plural, one {# issue} other {# issues}}"
+msgstr "{0, plural, one {# issue} other {# issues}}"
+
+#. placeholder {0}: env.warnings.length
+#: src/components/workspace-row.tsx
+msgid "{0, plural, one {# warning} other {# warnings}}"
+msgstr "{0, plural, one {# warning} other {# warnings}}"
+
+#: src/intl/format.ts
+msgid "{days}d"
+msgstr "{days}d"
+
+#: src/components/workspace-row.tsx
+msgid "{errors, plural, one {# error} other {# errors}}"
+msgstr "{errors, plural, one {# error} other {# errors}}"
+
+#: src/intl/format.ts
+#: src/intl/format.ts
+#: src/intl/format.ts
+msgid "{gb} GB"
+msgstr "{gb} GB"
+
+#: src/intl/format.ts
+msgid "{hours}h"
+msgstr "{hours}h"
+
+#: src/intl/format.ts
+msgid "{hours}h{rest}m"
+msgstr "{hours}h{rest}m"
+
+#: src/intl/format.ts
+msgid "{kb} KB"
+msgstr "{kb} KB"
+
+#: src/intl/format.ts
+msgid "{mb} MB"
+msgstr "{mb} MB"
+
+#: src/intl/format.ts
+msgid "{minutes}m"
+msgstr "{minutes}m"
+
+#: src/screens/about.tsx
+msgid "{name}: stim {stim} · server {version}"
+msgstr "{name}: stim {stim} · server {version}"
+
+#: src/intl/format.ts
+msgid "{secs}s"
+msgstr "{secs}s"
+
+#: src/intl/format.ts
+msgid "{tb} TB"
+msgstr "{tb} TB"
+
+#: src/screens/inbox.tsx
+msgid "{title}, {body}, {detail}, {ago} ago"
+msgstr "{title}, {body}, {detail}, {ago} ago"
+
+#: src/intl/format.ts
+msgid "{whole} MB"
+msgstr "{whole} MB"
+
+#: src/intl/format.ts
+msgid "<1m"
+msgstr "<1m"
+
+#: src/screens/about.tsx
+msgid "About"
+msgstr "About"
+
+#: src/screens/filters.tsx
+#: src/screens/filters.tsx
+#: src/screens/filters.tsx
+msgid "All"
+msgstr "All"
+
+#: src/screens/inbox.tsx
+msgid "All categories"
+msgstr "All categories"
+
+#: src/screens/inbox.tsx
+msgid "All machines"
+msgstr "All machines"
+
+#: src/screens/inbox.tsx
+msgid "Category"
+msgstr "Category"
+
+#: src/components/workspace-row.tsx
+msgid "EAS session"
+msgstr "EAS session"
+
+#: src/screens/about.tsx
+msgid "embedded"
+msgstr "embedded"
+
+#: src/screens/inbox.tsx
+msgid "Filter and mark read"
+msgstr "Filter and mark read"
+
+#: src/screens/filters.tsx
+msgid "Filters"
+msgstr "Filters"
+
+#: src/screens/filters.tsx
+msgid "Filters are saved on this phone."
+msgstr "Filters are saved on this phone."
+
+#: src/screens/filters.tsx
+msgid "Has errors"
+msgstr "Has errors"
+
+#: src/screens/filters.tsx
+msgid "Has remote sessions"
+msgstr "Has remote sessions"
+
+#: src/screens/filters.tsx
+msgid "Idle"
+msgstr "Idle"
+
+#: src/components/workspace-row.tsx
+msgid "Last seen {seen} ago"
+msgstr "Last seen {seen} ago"
+
+#: src/screens/filters.tsx
+msgid "Live"
+msgstr "Live"
+
+#: src/screens/inbox.tsx
+msgid "Machine"
+msgstr "Machine"
+
+#: src/screens/rename.tsx
+msgid "Machine name"
+msgstr "Machine name"
+
+#: src/screens/filters.tsx
+msgid "Machines"
+msgstr "Machines"
+
+#: src/screens/inbox.tsx
+msgid "Mark all read"
+msgstr "Mark all read"
+
+#: src/components/workspace-row.tsx
+msgid "Metro "
+msgstr "Metro "
+
+#: src/screens/inbox.tsx
+msgid "Muted"
+msgstr "Muted"
+
+#: src/screens/inbox.tsx
+msgid "No notifications"
+msgstr "No notifications"
+
+#: src/intl/format.ts
+msgid "None"
+msgstr "None"
+
+#: src/screens/inbox.tsx
+msgid "Nothing matches the filters"
+msgstr "Nothing matches the filters"
+
+#: src/components/workspace-row.tsx
+msgid "Offline"
+msgstr "Offline"
+
+#: src/screens/filters.tsx
+msgid "Projects"
+msgstr "Projects"
+
+#: src/screens/inbox.tsx
+msgid "Quiet hours"
+msgstr "Quiet hours"
+
+#: src/components/workspace-row.tsx
+#: src/components/workspace-row.tsx
+msgid "Ready"
+msgstr "Ready"
+
+#: src/screens/filters.tsx
+msgid "Reset"
+msgstr "Reset"
+
+#: src/screens/rename.tsx
+msgid "Save"
+msgstr "Save"
+
+#: src/screens/filters.tsx
+msgid "Show"
+msgstr "Show"
+
+#: src/screens/about.tsx
+msgid "Stim for phones {version} \\u00B7 protocol {PROTOCOL_VERSION}"
+msgstr "Stim for phones {version} \\u00B7 protocol {PROTOCOL_VERSION}"
+
+#: src/components/workspace-row.tsx
+msgid "supervisor unhealthy"
+msgstr "supervisor unhealthy"
+
+#: src/lib/inbox.ts
+msgid "Today"
+msgstr "Today"
+
+#: src/screens/inbox.tsx
+msgid "Unread, {title}, {body}, {detail}, {ago} ago"
+msgstr "Unread, {title}, {body}, {detail}, {ago} ago"
+
+#: src/screens/about.tsx
+msgid "Update {update}"
+msgstr "Update {update}"
+
+#: src/screens/inbox.tsx
+msgid "Update stim-server on your Macs to keep a history of their notifications."
+msgstr "Update stim-server on your Macs to keep a history of their notifications."
+
+#: src/components/workspace-row.tsx
+msgid "Warming"
+msgstr "Warming"
+
+#: src/components/workspace-row.tsx
+msgid "Warming…"
+msgstr "Warming…"
+
+#: src/components/workspace-row.tsx
+msgid "Warming… {warmStep}"
+msgstr "Warming… {warmStep}"
+
+#: src/screens/inbox.tsx
+msgid "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
+msgstr "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
+
+#: src/components/workspace-row.tsx
+msgid "Workspace {title} on {macName}"
+msgstr "Workspace {title} on {macName}"
+
+#: src/lib/inbox.ts
+msgid "Yesterday"
+msgstr "Yesterday"

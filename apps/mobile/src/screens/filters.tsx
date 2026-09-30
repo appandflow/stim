@@ -1,4 +1,6 @@
 import { Host } from '@expo/ui';
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { useMemo, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,12 +15,6 @@ import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/mac-connection';
 import { mergeWorkspaces, projectNames, type ActivityFilter } from '@/lib/home';
 
-const ACTIVITY: { value: ActivityFilter; label: string }[] = [
-  { value: 'live', label: 'Live' },
-  { value: 'idle', label: 'Idle' },
-  { value: 'all', label: 'All' },
-];
-
 const toggled = (list: string[], value: string) =>
   list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
@@ -30,16 +26,23 @@ export function Filters() {
     () => projectNames(mergeWorkspaces(connections.map((c) => ({ id: c.mac.id, name: c.mac.name, status: c.status })))),
     [connections],
   );
+  const activity: { value: ActivityFilter; label: string }[] = [
+    { value: 'live', label: t`Live` },
+    { value: 'idle', label: t`Idle` },
+    { value: 'all', label: t`All` },
+  ];
   const selectedMacs = filters.macs.filter((id) => connections.some((c) => c.mac.id === id));
 
   return (
     <ScrollView contentContainerStyle={styles.container} style={{ backgroundColor: theme.colors.background }}>
       <View style={styles.titleRow}>
-        <Text variant="title">Filters</Text>
-        <Button title="Reset" variant="plain" onPress={reset} />
+        <Text variant="title">
+          <Trans>Filters</Trans>
+        </Text>
+        <Button title={t`Reset`} variant="plain" onPress={reset} />
       </View>
-      <Group title="Show">
-        {ACTIVITY.map(({ value, label }) => (
+      <Group title={t`Show`}>
+        {activity.map(({ value, label }) => (
           <Toggle
             key={value}
             label={label}
@@ -49,8 +52,8 @@ export function Filters() {
         ))}
       </Group>
       {connections.length > 1 ? (
-        <Group title="Machines">
-          <Toggle label="All" on={selectedMacs.length === 0} onPress={() => update({ macs: [] })} />
+        <Group title={t`Machines`}>
+          <Toggle label={t`All`} on={selectedMacs.length === 0} onPress={() => update({ macs: [] })} />
           {connections.map((c) => (
             <Toggle
               key={c.mac.id}
@@ -62,8 +65,8 @@ export function Filters() {
         </Group>
       ) : null}
       {projects.length > 1 ? (
-        <Group title="Projects">
-          <Toggle label="All" on={filters.projects.length === 0} onPress={() => update({ projects: [] })} />
+        <Group title={t`Projects`}>
+          <Toggle label={t`All`} on={filters.projects.length === 0} onPress={() => update({ projects: [] })} />
           {projects.map((project) => (
             <Toggle
               key={project}
@@ -77,21 +80,21 @@ export function Filters() {
       <View style={styles.switches}>
         <Host matchContents seedColor={theme.colors.primary}>
           <Switch
-            label="Has errors"
+            label={t`Has errors`}
             value={filters.errorsOnly}
             onValueChange={(errorsOnly) => update({ errorsOnly })}
           />
         </Host>
         <Host matchContents seedColor={theme.colors.primary}>
           <Switch
-            label="Has remote sessions"
+            label={t`Has remote sessions`}
             value={filters.remoteOnly}
             onValueChange={(remoteOnly) => update({ remoteOnly })}
           />
         </Host>
       </View>
       <Text variant="caption" tone="tertiary">
-        Filters are saved on this phone.
+        <Trans>Filters are saved on this phone.</Trans>
       </Text>
     </ScrollView>
   );

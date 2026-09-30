@@ -11,8 +11,8 @@ import { Text } from '@/components/text';
 import { chipColor } from '@/components/workspace-cards';
 import { useStatus } from '@/hooks/mac-connection';
 import { useNow } from '@/hooks/use-now';
+import { formatDuration } from '@/intl/format';
 import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
-import { shortDuration } from '@/lib/format';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
 import { workspaceTitleAt } from '@/lib/workspaces';
 import type { PullRequestFacts } from '@/protocol/types';
@@ -99,7 +99,7 @@ export function WorkspaceWork({ path }: { path: string }) {
           <Button title="Open in GitHub" onPress={() => void Linking.openURL(pr.url)} />
           {Number.isFinite(checkedAt) ? (
             <Text variant="footnote" tone="tertiary" style={styles.center}>
-              {`Checked ${shortDuration(Math.max(0, now - checkedAt))} ago`}
+              {`Checked ${formatDuration(Math.max(0, now - checkedAt))} ago`}
             </Text>
           ) : null}
         </>

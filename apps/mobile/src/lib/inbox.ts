@@ -1,3 +1,6 @@
+import { t } from '@lingui/core/macro';
+
+import { formatDateTime } from '@/intl/format';
 import type { NotificationData } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
 import type { NotificationEntry, NotificationsListResult } from '@/protocol/types';
@@ -115,10 +118,10 @@ export function byDay(items: InboxItem[], now: number): { title: string; data: I
     const days = Math.round((today.getTime() - day.getTime()) / 86_400_000);
     const title =
       days === 0
-        ? 'Today'
+        ? t`Today`
         : days === 1
-          ? 'Yesterday'
-          : day.toLocaleDateString(undefined, {
+          ? t`Yesterday`
+          : formatDateTime(day, {
               weekday: 'long',
               month: 'long',
               day: 'numeric',

@@ -15,7 +15,7 @@
       "ignoreBinaries": ["plutil"]
     },
     "apps/mobile": {
-      "entry": ["plugins/*.js", "scripts/*.mjs", "mock-server/*.mjs", "fingerprint.config.js"],
+      "entry": ["plugins/*.js", "scripts/*.mjs", "mock-server/*.mjs", "fingerprint.config.js", "lingui.config.js"],
       "ignoreBinaries": ["stim-server"],
       "ignoreDependencies": ["expo-screen-orientation", "@expo/fingerprint"],
       "ignoreExportsUsedInFile": {
