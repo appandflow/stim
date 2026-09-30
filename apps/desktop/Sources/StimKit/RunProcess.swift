@@ -53,7 +53,7 @@ public struct ProcessRequest: Sendable {
   public var captureStderr = false
   public var stderrLimit: UInt64 = 4096
   /// The child's quality of service; nil leaves it unset. macOS throttles the disk I/O of utility and
-  /// background children, which made `du` over a 9 GB node_modules take 165 to 390 seconds instead of 8 to 11.
+  /// background children.
   public var qualityOfService: QualityOfService?
   public var registry: ProcessRegistry?
 
@@ -130,7 +130,7 @@ public struct ProcessRequest: Sendable {
         if process.isRunning { kill(process.processIdentifier, timeoutSignal) }
         if exited.wait(timeout: .now() + killGrace) == .timedOut {
           if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-          _ = exited.wait(timeout: .now() + 5)
+          _ = exited.wait(timeout: .now() + 2)
         }
       }
     } else {

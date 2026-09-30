@@ -20,7 +20,7 @@ public enum SimulatorFold {
     request.captureStderr = true
     do {
       let result = try await request.run()
-      return result.status == 0 ? nil : result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+      return result.succeeded ? nil : result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
     } catch {
       return error.localizedDescription
     }

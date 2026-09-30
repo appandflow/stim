@@ -7,7 +7,6 @@ import StimKit
 @MainActor
 final class StorageStore: ObservableObject {
   static let maxAge: TimeInterval = 15 * 60
-  nonisolated static let toolTimeout: TimeInterval = 30
   nonisolated static let duTimeout: TimeInterval = 180
   nonisolated static let duConcurrency = 3
   nonisolated private static let running = ProcessRegistry()
@@ -86,14 +85,15 @@ final class StorageStore: ObservableObject {
   }
 
   private func loadPulls(repositories: Set<String>, environment: [String: String]) async {
-    let gh = GitHubCLI(environment: environment, registry: Self.running)
-    let pulls = await Self.offThread {
-      Dictionary(
+    let (gh, pulls) = await Self.offThread {
+      let gh = GitHubCLI(environment: environment, registry: Self.running)
+      let pulls = Dictionary(
         uniqueKeysWithValues: repositories.compactMap { repository -> (String, [String: PullRequest])? in
           guard let byBranch = gh.run(PullRequest.listArguments, cwd: repository).flatMap(PullRequest.byBranch)
           else { return nil }
           return (repository, byBranch)
         })
+      return (gh, pulls)
     }
     self.pulls = pulls
     hasGitHubCLI = gh.executable != nil
