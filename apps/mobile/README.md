@@ -894,8 +894,8 @@ This is the `expo-updates` default. A monitor that opens to glance at a build
 should open at once, even on a slow or captive network, and one launch on the
 previous JS changes nothing on the Mac. A resumed process never launches
 again, so the app also checks whenever it returns to the foreground, at most
-once a minute. Once an update has downloaded, the menu's footer shows
-**Restart to update** (unless a machine problem outranks it); tapping it asks
+once a minute. Once an update has downloaded, the menu lists
+**Restart to update** under **Pair a machine**; tapping it asks
 before restarting into the new JS, and a restart that fails says so. Nothing
 restarts the app on its own.
 
