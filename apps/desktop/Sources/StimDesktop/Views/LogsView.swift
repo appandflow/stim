@@ -82,7 +82,7 @@ struct LogsView: View {
             query.sources.insert(source)
           }
         } label: {
-          ToggleChip(on: on, tone: .accent) { Text(Self.title(source)) }
+          ToggleChip(on: on, tone: .brand) { Text(Self.title(source)) }
         }
         .buttonStyle(.plain)
         .help(Self.help(source))
@@ -214,7 +214,7 @@ struct LogMoment: Equatable {
 
 private struct ToggleChip<Content: View>: View {
   var on: Bool
-  var tone: PillTone
+  var tone: Tone
   @ViewBuilder var content: Content
 
   var body: some View {

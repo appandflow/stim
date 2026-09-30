@@ -133,7 +133,7 @@ struct WorkspaceHeader: View {
         Pill {
           Sparkline(values: usage.memory, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
           Text("RAM")
-          Text(formatMemory(usage.memoryBytes)).font(.stim(.caption, mono: true))
+          Text(Format.memory(usage.memoryBytes)).font(.stim(.caption, mono: true))
         }
         .help("Memory the workspace's processes, simulators and emulators use, as Activity Monitor counts it")
       } else if let mb = env.memoryMb, mb > 0 {

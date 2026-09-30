@@ -52,13 +52,13 @@ struct MemoryPill: View {
   var body: some View {
     Pill {
       Image(systemName: "memorychip")
-      Text(formatGigabytes(mb: mb))
+      Text(Format.gigabytes(mb: mb))
     }
     .help(help)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
       source != .footprint && source != .rss
-        ? "Estimated to use about \(formatGigabytes(mb: mb)) of memory" : "Uses \(formatGigabytes(mb: mb)) of memory")
+        ? "Estimated to use about \(Format.gigabytes(mb: mb)) of memory" : "Uses \(Format.gigabytes(mb: mb)) of memory")
   }
 
   private var help: String {
@@ -77,7 +77,7 @@ struct DriversPill: View {
   var body: some View {
     TimelineView(.periodic(from: .now, by: 30)) { context in
       if let summary = ActivityBadge.driversSummary(activities, now: context.date) {
-        Pill(tone: .accent) {
+        Pill(tone: .brand) {
           StatusDot(color: Palette.primary)
           Text("Driven by \(summary)")
         }
@@ -332,9 +332,9 @@ struct BuildProgressBar: View {
   }
 
   private func timing(_ progress: BuildProgress) -> String {
-    let elapsed = formatDuration(ms: progress.elapsedMs)
+    let elapsed = Format.elapsed(ms: progress.elapsedMs)
     guard let expected = build.expectedMs, progress.remaining != nil else { return elapsed }
-    return "\(elapsed) / ~\(formatDuration(ms: expected))"
+    return "\(elapsed) / ~\(Format.elapsed(ms: expected))"
   }
 
   private var help: String {

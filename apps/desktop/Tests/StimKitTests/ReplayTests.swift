@@ -206,7 +206,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(timeline.seekTime(forActionAt: 2 * minute) == 2 * minute - 1500)
     #expect(timeline.seekTime(forActionAt: 2 * hour + 500) == 2 * hour)
     #expect(timeline.seekTime(forActionAt: hour) == nil)
-    #expect([40_000, 14 * minute, 2 * hour, 72 * hour].map(ReplayTimeline.shortDuration) == ["40s", "14m", "2h", "3d"])
+    #expect([40_000, 14 * minute, 2 * hour, 72 * hour].map(Format.roundedDuration(ms:)) == ["40s", "14m", "2h", "3d"])
   }
 
   @Test func stepsToTheNextOrPreviousAgentActionSkippingErrorsAndTheActionItStandsOn() {

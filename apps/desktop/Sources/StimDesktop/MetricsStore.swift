@@ -139,28 +139,6 @@ func stimDiskLocations(_ workspaces: [Workspace], status: StatusStore) -> [(labe
   ]
 }
 
-func formatMemory(_ bytes: Int64) -> String {
-  ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
-}
-
-private let diskFormatter: ByteCountFormatter = {
-  let formatter = ByteCountFormatter()
-  formatter.countStyle = .file
-  formatter.allowsNonnumericFormatting = false
-  return formatter
-}()
-
-func formatDisk(_ bytes: Int64) -> String {
-  diskFormatter.string(fromByteCount: bytes)
-}
-
 func formatPercent(_ percent: Double) -> String {
   "\(Int(percent.rounded()))%"
-}
-
-func formatAgo(_ seconds: TimeInterval) -> String {
-  let minutes = Int(seconds / 60)
-  if minutes < 1 { return "just now" }
-  if minutes < 60 { return "\(minutes)m ago" }
-  return "\(minutes / 60)h ago"
 }

@@ -406,24 +406,13 @@ public enum Oversight {
     var activity: OversightActivity?
   }
 
-  private static let modelPattern = try! NSRegularExpression(pattern: #"\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$"#)
-
-  static func iosModel(_ name: String?) -> String {
-    let name = name ?? ""
-    let range = NSRange(name.startIndex..., in: name)
-    guard let match = modelPattern.firstMatch(in: name, range: range),
-      let group = Range(match.range(at: 1), in: name)
-    else { return "iOS Simulator" }
-    return String(name[group])
-  }
-
   static func devices(_ env: OversightEnvironment) -> [SlotDevice] {
     var out: [SlotDevice] = []
     func add(_ slot: String, _ ios: OversightDevice?, _ android: OversightDevice?) {
       if let ios {
         out.append(
           SlotDevice(
-            platform: "ios", slot: slot, model: iosModel(ios.name), running: ios.state == "Booted",
+            platform: "ios", slot: slot, model: Format.simulatorModel(ios.name), running: ios.state == "Booted",
             activity: ios.activity))
       }
       if let android {
@@ -579,7 +568,7 @@ public enum Oversight {
       if let lowest, lowest < (previous?.disk != nil ? diskRecoveredBytes : diskCriticalBytes) {
         var held = previous?.disk ?? OversightState.Held(since: now, notified: false)
         if !held.notified {
-          let body = "\(formatBytes(lowest)) free, below Stim's floor"
+          let body = "\(Format.freeSpace(lowest)) free, below Stim's floor"
           held.notified = run.lasting(run.machineNotification("disk", body))
         }
         state.disk = held
@@ -794,17 +783,6 @@ public enum Oversight {
       state.workspaces = previous?.workspaces ?? [:]
     }
     return OversightResult(state: state, notifications: run.notifications, wakeAt: run.wakeAt)
-  }
-
-  static func formatBytes(_ bytes: Double) -> String {
-    let tenths = { (value: Double) -> String in
-      let scaled = value * 10
-      let tie = scaled - scaled.rounded(.down) == 0.5 && (-scaled).addingProduct(value, 10) == 0
-      return String(format: "%.1f", tie ? scaled.rounded(.up) / 10 : value)
-    }
-    if bytes >= 1e12 { return "\(tenths(bytes / 1e12)) TB" }
-    let gb = bytes / 1e9
-    return gb >= 100 ? "\(Int(gb.rounded())) GB" : "\(tenths(gb)) GB"
   }
 
   /// Whether `minuteOfDay` falls in quiet hours from `start` to `end`, minutes after midnight; they may span midnight.

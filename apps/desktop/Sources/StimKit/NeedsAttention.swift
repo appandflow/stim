@@ -51,12 +51,6 @@ private func epochMs(_ text: String?) -> Double? {
   text.flatMap(parseTimestamp).map { $0.timeIntervalSince1970 * 1000 }
 }
 
-private func formatFreeBytes(_ bytes: Double) -> String {
-  if bytes >= 1e12 { return String(format: "%.1f TB", bytes / 1e12) }
-  let gb = bytes / 1e9
-  return gb >= 100 ? "\(Int(gb.rounded())) GB" : String(format: "%.1f GB", gb)
-}
-
 private func signingItem(_ env: Workspace, _ platform: String, _ build: LastBuild, now: Double) -> NeedsAttentionItem? {
   guard let code = build.errorCode, signingCodes.contains(code) else { return nil }
   if !env.live {
@@ -108,17 +102,13 @@ private struct OverseenDevice {
   var driven: Bool { running && activity?.state == "driven" }
 }
 
-private let simulatorModel = try! NSRegularExpression(pattern: #"\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$"#)
-
 private func overseenDevices(_ env: Workspace) -> [OverseenDevice] {
   var out: [OverseenDevice] = []
   func add(_ ios: IosDevice?, _ android: AndroidDevice?) {
     if let ios {
-      let range = NSRange(ios.name.startIndex..., in: ios.name)
-      let model = simulatorModel.firstMatch(in: ios.name, range: range).flatMap { Range($0.range(at: 1), in: ios.name) }
-        .map { String(ios.name[$0]) }
       out.append(
-        OverseenDevice(model: model ?? "iOS Simulator", running: ios.state == "Booted", activity: ios.activity, web: false))
+        OverseenDevice(model: Format.simulatorModel(ios.name), running: ios.state == "Booted", activity: ios.activity, web: false)
+      )
     }
     if let android {
       out.append(
@@ -220,7 +210,7 @@ public func needsAttention(
       (
         NeedsAttentionItem(
           id: "machine:disk", category: .machine, severity: "error", workspace: nil,
-          body: "\(formatFreeBytes(lowest)) free, below Stim's floor", remedy: nil), 0
+          body: "\(Format.freeSpace(lowest)) free, below Stim's floor", remedy: nil), 0
       ))
   }
   for env in environments {

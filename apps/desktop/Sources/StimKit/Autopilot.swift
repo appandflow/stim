@@ -99,13 +99,12 @@ public struct PressurePlan: Hashable, Sendable {
     if deletesDevices > 0 { parts.append("delete \(Self.count(deletesDevices, "unused owned device"))") }
     if parts.isEmpty { parts.append("empty what stim gc reports") }
     let list = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and " + parts.last!
-    let freed = reclaimableBytes > 0 ? " to free about \(Self.format(reclaimableBytes))" : ""
+    let freed = reclaimableBytes > 0 ? " to free about \(Format.fileSize(reclaimableBytes))" : ""
     return list.prefix(1).uppercased() + list.dropFirst() + freed + "."
   }
 
   static func count(_ n: Int, _ noun: String) -> String { n == 1 ? "1 \(noun)" : "\(n) \(noun)s" }
 
-  static func format(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 }
 
 /// One autopilot or plan run, kept in the app's activity log.

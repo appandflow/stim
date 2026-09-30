@@ -47,21 +47,12 @@ public enum ActivityBadge: Equatable, Sendable {
   public var text: String {
     switch self {
     case .driven(let tool, let since):
-      return since.map { "Driven by \(tool) \u{00B7} \(Self.duration($0))" } ?? "Driven by \(tool)"
+      return since.map { "Driven by \(tool) \u{00B7} \(Format.duration($0))" } ?? "Driven by \(tool)"
     case .idle(let idle):
-      return idle.map { "Idle \(Self.duration($0))" } ?? "Idle"
+      return idle.map { "Idle \(Format.duration($0))" } ?? "Idle"
     case .unknown:
       return "Activity unknown"
     }
-  }
-
-  static func duration(_ seconds: TimeInterval) -> String {
-    let minutes = Int(seconds / 60)
-    if minutes < 1 { return "<1m" }
-    if minutes < 60 { return "\(minutes)m" }
-    let hours = minutes / 60
-    if hours < 24 { return minutes % 60 == 0 ? "\(hours)h" : "\(hours)h\(String(format: "%02d", minutes % 60))m" }
-    return "\(hours / 24)d"
   }
 
   private static func date(_ text: String) -> Date? {
@@ -83,7 +74,7 @@ extension ActivityBadge {
     }
     let names = tools.joined(separator: ", ")
     guard let latest = driven.compactMap({ $0.driver?.since.flatMap(date) }).max() else { return names }
-    return "\(names) \u{00B7} \(duration(max(0, now.timeIntervalSince(latest))))"
+    return "\(names) \u{00B7} \(Format.duration(max(0, now.timeIntervalSince(latest))))"
   }
 }
 

@@ -1,4 +1,5 @@
 #if DEBUG
+  import StimKit
   import SwiftUI
 
   /// Every design token and kit component, in light and dark side by side.
@@ -80,15 +81,15 @@
           section("Pills") {
             ForEach(Pill<Text>.Size.allCases, id: \.self) { size in
               FlowLayout(spacing: Space.sm, lineSpacing: Space.sm) {
-                ForEach(PillTone.allCases, id: \.self) { tone in
+                ForEach(Tone.allCases, id: \.self) { tone in
                   Pill(String(describing: tone), tone: tone, size: size)
                 }
-                Pill(tone: .accent, size: size, outlined: true) { Text("outlined") }
+                Pill(tone: .brand, size: size, outlined: true) { Text("outlined") }
               }
             }
           }
           section("Banners") {
-            ForEach(BannerTone.allCases, id: \.self) { tone in
+            ForEach(Tone.allCases, id: \.self) { tone in
               Banner(tone: tone, icon: "exclamationmark.triangle.fill") {
                 Text(verbatim: "\(tone) banner").textStyle(.body, weight: .semibold)
                 Text("A message with more detail.").foregroundStyle(Palette.secondary)

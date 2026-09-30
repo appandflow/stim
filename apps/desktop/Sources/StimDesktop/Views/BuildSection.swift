@@ -103,7 +103,7 @@ struct BuildSection: View {
     if let last = env.lastBuilds?.build(for: platform) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         Text(
-          "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(formatAgo(context.date.timeIntervalSince($0)))" } ?? "")"
+          "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(Format.age(context.date.timeIntervalSince($0)))" } ?? "")"
         )
         .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
         .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
@@ -124,7 +124,7 @@ struct BuildSection: View {
   private func checkedAt(_ date: Date?) -> some View {
     if let date {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text("Checked \(formatAgo(context.date.timeIntervalSince(date)))").foregroundStyle(Palette.tertiary)
+        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))").foregroundStyle(Palette.tertiary)
       }
     }
   }
@@ -176,8 +176,8 @@ private struct RunningBuildDetail: View {
     TimelineView(.buildSeconds(build)) { context in
       let steps = build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)
       let (phase, counts) = build.currentPhaseLabel
-      let elapsed = clockDuration(ms: build.progress(at: context.date).elapsedMs)
-      let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
+      let elapsed = Format.clock(ms: build.progress(at: context.date).elapsedMs)
+      let estimate = build.expectedMs.map { "~\(Format.clock(ms: $0))" }
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
@@ -253,8 +253,8 @@ struct BuildHistoryRow: View {
             Spacer(minLength: 4)
             Text(
               [
-                entry.build.durationMs.map { formatDuration(ms: $0) },
-                entry.build.endedAt.map { formatAgo(now.timeIntervalSince($0)) },
+                entry.build.durationMs.map { Format.elapsed(ms: $0) },
+                entry.build.endedAt.map { Format.age(now.timeIntervalSince($0)) },
               ]
               .compactMap { $0 }.joined(separator: " \u{00B7} ")
             )

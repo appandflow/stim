@@ -287,11 +287,11 @@ struct ReplayBar: View {
 
   private func caption(_ timeline: ReplayTimeline, now: Date) -> String {
     guard let replay = controller.replay else {
-      return "Replay \(ReplayTimeline.shortDuration(ms: timeline.recordedLength)) recorded"
+      return "Replay \(Format.roundedDuration(ms: timeline.recordedLength)) recorded"
     }
     guard let at = replay.at else { return "Loading..." }
     let date = Date(timeIntervalSince1970: at / 1000)
-    let ago = ReplayTimeline.shortDuration(ms: now.timeIntervalSince(date) * 1000)
+    let ago = Format.roundedDuration(ms: now.timeIntervalSince(date) * 1000)
     return "\(date.formatted(date: .omitted, time: .standard)) \u{00B7} \(ago) ago\(replay.ended ? " \u{00B7} end" : "")"
   }
 
@@ -490,7 +490,7 @@ struct ReplayTrack: View {
       return "\(marker.title)\(marker.command.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(time)\n\(marker.label)"
     }
     let gap = track.pieces.first { $0.isGap && fraction(x) >= $0.from && fraction(x) <= $0.to }
-    return gap.map { "Not recorded for \(ReplayTimeline.shortDuration(ms: $0.end - $0.start))" } ?? time
+    return gap.map { "Not recorded for \(Format.roundedDuration(ms: $0.end - $0.start))" } ?? time
   }
 
 }

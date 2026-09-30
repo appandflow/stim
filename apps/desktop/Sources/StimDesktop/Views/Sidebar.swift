@@ -68,7 +68,7 @@ struct Sidebar: View {
         Spacer()
         let unread = inbox.inbox.unreadCount
         if unread > 0 {
-          Pill(unread > 99 ? "99+" : "\(unread)", tone: .accent, size: .small)
+          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
             .help("\(unread) unread notification\(unread == 1 ? "" : "s")")
         }
       }
@@ -482,7 +482,7 @@ struct SidebarFooter: View {
       Button {
         selection = .machine
       } label: {
-        statusLabel(dot: Palette.error, text: "Low disk: \(formatDisk(freeBytes)) free")
+        statusLabel(dot: Palette.error, text: "Low disk: \(Format.fileSize(freeBytes)) free")
       }
       .buttonStyle(.plain)
       .help("Free disk is below Stim's hard floor, so start, ios and android refuse \u{2014} click to open Machine")
@@ -496,7 +496,7 @@ struct SidebarFooter: View {
       Button {
         selection = .machine
       } label: {
-        statusLabel(dot: Palette.warning, text: "Low disk: \(formatDisk(freeBytes)) free")
+        statusLabel(dot: Palette.warning, text: "Low disk: \(Format.fileSize(freeBytes)) free")
       }
       .buttonStyle(.plain)
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")

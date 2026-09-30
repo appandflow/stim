@@ -145,10 +145,10 @@ struct PhaseChecklist: View {
   }
 
   private func timing(_ step: PhaseStep) -> String {
-    let expected = step.expectedMs.map { "~\(clockDuration(ms: $0))" }
+    let expected = step.expectedMs.map { "~\(Format.clock(ms: $0))" }
     switch step.state {
     case .done, .pending: return expected ?? ""
-    case .current: return step.elapsedMs.map { clockDuration(ms: $0) } ?? ""
+    case .current: return step.elapsedMs.map { Format.clock(ms: $0) } ?? ""
     }
   }
 }

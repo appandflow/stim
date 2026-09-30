@@ -161,7 +161,7 @@ struct OnboardingBanner: View {
   }
 
   private func popupCard<Body: View, Buttons: View>(
-    kind: Onboarding.PopupKind, icon: String, tone: BannerTone, @ViewBuilder text: () -> Body,
+    kind: Onboarding.PopupKind, icon: String, tone: Tone, @ViewBuilder text: () -> Body,
     @ViewBuilder buttons: () -> Buttons
   ) -> some View {
     Banner(tone: tone, icon: icon, style: .floating, onDismiss: { onboarding.dismissPopup(kind) }) {

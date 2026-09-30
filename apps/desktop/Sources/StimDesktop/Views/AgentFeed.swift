@@ -138,7 +138,7 @@ struct AgentActionLog: View {
             .font(.stim(.headline))
             .lineLimit(1)
           Text(
-            [driving?.since.map { "driving \(shortDuration($0))" }, countLabel(actions.count, "action")]
+            [driving?.since.map { "driving \(Format.duration($0))" }, countLabel(actions.count, "action")]
               .compactMap { $0 }.joined(separator: " \u{00B7} ")
           )
           .font(.stim(.footnote))
@@ -163,7 +163,7 @@ struct AgentActionLog: View {
         Button {
           filter = option.filter
         } label: {
-          Pill(tone: selected ? .accent : option.filter == .failed ? .error : .neutral, outlined: !selected) {
+          Pill(tone: selected ? .brand : option.filter == .failed ? .error : .neutral, outlined: !selected) {
             Text("\(option.label) \u{00B7} \(option.count)")
               .foregroundStyle(
                 selected ? Palette.primary : option.filter == .failed ? Palette.error : Palette.text)

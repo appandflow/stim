@@ -11,10 +11,6 @@ public struct WorkspaceStage: Equatable, Sendable {
     case stopped = "Stopped"
   }
 
-  public enum Tone: Sendable {
-    case success, brand, error, warning, tertiary
-  }
-
   public var label: Label
   public var tone: Tone
   public var subtitle: String?
@@ -32,31 +28,9 @@ public enum AppPresence: Sendable {
   case none, closed
 }
 
-/// "12m" for a duration, "<1m" under a minute.
-public func shortDuration(_ seconds: TimeInterval) -> String {
-  let minutes = Int(max(0, seconds) / 60)
-  if minutes < 1 { return "<1m" }
-  if minutes < 60 { return "\(minutes)m" }
-  let hours = minutes / 60
-  if hours < 24 { return minutes % 60 == 0 ? "\(hours)h" : "\(hours)h\(String(format: "%02d", minutes % 60))m" }
-  return "\(hours / 24)d"
-}
-
-/// "2:38" for a build time.
-public func clockDuration(ms: Double) -> String {
-  let seconds = max(0, Int(ms / 1000))
-  return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
-}
-
-/// "12s" under a minute, else `shortDuration`.
-public func sinceLabel(_ seconds: TimeInterval) -> String {
-  let clamped = max(0, seconds)
-  return clamped < 60 ? "\(Int(clamped))s" : shortDuration(clamped)
-}
-
 private func ago(_ now: Date, _ text: String?) -> String? {
   guard let text, let at = parseTimestamp(text) else { return nil }
-  return shortDuration(now.timeIntervalSince(at))
+  return Format.duration(now.timeIntervalSince(at))
 }
 
 extension Workspace {
@@ -247,10 +221,6 @@ extension Workspace {
 }
 
 public struct BundleLine: Equatable, Sendable {
-  public enum Tone: Sendable {
-    case normal, error, tertiary
-  }
-
   public var text: String
   public var tone: Tone
 }
@@ -271,7 +241,7 @@ extension Workspace {
       return BundleLine(text: "Bundling" + (bundle.percent.map { " \u{00B7} \(Int($0.rounded()))%" } ?? ""), tone: .normal)
     }
     guard let last = bundle.last else { return nil }
-    let when = parseTimestamp(last.finishedAt).map { " \u{00B7} \(sinceLabel(now.timeIntervalSince($0))) ago" } ?? ""
+    let when = parseTimestamp(last.finishedAt).map { " \u{00B7} \(Format.since(now.timeIntervalSince($0))) ago" } ?? ""
     if last.status == "failed" { return BundleLine(text: "Bundle failed\(when)", tone: .error) }
     return BundleLine(text: "Bundled in \(String(format: "%.1f", last.durationMs / 1000))s\(when)", tone: .tertiary)
   }
@@ -289,7 +259,7 @@ public struct AgentRow: Equatable, Sendable {
   public var text: String
 
   public init(activity: DeviceActivity?, last: (date: Date, message: String)?, now: Date) {
-    let lastText = last.map { "\($0.message) \u{00B7} \(sinceLabel(now.timeIntervalSince($0.date))) ago" }
+    let lastText = last.map { "\($0.message) \u{00B7} \(Format.since(now.timeIntervalSince($0.date))) ago" }
     if activity?.state == "driven" {
       tool = activity?.driver?.tool ?? "Agent"
       text = lastText ?? "no action yet"
@@ -297,17 +267,13 @@ public struct AgentRow: Equatable, Sendable {
     }
     tool = nil
     let idleSince = last?.date ?? activity?.lastActivityAt.flatMap(parseTimestamp)
-    text = idleSince.map { "idle \(shortDuration(now.timeIntervalSince($0)))" } ?? "nothing yet"
+    text = idleSince.map { "idle \(Format.duration(now.timeIntervalSince($0)))" } ?? "nothing yet"
   }
 }
 
 /// The git and pull request chip beside the stage: the pull request coloured by its state with one CI mark, and
 /// git details only when there are some.
 public struct GitChip: Equatable, Sendable {
-  public enum Tone: Sendable {
-    case normal, secondary, tertiary, success, warning, error, brand
-  }
-
   public enum Checks: Sendable {
     case passing, failing, pending
   }
@@ -334,7 +300,7 @@ public struct GitChip: Equatable, Sendable {
     let pull = worktree.pullRequest
     var parts: [Part] = []
     if let arrows = git.arrows { parts.append(Part(text: arrows, tone: .normal)) }
-    if git.uncommitted > 0 { parts.append(Part(text: "\(git.uncommitted) changed", tone: .secondary)) }
+    if git.uncommitted > 0 { parts.append(Part(text: "\(git.uncommitted) changed", tone: .neutral)) }
     if let merged = git.mergedInto {
       if pull?.state != "merged" { parts.append(Part(text: "merged into \(merged)", tone: .brand)) }
     } else if git.upstream == nil {

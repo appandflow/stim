@@ -121,7 +121,7 @@ private struct InboxRow: View {
         .accessibilityHidden(true)
       Image(systemName: entry.category.symbol)
         .font(.system(size: 15, weight: .semibold))
-        .foregroundStyle(OversightNotifier.tone(entry.category).color)
+        .foregroundStyle(Color(OversightNotifier.tone(entry.category)))
         .frame(width: 20)
         .help(entry.category.label)
       VStack(alignment: .leading, spacing: Space.xxs) {

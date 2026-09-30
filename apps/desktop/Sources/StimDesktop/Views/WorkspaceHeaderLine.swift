@@ -36,8 +36,8 @@ struct BuildInlineProgress: View {
   var body: some View {
     let progress = build.progress(at: now)
     let (phase, counts) = build.currentPhaseLabel
-    let elapsed = clockDuration(ms: progress.elapsedMs)
-    let estimate = build.expectedMs.map { "~\(clockDuration(ms: $0))" }
+    let elapsed = Format.clock(ms: progress.elapsedMs)
+    let estimate = build.expectedMs.map { "~\(Format.clock(ms: $0))" }
     let time = ZStack(alignment: .leading) {
       Text("00:00 / ~00:00").hidden()
       Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary)
@@ -87,22 +87,6 @@ struct BuildInlineProgress: View {
   }
 }
 
-func formatMemoryMb(_ mb: Double) -> String {
-  mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : "\(Int(mb.rounded())) MB"
-}
-
-extension WorkspaceStage.Tone {
-  var color: Color {
-    switch self {
-    case .success: return Palette.success
-    case .brand: return Palette.primary
-    case .error: return Palette.error
-    case .warning: return Palette.warning
-    case .tertiary: return Palette.tertiary
-    }
-  }
-}
-
 struct StageLine: View {
   var env: Workspace
   var now: Date
@@ -111,7 +95,7 @@ struct StageLine: View {
     let stage = env.stage(now: now)
     HStack(spacing: Space.md) {
       HStack(spacing: Space.sm) {
-        StatusDot(color: stage.tone.color)
+        StatusDot(color: Color(stage.tone))
         Text(stage.label.rawValue).font(.stim(.callout, weight: .semibold)).fixedSize()
         if let subtitle = stage.subtitle {
           Text(subtitle).font(.stim(.callout)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
@@ -127,20 +111,6 @@ struct StageLine: View {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
         GitChipButton(chip: chip, worktree: env.worktree!).layoutPriority(1)
       }
-    }
-  }
-}
-
-extension GitChip.Tone {
-  var color: Color {
-    switch self {
-    case .normal: return Palette.text
-    case .secondary: return Palette.secondary
-    case .tertiary: return Palette.tertiary
-    case .success: return Palette.success
-    case .warning: return Palette.warning
-    case .error: return Palette.error
-    case .brand: return Palette.primary
     }
   }
 }
@@ -169,13 +139,13 @@ struct GitChipButton: View {
     } label: {
       HStack(spacing: Space.xs + 1) {
         if let pull = chip.pullRequest {
-          Text(pull.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(pull.tone.color)
+          Text(pull.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(pull.tone))
           if let checks = pull.checks { ChecksMark(checks: checks).font(.system(size: 9, weight: .bold)) }
         } else {
           Image(systemName: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
         }
         ForEach(chip.parts, id: \.text) { part in
-          Text(part.text).foregroundStyle(part.tone.color).monospacedDigit()
+          Text(part.text).foregroundStyle(Color(part.tone)).monospacedDigit()
         }
         Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.tertiary)
       }
@@ -212,7 +182,7 @@ struct GitPopover: View {
         Rectangle().fill(Palette.border).frame(height: 1)
         HStack(spacing: Space.sm) {
           Text("PR #\(pull.number)").font(.stim(.callout, weight: .semibold))
-            .foregroundStyle(GitChip.tone(ofPullRequest: pull.state).color)
+            .foregroundStyle(Color(GitChip.tone(ofPullRequest: pull.state)))
           Pill(pull.state.capitalized, size: .small)
         }
         Text(pull.title).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -244,9 +214,11 @@ struct UsageFigures: View {
 
   var body: some View {
     if let cpu = usage.cpuPercent { figure("cpu", formatPercent(cpu), help: "CPU, where 100% is one core") }
-    if let memory = usage.memoryMb { figure("memorychip", formatMemoryMb(memory), help: "Memory, as Activity Monitor counts it") }
+    if let memory = usage.memoryMb {
+      figure("memorychip", Format.memoryMb(memory), help: "Memory, as Activity Monitor counts it")
+    }
     if let disk = usage.diskBytes {
-      figure("internaldrive", formatDisk(Int64(disk)), help: "Disk: the worktree and Stim's build folder", minor: true)
+      figure("internaldrive", Format.fileSize(Int64(disk)), help: "Disk: the worktree and Stim's build folder", minor: true)
     }
   }
 
@@ -279,7 +251,7 @@ struct ProcessRowsTable: View {
         GridRow {
           Text(row.label).lineLimit(1).truncationMode(.middle)
           Text(formatPercent(row.cpuPercent)).monospacedDigit().gridColumnAlignment(.trailing)
-          Text(formatMemoryMb(row.memoryMb)).monospacedDigit().gridColumnAlignment(.trailing)
+          Text(Format.memoryMb(row.memoryMb)).monospacedDigit().gridColumnAlignment(.trailing)
         }
         .font(.stim(.callout))
       }
