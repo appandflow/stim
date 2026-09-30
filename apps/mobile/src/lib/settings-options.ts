@@ -73,5 +73,4 @@ export function parseQuietHoursValue(value: string): QuietHours | null {
     : null;
 }
 
-export const NOTIFICATIONS_FOOTER =
-  'In the background, notifications arrive only if your Mac sends push notifications.';
+export const NOTIFICATIONS_FOOTER = 'Background notifications need an iPhone and a Mac that sends push.';
