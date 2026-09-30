@@ -53,3 +53,14 @@ test('a mount after the clock stopped reads the current time', async () => {
   const { result } = await renderHook(() => useNow(1000));
   expect(result.current).toBe(Date.parse('2026-01-01T01:00:00.000Z'));
 });
+
+test('a hook that changes interval moves to the other clock and stops the old one', async () => {
+  const { result, rerender } = await renderHook((props: { ms: number }) => useNow(props.ms), {
+    initialProps: { ms: 1000 },
+  });
+  await rerender({ ms: 30_000 });
+  scheduled.mockClear();
+  await act(async () => jest.advanceTimersByTime(60_000));
+  expect(armed(1000)).toBe(0);
+  expect(result.current).toBe(Date.parse('2026-01-01T00:01:00.000Z'));
+});

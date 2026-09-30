@@ -47,7 +47,7 @@ function createClock(intervalMs: number): Clock {
   return clock;
 }
 
-/** The current time, refreshed on each wall-clock multiple of `intervalMs`. Callers with the same interval share one timer and one tick. */
+/** The current time, refreshed on each wall-clock multiple of `intervalMs`. Callers with the same interval share one timer and one tick. A component that mounts between ticks reads the last tick, at most one interval old. */
 export function useNow(intervalMs: number): number {
   let clock = clocks.get(intervalMs);
   if (!clock) {
