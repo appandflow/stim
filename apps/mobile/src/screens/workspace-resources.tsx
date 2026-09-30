@@ -1,22 +1,24 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ListSection } from '@/components/list';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
-import { formatBytes, formatMemoryMb } from '@/intl/format';
+import { formatBytes, formatMemoryMb, formatSize } from '@/intl/format';
 import {
-  diskBreakdown,
+  diskParts,
+  diskPartsLabel,
   formatCpu,
   processRows,
   sparkline,
   workspaceSeries,
   workspaceStage,
   workspaceUsage,
+  type DiskPart,
 } from '@/lib/workspace-view';
 import { devicesOf, orderDevices } from '@/lib/workspaces';
 import type { MachineUsage } from '@/protocol/types';
@@ -53,12 +55,7 @@ export function WorkspaceResources({ path }: { path: string }) {
   const minutes = series?.minutes ?? 0;
   const peakCpu = series?.peakCpuPercent == null ? null : formatCpu(series.peakCpuPercent);
   const freeSpace = free === null ? '' : formatBytes(free);
-  const diskNote = [
-    diskBreakdown(env),
-    free === null ? null : t`The Mac volume that holds workspaces has ${freeSpace} free.`,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const disk = diskParts(env);
   return (
     <SheetScreen
       title={t`Status`}
@@ -90,12 +87,6 @@ export function WorkspaceResources({ path }: { path: string }) {
           value={usage.memoryMb === null ? '\u2014' : formatMemoryMb(usage.memoryMb)}
           bars={series?.memoryMb ?? []}
           note={series?.memoryChangeMb == null ? null : memoryChange(series.memoryChangeMb)}
-        />
-        <Tile
-          label={t`Disk`}
-          value={usage.diskBytes === null ? '\u2014' : formatBytes(usage.diskBytes)}
-          bars={[]}
-          note={free === null ? null : t`${freeSpace} free`}
         />
       </View>
       {rows.length ? (
@@ -130,11 +121,12 @@ export function WorkspaceResources({ path }: { path: string }) {
           <Trans>Nothing in this workspace is using CPU or memory now.</Trans>
         </Text>
       )}
-      {diskNote ? (
+      {disk ? <DiskCard parts={disk} /> : null}
+      {free === null ? null : (
         <Text variant="footnote" tone="tertiary">
-          {diskNote}
+          <Trans>The Mac volume that holds workspaces has {freeSpace} free.</Trans>
         </Text>
-      ) : null}
+      )}
     </SheetScreen>
   );
 }
@@ -183,7 +175,59 @@ function Tile({
   );
 }
 
+const PART_COLOR = { nodeModules: 'accent', worktree: 'tertiary', build: 'info' } as const;
+
+function DiskCard({ parts }: { parts: DiskPart[] }) {
+  const { theme } = useUnistyles();
+  const total = parts.reduce((sum, part) => sum + part.bytes, 0);
+  const size = formatSize(total);
+  const summary = diskPartsLabel(parts);
+  return (
+    <View style={styles.card} accessible accessibilityLabel={t`Disk ${size}: ${summary}`}>
+      <Text variant="caption" tone="secondary">
+        <Trans>Disk</Trans>
+      </Text>
+      <Text variant="headline" style={styles.tabular} numberOfLines={1}>
+        {size}
+      </Text>
+      <View style={styles.stack}>
+        {parts.map((part) => (
+          <View
+            key={part.kind}
+            style={{
+              flexGrow: part.bytes / Math.max(total, 1),
+              flexBasis: 2,
+              backgroundColor: theme.colors[PART_COLOR[part.kind]],
+            }}
+          />
+        ))}
+      </View>
+      {parts.map((part) => (
+        <View key={part.kind} style={styles.legendRow}>
+          <View style={[styles.dot, { backgroundColor: theme.colors[PART_COLOR[part.kind]] }]} />
+          <Text variant="footnote" style={styles.grow}>
+            {part.label}
+          </Text>
+          <Text variant="footnote" tone="secondary" style={styles.tabular}>
+            {formatSize(part.bytes)}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
+  card: {
+    padding: theme.space.md + 2,
+    gap: theme.space.sm,
+    borderRadius: theme.radius.card,
+    borderCurve: 'continuous',
+    backgroundColor: theme.colors.grouped,
+  },
+  stack: { flexDirection: 'row', gap: 1, height: 6, borderRadius: 3, overflow: 'hidden' },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  dot: { width: 7, height: 7, borderRadius: 3.5 },
   tiles: { flexDirection: 'row', gap: theme.space.md },
   tile: {
     flex: 1,

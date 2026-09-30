@@ -134,10 +134,12 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     processes, so above 100% on several cores) and memory from the status
     `machine` owners, and its disk (the worktree plus Stim's build folder) once
     a status watcher measured it. It opens the **Status** sheet: the whole
-    stage line, CPU, memory and disk tiles, with sparklines of the last 10
+    stage line, CPU and memory tiles, with sparklines of the last 10
     minutes when the server sends usage history, a process table of the
-    workspace's simulators, emulators, Chrome, Metro and build, and the disk
-    split with the Mac's free space.
+    workspace's simulators, emulators, Chrome, Metro and build, and a Disk
+    card: the total, a stacked bar and a legend row each for node_modules, the
+    rest of the worktree and Stim's build output, with the Mac's free space
+    below it.
   - **Build**: one row per platform with the Apple or Android glyph, the last
     run's time and whether it hit the cache, **Failed** in red, or the next
     build's prediction from `build.plan` before any run, in grey with a tilde
