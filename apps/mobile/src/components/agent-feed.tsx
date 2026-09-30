@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { useReplayAt, type ReplayPlayhead } from '@/hooks/device-stream';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { actionsAt } from '@/lib/logs';
 import { clockTime } from '@/lib/format';
@@ -14,24 +15,27 @@ const KEPT = 200;
 const ROW_HEIGHT = 20;
 
 /**
- * The device's last agent actions, newest first, over the dark viewer: in replay, the ones at or before `at`. A
- * failed action is in the error tone. Always `ROWS` rows tall, so the screen above keeps its size.
+ * The device's last agent actions, newest first, over the dark viewer: in replay, the ones at or before the frame
+ * `playhead` shows. A failed action is in the error tone. Always `ROWS` rows tall, so the screen above keeps its
+ * size.
  */
 export function AgentFeed({
   workspace,
   slot,
   deviceId,
-  at,
+  playhead,
   onOpen,
 }: {
   workspace: string;
   slot: string;
   deviceId: string;
-  /** The replay playhead, a Mac capture time; null while live, undefined while a replay has no frame yet. */
-  at: number | null | undefined;
+  /** The replay's playhead; null while live. */
+  playhead: ReplayPlayhead | null;
   onOpen: () => void;
 }) {
   const actions = useAgentActions(workspace, slot, deviceId, KEPT);
+  const shownAt = useReplayAt(playhead);
+  const at = playhead === null ? null : (shownAt ?? undefined);
   const shown = at === undefined ? [] : actionsAt(actions, at).slice(0, ROWS);
   const list = shown
     .map(({ record }) => {

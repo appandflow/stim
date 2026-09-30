@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import type { Replay } from '@/hooks/device-stream';
+import { useReplayAt, type Replay, type ReplayPlayhead } from '@/hooks/device-stream';
 import {
   adjacentAction,
   buildTimeline,
@@ -46,6 +46,7 @@ export function ReplayBar({
   timeline,
   markers,
   replay,
+  playhead,
   seeking,
   canGoLive,
   recording,
@@ -56,7 +57,8 @@ export function ReplayBar({
   timeline: Timeline | null;
   markers: ReplayMarker[];
   replay: Replay | null;
-  /** A seek is out or waiting, so `replay.at` is not yet the frame last asked for. */
+  playhead: ReplayPlayhead;
+  /** A seek is out or waiting, so `playhead` is not yet the frame last asked for. */
   seeking: boolean;
   /** False while the device is not running, so only its recording can be shown. */
   canGoLive: boolean;
@@ -86,7 +88,8 @@ export function ReplayBar({
   const [trackLength, setTrackLength] = useState<number | undefined>(undefined);
   const [stepped, setStepped] = useState<number | null>(null);
   if ((replay === null || replay.ended) && stepped !== null) setStepped(null);
-  const at = replay?.at ?? null;
+  const shown = useReplayAt(playhead);
+  const at = replay ? shown : null;
   if (at !== null && at !== lastAt) setLastAt(at);
   if (replay === null && lastAt !== null) setLastAt(null);
   const isLive = replay === null && canGoLive;

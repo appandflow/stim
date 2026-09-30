@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { frameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
@@ -21,21 +22,21 @@ export interface DeviceStream {
   meter: VideoMeter;
   /** Asks the server for a keyframe, after the decoder lost its state. */
   requestKeyframe: () => void;
-  /** Null while the stream shows the live screen; otherwise the recorded frame shown and how it plays. */
+  /** Null while the stream shows the live screen; otherwise how the recording plays. */
   replay: Replay | null;
+  /** The recorded frame shown, which moves several times a second during playback; read it with `useReplayAt`. */
+  playhead: ReplayPlayhead;
   /** Shows the recorded frame at `at` and plays on at `rate`; 0 pauses. */
   seek: (at: number, rate: ReplayRate) => void;
   /** Returns to the live screen. */
   live: () => void;
   /** Whether the server sends this subscription H.264 and so can `seek`; null until it answers. */
   replayable: boolean | null;
-  /** A seek is out or waiting, so `replay.at` is not yet the frame last asked for. */
+  /** A seek is out or waiting, so `playhead` is not yet the frame last asked for. */
   seeking: boolean;
 }
 
 export interface Replay {
-  /** The capture time of the frame shown, epoch ms on the Mac's clock; null until the first one arrives. */
-  at: number | null;
   rate: ReplayRate;
   /** Playback reached the newest recorded frame and paused there. */
   ended: boolean;
@@ -65,6 +66,19 @@ const EMPTY: Omit<StreamState, 'key'> = {
 };
 const POSITION_MS = 200;
 
+type Shown = Replay & { at: number | null };
+type Update = Partial<Omit<StreamState, 'key' | 'replay'>> & { replay?: Shown | null };
+
+/** The capture time of the replay frame shown, epoch ms on the Mac's clock; null until the first one arrives. */
+export type ReplayPlayhead = StoreApi<{ at: number | null }>;
+
+const unsubscribed = () => () => {};
+
+/** The replay frame `playhead` shows, re-rendering on each move; null for a null `playhead`. */
+export function useReplayAt(playhead: ReplayPlayhead | null): number | null {
+  return useSyncExternalStore(playhead?.subscribe ?? unsubscribed, () => playhead?.getState().at ?? null);
+}
+
 /**
  * Subscribes to a device's frames, asking for the given codecs. Video goes straight to the `StimVideoView` with
  * the returned `streamId`, which must be mounted before the first keyframe arrives; JPEG frames (when `video` is
@@ -83,17 +97,18 @@ export function useDeviceStream(
   const startAt = options.startAt ?? null;
   const [latest, setLatest] = useState<StreamState | null>(null);
   const subscription = useRef<string | null>(null);
-  const replaying = useRef<(Replay & { timer: ReturnType<typeof setTimeout> | null }) | null>(null);
-  const updateRef = useRef<((patch: Partial<StreamState>) => void) | null>(null);
+  const replaying = useRef<(Shown & { timer: ReturnType<typeof setTimeout> | null }) | null>(null);
+  const updateRef = useRef<((patch: Update) => void) | null>(null);
   const seeks = useRef(new SeekQueue());
   const key =
     connection && options.enabled
       ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt }).key
       : null;
   const [meter] = useState(() => new VideoMeter());
+  const [playhead] = useState<ReplayPlayhead>(() => createStore(() => ({ at: null })));
   /**
    * Sends the waiting seek when `seeks` lets it go out, or schedules it. Only the answer to the latest seek moves
-   * `replay.at`; a refused latest seek leaves the stream as it was before it, and an answer for a subscription that
+   * `playhead`; a refused latest seek leaves the stream as it was before it, and an answer for a subscription that
    * has since been replaced is dropped.
    */
   const pumpSeeks = (on: NonNullable<typeof connection>) =>
@@ -107,7 +122,7 @@ export function useDeviceStream(
     const before = previous ? { at: previous.at, rate: previous.rate, ended: previous.ended } : null;
     if (!replaying.current) replaying.current = { at: null, rate, ended: false, timer: null };
     updateRef.current?.({ replay: { at: replaying.current.at, rate, ended: false } });
-    const answered = (replay: Replay | null) => {
+    const answered = (replay: Shown | null) => {
       if (subscription.current !== current) return;
       if (seeks.current.finish(seek)) {
         if (replay) {
@@ -129,8 +144,12 @@ export function useDeviceStream(
     let size = '';
     const queue = seeks.current;
     subscription.current = null;
-    const update = (patch: Partial<StreamState>) =>
-      setLatest((prev) => ({ ...(prev && prev.key === key ? prev : { key, ...EMPTY }), ...patch, key }));
+    const update = ({ replay, ...patch }: Update) => {
+      if (replay !== undefined) playhead.setState({ at: replay?.at ?? null });
+      const next =
+        replay === undefined ? patch : { ...patch, replay: replay && { rate: replay.rate, ended: replay.ended } };
+      setLatest((prev) => ({ ...(prev && prev.key === key ? prev : { key, ...EMPTY }), ...next, key }));
+    };
     updateRef.current = update;
     const unsubscribe = connection.subscribe(
       'frames.subscribe',
@@ -170,19 +189,13 @@ export function useDeviceStream(
       (packet) => {
         pushAccessUnit(streamId, packet.accessUnit, packet.width, packet.height);
         meter.add(packet, Date.now());
-        const position = replaying.current;
-        if (position && queue.settled) {
-          position.at = packet.capturedAt;
-          if (!position.timer) {
-            position.timer = setTimeout(() => {
-              position.timer = null;
-              if (replaying.current === position) {
-                setLatest((prev) =>
-                  prev && prev.key === key && prev.replay
-                    ? { ...prev, replay: { ...prev.replay, at: position.at } }
-                    : prev,
-                );
-              }
+        const shown = replaying.current;
+        if (shown && queue.settled) {
+          shown.at = packet.capturedAt;
+          if (!shown.timer) {
+            shown.timer = setTimeout(() => {
+              shown.timer = null;
+              if (replaying.current === shown) playhead.setState({ at: shown.at });
             }, POSITION_MS);
           }
         }
@@ -202,7 +215,7 @@ export function useDeviceStream(
       queue.clear();
       unsubscribe();
     };
-  }, [connection, key, streamId, workspace, platform, slot, physical, fps, maxEdge, video, meter, startAt]);
+  }, [connection, key, streamId, workspace, platform, slot, physical, fps, maxEdge, video, meter, playhead, startAt]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});
@@ -228,5 +241,5 @@ export function useDeviceStream(
     );
   }, [connection]);
   const state = latest && latest.key === key ? latest : EMPTY;
-  return { ...state, streamId, meter, requestKeyframe, seek, live };
+  return { ...state, streamId, meter, playhead, requestKeyframe, seek, live };
 }
