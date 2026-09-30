@@ -5,13 +5,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Button } from '@/components/button';
 import { Text } from '@/components/text';
 import { withAlpha } from '@/design/color';
-import type { Theme } from '@/design/theme';
+import { toneColor, type Tone } from '@/design/tone';
 
-export type BannerTone = 'neutral' | 'warning' | 'error';
-
-function toneColor(theme: Theme, tone: BannerTone): string {
-  return tone === 'neutral' ? theme.colors.secondary : theme.colors[tone];
-}
+export type BannerTone = 'neutral' | Extract<Tone, 'warning' | 'error'>;
 
 /**
  * A status message. `attached` spans the width under a header, filled in the tone's color; `inline` sits in the

@@ -1,5 +1,6 @@
 import { t } from '@lingui/core/macro';
 
+import type { Tone } from '@/design/tone';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
 import { deviceKey, devicesOf, isShownLive, orderDevices, type DeviceRef } from '@/lib/workspaces';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
@@ -189,6 +190,10 @@ const LOW_DISK_BYTES = 20e9;
 const memoryGb = (bytes: number) => bytes / 2 ** 30;
 
 export type UsageTone = 'normal' | 'warn' | 'critical';
+
+const USAGE_TONE: Record<UsageTone, Tone> = { normal: 'default', warn: 'warning', critical: 'error' };
+
+export const usageTone = (tone: UsageTone): Tone => USAGE_TONE[tone];
 
 export type StatKind = 'cpu' | 'memory' | 'disk';
 

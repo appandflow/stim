@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, type IconName } from '@/components/icon';
 import { Text, type TextTone } from '@/components/text';
 import { Touch } from '@/components/touch';
-import type { Theme } from '@/design/theme';
+import { toneColor } from '@/design/tone';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'plain' | 'destructive';
 export type ButtonSize = 'small' | 'regular';
@@ -18,10 +18,6 @@ function labelTone(variant: ButtonVariant): TextTone {
     default:
       return 'brand';
   }
-}
-
-function toneColor(theme: Theme, tone: TextTone): string {
-  return tone === 'onBrand' ? theme.colors.onPrimary : tone === 'error' ? theme.colors.error : theme.colors.primary;
 }
 
 /** A text button. `plain` and `destructive` have no fill, for actions inside rows and cards. */

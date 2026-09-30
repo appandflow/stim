@@ -10,7 +10,7 @@ import { ListRow, ListSection } from '@/components/list';
 import { StatusDot } from '@/components/pill';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
-import { chipColor } from '@/components/workspace-cards';
+import { toneColor } from '@/design/tone';
 import { useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
@@ -105,7 +105,7 @@ export function WorkspaceWork({ path }: { path: string }) {
             <ListRow
               title={t`Checks`}
               value={checksSummary(pr.checks) ?? undefined}
-              accessory={checks ? <StatusDot color={chipColor(checks, theme.colors)} /> : undefined}
+              accessory={checks ? <StatusDot color={toneColor(theme, checks)} /> : undefined}
             />
           ) : null}
           {pr.reviewDecision ? <ListRow title={t`Review`} value={reviewName(pr.reviewDecision)} /> : null}

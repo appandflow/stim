@@ -1,19 +1,10 @@
 import { Text as NativeText, type TextProps as NativeTextProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { Theme } from '@/design/theme';
 import { fontWeight, type FontWeight, type TextVariant } from '@/design/tokens';
+import { toneColor, type Tone } from '@/design/tone';
 
-export type TextTone =
-  | 'default'
-  | 'secondary'
-  | 'tertiary'
-  | 'brand'
-  | 'onBrand'
-  | 'success'
-  | 'warning'
-  | 'error'
-  | 'info';
+export type TextTone = Tone;
 
 export type TextProps = NativeTextProps & {
   variant?: TextVariant;
@@ -21,19 +12,6 @@ export type TextProps = NativeTextProps & {
   weight?: FontWeight;
   mono?: boolean;
 };
-
-function toneColor(theme: Theme, tone: TextTone): string {
-  switch (tone) {
-    case 'default':
-      return theme.colors.text;
-    case 'brand':
-      return theme.colors.primary;
-    case 'onBrand':
-      return theme.colors.onPrimary;
-    default:
-      return theme.colors[tone];
-  }
-}
 
 /**
  * The tone's color is read through `useUnistyles()` rather than the stylesheet: Unistyles does not re-style a `Text`

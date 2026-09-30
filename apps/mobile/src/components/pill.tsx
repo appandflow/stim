@@ -3,27 +3,14 @@ import { Text as NativeText, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon, type IconName } from '@/components/icon';
-import { Text, type TextTone } from '@/components/text';
+import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
-import type { Theme } from '@/design/theme';
+import { toneColor, type Tone } from '@/design/tone';
 
 export type PillTone = 'neutral' | 'accent' | 'success' | 'warning' | 'error' | 'info';
 
-function toneColor(theme: Theme, tone: PillTone): string {
-  switch (tone) {
-    case 'neutral':
-      return theme.colors.secondary;
-    case 'accent':
-      return theme.colors.primary;
-    default:
-      return theme.colors[tone];
-  }
-}
-
-function textTone(tone: PillTone): TextTone {
-  return tone === 'neutral' ? 'secondary' : tone === 'accent' ? 'brand' : tone;
-}
+const pillTone = (tone: PillTone): Tone => (tone === 'neutral' ? 'secondary' : tone === 'accent' ? 'brand' : tone);
 
 /**
  * A short status label on a tinted background. `tabular` is appended with tabular figures, for ports and counts that
@@ -47,12 +34,12 @@ export function Pill({
   children?: ReactNode;
 }) {
   const { theme } = useUnistyles();
-  const color = toneColor(theme, tone);
+  const color = toneColor(theme, pillTone(tone));
   const content = (
     <>
       {dot ? <StatusDot color={color} /> : null}
       {icon ? <Icon name={icon} size={12} color={color} /> : null}
-      <Text variant="caption" weight="medium" tone={textTone(tone)} style={styles.label} numberOfLines={1}>
+      <Text variant="caption" weight="medium" tone={pillTone(tone)} style={styles.label} numberOfLines={1}>
         {children}
         {tabular ? <NativeText style={styles.tabular}>{tabular}</NativeText> : null}
       </Text>
@@ -96,7 +83,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.chip,
     borderCurve: 'continuous',
     maxWidth: '100%',
-    backgroundColor: tone === 'neutral' ? theme.colors.raised : withAlpha(toneColor(theme, tone), theme.opacity.tint),
+    backgroundColor:
+      tone === 'neutral' ? theme.colors.raised : withAlpha(toneColor(theme, pillTone(tone)), theme.opacity.tint),
   }),
   label: { flexShrink: 1 },
   tabular: { fontVariant: ['tabular-nums'] },

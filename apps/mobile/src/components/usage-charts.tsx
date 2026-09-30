@@ -4,17 +4,18 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/icon';
-import { STAT_ICON, toneColor } from '@/components/machine-stats';
+import { STAT_ICON } from '@/components/stat-row';
 import { Text } from '@/components/text';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
-import type { UsageChart, UsageTone } from '@/lib/home';
+import { toneColor } from '@/design/tone';
+import { usageTone, type UsageChart, type UsageTone } from '@/lib/home';
 
 const CHART_HEIGHT = 48;
 const GRID_LINES = [0.25, 0.5, 0.75];
 
-function fillColor(tone: UsageTone, colors: Theme['colors']): string {
-  return tone === 'normal' ? colors.accent : toneColor(tone, colors);
+function fillColor(tone: UsageTone, theme: Theme): string {
+  return tone === 'normal' ? theme.colors.accent : toneColor(theme, usageTone(tone));
 }
 
 function Chart({ chart }: { chart: UsageChart }) {
@@ -30,7 +31,7 @@ function Chart({ chart }: { chart: UsageChart }) {
         <Text variant="footnote" tone="secondary" style={styles.label}>
           {chart.label}
         </Text>
-        <Text variant="headline" weight="bold" style={[styles.value, { color: fillColor(chart.tone, colors) }]}>
+        <Text variant="headline" weight="bold" style={[styles.value, { color: fillColor(chart.tone, theme) }]}>
           {chart.value}
         </Text>
       </View>
@@ -47,8 +48,8 @@ function Chart({ chart }: { chart: UsageChart }) {
                     styles.area,
                     {
                       height: Math.max(2, column.fraction * CHART_HEIGHT),
-                      backgroundColor: withAlpha(fillColor(column.tone, colors), theme.opacity.track),
-                      borderTopColor: fillColor(column.tone, colors),
+                      backgroundColor: withAlpha(fillColor(column.tone, theme), theme.opacity.track),
+                      borderTopColor: fillColor(column.tone, theme),
                     },
                   ]}
                 />
@@ -63,7 +64,7 @@ function Chart({ chart }: { chart: UsageChart }) {
               {
                 bottom: Math.max(2, last.fraction * CHART_HEIGHT) - 4,
                 left: `${((lastIndex + 1) / chart.columns.length) * 100}%`,
-                backgroundColor: fillColor(chart.tone, colors),
+                backgroundColor: fillColor(chart.tone, theme),
                 borderColor: colors.surface,
               },
             ]}
