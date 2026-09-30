@@ -103,10 +103,11 @@ function RootLayoutContent() {
                       name="settings"
                       options={{
                         title: 'Settings',
-                        headerLargeTitle: true,
-                        contentStyle: { backgroundColor: colors.grouped },
                         ...(Platform.OS === 'android'
-                          ? { headerStyle: { backgroundColor: colors.grouped }, headerShadowVisible: false }
+                          ? {
+                              contentStyle: { backgroundColor: colors.grouped },
+                              headerStyle: { backgroundColor: colors.grouped },
+                            }
                           : null),
                       }}
                     />

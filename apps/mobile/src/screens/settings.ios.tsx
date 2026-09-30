@@ -55,12 +55,12 @@ export function Settings() {
   const { filters, update, view, setView } = useHomeFilters();
   const { connections } = useMacs();
   const notifications = useNotificationPrefs();
-  const rowModifiers = [listRowBackground(colors.groupedRow)];
+  const rowModifiers = [listRowBackground(colors.raised)];
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
 
   return (
     <Host style={{ flex: 1 }}>
-      <Form modifiers={[scrollContentBackground('hidden'), background(colors.grouped), tint(colors.primary)]}>
+      <Form modifiers={[scrollContentBackground('hidden'), background(colors.background), tint(colors.primary)]}>
         <Section title="Appearance">
           <Choice
             colors={colors}
