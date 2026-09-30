@@ -266,6 +266,7 @@ export function mergeUsageSamples(current: UsageSample[], incoming: UsageSample[
   const start = (next.at(-1)?.at ?? 0) - HISTORY_WINDOW_MS;
   return next.filter((sample) => sample.at > start);
 }
+
 const HISTORY_COLUMNS = 60;
 const TONE_RANK: Record<UsageTone, number> = { normal: 0, warn: 1, critical: 2 };
 

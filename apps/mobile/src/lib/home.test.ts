@@ -349,6 +349,7 @@ describe('minFreeDiskGb', () => {
 
   it('is null for no floor, a missing entry or a malformed payload', () => {
     expect(minFreeDiskGb(setting(0))).toBeNull();
+    expect(minFreeDiskGb(setting(-5))).toBeNull();
     expect(minFreeDiskGb(setting(null))).toBeNull();
     expect(minFreeDiskGb(setting('20'))).toBeNull();
     expect(minFreeDiskGb({ settings: [{ key: 'ios.runtime', value: 18 }, null, 'x'] })).toBeNull();
