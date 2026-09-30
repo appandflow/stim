@@ -257,7 +257,16 @@ export function machineStats(usage: MachineUsage | null): MachineStat[] {
   return stats;
 }
 
-export const HISTORY_WINDOW_MS = 60 * 60 * 1000;
+const HISTORY_WINDOW_MS = 60 * 60 * 1000;
+
+/** Appends the samples newer than the last one held, then drops those outside the history window. */
+export function mergeUsageSamples(current: UsageSample[], incoming: UsageSample[]): UsageSample[] {
+  const last = current.at(-1)?.at ?? -Infinity;
+  const next = [...current, ...incoming.filter((sample) => sample.at > last)];
+  const start = (next.at(-1)?.at ?? 0) - HISTORY_WINDOW_MS;
+  return next.filter((sample) => sample.at > start);
+}
+
 const HISTORY_COLUMNS = 60;
 const TONE_RANK: Record<UsageTone, number> = { normal: 0, warn: 1, critical: 2 };
 
@@ -391,8 +400,7 @@ const budgets = (): { key: string; label: string; describe: (value: number | nul
   { key: 'budget.maxLiveWorkspaces', label: t`Live workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
 ];
 
-/** The budget rows of a `stim settings --json` payload; settings the Mac does not list are left out. */
-export function budgetRows(settings: Record<string, unknown> | null): BudgetRow[] {
+function settingNumbers(settings: Record<string, unknown> | null): Map<string, number | null> {
   const entries = Array.isArray(settings?.settings) ? (settings.settings as unknown[]) : [];
   const values = new Map<string, number | null>();
   for (const entry of entries) {
@@ -400,6 +408,18 @@ export function budgetRows(settings: Record<string, unknown> | null): BudgetRow[
     const { key, value } = entry as { key?: unknown; value?: unknown };
     if (typeof key === 'string') values.set(key, typeof value === 'number' ? value : null);
   }
+  return values;
+}
+
+/** The Mac's `budget.minFreeDiskGb`, or null when the payload omits it or sets no positive floor. */
+export function minFreeDiskGb(settings: Record<string, unknown> | null): number | null {
+  const value = settingNumbers(settings).get('budget.minFreeDiskGb');
+  return value != null && value > 0 ? value : null;
+}
+
+/** The budget rows of a `stim settings --json` payload; settings the Mac does not list are left out. */
+export function budgetRows(settings: Record<string, unknown> | null): BudgetRow[] {
+  const values = settingNumbers(settings);
   return budgets()
     .filter((b) => values.has(b.key))
     .map((b) => ({

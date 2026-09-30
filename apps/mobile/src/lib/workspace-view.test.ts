@@ -20,6 +20,9 @@ import {
   phaseSteps,
   type PhaseStep,
   processRows,
+  segmentWeights,
+  usageLabel,
+  usageParts,
   remoteBuild,
   workspaceSeries,
   workspaceStage,
@@ -705,5 +708,41 @@ describe('workspace view vectors', () => {
   it.each(vectors.agentRow.map((c) => [c.name, c] as const))('agent row: %s', (_, c) => {
     const last = c.last && { ts: vectorNow - c.last.agoMs, msg: c.last.message };
     expect(agentRow(c.activity as unknown as DeviceActivity, last, vectorNow)).toEqual(c.row);
+  });
+});
+
+describe('usageParts and usageLabel', () => {
+  it('lists the measured resources in CPU, memory, disk order', () => {
+    const usage = { cpuPercent: 42.4, memoryMb: 2048, diskBytes: 3e9 };
+    expect(usageParts(usage).map((part) => [part.kind, part.value])).toEqual([
+      ['cpu', '42%'],
+      ['memory', '2.0 GB'],
+      ['disk', '3.0 GB'],
+    ]);
+    expect(usageLabel(usage)).toBe('CPU 42%, memory 2.0 GB, disk 3.0 GB');
+  });
+
+  it('leaves out a resource that is not measured, but keeps a measured zero', () => {
+    expect(usageLabel({ cpuPercent: null, memoryMb: 512, diskBytes: null })).toBe('memory 512 MB');
+    expect(usageLabel({ cpuPercent: 0, memoryMb: null, diskBytes: null })).toBe('CPU 0%');
+    expect(usageLabel({ cpuPercent: null, memoryMb: null, diskBytes: null })).toBe('');
+  });
+});
+
+describe('segmentWeights', () => {
+  const step = (expectedMs: number | null) => ({ expectedMs }) as PhaseStep;
+
+  it('weighs segments by expected duration', () => {
+    expect(segmentWeights([step(100), step(100)])).toEqual([100, 100]);
+  });
+
+  it('weighs segments equally when no duration is expected', () => {
+    expect(segmentWeights([step(null), step(0), step(null)])).toEqual([1, 1, 1]);
+  });
+
+  it('keeps a short phase at 18% of the total so it stays visible', () => {
+    const [long, short] = segmentWeights([step(1000), step(10)]);
+    expect(long).toBe(1000);
+    expect(short).toBeCloseTo(181.8);
   });
 });

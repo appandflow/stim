@@ -1,6 +1,5 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
-import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -9,56 +8,10 @@ import { STAT_ICON, toneColor } from '@/components/machine-stats';
 import { Text } from '@/components/text';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
-import { usePolledRequest } from '@/hooks/polled-request';
-import type { StimConnection } from '@/lib/connection';
-import { HISTORY_WINDOW_MS, type UsageChart, type UsageTone } from '@/lib/home';
-import type { MachineUsage, UsageSample } from '@/protocol/types';
+import type { UsageChart, UsageTone } from '@/lib/home';
 
 const CHART_HEIGHT = 48;
 const GRID_LINES = [0.25, 0.5, 0.75];
-
-function merge(current: UsageSample[], incoming: UsageSample[]): UsageSample[] {
-  const last = current.at(-1)?.at ?? -Infinity;
-  const next = [...current, ...incoming.filter((sample) => sample.at > last)];
-  const start = (next.at(-1)?.at ?? 0) - HISTORY_WINDOW_MS;
-  return next.filter((sample) => sample.at > start);
-}
-
-export function useUsageHistory(connection: StimConnection | null, open: boolean, usage: MachineUsage | null) {
-  const [samples, setSamples] = useState<UsageSample[] | null>(null);
-  const lastAt = useRef<number | undefined>(undefined);
-  const loaded = samples !== null;
-
-  usePolledRequest(
-    connection,
-    'machine.history',
-    {},
-    {
-      active: open,
-      onData: (history) => setSamples(merge([], history.samples)),
-      onError: () => setSamples(null),
-    },
-  );
-
-  useEffect(() => {
-    lastAt.current = samples?.at(-1)?.at;
-  }, [samples]);
-
-  useEffect(() => {
-    if (!connection || !open || !usage || !loaded) return;
-    let cancelled = false;
-    const sinceMs = lastAt.current;
-    connection.request('machine.history', sinceMs === undefined ? {} : { sinceMs }).then(
-      (history) => !cancelled && setSamples((current) => merge(current ?? [], history.samples)),
-      () => {},
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [connection, open, usage, loaded]);
-
-  return samples;
-}
 
 function fillColor(tone: UsageTone, colors: Theme['colors']): string {
   return tone === 'normal' ? colors.accent : toneColor(tone, colors);

@@ -16,14 +16,13 @@ import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
-import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
+import { formatDuration } from '@/intl/format';
 import { agentLabel } from '@/lib/agents';
-import { buildKey, buildProgress, clockDuration } from '@/lib/format';
+import { buildKey, buildTiming } from '@/lib/format';
 import {
   barFills,
   barSteps,
   currentPhaseLabel,
-  formatCpu,
   namesPhases,
   otherPlatformLine,
   phaseName,
@@ -38,6 +37,8 @@ import {
   type PhaseStep,
   type Usage,
   type WorkspaceStage,
+  usageLabel,
+  usageParts,
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
 import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
@@ -94,20 +95,6 @@ function SmallCard({
     </Card>
   );
 }
-
-const usageParts = (usage: Usage) =>
-  [
-    usage.cpuPercent === null ? null : { kind: 'cpu' as const, value: formatCpu(usage.cpuPercent), label: t`CPU` },
-    usage.memoryMb === null
-      ? null
-      : { kind: 'memory' as const, value: formatMemoryMb(usage.memoryMb), label: t`memory` },
-    usage.diskBytes === null ? null : { kind: 'disk' as const, value: formatBytes(usage.diskBytes), label: t`disk` },
-  ].filter((part) => part !== null);
-
-export const usageLabel = (usage: Usage) =>
-  usageParts(usage)
-    .map(({ label, value }) => `${label} ${value}`)
-    .join(', ');
 
 function UsagePart({ kind, value }: { kind: keyof typeof STAT_ICON; value: string }) {
   const { theme } = useUnistyles();
@@ -437,14 +424,6 @@ function PhaseBar({ steps, buildId }: { steps: PhaseStep[]; buildId: string }) {
       ) : null}
     </View>
   );
-}
-
-export function buildTiming(build: BuildReport, now: number): { elapsed: string; estimate: string | null } {
-  const progress = buildProgress(build, now);
-  return {
-    elapsed: clockDuration(progress.elapsedMs),
-    estimate: build.expectedMs ? `~${clockDuration(build.expectedMs)}` : null,
-  };
 }
 
 export function BuildInProgressCard({

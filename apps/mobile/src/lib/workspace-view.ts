@@ -1,6 +1,6 @@
 import { plural, t } from '@lingui/core/macro';
 
-import { formatBytes, formatDuration } from '@/intl/format';
+import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
 import { clockDuration, gitBadges, machineName, steadyFraction } from '@/lib/format';
 import type { PlanState } from '@/lib/plan-checks';
 import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
@@ -125,6 +125,21 @@ export interface Usage {
   memoryMb: number | null;
   diskBytes: number | null;
 }
+
+/** The measured resources of a workspace, in CPU, memory, disk order; a resource not measured is left out. */
+export const usageParts = (usage: Usage) =>
+  [
+    usage.cpuPercent === null ? null : { kind: 'cpu' as const, value: formatCpu(usage.cpuPercent), label: t`CPU` },
+    usage.memoryMb === null
+      ? null
+      : { kind: 'memory' as const, value: formatMemoryMb(usage.memoryMb), label: t`memory` },
+    usage.diskBytes === null ? null : { kind: 'disk' as const, value: formatBytes(usage.diskBytes), label: t`disk` },
+  ].filter((part) => part !== null);
+
+export const usageLabel = (usage: Usage) =>
+  usageParts(usage)
+    .map(({ label, value }) => `${label} ${value}`)
+    .join(', ');
 
 const ownersOf = (machine: MachineUsageState | null | undefined, path: string) =>
   machine?.owners.filter((owner) => owner.workspace === path) ?? [];

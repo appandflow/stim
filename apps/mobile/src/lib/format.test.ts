@@ -1,6 +1,7 @@
 import {
   activityBadge,
   buildProgress,
+  buildTiming,
   clockTime,
   drivenLabel,
   driversSummary,
@@ -112,6 +113,29 @@ describe('buildProgress', () => {
   it('never reaches 100% while the build still runs', () => {
     expect(buildProgress(build(300_000), now)).toMatchObject({ fraction: 0.3, remaining: 'about 4 min left' });
     expect(buildProgress(build(60_000), now)).toMatchObject({ fraction: 0.99, remaining: 'longer than usual' });
+  });
+});
+
+describe('buildTiming', () => {
+  const build = (expectedMs: number | null): BuildReport => ({
+    platform: 'ios',
+    slot: 'default',
+    state: 'running',
+    phase: 'compile',
+    startedAt: ago(90_000),
+    phaseStartedAt: ago(30_000),
+    outcome: null,
+    expectedMs,
+    expectedPhaseMs: null,
+    basis: 0,
+  });
+
+  it('reports the elapsed clock and the estimate when runs are comparable', () => {
+    expect(buildTiming(build(300_000), now)).toEqual({ elapsed: '1:30', estimate: '~5:00' });
+  });
+
+  it('has no estimate without comparable runs', () => {
+    expect(buildTiming(build(null), now)).toEqual({ elapsed: '1:30', estimate: null });
   });
 });
 
