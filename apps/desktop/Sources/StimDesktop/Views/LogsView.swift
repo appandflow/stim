@@ -89,20 +89,22 @@ struct LogsView: View {
       }
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if !slots.isEmpty {
-        Picker("Slot", selection: Binding(get: { effectiveQuery.slot }, set: { query.slot = $0 })) {
-          Text("All slots").tag(String?.none)
-          ForEach(slots, id: \.self) { slot in Text(slot).tag(Optional(slot)) }
-        }
-        .labelsHidden()
-        .fixedSize()
+        MenuPill(
+          label: "Slot",
+          selection: Binding(get: { effectiveQuery.slot }, set: { query.slot = $0 }),
+          options: [MenuPillOption(value: String?.none, title: "All slots")]
+            + slots.map { MenuPillOption(value: Optional($0), title: $0) },
+          isActive: effectiveQuery.slot != nil
+        )
       }
-      Picker("Level", selection: $query.minimumLevel) {
-        ForEach(LogLevel.allCases, id: \.self) { level in
-          Text(level == .debug ? "All levels" : "\(level.rawValue.capitalized)+").tag(level)
-        }
-      }
-      .labelsHidden()
-      .fixedSize()
+      MenuPill(
+        label: "Level",
+        selection: $query.minimumLevel,
+        options: LogLevel.allCases.map {
+          MenuPillOption(value: $0, title: $0 == .debug ? "All levels" : "\($0.rawValue.capitalized)+")
+        },
+        isActive: query.minimumLevel != .debug
+      )
       Button {
         query.errorsOnly.toggle()
       } label: {

@@ -55,11 +55,11 @@ struct NowBand: View {
   @ViewBuilder private var tiles: some View {
     tile(
       "memorychip", "Memory used",
-      metrics.memory.map { "\(formatMemory($0.usedBytes)) of \(formatMemory($0.totalBytes))" } ?? "--",
+      metrics.memory.map { "\(formatMemory($0.usedBytes)) of \(formatMemory($0.totalBytes))" } ?? "\u{2014}",
       values: metrics.memoryUsed, peak: Double(metrics.memory?.totalBytes ?? 1))
     tile(
       "cpu", "CPU of the rows below",
-      status.payload?.machine.map { formatPercent($0.cpuPercent) } ?? "--",
+      status.payload?.machine.map { formatPercent($0.cpuPercent) } ?? "\u{2014}",
       values: metrics.ownersCpu, peak: 100)
   }
 

@@ -37,6 +37,7 @@ struct SidebarPreferences: DynamicProperty {
 
 struct ViewOptionsButton: View {
   var projects: [Project]
+  var title: (Project) -> String
   @State private var isPresented = false
   let prefs = SidebarPreferences()
 
@@ -58,13 +59,14 @@ struct ViewOptionsButton: View {
     .accessibilityLabel("View options")
     .help(differs ? "View options (filtered)" : "View options")
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-      ViewOptionsMenu(projects: projects)
+      ViewOptionsMenu(projects: projects, title: title)
     }
   }
 }
 
 private struct ViewOptionsMenu: View {
   var projects: [Project]
+  var title: (Project) -> String
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -128,7 +130,7 @@ private struct ViewOptionsMenu: View {
     for (index, project) in projects.enumerated() {
       items.append(
         MenuItem(
-          id: project.root, title: project.name, accessory: .check(!hidden.contains(project.root)),
+          id: project.root, title: title(project), accessory: .check(!hidden.contains(project.root)),
           dividerBefore: index == 0, keepsOpen: true
         ) {
           var updated = hidden

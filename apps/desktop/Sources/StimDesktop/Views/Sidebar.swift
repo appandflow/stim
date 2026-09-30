@@ -35,7 +35,7 @@ struct Sidebar: View {
           let entries = store.sidebarList(options)
           ForEach(entries) { entry in
             EntryRow(
-              entry: entry, subtitle: store.project(ofPath: entry.path).name, showsGit: options.showsGitStatus,
+              entry: entry, subtitle: store.title(of: store.project(ofPath: entry.path)), showsGit: options.showsGitStatus,
               selection: selection, openLogs: openLogs)
           }
           if entries.isEmpty { emptyText(options) }
@@ -100,7 +100,8 @@ struct Sidebar: View {
       StimWordmark()
       Spacer()
       ViewOptionsButton(
-        projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() })
+        projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() },
+        title: store.title(of:))
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
@@ -184,7 +185,7 @@ struct ProjectRow: View {
     HStack(spacing: Space.md) {
       Image(systemName: "folder")
         .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
-      Text(summary.project.name).lineLimit(1).truncationMode(.middle)
+      Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
         Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
@@ -245,18 +246,31 @@ struct WorkspaceRow: View {
   @State private var confirmingStop = false
   @State private var removal: WorktreeRemoval?
 
+  private var subtitleText: String {
+    SidebarSubtitle.text(title: env.names.title, parts: [subtitle, env.names.inCheckout])
+  }
+
+  @ViewBuilder private var metroPort: some View {
+    if let metro = env.metro {
+      Text(":\(String(metro.port))").font(.stim(.caption2, mono: true)).foregroundStyle(Palette.tertiary).fixedSize()
+        .help("Metro port \(String(metro.port))\(metro.running ? "" : ", stopped")")
+    }
+  }
+
   var body: some View {
-    HStack(spacing: Space.md) {
+    HStack(alignment: .top, spacing: Space.md) {
       StatusDot(
         color: env.live ? Palette.success : env.isSettingUp ? Palette.accent : Palette.tertiary,
         filled: env.live || env.isSettingUp
       )
+      .padding(.top, Space.sm - 1)
       .contentShape(Circle())
       .help(env.live ? "Live" : env.isWarming ? "Warming" : env.isSettingUp ? "Warmed, not started" : "Idle")
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: Space.sm) {
           Text(env.names.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
           Spacer(minLength: 0)
+          if subtitleText.isEmpty { metroPort }
           if !env.live { SetupBadge(env: env, compact: true) }
           if showsGit { GitIndicator(git: env.worktree?.git) }
           if let errors = env.logs?.errorsSinceMarker, errors > 0 {
@@ -274,12 +288,11 @@ struct WorkspaceRow: View {
               .accessibilityLabel(countLabel(env.warnings.count, "warning"))
           }
         }
-        HStack(spacing: Space.sm) {
-          SidebarSubtitle(title: env.names.title, parts: [subtitle, env.names.inCheckout])
-          Spacer(minLength: 0)
-          if let metro = env.metro {
-            Text(":\(String(metro.port))").font(.stim(.caption2, mono: true)).foregroundStyle(Palette.tertiary).fixedSize()
-              .help("Metro port \(String(metro.port))\(metro.running ? "" : ", stopped")")
+        if !subtitleText.isEmpty {
+          HStack(spacing: Space.sm) {
+            SidebarSubtitle(text: subtitleText)
+            Spacer(minLength: 0)
+            metroPort
           }
         }
       }
@@ -330,13 +343,14 @@ struct WorkspaceRow: View {
 }
 
 private struct SidebarSubtitle: View {
-  var title: String
-  var parts: [String?]
+  var text: String
+
+  static func text(title: String, parts: [String?]) -> String {
+    parts.compactMap { $0 }.filter { $0 != title }.joined(separator: " \u{00B7} ")
+  }
 
   var body: some View {
-    let text = parts.compactMap { $0 }.filter { $0 != title }.joined(separator: " \u{00B7} ")
-    Text(text.isEmpty ? " " : text).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
-      .truncationMode(.middle)
+    Text(text).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
   }
 }
 
@@ -350,11 +364,13 @@ struct NoEnvironmentRow: View {
 
   var body: some View {
     let names = worktree.names
-    HStack(spacing: Space.md) {
+    HStack(alignment: .top, spacing: Space.md) {
       StatusDot(color: Palette.tertiary, filled: false)
+        .padding(.top, Space.sm - 1)
       VStack(alignment: .leading, spacing: 1) {
         Text(names.title).lineLimit(1).truncationMode(.middle)
-        SidebarSubtitle(title: names.title, parts: [subtitle, names.inCheckout])
+        let text = SidebarSubtitle.text(title: names.title, parts: [subtitle, names.inCheckout])
+        if !text.isEmpty { SidebarSubtitle(text: text) }
       }
       .layoutPriority(1)
       Spacer()
@@ -407,7 +423,10 @@ private struct PlainSelectionHighlight: NSViewRepresentable {
 
 extension View {
   fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
-    tag(item).listRowBackground(item == selection ? Palette.selection : Color.clear)
+    tag(item).listRowBackground(
+      item == selection
+        ? RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.selection).padding(.horizontal, Space.md)
+        : nil)
   }
 }
 

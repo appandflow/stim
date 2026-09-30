@@ -149,6 +149,10 @@ struct LogTable: NSViewRepresentable {
       LogRowView.height(lines: row < model.rows.count ? model.rows[row].lines : 1)
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+      LogSelectionRowView()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
       let id = NSUserInterfaceItemIdentifier("logRow")
       let view = tableView.makeView(withIdentifier: id, owner: nil) as? LogRowView ?? LogRowView()
@@ -162,6 +166,18 @@ struct LogTable: NSViewRepresentable {
       guard let table else { return }
       selection.wrappedValue = table.selectedRowIndexes
     }
+  }
+}
+
+final class LogSelectionRowView: NSTableRowView {
+  override var isEmphasized: Bool {
+    get { false }
+    set {}
+  }
+
+  override func drawSelection(in dirtyRect: NSRect) {
+    NSColor(Palette.selection).setFill()
+    bounds.fill()
   }
 }
 

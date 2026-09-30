@@ -19,7 +19,7 @@ struct WallView: View {
       }
     } else if live.isEmpty {
       EmptyState(
-        title: project.map { "Nothing running in \($0.name)" } ?? "Nothing running",
+        title: project.map { "Nothing running in \(store.title(of: $0))" } ?? "Nothing running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true, showsPrompts: true
       )
@@ -28,7 +28,7 @@ struct WallView: View {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.huge) {
           if let project {
-            Text(project.name).font(.stim(.title))
+            Text(store.title(of: project)).font(.stim(.title))
           }
           ForEach(live) { env in
             VStack(alignment: .leading, spacing: Space.lg) {

@@ -90,7 +90,7 @@ private struct ScopeSettingsView: View {
                 .tag(String?.some(path))
             }
           }
-          Button("Choose\u{2026}", action: chooseWorkspace)
+          Button("Choose\u{2026}", action: chooseWorkspace).buttonStyle(.stim())
         }
       }
       if let file = model.payload?.file(for: scope) {
@@ -257,7 +257,9 @@ private struct SettingEditor: View {
     case .toggle:
       Toggle(
         "Enabled",
-        isOn: Binding(get: { value?.bool ?? effective?.bool ?? false }, set: { commit(.bool($0)) }))
+        isOn: Binding(get: { value?.bool ?? effective?.bool ?? false }, set: { commit(.bool($0)) })
+      )
+      .toggleStyle(.switch)
     case .stepper(let minimum, let maximum, let integer):
       HStack {
         TextField(placeholder, text: $draft).frame(width: 100).onSubmit(commitNumber)
@@ -276,7 +278,7 @@ private struct SettingEditor: View {
     case .filePicker:
       HStack {
         TextField(placeholder, text: $draft).onSubmit { commitText() }
-        Button("Choose\u{2026}", action: choosePath)
+        Button("Choose\u{2026}", action: choosePath).buttonStyle(.stim())
       }
     case .tokens:
       TokenField(tokens: value?.strings ?? []) { commit(.array($0.map(JSONValue.string))) }

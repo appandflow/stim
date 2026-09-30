@@ -82,7 +82,7 @@ struct PhonesView: View {
       Section("stim-server executable") {
         HStack {
           TextField("stim-server on the login shell's PATH", text: $executable)
-          Button("Choose\u{2026}", action: chooseExecutable)
+          Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
         Text("Overrides PATH the next time the server starts.")
           .foregroundStyle(Palette.tertiary)

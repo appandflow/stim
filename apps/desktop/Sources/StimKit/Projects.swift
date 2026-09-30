@@ -132,3 +132,30 @@ public func projectSummaries(
     ($0.hasActive ? 0 : 1, $0.project.name.lowercased()) < ($1.hasActive ? 0 : 1, $1.project.name.lowercased())
   }
 }
+
+/// A title for each project root: the folder name, with the enclosing folders added for as many levels as it
+/// takes to tell apart projects whose folders share a name, such as `app (work)` and `app (code)`.
+public func projectTitles(roots: [String]) -> [String: String] {
+  var titles: [String: String] = [:]
+  let byName = Dictionary(grouping: Set(roots)) { ($0 as NSString).lastPathComponent }
+  for (name, group) in byName {
+    guard group.count > 1 else {
+      titles[group[0]] = name
+      continue
+    }
+    let parents = group.map { root in (root, (root as NSString).deletingLastPathComponent.split(separator: "/").map(String.init))
+    }
+    var depth = 1
+    func qualifier(_ parents: [String], _ depth: Int) -> String { parents.suffix(depth).joined(separator: "/") }
+    while depth < (parents.map(\.1.count).max() ?? 0),
+      Set(parents.map { qualifier($0.1, depth) }).count < parents.count
+    {
+      depth += 1
+    }
+    for (root, components) in parents {
+      let qualified = qualifier(components, depth)
+      titles[root] = qualified.isEmpty ? name : "\(name) (\(qualified))"
+    }
+  }
+  return titles
+}

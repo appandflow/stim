@@ -30,16 +30,31 @@ struct AppPreferencesView: View {
   @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
+  @State private var scrolledToTop = false
 
   var body: some View {
+    ScrollViewReader { proxy in
+      form
+        .background(ResignFirstResponder())
+        .onAppear {
+          guard !scrolledToTop else { return }
+          scrolledToTop = true
+          DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) }
+        }
+    }
+  }
+
+  private var form: some View {
     Form {
       Section("Appearance") {
         Picker("Appearance", selection: $appearance) {
           ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
         .onChange(of: appearance) { _, value in Theme.apply(value) }
       }
+      .id("top")
 
       Section("Workspace list") {
         Picker("Status", selection: $status) {
@@ -177,7 +192,7 @@ struct AppPreferencesView: View {
       Section("Stim executable") {
         HStack {
           TextField("stim on the login shell's PATH", text: $stimExecutable)
-          Button("Choose\u{2026}", action: chooseExecutable)
+          Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
         Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")
           .foregroundStyle(Palette.tertiary)
@@ -274,5 +289,18 @@ private struct AutopilotLogRow: View {
       }
     }
     .textSelection(.enabled)
+  }
+}
+
+private struct ResignFirstResponder: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { WindowView() }
+
+  func updateNSView(_ view: NSView, context: Context) {}
+
+  private final class WindowView: NSView {
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(nil) }
+    }
   }
 }

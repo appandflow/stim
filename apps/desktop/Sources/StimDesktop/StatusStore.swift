@@ -8,7 +8,10 @@ final class StatusStore: ObservableObject {
   @Published private(set) var payload: StatusPayload?
   @Published private(set) var error: String?
   @Published private(set) var updatedAt: Date?
-  @Published private(set) var projects: [String: Project] = [:]
+  @Published private(set) var projects: [String: Project] = [:] {
+    didSet { projectTitleMap = projectTitles(roots: projects.values.map(\.root)) }
+  }
+  private var projectTitleMap: [String: String] = [:]
   @Published private(set) var watching = false
   @Published private(set) var doctorReports: [String: DoctorReport] = [:]
 
@@ -163,6 +166,11 @@ final class StatusStore: ObservableObject {
 
   func project(of env: Workspace) -> Project {
     project(ofPath: env.path)
+  }
+
+  func title(of project: Project) -> String {
+    projectTitleMap[project.root] ?? projectTitles(roots: Array(projectTitleMap.keys) + [project.root])[project.root]
+      ?? project.name
   }
 
   func names(ofPath path: String) -> PathNames {

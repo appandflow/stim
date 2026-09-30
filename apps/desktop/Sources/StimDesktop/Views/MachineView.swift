@@ -203,7 +203,7 @@ struct MachineView: View {
         }
         .buttonStyle(.stim())
       } else {
-        Button("Free \(formatDisk(bytes))\u{2026}") { free(commands) }
+        Button(bytes > 0 ? "Free \(formatDisk(bytes))\u{2026}" : "Free space\u{2026}") { free(commands) }
           .buttonStyle(.stim(.primary))
           .disabled(commands.isEmpty)
           .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
@@ -365,7 +365,7 @@ struct MachineView: View {
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(Palette.tertiary)
           .frame(width: 12)
-        Text(repository.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
+        Text(status.title(of: Project(root: repository.path))).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text("\(repository.worktrees.count) worktrees").foregroundStyle(Palette.tertiary)
         Spacer()
         totalText(repository.total, complete: repository.totalComplete)
@@ -381,11 +381,14 @@ struct MachineView: View {
 
   private func workspaceRow(_ workspace: WorkspaceStorage, nested: Bool) -> some View {
     let names = status.names(ofPath: workspace.path)
+    let project = status.project(ofPath: workspace.path)
+    let title =
+      workspace.worktreePath == project.root && names.title == project.name ? status.title(of: project) : names.title
     let lifecycle = WorktreeLifecycle(
       worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
     return HStack(spacing: Space.lg) {
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(names.title).lineLimit(1).truncationMode(.middle)
+        Text(title).lineLimit(1).truncationMode(.middle)
         if compact {
           HStack(spacing: Space.sm) {
             lifecycleChip(lifecycle, workspace: workspace)
@@ -499,7 +502,7 @@ struct MachineView: View {
         Label(notice, systemImage: "exclamationmark.triangle").font(.stim(.footnote)).foregroundStyle(Palette.warning)
       }
       if !report.hasInventory {
-        inventoryMissing
+        inventoryMissing("simulator and AVD")
       } else {
         Card {
           VStack(spacing: 0) {
@@ -513,11 +516,11 @@ struct MachineView: View {
     }
   }
 
-  @ViewBuilder private var inventoryMissing: some View {
+  @ViewBuilder private func inventoryMissing(_ what: String) -> some View {
     if metrics.gcReport == nil {
       Text(metrics.gcRunning ? "Waiting for stim gc\u{2026}" : "stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
     } else {
-      Text("Update stim to list every simulator, AVD, runtime and system image here.").foregroundStyle(Palette.tertiary)
+      Text("Update stim to list every \(what) here.").foregroundStyle(Palette.tertiary)
     }
   }
 
@@ -604,7 +607,7 @@ struct MachineView: View {
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)
       if !report.hasInventory {
-        inventoryMissing
+        inventoryMissing("runtime and system image")
       } else if report.runtimes.isEmpty {
         Text("No simulator runtime or Android system image is installed.").foregroundStyle(Palette.tertiary)
       } else {
@@ -659,8 +662,8 @@ struct MachineView: View {
   // MARK: Other tools
 
   private func otherTools(_ report: StorageReport) -> some View {
-    VStack(alignment: .leading, spacing: Space.md) {
-      Text("Other tools").font(.stim(.headline))
+    CollapsibleSection("machine.otherTools", title: "Other tools", items: report.unmanaged, capped: false) {
+    } content: { _ in
       Text("Space Xcode, Gradle and other apps use. Stim never deletes these; clear them from the tool that owns them.")
         .font(.stim(.footnote))
         .foregroundStyle(Palette.tertiary)

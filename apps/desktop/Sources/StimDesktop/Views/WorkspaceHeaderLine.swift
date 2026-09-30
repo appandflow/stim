@@ -182,7 +182,9 @@ struct GitChipButton: View {
     .onHover { hovering = $0 }
     .help("\(chip.label). Click for the branch and pull request.")
     .accessibilityLabel(chip.label)
-    .popover(isPresented: $shown, arrowEdge: .bottom) { GitPopover(worktree: worktree) }
+    .popover(isPresented: $shown, arrowEdge: .bottom) {
+      GitPopover(worktree: worktree).presentationBackground(Palette.surface)
+    }
   }
 }
 
