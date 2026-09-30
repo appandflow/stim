@@ -390,7 +390,9 @@ Events are `{ "event", "subscription", ... }`.
   prompts or conversation. `openUrl` there is a `claude://` or `codex://` link
   that only the Mac can open; the server has no action that opens it. `webUrl`
   is a Claude Code session's `https://claude.ai/code/` link while Remote Control
-  is connected, which a phone opens in the Claude app or a browser. The server
+  is connected, which a phone opens in the Claude app or a browser.
+  `endedAgents` lists the sessions that stopped running there in the last 3
+  days, with the same fields as last found, no `pid`, and `endedAt`. The server
   drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
   the `stim` commands it runs, so a phone's reload is not recorded as the work
   of the agent session that started the server. All subscribers share

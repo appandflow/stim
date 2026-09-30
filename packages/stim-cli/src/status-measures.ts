@@ -6,19 +6,26 @@ import {
   agentSessionsCacheFile,
   diskUsageCacheFile,
   pullRequestCacheFile,
+  ENDED_AGENT_RETENTION_MS,
   readAgentSessionsCache,
   readDiskUsage,
+  readEndedAgentSessions,
   readPullRequestCache,
   readWorkspaceAgent,
   readWorkspaceState,
+  workspaceEndedAgentsFile,
+  workspaceEndedAgentsLock,
+  type AgentSession,
   type DiskMeasure,
   type EnvironmentDisk,
+  type EndedAgentSession,
   type EnvironmentState,
   type PullRequestCacheEntry,
   type WorktreeFacts,
   type WorktreePullRequest,
 } from '@stim-cli/core/state';
-import { attributeAgentSessions, discoverAgentSessions } from './agent-sessions.ts';
+import { agentKey, attributeAgentSessions, discoverAgentSessions, type AgentWorkspace } from './agent-sessions.ts';
+import { withDirLock } from './dir-lock.ts';
 import { ownedAvdDirectory } from './devices/android.ts';
 import { getExecutor } from './exec.ts';
 import { workspaceDir } from './workspace/paths.ts';
@@ -120,22 +127,76 @@ function canonicalPath(path: string): string {
   }
 }
 
-function applyAgentSessions(states: EnvironmentState[], now: number): void {
-  const cache = readAgentSessionsCache();
-  const fresh = cache && now - Date.parse(cache.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS;
-  const workspaces = states.map((state) => ({
+function agentWorkspaces(states: EnvironmentState[]): AgentWorkspace[] {
+  return states.map((state) => ({
     path: canonicalPath(state.path),
     root: canonicalPath(checkoutDir(state)),
     recorded: readWorkspaceAgent(readWorkspaceState(state.path)),
   }));
-  attributeAgentSessions(workspaces, fresh ? cache.sessions : [], now).forEach((agents, i) => {
+}
+
+function applyAgentSessions(states: EnvironmentState[], now: number): void {
+  const cache = readAgentSessionsCache();
+  const sessions = cache && now - Date.parse(cache.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS ? cache.sessions : [];
+  const discovered = new Set(sessions.map(agentKey));
+  const ended = states.map((state) => readEndedAgentSessions(state.path, now));
+  const workspaces = agentWorkspaces(states);
+  workspaces.forEach((workspace, i) => {
+    const { recorded } = workspace;
+    if (!recorded || discovered.has(agentKey(recorded))) return;
+    if (ended[i]!.some((session) => agentKey(session) === agentKey(recorded))) workspace.recorded = null;
+  });
+  attributeAgentSessions(workspaces, sessions, now).forEach((agents, i) => {
     if (agents.length) states[i]!.agents = agents;
+    const running = new Set(agents.map(agentKey));
+    const endedAgents = ended[i]!.filter((session) => !running.has(agentKey(session)));
+    if (endedAgents.length) states[i]!.endedAgents = endedAgents;
   });
 }
 
+function writeFileAtomic(file: string, entry: object): void {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(entry));
+    renameSync(temporary, file);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function recordEndedAgents(
+  states: EnvironmentState[],
+  gone: AgentSession[],
+  endedAt: string,
+  now: number,
+): { changed: boolean; failed: boolean } {
+  const goneKeys = new Set(gone.map(agentKey));
+  const result = { changed: false, failed: false };
+  attributeAgentSessions(agentWorkspaces(states), gone, now).forEach((sessions, i) => {
+    const root = states[i]!.path;
+    const ended = sessions.filter((session) => goneKeys.has(agentKey(session)));
+    if (!ended.length || !existsSync(workspaceDir(root))) return;
+    try {
+      withDirLock(workspaceEndedAgentsLock(root), () => {
+        const kept = new Map<string, EndedAgentSession>(
+          readEndedAgentSessions(root, now).map((session) => [agentKey(session), session]),
+        );
+        for (const { pid: _pid, ...session } of ended) kept.set(agentKey(session), { ...session, endedAt });
+        writeFileAtomic(workspaceEndedAgentsFile(root), { sessions: [...kept.values()] });
+      });
+      result.changed = true;
+    } catch {
+      result.failed = true;
+    }
+  });
+  return result;
+}
+
 /**
- * Adds the cached measurements to a status read: each environment's `disk` and `agents`, each owned device's `disk`,
- * and each linked worktree's `pullRequest` when the cache holds a lookup for its current branch. Reads files only.
+ * Adds the cached measurements to a status read: each environment's `disk`, `agents` and `endedAgents`, each owned
+ * device's `disk`, and each linked worktree's `pullRequest` when the cache holds a lookup for its current branch.
+ * Reads files only.
  */
 export function applyStatusMeasures(states: EnvironmentState[], worktrees: WorktreeFacts[]): void {
   applyAgentSessions(states, Date.now());
@@ -174,7 +235,8 @@ export interface StatusMeasurer {
  * a time, live environments first, each folder at most every 5 minutes while its environment is live and every hour otherwise, and one `gh api
  * graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD moved. It
  * runs git only in the repository, never in a worktree, and only for worktrees whose git state status read. It rechecks
- * a folder's cache right before measuring, so two watchers rarely measure the same folder. `updated` runs after each
+ * a folder's cache right before measuring, so two watchers rarely measure the same folder. A session the previous
+ * discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated` runs after each
  * write.
  */
 export function createStatusMeasurer({
@@ -272,13 +334,23 @@ export function createStatusMeasurer({
     }
   }
 
-  async function discoverAgents(): Promise<void> {
+  async function discoverAgents(states: EnvironmentState[]): Promise<void> {
     const at = now();
     const sessions = await discoverAgentSessions({ now: at });
     const previous = readAgentSessionsCache();
+    const running = new Set(sessions.map(agentKey));
+    const lastFound = previous ? Date.parse(previous.discoveredAt) : -Infinity;
+    const gone =
+      at - lastFound <= ENDED_AGENT_RETENTION_MS
+        ? previous!.sessions.filter((session) => !running.has(agentKey(session)))
+        : [];
+    const ended = gone.length
+      ? recordEndedAgents(states, gone, previous!.discoveredAt, at)
+      : { changed: false, failed: false };
+    if (ended.failed && at - lastFound <= AGENT_CACHE_MAX_AGE_MS) return;
     writeCacheFile(agentSessionsCacheFile(), { discoveredAt: new Date(at).toISOString(), sessions });
     const shown = previous && at - Date.parse(previous.discoveredAt) <= AGENT_CACHE_MAX_AGE_MS;
-    if (!shown || JSON.stringify(previous.sessions) !== JSON.stringify(sessions)) updated();
+    if (ended.changed || !shown || JSON.stringify(previous.sessions) !== JSON.stringify(sessions)) updated();
   }
 
   return {
@@ -286,7 +358,7 @@ export function createStatusMeasurer({
       if (!discovering && now() - discoveredAt >= AGENT_DISCOVERY_MS) {
         discovering = true;
         discoveredAt = now();
-        void discoverAgents()
+        void discoverAgents(states)
           .catch(() => {})
           .finally(() => {
             discovering = false;

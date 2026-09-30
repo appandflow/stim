@@ -284,6 +284,14 @@ export interface AgentSession {
   webUrl?: string;
 }
 
+/**
+ * An agent session that stopped running in an environment, with the details Stim last found while it ran. `endedAt`
+ * is the last time a status watcher found it running.
+ */
+export interface EndedAgentSession extends Omit<AgentSession, 'pid'> {
+  endedAt: string;
+}
+
 export interface AndroidRuntimeFacts {
   serial: string | null;
   state: 'detected' | 'not-detected' | 'missing' | 'unknown';
@@ -512,6 +520,8 @@ export interface EnvironmentState {
   disk?: EnvironmentDisk;
   /** The coding-agent sessions working in the environment, most recently active first; absent when none. */
   agents?: AgentSession[];
+  /** The agent sessions that stopped running here in the last 3 days, most recently ended first; absent when none. */
+  endedAgents?: EndedAgentSession[];
 }
 
 /** `committedMb` sums the environments' `memoryMb`; `overCapacity` is that sum over 60% of `totalMemoryMb`. */

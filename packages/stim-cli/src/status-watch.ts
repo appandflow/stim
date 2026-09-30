@@ -101,7 +101,7 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
     case 'home':
       return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks' ? 'full' : null;
     case 'workspace':
-      return name.startsWith('state.json') || name === 'logs' ? 'full' : null;
+      return name.startsWith('state.json') || name.startsWith('ended-agents.json') || name === 'logs' ? 'full' : null;
     case 'eas':
       return name.startsWith('sessions.json') ? 'full' : null;
     default:

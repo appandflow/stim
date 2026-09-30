@@ -1,11 +1,19 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readDiskUsage, readPullRequestCache, type EnvironmentState } from '@stim-cli/core/state';
+import {
+  ENDED_AGENT_RETENTION_MS,
+  readAgentSessionsCache,
+  readDiskUsage,
+  readEndedAgentSessions,
+  readPullRequestCache,
+  type EnvironmentState,
+} from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { applyStatusMeasures, createStatusMeasurer } from '../status-measures.ts';
 import { checkCounts } from '../workspace/pull-request.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const GRAPHQL = readFileSync(new URL('./fixtures/gh-pull-requests-graphql.json', import.meta.url), 'utf-8');
 const HEAD = 'dcce0407269e492928e083695fd7b134e64e7af4';
@@ -18,11 +26,13 @@ let calls: { file: string; args: string[] }[];
 let head: string;
 let clock: number;
 const realHome = process.env.HOME;
+const realUserProfile = process.env.USERPROFILE;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-status-measures-'));
   process.env.STIM_HOME = home;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   process.env.ANDROID_AVD_HOME = join(home, 'avd');
   app = join(home, 'app');
   avd = join(home, 'avd', 'stim-t.avd');
@@ -59,6 +69,8 @@ afterEach(() => {
   delete process.env.STIM_HOME;
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
   delete process.env.ANDROID_AVD_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -129,6 +141,124 @@ test('measures stale folders and pull requests in the background, then status re
   measurer.schedule([state], [state.worktree!]);
   await vi.waitFor(() => expect(readPullRequestCache(app)?.head).toBe(head));
   expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
+});
+
+test('a session that stops running stays listed as ended with its links for 3 days, and running again wins', async () => {
+  clock = Date.now();
+  const firstAt = new Date(clock).toISOString();
+  const sessions = join(home, '.claude', 'sessions');
+  mkdirSync(sessions, { recursive: true });
+  const claude = join(sessions, `${process.pid}.json`);
+  const run = () =>
+    writeFileSync(
+      claude,
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: 'live',
+        cwd: app,
+        name: 'Fix tiles',
+        startedAt: clock,
+        bridgeSessionId: 'session_01abc',
+      }),
+    );
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const discover = async (count: number) => {
+    const before = readAgentSessionsCache()?.discoveredAt;
+    const state = environment();
+    measurer.schedule([state], [state.worktree!]);
+    await vi.waitFor(() => {
+      const cache = readAgentSessionsCache();
+      expect(cache?.discoveredAt).not.toBe(before);
+      expect(cache?.sessions).toHaveLength(count);
+    });
+  };
+  const read = () => {
+    const state = environment();
+    applyStatusMeasures([state], []);
+    return state;
+  };
+
+  run();
+  recordWorkspaceUse(app, new Date(clock), { CLAUDE_CODE_SESSION_ID: 'live' });
+  await discover(1);
+  expect(read().agents?.map((agent) => agent.sessionId)).toEqual(['live']);
+  expect(read().endedAgents).toBeUndefined();
+
+  rmSync(claude);
+  clock += 20_000;
+  await discover(0);
+  const ended = read();
+  expect(ended.agents).toBeUndefined();
+  expect(ended.endedAgents).toEqual([
+    {
+      tool: 'claude-code',
+      sessionId: 'live',
+      title: 'Fix tiles',
+      cwd: realpathSync(app),
+      startedAt: firstAt,
+      lastActiveAt: firstAt,
+      webUrl: 'https://claude.ai/code/session_01abc',
+      endedAt: firstAt,
+    },
+  ]);
+  expect(readEndedAgentSessions(app, Date.parse(firstAt) + ENDED_AGENT_RETENTION_MS + 1)).toEqual([]);
+
+  run();
+  clock += 20_000;
+  await discover(1);
+  const resumed = read();
+  expect(resumed.agents?.map((agent) => agent.sessionId)).toEqual(['live']);
+  expect(resumed.endedAgents).toBeUndefined();
+});
+
+test('a failed ended-session write keeps the cache for 2 minutes, so a later discovery records the session', async () => {
+  clock = Date.now();
+  const sessions = join(home, '.claude', 'sessions');
+  mkdirSync(sessions, { recursive: true });
+  const claude = join(sessions, `${process.pid}.json`);
+  const run = (sessionId: string) =>
+    writeFileSync(claude, JSON.stringify({ pid: process.pid, sessionId, cwd: app, startedAt: clock }));
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const discover = () => {
+    const state = environment();
+    measurer.schedule([state], [state.worktree!]);
+  };
+  const blocked = join(workspaceDir(app), 'ended-agents.json');
+  mkdirSync(join(home, '.codex'));
+  writeFileSync(join(home, '.codex', 'state_1.sqlite'), '');
+  const failOnce = async () => {
+    rmSync(blocked, { recursive: true, force: true });
+    mkdirSync(join(blocked, 'keep'), { recursive: true });
+    calls = [];
+    discover();
+    await vi.waitFor(() => expect(calls.some((call) => call.file === process.execPath)).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  };
+
+  run('first');
+  discover();
+  await vi.waitFor(() => expect(readAgentSessionsCache()?.sessions).toHaveLength(1));
+  rmSync(claude);
+  clock += 20_000;
+  await failOnce();
+  expect(readAgentSessionsCache()?.sessions.map((session) => session.sessionId)).toEqual(['first']);
+
+  rmSync(blocked, { recursive: true });
+  clock += 20_000;
+  discover();
+  await vi.waitFor(() =>
+    expect(readEndedAgentSessions(app, clock).map((session) => session.sessionId)).toEqual(['first']),
+  );
+  expect(readAgentSessionsCache()?.sessions).toEqual([]);
+
+  run('second');
+  clock += 20_000;
+  discover();
+  await vi.waitFor(() => expect(readAgentSessionsCache()?.sessions).toHaveLength(1));
+  rmSync(claude);
+  clock += 3 * 60_000;
+  await failOnce();
+  await vi.waitFor(() => expect(readAgentSessionsCache()?.sessions).toEqual([]));
 });
 
 test('a missing gh leaves the pull request unknown', async () => {

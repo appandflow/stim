@@ -1281,6 +1281,18 @@ RULES
   that ran them, so that session is listed for 30 minutes after the command
   even when status cannot see it, and for as long as it runs.
 
+  When a watcher stops finding a session it found on its previous look, it
+  records the session in each environment it worked in, under
+  $STIM_HOME/workspaces/<id>/ended-agents.json, for 3 days:
+
+  endedAgents   [{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?,
+                openUrl?, webUrl?, endedAt }], most recently ended first
+    endedAt     the last time a watcher found the session running; a Codex
+                thread ends 30 minutes after its last update
+
+  The other fields are as the watcher last found them. A session that runs
+  again is listed in agents only.
+
   memorySource says how a memory figure was obtained:
 
   footprint  physical footprint, the figure Activity Monitor's Memory

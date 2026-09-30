@@ -850,6 +850,14 @@ session's `https://claude.ai/code/` link while Claude Code Remote Control is
 connected, which opens it in a browser or the Claude mobile app; Stim's phone
 app opens it from the workspace page.
 
+When the watcher stops finding a session it found on its previous look, it
+records the session in each workspace it worked in, and the environment
+carries it for 3 days in `endedAgents`, most recently ended first. Each entry
+has the fields above except `pid`, as the watcher last found them, including
+its `openUrl` and `webUrl`, plus `endedAt`, the last time the watcher found it
+running. A Codex thread ends 30 minutes after its last update. A session that
+runs again is listed in `agents` only.
+
 In `--json`, `machine` lists what uses CPU and memory now: each booted
 simulator and emulator with its workspace, each Metro, running build and
 `stim web` Chrome, stim-server, and a shared bucket for machine-wide processes
