@@ -54,11 +54,19 @@ const PLACEMENT_KEYS = new Set([
   'zIndex',
 ]);
 
-function splitStyle(style: object) {
+const FILL_KEYS = ['flex', 'flexGrow', 'flexBasis', 'height', 'minHeight', 'aspectRatio'];
+
+function splitStyle(style: Record<string, unknown>) {
   const placement: Record<string, unknown> = {};
-  const surface: Record<string, unknown> = { flexGrow: 1, flexShrink: 1 };
+  const surface: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(style)) {
     (PLACEMENT_KEYS.has(key) ? placement : surface)[key] = value;
+  }
+  // The surface grows into a wrapper that layout sizes beyond its content. A surface that always grows fills every
+  // column: Yoga measures the wrapper with the parent's height as its maximum, so the surface takes all of it.
+  if (FILL_KEYS.some((key) => key in placement) || placement.alignSelf === 'stretch') {
+    surface.flexGrow = 1;
+    surface.flexShrink = 1;
   }
   return { placement, surface };
 }
@@ -70,7 +78,7 @@ function splitStyle(style: object) {
 function BouncingTouchable({ style, onPressIn, onPressOut, ...props }: TouchableProps) {
   const reduceMotion = useReducedMotion();
   const [pressed, setPressed] = useState(false);
-  const { placement, surface } = splitStyle((style ?? {}) as object);
+  const { placement, surface } = splitStyle((style ?? {}) as Record<string, unknown>);
   return (
     <EaseView
       style={placement}
