@@ -2,12 +2,13 @@ import SwiftUI
 
 /// The fill under a clickable row or chip: a light accent tint while the pointer is over it, a stronger one while
 /// it is pressed, and `Palette.selection` while `selected`, which hovering does not change.
-private struct HoverFill: View {
-  var radius: CGFloat
-  var outset: CGFloat
+struct HoverFill: View {
+  var radius: CGFloat = Radius.chip
+  var outset: CGFloat = 0
   var hovering: Bool
-  var pressed: Bool
-  var selected: Bool
+  var pressed = false
+  var selected = false
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     RoundedRectangle(cornerRadius: radius)
@@ -17,10 +18,12 @@ private struct HoverFill: View {
       .animation(.easeOut(duration: 0.1), value: pressed)
   }
 
+  /// Light `Palette.selection` is itself a faint accent tint, so a light hover stays under it.
   private var color: Color {
+    let weight = scheme == .dark ? 1.0 : 0.5
     if selected { return Palette.selection }
-    if pressed { return Palette.accent.opacity(Opacity.tint) }
-    return Palette.accent.opacity(hovering ? Opacity.subtle : 0)
+    if pressed { return Palette.accent.opacity(Opacity.tint * weight) }
+    return Palette.accent.opacity(hovering ? Opacity.subtle * weight : 0)
   }
 }
 

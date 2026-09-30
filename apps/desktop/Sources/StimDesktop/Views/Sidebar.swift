@@ -434,9 +434,7 @@ private struct SidebarRowBackground: ViewModifier {
       .tag(item)
       .listRowBackground(
         item == selection || hovering
-          ? RoundedRectangle(cornerRadius: Radius.chip)
-            .fill(item == selection ? Palette.selection : Palette.accent.opacity(Opacity.subtle))
-            .padding(.horizontal, Space.md)
+          ? HoverFill(hovering: hovering, selected: item == selection).padding(.horizontal, Space.md)
           : nil)
   }
 }
