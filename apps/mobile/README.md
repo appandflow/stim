@@ -24,8 +24,9 @@ reload and stop a workspace:
   git state (a dot with the count of uncommitted files, arrows for commits ahead
   of and behind the upstream, and **merged** once gc would call the branch
   merged), Metro, devices and
-  their activity (driven by a tool, or idle), build progress, error and warning
-  counts, and remote EAS sessions. A machine that is not connected keeps its
+  their activity (driven by a tool, or idle), the workspace's agent session
+  (the same one the Work card shows, running or ended) with how many others it
+  has, build progress, error and warning counts, and remote EAS sessions. A machine that is not connected keeps its
   last status: its rows are dimmed with a hollow dot and "Last seen 3m ago",
   and their activity and build times stop at the moment it disconnected. Its
   device chips turn grey. The phone keeps each machine's last status on disk,
@@ -157,8 +158,8 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     opens the **Work** sheet: every agent session running in the workspace or
     that stopped there in the last 3 days, in the same order, by title and
     tool without times. A Claude Code session with Remote Control connected,
-    running or ended, shows as a link that opens it in the Claude app, or claude.ai/code without
-    the app. Below come the upstream, ahead, behind, changed and untracked
+    running or ended, shows as a link that opens it in the Claude app, or
+    claude.ai/code without the app. Below come the upstream, ahead, behind, changed and untracked
     files, merged into, and the pull request's title, state, checks and review
     with **Open in GitHub**.
 
