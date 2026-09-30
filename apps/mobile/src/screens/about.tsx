@@ -22,9 +22,6 @@ export function About() {
         <Text variant="footnote" tone="secondary">
           {`Update ${Updates.isEmbeddedLaunch || !Updates.updateId ? 'embedded' : Updates.updateId}`}
         </Text>
-        <Text variant="footnote" tone="secondary">
-          Read-only: this app watches workspaces, devices and logs on your machines and changes nothing.
-        </Text>
         {connections.map((c) => (
           <Text key={c.mac.id} variant="footnote" tone="secondary">
             {c.state.kind === 'open'
