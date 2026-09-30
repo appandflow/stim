@@ -26,11 +26,13 @@ let calls: { file: string; args: string[] }[];
 let head: string;
 let clock: number;
 const realHome = process.env.HOME;
+const realUserProfile = process.env.USERPROFILE;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-status-measures-'));
   process.env.STIM_HOME = home;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   process.env.ANDROID_AVD_HOME = join(home, 'avd');
   app = join(home, 'app');
   avd = join(home, 'avd', 'stim-t.avd');
@@ -67,6 +69,8 @@ afterEach(() => {
   delete process.env.STIM_HOME;
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
   delete process.env.ANDROID_AVD_HOME;
   rmSync(home, { recursive: true, force: true });
 });
