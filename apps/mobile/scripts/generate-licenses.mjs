@@ -68,14 +68,21 @@ function repositoryUrl(pkg) {
   return /^[\w.-]+\/[\w.-]+$/.test(url) ? `https://github.com/${url}` : null;
 }
 
-function licenseText(root) {
-  const file = readdirSync(root)
-    .filter((name) => /^(licen[cs]e|copying)(\.|$|-)/i.test(name))
-    .sort()[0];
-  if (!file) return null;
-  const text = readFileSync(join(root, file), 'utf8').replace(/\r\n/g, '\n').trim();
-  return text || null;
+const clean = (text) => text.replace(/\r\n/g, '\n').trim();
+
+/** Every license file in the package, so a dual-licensed package shows both. */
+function licenseText(root, name) {
+  const texts = readdirSync(root)
+    .filter((file) => /^(licen[cs]e|copying|unlicense)([._-]|$)/i.test(file))
+    .sort()
+    .map((file) => clean(readFileSync(join(root, file), 'utf8')))
+    .filter(Boolean);
+  if (texts.length > 0) return texts.join('\n\n---\n\n');
+  const override = join(app, 'scripts', 'licenses', `${name.replace('/', '__')}.txt`);
+  return existsSync(override) ? clean(readFileSync(override, 'utf8')) : null;
 }
+
+const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 function generate() {
   const roots = [...new Set([...bundledPackageRoots(), ...directDependencyRoots()])];
@@ -92,7 +99,7 @@ function generate() {
     {
       ...stim,
       url: 'https://github.com/appandflow/stim',
-      text: indexOf(readFileSync(join(repo, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n').trim()),
+      text: indexOf(clean(readFileSync(join(repo, 'LICENSE'), 'utf8'))),
     },
   ];
   const entries = new Map();
@@ -103,7 +110,7 @@ function generate() {
       version: pkg.version,
       license: licenseId(pkg),
       url: repositoryUrl(pkg) ?? (pkg.homepage?.startsWith('http') ? pkg.homepage : null),
-      text: licenseText(root),
+      text: licenseText(root, pkg.name),
     });
   }
   const byRepository = new Map();
@@ -113,9 +120,11 @@ function generate() {
   for (const entry of entries.values()) {
     entry.text ??= byRepository.get(`${entry.url} ${entry.license}`) ?? null;
   }
-  const sorted = [...entries.values()].sort(
-    (a, b) => a.name.localeCompare(b.name, 'en') || a.version.localeCompare(b.version),
-  );
+  const sorted = [...entries.values()].sort((a, b) => compare(a.name, b.name) || compare(a.version, b.version));
+  const missing = sorted.filter((entry) => entry.text === null).map((entry) => entry.name);
+  if (missing.length > 0) {
+    console.warn(`No license text for ${missing.join(', ')}; add scripts/licenses/<name>.txt if upstream has one.`);
+  }
   for (const entry of sorted) packages.push({ ...entry, text: indexOf(entry.text) });
 
   const json = JSON.stringify({ packages, texts }, null, 1).replace(

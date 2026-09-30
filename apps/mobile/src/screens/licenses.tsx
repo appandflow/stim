@@ -6,6 +6,10 @@ import { ListRow } from '@/components/list';
 import { FlatList } from '@/components/lists';
 import { LICENSES } from '@/lib/licenses';
 
+function Separator() {
+  return <View style={styles.separator} />;
+}
+
 export function Licenses() {
   return (
     <FlatList
@@ -13,7 +17,7 @@ export function Licenses() {
       contentInsetAdjustmentBehavior="automatic"
       data={LICENSES}
       keyExtractor={(item) => `${item.name}@${item.version}`}
-      ItemSeparatorComponent={() => <View style={styles.separator} />}
+      ItemSeparatorComponent={Separator}
       renderItem={({ item, index }) => (
         <ListRow
           title={item.name}

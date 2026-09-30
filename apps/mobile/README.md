@@ -983,11 +983,15 @@ from `src/generated/licenses.json`, which `pnpm run licenses` writes: it runs
 Metro bundles pull in, adds the direct dependencies of `package.json`, and reads
 each package's `package.json` and license file. A package that ships no license
 file uses the text of another bundled package from the same repository under the
-same license, and otherwise shows none. Identical texts are stored once. The
+same license, or its file in `scripts/licenses`, and otherwise shows none. Identical texts are stored once. The
 list does not include native libraries that no npm package vendors, such as the
 Hermes engine and CocoaPods or Gradle transitive dependencies.
 
-Run `pnpm run licenses` and commit the file after a dependency change.
+Run `pnpm run licenses` and commit the file after a dependency change: a change
+to the dependencies or `pnpm-lock.yaml`, including an automated update, fails the
+Mobile workflow until the file is regenerated. `scripts/licenses/<name>.txt`
+holds the upstream license text of a package that ships no license file; the
+generator prints the packages that still have none.
 `pnpm run licenses:check` regenerates the list and fails when the committed file
 differs; the Mobile workflow runs it. The page is JavaScript and JSON only, so
 it changes no native fingerprint and ships over the air.

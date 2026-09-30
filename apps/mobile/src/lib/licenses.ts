@@ -15,7 +15,6 @@ interface LicenseData {
 
 const { packages, texts } = data as LicenseData;
 
-/** Stim first, then every npm package in the app's JS bundle or linked natively, from `pnpm run licenses`. */
 export const LICENSES: LicensePackage[] = packages.map((entry) => ({
   ...entry,
   text: entry.text === null ? null : texts[entry.text],
