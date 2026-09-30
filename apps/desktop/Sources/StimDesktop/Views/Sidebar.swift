@@ -75,11 +75,7 @@ struct Sidebar: View {
       PinnedRow(item: .attention, selection: $selection) {
         SidebarLabel(title: "Needs attention", icon: "exclamationmark.triangle", selected: selection == .attention)
         Spacer()
-        let count = store.attention(lowestVolume: autopilot.lowestVolume).count + autopilot.finishedPullRequests.count
-        if count > 0 {
-          Pill("\(count)", tone: .warning, size: .small)
-            .help("\(count) item\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") attention")
-        }
+        AttentionCount(store: store, autopilot: autopilot)
       }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machine", icon: "internaldrive", selected: selection == .machine)
@@ -133,6 +129,21 @@ struct Sidebar: View {
         updated[root] = expanded
         expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
       })
+  }
+}
+
+private struct AttentionCount: View {
+  @ObservedObject var store: StatusStore
+  @ObservedObject var autopilot: AutopilotRunner
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 60)) { _ in
+      let count = store.attention(lowestVolume: autopilot.lowestVolume).count + autopilot.finishedPullRequests.count
+      if count > 0 {
+        Pill("\(count)", tone: .warning, size: .small)
+          .help("\(count) item\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") attention")
+      }
+    }
   }
 }
 

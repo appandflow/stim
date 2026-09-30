@@ -13,9 +13,10 @@ enum SidebarItem: Hashable {
 
 struct RootView: View {
   @ObservedObject private var store: StatusStore
-  @StateObject private var metrics: MetricsStore
+  @State private var metrics: MetricsStore
+  private let gc: GcReportStore
   @ObservedObject private var actions: ActionCenter
-  @ObservedObject private var autopilot: AutopilotRunner
+  private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
   @StateObject private var storage: StorageStore
   @StateObject private var planChecks: BuildPlanChecks
@@ -35,7 +36,7 @@ struct RootView: View {
   @State private var detailWidth: CGFloat = 0
   @State private var columnVisibility = NavigationSplitViewVisibility.all
   @ObservedObject private var openRequests = OpenRequests.shared
-  @ObservedObject private var toasts = ToastCenter.shared
+  private let toasts = ToastCenter.shared
   @State private var pendingLink: PendingWorkspaceLink?
   @Environment(\.openWindow) private var openWindow
 
@@ -50,7 +51,8 @@ struct RootView: View {
     self.store = store
     self.actions = actions
     self.autopilot = autopilot
-    _metrics = StateObject(wrappedValue: MetricsStore(status: store, gc: gc))
+    self.gc = gc
+    _metrics = State(initialValue: MetricsStore(status: store, gc: gc))
     _storage = StateObject(wrappedValue: StorageStore(status: store, cli: cli))
     _planChecks = StateObject(
       wrappedValue: BuildPlanChecks { platform, workspace in
@@ -84,7 +86,7 @@ struct RootView: View {
         .toolbar {
           ToolbarItem(placement: .navigation) { ActivityToolbarIndicator(actions: actions) }
           ToolbarItem(id: summaryItemID, placement: .navigation) {
-            MachineSummary(store: store, metrics: metrics, width: summaryWidth)
+            MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth)
           }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
@@ -321,12 +323,10 @@ struct RootView: View {
     switch selection {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        WorkspaceDetail(
-          cli: cli, env: env, usage: metrics.usage[env.path], machine: store.payload?.machine,
+        WorkspaceDetailHost(
+          cli: cli, env: env, metrics: metrics, machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
-          history: metrics.owners, inspector: inspector,
-          inspectorWidth: $inspectorWidth,
-          focusedID: $focusedDeviceID, logQuery: $logQuery)
+          inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery)
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
@@ -341,10 +341,29 @@ struct RootView: View {
     case .attention:
       AttentionView(store: store, autopilot: autopilot, openLogs: openErrors)
     case .machine:
-      MachineView(cli: cli, status: store, metrics: metrics, storage: storage, autopilot: autopilot)
+      MachineView(cli: cli, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot)
     default:
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }
+  }
+}
+
+private struct WorkspaceDetailHost: View {
+  var cli: Task<StimCLI, Never>
+  var env: Workspace
+  var metrics: MetricsStore
+  var machine: MachineUsage?
+  var reportsBundles: Bool
+  var inspector: InspectorPresentation
+  @Binding var inspectorWidth: CGFloat
+  @Binding var focusedID: String?
+  @Binding var logQuery: LogQuery
+
+  var body: some View {
+    WorkspaceDetail(
+      cli: cli, env: env, usage: metrics.usage[env.path], machine: machine, reportsBundles: reportsBundles,
+      history: metrics.owners, inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedID,
+      logQuery: $logQuery)
   }
 }
 
@@ -356,7 +375,8 @@ private struct PendingWorkspaceLink {
 
 struct MachineSummary: View {
   @ObservedObject var store: StatusStore
-  @ObservedObject var metrics: MetricsStore
+  var metrics: MetricsStore
+  var gc: GcReportStore
   var width: CGFloat
   @State private var showsDisk = false
 
@@ -414,7 +434,7 @@ struct MachineSummary: View {
             statItem(
               icon: "internaldrive", value: "\(Format.fileSize(lowest.freeBytes)) free",
               tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
-            if showsReclaimable, let reclaimable = metrics.reclaimable, reclaimable.bytes > 0 {
+            if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
               Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
             }
           }
@@ -422,7 +442,7 @@ struct MachineSummary: View {
         .buttonStyle(.plain)
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
         .popover(isPresented: $showsDisk, arrowEdge: .bottom) {
-          DiskPopover(volumes: metrics.volumes, reclaimable: metrics.reclaimable).presentationBackground(Palette.surface)
+          DiskPopover(volumes: metrics.volumes, reclaimable: gc.report?.reclaimable).presentationBackground(Palette.surface)
         }
       }
       if store.watching {

@@ -1,21 +1,22 @@
 import AppKit
+import Observation
 import StimKit
 
 /// The one `stim gc --json` report the Machine page, the metrics and the autopilot share. At most one run is in
 /// flight; a caller that asks while it runs gets its result.
-@MainActor
-final class GcReportStore: ObservableObject {
+@MainActor @Observable
+final class GcReportStore {
   static let settleDelay: TimeInterval = 2
 
-  @Published private(set) var latest = Fetched<GcReport>()
-  @Published private(set) var at: Date?
-  @Published private(set) var running = false
+  private(set) var latest = Fetched<GcReport>()
+  private(set) var at: Date?
+  private(set) var running = false
 
   private let cli: Task<StimCLI, Never>
-  private var task: Task<GcReport?, Never>?
-  private var taskStartedAt = Date.distantPast
-  private var changedAt = Date.distantPast
-  private var settle: Timer?
+  @ObservationIgnored private var task: Task<GcReport?, Never>?
+  @ObservationIgnored private var taskStartedAt = Date.distantPast
+  @ObservationIgnored private var changedAt = Date.distantPast
+  @ObservationIgnored private var settle: Timer?
 
   init(cli: Task<StimCLI, Never>) {
     self.cli = cli

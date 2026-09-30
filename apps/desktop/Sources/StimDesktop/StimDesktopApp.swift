@@ -108,13 +108,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct StimDesktopApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-  @StateObject private var store: StatusStore
-  @StateObject private var notifier: Notifier
-  @StateObject private var oversight: OversightNotifier
-  @StateObject private var actions: ActionCenter
-  @StateObject private var autopilot: AutopilotRunner
-  @StateObject private var onboarding: Onboarding
-  @StateObject private var gc: GcReportStore
+  private let store: StatusStore
+  private let notifier: Notifier
+  private let oversight: OversightNotifier
+  private let actions: ActionCenter
+  private let autopilot: AutopilotRunner
+  private let onboarding: Onboarding
+  private let gc: GcReportStore
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   private let cli: Task<StimCLI, Never>
 
@@ -136,14 +136,14 @@ struct StimDesktopApp: App {
     BuildRequestNotifier.shared.start()
     _ = ServerSession.shared
     let store = StatusStore(cli: cli)
-    _store = StateObject(wrappedValue: store)
-    _notifier = StateObject(wrappedValue: Notifier(store: store))
+    self.store = store
+    notifier = Notifier(store: store)
     let oversight = OversightNotifier(store: store)
-    _oversight = StateObject(wrappedValue: oversight)
+    self.oversight = oversight
     let actions = ActionCenter(cli: cli)
-    _actions = StateObject(wrappedValue: actions)
+    self.actions = actions
     let gc = GcReportStore(cli: cli)
-    _gc = StateObject(wrappedValue: gc)
+    self.gc = gc
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
       if !store.watching || worktree { store.refresh() }
@@ -153,9 +153,9 @@ struct StimDesktopApp: App {
       }
     }
     let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, cli: cli)
-    _autopilot = StateObject(wrappedValue: autopilot)
+    self.autopilot = autopilot
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
-    _onboarding = StateObject(wrappedValue: onboarding)
+    self.onboarding = onboarding
     DispatchQueue.main.async {
       store.start()
       oversight.start()
@@ -189,9 +189,7 @@ struct StimDesktopApp: App {
     MenuBarExtra(isInserted: menuBarExtraInserted) {
       MenuBarContent(store: store)
     } label: {
-      let live = store.payload?.environments.filter(\.live).count ?? 0
-      Label("\(live)", systemImage: "iphone.gen3")
-        .labelStyle(.titleAndIcon)
+      MenuBarLabel(store: store)
     }
   }
 
@@ -202,6 +200,15 @@ struct StimDesktopApp: App {
     Binding(
       get: { showsMenuBarExtra },
       set: { if $0 != showsMenuBarExtra { showsMenuBarExtra = $0 } })
+  }
+}
+
+private struct MenuBarLabel: View {
+  @ObservedObject var store: StatusStore
+
+  var body: some View {
+    Label("\(store.payload?.environments.filter(\.live).count ?? 0)", systemImage: "iphone.gen3")
+      .labelStyle(.titleAndIcon)
   }
 }
 

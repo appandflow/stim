@@ -256,7 +256,7 @@ public struct MachineMemory: Equatable, Sendable {
 }
 
 /// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
-public struct GcReport: Decodable, Sendable {
+public struct GcReport: Decodable, Equatable, Sendable {
   /// Whether a finished `command` can change what `stim gc --json` reports: a cleanup, a run, start or stop,
   /// a worktree, port, device lease or setting change. A reload or a read-only command cannot.
   public static func changed(by command: StimCommand) -> Bool {
@@ -374,7 +374,7 @@ public struct GcReport: Decodable, Sendable {
     public var path: String
   }
 
-  public struct Sections: Decodable, Sendable {
+  public struct Sections: Decodable, Equatable, Sendable {
     public var deadProjects: [Path]?
     public var orphanedWorkspaces: [Sized]?
     public var linkedWorktrees: [LinkedWorktree]?
@@ -391,7 +391,7 @@ public struct GcReport: Decodable, Sendable {
   /// Every simulator, AVD, iOS runtime and system image on the machine; nil from a CLI that predates it.
   public var inventory: Inventory?
 
-  public struct Inventory: Decodable, Sendable {
+  public struct Inventory: Decodable, Equatable, Sendable {
     public var devices: [InventoryDevice]
     public var runtimes: [InventoryRuntime]
     public var systemImages: [InventorySystemImage]

@@ -5,7 +5,8 @@ import SwiftUI
 struct MachineView: View {
   var cli: Task<StimCLI, Never>
   @ObservedObject var status: StatusStore
-  @ObservedObject var metrics: MetricsStore
+  var metrics: MetricsStore
+  var gc: GcReportStore
   @ObservedObject var storage: StorageStore
   @ObservedObject var autopilot: AutopilotRunner
   @EnvironmentObject private var actions: ActionCenter
@@ -14,15 +15,17 @@ struct MachineView: View {
   @State private var removing: WorkspaceStorage?
   @State private var expanded: Set<String> = []
   @State private var width: CGFloat = 1000
+  @State private var reportCache = StorageReportCache()
 
   private static let sizeWidth: CGFloat = 84
   private var compact: Bool { width < 860 }
 
   var body: some View {
-    let report = StorageReport.make(
-      environments: status.payload?.environments ?? [], unprovisioned: status.payload?.unprovisionedWorktrees ?? [],
-      gc: metrics.gcReport, disk: storage.disk, paths: storage.paths,
-      projectRoots: status.projects.mapValues(\.root))
+    let report = reportCache.value(
+      for: StorageReportInputs(
+        environments: status.payload?.environments ?? [],
+        unprovisioned: status.payload?.unprovisionedWorktrees ?? [], gc: gc.report, disk: storage.disk,
+        paths: storage.paths, projectRoots: status.projects.mapValues(\.root)))
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
@@ -42,7 +45,7 @@ struct MachineView: View {
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
     .onAppear {
       storage.refresh()
-      if metrics.gcReport == nil { metrics.refreshGc() }
+      if gc.report == nil { gc.refresh() }
     }
     .confirmationDialog(
       "Free this space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
@@ -83,17 +86,17 @@ struct MachineView: View {
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
-      if let at = storage.measuredAt, !storage.measuring, !metrics.gcRunning {
+      if let at = storage.measuredAt, !storage.measuring, !gc.running {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           Text("Measured \(Format.age(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
         }
       }
       Button("Refresh") {
         storage.refresh(force: true)
-        metrics.refreshGc()
+        gc.refresh()
       }
       .buttonStyle(.stim())
-      .disabled(storage.measuring || metrics.gcRunning)
+      .disabled(storage.measuring || gc.running)
     }
   }
 
@@ -188,9 +191,9 @@ struct MachineView: View {
   }
 
   @ViewBuilder private var gcMissing: some View {
-    if metrics.gcRunning {
+    if gc.running {
       Text("Waiting for stim gc\u{2026}").foregroundStyle(Palette.tertiary)
-    } else if let error = metrics.gcError {
+    } else if let error = gc.error {
       gcFailed(error)
     } else {
       Text("stim gc has not reported yet.").foregroundStyle(Palette.tertiary)
@@ -228,13 +231,13 @@ struct MachineView: View {
           .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
       }
     } content: { shown in
-      if metrics.gcReport == nil {
+      if gc.report == nil {
         gcMissing
       } else if report.free.isEmpty {
-        if let error = metrics.gcError, !metrics.gcRunning { gcFailed(error) }
+        if let error = gc.error, !gc.running { gcFailed(error) }
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
-        if let error = metrics.gcError, !metrics.gcRunning { gcFailed(error) }
+        if let error = gc.error, !gc.running { gcFailed(error) }
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
@@ -500,7 +503,7 @@ struct MachineView: View {
       case .active:
         Text(workspace.unprovisioned ? "Not warmed" : "Active").foregroundStyle(Palette.tertiary)
       case nil:
-        Text(workspace.unprovisioned ? "Not warmed" : metrics.gcReport == nil ? "\u{2014}" : "Checkout")
+        Text(workspace.unprovisioned ? "Not warmed" : gc.report == nil ? "\u{2014}" : "Checkout")
           .foregroundStyle(Palette.tertiary)
           .help(
             workspace.unprovisioned
@@ -537,7 +540,7 @@ struct MachineView: View {
   }
 
   @ViewBuilder private func inventoryMissing(_ what: String) -> some View {
-    if metrics.gcReport == nil {
+    if gc.report == nil {
       gcMissing
     } else {
       Text("Update stim to list every \(what) here.").foregroundStyle(Palette.tertiary)
@@ -741,6 +744,30 @@ struct MachineView: View {
 
   private func reveal(_ path: String) {
     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+  }
+}
+
+private struct StorageReportInputs: Equatable {
+  var environments: [Workspace]
+  var unprovisioned: [UnprovisionedWorktree]
+  var gc: GcReport?
+  var disk: DiskMeasurements
+  var paths: StoragePaths
+  var projectRoots: [String: String]
+}
+
+private final class StorageReportCache {
+  private var inputs: StorageReportInputs?
+  private var report: StorageReport?
+
+  func value(for inputs: StorageReportInputs) -> StorageReport {
+    if let report, inputs == self.inputs { return report }
+    let report = StorageReport.make(
+      environments: inputs.environments, unprovisioned: inputs.unprovisioned, gc: inputs.gc, disk: inputs.disk,
+      paths: inputs.paths, projectRoots: inputs.projectRoots)
+    self.inputs = inputs
+    self.report = report
+    return report
   }
 }
 
