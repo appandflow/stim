@@ -17,10 +17,22 @@ import { describeState } from '@/components/mac-chip';
 import { Text } from '@/components/text';
 import { useMacs, type PairedConnection } from '@/hooks/machines';
 import { formatDateTime } from '@/intl/format';
-import { diagnosticText, shortId, versionWithBuild, type AboutApp, type AboutMachine } from '@/lib/about';
+import {
+  bugReportUrl,
+  diagnosticText,
+  shortId,
+  versionWithBuild,
+  type AboutApp,
+  type AboutDevice,
+  type AboutMachine,
+} from '@/lib/about';
+import { LICENSES } from '@/lib/licenses';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 
 const ICON = require('@/assets/images/icon-ios.png');
+
+/** The generated list starts with Stim's own license. */
+const STIM_LICENSE = 0;
 
 const WEBSITE = 'https://stim.appandflow.com';
 const REPOSITORY = 'https://github.com/appandflow/stim';
@@ -40,9 +52,21 @@ function appInfo(): AboutApp {
   };
 }
 
+function deviceInfo(): AboutDevice {
+  return {
+    os: Platform.OS,
+    osVersion: String(Platform.Version),
+    model: Platform.OS === 'android' ? Platform.constants.Model : (Constants.platform?.ios?.model ?? null),
+    locale: Intl.DateTimeFormat().resolvedOptions().locale,
+  };
+}
+
 function machineInfo({ mac, state, missing }: PairedConnection): AboutMachine {
   if (state.kind !== 'open') return { name: mac.name, detail: { state: describeState(state, missing) } };
-  return { name: mac.name, detail: { stim: state.server.stim, server: state.server.version } };
+  return {
+    name: mac.name,
+    detail: { stim: state.server.stim, server: state.server.version, protocol: state.protocol },
+  };
 }
 
 export function About({ onClose }: { onClose?: () => void }) {
@@ -111,8 +135,22 @@ export function About({ onClose }: { onClose?: () => void }) {
         </ListSection>
       ) : null}
       <ListSection>
+        <ListRow
+          title={t`Report a bug`}
+          accessory="chevron"
+          onPress={() => open(bugReportUrl(app, connections.map(machineInfo), deviceInfo()))}
+        />
         <ListRow title={t`Website`} accessory="chevron" onPress={() => open(WEBSITE)} />
         <ListRow title={t`GitHub`} accessory="chevron" onPress={() => open(REPOSITORY)} />
+        <ListRow
+          title={t`License`}
+          value={LICENSES[STIM_LICENSE].license}
+          accessory="chevron"
+          onPress={() => {
+            onClose?.();
+            router.push({ pathname: '/license', params: { index: String(STIM_LICENSE) } });
+          }}
+        />
         <ListRow
           title={t`Open source licenses`}
           accessory="chevron"
@@ -136,12 +174,12 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.space.xxl,
     paddingTop: theme.space.xxxl,
     paddingBottom: theme.space.huge,
-    gap: theme.space.xxxl,
+    gap: theme.space.xl,
   },
   header: { alignItems: 'center', gap: theme.space.xs },
   icon: {
-    width: 80,
-    height: 80,
+    width: 64,
+    height: 64,
     marginBottom: theme.space.md,
     borderRadius: theme.radius.sheet,
     borderCurve: 'continuous',

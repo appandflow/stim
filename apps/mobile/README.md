@@ -113,8 +113,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   phone. The button at the bottom shows the number of
   paired machines and opens **About**, with the app version and build, the
   runtime, channel, update and protocol, each paired machine's stim and server
-  versions, and links to the website, GitHub, the open source licenses and
-  App&Flow, as a sheet sized to its content on iOS over the menu, which stays
+  versions with the protocol, **Report a bug**, which opens a new GitHub
+  issue prefilled with those versions and numbered, unnamed machines for you to
+  review and submit, and links to the website, GitHub, Stim's own license, the
+  open source licenses and App&Flow, as a sheet sized to its content on iOS over the menu, which stays
   open when the sheet closes. **Copy** puts every version on the clipboard for a
   bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop

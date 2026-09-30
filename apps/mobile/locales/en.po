@@ -1840,6 +1840,10 @@ msgstr "Leased devices"
 msgid "less than a minute"
 msgstr "less than a minute"
 
+#: src/screens/about.tsx
+msgid "License"
+msgstr "License"
+
 #: src/lib/settings-options.ts
 msgid "Light"
 msgstr "Light"
@@ -2785,6 +2789,10 @@ msgstr "Replay"
 #: src/screens/device-view.tsx
 msgid "Replay off"
 msgstr "Replay off"
+
+#: src/screens/about.tsx
+msgid "Report a bug"
+msgstr "Report a bug"
 
 #: src/screens/filters.tsx
 msgid "Reset"

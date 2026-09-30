@@ -1,4 +1,12 @@
-import { diagnosticText, shortId, versionWithBuild, type AboutApp } from '@/lib/about';
+import {
+  bugReportUrl,
+  diagnosticText,
+  shortId,
+  versionWithBuild,
+  type AboutApp,
+  type AboutDevice,
+  type AboutMachine,
+} from '@/lib/about';
 
 const app: AboutApp = {
   version: '0.1.0',
@@ -26,7 +34,7 @@ describe('about', () => {
   it('lists every version, and what keeps a machine from reporting its own', () => {
     expect(
       diagnosticText(app, [
-        { name: 'MacBook Pro', detail: { stim: '1.14.0', server: '1.14.0' } },
+        { name: 'MacBook Pro', detail: { stim: '1.14.0', server: '1.14.0', protocol: 1 } },
         { name: 'Mac mini', detail: { state: 'Needs an update' } },
       ]),
     ).toBe(
@@ -36,7 +44,7 @@ describe('about', () => {
         'Channel: production',
         'Update: 01a0f251-5fa5-7d78-bafd-b77f915d8900 (published 2026-09-30T13:15:00.000Z)',
         'Protocol: 1',
-        'MacBook Pro: stim 1.14.0, server 1.14.0',
+        'MacBook Pro: stim 1.14.0, server 1.14.0, protocol 1',
         'Mac mini: Needs an update',
       ].join('\n'),
     );
@@ -46,5 +54,48 @@ describe('about', () => {
     const text = diagnosticText({ ...app, embedded: true, channel: null, runtimeVersion: null }, []);
     expect(text).toContain('Update: built-in');
     expect(text).toContain('Channel: none');
+  });
+
+  describe('bugReportUrl', () => {
+    const device: AboutDevice = { os: 'ios', osVersion: '27.0', model: 'iPhone 18 Pro', locale: 'en-CA' };
+    const machine = (name: string, patch: Partial<AboutMachine> = {}): AboutMachine => ({
+      name,
+      detail: { stim: '1.14.0', server: '1.14.0', protocol: 1 },
+      ...patch,
+    });
+    const parse = (url: string) => {
+      const parsed = new URL(url);
+      return { url: parsed, title: parsed.searchParams.get('title'), body: parsed.searchParams.get('body') ?? '' };
+    };
+
+    it('opens the report template with the mobile title prefix and its headings', () => {
+      const { url, title, body } = parse(bugReportUrl(app, [], device));
+      expect(url.origin + url.pathname).toBe('https://github.com/appandflow/stim/issues/new');
+      expect(url.searchParams.get('template')).toBe('report.md');
+      expect(title).toBe('mobile: ');
+      expect(body.match(/^## .*$/gm)).toEqual(['## Problem', '## Evidence', '## Cause', '## Fix idea']);
+      expect(body).toContain('- App: Stim for phones 0.1.0 (12) (ios)');
+      expect(body).toContain('- OS: iOS 27.0');
+      expect(body).toContain('- Locale: en-CA');
+    });
+
+    it('numbers machines and leaves out their names', () => {
+      const url = bugReportUrl(
+        app,
+        [machine("Janic's MacBook Pro"), machine('mini.tail1234.ts.net', { detail: { state: 'Offline' } })],
+        device,
+      );
+      const { body } = parse(url);
+      expect(body).toContain('- Machine 1: stim 1.14.0, server 1.14.0, protocol 1');
+      expect(body).toContain('- Machine 2: Offline');
+      expect(url).not.toMatch(/Janic|MacBook|tail1234|ts\.net/);
+    });
+
+    it('keeps the URL under the cap and counts the machines it drops', () => {
+      const many = Array.from({ length: 400 }, (_, index) => machine(`Mac ${index}`));
+      const url = bugReportUrl(app, many, device);
+      expect(url.length).toBeLessThanOrEqual(7000);
+      expect(parse(url).body).toMatch(/- \d+ more machines/);
+    });
   });
 });

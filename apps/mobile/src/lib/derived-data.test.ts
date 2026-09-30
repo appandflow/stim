@@ -55,6 +55,7 @@ const liveMac: AttentionMachine = {
   name: 'MacBook Pro',
   state: {
     kind: 'open',
+    protocol: 1,
     server: { name: 'm', version: '1', stim: '1' },
     actions: null,
     capabilities: [],
