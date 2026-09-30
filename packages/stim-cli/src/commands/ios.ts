@@ -406,6 +406,7 @@ async function runIos(
   };
   const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
   stats.setProject(projectKey);
+  progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= d.readEstimates({ projectKey, platform: PLATFORM }));
   const settings = d.resolveSettings(settingsContext);
@@ -630,7 +631,6 @@ async function runIos(
       ReturnType<typeof ensureOwnedDevice>
     >;
   } else {
-    progress.step('device');
     const prepare = stepClock(d.now);
     try {
       device = await d.ensureOwnedDevice({

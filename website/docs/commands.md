@@ -901,33 +901,41 @@ and an estimate of the time left:
 ```
 
 In `--json`, each environment carries `build`: `null`, or
-`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, expectedMs, expectedPhaseMs, basis }`.
+`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
-`compile`, `device`, `install` and `launch`. `device` covers creating or
-adopting the owned simulator or emulator, and, once the app is ready, waiting
-for the device (its boot, adoption cleanup, or a physical device's lease and
-connection check); a boot that finishes during the build adds no `device` time. `state` is `running` while the run's
+`compile`, `device`, `install` and `launch`. Creating, adopting or booting the
+owned simulator or emulator before the cache lookup counts as `prepare`.
+`device` starts once the app is ready and covers waiting for the device (its
+boot, adoption cleanup, or a physical device's lease and connection check); a
+boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
 `cold` once the run reaches prebuild, pods or compile, and `hit` once it
 reaches `device` after the cache lookup, or install, without them; before that it follows the project's most recent
-run. `expectedMs` and `expectedPhaseMs` are medians of this project's last
-successful runs with that outcome, and `basis` counts the runs behind
-`expectedMs`. Both are `null` until the project has such a run. Once the run
-knows whether it creates, adopts or cold-boots its device, `expectedMs` and the
-`device` estimate use only runs that did the same, so a new worktree is not
-estimated from reruns that reused a booted device. Runs recorded before Stim
-tagged them count only for a run that reuses its device and for phases other
-than `device`.
+run, and `outcomeKnown` is `false`. `expectedMs` and `expectedPhaseMs` are
+medians of this project's last successful runs with that outcome, and `basis`
+counts the runs behind `expectedMs`. Both are `null` until the project has such
+a run. `plannedPhases` lists, in order, the phases at least half of those runs
+entered, each as `{ phase, expectedMs }` with its median, so a progress bar can
+be drawn before the run reaches them; it is `null` without such runs.
+
+The run estimates twice: when it starts, and once its outcome is known. The
+second estimate uses only runs that created, adopted or cold-booted their
+device the way this run did, so a new worktree is not estimated from reruns
+that reused a booted device. Runs recorded before Stim tagged them also count
+for a run that reuses its device until three tagged ones exist. Runs that
+finish while this one is running do not change its estimate.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
 in the shape of `lastBuilds.<platform>.missReason` below. Once the native
-build tool prints a line Stim reads, `build` also carries `detail` until the run
-ends:
+build tool prints a line Stim reads, `build` also carries `detail` while the
+run is in `compile`:
 `{ step, unit, done, total, line, updatedAt }`. `step` is the tool's step:
 `configure`, `compile`, `link`, `resources`, `script`, `dex`, `package` or
-`sign`. For xcodebuild, `unit` is `targets`, `done` counts the targets that
-started work and `total` the targets in its dependency graph. For Gradle,
+`sign`. For xcodebuild, `unit` is `targets`, `done` counts the targets it
+finished and `total` the targets in its dependency graph. A target counts once
+xcodebuild touches or signs its product, so an incremental build can end below
+`total`. For Gradle,
 `unit` is `tasks`, `done` counts the tasks it reported and `total` is `null`.
 `line` is the latest compile, link or task line with paths shortened to file
 names. These are counts, not a completion percentage: one target can take ten

@@ -167,7 +167,7 @@ export function planPayload(
   const { refusal, missReason, ...rest } = found;
   const outcome = refusal ? null : found.cacheHit ? 'hit' : 'cold';
   const estimate = outcome
-    ? estimateBuild(readStats().record?.history?.[projectKey], platform, outcome, 'prepare')
+    ? estimateBuild(readStats().record?.history?.[projectKey], platform, outcome)
     : { expectedMs: null, basis: 0 };
   return {
     platform,

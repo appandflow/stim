@@ -797,6 +797,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
   const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
   stats.setProject(projectKey);
+  progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
@@ -989,7 +990,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     });
     if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
-    progress.step('device');
     const prepare = stepClock(now);
     try {
       device = await ensureDevice({

@@ -338,7 +338,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
   };
 }
 
-/** Sets the facts status derives from workspace logs and the running build's detail file. */
+/** Sets the facts status derives from workspace logs, the running build's record and its detail file. */
 function readLogDerivedFacts(states: EnvironmentState[]): void {
   const now = Date.now();
   for (const state of states) {
@@ -352,8 +352,26 @@ function readLogDerivedFacts(states: EnvironmentState[]): void {
     }
     if (state.build?.state === 'running') {
       const record = parseActiveBuild(readWorkspaceState(state.path)?.[ACTIVE_BUILD_KEY]);
-      const detail = record ? readBuildDetail(state.path, record.claim.claimId) : null;
+      if (!record) {
+        state.build = null;
+        continue;
+      }
+      const report = buildReport(record, { state: activeBuildState(record.claim), history: undefined });
+      const { outcome, expectedMs, expectedPhaseMs, basis, plannedPhases } = state.build;
+      state.build =
+        record.estimate || record.startedAt !== state.build.startedAt
+          ? report
+          : {
+              ...report,
+              outcome,
+              expectedMs,
+              expectedPhaseMs: report.phase === state.build.phase ? expectedPhaseMs : null,
+              basis,
+              plannedPhases,
+            };
+      const detail = record.phase === 'compile' ? readBuildDetail(state.path, record.claim.claimId) : null;
       if (detail) state.build.detail = detail;
+      else delete state.build.detail;
     }
   }
 }

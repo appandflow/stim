@@ -23,6 +23,7 @@ import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
+import { buildReport } from '../engine/build-progress.ts';
 import {
   topicNames,
   renderTopic,
@@ -731,6 +732,28 @@ test('the facts topic documents every build phase and state status can report', 
   const values = [...`${phases}${states}`.matchAll(/'([a-z-]+)'/g)].map((m) => m[1] as string);
   expect(values.length).toBeGreaterThan(8);
   for (const value of values) expect(body).toMatch(new RegExp(`(^|[\\s|"])${value}(?=[\\s|".,]|$)`, 'm'));
+});
+
+test('the facts topic lists every field of a running build', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  const at = '2026-09-30T10:00:00.000Z';
+  const report = buildReport(
+    {
+      platform: 'ios',
+      slot: 'default',
+      startedAt: at,
+      phase: 'compile',
+      phaseStartedAt: at,
+      phases: [{ phase: 'compile', startedAt: at }],
+      claim: { root: '/r', path: '', claimId: 'c', pid: 1 },
+    },
+    { state: 'running', history: undefined },
+  );
+  const listed = /^ {2}build {3}\{([^}]+)\}/m.exec(body)?.[1];
+  assert(listed);
+  const fields = listed.split(/[\s,]+/).map((field) => field.replace(/\?$/, ''));
+  expect(Object.keys(report).filter((key) => !fields.includes(key))).toEqual([]);
 });
 
 test('the web topic names every web setting and every stim web flag, and the agent guide routes to it', () => {

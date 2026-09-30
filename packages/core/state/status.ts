@@ -34,14 +34,27 @@ export interface BuildReport {
   startedAt: string;
   phaseStartedAt: string;
   outcome: RunOutcomeKind | null;
+  /** Whether `outcome` is this run's own; before its cache lookup resolves it is the project's latest outcome. */
+  outcomeKnown: boolean;
   expectedMs: number | null;
   expectedPhaseMs: number | null;
   basis: number;
+  /**
+   * The phases a run like this one goes through, in order, with each one's median in milliseconds, from the same
+   * runs as `expectedMs`; null without comparable runs. The current phase can be one the plan does not list.
+   */
+  plannedPhases: PlannedPhase[] | null;
   /** Why the run's cache lookup missed, once the run knows; `baseline` omits `cacheKey`. */
   missReason?: BuildMissReason;
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
   placement: BuildPlacement;
+}
+
+/** One phase a running build is expected to go through, and its median duration in comparable runs. */
+export interface PlannedPhase {
+  phase: BuildPhase;
+  expectedMs: number;
 }
 
 /** The native build tool's step inside a build's `compile` phase. */
@@ -60,8 +73,9 @@ export type NativeBuildStep = (typeof NATIVE_BUILD_STEPS)[number];
 
 /**
  * A running build's progress as its tool reports it. `unit` is `targets` for xcodebuild and `tasks` for Gradle.
- * xcodebuild's `done` counts targets that started work and `total` the targets in its dependency graph; Gradle's
- * `done` counts the tasks it reported, with a null `total`. They are counts, not a completion fraction. `line` is
+ * xcodebuild's `done` counts targets it finished and `total` the targets in its dependency graph, which includes
+ * targets with nothing to do; Gradle's `done` counts the tasks it reported, with a null `total`. They are counts, not
+ * a completion fraction. `status` reports the detail only during the `compile` phase. `line` is
  * the latest compile, link or task line with paths shortened to file names.
  */
 export interface BuildDetail {

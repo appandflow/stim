@@ -18,6 +18,8 @@ import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '..
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
+import { startBuildProgress } from '../engine/build-progress.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 
 let tmpHome: string;
 const realExecutor = getExecutor();
@@ -631,6 +633,36 @@ test('a label-only worktree root is flagged labelOnly in --json and relabelled i
 
   const logs = await runStatus();
   expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
+});
+
+test('a running build reports what its build tool is doing only while it compiles', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
+  const claim = tryAcquireClaim({
+    root: join(tmpHome, 'run.lock'),
+    mode: 'exclusive',
+    label: 'native-run lock',
+  }).acquired!;
+  try {
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim });
+    progress.step('compile');
+    progress.output({ src: 'build', level: 'debug', msg: 'note: Target dependency graph (3 targets)' });
+    expect((await runStatusJson()).environments[0].build).toMatchObject({
+      state: 'running',
+      phase: 'compile',
+      outcome: 'cold',
+      outcomeKnown: true,
+      detail: { unit: 'targets', done: 0, total: 3 },
+    });
+
+    progress.step('install');
+    expect((await runStatusJson()).environments[0].build).toMatchObject({ phase: 'install' });
+    expect((await runStatusJson()).environments[0].build).not.toHaveProperty('detail');
+    progress.clear();
+  } finally {
+    releaseClaim(claim);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('a workspace a warm just prepared reports phase ready in --json and [ready] in the human view', async () => {
