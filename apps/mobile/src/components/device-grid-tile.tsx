@@ -145,10 +145,17 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
       <View style={styles.meta}>
         <View style={styles.name}>
           <PlatformLogo platform={device.platform} size={14} color={theme.colors.text} />
-          <Text variant="callout" weight="semibold" style={styles.shrink} numberOfLines={1}>
+          <Text
+            variant="footnote"
+            weight="semibold"
+            style={styles.shrink}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
             {name}
             {detail ? (
-              <Text variant="callout" tone="secondary">
+              <Text variant="caption" weight="regular" tone="secondary">
                 {` \u00B7 ${detail}`}
               </Text>
             ) : null}
@@ -157,14 +164,16 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         <Text variant="caption" weight="medium" tone={state.tone} style={styles.state} numberOfLines={2}>
           {state.text}
         </Text>
-        <Text variant="caption" tone="secondary" numberOfLines={1} ellipsizeMode="middle">
-          {item.title}
-        </Text>
-        {context ? (
-          <Text variant="caption" tone="tertiary" numberOfLines={1}>
-            {context}
+        <View style={styles.workspace}>
+          <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
+            {item.title}
           </Text>
-        ) : null}
+          {context ? (
+            <Text variant="caption" tone="tertiary" style={styles.context} numberOfLines={1}>
+              {` \u00B7 ${context}`}
+            </Text>
+          ) : null}
+        </View>
         {sessions.length ? (
           sessionUrl ? (
             <Touch onPress={openSession} accessible={false} hitSlop={8}>
@@ -192,9 +201,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   frame: { ...StyleSheet.absoluteFillObject, borderRadius: theme.radius.small },
   placeholder: { textAlign: 'center', paddingHorizontal: theme.space.md },
-  meta: { padding: theme.space.md, gap: theme.space.xxs },
+  meta: { paddingHorizontal: theme.space.sm, paddingVertical: theme.space.md, gap: theme.space.xxs },
   stale: { paddingHorizontal: theme.space.md, paddingTop: theme.space.md },
   shrink: { flexShrink: 1 },
+  workspace: { flexDirection: 'row', alignItems: 'center' },
+  context: { flexShrink: 0, maxWidth: '45%' },
   name: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
   state: { marginVertical: theme.space.xs },
 }));
