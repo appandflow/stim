@@ -133,7 +133,6 @@ func worktreeRemovalMessage(path: String, branch: String?) -> String {
 
   Stim deletes the worktree, its branch when Stim created it and nothing else uses it, \
   its build artifacts, owned devices and Metro port. It refuses when the worktree holds \
-  uncommitted or unpushed work. On the source checkout it reclaims the environment only \
-  and leaves the tree in place.
+  uncommitted or unpushed work.
   """
 }
