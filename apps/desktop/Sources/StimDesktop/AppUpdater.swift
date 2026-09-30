@@ -3,7 +3,7 @@ import Foundation
 import Sparkle
 
 /// Sparkle's updater, started only in a bundled app whose Info.plist carries the appcast's EdDSA public
-/// key. Builds without the key, which is every build `scripts/bundle.sh` makes without
+/// key. Builds without the key, which is every Stim Dev build, every `scripts/bundle.sh --release` without
 /// `SPARKLE_PUBLIC_ED_KEY` and every `swift run`, never check for updates.
 @MainActor
 final class AppUpdater: ObservableObject {

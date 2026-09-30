@@ -88,7 +88,8 @@ import Testing
           {"id":"a1","name":"Stim Desktop","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read","control"]},
           {"id":"a2","name":"Stim Desktop","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
           {"id":"a3","name":"Janic's iPhone","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
-          {"id":"a4","name":"Mini","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["build"]}
+          {"id":"a4","name":"Mini","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["build"]},
+          {"id":"a5","name":"Stim Dev","identity":{"kind":"local"},"pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read","control"]}
         ]}
         """#.utf8)
     ).devices

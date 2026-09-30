@@ -109,12 +109,16 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   /// A Mac that asked to build here or may build here, rather than a phone or app that reads.
   public var isBuildClient: Bool { pendingUntil != nil || capabilities.contains("build") }
 
-  /// The name Stim Desktop pairs under.
+  /// The name the release Stim Desktop pairs under.
   public static let desktopName = "Stim Desktop"
+  /// The name a Stim Dev build pairs under, so it keeps its own pairing next to the release app's.
+  public static let devDesktopName = "Stim Dev"
 
-  /// A Stim Desktop on this Mac, which pairs over loopback. Revoking it cuts that Desktop's own connection, so it is
-  /// not one of the paired phones.
-  public var isDesktopClient: Bool { name == Self.desktopName && identity.kind != "tailnet" }
+  /// A Stim Desktop or Stim Dev on this Mac, which pairs over loopback. Revoking it cuts that app's own connection,
+  /// so it is not one of the paired phones.
+  public var isDesktopClient: Bool {
+    (name == Self.desktopName || name == Self.devDesktopName) && identity.kind != "tailnet"
+  }
 
   /// A paired phone or app that reads and may control, as the Phones list shows it.
   public var isPhone: Bool { !isBuildClient && !isDesktopClient }
