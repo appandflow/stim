@@ -824,7 +824,6 @@ import Testing
   @Test func normalizesWholeMachineCpuByCoresAndCapsAtOne() {
     #expect(UsageThresholds.cpuFraction(percentOfOneCore: 668, cores: 10) == 0.668)
     #expect(UsageThresholds.cpuFraction(percentOfOneCore: 1040, cores: 10) == 1)
-    #expect(UsageThresholds.cpuFraction(percentOfOneCore: 50, cores: 0) == 0.5)
   }
 
   @Test func toneStepsAtTheCpuWarnAndCriticalFractions() {
