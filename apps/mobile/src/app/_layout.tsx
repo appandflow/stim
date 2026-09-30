@@ -11,6 +11,7 @@ import { Button } from '@/components/button';
 import { EmptyState } from '@/components/empty-state';
 import { MenuDrawer } from '@/components/menu-drawer';
 import { SplashOverlay } from '@/components/splash-overlay';
+import { UpdateReady } from '@/components/update-ready';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
 import { InboxSync } from '@/hooks/inbox';
@@ -133,6 +134,7 @@ function RootLayoutContent() {
                     <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
                   </Stack>
                 </MenuDrawer>
+                <UpdateReady />
               </RecentsProvider>
             </HomeFiltersProvider>
           </NotificationsProvider>
