@@ -65,14 +65,16 @@ struct RootView: View {
 
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
-      Sidebar(store: store, autopilot: autopilot, onboarding: onboarding, selection: $selection, openLogs: showLogs)
-        .frame(minWidth: 220, idealWidth: 272, maxWidth: 360)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
-        .onGeometryChange(for: CGFloat.self) {
-          $0.size.width
-        } action: {
-          sidebarWidth = $0
-        }
+      Sidebar(
+        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs
+      )
+      .frame(minWidth: 220, idealWidth: 272, maxWidth: 360)
+      .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.width
+      } action: {
+        sidebarWidth = $0
+      }
     } detail: {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -87,7 +89,11 @@ struct RootView: View {
         }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
-          ToolbarItem(placement: .navigation) { ActivityToolbarIndicator(actions: actions) }
+          ToolbarItem(placement: .navigation) {
+            if columnVisibility == .detailOnly {
+              OperationsButton(log: actions.operations, actions: actions, store: store, arrowEdge: .bottom)
+            }
+          }
           ToolbarItem(id: summaryItemID, placement: .navigation) {
             MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth)
           }
@@ -540,31 +546,6 @@ enum InspectorPresentation {
   case column
   case overlay
   case hidden
-}
-
-/// A small toolbar button showing background Stim runs, so closing an activity sheet
-/// does not lose track of it. Hidden when nothing is running.
-struct ActivityToolbarIndicator: View {
-  @ObservedObject var actions: ActionCenter
-
-  var body: some View {
-    let active = actions.activeRuns
-    if let latest = active.last {
-      Button {
-        actions.presented = latest
-      } label: {
-        HStack(spacing: Space.xs) {
-          ProgressView().controlSize(.mini)
-          if active.count > 1 { Text("\(active.count)").font(.stim(.caption, mono: true)) }
-        }
-      }
-      .help(
-        (active.count == 1 ? "Running: \(latest.title)" : "\(active.count) commands running")
-          + " \u{2014} click to show the latest output"
-      )
-      .accessibilityLabel(active.count == 1 ? "Running: \(latest.title)" : "\(active.count) commands running")
-    }
-  }
 }
 
 struct InspectorToggleButton: View {

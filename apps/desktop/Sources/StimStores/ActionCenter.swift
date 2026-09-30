@@ -15,6 +15,7 @@ public final class ActionRun: ObservableObject, Identifiable {
   public let steps: [StimCommand]
   public let key: String
   public let startedAt = Date()
+  public private(set) var finishedAt: Date?
   @Published public private(set) var output: ActionOutput
   @Published public private(set) var exitStatus: Int32?
   @Published public private(set) var launchError: String?
@@ -41,6 +42,25 @@ public final class ActionRun: ObservableObject, Identifiable {
   public var gcOutcome: Result<GcOutcome, Error>? {
     guard steps.count == 1, exitStatus != nil, GcOutcome.describes(command.arguments) else { return nil }
     return Result { try GcOutcome(json: stdout) }
+  }
+
+  public var needsAttention: Bool {
+    if launchError != nil { return true }
+    guard let exitStatus else { return false }
+    if exitStatus != 0 { return true }
+    if case .success(let outcome) = gcOutcome { return outcome.failures > 0 }
+    return false
+  }
+
+  public var statusLine: String? {
+    if isRunning {
+      return progress.last { $0.state != .failed }.map { $0.fact.isEmpty ? $0.label : $0.fact } ?? summary
+    }
+    if needsAttention, launchError == nil, let failed = progress.last(where: { $0.state == .failed }) {
+      return failed.fact.isEmpty ? failed.label : failed.fact
+    }
+    if let exitStatus, exitStatus != 0 { return summary ?? "Exited \(exitStatus)" }
+    return summary
   }
 
   /// The output to show as text: everything but the JSON payload of a `--json` command.
@@ -79,6 +99,7 @@ public final class ActionRun: ObservableObject, Identifiable {
               if step + 1 < self.steps.count {
                 self.start(step: step + 1, launch: launch, worst: worst, onFinish: onFinish)
               } else {
+                self.finishedAt = Date()
                 self.exitStatus = worst
                 onFinish()
               }
@@ -86,6 +107,7 @@ public final class ActionRun: ObservableObject, Identifiable {
           }
         })
     } catch {
+      finishedAt = Date()
       launchError = error.localizedDescription
       onFinish()
     }
@@ -98,7 +120,10 @@ public final class ActionCenter: ObservableObject {
   public static let machineKey = "machine"
 
   @Published public private(set) var runs: [String: ActionRun] = [:]
-  @Published public var presented: ActionRun?
+  @Published public var presented: ActionRun? {
+    didSet { if let presented { operations.markSeen(presented) } }
+  }
+  public let operations = OperationLog()
   public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
 
@@ -111,9 +136,6 @@ public final class ActionCenter: ObservableObject {
   }
 
   public func latest(for key: String) -> ActionRun? { runs[key] }
-
-  /// Runs still in flight, for the toolbar's background-activity indicator.
-  public var activeRuns: [ActionRun] { runs.values.filter(\.isRunning).sorted { $0.startedAt < $1.startedAt } }
 
   public func run(_ title: String, _ command: StimCommand, key: String? = nil) {
     run(title, steps: [command], key: key)
@@ -133,6 +155,7 @@ public final class ActionCenter: ObservableObject {
     }
     let run = ActionRun(title: title, steps: steps, key: key)
     runs[key] = run
+    operations.began(run)
     if present { presented = run }
     let cli = cli
     Task { [weak self] in
@@ -141,6 +164,7 @@ public final class ActionCenter: ObservableObject {
         try stim.stream(command, onLine: onLine, onExit: onExit)
       }) { [weak self] in
         self?.objectWillChange.send()
+        if let self { operations.finished(run, viewed: presented?.id == run.id) }
         self?.onFinish?(run)
         completion?(run)
       }

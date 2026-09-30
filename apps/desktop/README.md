@@ -189,6 +189,11 @@ message and remedy. Cleanups run `stim gc --delete --json` or `stim gc --idle
 --json`, and the sheet summarizes the payload's `results`: what was freed and
 deleted, then what gc left alone and what failed, each with its reason. It
 stays open until closed. The command and the raw output are under **Details**.
+Closing the sheet leaves the command running. The sidebar footer's Operations
+item (in the toolbar while the sidebar is hidden) shows a spinner and a count
+while commands run and a red dot when a finished one failed and was not
+opened. Its popover lists the running commands and the last 20 finished ones of
+the session, and each row reopens its sheet.
 Status follows from the status watch. A finished command triggers a one-shot
 `stim status --json` only while the watch is not running, or after a
 `stim worktree` command, which can change git worktrees the watch does not

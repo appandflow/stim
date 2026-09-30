@@ -6,6 +6,7 @@ struct Sidebar: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var autopilot: AutopilotRunner
   @ObservedObject var onboarding: Onboarding
+  let actions: ActionCenter
   @ObservedObject private var inbox = NotificationInbox.shared
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
@@ -55,7 +56,7 @@ struct Sidebar: View {
       .background(Palette.sidebar)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
-      SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, selection: $selection)
+      SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
     }
   }
 
@@ -452,11 +453,12 @@ private struct SidebarRowBackground: ViewModifier {
 }
 
 /// The sidebar's pinned bottom bar: one status line at a time on the left (`SidebarFooterStatus`), and
-/// up to three small icon buttons on the right, each hidden rather than disabled when it does not apply.
+/// up to four small icon buttons on the right, each hidden rather than disabled when it does not apply.
 struct SidebarFooter: View {
   @ObservedObject var store: StatusStore
   @ObservedObject var autopilot: AutopilotRunner
   @ObservedObject var onboarding: Onboarding
+  let actions: ActionCenter
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var server = ServerController.shared
   @Binding var selection: SidebarItem?
@@ -476,6 +478,7 @@ struct SidebarFooter: View {
     HStack(spacing: Space.sm) {
       leftStatus
       Spacer(minLength: 8)
+      OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }
       if servesPhones { phonesButton }
       settingsButton
