@@ -631,7 +631,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   protected. New versions resolve that marker through the same identity claim.
   When a marker outlives its owner, Stim cannot tell whether the erase or
   deletion ran, so adoption treats the device as erased and drops the recorded
-  app, cache key and scheme approvals.
+  app, cache key and scheme approvals. A \`gc --cache parked --delete\` erase
+  that fails after the erase command started keeps the device parked without
+  them for the same reason.
   A crash during a synchronous device-tool call leaves that work unverifiable; inspect
   the old process and its native children before following the claim's removal
   remedy. See \`stim guide errors STIM_CLAIM_REFUSED\`.

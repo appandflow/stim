@@ -718,6 +718,24 @@ test('eraseParkedIosSim leaves a booted parked simulator and its record alone', 
   ]);
 });
 
+test('a failed simctl erase keeps the parked simulator without its app, cache key, or scheme approvals', () => {
+  seedParkedSim();
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
+    throwOn: 'simctl erase U1',
+  });
+  setExecutor(exec);
+
+  expect(eraseParkedIosSim('U1').status).toBe('failed');
+
+  const [record] = readParked('ios');
+  expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
+  expect(record).not.toHaveProperty('deletionClaim');
+  expect(record).not.toHaveProperty('bundleId');
+  expect(record).not.toHaveProperty('cacheKey');
+  expect(record).not.toHaveProperty('schemeApprovals');
+});
+
 interface AndroidExecutorOptions {
   avds?: string[];
   adb?: string;

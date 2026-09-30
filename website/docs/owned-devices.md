@@ -486,6 +486,8 @@ attempt recovers a proven dead or different owner, while a live owner keeps
 the device protected. An opaque deletion marker also protects the device from
 older Stim versions. When that marker outlives its owner, adoption treats the
 device as erased and drops its recorded app, cache key and scheme approvals.
+An erase by `gc --cache parked --delete` that fails after the erase command
+started keeps the device parked without them for the same reason.
 If Stim dies during a device-tool call, its native child
 may still be running: inspect both before following the claim's removal remedy.
 Older inline `deletionClaim` fields require manual inspection and removal of

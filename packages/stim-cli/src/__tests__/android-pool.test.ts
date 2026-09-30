@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
@@ -384,6 +384,28 @@ test('erasing refuses a parked AVD a workspace references and keeps its data and
   expect(readdirSync(directory)).toContain('userdata-qemu.img.qcow2');
   expect(readParked('android')).toEqual([expect.objectContaining({ packageName: 'com.example.app' })]);
 });
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a failed wipe keeps the parked AVD without its app or cache key (POSIX directory permissions; skipped on win32 and as root)',
+  () => {
+    park('stim-old', { packageName: 'com.example.app', cacheKey: 'abc-debug' });
+    const directory = join(home, 'avd', 'stim-old.avd');
+    fillUserData(directory);
+    const snapshots = join(directory, 'snapshots');
+    chmodSync(snapshots, 0o500);
+    try {
+      expect(eraseParkedAvd('stim-old').status).toBe('failed');
+    } finally {
+      chmodSync(snapshots, 0o700);
+    }
+
+    const [record] = readParked('android');
+    expect(record).toMatchObject({ name: 'stim-old' });
+    expect(record).not.toHaveProperty('deletionClaim');
+    expect(record).not.toHaveProperty('packageName');
+    expect(record).not.toHaveProperty('cacheKey');
+  },
+);
 
 test('a workspace wipe of its own stopped AVD removes user data and keeps the assignment', () => {
   makeAvd('stim-new');

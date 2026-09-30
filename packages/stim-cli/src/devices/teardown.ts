@@ -125,13 +125,14 @@ export function teardownParkedIosSim(
 
 export function eraseParkedIosSim(udid: string, { label }: { label?: string } = {}): TeardownOutcome {
   try {
-    const erased = eraseParkedAfter('ios', udid, () => {
+    const erased = eraseParkedAfter('ios', udid, (_record, eraseStarted) => {
       closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
       const resolved = resolveOwnedIosSim(udid);
       if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
       if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
       const state = (resolved.sim as IosSimRecord).state;
       if (state !== 'Shutdown') throw new Error(`simulator ${udid} is ${state}, not Shutdown; it was kept`);
+      eraseStarted();
       eraseIosSim(udid);
     });
     if (!erased) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
@@ -143,9 +144,9 @@ export function eraseParkedIosSim(udid: string, { label }: { label?: string } = 
 
 export function eraseParkedAvd(avdName: string): TeardownOutcome {
   try {
-    const erased = eraseParkedAfter('android', avdName, () => {
+    const erased = eraseParkedAfter('android', avdName, (_record, eraseStarted) => {
       if (resolveOwnedAvdSerial(avdName).serial) throw new Error(`AVD ${avdName} is running; it was kept`);
-      const result = teardownOwnedAvd(avdName, { wipe: true, owner: { pool: true } });
+      const result = teardownOwnedAvd(avdName, { wipe: true, owner: { pool: true }, onWipeStart: eraseStarted });
       if (result.status !== 'torn-down') throw new Error(result.reason ?? `AVD ${avdName} is ${result.status}`);
     });
     return erased
@@ -430,6 +431,7 @@ interface AvdTeardownOptions {
   orphanedDirectory?: OrphanedAvdDirectory;
   onlyIfMissing?: boolean;
   onRemoved?: () => void;
+  onWipeStart?: () => void;
   waitForShutdown?: typeof waitForAndroidEmulatorShutdown;
   assertStopped?: typeof assertOwnedAvdStopped;
   resolveAvd?: typeof resolveOwnedAvdSerial;
@@ -472,6 +474,7 @@ function teardownClaimedAvd(
     workspace,
     orphanedDirectory,
     onlyIfMissing = false,
+    onWipeStart,
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = assertOwnedAvdStopped,
     resolveAvd = resolveOwnedAvdSerial,
@@ -533,6 +536,7 @@ function teardownClaimedAvd(
       withConfigLock(() => assertAvdReferences(avdName, owner));
       const directory = ownedAvdDirectory(avdName);
       if (!directory) throw new Error(`The data directory of AVD ${avdName} could not be resolved.`);
+      onWipeStart?.();
       wipeAvdUserData(directory);
     }
     if (del) {
