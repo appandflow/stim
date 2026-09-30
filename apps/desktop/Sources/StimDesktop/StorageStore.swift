@@ -10,7 +10,7 @@ final class StorageStore: ObservableObject {
   nonisolated static let toolTimeout: TimeInterval = 30
   nonisolated static let duTimeout: TimeInterval = 180
   nonisolated static let duConcurrency = 3
-  nonisolated private static let running = RunningProcesses()
+  nonisolated private static let running = ProcessRegistry()
 
   @Published private(set) var disk = DiskMeasurements()
   @Published private(set) var measuredAt: Date?
@@ -67,10 +67,12 @@ final class StorageStore: ObservableObject {
       func next() {
         guard let job = queue.popFirst() else { return }
         group.addTask {
-          let result = await Self.offThread {
-            Self.run("/usr/bin/du", job.options + [job.path], cwd: NSHomeDirectory(), environment: nil, timeout: Self.duTimeout)
-          }
-          return (job.path, DiskSizes.parse(String(decoding: result?.output ?? Data(), as: UTF8.self)))
+          var request = ProcessRequest(
+            "/usr/bin/du", job.options + [job.path], cwd: NSHomeDirectory(), timeout: Self.duTimeout)
+          request.qualityOfService = .default
+          request.registry = Self.running
+          let result = try? await request.run()
+          return (job.path, DiskSizes.parse(result?.stdoutText ?? ""))
         }
       }
       for _ in 0..<Self.duConcurrency { next() }
@@ -84,20 +86,17 @@ final class StorageStore: ObservableObject {
   }
 
   private func loadPulls(repositories: Set<String>, environment: [String: String]) async {
-    let (gh, pulls) = await Self.offThread {
-      let gh = Self.executable("gh", in: environment)
-      let pulls = Dictionary(
+    let gh = GitHubCLI(environment: environment, registry: Self.running)
+    let pulls = await Self.offThread {
+      Dictionary(
         uniqueKeysWithValues: repositories.compactMap { repository -> (String, [String: PullRequest])? in
-          guard let gh,
-            let byBranch = Self.run(gh, PullRequest.listArguments, cwd: repository, environment: environment)
-              .flatMap({ $0.timedOut ? nil : PullRequest.byBranch($0.output) })
+          guard let byBranch = gh.run(PullRequest.listArguments, cwd: repository).flatMap(PullRequest.byBranch)
           else { return nil }
           return (repository, byBranch)
         })
-      return (gh, pulls)
     }
     self.pulls = pulls
-    hasGitHubCLI = gh != nil
+    hasGitHubCLI = gh.executable != nil
     loadingPulls = false
   }
 
@@ -105,71 +104,9 @@ final class StorageStore: ObservableObject {
     workspace.repository.flatMap { pulls[$0] }
   }
 
-  nonisolated private static func executable(_ name: String, in environment: [String: String]) -> String? {
-    (environment["PATH"] ?? "").split(separator: ":").lazy.map { "\($0)/\(name)" }
-      .first { FileManager.default.isExecutableFile(atPath: $0) }
-  }
-
   nonisolated private static func offThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
     await withCheckedContinuation { continuation in
       DispatchQueue.global(qos: .default).async { continuation.resume(returning: work()) }
     }
   }
-
-  /// Stdout of a run and whether it ran past `timeout` and was terminated, or nil when it could not start. A
-  /// terminated `du -d 1` has already printed the entries it finished, and `du` exits 1 after an unreadable
-  /// entry but still prints the rest, so neither case discards the output. The child runs at default QoS: macOS
-  /// throttles the disk I/O of utility and background children, which made `du` over a 9 GB node_modules take
-  /// 165 to 390 seconds instead of 8 to 11.
-  nonisolated private static func run(
-    _ executable: String, _ arguments: [String], cwd: String, environment: [String: String]?,
-    timeout: TimeInterval = toolTimeout
-  ) -> (output: Data, timedOut: Bool)? {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-    if let environment { process.environment = environment }
-    process.qualityOfService = .default
-    let out = Pipe()
-    process.standardOutput = out
-    process.standardError = FileHandle.nullDevice
-    process.standardInput = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return nil }
-    running.insert(process)
-    defer { running.remove(process) }
-    let box = DataBox()
-    let read = DispatchSemaphore(value: 0)
-    DispatchQueue.global(qos: .default).async {
-      box.value = out.fileHandleForReading.readDataToEndOfFile()
-      read.signal()
-    }
-    guard read.wait(timeout: .now() + timeout) == .timedOut else {
-      process.waitUntilExit()
-      return (box.value, false)
-    }
-    process.terminate()
-    if read.wait(timeout: .now() + 5) == .timedOut {
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-      guard read.wait(timeout: .now() + 5) == .success else { return (Data(), true) }
-    }
-    return (box.value, true)
-  }
-}
-
-private final class RunningProcesses: @unchecked Sendable {
-  private let lock = NSLock()
-  private var processes: Set<Process> = []
-
-  func insert(_ process: Process) { lock.withLock { _ = processes.insert(process) } }
-  func remove(_ process: Process) { lock.withLock { _ = processes.remove(process) } }
-  func terminateAll() {
-    lock.withLock {
-      for process in processes { process.terminate() }
-    }
-  }
-}
-
-private final class DataBox: @unchecked Sendable {
-  var value = Data()
 }

@@ -107,8 +107,10 @@ public struct StimCLI: Sendable {
 
   private func execute(_ args: [String], cwd: String?) async throws -> (Int32, Data, String) {
     guard let executable else { throw Failure.notFound }
-    let (status, data, stderr) = try await runCommand(executable, args, cwd: cwd, environment: environment)
-    return (status, data, stderrTail(stderr))
+    var request = ProcessRequest(executable, args, cwd: cwd, environment: environment)
+    request.captureStderr = true
+    let result = try await request.run()
+    return (result.status, result.stdout, stderrTail(result.stderrText))
   }
 
   /// Runs `stim <args>` in `cwd`, reporting output lines as they arrive and
@@ -149,88 +151,10 @@ public struct StimCLI: Sendable {
   }
 }
 
-func lastBytes(of url: URL, count: UInt64) throws -> Data {
-  let handle = try FileHandle(forReadingFrom: url)
-  defer { try? handle.close() }
-  let end = try handle.seekToEnd()
-  try handle.seek(toOffset: end > count ? end - count : 0)
-  return try handle.readToEnd() ?? Data()
-}
-
 /// The last three non-empty lines of `text`.
 func stderrTail(_ text: String) -> String {
   text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     .suffix(3).joined(separator: "\n")
-}
-
-/// Runs `executable` to its exit on a dispatch queue, so the wait parks no thread of Swift's cooperative pool.
-/// Returns the exit status, stdout, and the last 4 KB of stderr, which goes to a temporary file so a process that
-/// fills stderr cannot block on a pipe nobody reads. Cancelling the calling task terminates the process and throws
-/// `CancellationError`, also when the process exits normally after the cancel.
-func runCommand(_ executable: String, _ arguments: [String], cwd: String?, environment: [String: String])
-  async throws -> (Int32, Data, String)
-{
-  let run = CancellableRun()
-  let result = try await withTaskCancellationHandler {
-    try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .default).async {
-        continuation.resume(
-          with: Result {
-            try runToExit(executable, arguments, cwd: cwd, environment: environment, started: run.started)
-          })
-      }
-    }
-  } onCancel: {
-    run.cancel()
-  }
-  try Task.checkCancellation()
-  return result
-}
-
-private func runToExit(
-  _ executable: String, _ arguments: [String], cwd: String?, environment: [String: String],
-  started: (Process) throws -> Void
-) throws -> (Int32, Data, String) {
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: executable)
-  process.arguments = arguments
-  if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-  process.environment = environment
-  let out = Pipe()
-  process.standardOutput = out
-  let errURL = FileManager.default.temporaryDirectory.appendingPathComponent("stim-stderr-\(UUID().uuidString)")
-  guard FileManager.default.createFile(atPath: errURL.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
-  defer { try? FileManager.default.removeItem(at: errURL) }
-  let err = try FileHandle(forWritingTo: errURL)
-  defer { try? err.close() }
-  process.standardError = err
-  try started(process)
-  let data = out.fileHandleForReading.readDataToEndOfFile()
-  process.waitUntilExit()
-  let stderr = (try? lastBytes(of: errURL, count: 4096)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-  return (process.terminationStatus, data, stderr)
-}
-
-/// Starts a process unless the run was already cancelled, and terminates it on cancel.
-private final class CancellableRun: @unchecked Sendable {
-  private let lock = NSLock()
-  private var process: Process?
-  private var cancelled = false
-
-  func started(_ process: Process) throws {
-    try lock.withLock {
-      if cancelled { throw CancellationError() }
-      try process.run()
-      self.process = process
-    }
-  }
-
-  func cancel() {
-    lock.withLock {
-      cancelled = true
-      process?.terminate()
-    }
-  }
 }
 
 /// The override, or the first `name` on the environment's `PATH`.

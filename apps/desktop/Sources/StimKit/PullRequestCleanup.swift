@@ -127,43 +127,24 @@ public enum PullRequestCleanup {
 public struct GitHubCLI: Sendable {
   public let executable: String?
   let environment: [String: String]
+  let registry: ProcessRegistry?
 
-  public init(environment: [String: String]) {
+  /// With a `registry`, its `terminateAll` also terminates every run.
+  public init(environment: [String: String], registry: ProcessRegistry? = nil) {
     var environment = environment
     executable = resolveExecutable("gh", override: nil, environment: &environment)
     environment["GH_PROMPT_DISABLED"] = "1"
     environment["GH_NO_UPDATE_NOTIFIER"] = "1"
     self.environment = environment
+    self.registry = registry
   }
 
   /// Stdout of a run that exited 0 within `timeout`, else nil.
   public func run(_ arguments: [String], cwd: String, timeout: TimeInterval = 30) -> Data? {
     guard let executable else { return nil }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-    process.environment = environment
-    let out = Pipe()
-    process.standardOutput = out
-    process.standardError = FileHandle.nullDevice
-    process.standardInput = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return nil }
-    let output = Output()
-    let read = DispatchSemaphore(value: 0)
-    DispatchQueue.global(qos: .utility).async {
-      output.data = out.fileHandleForReading.readDataToEndOfFile()
-      read.signal()
-    }
-    if read.wait(timeout: .now() + timeout) == .timedOut {
-      process.terminate()
-      return nil
-    }
-    process.waitUntilExit()
-    return process.terminationStatus == 0 ? output.data : nil
+    var request = ProcessRequest(executable, arguments, cwd: cwd, environment: environment, timeout: timeout)
+    request.registry = registry
+    guard let result = try? request.runBlocking(), result.succeeded else { return nil }
+    return result.stdout
   }
-}
-
-private final class Output: @unchecked Sendable {
-  var data = Data()
 }

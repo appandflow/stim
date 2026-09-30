@@ -226,10 +226,12 @@ public struct StimServerCLI: Sendable {
 
   private func run(_ args: [String]) async throws -> Data {
     guard let executable else { throw Failure.notFound }
-    let (status, data, stderr) = try await runCommand(executable, args, cwd: nil, environment: environment)
-    guard status == 0 else {
-      throw Failure.exited(status, stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+    var request = ProcessRequest(executable, args, environment: environment)
+    request.captureStderr = true
+    let result = try await request.run()
+    guard result.status == 0 else {
+      throw Failure.exited(result.status, result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
     }
-    return data
+    return result.stdout
   }
 }

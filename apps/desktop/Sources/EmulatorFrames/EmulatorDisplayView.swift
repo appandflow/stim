@@ -424,17 +424,7 @@ private final class AdbInput {
   private func run(_ arguments: [String]) {
     let serial = serial
     queue.async {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: Self.adbPath)
-      process.arguments = ["-s", serial] + arguments
-      process.standardInput = FileHandle.nullDevice
-      process.standardOutput = FileHandle.nullDevice
-      process.standardError = FileHandle.nullDevice
-      guard (try? process.run()) != nil else { return }
-      let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-      DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: timeout)
-      process.waitUntilExit()
-      timeout.cancel()
+      _ = try? ProcessRequest(Self.adbPath, ["-s", serial] + arguments, timeout: 10).runBlocking()
     }
   }
 

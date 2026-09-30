@@ -21,16 +21,7 @@ public enum ProcessTable {
   public static let psArguments = ["-axo", "pid=,ppid=,rss=,time=,args="]
 
   public static func snapshot() throws -> [ProcessEntry] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/ps")
-    process.arguments = psArguments
-    let out = Pipe()
-    process.standardOutput = out
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return parse(String(decoding: data, as: UTF8.self))
+    parse(try ProcessRequest("/bin/ps", psArguments).runBlocking().stdoutText)
   }
 
   public static func parse(_ output: String) -> [ProcessEntry] {
