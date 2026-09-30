@@ -35,6 +35,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const active = isActive(env) || settingUp;
   const running = devicesOf(env).filter((d) => d.running);
   const errors = env.logs?.errorsSinceMarker ?? 0;
+  const hasErrorIssue = env.issues?.some((issue) => issue.severity === 'error') ?? false;
   const activityAt = offline ? (lastSeenAt ?? now) : now;
   const deviceName = (d: (typeof running)[number]) =>
     `${platformName(d.platform)}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`;
@@ -148,7 +149,9 @@ export const WorkspaceRow = memo(function WorkspaceRow({
               </Pill>
             ) : null}
             {env.warnings.length > 0 ? (
-              <Pill tone="warning">{env.warnings.length === 1 ? '1 warning' : `${env.warnings.length} warnings`}</Pill>
+              <Pill tone={hasErrorIssue ? 'error' : 'warning'}>
+                {`${env.warnings.length} ${hasErrorIssue ? 'issue' : 'warning'}${env.warnings.length === 1 ? '' : 's'}`}
+              </Pill>
             ) : null}
           </View>
         ) : null}
