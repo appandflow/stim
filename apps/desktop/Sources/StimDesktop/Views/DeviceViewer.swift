@@ -82,7 +82,7 @@ struct DeviceViewer: View {
       if interactive != true { takenOver = false }
     }
     .onChange(of: takenOver) { _, takenOver in
-      if !takenOver { actionsFocused = true }
+      actionsFocused = !takenOver
     }
   }
 
@@ -145,11 +145,10 @@ struct DeviceViewer: View {
   private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {
     GeometryReader { geo in
       let padding = Space.xxl
-      let strip = device.isRunning && !device.isPhysical ? DeviceTile.buttonStripWidth + Space.lg : 0
+      let strip = DeviceTile.hasButtons(device) ? DeviceTile.buttonStripWidth + Space.lg : 0
       DeviceTile(
         device: device, screenHeight: max(160, geo.size.height - padding * 2),
         interactive: device.isRunning && takenOver && !replaying, workspace: env.path,
-        workspaceTitle: env.names.title,
         build: env.runningBuild(for: device),
         replay: replay, replaying: replaying,
         presence: env.appPresence(device),

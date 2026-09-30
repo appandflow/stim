@@ -224,7 +224,7 @@ struct WorkspaceDetail: View {
 
   private func tile(_ device: DeviceRef, focused: Bool, screenHeight: CGFloat) -> some View {
     DeviceTile(
-      device: device, screenHeight: screenHeight, workspace: env.path, workspaceTitle: env.names.title,
+      device: device, screenHeight: screenHeight, workspace: env.path,
       build: env.runningBuild(for: device),
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
       presence: env.appPresence(device),

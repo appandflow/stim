@@ -22,11 +22,12 @@ struct AgentActionsPanel: View {
   @State private var shown = Shown()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  /// What the list shows of the replay: the action on screen and the recorded spans.
+  /// What the list shows of the replay: the action on screen and the actions it recorded, kept apart from the range
+  /// so a span growing while live redraws the list only when an action's recorded state changes.
   private struct Shown: Equatable {
     var live = true
     var current: Int?
-    var spans: [ReplaySpan] = []
+    var recorded: Set<Int> = []
   }
 
   var body: some View {
@@ -44,7 +45,7 @@ struct AgentActionsPanel: View {
           .font(.stim(.caption))
           .foregroundStyle(Palette.tertiary)
         Spacer()
-        Button("Open in logs") { openLogs(actions.first { $0.key == selected }) }
+        Button("Open in logs") { openLogs(actions.first { $0.key == selected ?? shown.current }) }
           .buttonStyle(.stim())
           .help("Close the viewer and show this device's agent actions in the logs")
       }
@@ -77,10 +78,11 @@ struct AgentActionsPanel: View {
   private func update(
     _ list: AgentActionList, replayed: ReplayController.Replay?, stepped: Double?, range: ReplayRange?
   ) {
+    let timeline = canReplay ? range.flatMap { ReplayTimeline(spans: $0.spans) } : nil
     let next = Shown(
       live: replayed == nil,
       current: list.current(live: replayed == nil, at: replayed?.at, stepped: stepped),
-      spans: canReplay ? range?.spans ?? [] : [])
+      recorded: Set(actions.filter { timeline?.seekTime(forActionAt: $0.at) != nil }.map(\.key)))
     if next != shown { shown = next }
   }
 
@@ -120,7 +122,6 @@ struct AgentActionsPanel: View {
         .padding(Space.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     } else {
-      let timeline = ReplayTimeline(spans: shown.spans)
       ScrollViewReader { proxy in
         ScrollView {
           VStack(alignment: .leading, spacing: 0) {
@@ -131,8 +132,8 @@ struct AgentActionsPanel: View {
               case .action(let action):
                 AgentActionRow(
                   action: action, current: action.key == shown.current, expanded: action.key == selected,
-                  recorded: timeline?.seekTime(forActionAt: action.at) != nil
-                ) { select(action, timeline: timeline) }
+                  recorded: shown.recorded.contains(action.key)
+                ) { select(action) }
                 .id(action.key)
               }
             }
@@ -153,8 +154,8 @@ struct AgentActionsPanel: View {
       .focusable()
       .focused(focused)
       .focusEffectDisabled()
-      .onKeyPress(.downArrow) { move(list, forward: true, timeline: timeline) }
-      .onKeyPress(.upArrow) { move(list, forward: false, timeline: timeline) }
+      .onKeyPress(.downArrow) { move(list, forward: true) }
+      .onKeyPress(.upArrow) { move(list, forward: false) }
       .onKeyPress(.space) {
         guard let playOrPause else { return .ignored }
         playOrPause()
@@ -165,21 +166,21 @@ struct AgentActionsPanel: View {
     }
   }
 
-  private func move(_ list: AgentActionList, forward: Bool, timeline: ReplayTimeline?) -> KeyPress.Result {
+  private func move(_ list: AgentActionList, forward: Bool) -> KeyPress.Result {
     guard let action = list.adjacent(to: selected ?? shown.current, forward: forward) else { return .ignored }
-    select(action, timeline: timeline)
+    select(action)
     return .handled
   }
 
   /// Shows the action's details and, when the replay recorded it, plays from just before it. Selecting the action
   /// whose details show hides them.
-  private func select(_ action: AgentAction, timeline: ReplayTimeline?) {
+  private func select(_ action: AgentAction) {
     guard selected != action.key else {
       selected = nil
       return
     }
     selected = action.key
-    if timeline?.seekTime(forActionAt: action.at) != nil { seek(action) }
+    if shown.recorded.contains(action.key) { seek(action) }
   }
 
   private func gapRow(_ ms: Double) -> some View {

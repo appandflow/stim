@@ -176,9 +176,9 @@ plays from 1.5 seconds before it; an action the replay did not record only
 shows its details. While the list has
 the keyboard, Up and Down move through the actions the same way and Space
 plays and pauses. **Open in logs** closes the viewer and shows the device's
-agent actions in the logs, at the selected action. The toolbar button hides
+agent actions in the logs, at the selected action or the one on screen. The toolbar button hides
 the list, and the app remembers it; a sheet too narrow for the list and a
-400-point canvas hides it too. Physical and remote devices have no list.
+420-point canvas hides it too. Physical and remote devices have no list.
 
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
@@ -481,7 +481,7 @@ terminates the command. An action sits on the replay where it started, at the
 record's `startedAt` when agent-device reported one, like its marker.
 **Open in logs** switches the Logs tab to the Agent source of the device's
 slot, clears the level, search and **Errors only** filters, and scrolls to and
-selects the selected action's record.
+selects that action's record.
 
 ## Build progress
 

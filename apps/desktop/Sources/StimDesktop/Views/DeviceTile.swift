@@ -11,7 +11,6 @@ struct DeviceTile: View {
   var screenHeight: CGFloat
   var interactive = false
   var workspace: String?
-  var workspaceTitle: String?
   var build: Build? = nil
   /// The device's replay through stim-server, where the tile offers one.
   var replay: ReplayController? = nil
@@ -74,7 +73,7 @@ struct DeviceTile: View {
         .background(Media.screen)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
-        if hasButtons {
+        if Self.hasButtons(device) {
           buttonStrip
         }
       }
@@ -91,8 +90,12 @@ struct DeviceTile: View {
     return interactive ? 2 : 1
   }
 
-  private var hasButtons: Bool {
-    device.isRunning && !isPhysical && ["ios", "android"].contains(device.platform)
+  /// Whether the viewer draws the button column beside the device's screen.
+  static func hasButtons(_ device: DeviceRef) -> Bool {
+    switch device {
+    case .ios, .android: return device.isRunning && !device.isPhysical
+    case .web, .remote: return false
+    }
   }
 
   private var card: some View {
@@ -207,8 +210,7 @@ struct DeviceTile: View {
 
   /// Home, Back, Apps and Lock as the device has them, then rotation and fold or posture, in a column beside the
   /// screen. The buttons go through the screen's own input and press only while the device is taken over; rotation,
-  /// fold and posture use simctl or adb and work at any time. A physical Android phone's buttons come from its own
-  /// screen view.
+  /// fold and posture use simctl or adb and work at any time. A physical device has none.
   private var buttonStrip: some View {
     VStack(spacing: Space.sm) {
       switch device {
