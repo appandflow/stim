@@ -66,6 +66,7 @@ describe('active build record', () => {
       line(
         "CompileC /d/x.o /src/x.c normal arm64 c com.apple.compilers.llvm.clang.1_0.compiler (in target 'A' from project 'P')",
       );
+      line("Touch /d/A.framework (in target 'A' from project 'P')");
       expect(readBuildDetail(root, claim.claimId)).toMatchObject({ done: 0 });
       vi.advanceTimersByTime(2000);
       expect(readBuildDetail(root, claim.claimId)).toEqual({
@@ -351,27 +352,39 @@ describe('estimates', () => {
   const history: RunHistory = {
     ios: {
       cold: [
-        histSample(100_000, { compile: 80_000 }),
-        histSample(300_000, { compile: 250_000 }),
-        histSample(200_000, { compile: 150_000 }),
-        histSample(400_000, {}),
+        histSample(100_000, { prepare: 1_000, compile: 80_000 }),
+        histSample(300_000, { prepare: 3_000, pods: 40_000, compile: 250_000 }),
+        histSample(200_000, { prepare: 2_000, compile: 150_000 }),
+        histSample(400_000, { prepare: 2_000 }),
       ],
       hit: [histSample(20_000, { install: 5_000 }, T0 + 1)],
     },
   };
 
-  test('medians comparable runs of the known outcome and counts the basis', () => {
-    expect(estimateBuild(history, 'ios', 'cold', 'compile')).toEqual({
+  test('medians comparable runs of the known outcome and plans the phases at least half of them entered', () => {
+    expect(estimateBuild(history, 'ios', 'cold')).toEqual({
       outcome: 'cold',
       expectedMs: 250_000,
-      expectedPhaseMs: 150_000,
       basis: 4,
+      phaseMs: { prepare: 2_000, pods: 40_000, compile: 150_000 },
+      planned: ['prepare', 'compile'],
+    });
+  });
+
+  test('uses the latest outcome before the cache outcome is known, and nothing without history', () => {
+    expect(estimateBuild(history, 'ios', null)).toMatchObject({ outcome: 'hit', expectedMs: 20_000 });
+    expect(estimateBuild(undefined, 'android', null)).toEqual({
+      outcome: null,
+      expectedMs: null,
+      basis: 0,
+      phaseMs: {},
+      planned: [],
     });
   });
 
   describe("matching the run's device situation", () => {
     const tagged = (durationMs: number, device: number, deviceSetup?: boolean) => ({
-      ...histSample(durationMs, { device }),
+      ...histSample(durationMs, { prepare: 1_000, device }),
       ...(deviceSetup === undefined ? {} : { deviceSetup }),
     });
     const mixed: RunHistory = {
@@ -387,125 +400,146 @@ describe('estimates', () => {
       },
     };
 
-    test('a run that sets up its device is estimated from setup runs only', () => {
-      expect(estimateBuild(mixed, 'android', 'hit', 'device', true)).toEqual({
-        outcome: 'hit',
+    test('a run that sets up its device is estimated, every phase included, from setup runs only', () => {
+      expect(estimateBuild(mixed, 'android', 'hit', true)).toMatchObject({
         expectedMs: 55_000,
-        expectedPhaseMs: 47_500,
         basis: 2,
+        phaseMs: { prepare: 1_000, device: 47_500 },
       });
     });
 
     test('a run that reuses its device ignores setup runs', () => {
-      expect(estimateBuild(mixed, 'android', 'hit', 'device', false)).toEqual({
-        outcome: 'hit',
+      expect(estimateBuild(mixed, 'android', 'hit', false)).toMatchObject({
         expectedMs: 8_500,
-        expectedPhaseMs: 400,
         basis: 3,
+        phaseMs: { device: 400 },
       });
     });
 
-    test('untagged samples serve a reuse run only when no tagged one matches, and never a setup run', () => {
-      const legacy: RunHistory = { android: { hit: [tagged(7_000, 200), tagged(9_000, 600)] } };
-      expect(estimateBuild(legacy, 'android', 'hit', 'device', false)).toMatchObject({
-        expectedMs: 8_000,
-        expectedPhaseMs: 400,
-        basis: 2,
-      });
-      expect(estimateBuild(legacy, 'android', 'hit', 'device', true)).toEqual({
-        outcome: 'hit',
-        expectedMs: null,
-        expectedPhaseMs: null,
-        basis: 0,
-      });
-    });
-
-    test('other phases keep using every run, and an unknown situation uses all runs', () => {
-      expect(estimateBuild(mixed, 'android', 'hit', 'install', true).basis).toBe(2);
-      const withInstall: RunHistory = {
-        android: { hit: [{ ...histSample(1, { install: 10 }), deviceSetup: true }, histSample(1, { install: 30 })] },
+    test('fewer than 3 reuse runs are joined by the untagged ones; a setup run never uses them', () => {
+      const legacy: RunHistory = {
+        android: { hit: [tagged(7_000, 200), tagged(9_000, 600), tagged(30_000, 20_000, false)] },
       };
-      expect(estimateBuild(withInstall, 'android', 'hit', 'install', true).expectedPhaseMs).toBe(20);
-      expect(estimateBuild(mixed, 'android', 'hit', 'device')).toMatchObject({ basis: 6 });
-    });
-
-    test('a live record carries the device situation into its estimate', () => {
-      const record: ActiveBuildRecord = {
-        platform: 'android',
-        slot: 'default',
-        startedAt: new Date(T0).toISOString(),
-        phase: 'device',
-        phaseStartedAt: new Date(T0 + 1_000).toISOString(),
-        phases: [
-          { phase: 'prepare', startedAt: new Date(T0).toISOString() },
-          { phase: 'device', startedAt: new Date(T0 + 1_000).toISOString() },
-        ],
-        claim: { root: '/r', path: '', claimId: 'c', pid: 1 },
-        deviceSetup: true,
-      };
-      expect(buildReport(record, { state: 'running', history: { android: mixed.android } })).toMatchObject({
-        expectedMs: 55_000,
-        expectedPhaseMs: 47_500,
+      expect(estimateBuild(legacy, 'android', 'hit', false)).toMatchObject({
+        expectedMs: 9_000,
+        basis: 3,
+        phaseMs: { device: 600 },
       });
-      expect(parseActiveBuild(JSON.parse(JSON.stringify(record)))?.deviceSetup).toBe(true);
+      expect(estimateBuild(legacy, 'android', 'hit', true)).toMatchObject({ expectedMs: null, basis: 0 });
+      expect(estimateBuild(mixed, 'android', 'hit')).toMatchObject({ basis: 6 });
     });
   });
 
-  test('uses the latest outcome before the cache outcome is known, and nothing without history', () => {
-    expect(estimateBuild(history, 'ios', null, 'cache-lookup')).toMatchObject({ outcome: 'hit', expectedMs: 20_000 });
-    expect(estimateBuild(undefined, 'android', null, 'prepare')).toEqual({
-      outcome: null,
-      expectedMs: null,
-      expectedPhaseMs: null,
-      basis: 0,
-    });
-  });
-
-  test('a live record that reached compile is estimated as a cold run', () => {
-    const record: ActiveBuildRecord = {
-      platform: 'ios',
-      slot: 'default',
-      startedAt: new Date(T0).toISOString(),
-      phase: 'compile',
-      phaseStartedAt: new Date(T0 + 10_000).toISOString(),
-      phases: [
-        { phase: 'prepare', startedAt: new Date(T0).toISOString() },
-        { phase: 'compile', startedAt: new Date(T0 + 10_000).toISOString() },
-      ],
-      claim: { root: '/x', path: '/x/c', claimId: 'c', pid: 1 },
-    };
-    const report = buildReport(record, { state: 'running', history });
-    expect(report).toMatchObject({ outcome: 'cold', expectedMs: 250_000, basis: 4, phase: 'compile' });
-    expect(buildStatusLine(report, T0 + 70_000)).toBe(
-      'build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)',
-    );
-    expect(buildStatusLine(report, T0 + 300_000)).toBe(
-      'build: ios compile, 5m00s elapsed (usually ~4m10s, median of 4 cold runs)',
-    );
-  });
-  test('a live record waiting on its device after the cache lookup is a hit, with no device estimate from older runs', () => {
+  test("a record without the run's estimate is reported from history, and a phase outside the plan keeps its median", () => {
     const at = (ms: number) => new Date(T0 + ms).toISOString();
     const record: ActiveBuildRecord = {
       platform: 'ios',
       slot: 'default',
       startedAt: at(0),
-      phase: 'device',
-      phaseStartedAt: at(8_000),
+      phase: 'pods',
+      phaseStartedAt: at(10_000),
       phases: [
         { phase: 'prepare', startedAt: at(0) },
-        { phase: 'device', startedAt: at(1_000) },
-        { phase: 'cache-lookup', startedAt: at(2_000) },
-        { phase: 'device', startedAt: at(8_000) },
+        { phase: 'pods', startedAt: at(10_000) },
       ],
       claim: { root: '/x', path: '/x/c', claimId: 'c', pid: 1 },
+      outcome: 'cold',
     };
-    const coldLatest: RunHistory = { ios: { ...history.ios, cold: [histSample(100_000, {}, T0 + 2)] } };
-    expect(buildReport(record, { state: 'running', history: coldLatest })).toMatchObject({
-      outcome: 'hit',
-      expectedMs: 20_000,
-      expectedPhaseMs: null,
+    const report = buildReport(record, { state: 'running', history });
+    expect(report).toMatchObject({
+      outcome: 'cold',
+      outcomeKnown: true,
+      expectedMs: 250_000,
+      expectedPhaseMs: 40_000,
+      basis: 4,
+      plannedPhases: [
+        { phase: 'prepare', expectedMs: 2_000 },
+        { phase: 'compile', expectedMs: 150_000 },
+      ],
     });
-    const beforeLookup = { ...record, phases: record.phases.slice(0, 2) };
-    expect(buildReport(beforeLookup, { state: 'running', history: coldLatest })).toMatchObject({ outcome: 'cold' });
+    expect(buildStatusLine(report, T0 + 70_000)).toBe(
+      'build: ios pods, 1m10s elapsed -- about 3 min left (median of 4 cold runs)',
+    );
+    expect(buildStatusLine(report, T0 + 300_000)).toBe(
+      'build: ios pods, 5m00s elapsed (usually ~4m10s, median of 4 cold runs)',
+    );
+    const { outcome: _, ...unsettled } = record;
+    expect(buildReport(unsettled, { state: 'running', history })).toMatchObject({
+      outcome: 'hit',
+      outcomeKnown: false,
+      expectedMs: 20_000,
+      plannedPhases: [{ phase: 'install', expectedMs: 5_000 }],
+    });
+    expect(buildReport(unsettled, { state: 'running', history: undefined }).plannedPhases).toBeNull();
+  });
+
+  describe('a live run', () => {
+    const projectKey = '/repo/app';
+    let recorded = 0;
+    const sample = (
+      durationMs: number,
+      phases: Record<string, number>,
+      deviceSetup: boolean,
+      cacheHit: 'local' | false,
+    ) => recordRunStats(run({ projectKey, durationMs, phases, deviceSetup, cacheHit }), T0 + recorded++);
+
+    beforeEach(() => {
+      for (const ms of [20_000, 22_000, 24_000]) sample(ms, { prepare: 1_000, install: 4_000 }, false, 'local');
+      for (const ms of [60_000, 70_000, 80_000]) sample(ms, { prepare: 30_000, install: 4_000 }, true, 'local');
+      sample(200_000, { prepare: 1_000, compile: 180_000 }, false, false);
+    });
+
+    function live() {
+      const claim = takeClaim();
+      let now = T0;
+      const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+      const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+      return { claim, progress, report, advance: (ms: number) => (now += ms) };
+    }
+
+    test('estimates once from the latest outcome and once when its outcome is known, never on later history', () => {
+      const { claim, progress, report, advance } = live();
+      progress.estimate(projectKey);
+      expect(report()).toMatchObject({ outcome: 'cold', outcomeKnown: false, expectedMs: 200_000, basis: 1 });
+      progress.deviceSetup(false);
+      advance(1_000);
+      progress.step('cache-lookup');
+      expect(report()).toMatchObject({ outcomeKnown: false, expectedMs: 200_000 });
+
+      advance(2_000);
+      progress.step('device');
+      const settled = report();
+      expect(settled).toMatchObject({
+        outcome: 'hit',
+        outcomeKnown: true,
+        expectedMs: 22_000,
+        basis: 3,
+        plannedPhases: [
+          { phase: 'prepare', expectedMs: 1_000 },
+          { phase: 'install', expectedMs: 4_000 },
+        ],
+      });
+
+      sample(90_000, { prepare: 1_000, install: 80_000 }, false, 'local');
+      advance(1_000);
+      progress.step('install');
+      const { expectedMs, basis, plannedPhases } = settled;
+      expect(report()).toMatchObject({ phase: 'install', expectedPhaseMs: 4_000, expectedMs, basis, plannedPhases });
+      progress.clear();
+      releaseClaim(claim);
+    });
+
+    test('a native build step settles a cold outcome, and a run that set up its device uses setup runs', () => {
+      const { claim, progress, report } = live();
+      progress.estimate(projectKey);
+      progress.deviceSetup(true);
+      progress.step('cache-lookup');
+      progress.step('compile');
+      expect(report()).toMatchObject({ outcome: 'cold', outcomeKnown: true, expectedMs: null, basis: 0 });
+      progress.step('device');
+      expect(report()).toMatchObject({ outcome: 'cold', basis: 0 });
+      progress.clear();
+      releaseClaim(claim);
+    });
   });
 });

@@ -6555,10 +6555,10 @@ describe('run statistics', () => {
     expect(runs[0]?.run.podsMs).toBe(18000);
     expect(Object.keys(runs[0]?.run.phases ?? {})).toEqual([
       'prepare',
-      'device',
       'cache-lookup',
       'pods',
       'compile',
+      'device',
       'install',
       'launch',
     ]);

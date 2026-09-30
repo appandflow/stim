@@ -1097,8 +1097,8 @@ RULES
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
-            outcome, expectedMs, expectedPhaseMs, basis, missReason?,
-            detail?, placement }
+            outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis,
+            plannedPhases, missReason?, detail?, placement }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1108,41 +1108,53 @@ RULES
   phase            prepare | cache-lookup | wait | prebuild | pods |
                    compile | device | install | launch. prepare covers
                    settings and Metro; wait is waiting on another
-                   workspace's build of the same fingerprint; device covers
-                   creating or adopting the owned simulator or emulator
-                   before the cache lookup, and, once the app is ready,
-                   waiting for the device: its boot, adoption cleanup,
-                   or a physical device's lease and connection check. A
-                   boot that finishes during the build adds no device
-                   time. A run can enter device twice and records the
-                   sum; an --eas-profile run has no cache lookup, so its
-                   outcome in device is the project's most recent one.
+                   workspace's build of the same fingerprint. Creating,
+                   adopting or booting the owned simulator or emulator
+                   before the cache lookup is prepare time. device starts
+                   once the app is ready and covers waiting for the
+                   device: its boot, adoption cleanup, or a physical
+                   device's lease and connection check. A boot that
+                   finishes during the build adds no device time. An
+                   --eas-profile run has no cache lookup, so its outcome
+                   stays the project's most recent one until install.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" once the run reached prebuild, pods or compile,
                    "hit" once it reached device after the cache lookup,
                    or install, without them. Before that, the outcome of
                    this project's most recent run.
+  outcomeKnown     true once outcome is this run's own, false while it is
+                   the project's most recent one
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
-                   no history. Once the run knows whether it creates,
-                   adopts or cold-boots its device (right after the device
-                   is prepared), only runs that did the same count; a run
-                   that reuses a booted device also counts runs recorded
-                   before Stim tagged them. Until then all runs count.
-  expectedPhaseMs  the median duration of this phase in those runs, or null.
-                   For device it counts only the runs that match the run's
-                   device situation; other phases use every run
+                   no history. The run estimates twice: when it starts,
+                   from every run with the project's most recent outcome,
+                   and once when outcomeKnown turns true. From then on only
+                   runs that created, adopted or cold-booted their device
+                   the way this run did count; a run that reuses a booted
+                   device also counts runs recorded before Stim tagged them
+                   until 3 tagged ones exist. Runs that finish meanwhile do
+                   not change the estimate.
+  expectedPhaseMs  the median duration of this phase in those runs, or null
+                   when none of them entered it
   basis            how many runs the expectedMs median comes from (at most
                    10 per kind: device-setup runs keep their own 10)
+  plannedPhases    [{ phase, expectedMs }] in phase order: the phases at
+                   least half of those runs entered, each with its median
+                   in them; null with no such run. The current phase can be
+                   one it does not list, such as wait. Draw a progress bar
+                   from it rather than from builds, which holds only this
+                   workspace's runs and includes offloaded ones
   missReason       once the run knows its cache lookup missed, why, in the
                    shape of lastBuilds missReason below
-  detail           on a running build whose tool printed a line Stim reads:
-                   { step, unit, done, total, line, updatedAt }
+  detail           during compile, once the build tool printed a line Stim
+                   reads: { step, unit, done, total, line, updatedAt }
     step           the tool's step: configure, compile, link, resources,
                    script, dex, package or sign; null before one is known
     unit           "targets" for xcodebuild, "tasks" for Gradle
-    done           xcodebuild: targets that started work; Gradle: tasks it
-                   reported so far
+    done           xcodebuild: targets it finished (a target counts once
+                   xcodebuild touches or signs its product, so an
+                   incremental build can end below total); Gradle: tasks
+                   it reported so far
     total          xcodebuild: targets in its dependency graph; Gradle: null,
                    since its plain output gives no total
     line           the latest compile, link or task line, paths shortened

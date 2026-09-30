@@ -1200,6 +1200,7 @@ describe('explicit remote backend behavior', () => {
         output: () => {},
         deviceSetup: () => {},
         deviceSetupKnown: () => undefined,
+        estimate: () => {},
         durations: () => ({}),
         clear: () => {},
       },
@@ -5902,17 +5903,18 @@ describe('run statistics', () => {
       output: () => {},
       deviceSetup: () => {},
       deviceSetupKnown: () => undefined,
+      estimate: () => {},
       durations: () => ({}),
       clear: () => {},
     };
     expect((await harness({ progress }).run()).ok).toBe(true);
-    expect(steps).toEqual(['device', 'cache-lookup', 'compile', 'device', 'install', 'launch']);
+    expect(steps).toEqual(['cache-lookup', 'compile', 'device', 'install', 'launch']);
 
     steps.length = 0;
     expect((await harness({ progress, resolveCached: () => fakeApk(), build: never('the build') }).run()).ok).toBe(
       true,
     );
-    expect(steps).toEqual(['device', 'cache-lookup', 'device', 'install', 'launch']);
+    expect(steps).toEqual(['cache-lookup', 'device', 'install', 'launch']);
   });
 
   test('the run tells its progress whether it set up its device or found it running', async () => {
@@ -5923,6 +5925,7 @@ describe('run statistics', () => {
       output: () => {},
       deviceSetup: (setup: unknown) => seen.push(setup),
       deviceSetupKnown: () => undefined,
+      estimate: () => {},
       durations: () => ({}),
       clear: () => {},
     };

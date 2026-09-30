@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { formatElapsed, plural } from '../command-output.ts';
 import { readClaimSet, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
 import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/workspace-state.ts';
-import type { RunHistory, RunOutcomeKind, RunSample, StatsPlatform } from './stats.ts';
+import { readStats, type RunHistory, type RunOutcomeKind, type RunSample, type StatsPlatform } from './stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createBuildDetailParser } from './build-detail.ts';
 import {
@@ -20,6 +20,7 @@ import {
   type BuildPlacement,
   type BuildReport,
   type BuildResult,
+  type PlannedPhase,
   type WorkspaceState,
 } from '@stim-cli/core/state';
 
@@ -46,10 +47,28 @@ export interface ActiveBuildRecord {
   placement?: Exclude<BuildPlacement, 'local'>;
   /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */
   deviceSetup?: boolean;
+  /** The run's cache outcome, once it entered a phase that settles it. */
+  outcome?: RunOutcomeKind;
+  /** The estimate the run made when it knew its project, and again when it knew its outcome. */
+  estimate?: BuildEstimate;
+}
+
+/**
+ * A run's estimate from its project's recent comparable runs: their median duration, how many there were, the median
+ * of each phase they entered, and the phases at least half of them entered, in phase order.
+ */
+export interface BuildEstimate {
+  outcome: RunOutcomeKind | null;
+  expectedMs: number | null;
+  basis: number;
+  phaseMs: Partial<Record<BuildPhase, number>>;
+  planned: BuildPhase[];
 }
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
+  /** Estimates the run from the recent runs of the project with `projectKey`, and again once its outcome is known. */
+  estimate(projectKey: string): void;
   /** Records why the run's cache lookup missed. */
   miss(reason: BuildMissReason): void;
   /** Records whether the run set up its device (created, adopted or cold-booted) rather than reusing a booted one. */
@@ -66,6 +85,7 @@ export interface BuildProgress {
 
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
+  estimate: () => {},
   miss: () => {},
   deviceSetup: () => {},
   deviceSetupKnown: () => undefined,
@@ -118,6 +138,24 @@ function writeBuildDetail(root: string, claimId: string, detail: BuildDetail): v
 const COLD_PHASES: readonly BuildPhase[] = ['prebuild', 'pods', 'compile'];
 const HIT_PHASES: readonly BuildPhase[] = ['install', 'launch'];
 
+/**
+ * The outcome entering `phase` settles: a native build step means cold; reaching the device after the cache lookup,
+ * or install, without one means hit. An --eas-profile run has no cache lookup.
+ */
+function settledOutcome(phase: BuildPhase, entered: ActiveBuildRecord['phases']): RunOutcomeKind | null {
+  if (COLD_PHASES.includes(phase)) return 'cold';
+  if (phase === 'device') return entered.some((entry) => entry.phase === 'cache-lookup') ? 'hit' : null;
+  return HIT_PHASES.includes(phase) ? 'hit' : null;
+}
+
+function projectHistory(projectKey: string): RunHistory | undefined {
+  try {
+    return readStats().record?.history?.[projectKey];
+  } catch {
+    return undefined;
+  }
+}
+
 export function startBuildProgress({
   root,
   platform,
@@ -156,6 +194,7 @@ export function startBuildProgress({
   const write = (before: (state: WorkspaceState) => WorkspaceState = (state) => state) =>
     guard(() => updateWorkspaceState(root, (state) => ({ ...before(state), [ACTIVE_BUILD_KEY]: record })));
   write(withInterruptedBuild);
+  let projectKey: string | null = null;
   const parser = createBuildDetailParser();
   let detailWrittenAt = -Infinity;
   let detailTimer: ReturnType<typeof setTimeout> | null = null;
@@ -172,6 +211,22 @@ export function startBuildProgress({
       record.phase = phase;
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
+      const outcome = record.outcome ? null : settledOutcome(phase, record.phases);
+      if (outcome) {
+        record.outcome = outcome;
+        if (projectKey)
+          record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
+      }
+      write();
+    },
+    estimate(key) {
+      projectKey = key;
+      record.estimate = estimateBuild(
+        projectHistory(key),
+        platform,
+        record.outcome ?? null,
+        record.outcome ? record.deviceSetup : undefined,
+      );
       write();
     },
     miss(reason) {
@@ -330,6 +385,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     : [];
   const missReason = parseMissReason(record.missReason);
   const placement = parsePlacement(record.placement);
+  const estimate = parseEstimate(record.estimate);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -340,6 +396,8 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(missReason ? { missReason } : {}),
     ...(placement ? { placement } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
+    ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
+    ...(estimate ? { estimate } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -361,6 +419,24 @@ function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
   };
 }
 
+function parseEstimate(value: unknown): BuildEstimate | null {
+  if (!value || typeof value !== 'object') return null;
+  const { outcome, expectedMs, basis, phaseMs, planned } = value as Record<string, unknown>;
+  if (outcome !== null && outcome !== 'hit' && outcome !== 'cold') return null;
+  if (expectedMs !== null && typeof expectedMs !== 'number') return null;
+  if (typeof basis !== 'number' || !Array.isArray(planned) || !phaseMs || typeof phaseMs !== 'object') return null;
+  const durations = Object.entries(phaseMs).filter(
+    (entry): entry is [BuildPhase, number] => isPhase(entry[0]) && typeof entry[1] === 'number',
+  );
+  return {
+    outcome,
+    expectedMs,
+    basis,
+    phaseMs: Object.fromEntries(durations),
+    planned: planned.filter(isPhase),
+  };
+}
+
 function isPhase(value: unknown): value is BuildPhase {
   return (BUILD_PHASES as readonly unknown[]).includes(value);
 }
@@ -374,14 +450,6 @@ export function activeBuildState(
   return survey.unresolved.length ? 'unknown' : 'stale';
 }
 
-function liveOutcome(record: ActiveBuildRecord): RunOutcomeKind | null {
-  const seen = new Set(record.phases.map((entry) => entry.phase));
-  if (COLD_PHASES.some((phase) => seen.has(phase))) return 'cold';
-  if (HIT_PHASES.some((phase) => seen.has(phase))) return 'hit';
-  if (record.phase === 'device' && seen.has('cache-lookup')) return 'hit';
-  return null;
-}
-
 function median(values: readonly number[]): number | null {
   if (!values.length) return null;
   const sorted = values.toSorted((a, b) => a - b);
@@ -389,33 +457,49 @@ function median(values: readonly number[]): number | null {
   return sorted.length % 2 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
 }
 
+/**
+ * Estimates a run from the project's recent runs with the known outcome, or its latest outcome while unknown. When
+ * the run knows whether it set up its device, only runs in the same situation count.
+ */
 export function estimateBuild(
   history: RunHistory | undefined,
   platform: StatsPlatform,
   known: RunOutcomeKind | null,
-  phase: BuildPhase,
   deviceSetup?: boolean,
-): Pick<BuildReport, 'outcome' | 'expectedMs' | 'expectedPhaseMs' | 'basis'> {
+): BuildEstimate {
   const lists = history?.[platform];
   const outcome = known ?? latestOutcome(lists);
-  const samples: RunSample[] = (outcome && lists?.[outcome]) || [];
-  const matched = matchDeviceSetup(samples, deviceSetup);
-  const phaseSamples = (phase === 'device' ? matched : samples).flatMap((sample) =>
-    phase in sample.phases ? [sample.phases[phase]!] : [],
-  );
+  const samples = matchDeviceSetup((outcome && lists?.[outcome]) || [], deviceSetup);
+  const phaseMs: Partial<Record<BuildPhase, number>> = {};
+  const planned: BuildPhase[] = [];
+  for (const phase of BUILD_PHASES) {
+    const durations = samples.flatMap((sample) => (phase in sample.phases ? [sample.phases[phase]!] : []));
+    const ms = median(durations);
+    if (ms === null) continue;
+    phaseMs[phase] = ms;
+    if (durations.length * 2 >= samples.length) planned.push(phase);
+  }
   return {
     outcome,
-    expectedMs: median(matched.map((sample) => sample.durationMs)),
-    expectedPhaseMs: median(phaseSamples),
-    basis: matched.length,
+    expectedMs: median(samples.map((sample) => sample.durationMs)),
+    basis: samples.length,
+    phaseMs,
+    planned,
   };
 }
 
+const MIN_TAGGED_SAMPLES = 3;
+
+/**
+ * The samples in the run's device situation. A setup run uses only setup samples. A run that reuses its device uses
+ * reuse samples once there are `MIN_TAGGED_SAMPLES`, and until then those plus the untagged ones recorded before the
+ * tag, which are mostly reruns.
+ */
 function matchDeviceSetup(samples: RunSample[], deviceSetup: boolean | undefined): RunSample[] {
   if (deviceSetup === undefined) return samples;
   const tagged = samples.filter((sample) => sample.deviceSetup === deviceSetup);
-  if (tagged.length || deviceSetup) return tagged;
-  return samples.filter((sample) => sample.deviceSetup === undefined);
+  if (deviceSetup || tagged.length >= MIN_TAGGED_SAMPLES) return tagged;
+  return samples.filter((sample) => sample.deviceSetup !== true);
 }
 
 function latestOutcome(lists: Partial<Record<RunOutcomeKind, RunSample[]>> | undefined): RunOutcomeKind | null {
@@ -428,10 +512,21 @@ function latestOutcome(lists: Partial<Record<RunOutcomeKind, RunSample[]>> | und
   return latest?.outcome ?? null;
 }
 
+/**
+ * The status report of an active build. It uses the estimate the run stored; `history` stands in only for a record
+ * written before the run made one, with the same inputs the run uses.
+ */
 export function buildReport(
   record: ActiveBuildRecord,
   { state, history }: { state: ActiveBuildState; history: RunHistory | undefined },
 ): BuildReport {
+  const estimate =
+    record.estimate ??
+    estimateBuild(history, record.platform, record.outcome ?? null, record.outcome ? record.deviceSetup : undefined);
+  const plannedPhases: PlannedPhase[] = estimate.planned.flatMap((phase) => {
+    const expectedMs = estimate.phaseMs[phase];
+    return expectedMs === undefined ? [] : [{ phase, expectedMs }];
+  });
   return {
     platform: record.platform,
     slot: record.slot,
@@ -439,7 +534,12 @@ export function buildReport(
     phase: record.phase,
     startedAt: record.startedAt,
     phaseStartedAt: record.phaseStartedAt,
-    ...estimateBuild(history, record.platform, liveOutcome(record), record.phase, record.deviceSetup),
+    outcome: estimate.outcome,
+    outcomeKnown: record.outcome !== undefined,
+    expectedMs: estimate.expectedMs,
+    expectedPhaseMs: estimate.phaseMs[record.phase] ?? null,
+    basis: estimate.basis,
+    plannedPhases: plannedPhases.length ? plannedPhases : null,
     ...(record.missReason ? { missReason: record.missReason } : {}),
     placement: record.placement ?? 'local',
   };
