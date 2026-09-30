@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Card } from '@/components/card';
 import { Pill } from '@/components/pill';
@@ -9,11 +9,10 @@ import { shortDuration } from '@/lib/format';
 import type { RemoteDeviceState } from '@/protocol/types';
 
 export function RemoteTile({ session }: { session: RemoteDeviceState }) {
-  const { theme } = useUnistyles();
   const now = useNow(30_000);
   const started = session.startedAt ? Date.parse(session.startedAt) : NaN;
   return (
-    <Card ring={theme.colors.info}>
+    <Card>
       <View style={styles.body}>
         <View style={styles.row}>
           <Text variant="callout" weight="semibold">
