@@ -41,7 +41,6 @@ final class Onboarding: ObservableObject {
   @Published private(set) var setup = SetupChecks()
   @Published var showsGuide = false
   @Published var guideStep = SetupStep.welcome
-  /// The last run of each command the guide ran.
   @Published private(set) var guideRuns: [StimCommand: ActionRun] = [:]
   @Published var projectFolder: String?
   private let progress = SetupGuideProgress()
@@ -138,6 +137,7 @@ final class Onboarding: ObservableObject {
   var runsStim: Bool { report.map { $0.stim.isCompatible && !$0.needsRelaunch } ?? false }
 
   func openGuide() {
+    guard !showsGuide else { return }
     presentGuide(at: nil)
     check()
   }
@@ -154,7 +154,6 @@ final class Onboarding: ObservableObject {
     showsGuide = false
   }
 
-  /// Runs `command` through the action center, unless another setup command is running.
   func runGuide(_ title: String, _ command: StimCommand) {
     guard
       let run = actions.run(
@@ -181,7 +180,6 @@ final class Onboarding: ObservableObject {
     relaunch()
   }
 
-  /// Restarts Stim Desktop and reopens the guide on the current step.
   func restartForSetup() {
     progress.saveForRestart(at: guideStep)
     relaunch()
@@ -196,7 +194,6 @@ final class Onboarding: ObservableObject {
     }
   }
 
-  /// Asks macOS once; after a denial only System Settings can allow them.
   func requestNotifications() {
     guard Notifier.isAvailable else { return }
     Task {
@@ -205,7 +202,6 @@ final class Onboarding: ObservableObject {
     }
   }
 
-  /// Picks up a change made in System Settings while the guide is open.
   func refreshNotifications() {
     Task { setup.notifications = await Self.notificationAccess() }
   }

@@ -862,7 +862,7 @@ shows what it found, the exact command its **Run** button runs with the
 directory it runs in, and that command's output. Nothing runs until Run is
 pressed, commands run one at a time through the same runner as the banner, and
 the step checks again when the command ends. Return presses the step's Run
-button, or **Continue** when there is nothing to run; Escape is **Set Up
+button, or **Continue** once the step is done, and never skips a step; Escape is **Set Up
 Later**.
 
 1. **Welcome**.
@@ -887,7 +887,7 @@ Later**.
 6. **You're set**: the state of steps 2 to 4.
 
 When every step is already done at the first launch, the guide opens on the
-summary. Finishing or closing it sets `setupGuide.completed` in the app's
+summary. **Start Using Stim** or **Set Up Later** sets `setupGuide.completed` in the app's
 `UserDefaults`, so Stim and Stim Dev each show it once. The `stim` banner stays
 hidden while the guide is open.
 

@@ -83,7 +83,7 @@ struct SetupGuideView: View {
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(item.title), \(stateDescription(item))")
+        .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         .accessibilityAddTraits(item == step ? .isSelected : [])
       }
       Spacer()
@@ -332,7 +332,7 @@ struct SetupGuideView: View {
     VStack(alignment: .leading, spacing: Space.md) {
       Text("Check a project").font(.stim(.callout, weight: .semibold))
       Text(
-        "stim doctor reports what a React Native or Expo project needs for fast worktrees and builds, with the fix for each finding. It changes nothing."
+        "stim doctor reports what a React Native or Expo project needs for fast worktrees and builds, with the fix for each finding. It repairs nothing, and adds the folder to the projects Stim lists."
       )
       .foregroundStyle(Palette.secondary)
       HStack(spacing: Space.md) {
@@ -380,7 +380,7 @@ struct SetupGuideView: View {
             }
           }
           .buttonStyle(.plain)
-          .accessibilityLabel("\(item.title), \(stateDescription(item))")
+          .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
       if onboarding.report?.needsRelaunch == true {
@@ -405,7 +405,7 @@ struct SetupGuideView: View {
         let finished = [.done, .notApplicable].contains(setup.state(of: step))
         Button(step == .welcome ? "Get Started" : finished ? "Continue" : "Skip") { onboarding.guideStep = next }
           .buttonStyle(.stim(finished || step == .welcome ? .primary : .secondary, .regular))
-          .keyboardShortcut(hasDefaultAction ? nil : .defaultAction)
+          .keyboardShortcut(finished && !hasDefaultAction ? .defaultAction : nil)
       } else {
         Button("Start Using Stim", action: onboarding.finishGuide)
           .buttonStyle(.stim(.primary, .regular))
@@ -416,7 +416,6 @@ struct SetupGuideView: View {
     .padding(.vertical, Space.lg)
   }
 
-  /// Whether the screen itself holds the button Return presses: a Run button or a permission request.
   private var hasDefaultAction: Bool {
     switch step {
     case .cli:
@@ -431,7 +430,6 @@ struct SetupGuideView: View {
 
   private static let end = "end"
 
-  /// Scrolls to a command's output when it starts and to its result when it ends.
   private func revealEnd(_ proxy: ScrollViewProxy) {
     DispatchQueue.main.async {
       withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(Self.end, anchor: .bottom) }
@@ -476,7 +474,6 @@ private struct CommandBlock: View {
   @State private var copied = false
 
   private var text: String { ([command.program] + command.arguments).joined(separator: " ") }
-  private var matchingRun: ActionRun? { run }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
@@ -506,14 +503,14 @@ private struct CommandBlock: View {
       if !line.isEmpty {
         Text(line.joined(separator: " ")).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
-      if showsOutput, let matchingRun { RunOutput(run: matchingRun) }
+      if showsOutput, let run { RunOutput(run: run) }
     }
   }
 
   @ViewBuilder private var runButton: some View {
-    let running = matchingRun?.isRunning == true
-    let failed = matchingRun?.needsAttention == true
-    let succeeded = matchingRun?.exitStatus == 0
+    let running = run?.isRunning == true
+    let failed = run?.needsAttention == true
+    let succeeded = run?.exitStatus == 0
     Button(action: start) {
       HStack(spacing: Space.xs) {
         if running {

@@ -35,6 +35,10 @@ private func node(_ output: String?) -> CLICompatibility {
   #expect(ready.startStep(resuming: nil) == .done)
   #expect(ready.startStep(resuming: .skill) == .skill)
 
+  var denied = ready
+  denied.notifications = .denied
+  #expect(!denied.isComplete)
+
   var noSkill = ready
   noSkill.skillPath = nil
   #expect(!noSkill.isComplete)
@@ -103,4 +107,7 @@ private func node(_ output: String?) -> CLICompatibility {
   progress.saveForRestart(at: .cli)
   #expect(progress.opensAtLaunch)
   #expect(progress.resumeStep == .cli)
+  progress.finish()
+  #expect(progress.resumeStep == nil)
+  #expect(!progress.opensAtLaunch)
 }
