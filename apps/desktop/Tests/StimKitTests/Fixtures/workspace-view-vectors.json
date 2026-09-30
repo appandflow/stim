@@ -3086,5 +3086,177 @@
         "text": "idle 1m"
       }
     }
+  ],
+  "diskParts": [
+    {
+      "name": "node_modules is split out of the worktree",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 1530000000
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ]
+    },
+    {
+      "name": "an unmeasured node_modules leaves the whole worktree",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 500000000,
+          "nodeModulesBytes": null,
+          "buildBytes": null
+        }
+      },
+      "parts": [
+        {
+          "kind": "worktree",
+          "label": "Worktree",
+          "bytes": 500000000
+        }
+      ]
+    },
+    {
+      "name": "a zero-byte node_modules and build are skipped",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 500000000,
+          "nodeModulesBytes": 0,
+          "buildBytes": 0
+        }
+      },
+      "parts": [
+        {
+          "kind": "worktree",
+          "label": "Worktree",
+          "bytes": 500000000
+        }
+      ]
+    },
+    {
+      "name": "node_modules that fills the worktree leaves no rest",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 900,
+          "nodeModulesBytes": 900,
+          "buildBytes": 0
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 900
+        }
+      ]
+    },
+    {
+      "name": "node_modules larger than the worktree is not split out",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 900,
+          "nodeModulesBytes": 950,
+          "buildBytes": 100
+        }
+      },
+      "parts": [
+        {
+          "kind": "worktree",
+          "label": "Worktree",
+          "bytes": 900
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 100
+        }
+      ]
+    },
+    {
+      "name": "only the build folder measured",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": null,
+          "nodeModulesBytes": null,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ]
+    },
+    {
+      "name": "nothing measured",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": null,
+          "nodeModulesBytes": null,
+          "buildBytes": null
+        }
+      },
+      "parts": null
+    }
   ]
 }

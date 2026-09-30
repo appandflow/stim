@@ -15,6 +15,8 @@ import {
   deviceTitle,
   deviceUsage,
   fallbackLine,
+  diskParts,
+  diskPartsLabel,
   gitChip,
   namesPhases,
   phaseSteps,
@@ -705,6 +707,10 @@ describe('workspace view vectors', () => {
     expect(line && { text: line.text, tone: line.tone === 'default' ? 'normal' : line.tone }).toEqual(c.line);
   });
 
+  it.each(vectors.diskParts.map((c) => [c.name, c] as const))('disk parts: %s', (_, c) => {
+    expect(diskParts(c.workspace as unknown as EnvironmentState)).toEqual(c.parts);
+  });
+
   it.each(vectors.agentRow.map((c) => [c.name, c] as const))('agent row: %s', (_, c) => {
     const last = c.last && { ts: vectorNow - c.last.agoMs, msg: c.last.message };
     expect(agentRow(c.activity as unknown as DeviceActivity, last, vectorNow)).toEqual(c.row);
@@ -712,6 +718,15 @@ describe('workspace view vectors', () => {
 });
 
 describe('usageParts and usageLabel', () => {
+  it('words the disk parts in one line and sums them to the workspace disk', () => {
+    const e = env({
+      disk: { worktreeBytes: 1.72e9, nodeModulesBytes: 1.53e9, buildBytes: 19.2e6, measuredAt: iso(0) },
+    });
+    const parts = diskParts(e)!;
+    expect(diskPartsLabel(parts)).toBe('node_modules 1.5 GB, Rest of worktree 190 MB, Build output 19 MB');
+    expect(parts.reduce((sum, part) => sum + part.bytes, 0)).toBeCloseTo(workspaceUsage(e, null).diskBytes!);
+  });
+
   it('lists the measured resources in CPU, memory, disk order', () => {
     const usage = { cpuPercent: 42.4, memoryMb: 2048, diskBytes: 3e9 };
     expect(usageParts(usage).map((part) => [part.kind, part.value])).toEqual([

@@ -556,6 +556,18 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       var row: Row
     }
 
+    struct DiskPart: Decodable, Equatable {
+      var kind: String
+      var label: String
+      var bytes: Double
+    }
+
+    struct DiskCase: Decodable {
+      var name: String
+      var workspace: Workspace
+      var parts: [DiskPart]?
+    }
+
     var now: String
     var stage: [StageCase]
     var gitChip: [ChipCase]
@@ -564,6 +576,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     var activity: Activity
     var bundleLine: [BundleCase]
     var agentRow: [RowCase]
+    var diskParts: [DiskCase]
   }
 
   static let vectors: Vectors = {
@@ -634,6 +647,16 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     let c = try #require(Self.vectors.bundleLine.first { $0.name == name })
     let line = c.workspace.bundleLine(now: Self.now, reportsBundles: c.reportsBundles)
     #expect(line.map { Vectors.Line(text: $0.text, tone: String(describing: $0.tone)) } == c.line)
+  }
+
+  @Test(arguments: vectors.diskParts.map(\.name))
+  func splitsTheDiskAsThePhoneDoes(name: String) throws {
+    let c = try #require(Self.vectors.diskParts.first { $0.name == name })
+    let breakdown = c.workspace.diskBreakdown
+    let parts = breakdown.map { b in
+      b.parts.map { Vectors.DiskPart(kind: $0.kind.rawValue, label: b.label(of: $0), bytes: $0.bytes) }
+    }
+    #expect(parts == c.parts)
   }
 
   @Test(arguments: vectors.agentRow.map(\.name))

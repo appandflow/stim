@@ -214,10 +214,6 @@ msgstr "{free} free, below Stim's floor"
 msgid "{freeGb} GB free"
 msgstr "{freeGb} GB free"
 
-#: src/screens/workspace-resources.tsx
-msgid "{freeSpace} free"
-msgstr "{freeSpace} free"
-
 #: src/intl/format.ts
 #: src/intl/format.ts
 #: src/intl/format.ts
@@ -938,8 +934,8 @@ msgid "Build machines"
 msgstr "Build machines"
 
 #: src/lib/workspace-view.ts
-msgid "build output {build}"
-msgstr "build output {build}"
+msgid "Build output"
+msgstr "Build output"
 
 #: src/lib/machine-report.ts
 msgid "Build outputs of {workspace}"
@@ -1444,6 +1440,10 @@ msgstr "disk"
 msgid "Disk"
 msgstr "Disk"
 
+#: src/screens/workspace-resources.tsx
+msgid "Disk {size}: {summary}"
+msgstr "Disk {size}: {summary}"
+
 #: src/screens/mac-status.tsx
 msgid "Disk details are unavailable: {message}"
 msgstr "Disk details are unavailable: {message}"
@@ -1455,10 +1455,6 @@ msgstr "Disk free"
 #: src/screens/mac-status.tsx
 msgid "Disk use by category"
 msgstr "Disk use by category"
-
-#: src/lib/workspace-view.ts
-msgid "Disk: {list}."
-msgstr "Disk: {list}."
 
 #: src/screens/device-view.tsx
 msgid "Done"
@@ -2301,10 +2297,6 @@ msgstr "no upstream"
 msgid "node_modules {nodeModules}"
 msgstr "node_modules {nodeModules}"
 
-#: src/lib/workspace-view.ts
-msgid "node_modules {nodeModules} of it"
-msgstr "node_modules {nodeModules} of it"
-
 #: src/intl/format.ts
 #: src/screens/workspace-work.tsx
 msgid "None"
@@ -2863,6 +2855,10 @@ msgstr "Reset"
 #: src/components/workspace-cards.tsx
 msgid "resources not measured"
 msgstr "resources not measured"
+
+#: src/lib/workspace-view.ts
+msgid "Rest of worktree"
+msgstr "Rest of worktree"
 
 #: src/hooks/app-update.ts
 msgid "Restart"
@@ -3649,13 +3645,13 @@ msgstr "Workspaces"
 msgid "Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine."
 msgstr "Workspaces appear here when an agent runs stim start, stim ios or stim android on a paired machine."
 
+#: src/lib/workspace-view.ts
+msgid "Worktree"
+msgstr "Worktree"
+
 #: src/lib/machine-report.ts
 msgid "Worktree {name}"
 msgstr "Worktree {name}"
-
-#: src/lib/workspace-view.ts
-msgid "worktree {worktree}"
-msgstr "worktree {worktree}"
 
 #: src/lib/format.ts
 msgid "would refuse ({code})"

@@ -1,7 +1,7 @@
 import { plural, t } from '@lingui/core/macro';
 
 import type { Tone } from '@/design/tone';
-import { formatBytes, formatDuration, formatMemoryMb } from '@/intl/format';
+import { formatBytes, formatDuration, formatMemoryMb, formatSize } from '@/intl/format';
 import { clockDuration, gitBadges, machineName, steadyFraction } from '@/lib/format';
 import type { PlanState } from '@/lib/plan-checks';
 import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
@@ -164,19 +164,42 @@ function workspaceDiskBytes(env: EnvironmentState): number | null {
   return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0);
 }
 
-export function diskBreakdown(env: EnvironmentState): string | null {
+export interface DiskPart {
+  kind: 'nodeModules' | 'worktree' | 'build';
+  label: string;
+  bytes: number;
+}
+
+/**
+ * The disk a workspace holds, split into parts that add up to `workspaceUsage().diskBytes`: node_modules is part of
+ * the worktree, so it is split out of it, and the build folder is Stim's own. Zero-byte parts are left out.
+ */
+export function diskParts(env: EnvironmentState): DiskPart[] | null {
   const disk = env.disk;
   if (!disk) return null;
-  const worktree = disk.worktreeBytes === null ? null : formatBytes(disk.worktreeBytes);
-  const nodeModules = disk.nodeModulesBytes === null ? null : formatBytes(disk.nodeModulesBytes);
-  const build = disk.buildBytes === null ? null : formatBytes(disk.buildBytes);
-  const parts = [
-    worktree === null ? null : t`worktree ${worktree}`,
-    nodeModules === null ? null : t`node_modules ${nodeModules} of it`,
-    build === null ? null : t`build output ${build}`,
-  ].filter(Boolean);
-  const list = parts.join(', ');
-  return parts.length ? t`Disk: ${list}.` : null;
+  const parts: Omit<DiskPart, 'label'>[] = [];
+  const { worktreeBytes, nodeModulesBytes, buildBytes } = disk;
+  if (worktreeBytes !== null) {
+    if (nodeModulesBytes !== null && nodeModulesBytes > 0 && nodeModulesBytes <= worktreeBytes) {
+      parts.push({ kind: 'nodeModules', bytes: nodeModulesBytes });
+      if (worktreeBytes > nodeModulesBytes) parts.push({ kind: 'worktree', bytes: worktreeBytes - nodeModulesBytes });
+    } else {
+      parts.push({ kind: 'worktree', bytes: worktreeBytes });
+    }
+  }
+  if (buildBytes !== null && buildBytes > 0) parts.push({ kind: 'build', bytes: buildBytes });
+  const splitOut = parts.some((part) => part.kind === 'nodeModules');
+  const labels = {
+    nodeModules: 'node_modules',
+    worktree: splitOut ? t`Rest of worktree` : t`Worktree`,
+    build: t`Build output`,
+  };
+  return parts.length ? parts.map((part) => ({ ...part, label: labels[part.kind] })) : null;
+}
+
+/** The parts as one spoken line, for a bar that is not itself readable. */
+export function diskPartsLabel(parts: DiskPart[]): string {
+  return parts.map((part) => `${part.label} ${formatSize(part.bytes)}`).join(', ');
 }
 
 const DEVICE_KIND: Record<DeviceRef['platform'], MachineOwner['kind']> = {
