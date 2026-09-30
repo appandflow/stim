@@ -124,6 +124,7 @@ export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; u
   return (
     <SmallCard
       title="Status"
+      alert={stage.tone === 'error'}
       onPress={onPress}
       accessibilityLabel={['Status', stage.label, note, usageLabel(usage) || 'resources not measured']
         .filter(Boolean)
