@@ -10,6 +10,7 @@
     "website/static/img/branding/stim-jar-*.json",
     ".claude/**",
     "apps/mobile/**",
+    "apps/desktop/Support/Assets.xcassets/**",
     "apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json"
   ]
 }
