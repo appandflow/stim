@@ -4,57 +4,62 @@ import StimKit
 /// One or more Stim commands run one after another. The exit status is the first non-zero status, and a
 /// failed step does not stop the ones after it.
 @MainActor
-final class ActionRun: ObservableObject, Identifiable {
-  let id = UUID()
-  let title: String
-  let steps: [StimCommand]
-  let key: String
-  let startedAt = Date()
-  @Published private(set) var output: ActionOutput
-  @Published private(set) var exitStatus: Int32?
-  @Published private(set) var launchError: String?
+public final class ActionRun: ObservableObject, Identifiable {
+  typealias Launch =
+    @Sendable (
+      StimCommand, @escaping @Sendable (OutputLine) -> Void, @escaping @Sendable (Int32) -> Void
+    ) throws -> Void
 
-  init(title: String, steps: [StimCommand], key: String) {
+  public let id = UUID()
+  public let title: String
+  public let steps: [StimCommand]
+  public let key: String
+  public let startedAt = Date()
+  @Published public private(set) var output: ActionOutput
+  @Published public private(set) var exitStatus: Int32?
+  @Published public private(set) var launchError: String?
+
+  public init(title: String, steps: [StimCommand], key: String) {
     self.title = title
     self.steps = steps
     self.key = key
     output = ActionOutput(keepsStdout: steps.count == 1 && steps[0].arguments.contains("--json"))
   }
 
-  var lines: [OutputLine] { output.lines }
+  public var lines: [OutputLine] { output.lines }
 
-  var progress: [ProgressStep] { output.steps }
+  public var progress: [ProgressStep] { output.steps }
 
-  var command: StimCommand { steps[0] }
+  public var command: StimCommand { steps[0] }
 
-  var isRunning: Bool { exitStatus == nil && launchError == nil }
+  public var isRunning: Bool { exitStatus == nil && launchError == nil }
 
   /// The whole stdout of a single `--json` command; empty for any other run.
-  var stdout: Data { output.stdout }
+  public var stdout: Data { output.stdout }
 
   /// What a finished `gc --delete --json` or `gc --idle --json` run did, or nil for any other command.
-  var gcOutcome: Result<GcOutcome, Error>? {
+  public var gcOutcome: Result<GcOutcome, Error>? {
     guard steps.count == 1, exitStatus != nil, GcOutcome.describes(command.arguments) else { return nil }
     return Result { try GcOutcome(json: stdout) }
   }
 
   /// The output to show as text: everything but the JSON payload of a `--json` command.
-  var logLines: [OutputLine] {
+  public var logLines: [OutputLine] {
     command.arguments.contains("--json") ? lines.filter { $0.channel != .stdout } : lines
   }
 
   /// One line for the autopilot log: the cleanup summary, or the last line the command printed.
-  var summary: String? {
+  public var summary: String? {
     if let launchError { return launchError }
     if case .success(let outcome) = gcOutcome { return outcome.headline }
     return logLines.last { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty && !$0.text.hasPrefix("$ ") }?.text
   }
 
-  fileprivate func start(cli: StimCLI, onFinish: @escaping @MainActor () -> Void) {
-    start(step: 0, cli: cli, worst: 0, onFinish: onFinish)
+  func start(launch: @escaping Launch, onFinish: @escaping @MainActor () -> Void) {
+    start(step: 0, launch: launch, worst: 0, onFinish: onFinish)
   }
 
-  private func start(step: Int, cli: StimCLI, worst: Int32, onFinish: @escaping @MainActor () -> Void) {
+  private func start(step: Int, launch: @escaping Launch, worst: Int32, onFinish: @escaping @MainActor () -> Void) {
     let command = steps[step]
     if steps.count > 1 {
       output.append([OutputLine(.stderr, "$ \(([command.program] + command.arguments).joined(separator: " "))")])
@@ -63,16 +68,16 @@ final class ActionRun: ObservableObject, Identifiable {
     // the lines to the main queue in that order, one batch per 100 ms.
     let batcher = OutputBatcher { [weak self] batch in self?.output.append(batch) }
     do {
-      try cli.stream(
+      try launch(
         command,
-        onLine: { line in batcher.receive(line) },
-        onExit: { status in
+        { line in batcher.receive(line) },
+        { status in
           DispatchQueue.main.async {
             MainActor.assumeIsolated {
               batcher.flush()
               let worst = worst != 0 ? worst : status
               if step + 1 < self.steps.count {
-                self.start(step: step + 1, cli: cli, worst: worst, onFinish: onFinish)
+                self.start(step: step + 1, launch: launch, worst: worst, onFinish: onFinish)
               } else {
                 self.exitStatus = worst
                 onFinish()
@@ -89,35 +94,35 @@ final class ActionRun: ObservableObject, Identifiable {
 
 /// Runs Stim commands, at most one at a time per workspace.
 @MainActor
-final class ActionCenter: ObservableObject {
-  static let machineKey = "machine"
+public final class ActionCenter: ObservableObject {
+  public static let machineKey = "machine"
 
-  @Published private(set) var runs: [String: ActionRun] = [:]
-  @Published var presented: ActionRun?
-  var onFinish: ((ActionRun) -> Void)?
+  @Published public private(set) var runs: [String: ActionRun] = [:]
+  @Published public var presented: ActionRun?
+  public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
 
-  init(cli: Task<StimCLI, Never>) {
+  public init(cli: Task<StimCLI, Never>) {
     self.cli = cli
   }
 
-  func active(for key: String) -> ActionRun? {
+  public func active(for key: String) -> ActionRun? {
     runs[key].flatMap { $0.isRunning ? $0 : nil }
   }
 
-  func latest(for key: String) -> ActionRun? { runs[key] }
+  public func latest(for key: String) -> ActionRun? { runs[key] }
 
   /// Runs still in flight, for the toolbar's background-activity indicator.
-  var activeRuns: [ActionRun] { runs.values.filter(\.isRunning).sorted { $0.startedAt < $1.startedAt } }
+  public var activeRuns: [ActionRun] { runs.values.filter(\.isRunning).sorted { $0.startedAt < $1.startedAt } }
 
-  func run(_ title: String, _ command: StimCommand, key: String? = nil) {
+  public func run(_ title: String, _ command: StimCommand, key: String? = nil) {
     run(title, steps: [command], key: key)
   }
 
   /// Starts `steps` unless a run already holds `key`. With `present`, the activity sheet shows the new
   /// run, or the one already running. Returns the new run, or nil when one was already running.
   @discardableResult
-  func run(
+  public func run(
     _ title: String, steps: [StimCommand], key: String? = nil, present: Bool = true,
     completion: ((ActionRun) -> Void)? = nil
   ) -> ActionRun? {
@@ -131,7 +136,10 @@ final class ActionCenter: ObservableObject {
     if present { presented = run }
     let cli = cli
     Task { [weak self] in
-      run.start(cli: await cli.value) { [weak self] in
+      let stim = await cli.value
+      run.start(launch: { command, onLine, onExit in
+        try stim.stream(command, onLine: onLine, onExit: onExit)
+      }) { [weak self] in
         self?.objectWillChange.send()
         self?.onFinish?(run)
         completion?(run)
@@ -140,7 +148,7 @@ final class ActionCenter: ObservableObject {
     return run
   }
 
-  func runApp(_ env: Workspace, platform: String) {
+  public func runApp(_ env: Workspace, platform: String) {
     run("Run \(env.names.title) on \(platformName(platform))", StimCommand([platform], cwd: env.path))
   }
 }

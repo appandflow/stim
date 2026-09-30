@@ -8,6 +8,28 @@ public struct DevToolsError: Error, CustomStringConvertible {
   }
 }
 
+/// One JSON message of the DevTools protocol: the reply to a command, or an event.
+enum DevToolsMessage {
+  case reply(id: Int, Result<[String: Any], DevToolsError>)
+  case event(DevToolsClient.Event)
+
+  /// Nil when `data` is not a JSON object with an `id` or a `method`. A message with an `id` is a reply.
+  init?(_ data: Data) {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    if let id = object["id"] as? Int {
+      if let error = object["error"] as? [String: Any] {
+        self = .reply(id: id, .failure(DevToolsError(error["message"] as? String ?? "DevTools command failed.")))
+      } else {
+        self = .reply(id: id, .success(object["result"] as? [String: Any] ?? [:]))
+      }
+    } else if let method = object["method"] as? String {
+      self = .event((method, object["params"] as? [String: Any] ?? [:], object["sessionId"] as? String))
+    } else {
+      return nil
+    }
+  }
+}
+
 /// A Chrome DevTools Protocol connection to the browser endpoint of a Chrome Stim owns. `connect` refuses an
 /// endpoint whose browser process is not `chromePid`, the pid `stim status` reports, the same rule the CLI's
 /// `connectOwnedBrowser` applies: the loopback port alone does not prove which Chrome answers it.
@@ -135,18 +157,11 @@ public final class DevToolsClient: @unchecked Sendable {
   }
 
   private func handle(_ data: Data) {
-    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-    if let id = object["id"] as? Int {
-      guard let reply = pending.removeValue(forKey: id) else { return }
-      if let error = object["error"] as? [String: Any] {
-        reply(.failure(DevToolsError(error["message"] as? String ?? "DevTools command failed.")))
-      } else {
-        reply(.success(object["result"] as? [String: Any] ?? [:]))
-      }
-      return
+    switch DevToolsMessage(data) {
+    case .reply(let id, let result): pending.removeValue(forKey: id)?(result)
+    case .event(let event): eventHandler?(event)
+    case nil: break
     }
-    guard let method = object["method"] as? String else { return }
-    eventHandler?((method, object["params"] as? [String: Any] ?? [:], object["sessionId"] as? String))
   }
 
   private func finish() {

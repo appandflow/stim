@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// The top of a workspace page, one line: the stage, the running build's progress, the git chip and the workspace

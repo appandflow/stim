@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// A floating toast anchored to the bottom of the main content column: one problem at a time,

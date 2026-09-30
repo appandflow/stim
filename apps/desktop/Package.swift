@@ -16,13 +16,14 @@ let package = Package(
   ],
   targets: [
     .target(name: "StimKit"),
+    .target(name: "StimStores", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "WebFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .executableTarget(
       name: "StimDesktop",
       dependencies: [
-        "StimKit", "SimulatorFrames", "EmulatorFrames", "WebFrames", .product(name: "Lottie", package: "lottie-spm"),
+        "StimKit", "StimStores", "SimulatorFrames", "EmulatorFrames", "WebFrames", .product(name: "Lottie", package: "lottie-spm"),
         .product(name: "Sparkle", package: "Sparkle"), .product(name: "Sentry", package: "sentry-cocoa"),
       ],
       swiftSettings: [.swiftLanguageMode(.v5)]
@@ -32,6 +33,8 @@ let package = Package(
       dependencies: ["StimKit"],
       resources: [.copy("Fixtures")]
     ),
+    .testTarget(name: "StimStoresTests", dependencies: ["StimStores", "StimKit"]),
+    .testTarget(name: "WebFramesTests", dependencies: ["WebFrames"]),
     .testTarget(name: "SimulatorFramesTests", dependencies: ["SimulatorFrames"]),
     .testTarget(name: "EmulatorFramesTests", dependencies: ["EmulatorFrames"]),
   ]

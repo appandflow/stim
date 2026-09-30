@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// This Mac's side of build offload: the `offload.machines` it builds on, with each one's state from `stim doctor`,

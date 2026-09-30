@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 struct WorkspaceDetail: View {

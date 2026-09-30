@@ -1,6 +1,7 @@
 import EmulatorFrames
 import SimulatorFrames
 import StimKit
+import StimStores
 import SwiftUI
 import WebFrames
 import WebKit

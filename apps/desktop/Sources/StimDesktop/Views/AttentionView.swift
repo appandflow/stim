@@ -1,5 +1,6 @@
 import AppKit
 import StimKit
+import StimStores
 import SwiftUI
 
 struct AttentionView: View {

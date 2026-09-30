@@ -2,21 +2,22 @@ import AppKit
 import StimKit
 
 @MainActor
-final class StatusStore: ObservableObject {
+public final class StatusStore: ObservableObject {
   static let pollInterval: TimeInterval = 10
 
-  @Published private(set) var payload: StatusPayload?
-  @Published private(set) var error: String?
-  @Published private(set) var updatedAt: Date?
-  @Published private(set) var projects: [String: Project] = [:] {
+  @Published public private(set) var payload: StatusPayload?
+  @Published public private(set) var error: String?
+  @Published public private(set) var updatedAt: Date?
+  @Published public private(set) var projects: [String: Project] = [:] {
     didSet { projectTitleMap = projectTitles(roots: projects.values.map(\.root)) }
   }
   private var projectTitleMap: [String: String] = [:]
-  @Published private(set) var watching = false
-  private(set) var stimHome = "\(NSHomeDirectory())/.stim"
-  @Published private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
+  @Published public private(set) var watching = false
+  public private(set) var stimHome = "\(NSHomeDirectory())/.stim"
+  @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
 
   private let cli: Task<StimCLI, Never>
+  private let fetch: @Sendable () async throws -> StatusPayload
   private var started = false
   private var terminating = false
   private var watcher: Process?
@@ -33,12 +34,17 @@ final class StatusStore: ObservableObject {
   private static let doctorTimeout: TimeInterval = 10 * 60
   private static let doctorCheckInterval: TimeInterval = 60
 
-  init(cli: Task<StimCLI, Never>) {
+  init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
     self.cli = cli
+    self.fetch = fetch
     Task { stimHome = await cli.value.stimHome }
   }
 
-  func start() {
+  public convenience init(cli: Task<StimCLI, Never>) {
+    self.init(cli: cli, fetch: { try await cli.value.status() })
+  }
+
+  public func start() {
     guard !started else { return }
     started = true
     NotificationCenter.default.addObserver(
@@ -52,16 +58,16 @@ final class StatusStore: ObservableObject {
     startWatch()
   }
 
-  func refresh() {
+  public func refresh() {
     guard !inFlight else {
       refreshPending = true
       return
     }
     inFlight = true
     let sequence = nextSequence()
-    let cli = cli
+    let fetch = fetch
     Task {
-      let result = await Result.awaiting { try await cli.value.status() }
+      let result = await Result.awaiting { try await fetch() }
       inFlight = false
       show(result, sequence: sequence)
       if refreshPending {
@@ -89,7 +95,7 @@ final class StatusStore: ObservableObject {
               MainActor.assumeIsolated {
                 guard let self else { return }
                 if let decoded {
-                  self.show(decoded, sequence: self.nextSequence())
+                  self.accept(decoded)
                 } else {
                   self.watchStderr.append(line.text)
                 }
@@ -136,6 +142,11 @@ final class StatusStore: ObservableObject {
     }
   }
 
+  /// Shows a payload the live watch delivered, which is newer than every refresh started before it.
+  func accept(_ result: Result<StatusPayload, Error>) {
+    show(result, sequence: nextSequence())
+  }
+
   private func nextSequence() -> Int {
     issued += 1
     return issued
@@ -171,44 +182,44 @@ final class StatusStore: ObservableObject {
     }
   }
 
-  func project(of env: Workspace) -> Project {
+  public func project(of env: Workspace) -> Project {
     project(ofPath: env.path)
   }
 
-  func title(of project: Project) -> String {
+  public func title(of project: Project) -> String {
     projectTitleMap[project.root] ?? projectTitles(roots: Array(projectTitleMap.keys) + [project.root])[project.root]
       ?? project.name
   }
 
-  func names(ofPath path: String) -> PathNames {
+  public func names(ofPath path: String) -> PathNames {
     if let env = payload?.environments.first(where: { $0.path == path }) { return env.names }
     if let worktree = payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) { return worktree.names }
     return PathNames(path: path, project: projects[path])
   }
 
-  func project(ofPath path: String) -> Project {
+  public func project(ofPath path: String) -> Project {
     projects[path] ?? Project(fallbackFor: path)
   }
 
-  func environments(in project: Project?) -> [Workspace] {
+  public func environments(in project: Project?) -> [Workspace] {
     let all = payload?.environments ?? []
     guard let project else { return all }
     return all.filter { self.project(of: $0) == project }
   }
 
-  var projectList: [ProjectSummary] {
+  public var projectList: [ProjectSummary] {
     projectSummaries(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
       project: project(ofPath:))
   }
 
-  func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
+  public func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
     StimKit.sidebarTrees(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
       project: project(ofPath:), options: options)
   }
 
-  func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
+  public func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
     StimKit.sidebarList(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
       project: project(ofPath:), options: options)
@@ -249,14 +260,14 @@ final class StatusStore: ObservableObject {
   private func finishDoctor() { doctorStartedAt = nil }
 
   /// Makes doctor due again in `path`, after a command there may have changed its findings.
-  func doctorChanged(in path: String) {
+  public func doctorChanged(in path: String) {
     doctorRuns[path] = nil
     doctorCheckedAt = nil
     checkDoctor()
   }
 
   /// What only a person can act on; `lowestVolume` is the fullest volume Stim uses, when measured.
-  func attention(lowestVolume: DiskVolume?) -> [NeedsAttentionItem] {
+  public func attention(lowestVolume: DiskVolume?) -> [NeedsAttentionItem] {
     let minutes = UserDefaults.standard.integer(forKey: AppPreferences.Key.remoteSessionMinutes)
     let setup =
       setupItems(doctor.keys.sorted().compactMap { doctor[$0]?.value })

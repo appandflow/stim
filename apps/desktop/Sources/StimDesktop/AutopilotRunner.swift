@@ -1,5 +1,6 @@
 import AppKit
 import StimKit
+import StimStores
 
 /// Runs Stim's cleanup commands on a schedule while the app runs: `stim gc --idle` for idle devices,
 /// a nightly `stim gc --delete` bounded by age, and an unbounded `stim gc --delete` when free disk falls under
