@@ -33,6 +33,8 @@
   <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
+  <key>NSAccentColorName</key>
+  <string>AccentColor</string>
   <key>NSCameraUsageDescription</key>
   <string>Stim shows the screen of a USB-cabled iPhone, which macOS offers as a camera.</string>
   <key>NSHighResolutionCapable</key>
