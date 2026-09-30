@@ -89,8 +89,8 @@ export function createRefreshScheduler({
 type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas';
 
 /**
- * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append, which can
- * change only the log-derived fields, `full` for anything else that can change the payload, null for none. A null
+ * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append or a running
+ * build's detail, which can change only the log-derived fields, `full` for anything else that can change the payload, null for none. A null
  * name means the platform did not report one.
  */
 export function statusChange(dir: WatchedDir, name: string | null): RefreshKind | null {
@@ -101,6 +101,7 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
     case 'home':
       return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks' ? 'full' : null;
     case 'workspace':
+      if (name.startsWith('build-detail.json')) return 'light';
       return name.startsWith('state.json') || name.startsWith('ended-agents.json') || name === 'logs' ? 'full' : null;
     case 'eas':
       return name.startsWith('sessions.json') ? 'full' : null;

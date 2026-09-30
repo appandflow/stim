@@ -124,12 +124,13 @@ describe('createRefreshScheduler', () => {
   });
 });
 
-test('a log append needs only a log refresh; other state changes need a full one, and locks none', () => {
+test('a log append or build detail needs only a log refresh; other state changes need a full one, and locks none', () => {
   expect(statusChange('home', 'config.json')).toBe('full');
   expect(statusChange('home', 'build-cache')).toBe(null);
   expect(statusChange('workspace', 'state.json')).toBe('full');
   expect(statusChange('workspace', 'logs')).toBe('full');
   expect(statusChange('workspace', 'ended-agents.json')).toBe('full');
+  expect(statusChange('workspace', 'build-detail.json')).toBe('light');
   expect(statusChange('workspace', 'derived-data')).toBe(null);
   expect(statusChange('workspace', 'state.lock')).toBe(null);
   expect(statusChange('logs', 'device.ndjson')).toBe('light');
