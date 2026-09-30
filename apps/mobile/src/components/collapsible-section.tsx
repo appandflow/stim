@@ -39,7 +39,7 @@ export function CollapsibleSection<T>({
   const open = !state.collapsed;
   const count = rows.length;
   return (
-    <View style={styles.section}>
+    <View>
       <Touch
         feedback="opacity"
         onPress={() => update({ collapsed: open })}
@@ -99,9 +99,8 @@ export function CollapsibleSection<T>({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  section: { gap: theme.space.sm },
   header: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm, paddingVertical: theme.space.xs },
-  body: { gap: theme.space.sm },
+  body: { gap: theme.space.sm, paddingTop: theme.space.sm },
   title: { flexShrink: 1 },
   count: { fontVariant: ['tabular-nums'] },
   trailing: { flex: 1, alignItems: 'flex-end' },

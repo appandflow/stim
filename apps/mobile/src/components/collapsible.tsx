@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { EaseView } from 'react-native-ease';
 import Animated, {
@@ -8,10 +8,10 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import { useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { Icon } from '@/components/icon';
-import { useUnistyles } from 'react-native-unistyles';
 
 const DISCLOSURE_MS = 220;
 const EASING = Easing.out(Easing.cubic);
@@ -26,27 +26,32 @@ export function Collapsible({ open, children }: { open: boolean; children: React
   const [previous, setPrevious] = useState(open);
   const progress = useSharedValue(open ? 1 : 0);
   const natural = useSharedValue(0);
-  const folding = useSharedValue(false);
+  const folding = useSharedValue(!open);
+  const applied = useRef(open);
 
   if (open !== previous) {
     setPrevious(open);
     if (open || reduceMotion) setMounted(open);
   }
 
-  const unmount = useCallback(() => setMounted(false), []);
+  const unmount = useCallback(() => {
+    if (!applied.current) setMounted(false);
+  }, []);
 
   useEffect(() => {
+    if (applied.current === open) return;
+    applied.current = open;
     if (reduceMotion) {
       progress.set(open ? 1 : 0);
-      folding.set(false);
+      folding.set(!open);
       return;
     }
     folding.set(true);
     progress.set(
       withTiming(open ? 1 : 0, { duration: DISCLOSURE_MS, easing: EASING }, (finished) => {
         if (!finished) return;
-        folding.set(false);
-        if (!open) scheduleOnRN(unmount);
+        if (open) folding.set(false);
+        else scheduleOnRN(unmount);
       }),
     );
   }, [open, reduceMotion, progress, folding, unmount]);

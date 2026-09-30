@@ -554,7 +554,6 @@ function Fallback({ build }: { build: LastBuild }) {
       onPress={() => setOpen(!open)}
       accessibilityState={{ expanded: open }}
       accessibilityLabel={open ? line.reason : t`${text}. Shows why.`}
-      style={styles.fallback}
     >
       <View style={styles.row}>
         <Icon name="desktopcomputer" size={12} color={theme.colors.tertiary} />
@@ -563,9 +562,11 @@ function Fallback({ build }: { build: LastBuild }) {
         </Text>
       </View>
       <Collapsible open={open}>
-        <Text variant="footnote" tone="tertiary" selectable>
-          {line.reason}
-        </Text>
+        <View style={styles.fallbackReason}>
+          <Text variant="footnote" tone="tertiary" selectable>
+            {line.reason}
+          </Text>
+        </View>
       </Collapsible>
     </Touch>
   );
@@ -628,7 +629,7 @@ function Note({ children }: { children: ReactNode }) {
 const styles = StyleSheet.create((theme) => ({
   container: { padding: theme.space.xxl, paddingTop: theme.space.xxxl, gap: theme.space.xl, paddingBottom: 48 },
   titles: { gap: theme.space.xxs },
-  fallback: { gap: theme.space.xxs },
+  fallbackReason: { paddingTop: theme.space.xxs },
   switch: {
     flexDirection: 'row',
     padding: SWITCH_INSET,
