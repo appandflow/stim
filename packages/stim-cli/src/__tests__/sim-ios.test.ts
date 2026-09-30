@@ -664,14 +664,15 @@ describe('clearIosAppData', () => {
   });
   afterEach(() => rmSync(container, { recursive: true, force: true }));
 
-  function exec(deleteError: string | null) {
+  function exec(deleteError: string | null, inputs: Array<string | undefined> = []) {
     const calls: string[][] = [];
     setExecutor({
       run: () => {
         throw new Error('must not invoke a shell');
       },
-      runFile(file, args = []) {
+      runFile(file, args = [], options) {
         calls.push([file, ...args]);
+        inputs.push(options?.input);
         if (args.includes('defaults') && deleteError) throw new Error(`Command failed\n${deleteError}`);
         if (args[1] === 'get_app_container') return `${container}\n`;
         return '';
@@ -692,6 +693,16 @@ describe('clearIosAppData', () => {
     for (const dir of ['Documents', 'Library', 'tmp', 'SystemData'])
       expect(readdirSync(join(container, dir))).toEqual([]);
     expect(readdirSync(container)).toContain('.com.apple.mobile_container_manager.metadata.plist');
+  });
+
+  test('replaces the defaults domain with the given plist instead of deleting it', () => {
+    const inputs: Array<string | undefined> = [];
+    const calls = exec(null, inputs);
+    clearIosAppData('U1', 'com.example.app', { defaultsPlist: '<plist/>' });
+    expect(calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'import', 'com.example.app', '-']);
+    expect(inputs[0]).toBe('<plist/>');
+    expect(calls.some((call) => call.includes('delete'))).toBe(false);
+    expect(readdirSync(join(container, 'Library'))).toEqual([]);
   });
 
   test('removes a symlinked data directory without touching its target', () => {

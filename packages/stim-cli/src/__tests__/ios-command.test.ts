@@ -22,6 +22,7 @@ import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
+import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import type { WorkspaceState } from '../workspace/workspace-state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -755,6 +756,35 @@ describe('parked simulator adoption', () => {
     expect(errs.join('\n')).toMatch(/device\s+stim-fixture .* adopted/);
     expect(errs.join('\n')).toMatch(/removed com\.example\.old/);
     expect(errs.join('\n')).toMatch(/cleared \S+ data left by the previous workspace/);
+  });
+
+  test.each([
+    ['an expo-dev-client app', 'fixture', IOS_DEV_MENU_OFF_DEFAULTS_PLIST],
+    ['a bare app', undefined, null],
+  ])('adopting %s clears its data into the dev-menu-off defaults it needs', async (_label, scheme, plist) => {
+    reserve();
+    let options: unknown;
+    const { exitCode } = await run(
+      { metroCheck: false },
+      {
+        devClientScheme: () => scheme,
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+        }),
+        clearOtherUserApps: () => ({ listed: true, kept: true, removed: [], failed: [] }),
+        clearIosAppData: (_udid, _bundleId, opts) => {
+          options = opts;
+        },
+        clearIosAdoptionPending: () => {},
+        installIosApp: () => ({ ok: true, skipped: true }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(options).toEqual({ defaultsPlist: plist });
   });
 
   test.each([

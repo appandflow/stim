@@ -586,7 +586,9 @@ result as proof instead of requiring an unrelated screenshot.`,
                   the run pays anyway, \`simctl privacy reset all\` and
                   \`simctl keychain reset\`; at install, every other user app
                   is uninstalled, and this workspace's app, when it is
-                  installed, has its preferences domain deleted and its data
+                  installed, has its preferences domain deleted (an
+                  expo-dev-client app's is replaced by the two dev-menu-off
+                  keys, see \`guide facts devmenu\`) and its data
                   container's Documents, Library, tmp and SystemData emptied
 
   Adoption always clears the app's data, whichever workspace parked the

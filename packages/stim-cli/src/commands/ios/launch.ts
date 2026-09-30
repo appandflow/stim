@@ -3,7 +3,13 @@ import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../e
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase } from '../../engine/build-progress.ts';
-import { DEFAULT_METRO_PORT, devClientUrl, iosAppProcess, restartedAppNote } from '../../engine/app-install.ts';
+import {
+  DEFAULT_METRO_PORT,
+  IOS_DEV_MENU_OFF_DEFAULTS_PLIST,
+  devClientUrl,
+  iosAppProcess,
+  restartedAppNote,
+} from '../../engine/app-install.ts';
 import {
   LAUNCH_BUNDLING,
   LAUNCH_FATAL,
@@ -460,12 +466,14 @@ function cleanAdoptedIosApps({
   d,
   udid,
   bundleId,
+  devClient,
   phase,
   note,
 }: {
   d: IosDeps;
   udid: string;
   bundleId: string | null;
+  devClient: boolean;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
 }): string | null {
@@ -476,7 +484,9 @@ function cleanAdoptedIosApps({
   if (swept.listed && swept.failed.length === 0) {
     if (swept.kept && bundleId) {
       try {
-        d.clearIosAppData(udid, bundleId);
+        d.clearIosAppData(udid, bundleId, {
+          defaultsPlist: devClient ? IOS_DEV_MENU_OFF_DEFAULTS_PLIST : null,
+        });
       } catch (error) {
         return `Could not clear the data ${bundleId} kept from the previous workspace: ${String((error as Error)?.message || error)}`;
       }
@@ -763,7 +773,7 @@ export async function finishIosRun({
   } else {
     const adopting = Boolean(device?.adoptionPending);
     if (adopting) {
-      const cleanupFailure = cleanAdoptedIosApps({ d, udid, bundleId, phase, note });
+      const cleanupFailure = cleanAdoptedIosApps({ d, udid, bundleId, devClient: Boolean(scheme), phase, note });
       if (cleanupFailure) {
         return fail({
           code: 'STIM_INSTALL_FAILED',

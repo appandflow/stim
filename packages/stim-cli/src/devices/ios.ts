@@ -515,12 +515,23 @@ export function resetIosKeychain(udid: string): void {
 
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
 
-export function clearIosAppData(udid: string, bundleId: string): void {
+export function clearIosAppData(
+  udid: string,
+  bundleId: string,
+  { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
+): void {
   const exec = getExecutor();
-  try {
-    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
-  } catch (error) {
-    if (!/Domain .* not found/.test(String((error as Error)?.message))) throw error;
+  if (defaultsPlist) {
+    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
+      ...SIMCTL_OPTIONS,
+      input: defaultsPlist,
+    });
+  } else {
+    try {
+      exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
+    } catch (error) {
+      if (!/Domain .* not found/.test(String((error as Error)?.message))) throw error;
+    }
   }
   const output = exec.runFile('xcrun', ['simctl', 'get_app_container', udid, bundleId, 'data'], SIMCTL_OPTIONS);
   const container = parseAppContainerPath(output);
