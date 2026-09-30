@@ -288,13 +288,13 @@ of footage (see `packages/server/README.md`, Recording).
   zooms without showing them.
   Reduce Motion shows and hides them without a fade. A device that is not
   streaming shows them under the screen instead.
-- **The bar.** It has **Live**, play or pause, and, in replay only, previous
-  and next agent action and 1x or 2x, which keep their places while live. In
+- **The bar.** It has **Live**, play or pause, previous and next agent action,
+  and 1x or 2x. Previous and next always show and dim when there is no earlier
+  or later agent action; 1x or 2x is hidden while live and keeps its place. In
   replay, a line under the buttons shows the time of the frame shown. The
   scrubber is linear in time: a second of footage or of a short stop takes the
   same width anywhere on it. A stop longer than a minute takes a minute's width
-  and is dashed. Each stop is labeled "stopped 24s" under it; a label that
-  would overlap a longer stop's is left out. The track's length is rounded up
+  and is dashed. The track's length is rounded up
   to a whole minute, with the spare room before the oldest footage, so it grows
   at most once a minute; it shrinks only when the footage is two minutes
   shorter, so pruning at the 15 minute cap does not rescale it. While the Mac
@@ -318,8 +318,8 @@ of footage (see `packages/server/README.md`, Recording).
     frame, in replay. In replay, play plays on at the chosen speed and pauses
     at the newest frame.
   - Previous and next agent action land 1.5 seconds before the agent action
-    before or after the frame shown, and keep playing or paused. Past the last
-    action, next returns to live while the device runs.
+    before or after the frame shown, and keep playing or paused. From live,
+    previous goes to the newest agent action.
   - **Live** returns to the live screen.
 - **Agent actions.** Under the screen, in portrait, on a simulator, emulator
   or Chrome page, the device's last three agent actions

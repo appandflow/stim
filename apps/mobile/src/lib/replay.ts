@@ -146,38 +146,6 @@ export function replayLabel(at: number, now: number, locale?: string): string {
   return `${clockTime(at, locale)} \u00B7 ${shortDuration(now - at)} ago`;
 }
 
-const LABEL_CHAR_WIDTH = 6.5;
-const LABEL_GAP = 6;
-
-export interface GapLabel {
-  start: number;
-  text: string;
-  left: number;
-  width: number;
-}
-
-/**
- * The "stopped" labels to draw under the track's gaps, at most one per place: each is centred under its gap and
- * kept inside the track, and a label that would overlap a longer stop's is left out. `width` is the track's in
- * points; a label's width is estimated from its length.
- */
-export function layoutGapLabels(pieces: readonly TimelinePiece[], width: number): GapLabel[] {
-  const placed: GapLabel[] = [];
-  const gaps = pieces.filter((piece) => piece.kind === 'gap').sort((a, b) => b.end - b.start - (a.end - a.start));
-  for (const gap of gaps) {
-    const text = `stopped ${shortDuration(gap.end - gap.start)}`;
-    const labelWidth = Math.ceil(text.length * LABEL_CHAR_WIDTH);
-    if (labelWidth > width) continue;
-    const center = ((gap.from + gap.to) / 2) * width;
-    const left = Math.min(Math.max(0, center - labelWidth / 2), width - labelWidth);
-    const overlaps = placed.some(
-      (other) => left < other.left + other.width + LABEL_GAP && other.left < left + labelWidth + LABEL_GAP,
-    );
-    if (!overlaps) placed.push({ start: gap.start, text, left, width: labelWidth });
-  }
-  return placed.sort((a, b) => a.left - b.left);
-}
-
 export const MARKER_TITLES: Record<ReplayMarker['kind'], string> = {
   action: 'Agent',
   error: 'Error',
