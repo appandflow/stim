@@ -15,9 +15,7 @@ import {
   parseFilters,
   projectNames,
   runningDevices,
-  usageTone,
   type DeviceTileItem,
-  type UsageTone,
 } from '@/lib/home';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
 
@@ -441,11 +439,5 @@ describe('usageCharts', () => {
     expect(usageCharts([], usage)).toEqual([]);
     expect(usageCharts([sample(END, 0.5)], null)).toEqual([]);
     expect(usageCharts([sample(END, 0.5)], { ...usage, volumes: [] }).map((c) => c.kind)).toEqual(['cpu', 'memory']);
-  });
-});
-
-describe('usageTone', () => {
-  it('draws normal in the text color and warn and critical as the warning and error colors', () => {
-    expect((['normal', 'warn', 'critical'] as UsageTone[]).map(usageTone)).toEqual(['default', 'warning', 'error']);
   });
 });

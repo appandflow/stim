@@ -13,6 +13,7 @@ describe('toneColor', () => {
 
   it('draws brand as primary, which stays legible on the dark background where the brand token does not', () => {
     const theme = { colors: colors.dark } as Parameters<typeof toneColor>[0];
-    expect(toneColor(theme, 'brand')).toBe('#B39CFF');
+    expect(toneColor(theme, 'brand')).toBe(colors.dark.primary);
+    expect(toneColor(theme, 'brand')).not.toBe(colors.dark.brand);
   });
 });
