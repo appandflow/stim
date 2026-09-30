@@ -80,6 +80,21 @@ final class ActivityProgressTests: XCTestCase {
     XCTAssertEqual(steps.map(\.label), ["device"])
   }
 
+  func testGcStepsSkipItsReportRowsAndResolveTheExitWait() {
+    let steps = ActivityProgress.parse([
+      "  daemons     watchman pid 32725: checking 12 roots",
+      "  watchman pid 32725 50M, up 17m, idle",
+      "  daemons     waiting up to 10s for 1 Gradle daemon to exit: pid 51234",
+      "  daemons     checking 0 Gradle daemons and 1 Kotlin daemon",
+    ])
+    XCTAssertEqual(
+      steps.map(\.fact),
+      [
+        "watchman pid 32725: checking 12 roots", "checking 0 Gradle daemons and 1 Kotlin daemon",
+      ])
+    XCTAssertNil(ActivityProgress.waitingStep(steps))
+  }
+
   func testFailedState() {
     let steps = ActivityProgress.parse([
       "  device      failed to shut down stim-e2e-2: simulator 9C1F.. is still Booted"

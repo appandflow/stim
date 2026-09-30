@@ -35,11 +35,11 @@ public enum ActivityProgress {
   /// The CLI's closed set of progress labels (`OUTPUT_LABELS` in packages/stim-cli/src/command-output.ts).
   /// Other indented lines, such as the rows of a `gc` report, are not progress.
   public static let labels: Set<String> = [
-    "app", "branch", "budget", "build", "cache", "caches", "carry", "checkout", "deps", "device", "devices", "error",
-    "failed", "findings", "fingerprint", "gems", "install", "installs", "ip.txt", "lan", "launch", "lease", "lock",
-    "log", "logs", "meaning", "metro", "pods", "port", "prebuild", "project", "readiness", "ready", "remedy",
+    "app", "branch", "budget", "build", "cache", "caches", "carry", "checkout", "daemons", "deps", "device", "devices",
+    "error", "failed", "findings", "fingerprint", "gems", "install", "installs", "ip.txt", "lan", "launch", "lease",
+    "lock", "log", "logs", "meaning", "metro", "pods", "port", "prebuild", "project", "readiness", "ready", "remedy",
     "removed", "resolved", "result", "services", "setting", "settings", "setup", "state", "stats", "stop", "storage",
-    "swap", "verify", "version", "workspace",
+    "swap", "verify", "version", "workspace", "worktrees",
   ]
 
   /// Parses `lines` in order into step rows. A line whose label repeats the previous row's

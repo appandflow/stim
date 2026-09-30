@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import chalk from 'chalk';
 import { buildWorkerRoot, loadConfig } from '@stim-cli/core/state';
-import { formatLongDuration } from '../../command-output.ts';
+import { formatLongDuration, plural } from '../../command-output.ts';
 import { createDeviceProcessTables, type HostProcess } from '../../devices/activity.ts';
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
 import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts';
@@ -20,6 +20,7 @@ import {
   type WatchmanClient,
 } from '../../watchman.ts';
 import type { Finding } from '../../diagnostics/doctor.ts';
+import { phase } from './progress.ts';
 import { recordGcResult } from './results.ts';
 
 export const WATCHMAN_KIND = 'watchman';
@@ -84,6 +85,7 @@ const WATCHMAN_DOCTOR_BYTES = 2 * 1024 ** 3;
 const GRADLE_STATUS_TIMEOUT_MS = 20_000;
 const GRADLE_STOP_TIMEOUT_MS = 60_000;
 const LSOF_TIMEOUT_MS = 10_000;
+const ROOT_PROBES_AT_ONCE = 4;
 const GRADLE_DAEMON_CLASS = /\borg\.gradle\.launcher\.daemon\.bootstrap\.GradleDaemon\s+(\S+)/;
 const KOTLIN_DAEMON_CLASS = /^\S.*?\/bin\/java\s.*\sorg\.jetbrains\.kotlin\.daemon\.KotlinCompileDaemon(\s|$)/;
 
@@ -522,19 +524,30 @@ function watchmanClients(): Promise<WatchmanClient[] | null> {
   });
 }
 
-async function collectWatchmanRoots(): Promise<WatchmanRootFacts[] | null> {
+async function collectWatchmanRoots(pid: number, progress: boolean): Promise<WatchmanRootFacts[] | null> {
   const watchman = boundWatchman;
   const paths = parseWatchRoots(await quietly(() => watchman(['watch-list'])));
   if (!paths) return null;
+  if (progress) phase('daemons', `watchman pid ${pid}: checking ${plural(paths.length, 'root')}`);
   const roots: WatchmanRootFacts[] = [];
-  for (const path of paths) {
-    roots.push({
-      path,
-      stale: watchmanRootStaleness(path),
-      subscribers: parseSubscriberNames(await quietly(() => watchman(['debug-get-subscriptions', path]))),
-      triggers: parseTriggerCount(await quietly(() => watchman(['trigger-list', path]))),
-    });
-  }
+  let next = 0;
+  const probe = async (): Promise<void> => {
+    while (next < paths.length) {
+      const index = next++;
+      const path = paths[index]!;
+      const [subscriptions, triggers] = await Promise.all([
+        quietly(() => watchman(['debug-get-subscriptions', path])),
+        quietly(() => watchman(['trigger-list', path])),
+      ]);
+      roots[index] = {
+        path,
+        stale: watchmanRootStaleness(path),
+        subscribers: parseSubscriberNames(subscriptions),
+        triggers: parseTriggerCount(triggers),
+      };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(ROOT_PROBES_AT_ONCE, paths.length) }, probe));
   return roots;
 }
 
@@ -602,6 +615,7 @@ async function collectGradleFacts(
   byPid: ReadonlyMap<number, HostProcess>,
   footprints: ReadonlyMap<number, number> | null,
   stimServerRunning: boolean,
+  progress: boolean,
 ): Promise<{ gradle: GradleDaemonFacts[]; kotlin: KotlinDaemonFacts[] }> {
   const gradleRows = rows.flatMap((row) => {
     const command = parseGradleDaemonCommand(row.command);
@@ -609,6 +623,12 @@ async function collectGradleFacts(
   });
   const kotlinRows = rows.filter((row) => isKotlinDaemonCommand(row.command));
   if (gradleRows.length === 0 && kotlinRows.length === 0) return { gradle: [], kotlin: [] };
+  if (progress) {
+    phase(
+      'daemons',
+      `checking ${plural(gradleRows.length, 'Gradle daemon')} and ${plural(kotlinRows.length, 'Kotlin daemon')}`,
+    );
+  }
   const lsof = await readLsof([...gradleRows.map(({ row }) => row.pid), ...kotlinRows.map((row) => row.pid)]);
   const workerRoot = buildWorkerRoot();
   const homes = gradleRows.map(({ row, command }) => {
@@ -620,8 +640,10 @@ async function collectGradleFacts(
   gradleRows.forEach(({ command }, index) => {
     const home = homes[index];
     if (offload[index] !== null && stimServerRunning) return;
-    if (home && !statuses.has(groupKey(command, home)))
+    if (home && !statuses.has(groupKey(command, home))) {
+      if (progress) phase('daemons', `gradle --status for Gradle ${command.version} in ${home}`);
       statuses.set(groupKey(command, home), gradleStatus(command, home));
+    }
   });
   const gradle: GradleDaemonFacts[] = [];
   for (const [index, { row, command }] of gradleRows.entries()) {
@@ -663,10 +685,11 @@ async function collectGradleFacts(
 async function collectWatchmanFacts(
   byPid: ReadonlyMap<number, HostProcess>,
   footprints: ReadonlyMap<number, number> | null,
+  progress: boolean,
 ): Promise<WatchmanFacts | null> {
   const pid = parseWatchmanPid(await quietly(() => boundWatchman(['get-pid'])));
   if (pid === null) return null;
-  const roots = await collectWatchmanRoots();
+  const roots = await collectWatchmanRoots(pid, progress);
   const clients = (await watchmanClients())?.filter((client) => client.pid !== pid) ?? null;
   return {
     pid,
@@ -701,7 +724,7 @@ export function scopedMemoryReport(): MemoryReport {
   };
 }
 
-export async function collectMemoryReport(scope: MemoryScope): Promise<MemoryReport> {
+export async function collectMemoryReport(scope: MemoryScope, progress = false): Promise<MemoryReport> {
   const report: MemoryReport = { processes: [], watchmanRoots: [], notices: [] };
   if (process.platform === 'win32') return report;
   const rows = createDeviceProcessTables().host();
@@ -712,7 +735,7 @@ export async function collectMemoryReport(scope: MemoryScope): Promise<MemoryRep
   const byPid = new Map(rows.map((row) => [row.pid, row]));
   const footprints = await readFootprints();
   if (scope.watchman) {
-    const facts = await collectWatchmanFacts(byPid, footprints);
+    const facts = await collectWatchmanFacts(byPid, footprints, progress);
     if (facts) {
       const plan = planWatchman(facts, watchmanClientDescriber(rows));
       report.processes.push(plan.process);
@@ -723,7 +746,7 @@ export async function collectMemoryReport(scope: MemoryScope): Promise<MemoryRep
   }
   if (scope.gradle) {
     const stimServerRunning = rows.some((row) => STIM_SERVER_COMMAND.test(row.command));
-    const facts = await collectGradleFacts(rows, byPid, footprints, stimServerRunning);
+    const facts = await collectGradleFacts(rows, byPid, footprints, stimServerRunning, progress);
     report.processes.push(
       ...planDaemons({
         ...facts,
@@ -813,7 +836,7 @@ function keep(entry: MemoryProcess, kind: 'watchman' | 'gradleDaemon' | 'kotlinD
 
 async function reclaimWatchman(before: MemoryReport): Promise<number> {
   let failures = 0;
-  const fresh = await collectMemoryReport({ watchman: true, gradle: false });
+  const fresh = await collectMemoryReport({ watchman: true, gradle: false }, true);
   const daemon = fresh.processes.find((entry) => entry.kind === 'watchman');
   const planned = before.processes.find((entry) => entry.kind === 'watchman');
   if (!daemon || !planned || daemon.pid !== planned.pid) {
@@ -827,6 +850,7 @@ async function reclaimWatchman(before: MemoryReport): Promise<number> {
       continue;
     }
     try {
+      phase('daemons', `removing stale watchman root ${root.path}`);
       await boundWatchman(['watch-del', root.path]);
       console.log(chalk.green(`Removed the stale watchman root ${root.path} (${root.detail})`));
       recordGcResult('watchmanRoot', 'done', root.path, { detail: root.detail });
@@ -836,7 +860,7 @@ async function reclaimWatchman(before: MemoryReport): Promise<number> {
       recordGcResult('watchmanRoot', 'failed', root.path, { detail: (error as Error).message });
     }
   }
-  const after = await collectMemoryReport({ watchman: true, gradle: false });
+  const after = await collectMemoryReport({ watchman: true, gradle: false }, true);
   const current = after.processes.find((entry) => entry.kind === 'watchman');
   if (!current || current.pid !== daemon.pid) return failures;
   if (!current.reclaimable) {
@@ -844,6 +868,7 @@ async function reclaimWatchman(before: MemoryReport): Promise<number> {
     return failures;
   }
   try {
+    phase('daemons', `shutting down watchman pid ${current.pid}: no client uses it`);
     await boundWatchman(['shutdown-server']);
     console.log(
       chalk.green(
@@ -911,6 +936,7 @@ async function stopGradle(
       for (const entry of entries) keep(entry, 'gradleDaemon', building);
       continue;
     }
+    phase('daemons', `gradle --status for Gradle ${command.version} in ${home}`);
     let states = await gradleStatus(command, home);
     let current = hostRows();
     const listed = states instanceof Map ? [...states].filter(([, state]) => state !== 'stopped') : [];
@@ -920,6 +946,7 @@ async function stopGradle(
       listed.every(([pid, state]) => state === 'idle' && entries.some((entry) => entry.pid === pid));
     if (whole) {
       try {
+        phase('daemons', `gradle --stop for Gradle ${command.version} in ${home}`);
         await getExecutor().runFileAsync(join(distribution, 'bin', 'gradle'), ['--stop', '-q', '-g', home], {
           cwd: home,
           env: { JAVA_HOME: javaHome },
@@ -999,21 +1026,27 @@ function alive(pid: number): boolean {
 }
 
 async function waitForExit(pids: readonly number[]): Promise<void> {
+  const running = pids.filter(alive);
+  if (running.length === 0) return;
+  phase(
+    'daemons',
+    `waiting up to ${EXIT_WAIT_MS / 1000}s for ${plural(running.length, 'Gradle daemon')} to exit: pid ${running.join(', ')}`,
+  );
   const deadline = Date.now() + EXIT_WAIT_MS;
-  while (pids.some(alive) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 200));
+  while (running.some(alive) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 200));
 }
 
 /** Stops the Gradle daemons first, then re-checks the Kotlin daemons, whose clients those Gradle daemons were. */
 async function reclaimDaemons(before: MemoryReport): Promise<number> {
   const scope = { watchman: false, gradle: true };
-  const gradle = stillPlanned(await collectMemoryReport(scope), before, 'gradleDaemon');
+  const gradle = stillPlanned(await collectMemoryReport(scope, true), before, 'gradleDaemon');
   for (const entry of gradle.filter((e) => !e.reclaimable))
     keep(entry, 'gradleDaemon', entry.detail ?? 'it could not be proven idle');
   const stopping = gradle.filter((entry) => entry.reclaimable);
   let failures = await stopGradle(stopping, hostRows());
   if (!before.processes.some((entry) => entry.kind === 'kotlinDaemon')) return failures;
   await waitForExit(stopping.map((entry) => entry.pid));
-  const kotlin = stillPlanned(await collectMemoryReport(scope), before, 'kotlinDaemon');
+  const kotlin = stillPlanned(await collectMemoryReport(scope, true), before, 'kotlinDaemon');
   for (const entry of before.processes.filter((e) => e.kind === 'kotlinDaemon' && e.reclaimable)) {
     if (kotlin.some((current) => current.pid === entry.pid) || alive(entry.pid)) continue;
     console.log(

@@ -1217,6 +1217,11 @@ Anything gc cannot prove idle is kept, with the reason. With `STIM_HOME` set,
 gc skips these machine-global processes. `stim doctor` notes a watchman
 footprint over 2 GiB.
 
+While it works, `gc` prints each slow step on stderr as it starts, such as
+`daemons     watchman pid 49040: checking 12 roots`, so a long run shows what it
+is waiting on. The report stays on stdout, and `--json` prints only its payload
+there.
+
 - `--older-than <days>` also selects devices and workspace build outputs of
   workspaces no Stim command has used for that many days, and unused cache
   entries. It limits the parked simulators and emulators `--delete` clears to

@@ -443,7 +443,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   column:
 
     branch      budget      build       cache       caches      carry
-    checkout    deps        device
+    checkout    daemons     deps        device
     devices     error       failed      findings    fingerprint gems
     install     installs    ip.txt      lan         launch      lease
     lock        log
@@ -452,7 +452,7 @@ result as proof instead of requiring an unrelated screenshot.`,
     result
     services
     setting     settings    setup       state       stats       stop
-    storage     swap        verify      version     workspace
+    storage     swap        verify      version     workspace   worktrees
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
   run ends with. When a native build runs, its compilation-cache result is
@@ -562,6 +562,16 @@ result as proof instead of requiring an unrelated screenshot.`,
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
   is the source checkout).\`
+
+  \`gc\` names each slow step on stderr as it starts, in every mode; its
+  report stays on stdout, and with \`--json\` stdout carries only the payload:
+
+    caches      measuring 18 shared caches
+    devices     listing simulators and emulators
+    worktrees   checking 26 projects for merged or idle worktrees
+    daemons     watchman pid 49040: checking 12 roots
+    daemons     removing stale watchman root /w/app-409
+    daemons     waiting up to 10s for 1 Gradle daemon to exit: pid 51234
 
   A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
   synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer
