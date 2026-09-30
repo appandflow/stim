@@ -15,9 +15,10 @@ import { Touch } from '@/components/touch';
 import { useMachinePresence } from '@/hooks/machines';
 import { formatDuration } from '@/intl/format';
 import { agentsSummary, workspaceAgentSessions } from '@/lib/agents';
-import { drivenLabel, driversSummary, gitBadges } from '@/lib/format';
+import { driversSummary, gitBadges } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
-import { deviceKey, devicesOf, isActive, isSettingUp, platformName, runningBuild } from '@/lib/workspaces';
+import { deviceTitle, workspaceStatusLabels } from '@/lib/spoken-status';
+import { deviceKey, devicesOf, isActive, isSettingUp, runningBuild } from '@/lib/workspaces';
 
 export const WorkspaceRow = memo(function WorkspaceRow({
   item,
@@ -40,11 +41,6 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const errors = env.logs?.errorsSinceMarker ?? 0;
   const hasErrorIssue = env.issues?.some((issue) => issue.severity === 'error') ?? false;
   const activityAt = offline ? (lastSeenAt ?? now) : now;
-  const deviceName = (d: (typeof running)[number]) =>
-    `${platformName(d.platform)}${d.slot === 'default' ? '' : ` \u00B7 ${d.slot}`}`;
-  const drivenLabels = running.flatMap((d) =>
-    d.activity?.state === 'driven' ? [drivenLabel(deviceName(d), d.activity, activityAt)] : [],
-  );
   const drivers = driversSummary(
     running.map((d) => d.activity),
     activityAt,
@@ -73,7 +69,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
         settingUp ? (env.phase === 'ready' ? t`Ready` : [t`Warming`, env.warmStep].filter(Boolean).join(', ')) : null,
         gitBadges(env.worktree?.git)?.label,
         agents,
-        ...drivenLabels,
+        ...workspaceStatusLabels(env, activityAt),
       ]
         .filter(Boolean)
         .join(', ')}
@@ -138,7 +134,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
               return (
                 <Fragment key={deviceKey(d)}>
                   <Pill tone={offline ? 'neutral' : driven ? 'accent' : 'success'} dot={driven}>
-                    {deviceName(d)}
+                    {deviceTitle(d)}
                   </Pill>
                   {driven ? null : (
                     <ActivityChip activity={d.activity} frozenAt={offline ? (lastSeenAt ?? now) : null} />

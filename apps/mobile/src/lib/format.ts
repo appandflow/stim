@@ -65,7 +65,7 @@ export function driversSummary(activities: (DeviceActivity | undefined)[], now: 
   return Number.isFinite(latest) ? t`${names} \u00B7 ${duration}` : names;
 }
 
-function spokenDuration(ms: number): string {
+export function spokenDuration(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 1) return t`less than a minute`;
   const minuteCount = (n: number) => plural(n, { one: '# minute', other: '# minutes' });
@@ -78,12 +78,25 @@ function spokenDuration(ms: number): string {
   return `${hoursText} ${minutesText}`;
 }
 
-/** A driven device's accessibility label, such as "iOS, driven by agent-device for 47 minutes". */
-export function drivenLabel(name: string, activity: DeviceActivity, now: number): string {
-  const tool = activity.driver?.tool ?? t`an unknown tool`;
-  const since = activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
-  const spoken = spokenDuration(Math.max(0, now - since));
-  return Number.isFinite(since) ? t`${name}, driven by ${tool} for ${spoken}` : t`${name}, driven by ${tool}`;
+/** How long a device has been driven or idle, such as "driven by agent-device for 47 minutes", for assistive technology. */
+export function activityLabel(activity: DeviceActivity | undefined, now: number): string | null {
+  const badge = activityBadge(activity, now);
+  if (!activity || !badge) return null;
+  switch (badge.kind) {
+    case 'driven': {
+      const tool = activity.driver?.tool ?? t`an unknown tool`;
+      const since = activity.driver?.since ? Date.parse(activity.driver.since) : NaN;
+      const spoken = spokenDuration(Math.max(0, now - since));
+      return Number.isFinite(since) ? t`driven by ${tool} for ${spoken}` : t`driven by ${tool}`;
+    }
+    case 'idle': {
+      const last = activity.lastActivityAt ? Date.parse(activity.lastActivityAt) : NaN;
+      const spoken = spokenDuration(Math.max(0, now - last));
+      return Number.isFinite(last) ? t`idle for ${spoken}` : t`idle`;
+    }
+    case 'unknown':
+      return t`activity unknown`;
+  }
 }
 
 export interface BuildProgress {
