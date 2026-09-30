@@ -54,7 +54,7 @@ struct InboxView: View {
       }
       VStack(alignment: .leading, spacing: Space.lg) {
         title
-        HStack(spacing: Space.md) { filters(empty: empty, compresses: true) }
+        HStack(spacing: Space.md) { filters(empty: empty) }
       }
     }
   }
@@ -63,25 +63,26 @@ struct InboxView: View {
     Text("Notifications").font(.stim(.title)).fixedSize()
   }
 
-  @ViewBuilder private func filters(empty: Bool, compresses: Bool = false) -> some View {
-    Picker("Category", selection: $filter.category) {
-      Text("All categories").tag(OversightCategory?.none)
-      ForEach(OversightCategory.desktop, id: \.self) { category in
-        Label(category.label, systemImage: category.symbol).tag(Optional(category))
-      }
-    }
-    .labelsHidden()
-    .fixedSize(horizontal: !compresses, vertical: false)
+  @ViewBuilder private func filters(empty: Bool) -> some View {
+    MenuPill(
+      label: "Category",
+      selection: $filter.category,
+      options: [MenuPillOption(value: OversightCategory?.none, title: "All categories")]
+        + OversightCategory.desktop.map {
+          MenuPillOption(value: Optional($0), title: $0.label, symbol: $0.symbol)
+        },
+      isActive: filter.category != nil
+    )
     .help("Show one category")
-    Picker("Workspace", selection: $filter.workspace) {
-      Text("All workspaces").tag(String?.none)
-      Text("Machine").tag(Optional(""))
-      ForEach(workspaceChoices, id: \.path) { workspace in
-        Text(workspace.title).tag(Optional(workspace.path))
-      }
-    }
-    .labelsHidden()
-    .fixedSize(horizontal: !compresses, vertical: false)
+    MenuPill(
+      label: "Workspace",
+      selection: $filter.workspace,
+      options: [
+        MenuPillOption(value: String?.none, title: "All workspaces"),
+        MenuPillOption(value: Optional(""), title: "Machine"),
+      ] + workspaceChoices.map { MenuPillOption(value: Optional($0.path), title: $0.title) },
+      isActive: filter.workspace != nil
+    )
     .help("Show one workspace")
     Button("Mark all read") { inbox.markAllRead(filter) }
       .buttonStyle(.stim())
