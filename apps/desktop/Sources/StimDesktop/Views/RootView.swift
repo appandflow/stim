@@ -442,7 +442,7 @@ struct MachineSummary: View {
         .buttonStyle(.plain)
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
         .popover(isPresented: $showsDisk, arrowEdge: .bottom) {
-          DiskPopover(volumes: metrics.volumes, reclaimable: gc.report?.reclaimable).presentationBackground(Palette.surface)
+          DiskPopover(metrics: metrics, gc: gc).presentationBackground(Palette.surface)
         }
       }
       if store.watching {
@@ -485,10 +485,12 @@ private struct ProposedWidth: Layout {
 }
 
 struct DiskPopover: View {
-  var volumes: [DiskVolume]
-  var reclaimable: GcReport.Reclaimable?
+  var metrics: MetricsStore
+  var gc: GcReportStore
 
   var body: some View {
+    let volumes = metrics.volumes
+    let reclaimable = gc.report?.reclaimable
     VStack(alignment: .leading, spacing: Space.xl) {
       SectionLabel(title: "Disk")
       ForEach(volumes) { volume in
