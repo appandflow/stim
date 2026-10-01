@@ -777,7 +777,10 @@ that fixes it:
 
 In `--json`, each environment's `issues` array holds
 `{ code, severity, message, remedy, workspace, slot? }`, and `warnings` holds
-the `error` and `warning` issues as text. Run `remedy` from `workspace`. An
+the `error` and `warning` issues as text. Run `remedy` from `workspace`.
+`error` is something Stim cannot verify or safely act on, `warning` something
+broken now that needs someone to act, and `info` a fact the next normal Stim
+command handles by itself; the phone app and Desktop hide `info`. An
 `info` issue is a note that blocks nothing: when another app holds an idle
 workspace's reserved port, plain `status` prints
 `- port 8083 is in use by a dev server in scratchpad/web-phase2/expo-web; stim start will choose a free port`,

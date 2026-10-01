@@ -906,11 +906,16 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
       moved: { serial: 'emulator-5556', state: 'detected', warning: /emulator-5554 -> emulator-5556.*stim android/ },
       absent: { serial: null, state: 'not-detected', warning: /^$/ },
       launched: { serial: null, state: 'not-detected', warning: /not detected by adb; run `stim android`/ },
-      missing: { serial: null, state: 'missing', warning: /no longer exists/ },
+      missing: { serial: null, state: 'missing', warning: /^$/ },
       unavailable: { serial: null, state: 'unknown', warning: /could not check.*listing unavailable/ },
     }[scenario];
     expect(state.android).toMatchObject({ serial: expected.serial, state: expected.state, owned: true });
     expect(state.warnings.join(' ')).toMatch(expected.warning);
+    expect(
+      state.issues
+        .filter((issue: { code: string }) => issue.code === 'avd-missing')
+        .map((issue: { severity: string }) => issue.severity),
+    ).toEqual(scenario === 'missing' ? ['info'] : []);
     expect(state.live).toBe(scenario === 'moved');
     expect(loadConfig()).toEqual(before);
     expect(commands.some((cmd) => /reverse|emu kill|\bboot\b/.test(cmd))).toBe(false);

@@ -904,6 +904,18 @@ RULES
 
   issues   [{ code, severity, message, remedy, workspace, slot? }]
 
+  severity   "error"    Stim cannot verify or safely act on something; a
+                        person resolves it (stim guide errors teardown)
+             "warning"  something is broken now and needs someone to act:
+                        an app cannot reach Metro, a port is held, an
+                        expected device vanished
+             "info"     a fact the next normal stim command handles by
+                        itself, so it needs no action
+             The apps show error and warning and hide info; plain stim
+             status prints info as a dim note with no remedy; warnings
+             excludes info. The info codes: sim-missing, sim-without-metro,
+             avd-missing, and port-not-ours while no supervisor runs.
+
   code       port-not-ours          another process answers Metro on this
                                     workspace's reserved port. "info" with
                                     remedy stim start when no supervisor
@@ -916,12 +928,14 @@ RULES
                                     inside another workspace, else "a dev
                                     server in <last dirs>"; metro.heldBy
                                     carries its pid and cwd
-             sim-missing            the recorded simulator no longer exists
+             sim-missing            the recorded simulator no longer exists;
+                                    always "info", stim ios creates a new one
              sim-without-metro      the simulator is booted and no Metro
-                                    serves the workspace
+                                    serves the workspace; always "info"
              avd-serial-changed     the owned emulator came back on another
                                     serial, so Metro forwarding is lost
-             avd-missing            the recorded AVD no longer exists
+             avd-missing            the recorded AVD no longer exists; always
+                                    "info", stim android creates a new one
              android-reverse-missing the owned emulator runs this
                                     workspace's debug app against its live
                                     Metro, but the adb reverse for that Metro
@@ -947,9 +961,8 @@ RULES
              browser-orphaned       the owned Chrome runs but its supervisor
                                     exited, so page logs are not captured;
                                     stim stop closes it
-  severity   "error" when stop or start refuses until it is resolved,
-             "info" for a note that blocks nothing (not in warnings, and
-             not shown as a problem), else "warning"
+  severity   the rule above; "error" is also what makes stop or start
+             refuse until it is resolved
   remedy     a command to run from workspace, such as "stim android --slot
              fold"
   slot       absent for the default slot
