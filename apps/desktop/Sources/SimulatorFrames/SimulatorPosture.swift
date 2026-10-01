@@ -68,8 +68,6 @@ enum DuoHinge {
   static let coverRestAngle = 40.0
   static let innerRestAngle = 110.0
 
-  /// One angle per `interval` seconds, from just after `from` to exactly `to`,
-  /// following Siniulator's spring along its hinge path.
   static func sweep(from: Double, to: Double, interval: Double = 1.0 / 60) -> [Double] {
     var spring = Spring(phase(for: from), maximumSpeed: 1)
     spring.target = phase(for: to)
@@ -198,6 +196,7 @@ public enum SimulatorPosture {
       return "This simulator has no hinge input service."
     }
     while !hid.isReady, hid.isConnected { try? await Task.sleep(for: .milliseconds(50)) }
+    guard hid.isConnected else { return "The simulator's input connection closed. Try again." }
     for angle in DuoHinge.sweep(from: angle, to: posture.hingeAngle) {
       guard let report = DuoHinge.report(angle: angle) else { return "IOKit could not serialize the hinge report." }
       hid.vendorDefined(report)
@@ -216,9 +215,12 @@ public enum SimulatorPosture {
 
   private static func connection(udid: String) -> CoreDeviceHID? {
     lock.lock()
-    if let hid = connections[udid], hid.isConnected {
-      lock.unlock()
-      return hid
+    if let hid = connections[udid] {
+      if hid.isConnected {
+        lock.unlock()
+        return hid
+      }
+      postures[udid] = nil
     }
     lock.unlock()
     guard let device = CoreSimulator.device(udid: udid),

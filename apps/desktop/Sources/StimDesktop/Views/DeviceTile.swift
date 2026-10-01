@@ -234,16 +234,11 @@ struct DeviceTile: View {
       rotateButton(clockwise: false)
       rotateButton(clockwise: true)
       if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
-        Group {
-          if hingeAvailable {
-            Rectangle().fill(Palette.border).frame(width: 16, height: 1)
-            ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
-          } else if SimulatorFold.isAvailable {
-            foldButton(udid: sim.udid)
-          }
-        }
-        .task(id: sim.udid) {
-          hingeAvailable = await Task.detached { SimulatorPosture.isAvailable(udid: sim.udid) }.value
+        if hingeAvailable {
+          Rectangle().fill(Palette.border).frame(width: 16, height: 1)
+          ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
+        } else if SimulatorFold.isAvailable {
+          foldButton(udid: sim.udid)
         }
       }
       if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
@@ -252,6 +247,14 @@ struct DeviceTile: View {
     }
     .padding(Space.sm)
     .frame(width: Self.buttonStripWidth)
+    .task(id: dualSimulatorUDID) {
+      guard let udid = dualSimulatorUDID else { return }
+      while !Task.isCancelled {
+        hingeAvailable = await Task.detached { SimulatorPosture.isAvailable(udid: udid) }.value
+        if hingeAvailable { return }
+        try? await Task.sleep(for: .seconds(10))
+      }
+    }
     .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
@@ -395,6 +398,11 @@ struct DeviceTile: View {
     )
     .accessibilityLabel(failed ? "\(target.label) failed, retry" : target.label)
     .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+
+  private var dualSimulatorUDID: String? {
+    guard device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device else { return nil }
+    return sim.udid
   }
 
   /// The iPhone Duo's posture: folded when the cover is lit, else the open posture Stim Desktop last set, since the

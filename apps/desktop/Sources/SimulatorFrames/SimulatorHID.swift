@@ -197,7 +197,6 @@ final class CoreDeviceHID {
     return !closed
   }
 
-  /// Whether dtuhidd answered the activating barrier, so a message sent now is not queued.
   var isReady: Bool {
     lock.lock()
     defer { lock.unlock() }
