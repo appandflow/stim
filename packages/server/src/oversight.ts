@@ -6,7 +6,15 @@
  */
 
 /** What a notification is about; each can be switched off on its own. */
-export const OVERSIGHT_CATEGORIES = ['started', 'stuck', 'looping', 'finished', 'machine', 'control'] as const;
+export const OVERSIGHT_CATEGORIES = [
+  'started',
+  'stuck',
+  'looping',
+  'finished',
+  'machine',
+  'control',
+  'attention',
+] as const;
 
 export type OversightCategory = (typeof OVERSIGHT_CATEGORIES)[number];
 
@@ -57,7 +65,17 @@ export interface OversightEnvironment {
     repository?: string;
     git?: { mergedInto: string | null } | null;
   } | null;
-  build?: { state: string; startedAt: string } | null;
+  build?: { state: string; startedAt: string; platform?: string } | null;
+  issues?: { code: string; severity: 'error' | 'warning' | 'info'; message: string; remedy: string; slot?: string }[];
+  physicalDevices?: {
+    platform: string;
+    slot: string;
+    id: string;
+    name: string | null;
+    model: string | null;
+    lease: { expiresAt: string };
+  }[];
+  remoteDevices?: { sessionId: string; startedAt: string | null }[];
   lastBuilds?: { ios?: Build; android?: Build };
   builds?: { ios?: Build[]; android?: Build[] };
   logs?: { errorsSinceMarker: number } | null;
@@ -133,6 +151,8 @@ interface WorkspaceEntry {
   errorsAt: number | null;
   stuckAt: number | null;
   finished: boolean;
+  /** Ids of the `attention` items already notified, so each notifies once per episode. */
+  attention: string[];
   loops: { ios?: Loop; android?: Loop };
   pr: { number: number; ready: boolean; merged: boolean } | null | undefined;
   mergedInto: string | null;
@@ -563,6 +583,23 @@ function overseeMerge(run: Run, { env, entry, notify }: WorkspaceLook, prev: Wor
   }
 }
 
+/** What only a person can fix, notified once per episode; what an agent handles is left out. */
+function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev: WorkspaceEntry | undefined): void {
+  const items = workspaceItems(env, {
+    now: run.now,
+    stuckMinutes: run.prefs.stuckMinutes,
+    easSessionMinutes: EAS_SESSION_MINUTES,
+  });
+  for (const item of items) {
+    if (item.category !== 'attention') continue;
+    const target: OversightTarget = item.id.startsWith('run-')
+      ? { kind: 'build', path: env.path, platform: item.id.startsWith('run-ios') ? 'ios' : 'android' }
+      : { kind: 'workspace', path: env.path };
+    const notification = { ...notify('attention', item.body, target), id: item.id };
+    if (prev?.attention.includes(item.id) || lasting(run, notification)) entry.attention.push(item.id);
+  }
+}
+
 function overseeWorkspace(
   run: Run,
   env: OversightEnvironment,
@@ -581,6 +618,7 @@ function overseeWorkspace(
     errorsAt: prev && prev.errors !== errors ? run.now : (prev?.errorsAt ?? null),
     stuckAt: prev?.stuckAt ?? null,
     finished: prev?.finished ?? false,
+    attention: [],
     loops: {},
     pr: prev?.pr,
     mergedInto: git ? git.mergedInto : (prev?.mergedInto ?? null),
@@ -603,6 +641,7 @@ function overseeWorkspace(
   overseeProgress(run, look);
   overseeLoops(run, look, prev);
   overseeMerge(run, look, prev);
+  overseeAttention(run, look, prev);
   return entry;
 }
 
@@ -646,4 +685,165 @@ export function inQuietHours(quietHours: { start: number; end: number } | null, 
   if (!quietHours || quietHours.start === quietHours.end) return false;
   const { start, end } = quietHours;
   return start < end ? minuteOfDay >= start && minuteOfDay < end : minuteOfDay >= start || minuteOfDay < end;
+}
+
+/** How long a billable EAS session may run with no agent before it needs a person. */
+export const EAS_SESSION_MINUTES = 30;
+
+/**
+ * What only a person can act on or decide. apps/desktop/Sources/StimKit/NeedsAttention.swift and
+ * apps/mobile/src/lib/needs-attention.ts hold the same rule; the three replay
+ * apps/desktop/Tests/StimKitTests/Fixtures/needs-attention-vectors.json.
+ */
+export interface NeedsAttentionItem {
+  /** Stable while the problem lasts; `stuck`, `looping` and `machine` items use the oversight notification ids. */
+  id: string;
+  /** The oversight notification category that covers the item; `attention` is for the rest. */
+  category: 'attention' | 'stuck' | 'looping' | 'machine';
+  severity: 'error' | 'warning';
+  /** The workspace path; null for the machine. */
+  workspace: string | null;
+  body: string;
+  /** A `stim` command to run from `workspace`, or null when the fix is outside Stim. */
+  remedy: string | null;
+}
+
+export interface NeedsAttentionInput {
+  environments: OversightEnvironment[];
+  /** Each volume Stim uses; null when not measured. */
+  volumes: { freeBytes: number }[] | null;
+  now: number;
+  stuckMinutes: number;
+  easSessionMinutes: number;
+}
+
+const PERSON_ISSUES = new Set(['port-not-ours', 'supervisor-unverified', 'browser-unverified', 'avd-unchecked']);
+const SIGNING_CODES = ['STIM_NO_SIGNING_IDENTITY', 'STIM_CODESIGN_FAILED', 'STIM_NO_PROFILE', 'STIM_PROFILE_MISMATCH'];
+/** A failed run older than this on an idle workspace is history, not a problem. */
+const STALE_MS = 24 * 60 * 60 * 1000;
+
+const recent = (env: OversightEnvironment, at: string | null | undefined, now: number) =>
+  env.live || now - time(at) < STALE_MS;
+
+function workspaceItems(
+  env: OversightEnvironment,
+  input: Pick<NeedsAttentionInput, 'now' | 'stuckMinutes' | 'easSessionMinutes'>,
+): NeedsAttentionItem[] {
+  const { now } = input;
+  const items: NeedsAttentionItem[] = [];
+  for (const issue of env.issues ?? []) {
+    if (issue.severity === 'info' || !PERSON_ISSUES.has(issue.code)) continue;
+    items.push({
+      id: `issue-${issue.code}-${issue.slot ?? 'default'}:${env.path}`,
+      category: 'attention',
+      severity: issue.severity,
+      workspace: env.path,
+      body: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
+      remedy: issue.remedy,
+    });
+  }
+  for (const platform of ['ios', 'android'] as const) {
+    const last = env.lastBuilds?.[platform];
+    const building = env.build?.state === 'running' && env.build.platform === platform;
+    const code = last?.errorCode ?? '';
+    if (last && last.status === 'failed' && !building && SIGNING_CODES.includes(code)) {
+      if (recent(env, last.finishedAt ?? last.startedAt, now)) {
+        items.push({
+          id: `run-${platform}:${env.path}`,
+          category: 'attention',
+          severity: 'error',
+          workspace: env.path,
+          body: `${platformName(platform)} signing or provisioning failed (${code})`,
+          remedy: null,
+        });
+        continue;
+      }
+    }
+    const history = env.builds?.[platform];
+    const streak = failureStreak(platform, history);
+    const head = history?.[0];
+    if (streak && head && streak.count >= LOOP_COUNT && recent(env, head.finishedAt ?? head.startedAt, now)) {
+      items.push({
+        id: `looping-${platform}:${env.path}`,
+        category: 'looping',
+        severity: 'error',
+        workspace: env.path,
+        body: streak.body(streak.count),
+        remedy: null,
+      });
+    }
+  }
+  for (const device of env.physicalDevices ?? []) {
+    if (!(time(device.lease.expiresAt) <= now)) continue;
+    const slot = device.slot === 'default' ? '' : ` --slot ${device.slot}`;
+    items.push({
+      id: `lease-${device.platform}-${device.slot}:${env.path}`,
+      category: 'attention',
+      severity: 'warning',
+      workspace: env.path,
+      body: `Lease on ${device.name ?? device.model ?? device.id} expired`,
+      remedy: `stim device unlock ${device.platform}${slot}`,
+    });
+  }
+  const devices = devicesOf(env);
+  const driven = devices.find((d) => d.running && d.activity?.state === 'driven');
+  for (const session of env.remoteDevices ?? []) {
+    const started = time(session.startedAt);
+    if (driven || !(now - started >= input.easSessionMinutes * 60_000)) continue;
+    items.push({
+      id: `eas-${session.sessionId}:${env.path}`,
+      category: 'attention',
+      severity: 'warning',
+      workspace: env.path,
+      body: `EAS session running for ${Math.floor((now - started) / 60_000)} min with no agent; billed while it runs`,
+      remedy: 'stim stop',
+    });
+  }
+  const since = lastActivityAt(env, devices, []);
+  if (driven && env.build?.state !== 'running' && since !== null && now - since >= input.stuckMinutes * 60_000) {
+    const newest = newestBuild(env);
+    const after = newest?.status === 'ok' ? ` after a green ${platformName(newest.platform)} build` : '';
+    items.push({
+      id: `stuck:${env.path}`,
+      category: 'stuck',
+      severity: 'warning',
+      workspace: env.path,
+      body: `No agent activity for ${Math.floor((now - since) / 60_000)} min${after}; ${driven.model} still up`,
+      remedy: null,
+    });
+  }
+  return items;
+}
+
+/**
+ * The items, errors first, then the machine's, then live workspaces' before idle ones', each in status order. Log
+ * errors, a single failed run, and issues an agent's next `stim` command repairs are left out: agents handle them.
+ */
+export function needsAttention(input: NeedsAttentionInput): NeedsAttentionItem[] {
+  const ranked: { item: NeedsAttentionItem; scope: number }[] = [];
+  const lowest = input.volumes?.reduce<number | null>(
+    (min, v) => (min === null ? v.freeBytes : Math.min(min, v.freeBytes)),
+    null,
+  );
+  if (lowest !== null && lowest !== undefined && lowest < DISK_CRITICAL_BYTES) {
+    ranked.push({
+      scope: 0,
+      item: {
+        id: 'machine:disk',
+        category: 'machine',
+        severity: 'error',
+        workspace: null,
+        body: `${formatBytes(lowest)} free, below Stim's floor`,
+        remedy: null,
+      },
+    });
+  }
+  for (const env of input.environments) {
+    for (const item of workspaceItems(env, input)) ranked.push({ item, scope: env.live ? 1 : 2 });
+  }
+  const severity = (item: NeedsAttentionItem) => (item.severity === 'error' ? 0 : 1);
+  return ranked
+    .map((entry, index) => ({ ...entry, index }))
+    .sort((a, b) => severity(a.item) - severity(b.item) || a.scope - b.scope || a.index - b.index)
+    .map((entry) => entry.item);
 }

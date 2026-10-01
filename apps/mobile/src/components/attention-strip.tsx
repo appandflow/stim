@@ -14,13 +14,17 @@ const COLLAPSED = 3;
 export function AttentionStrip({
   items,
   onOpen,
+  notifications,
 }: {
   items: HomeAttentionItem[];
   onOpen: (item: HomeAttentionItem) => void;
+  /** The notification inbox, which keeps what the strip shows and what came before; absent where there is none. */
+  notifications?: { unread: number; onOpen: () => void };
 }) {
   const { theme } = useUnistyles();
   const [expandedState, setExpanded] = useState(false);
   if (items.length === 0) return null;
+  const unread = notifications?.unread ?? 0;
   const expanded = expandedState && items.length > COLLAPSED;
   const more = items.length - COLLAPSED;
   const renderItem = (item: HomeAttentionItem, index: number) => {
@@ -66,6 +70,26 @@ export function AttentionStrip({
           </Text>
         </Touch>
       ) : null}
+      {notifications ? (
+        <Touch
+          feedback="row"
+          onPress={notifications.onOpen}
+          accessibilityLabel={unread > 0 ? t`Notifications, ${unread} unread` : t`Notifications`}
+          style={[styles.row, styles.divider]}
+        >
+          <Text variant="callout" weight="semibold" style={styles.text}>
+            {t`Notifications`}
+          </Text>
+          {unread > 0 ? (
+            <View style={styles.count}>
+              <Text variant="caption" weight="semibold" style={styles.countText}>
+                {unread > 99 ? '99+' : unread}
+              </Text>
+            </View>
+          ) : null}
+          <Icon name="chevron.right" size={13} color={theme.colors.tertiary} />
+        </Touch>
+      ) : null}
     </View>
   );
 }
@@ -96,4 +120,14 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors[tone],
   }),
   text: { flex: 1, gap: 1 },
+  count: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: theme.space.sm,
+    borderRadius: theme.radius.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+  },
+  countText: { color: theme.colors.onPrimary, fontVariant: ['tabular-nums'] },
 }));

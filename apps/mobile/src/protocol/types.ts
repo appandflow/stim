@@ -684,7 +684,7 @@ export interface BuildMachineReport {
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
 /** What stim-server can push, the categories of `@/lib/oversight`. */
-export type PushEvent = 'started' | 'stuck' | 'looping' | 'finished' | 'machine' | 'control';
+export type PushEvent = 'started' | 'stuck' | 'looping' | 'finished' | 'machine' | 'control' | 'attention';
 
 /** How a pushed event is delivered: `alert` with a banner and sound, `silent` to the notification list only. */
 export type NotificationLevel = 'alert' | 'silent';

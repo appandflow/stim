@@ -53,6 +53,8 @@ export function notifyCategoryLabel(category: OversightCategory): string {
       return t`Machine in trouble`;
     case 'control':
       return t`Someone takes over your device`;
+    case 'attention':
+      return t`Needs you`;
   }
 }
 

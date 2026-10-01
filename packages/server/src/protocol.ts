@@ -765,7 +765,7 @@ export interface BuildMachineCapacity {
  * failure, work `finished` (the agent stopped after a green build, or the workspace's pull request became ready for
  * review or merged), a `machine` in trouble, and a `control` conflict over a device this phone controls.
  */
-export const PUSH_EVENTS = ['started', 'stuck', 'looping', 'finished', 'machine', 'control'] as const;
+export const PUSH_EVENTS = ['started', 'stuck', 'looping', 'finished', 'machine', 'control', 'attention'] as const;
 
 export type PushEvent = (typeof PUSH_EVENTS)[number];
 

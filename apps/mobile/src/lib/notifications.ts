@@ -32,6 +32,7 @@ export const DEFAULT_LEVELS: Record<OversightCategory, NotifyLevel> = {
   finished: 'silent',
   machine: 'silent',
   control: 'silent',
+  attention: 'silent',
 };
 
 export interface NotificationPrefs {
@@ -54,9 +55,20 @@ export const notifiedCategories = (prefs: NotificationPrefs): OversightCategory[
 
 const minute = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440;
 
+/** The categories that existed when preferences stored them as on/off `categories`. */
+const ON_OFF_CATEGORIES: readonly OversightCategory[] = [
+  'started',
+  'stuck',
+  'looping',
+  'finished',
+  'machine',
+  'control',
+];
+
 /**
  * Each category's stored level. Preferences saved with on/off `categories` give a category that was on its default
- * level and keep one that was off off; ones saved before categories give every category its default level.
+ * level and keep one that was off off, and a category added since its default level; ones saved before categories
+ * give every category its default level.
  */
 function parseLevels(levels: unknown, categories: unknown): Record<OversightCategory, NotifyLevel> {
   const stored = (levels ?? {}) as Partial<Record<string, unknown>>;
@@ -64,7 +76,9 @@ function parseLevels(levels: unknown, categories: unknown): Record<OversightCate
     NOTIFY_CATEGORIES.map((category) => {
       const level = stored[category];
       if (typeof level === 'string' && (NOTIFY_LEVELS as readonly string[]).includes(level)) return [category, level];
-      if (Array.isArray(categories) && !categories.includes(category)) return [category, 'off'];
+      if (Array.isArray(categories) && ON_OFF_CATEGORIES.includes(category) && !categories.includes(category)) {
+        return [category, 'off'];
+      }
       return [category, DEFAULT_LEVELS[category]];
     }),
   ) as Record<OversightCategory, NotifyLevel>;

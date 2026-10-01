@@ -30,6 +30,7 @@ const CATEGORY_ICONS: Record<OversightCategory, IconName> = {
   finished: 'checkmark.circle',
   machine: 'exclamationmark.triangle',
   control: 'hand.raised',
+  attention: 'exclamationmark.bubble',
 };
 
 function categoryColor(theme: Theme, category: OversightCategory): string {
@@ -38,6 +39,7 @@ function categoryColor(theme: Theme, category: OversightCategory): string {
       return theme.colors.info;
     case 'stuck':
     case 'machine':
+    case 'attention':
       return theme.colors.warning;
     case 'looping':
       return theme.colors.error;
