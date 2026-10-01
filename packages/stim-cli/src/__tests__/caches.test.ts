@@ -363,6 +363,41 @@ test('current nested Metro stores preserve the parent as report-only and unmarke
   expect(caches.some((cache) => cache.dir === unmarkedChild)).toBe(true);
 });
 
+test('caches that share a name are told apart by their directory', () => {
+  const stores = ['app', 'tlon-mobile'].map((name) => join(tmpHome, 'metro', name));
+  const lone = join(tmpHome, 'other', 'same');
+  const twin = join(tmpHome, 'another', 'same');
+  for (const dir of [...stores, lone, twin]) mkdirSync(dir, { recursive: true });
+  const entry = (dir: string, name: string) => ({ dir, name, prune: 'entries', entriesDepth: 2 });
+  writeFileSync(
+    join(tmpHome, 'caches.json'),
+    JSON.stringify({
+      version: 1,
+      caches: [
+        ...stores.map((dir) => entry(dir, 'Metro transform cache')),
+        entry(lone, 'Build output'),
+        entry(twin, 'Build output'),
+        entry(join(tmpHome, 'solo'), 'Solo cache'),
+      ],
+    }),
+  );
+  mkdirSync(join(tmpHome, 'solo'));
+
+  const names = discoverCaches()
+    .filter((cache) => cache.source === 'registered')
+    .map((cache) => cache.name);
+
+  expect(names.toSorted()).toEqual(
+    [
+      'Metro transform cache: app',
+      'Metro transform cache: tlon-mobile',
+      `Build output: ${lone}`,
+      `Build output: ${twin}`,
+      'Solo cache',
+    ].toSorted(),
+  );
+});
+
 describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
   'unremovable cache entries (POSIX directory permissions; skipped on win32)',
   () => {

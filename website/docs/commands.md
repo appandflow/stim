@@ -1229,6 +1229,9 @@ there.
 - `--cache <name|all|workspaces|recordings|parked>` with `--delete` empties the caches whose name
   or directory carries `<name>` whole, or every cache and the workspace build
   outputs with `all`. `workspaces` clears only the workspace build outputs.
+  When several caches share a name, as the Metro transform cache of each
+  project does, gc names each one `<name>: <directory>` using its directory's
+  last component, so the report and `--cache` tell them apart.
   `parked` erases the parked simulators and emulators and keeps them parked;
   `all` leaves them alone. `watchman` and `gradle-daemons` act on those
   helpers alone (see above), and `--older-than` with them is refused. Other

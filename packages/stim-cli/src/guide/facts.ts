@@ -815,7 +815,10 @@ RULES
                               would clear
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped }  alive, not garbage; willEmpty
-                              marks the ones --delete would empty
+                              marks the ones --delete would empty; caches
+                              that share a name carry their directory's
+                              last component, as "Metro transform cache:
+                              <store>"
     memory                  { kind: "watchman" | "gradleDaemon" |
                               "kotlinDaemon", cacheKind: "watchman" |
                               "gradle-daemons", pid, startedAt, bytes,
