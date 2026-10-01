@@ -21,9 +21,6 @@
       "ignoreExportsUsedInFile": {
         "interface": true,
         "type": true
-      },
-      "ignoreIssues": {
-        "src/protocol/types.ts": ["types"]
       }
     }
   }
