@@ -20,7 +20,7 @@ import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
 import type { OversightCategory } from '@/lib/oversight';
 import { notifyCategoryLabel } from '@/lib/settings-options';
 
-const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const SLIDERS_ICON = require('@/assets/icons/sliders.png');
 
 /** The same symbols as Stim Desktop's inbox (#1746). */
 const CATEGORY_ICONS: Record<OversightCategory, IconName> = {
@@ -80,7 +80,7 @@ export function Inbox() {
     <View style={styles.screen}>
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
-          icon={Platform.OS === 'ios' ? 'line.3.horizontal.decrease' : FUNNEL_ICON}
+          icon={Platform.OS === 'ios' ? 'slider.vertical.3' : SLIDERS_ICON}
           iconRenderingMode="template"
           tintColor={theme.colors.text}
           accessibilityLabel={t`Filter and mark read`}

@@ -40,7 +40,7 @@ import { checkoutProjects, homeSections, type HomeSection } from '@/lib/home-lis
 import { MacList } from '@/screens/mac-list';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
-const FUNNEL_ICON = require('@/assets/icons/funnel.png');
+const SLIDERS_ICON = require('@/assets/icons/sliders.png');
 const PLUS_ICON = require('@/assets/icons/plus.png');
 const WORDMARK = require('@/assets/images/wordmark.png');
 const VIEWABILITY = { itemVisiblePercentThreshold: 10 };
@@ -132,7 +132,7 @@ export function Home() {
           />
         ) : (
           <Stack.Toolbar.Button
-            icon={Platform.OS === 'ios' ? 'line.3.horizontal.decrease' : FUNNEL_ICON}
+            icon={Platform.OS === 'ios' ? 'slider.vertical.3' : SLIDERS_ICON}
             iconRenderingMode="template"
             tintColor={theme.colors.text}
             accessibilityLabel={t`Filter`}
