@@ -18,6 +18,7 @@ import { Text } from '@/components/text';
 import { useMacs, type PairedConnection } from '@/hooks/machines';
 import { formatDateTime } from '@/intl/format';
 import {
+  appAndFlowLibraries,
   bugReportUrl,
   plainState,
   diagnosticText,
@@ -38,6 +39,8 @@ const STIM_LICENSE = 0;
 const WEBSITE = 'https://stim.appandflow.com';
 const REPOSITORY = 'https://github.com/appandflow/stim';
 const APP_AND_FLOW = 'https://appandflow.com';
+
+const LIBRARIES = appAndFlowLibraries(LICENSES);
 
 function appInfo(): AboutApp {
   return {
@@ -161,6 +164,11 @@ export function About({ onClose }: { onClose?: () => void }) {
           }}
         />
         <ListRow title={t`Made by App&Flow`} accessory="chevron" onPress={() => open(APP_AND_FLOW)} />
+      </ListSection>
+      <ListSection title={t`Open source by App&Flow`}>
+        {LIBRARIES.map((library) => (
+          <ListRow key={library.name} title={library.name} accessory="chevron" onPress={() => open(library.url)} />
+        ))}
       </ListSection>
     </SheetScreen>
   );
