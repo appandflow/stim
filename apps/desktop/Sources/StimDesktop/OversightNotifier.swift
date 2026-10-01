@@ -11,6 +11,8 @@ final class OversightNotifier: ObservableObject {
   private let store: StatusStore
   private let disks: DiskVolumeStore
   private let machine: String
+  var keptWorktrees: @MainActor () -> [PullRequestCleanup.Flag] = { [] }
+  private var attention = Set(UserDefaults.standard.stringArray(forKey: NotificationSettings.attentionKey) ?? [])
   private let awakeSince = Date().timeIntervalSince1970 * 1000
   private var state: OversightState?
   private var volumes: [OversightInput.Volume]?
@@ -57,7 +59,7 @@ final class OversightNotifier: ObservableObject {
       now: now.timeIntervalSince1970 * 1000, awakeSince: awakeSince)
     state = result.state
     let quiet = NotificationSettings.isQuiet(.standard, minuteOfDay: minuteOfDay)
-    for notification in result.notifications {
+    for notification in result.notifications + overseeAttention() {
       deliver(notification, NotificationSettings.level(notification.category, .standard), quiet: quiet)
     }
     wakeTimer?.invalidate()
@@ -67,6 +69,24 @@ final class OversightNotifier: ObservableObject {
         MainActor.assumeIsolated { self?.evaluate(nil) }
       }
     }
+  }
+
+  private func overseeAttention() -> [OversightNotification] {
+    let doctorKnown = Set(store.doctor.keys)
+    let result = AttentionNotices.update(
+      previous: attention, items: store.attention(lowestVolume: nil), kept: keptWorktrees(), machine: machine,
+      title: { store.names(ofPath: $0).title },
+      pending: { id in
+        guard id.hasPrefix("setup-") || id.hasPrefix("doctor-failed:"), let split = id.range(of: ":/") else {
+          return false
+        }
+        return !doctorKnown.contains(String(id[id.index(after: split.lowerBound)...]))
+      })
+    if result.active != attention {
+      attention = result.active
+      UserDefaults.standard.set(attention.sorted(), forKey: NotificationSettings.attentionKey)
+    }
+    return result.notifications
   }
 
   private func memoryPressure() -> MemoryPressureLevel? {
@@ -108,7 +128,7 @@ final class OversightNotifier: ObservableObject {
     case .finished: return .success
     case .stuck, .looping: return .warning
     case .machine, .control: return .error
-    case .buildRequest: return .warning
+    case .buildRequest, .attention: return .warning
     }
   }
 }

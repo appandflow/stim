@@ -346,9 +346,7 @@ struct RootView: View {
         EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
       }
     case .notifications:
-      InboxView(inbox: NotificationInbox.shared)
-    case .attention:
-      AttentionView(store: store, autopilot: autopilot, openLogs: openErrors)
+      InboxView(inbox: NotificationInbox.shared, openLogs: openErrors)
     case .machine:
       MachineView(buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot)
     default:
