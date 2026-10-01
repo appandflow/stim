@@ -113,29 +113,38 @@ public func projectSummaries(
   }
 }
 
-/// A title for each project root: the folder name, with the enclosing folders added for as many levels as it
-/// takes to tell apart projects whose folders share a name, such as `app (work)` and `app (code)`.
-public func projectTitles(roots: [String]) -> [String: String] {
-  var titles: [String: String] = [:]
-  let byName = Dictionary(grouping: Set(roots)) { ($0 as NSString).lastPathComponent }
-  for (name, group) in byName {
-    guard group.count > 1 else {
-      titles[group[0]] = name
-      continue
-    }
-    let parents = group.map { root in (root, (root as NSString).deletingLastPathComponent.split(separator: "/").map(String.init))
-    }
+/// The trailing folders of `qualifyBy` that tell apart items sharing a name, for as many levels as it takes. An
+/// item whose name is unique gets no entry.
+public func nameQualifiers(_ items: [(path: String, name: String, qualifyBy: String)]) -> [String: String] {
+  var qualifiers: [String: String] = [:]
+  for group in Dictionary(grouping: items, by: \.name).values {
+    var byPath: [String: [String]] = [:]
+    for item in group { byPath[item.path] = item.qualifyBy.split(separator: "/").map(String.init) }
+    guard byPath.count > 1 else { continue }
     var depth = 1
-    func qualifier(_ parents: [String], _ depth: Int) -> String { parents.suffix(depth).joined(separator: "/") }
-    while depth < (parents.map(\.1.count).max() ?? 0),
-      Set(parents.map { qualifier($0.1, depth) }).count < parents.count
+    func qualifier(_ components: [String], _ depth: Int) -> String { components.suffix(depth).joined(separator: "/") }
+    while depth < (byPath.values.map(\.count).max() ?? 0),
+      Set(byPath.values.map { qualifier($0, depth) }).count < byPath.count
     {
       depth += 1
     }
-    for (root, components) in parents {
+    for (path, components) in byPath {
       let qualified = qualifier(components, depth)
-      titles[root] = qualified.isEmpty ? name : "\(name) (\(qualified))"
+      if !qualified.isEmpty { qualifiers[path] = qualified }
     }
   }
-  return titles
+  return qualifiers
+}
+
+/// A title for each project root: the folder name, with the enclosing folders added for as many levels as it
+/// takes to tell apart projects whose folders share a name, such as `app (work)` and `app (code)`.
+public func projectTitles(roots: [String]) -> [String: String] {
+  let unique = Set(roots)
+  let qualifiers = nameQualifiers(
+    unique.map { ($0, ($0 as NSString).lastPathComponent, ($0 as NSString).deletingLastPathComponent) })
+  return Dictionary(
+    uniqueKeysWithValues: unique.map { root in
+      let name = (root as NSString).lastPathComponent
+      return (root, qualifiers[root].map { "\(name) (\($0))" } ?? name)
+    })
 }

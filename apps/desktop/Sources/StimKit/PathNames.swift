@@ -33,6 +33,15 @@ private func markedCheckout(_ path: String) -> String? {
   return nil
 }
 
+/// The checkout holding `path`: its `.worktrees/<name>` or `.claude/worktrees/<name>` parent's repository folder, else
+/// the path itself.
+public func checkoutRoot(_ path: String) -> String {
+  guard let marked = markedCheckout(path) else { return path }
+  var parts = marked.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+  parts.removeLast(parts[parts.count - 3] == ".claude" ? 3 : 2)
+  return parts.joined(separator: "/")
+}
+
 /// `text` with the home directory written as `~` wherever a path starts with it.
 public func abbreviatingHome(_ text: String, home: String = NSHomeDirectory()) -> String {
   guard home.count > 1, text.contains(home) else { return text }

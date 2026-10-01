@@ -8,6 +8,7 @@ struct InboxView: View {
 
   var body: some View {
     let days = inbox.inbox.days(filter)
+    let titles = inbox.inbox.displayTitles
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxl) {
         header(empty: days.isEmpty)
@@ -28,7 +29,7 @@ struct InboxView: View {
               VStack(spacing: 0) {
                 ForEach(Array(day.entries.enumerated()), id: \.element.id) { index, entry in
                   if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-                  InboxRow(entry: entry) { inbox.open(entry) }
+                  InboxRow(entry: entry, title: titles[entry.id] ?? entry.title) { inbox.open(entry) }
                 }
               }
             }
@@ -112,6 +113,7 @@ struct InboxView: View {
 
 private struct InboxRow: View {
   var entry: InboxEntry
+  var title: String
   var open: () -> Void
 
   var body: some View {
@@ -124,7 +126,7 @@ private struct InboxRow: View {
         .frame(width: 20)
         .help(entry.category.label)
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(entry.title).textStyle(.callout, weight: entry.read ? nil : .semibold).lineLimit(1)
+        Text(title).textStyle(.callout, weight: entry.read ? nil : .semibold).lineLimit(1)
         Text(entry.body).textStyle(.footnote).foregroundStyle(Palette.secondary).lineLimit(2)
       }
       Spacer(minLength: Space.md)
@@ -137,7 +139,7 @@ private struct InboxRow: View {
     .onTapGesture(perform: open)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "\(entry.read ? "" : "Unread, ")\(entry.category.label), \(entry.title), \(entry.body), \(detail)"
+      "\(entry.read ? "" : "Unread, ")\(entry.category.label), \(title), \(entry.body), \(detail)"
     )
     .accessibilityAddTraits(.isButton)
     .accessibilityAction(named: entry.target.actionTitle, open)

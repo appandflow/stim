@@ -130,13 +130,47 @@ public struct Inbox: Codable, Equatable, Sendable {
     return out
   }
 
-  /// The workspaces with entries, by path, each named by its newest entry's title, in first-seen order.
-  public var workspaces: [(path: String, title: String)] {
+  private var newestTitles: [(path: String, title: String)] {
     var seen: [(path: String, title: String)] = []
     for entry in entries {
       guard let path = entry.target.path, !seen.contains(where: { $0.path == path }) else { continue }
       seen.append((path, entry.title))
     }
     return seen
+  }
+
+  /// Workspaces in one checkout, such as `apps/web` and `apps/mobile`, share a qualifier: telling them apart would
+  /// need the path inside the checkout, which the title already omits.
+  private func qualifiers() -> [String: String] {
+    nameQualifiers(
+      newestTitles.map { item in
+        let root = checkoutRoot(item.path) as NSString
+        return (item.path, item.title, root.lastPathComponent == item.title ? root.deletingLastPathComponent : root as String)
+      })
+  }
+
+  private static func qualified(_ title: String, _ qualifier: String?) -> String {
+    qualifier.map { "\(title) (\($0))" } ?? title
+  }
+
+  /// The workspaces with entries, by path, each named by its newest entry's title, in first-seen order. Workspaces
+  /// sharing a title carry their enclosing folders, such as `app (work)`.
+  public var workspaces: [(path: String, title: String)] {
+    let qualifiers = qualifiers()
+    return newestTitles.map { ($0.path, Self.qualified($0.title, qualifiers[$0.path])) }
+  }
+
+  /// What each entry shows as its title, by entry id: its own, with the workspace's enclosing folders when another
+  /// workspace in the inbox shares that title.
+  public var displayTitles: [String: String] {
+    let qualifiers = qualifiers()
+    let newest = Dictionary(newestTitles.map { ($0.path, $0.title) }, uniquingKeysWith: { first, _ in first })
+    var titles: [String: String] = [:]
+    for entry in entries {
+      let path = entry.target.path
+      let collides = path.flatMap { newest[$0] } == entry.title
+      titles[entry.id] = Self.qualified(entry.title, collides ? path.flatMap { qualifiers[$0] } : nil)
+    }
+    return titles
   }
 }

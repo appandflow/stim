@@ -38,6 +38,34 @@ struct InboxTests {
     #expect(inbox.workspaces.map(\.path) == ["/b", "/a"])
   }
 
+  @Test func workspacesAndRowsSharingATitleShowTheirEnclosingFolders() {
+    func titled(_ id: String, _ title: String, _ path: String) -> InboxEntry {
+      var e = entry(id, .finished, .workspace(path: path), ago: 0)
+      e.title = title
+      return e
+    }
+    var inbox = Inbox()
+    inbox.add(titled("a", "app", "/w/code/app"), now: now)
+    inbox.add(titled("b", "app", "/w/work/app"), now: now)
+    inbox.add(titled("c", "other", "/w/code/other"), now: now)
+    #expect(inbox.workspaces.map(\.title) == ["other", "app (work)", "app (code)"])
+    #expect(inbox.displayTitles == ["a": "app (code)", "b": "app (work)", "c": "other"])
+  }
+
+  @Test func branchTitlesAreQualifiedByTheirCheckoutFolder() {
+    func titled(_ id: String, _ title: String, _ path: String) -> InboxEntry {
+      var e = entry(id, .finished, .workspace(path: path), ago: 0)
+      e.title = title
+      return e
+    }
+    var inbox = Inbox()
+    inbox.add(titled("old", "old", "/w/shop"), now: now)
+    inbox.add(titled("a", "main", "/w/shop"), now: now)
+    inbox.add(titled("b", "main", "/w/app/.worktrees/x/apps/mobile"), now: now)
+    #expect(inbox.workspaces.map(\.title) == ["main (app)", "main (shop)"])
+    #expect(inbox.displayTitles == ["old": "old", "a": "main (shop)", "b": "main (app)"])
+  }
+
   @Test func groupsByLocalDayNewestFirst() {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "UTC")!
