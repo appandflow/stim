@@ -16,6 +16,7 @@ import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { listAvds, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import type { StimConfig } from '@stim-cli/core/state';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
 import { recordGcResult, takeGcResults, type GcResult } from './gc/results.ts';
 import { phase } from './gc/progress.ts';
@@ -24,7 +25,9 @@ import {
   includesParkedDevices,
   includesRecordings,
   includesWorkspaceOutputs,
+  isWorkspacesScope,
   planCacheEmptying,
+  previewScopedEmptying,
   selectCaches,
   selectsBeyondCaches,
   trimCaches,
@@ -158,6 +161,48 @@ function collectGcMemory(scope: MemoryScope): Promise<MemoryReport> {
   return memorySweepIsScoped() ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true);
 }
 
+function classifyProjectEntries(
+  cfg: StimConfig | null,
+  mountedVolumes: string[],
+): { deadProjects: string[]; invalidProjects: string[]; skipped: GcSkip[] } {
+  const deadProjects: string[] = [];
+  const invalidProjects: string[] = [];
+  const skipped: GcSkip[] = [];
+  for (const [path, project] of Object.entries(cfg?.projects || {})) {
+    if (!isAbsolute(path)) {
+      const claimed = describeDereferenced(project);
+      if (claimed.length) {
+        skipped.push({
+          dir: path,
+          reason:
+            `not an absolute path, so this record is invalid; kept because it still claims ${claimed.join(' and ')}; ` +
+            'gc removes it once that claim is gone, or drop the entry from the config file by hand',
+        });
+      } else {
+        invalidProjects.push(path);
+      }
+      continue;
+    }
+    if (existsSync(path)) continue;
+    if (!isOnMountedVolume(path, mountedVolumes)) {
+      const volume = volumeRootFor(path);
+      skipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
+    } else {
+      deadProjects.push(path);
+    }
+  }
+  return { deadProjects, invalidProjects, skipped };
+}
+
+/** The workspace directories an unscoped run removes whole: those of dead projects and orphaned directories. */
+function removedWholeWorkspaceDirs(): string[] {
+  const mountedVolumes = listMountedVolumes();
+  const cfg = loadConfig();
+  const { deadProjects } = classifyProjectEntries(cfg, mountedVolumes);
+  const { orphaned } = collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes, { measure: false });
+  return [...orphaned.map((entry) => entry.dir), ...deadProjects.map(workspaceDir)];
+}
+
 export async function collectGcReport(
   {
     olderThan = null,
@@ -173,7 +218,8 @@ export async function collectGcReport(
   const withWorkspaces = includesWorkspaceOutputs(scope);
   const selected = selectCaches(discoverCaches(), scope).filter((c) => !withWorkspaces || !isInsideWorkspaces(c.dir));
   if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`);
-  const caches = planCacheEmptying(sizeCaches(selected), all);
+  const sized = sizeCaches(selected);
+  const caches = scope === null ? previewScopedEmptying(sized) : planCacheEmptying(sized, all);
 
   if (scope) {
     return {
@@ -195,7 +241,13 @@ export async function collectGcReport(
       parkedSims: includesParkedDevices(scope) ? collectParkedSims(deps, { olderThanDays: olderThan, now }) : [],
       parkedAvds: includesParkedDevices(scope) ? collectParkedAvds(deps, { olderThanDays: olderThan, now }) : [],
       caches,
-      workspaceOutputs: withWorkspaces ? collectWorkspaceOutputs({ olderThan, now }) : null,
+      workspaceOutputs: withWorkspaces
+        ? collectWorkspaceOutputs({
+            olderThan,
+            now,
+            exclude: isWorkspacesScope(scope) ? removedWholeWorkspaceDirs() : [],
+          })
+        : null,
       workspaceLogs: [],
       recordings: includesRecordings(scope) ? collectRecordings({ whole: all, olderThan, now }) : [],
       worktreeSweep: null,
@@ -223,32 +275,7 @@ export async function collectGcReport(
   }
   const parkedSims = collectParkedSims(deps, { olderThanDays: olderThan, now });
   const parkedAvds = collectParkedAvds(deps, { olderThanDays: olderThan, now });
-  const deadProjects: string[] = [];
-  const invalidProjects: string[] = [];
-  const skipped: GcSkip[] = [];
-  for (const [path, project] of Object.entries(cfg?.projects || {})) {
-    if (!isAbsolute(path)) {
-      const claimed = describeDereferenced(project);
-      if (claimed.length) {
-        skipped.push({
-          dir: path,
-          reason:
-            `not an absolute path, so this record is invalid; kept because it still claims ${claimed.join(' and ')}; ` +
-            'gc removes it once that claim is gone, or drop the entry from the config file by hand',
-        });
-      } else {
-        invalidProjects.push(path);
-      }
-      continue;
-    }
-    if (existsSync(path)) continue;
-    if (!isOnMountedVolume(path, mountedVolumes)) {
-      const volume = volumeRootFor(path);
-      skipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
-    } else {
-      deadProjects.push(path);
-    }
-  }
+  const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg, mountedVolumes);
   const workspaceDirs = collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes);
   skipped.push(...workspaceDirs.skipped);
 

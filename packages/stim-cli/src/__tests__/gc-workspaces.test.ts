@@ -1651,3 +1651,37 @@ test('a workspace whose output size cannot be measured is listed as size unknown
   await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
   expect(existsSync(join(dir, 'derived-data'))).toBe(false);
 });
+
+test('--cache workspaces leaves the build outputs of a directory the unscoped run removes whole', async () => {
+  const live = builtWorkspace('live-app', { usedDaysAgo: 10 });
+  const orphan = goneWorkspace('gone-app');
+  mkdirSync(join(orphan.dir, 'derived-data'), { recursive: true });
+  writeFileSync(join(orphan.dir, 'derived-data', 'blob'), 'x'.repeat(1024));
+  const outputs = (payload: { sections: { workspaceBuildOutputs: { projectRoot: string }[] } }) =>
+    payload.sections.workspaceBuildOutputs.map((entry) => entry.projectRoot);
+
+  const unscoped = (await gcJson({})).payload;
+  expect(unscoped.sections.orphanedWorkspaces.map((entry: { dir: string }) => entry.dir)).toContain(orphan.dir);
+  expect(outputs(unscoped)).toEqual([live.root]);
+
+  const scoped = (await gcJson({ cache: 'workspaces' })).payload;
+  expect(outputs(scoped)).toEqual([live.root]);
+
+  await gcJson({ cache: 'workspaces', delete: true });
+  expect(existsSync(join(live.dir, 'derived-data'))).toBe(false);
+  expect(existsSync(join(orphan.dir, 'derived-data', 'blob'))).toBe(true);
+});
+
+test('--cache workspaces leaves the build outputs of a dead project to the unscoped run', async () => {
+  const live = builtWorkspace('live-one', { usedDaysAgo: 10 });
+  const dead = builtWorkspace('dead-one', { usedDaysAgo: 10 });
+  rmSync(dead.root, { recursive: true, force: true });
+
+  const { payload } = await gcJson({ cache: 'workspaces', delete: true });
+
+  expect(payload.sections.workspaceBuildOutputs.map((entry: { projectRoot: string }) => entry.projectRoot)).toEqual([
+    live.root,
+  ]);
+  expect(existsSync(join(live.dir, 'derived-data'))).toBe(false);
+  expect(existsSync(join(dead.dir, 'derived-data'))).toBe(true);
+});

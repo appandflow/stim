@@ -13,6 +13,7 @@ export interface GcCache extends CacheDescriptor {
   machineGlobal?: string | null;
   willEmpty?: boolean;
   emptySkipped?: string | null;
+  scopedEmpty?: { willEmpty: boolean; emptySkipped: string | null };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -49,6 +50,10 @@ export function includesRecordings(name: string | null | undefined): boolean {
   return !wanted || wanted === EVERY_CACHE || wanted === RECORDINGS;
 }
 
+export function isWorkspacesScope(name: string | null | undefined): boolean {
+  return name?.trim().toLowerCase() === WORKSPACE_OUTPUTS;
+}
+
 export function includesWorkspaceOutputs(name: string | null | undefined): boolean {
   const wanted = name?.trim().toLowerCase();
   return !wanted || wanted === EVERY_CACHE || wanted === WORKSPACE_OUTPUTS;
@@ -69,27 +74,25 @@ export function selectCaches(caches: CacheDescriptor[], name: string | null | un
   return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
 }
 
+function emptyVerdict(c: GcCache): { willEmpty: boolean; emptySkipped: string | null } {
+  if (c.prune === 'report-only') {
+    return { willEmpty: false, emptySkipped: 'report-only shared cache; Stim never deletes it' };
+  }
+  if (c.machineGlobal) return { willEmpty: false, emptySkipped: c.machineGlobal };
+  if (!ownsItsDirectory(c)) {
+    return { willEmpty: false, emptySkipped: `${c.dir} is not a directory this cache owns` };
+  }
+  return { willEmpty: true, emptySkipped: null };
+}
+
 export function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
   const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
-  if (!all) return annotated;
-  return annotated.map((c) => {
-    if (c.prune === 'report-only') {
-      return Object.assign({}, c, {
-        willEmpty: false,
-        emptySkipped: 'report-only shared cache; Stim never deletes it',
-      });
-    }
-    if (c.machineGlobal) {
-      return Object.assign({}, c, { willEmpty: false, emptySkipped: c.machineGlobal });
-    }
-    if (!ownsItsDirectory(c)) {
-      return Object.assign({}, c, {
-        willEmpty: false,
-        emptySkipped: `${c.dir} is not a directory this cache owns`,
-      });
-    }
-    return Object.assign({}, c, { willEmpty: true, emptySkipped: null });
-  });
+  return all ? annotated.map((c) => Object.assign({}, c, emptyVerdict(c))) : annotated;
+}
+
+/** What `gc --delete --cache <name>` would do to each cache, for a report that does not run that scope. */
+export function previewScopedEmptying(caches: CacheDescriptor[]): GcCache[] {
+  return planCacheEmptying(caches, false).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
 }
 
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.

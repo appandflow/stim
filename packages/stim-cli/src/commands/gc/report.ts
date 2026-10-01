@@ -430,6 +430,9 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
       if (c.note) lines.push(`              ${c.note}`);
       if (c.willEmpty) lines.push('              would be EMPTIED');
       else if (c.emptySkipped) lines.push(`              would be left alone: ${c.emptySkipped}`);
+      else if (c.scopedEmpty?.emptySkipped) {
+        lines.push(`              --delete --cache would leave it alone: ${c.scopedEmpty.emptySkipped}`);
+      }
     }
     lines.push(`  total: ${formatBytes(total)}`);
     const doomed = caches.filter((c) => c.willEmpty);
@@ -599,6 +602,7 @@ export interface GcJsonSections {
     note: string | null;
     willEmpty: boolean;
     emptySkipped: string | null;
+    scopedEmpty: { willEmpty: boolean; emptySkipped: string | null } | null;
   }[];
   memory: MemoryProcess[];
   watchmanRoots: WatchmanRoot[];
@@ -776,6 +780,7 @@ export function gcReportSections({
       note: c.note || null,
       willEmpty: Boolean(c.willEmpty),
       emptySkipped: c.emptySkipped ?? null,
+      scopedEmpty: c.scopedEmpty ?? null,
     })),
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],

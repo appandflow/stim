@@ -812,13 +812,21 @@ RULES
                               reason, detail }  derived-data, gradle-build,
                               android-cas and cache-provider of each
                               workspace; willClear marks the ones --delete
-                              would clear
+                              would clear; --cache workspaces omits the
+                              directories that --delete removes whole (dead
+                              projects and orphanedWorkspaces), and --cache
+                              all does not
     caches                  { name, dir, source, bytes, note, willEmpty,
-                              emptySkipped }  alive, not garbage; willEmpty
-                              marks the ones --delete would empty; caches
-                              that share a name carry their directory's
-                              last component, as "Metro transform cache:
-                              <store>"
+                              emptySkipped, scopedEmpty }  alive, not
+                              garbage; willEmpty marks the ones --delete
+                              would empty. scopedEmpty is { willEmpty,
+                              emptySkipped } and says what \`--delete
+                              --cache <selector>\` without --older-than
+                              would do to the cache; it is present without
+                              --cache and null with it, where willEmpty
+                              already says so. Caches that share a name
+                              carry their directory's last component, as
+                              "Metro transform cache: <store>"
     memory                  { kind: "watchman" | "gradleDaemon" |
                               "kotlinDaemon", cacheKind: "watchman" |
                               "gradle-daemons", pid, startedAt, bytes,

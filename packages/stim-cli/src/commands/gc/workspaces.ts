@@ -133,6 +133,7 @@ function rootPresence(path: string): boolean | null {
 export function collectOrphanedWorkspaces(
   registryKeys: readonly string[],
   mountedVolumes: string[],
+  { measure = true }: { measure?: boolean } = {},
 ): { orphaned: OrphanedWorkspace[]; skipped: GcSkip[] } {
   const classified = classifyWorkspaceDirs(listWorkspaceDirs(), {
     registryKeys,
@@ -141,7 +142,9 @@ export function collectOrphanedWorkspaces(
     inUse: (root) => workspaceInUse(root),
   });
   return {
-    orphaned: classified.orphaned.map((entry) => Object.assign({}, entry, { bytes: sizeOf(entry.dir) })),
+    orphaned: measure
+      ? classified.orphaned.map((entry) => Object.assign({}, entry, { bytes: sizeOf(entry.dir) }))
+      : classified.orphaned,
     skipped: classified.skipped,
   };
 }

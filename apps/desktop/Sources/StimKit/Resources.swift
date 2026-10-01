@@ -342,6 +342,14 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var bytes: Int64?
     public var note: String?
     public var willEmpty: Bool?
+    /// What `stim gc --delete --cache <selector>` would do to this cache, reported by an unscoped `stim gc --json`.
+    /// Nil from a `stim` that predates it and from a run scoped by `--cache`.
+    public var scopedEmpty: ScopedEmpty?
+
+    public struct ScopedEmpty: Decodable, Hashable, Sendable {
+      public var willEmpty: Bool
+      public var emptySkipped: String?
+    }
 
     /// The `stim gc --cache` argument that selects this cache alone: its name, else its directory, or nil
     /// when neither does. The CLI matches the argument as a case-insensitive substring of every cache's name

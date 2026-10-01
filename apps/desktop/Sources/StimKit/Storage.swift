@@ -590,7 +590,7 @@ public struct StorageReport: Sendable {
           bytes: bytes,
           action: .removeWorktree(path: worktree.path, repository: inside.first?.repository)))
     }
-    for cache in caches where (cache.bytes ?? 0) > 0 {
+    for cache in caches where (cache.bytes ?? 0) > 0 && cache.scopedEmpty?.willEmpty != false {
       guard let selector = cache.selector(among: caches) else { continue }
       items.append(
         FreeItem(
