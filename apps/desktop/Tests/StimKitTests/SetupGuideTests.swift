@@ -62,6 +62,14 @@ private func node(_ output: String?) -> CLICompatibility {
   #expect(SetupChecks.installedSkill(home: home) { $0.contains("other-skill") } == nil)
 }
 
+@Test func checkStepIsDoneOnlyWhenEveryCommandPassedAndNeedsAttentionWhenOneFailed() {
+  #expect(SetupChecks().state(of: .check) == .notApplicable)
+  #expect(SetupChecks(xcodeCheck: .passed, javaCheck: .passed).state(of: .check) == .notApplicable)
+  #expect(SetupChecks(xcodeCheck: .passed, javaCheck: .passed, projectCheck: .passed).state(of: .check) == .done)
+  #expect(SetupChecks(xcodeCheck: .passed, projectCheck: .failed).state(of: .check) == .blocked)
+  #expect(SetupChecks(xcodeCheck: .failed).state(of: .check) == .blocked)
+}
+
 @Test func readsXcodeAndJavaVersions() {
   #expect(MachineCheck.xcode("Xcode 26.0\nBuild version 17A324\n") == "Xcode 26.0")
   #expect(

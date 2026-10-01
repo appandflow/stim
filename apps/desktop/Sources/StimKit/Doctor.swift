@@ -24,10 +24,31 @@ public func doctorRemedy(_ fix: String?) -> String? {
   return spans.map { String($0.element) }.first { $0.hasPrefix("stim ") }
 }
 
+extension DoctorReport {
+  /// The findings that need action, as setup items do.
+  public var costFindings: [Finding] { findings.filter { $0.level == "cost" } }
+
+  /// The report `stim doctor --json` printed, or nil when `stdout` is not one.
+  public static func decode(_ stdout: Data) -> DoctorReport? {
+    try? JSONDecoder().decode(DoctorReport.self, from: stdout)
+  }
+}
+
+extension DoctorReport.Finding {
+  /// The `stim doctor --fix` command this finding's fix names, to run in `cwd`; nil when the fix needs project
+  /// judgment or another command.
+  public func repairCommand(cwd: String) -> StimCommand? {
+    guard let words = doctorRemedy(fix)?.split(separator: " ").map(String.init),
+      words.dropFirst().first == "doctor", words.contains("--fix")
+    else { return nil }
+    return StimCommand(Array(words.dropFirst()), cwd: cwd)
+  }
+}
+
 /// Needs-attention items for the doctor findings that need project judgment, one per `cost` finding.
 public func setupItems(_ reports: [DoctorReport]) -> [NeedsAttentionItem] {
   reports.flatMap { report in
-    report.findings.filter { $0.level == "cost" }.map { finding in
+    report.costFindings.map { finding in
       NeedsAttentionItem(
         id: "setup-\(finding.code ?? finding.title):\(report.project)", category: .attention, severity: "warning",
         workspace: report.project, body: "Setup: \(finding.title)", remedy: doctorRemedy(finding.fix))
