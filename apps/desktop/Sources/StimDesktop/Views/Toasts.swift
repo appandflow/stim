@@ -56,6 +56,11 @@ final class ToastCenter: ObservableObject {
       userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
   }
 
+  func release(_ id: Toast.ID) {
+    holds.removeValue(forKey: id)
+    if let toast = toasts.first(where: { $0.id == id }) { schedule(toast) }
+  }
+
   func dismiss(_ id: Toast.ID) {
     timers.removeValue(forKey: id)?.invalidate()
     holds.removeValue(forKey: id)
@@ -139,6 +144,7 @@ private struct ToastCard: View {
       action.perform()
     }
     .onHover { center.hold(toast.id, .pointer, $0) }
+    .onDisappear { center.release(toast.id) }
     .onChange(of: actionFocused) { _, focused in center.hold(toast.id, .focus, focused) }
   }
 }
