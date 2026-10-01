@@ -112,3 +112,90 @@ export function machineReadiness(report: BuildMachineReport): MachineReadiness {
   }
   return { id, name, title: report.reasons?.[0] ?? t`Cannot take builds`, remedy: null, tone: 'error' };
 }
+
+export type PlacementDecision = 'here' | 'offloaded' | 'fell-back';
+
+export interface Placement {
+  at: string;
+  platform: 'ios' | 'android';
+  decision: PlacementDecision;
+  reason: string;
+  machine: string | null;
+  buildMs: number | null;
+  failed: boolean;
+}
+
+export interface OffloadCounts {
+  offloaded: number;
+  offloadedMs: number;
+  savedMs: number;
+  fallbacks: number;
+}
+
+/** The `offload` part of `stim stats --json`: where this Mac's compiling builds ran and why. */
+export interface BuildPlacements {
+  today: { here: number; offloaded: number; fellBack: number };
+  machines: Record<string, { today: OffloadCounts; total: OffloadCounts }>;
+  /** Newest first. */
+  placements: Placement[];
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+function counts(value: unknown): OffloadCounts {
+  const entry = isObject(value) ? value : {};
+  return {
+    offloaded: num(entry.offloaded),
+    offloadedMs: num(entry.offloadedMs),
+    savedMs: num(entry.savedMs),
+    fallbacks: num(entry.fallbacks),
+  };
+}
+
+function placement(value: unknown): Placement[] {
+  if (!isObject(value)) return [];
+  const { at, platform, decision, reason, machine, buildMs } = value;
+  if (typeof at !== 'string' || typeof reason !== 'string') return [];
+  if (platform !== 'ios' && platform !== 'android') return [];
+  if (decision !== 'here' && decision !== 'offloaded' && decision !== 'fell-back') return [];
+  return [
+    {
+      at,
+      platform,
+      decision,
+      reason,
+      machine: typeof machine === 'string' ? machine : null,
+      buildMs: typeof buildMs === 'number' ? buildMs : null,
+      failed: value.failed === true,
+    },
+  ];
+}
+
+/** Reads `offload` from a `stim stats --json` payload; null from a stim that predates it. */
+export function buildPlacements(stats: Record<string, unknown> | null | undefined): BuildPlacements | null {
+  const offload = stats && isObject(stats.offload) ? stats.offload : null;
+  if (!offload) return null;
+  const today = isObject(offload.today) ? offload.today : {};
+  const machines: BuildPlacements['machines'] = {};
+  if (isObject(offload.machines)) {
+    for (const [name, entry] of Object.entries(offload.machines)) {
+      if (isObject(entry)) machines[name] = { today: counts(entry.today), total: counts(entry.total) };
+    }
+  }
+  return {
+    today: { here: num(today.here), offloaded: num(today.offloaded), fellBack: num(today.fellBack) },
+    machines,
+    placements: Array.isArray(offload.placements) ? offload.placements.flatMap(placement) : [],
+  };
+}
+
+/** "Built here", "Built on mini", "Built here after mini". */
+export function placementTitle(entry: Placement): string {
+  const name = entry.machine ? machineName(entry.machine) : null;
+  if (entry.decision === 'here') return t`Built here`;
+  if (entry.decision === 'offloaded') return name ? t`Built on ${name}` : t`Built on a build machine`;
+  return name ? t`Built here after ${name}` : t`Built here after offloading`;
+}

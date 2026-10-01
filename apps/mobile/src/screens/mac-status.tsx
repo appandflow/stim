@@ -29,7 +29,14 @@ import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/machines'
 import { useNow } from '@/hooks/use-now';
 import { useUsageHistory } from '@/hooks/usage-history';
 import { formatBytes, formatMemoryMb } from '@/intl/format';
-import { machineReadiness } from '@/lib/build-machines';
+import {
+  buildPlacements,
+  machineReadiness,
+  placementTitle,
+  type OffloadCounts,
+  type Placement,
+} from '@/lib/build-machines';
+import { clockDuration } from '@/lib/format';
 import { pairingScope } from '@/lib/connection';
 import { budgetRows, minFreeDiskGb, usageCharts, type BudgetRow } from '@/lib/home';
 import {
@@ -73,6 +80,8 @@ export function MacStatus({ id }: { id: string }) {
   const machines = details.kind === 'ready' ? (details.details.buildMachines ?? []).map(machineReadiness) : [];
   const machinesError = details.kind === 'ready' ? details.details.buildMachinesError : undefined;
   const machinesPending = details.kind === 'ready' ? (details.details.buildMachinesPending ?? false) : false;
+  const placements = details.kind === 'ready' ? buildPlacements(details.details.stats) : null;
+  const clients = details.kind === 'ready' ? (details.details.buildClients ?? []) : [];
 
   useEffect(() => {
     if (!connection || !open) return;
@@ -327,6 +336,35 @@ export function MacStatus({ id }: { id: string }) {
         </View>
       ) : null}
 
+      {placements && placements.placements.length > 0 ? (
+        <View style={styles.block}>
+          <Text variant="headline">
+            <Trans>Where builds ran</Trans>
+          </Text>
+          <Text variant="footnote" tone="secondary">
+            {todayLine(placements.today)}
+          </Text>
+          <Card>
+            {placements.placements.slice(0, 5).map((entry, index) => (
+              <View key={`${entry.at}-${index}`} style={[styles.row, index > 0 && styles.separated]}>
+                <PlatformGlyph platform={entry.platform} size={16} color={theme.colors.secondary} />
+                <View style={styles.grow}>
+                  <Text variant="callout" numberOfLines={1}>
+                    {placementTitle(entry)}
+                  </Text>
+                  <Text variant="footnote" tone="secondary" numberOfLines={3}>
+                    {entry.reason}
+                  </Text>
+                </View>
+                <Text variant="footnote" tone="tertiary" style={styles.tabular}>
+                  {placementMeta(entry, now)}
+                </Text>
+              </View>
+            ))}
+          </Card>
+        </View>
+      ) : null}
+
       {machines.length > 0 || machinesError || machinesPending ? (
         <View style={styles.block}>
           <Text variant="headline">
@@ -347,21 +385,60 @@ export function MacStatus({ id }: { id: string }) {
           ) : null}
           {machines.length > 0 ? (
             <Card>
-              {machines.map((machine, index) => (
-                <View key={machine.id} style={[styles.row, index > 0 && styles.separated]}>
-                  <Icon name="desktopcomputer" size={16} color={theme.colors.secondary} />
-                  <View style={styles.grow}>
-                    <Text variant="callout" numberOfLines={1}>
-                      {machine.name}
-                    </Text>
-                    <Text variant="footnote" tone={machine.tone}>
-                      {machineLine(machine.title, machine.remedy)}
-                    </Text>
+              {machines.map((machine, index) => {
+                const offloaded = placements?.machines[machine.id];
+                const last = placements?.placements.find(
+                  (entry) => entry.machine === machine.id && entry.decision !== 'here',
+                );
+                return (
+                  <View key={machine.id} style={[styles.row, index > 0 && styles.separated]}>
+                    <Icon name="desktopcomputer" size={16} color={theme.colors.secondary} />
+                    <View style={styles.grow}>
+                      <Text variant="callout" numberOfLines={1}>
+                        {machine.name}
+                      </Text>
+                      <Text variant="footnote" tone={machine.tone}>
+                        {machineLine(machine.title, machine.remedy)}
+                      </Text>
+                      {offloaded ? (
+                        <Text variant="footnote" tone="secondary">
+                          {offloadLine(offloaded.today, offloaded.total)}
+                        </Text>
+                      ) : null}
+                      {last ? (
+                        <Text variant="footnote" tone="tertiary" numberOfLines={2}>
+                          {placementTitle(last)}: {last.reason}
+                        </Text>
+                      ) : null}
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </Card>
           ) : null}
+        </View>
+      ) : null}
+
+      {clients.length > 0 ? (
+        <View style={styles.block}>
+          <Text variant="headline">
+            <Trans>Builds for other Macs</Trans>
+          </Text>
+          <Card>
+            {clients.map((client, index) => (
+              <View key={client.id} style={[styles.row, index > 0 && styles.separated]}>
+                <Icon name="desktopcomputer" size={16} color={theme.colors.secondary} />
+                <View style={styles.grow}>
+                  <Text variant="callout" numberOfLines={1}>
+                    {client.name}
+                  </Text>
+                  <Text variant="footnote" tone="secondary">
+                    {clientLine(client.today.builds, client.builds, client.failed, client.buildMs)}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </Card>
         </View>
       ) : null}
 
@@ -458,6 +535,37 @@ function buildLine(row: BuildStatsRow): string {
 function savedLabel(ms: number): string {
   const duration = hours(ms);
   return t`${duration} saved`;
+}
+
+function offloadLine(today: OffloadCounts, total: OffloadCounts): string {
+  const todayCount = today.offloaded;
+  const totalCount = total.offloaded;
+  const saved = Math.abs(total.savedMs) >= 60_000 ? hours(Math.abs(total.savedMs)) : null;
+  return [
+    t`${todayCount} offloaded today`,
+    t`${totalCount} in all`,
+    saved ? (total.savedMs > 0 ? t`~${saved} saved` : t`~${saved} slower`) : null,
+    total.fallbacks ? plural(total.fallbacks, { one: '# fallback', other: '# fallbacks' }) : null,
+  ]
+    .filter(Boolean)
+    .join(' \u00B7 ');
+}
+
+function todayLine(today: { here: number; offloaded: number; fellBack: number }): string {
+  const { here, offloaded, fellBack } = today;
+  return t`Today: ${here} here, ${offloaded} on a build machine, ${fellBack} here after trying one.`;
+}
+
+function placementMeta(entry: Placement, now: number): string {
+  const ago = agoLabel(entry.at, now);
+  return [entry.buildMs ? clockDuration(entry.buildMs) : null, ago].filter(Boolean).join('\n');
+}
+
+function clientLine(today: number, builds: number, failed: number, buildMs: number): string {
+  const time = hours(buildMs);
+  return [t`${today} today`, t`${builds} in all`, failed ? t`${failed} failed` : null, t`${time} building`]
+    .filter(Boolean)
+    .join(' \u00B7 ');
 }
 
 function machineLine(title: string, remedy: string | null): string {

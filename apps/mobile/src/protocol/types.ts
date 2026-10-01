@@ -643,7 +643,19 @@ export interface MachineDetails {
   buildMachinesError?: string;
   buildMachinesAt?: string;
   buildMachinesPending?: boolean;
+  /** The builds this Mac ran for each client Mac as a build machine; absent from a server older than it. */
+  buildClients?: BuildClientSummary[];
   measuredAt: string;
+}
+
+export interface BuildClientSummary {
+  id: string;
+  name: string;
+  builds: number;
+  failed: number;
+  buildMs: number;
+  today: { builds: number; failed: number; buildMs: number };
+  lastAt: string;
 }
 
 /** One `offload.machines` entry as `stim doctor --json` reports it. */
