@@ -39,7 +39,6 @@ extension TextVariant {
     return NSFont(name: name, size: size) ?? .systemFont(ofSize: size)
   }
 
-  /// The system text style a variant scales with when the macOS Text size setting changes.
   var scalingStyle: Font.TextStyle {
     switch self {
     case .caption2: .caption2
@@ -83,7 +82,7 @@ private struct StimTextStyle: ViewModifier {
 }
 
 extension View {
-  /// Sets a text style's font and the line spacing that brings its lines to the style's line height, both scaled by the Text size setting.
+  /// Sets a text style's font and the line spacing that brings its lines to the style's line height.
   func textStyle(_ style: TextVariant, weight: Font.Weight? = nil, mono: Bool = false) -> some View {
     modifier(StimTextStyle(style: style, weight: weight, mono: mono))
   }
