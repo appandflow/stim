@@ -27,6 +27,7 @@ struct AppPreferencesView: View {
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
   @EnvironmentObject private var autopilot: AutopilotRunner
+  @EnvironmentObject private var onboarding: Onboarding
   @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
@@ -192,7 +193,8 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Stim executable") {
+      Section("Stim CLI") {
+        stimVersionRow
         HStack {
           TextField("stim on the login shell's PATH", text: $stimExecutable)
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
@@ -204,6 +206,26 @@ struct AppPreferencesView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(Palette.background)
+  }
+
+  @ViewBuilder private var stimVersionRow: some View {
+    if case .compatible(let installed)? = onboarding.report?.stim {
+      LabeledContent("Installed") { Text(installed.description).font(.stim(.body, mono: true)) }
+      if let latest = onboarding.latestStim {
+        LabeledContent("Latest") {
+          HStack(spacing: Space.md) {
+            Text(latest.description).font(.stim(.body, mono: true))
+            if onboarding.stimUpdate != nil {
+              Button("Update", action: onboarding.installStim).buttonStyle(.stim(.primary))
+            }
+          }
+        }
+        if installed < latest, onboarding.stimUpdate == nil {
+          Text("No package manager installed this stim, so update it where it came from.")
+            .foregroundStyle(Palette.tertiary)
+        }
+      }
+    }
   }
 
   private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {

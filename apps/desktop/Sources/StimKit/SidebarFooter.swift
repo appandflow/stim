@@ -1,23 +1,27 @@
 import Foundation
 
 /// The sidebar footer shows one status line at a time. Priority, highest first: `stim` missing or
-/// outdated, critical low disk, a Desktop update, warning-level low disk, then normal.
+/// outdated, critical low disk, a Desktop update, warning-level low disk, a newer `stim`, then normal.
 public enum SidebarFooterStatus: Equatable, Sendable {
   case stimUnavailable(CLICompatibility)
   case diskCritical(freeBytes: Int64)
   case desktopUpdateAvailable
   case diskWarning(freeBytes: Int64)
+  case stimUpdateAvailable(installed: SemanticVersion, latest: SemanticVersion)
   /// `nil` before `Onboarding.check()` reports, when the footer has no version to show yet.
   case normal(SemanticVersion?)
 
   public static func decide(
-    stim: CLICompatibility?, pressure: PressurePlan?, desktopUpdateAvailable: Bool
+    stim: CLICompatibility?, pressure: PressurePlan?, desktopUpdateAvailable: Bool, stimUpdate: SemanticVersion? = nil
   ) -> SidebarFooterStatus {
     if let stim, !stim.isCompatible { return .stimUnavailable(stim) }
     if let pressure, pressure.belowHardFloor { return .diskCritical(freeBytes: pressure.freeBytes) }
     if desktopUpdateAvailable { return .desktopUpdateAvailable }
     if let pressure { return .diskWarning(freeBytes: pressure.freeBytes) }
-    if case .compatible(let version) = stim { return .normal(version) }
+    if case .compatible(let version) = stim {
+      if let stimUpdate { return .stimUpdateAvailable(installed: version, latest: stimUpdate) }
+      return .normal(version)
+    }
     return .normal(nil)
   }
 }

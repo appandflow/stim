@@ -47,6 +47,10 @@ final class Onboarding: ObservableObject {
   @Published private(set) var guideRuns: [StimCommand: ActionRun] = [:]
   @Published var projectFolder: String?
   @Published var installerChoice: PackageManager?
+  /// The newest `stim` the npm registry listed at the last check, from a day-old cache until the next check.
+  @Published private(set) var latestStim: SemanticVersion?
+  private let releases = StimReleaseCache()
+  private var fetchingLatest = false
   private let progress = SetupGuideProgress()
   private var launchDecided = false
   private let environment: Task<[String: String], Never>
@@ -57,6 +61,30 @@ final class Onboarding: ObservableObject {
     self.environment = environment
     self.cli = cli
     self.actions = actions
+    latestStim = releases.latest
+    Task { [weak self] in
+      while !Task.isCancelled {
+        self?.refreshLatestStim()
+        try? await Task.sleep(for: .seconds(3600))
+      }
+    }
+  }
+
+  /// The version to offer the installed `stim`, nil when it is current or no package manager owns it.
+  var stimUpdate: SemanticVersion? {
+    report.flatMap { StimRelease.offer(installed: $0.stim, latest: latestStim, owner: $0.stimOwner) }
+  }
+
+  /// Asks the registry when the last answer is a day old; offline leaves the cached answer and tries again later.
+  func refreshLatestStim() {
+    guard !fetchingLatest, StimRelease.isDue(lastChecked: releases.checkedAt, now: Date()) else { return }
+    fetchingLatest = true
+    Task {
+      defer { fetchingLatest = false }
+      guard let latest = await StimRelease.fetch() else { return }
+      releases.store(latest, at: Date())
+      latestStim = latest
+    }
   }
 
   func check() {

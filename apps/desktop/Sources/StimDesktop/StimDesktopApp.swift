@@ -219,7 +219,9 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines).environmentObject(autopilot)
+      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines)
+        .environmentObject(autopilot)
+        .environmentObject(onboarding)
     }
 
     MenuBarExtra(isInserted: menuBarExtraInserted) {

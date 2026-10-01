@@ -67,6 +67,13 @@ server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
 Notifications and Machine.
 
+Stim Desktop checks the npm registry once a day for a newer `stim`. When the
+`stim` it runs was installed by npm, pnpm or bun and is older, the sidebar
+footer says so and **Settings > App > Stim CLI** has an **Update** button that
+runs that package manager's update command. It never updates by itself, and it
+never offers an update for a `stim` that no package manager installed, such as a
+linked checkout.
+
 ## First steps
 
 Unless you are already set up, the first launch opens a setup guide that
