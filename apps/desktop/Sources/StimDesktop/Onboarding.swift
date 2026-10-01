@@ -12,6 +12,12 @@ final class Onboarding: ObservableObject {
   struct Report: Equatable {
     var stim: CLICompatibility
     var stimPath: String?
+    /// The package manager whose global directory holds the `stim` at `stimPath`; nil for a linked checkout, a
+    /// project-local copy or a missing `stim`.
+    var stimOwner: PackageManager?
+    /// The managers on the login shell's PATH, and the one a fresh install defaults to.
+    var installers: [PackageManager]
+    var defaultInstaller: PackageManager
     /// The executable the launch resolved differs from the one the preferences resolve now.
     var needsRelaunch: Bool
     var server: CLICompatibility?
@@ -43,6 +49,8 @@ final class Onboarding: ObservableObject {
   @Published var guideStep = SetupStep.welcome
   @Published private(set) var guideRuns: [StimCommand: ActionRun] = [:]
   @Published var projectFolder: String?
+  /// The manager picked in the install tabs; nil until the user picks one.
+  @Published var installerChoice: PackageManager?
   private let progress = SetupGuideProgress()
   private var launchDecided = false
   private let environment: Task<[String: String], Never>
@@ -77,6 +85,7 @@ final class Onboarding: ObservableObject {
           ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
           : []
         let node = await SetupChecks.version(of: "node", environment: environment)
+        let packages = await PackageManagerLayout.probe(environment: environment)
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
@@ -90,6 +99,9 @@ final class Onboarding: ObservableObject {
         return Report(
           stim: compatibility,
           stimPath: stim.executable,
+          stimOwner: stim.executable.flatMap { packages.owner(ofExecutable: $0) },
+          installers: packages.installed,
+          defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
           needsRelaunch: compatibility.isCompatible && stim.executable != launched,
           server: serverCompatibility,
           serverPath: server?.executable,
@@ -121,7 +133,14 @@ final class Onboarding: ObservableObject {
   private var home: String { report?.home ?? NSHomeDirectory() }
 
   var installNodeCommand: StimCommand { StimCommand(["install", "node"], cwd: home, program: "brew") }
-  var installCLICommand: StimCommand { StimCommand(["install", "--global", "stim"], cwd: home, program: "npm") }
+  /// The manager a fresh install uses: the tab picked, else the default for this Mac.
+  var installer: PackageManager { installerChoice ?? report?.defaultInstaller ?? .npm }
+  /// Installs `stim`, or updates it with the manager that owns it; nil when `stim` is installed but no package
+  /// manager owns it, as a linked checkout, so there is nothing for the app to update.
+  var installCLICommand: StimCommand? {
+    guard let report, report.stim != .missing else { return installer.installCommand("stim@latest", cwd: home) }
+    return report.stimOwner?.installCommand("stim@latest", cwd: home)
+  }
   /// The skills CLI asks which agents to install to unless `--yes` is given, and the runner has no terminal. Run
   /// from the home folder, its project scope is the user's own agent folders, such as `~/.agents/skills`, so the
   /// skill applies to every project.
@@ -231,8 +250,8 @@ final class Onboarding: ObservableObject {
   }
 
   func installStim() {
-    let title = report?.stim == .missing ? "Install stim" : "Update stim"
-    install(title, package: "stim@latest")
+    guard let command = installCLICommand else { return }
+    run(report?.stim == .missing ? "Install stim" : "Update stim", command)
   }
 
   func installServer() {
@@ -291,7 +310,10 @@ final class Onboarding: ObservableObject {
   }
 
   private func install(_ title: String, package: String, then: ((Int32?) -> Void)? = nil) {
-    let command = StimCommand(["install", "--global", package], cwd: NSHomeDirectory(), program: "npm")
+    run(title, PackageManager.npm.installCommand(package, cwd: NSHomeDirectory()), then: then)
+  }
+
+  private func run(_ title: String, _ command: StimCommand, then: ((Int32?) -> Void)? = nil) {
     actions.run(title, steps: [command], key: Self.actionKey) { [weak self] run in
       then?(run.exitStatus)
       self?.check()

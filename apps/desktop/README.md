@@ -866,10 +866,16 @@ replaces its card. With the main window closed, the link reopens it.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
-offers **Install stim** or **Update stim**, which runs `npm install --global
-stim@latest` in the activity sheet, and **Choose stim executable…**. `npm` is
-the one next to the resolved `stim` when there is one, otherwise the first on
-the login shell's `PATH`. A newly found `stim` at another path asks for a
+offers **Install stim** or **Update stim**, and **Choose stim executable…**.
+**Update stim** runs the package manager that owns the resolved `stim`: the
+app resolves the `stim` file through symbolic links and pnpm shims and checks
+it against `npm prefix -g`, `pnpm root -g` and `bun pm bin -g`, and runs
+`npm install --global`, `pnpm add --global` or `bun add --global` with
+`stim@latest`. A `stim` outside every manager's global directory, such as a
+linked checkout or a project-local copy, gets no Run button and a note, since
+the app cannot tell what installed it. **Install stim** uses the manager picked
+in the setup guide's tabs; the banner uses the default, pnpm or bun when its
+global bin directory is on the login shell's `PATH`, else npm. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
 served, `stim-server --version` gets the same check, installing
 `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
@@ -892,9 +898,13 @@ Later**.
 1. **Welcome**.
 2. **Install the CLI**: `node --version` from the login shell must report
    22.12.0 or later. Without it, the step offers `brew install node` when
-   `brew` is on the `PATH`, else a link to nodejs.org. Then it runs
-   `npm install --global stim` in the home folder and shows the `stim` found
-   afterwards with its version. A `stim` the app did not resolve at launch
+   `brew` is on the `PATH`, else a link to nodejs.org. Then it
+   shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
+   (the default is pnpm or bun when its global bin directory is on the `PATH`,
+   else npm), and runs `npm install --global stim`, `pnpm add --global stim`
+   or `bun add --global stim` in the home folder, then shows the `stim` found
+   afterwards with its version. A `stim` that no manager owns shows a note
+   instead of a Run button. A `stim` the app did not resolve at launch
    asks for a restart, which reopens the guide on the same step. Checks use
    the `PATH` captured at launch, so a Node.js installed into a new
    directory, as nvm does, needs a restart to be found.

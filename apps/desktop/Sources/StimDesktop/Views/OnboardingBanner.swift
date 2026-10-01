@@ -55,9 +55,16 @@ struct OnboardingBanner: View {
       Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(.stim(.headline))
       Text("Stim Desktop needs stim \(minimum) or later to show and drive your workspaces.")
         .foregroundStyle(Palette.secondary)
-      disclosure { Text(detail(report.stim, name: "stim", path: report.stimPath)) }
+      if !missing, report.stimOwner == nil {
+        Text("No package manager installed this stim, so update it where it came from, or choose another.")
+          .foregroundStyle(Palette.secondary)
+      }
+      disclosure { Text(detail(report.stim, name: "stim", path: report.stimPath, manager: onboarding.installer)) }
     } buttons: {
-      runButton(missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
+      if onboarding.installCLICommand != nil {
+        runButton(
+          missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
+      }
       Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
     }
   }
@@ -86,7 +93,7 @@ struct OnboardingBanner: View {
           "stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later."
         )
         .foregroundStyle(Palette.secondary)
-        disclosure { Text(detail(server, name: "stim-server", path: report.serverPath)) }
+        disclosure { Text(detail(server, name: "stim-server", path: report.serverPath, manager: .npm)) }
       } buttons: {
         runButton(
           missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
@@ -123,10 +130,13 @@ struct OnboardingBanner: View {
       "Android: Stim boots owned emulators without a window and shows them here. One already running keeps its window until it next boots.",
   ]
 
-  private func detail(_ compatibility: CLICompatibility, name: String, path: String?) -> String {
+  private func detail(_ compatibility: CLICompatibility, name: String, path: String?, manager: PackageManager)
+    -> String
+  {
     switch compatibility {
     case .missing:
-      return "No \(name) on the login shell's PATH. Installing runs npm install --global and needs Node.js 22.12 or later."
+      return
+        "No \(name) on the login shell's PATH. Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
     case .outdated(let found?):
       return "\(abbreviatingHome(path ?? name)) reports \(found)."
     case .outdated(nil):
