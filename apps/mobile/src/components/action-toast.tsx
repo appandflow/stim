@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
-import { useAnnounce, useScreenReaderEnabled } from '@/hooks/screen-reader';
+import { useScreenReaderEnabled } from '@/hooks/screen-reader';
 
 export interface Toast {
   kind: 'pending' | 'success' | 'error';
@@ -18,7 +18,6 @@ export function ActionToast({ toast, onDismiss }: { toast: Toast | null; onDismi
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const screenReader = useScreenReaderEnabled();
-  useAnnounce(toast?.message);
   useEffect(() => {
     if (!toast || toast.kind === 'pending' || screenReader) return;
     const timer = setTimeout(onDismiss, DISMISS_MS[toast.kind]);

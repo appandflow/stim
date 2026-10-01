@@ -50,7 +50,7 @@ import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream, useReplayAt } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
-import { useAnnounce } from '@/hooks/screen-reader';
+import { useAnnounce, useScreenReaderEnabled } from '@/hooks/screen-reader';
 import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
@@ -74,6 +74,7 @@ const DATA_SAVER_MAX_EDGE = 640;
 const TYPING_BAR_HEIGHT = 56;
 const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
+const ROTATE_NOTE_SCREEN_READER_MS = 16_000;
 const NOTE_INSET = 64;
 const SIDE_WIDTH = 208;
 const CONTROLS_FADE_MS = 200;
@@ -235,12 +236,13 @@ export function DeviceView({
   });
   const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
   const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
-  useAnnounce(rotateNote?.text);
+  useAnnounce(rest ? rotateNote?.text : null);
+  const screenReader = useScreenReaderEnabled();
   useEffect(() => {
     if (!rotateNote) return;
-    const timer = setTimeout(() => setRotateNote(null), ROTATE_NOTE_MS);
+    const timer = setTimeout(() => setRotateNote(null), screenReader ? ROTATE_NOTE_SCREEN_READER_MS : ROTATE_NOTE_MS);
     return () => clearTimeout(timer);
-  }, [rotateNote]);
+  }, [rotateNote, screenReader]);
   const orientation = orientationOf(source);
   const [rotating, setRotating] = useState<'landscape' | 'portrait' | null>(null);
   if (rotating && orientation && orientation !== rotating) {
