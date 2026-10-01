@@ -527,7 +527,7 @@ struct SidebarFooter: View {
   private var status: SidebarFooterStatus {
     SidebarFooterStatus.decide(
       stim: onboarding.report?.stim, pressure: autopilot.pressure,
-      desktopUpdateAvailable: updater.isAvailable && updater.updateAvailable)
+      desktopUpdateAvailable: updater.isAvailable && updater.updateAvailable, stimUpdate: onboarding.stimUpdate)
   }
 
   private var drivenDevices: [DrivenDevice] { DrivenDevice.all(in: store.payload?.environments ?? []) }
@@ -567,6 +567,14 @@ struct SidebarFooter: View {
             : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
         )
       }
+    case .stimUpdateAvailable(let installed, let latest):
+      Button(action: onboarding.installStim) {
+        statusLabel(dot: Palette.primary, text: "stim \(latest.description) available")
+      }
+      .buttonStyle(.hoverRow(outset: Space.sm))
+      .help(
+        "stim \(installed.description) is installed \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
+      )
     case .diskCritical(let freeBytes):
       Button {
         selection = .machine

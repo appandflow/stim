@@ -40,6 +40,22 @@ private let warning = PressurePlan(
         == .diskWarning(freeBytes: warning.freeBytes))
   }
 
+  @Test func aNewerStimShowsBelowEveryOtherNotice() {
+    let newer = SemanticVersion("1.14.0")!
+    #expect(
+      SidebarFooterStatus.decide(stim: compatible, pressure: nil, desktopUpdateAvailable: false, stimUpdate: newer)
+        == .stimUpdateAvailable(installed: SemanticVersion("1.11.0")!, latest: newer))
+    #expect(
+      SidebarFooterStatus.decide(stim: compatible, pressure: nil, desktopUpdateAvailable: true, stimUpdate: newer)
+        == .desktopUpdateAvailable)
+    #expect(
+      SidebarFooterStatus.decide(stim: compatible, pressure: warning, desktopUpdateAvailable: false, stimUpdate: newer)
+        == .diskWarning(freeBytes: warning.freeBytes))
+    #expect(
+      SidebarFooterStatus.decide(stim: outdated, pressure: nil, desktopUpdateAvailable: false, stimUpdate: newer)
+        == .stimUnavailable(outdated))
+  }
+
   @Test func normalShowsTheCheckedCLIVersion() {
     #expect(
       SidebarFooterStatus.decide(stim: compatible, pressure: nil, desktopUpdateAvailable: false)
