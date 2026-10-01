@@ -99,6 +99,9 @@ function RootLayoutContent() {
                       headerTitleStyle: { color: colors.text },
                       headerBackButtonDisplayMode: 'minimal',
                       headerShadowVisible: false,
+                      headerTransparent: Platform.OS === 'ios',
+                      headerBlurEffect:
+                        Platform.OS === 'ios' && Number(Platform.Version) < 26 ? 'systemMaterial' : undefined,
                     }}
                   >
                     <Stack.Screen name="index" options={{ title: t`Stim` }} />
