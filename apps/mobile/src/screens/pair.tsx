@@ -172,7 +172,7 @@ export function Pair() {
               setError(null);
               setStep(step.kind === 'scan' ? { kind: 'manual' } : { kind: 'scan' });
             }}
-            hitSlop={8}
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
           >
             <Text variant="body" weight="medium" tone="brand" style={styles.centered}>
               {step.kind === 'scan' ? t`Enter the endpoint and token instead` : t`Scan a QR code instead`}
@@ -267,7 +267,7 @@ function Field({
           <Touch
             onPress={() => setRevealed((r) => !r)}
             accessibilityLabel={revealed ? t`Hide token` : t`Show token`}
-            hitSlop={8}
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
             style={styles.reveal}
           >
             <Icon name={revealed ? 'eye.slash' : 'eye'} size={20} color={theme.colors.secondary} />

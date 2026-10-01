@@ -25,6 +25,8 @@ import type { ReplayMarker, ReplayRate } from '@/protocol/types';
 
 const MARKER_REACH = 14;
 const TRACK_HEIGHT = 44;
+const CONTROL_HIT_SLOP = { top: 8, bottom: 8, left: 4, right: 4 };
+const LIVE_HIT_SLOP = { top: 8, bottom: 8, left: 6, right: 6 };
 const textShadow = {
   textShadowColor: 'rgba(0, 0, 0, 0.7)',
   textShadowOffset: { width: 0, height: 1 },
@@ -100,7 +102,7 @@ export function ReplayBar({
       accessibilityLabel={liveLabel}
       accessibilityState={{ selected: isLive, disabled: !replay || !canGoLive }}
       style={styles.live(isLive)}
-      hitSlop={6}
+      hitSlop={LIVE_HIT_SLOP}
     >
       <View style={styles.liveDot(isLive)} />
       <Text variant="caption" weight="semibold" style={styles.liveText(isLive)}>
@@ -224,7 +226,7 @@ export function ReplayBar({
           accessibilityState={{ disabled: !previousAction }}
           defaultOpacity={previousAction ? 1 : theme.opacity.disabled}
           style={styles.round}
-          hitSlop={4}
+          hitSlop={CONTROL_HIT_SLOP}
         >
           <Icon name="backward.end.fill" size={14} color={theme.media.text} />
         </Touch>
@@ -233,7 +235,7 @@ export function ReplayBar({
           accessibilityRole="button"
           accessibilityLabel={showsPause ? t`Pause` : t`Play`}
           style={styles.round}
-          hitSlop={4}
+          hitSlop={CONTROL_HIT_SLOP}
         >
           <Text weight="semibold" style={styles.mediaText}>
             {showsPause ? '\u275A\u275A' : '\u25B6'}
@@ -247,7 +249,7 @@ export function ReplayBar({
           accessibilityState={{ disabled: !nextAction }}
           defaultOpacity={nextAction ? 1 : theme.opacity.disabled}
           style={styles.round}
-          hitSlop={4}
+          hitSlop={CONTROL_HIT_SLOP}
         >
           <Icon name="forward.end.fill" size={14} color={theme.media.text} />
         </Touch>
@@ -260,7 +262,7 @@ export function ReplayBar({
           importantForAccessibility={isLive ? 'no-hide-descendants' : 'auto'}
           defaultOpacity={isLive ? 0 : 1}
           style={styles.round}
-          hitSlop={4}
+          hitSlop={CONTROL_HIT_SLOP}
         >
           <Text variant="caption" weight="semibold" style={styles.mediaText}>
             {t`${speed}x`}
@@ -291,6 +293,19 @@ export function ReplayBar({
           pointerEvents="none"
           style={[styles.played, { left: footageFrom * width, width: Math.max(0, position - footageFrom) * width }]}
         />
+        <View
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+          accessible
+          accessibilityRole="adjustable"
+          accessibilityLabel={t`Recording timeline`}
+          accessibilityValue={{ text: at !== null ? replayLabel(at, now) : t`Live` }}
+          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+          onAccessibilityAction={(event) => {
+            const step = event.nativeEvent.actionName === 'increment' ? 0.05 : -0.05;
+            seekTo(timeAt(track, Math.min(1, Math.max(0, position + step))), 0);
+          }}
+        />
         {markers.map((marker, index) => (
           <View
             key={`${index}-${marker.at}`}
@@ -317,19 +332,7 @@ export function ReplayBar({
             />
           </View>
         ))}
-        <View
-          pointerEvents="none"
-          style={[styles.thumb, { left: position * width - 7 }]}
-          accessible
-          accessibilityRole="adjustable"
-          accessibilityLabel={t`Recording timeline`}
-          accessibilityValue={{ text: at !== null ? replayLabel(at, now) : t`Live` }}
-          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
-          onAccessibilityAction={(event) => {
-            const step = event.nativeEvent.actionName === 'increment' ? 0.05 : -0.05;
-            seekTo(timeAt(track, Math.min(1, Math.max(0, position + step))), 0);
-          }}
-        />
+        <View pointerEvents="none" style={[styles.thumb, { left: position * width - 7 }]} />
       </View>
     </View>
   );

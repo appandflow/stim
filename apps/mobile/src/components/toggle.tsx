@@ -31,6 +31,7 @@ export function Toggle({
       accessibilityRole="switch"
       accessibilityState={{ checked: on, disabled }}
       accessibilityLabel={count === undefined ? undefined : `${label}, ${count}`}
+      hitSlop={{ top: 8, bottom: 8 }}
       style={styles.toggle(on)}
     >
       {icon}

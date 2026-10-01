@@ -268,6 +268,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.lg,
     paddingHorizontal: theme.space.lg,
     paddingVertical: theme.space.md,
+    minHeight: 44,
     borderRadius: theme.radius.card,
     borderCurve: 'continuous',
   },
@@ -281,6 +282,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerLeft: {
     flex: 1,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.lg,

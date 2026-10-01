@@ -58,7 +58,7 @@ export function Button({
       accessibilityLabel={accessibilityLabel ?? title}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ busy: loading }}
-      hitSlop={filled ? undefined : theme.space.md}
+      hitSlop={filled ? undefined : { top: 14, bottom: 14, left: theme.space.md, right: theme.space.md }}
       style={[styles.button(variant, size), style]}
     >
       {loading ? (
