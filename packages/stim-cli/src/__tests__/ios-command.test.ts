@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -6555,6 +6555,38 @@ describe('run statistics', () => {
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a compiling run with a paired build machine records where it built and why', async () => {
+    reserve();
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    const credential = {
+      machine: 'mini',
+      nodeId: 'nMini',
+      dnsName: 'mini.tail1.ts.net',
+      deviceId: 'ab12',
+      deviceToken: 'secret',
+      state: 'approved',
+      requestedAt: '2026-09-01T00:00:00.000Z',
+    };
+    writeFileSync(join(tmpHome, 'build-machines.json'), JSON.stringify({ version: 1, machines: [credential] }));
+    process.env.STIM_OFFLOAD_MODE = 'off';
+    const { runs, recordStats } = recorder();
+    try {
+      await run({}, { recordStats });
+    } finally {
+      delete process.env.STIM_OFFLOAD_MODE;
+    }
+
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
+  });
+
+  test('a run with no paired build machine records no placement', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await run({}, { recordStats });
+
+    expect(runs[0]?.run).not.toHaveProperty('placement');
   });
 
   test('a run that starts booting its device is recorded as a device setup', async () => {

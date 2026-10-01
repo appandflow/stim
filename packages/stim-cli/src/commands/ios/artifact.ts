@@ -107,7 +107,7 @@ interface IosArtifactRequest {
     note: (line: string) => void;
     logWriter: () => NdjsonWriter;
     estimates: () => RunEstimates;
-    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs'>;
+    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs' | 'setPlacement'>;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason) => void;
     place: (remote: { host: string; phase: string } | null) => void;
@@ -268,6 +268,8 @@ export async function acquireIosArtifact(
   let cacheHit: CacheHitLevel = false;
   let offloadedTo: string | null = null;
   let offloadFallback: string | null = null;
+  let fallbackMachine: string | null = null;
+  let hereReason: string | null = null;
   const fallBack = (reason: string, line: string = reason) => {
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
@@ -682,8 +684,8 @@ export async function acquireIosArtifact(
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
     const mode = offloadMode();
-    const machines = mode === 'off' ? [] : pairedMachines();
-    if (mode === 'off' || machines.length === 0) return null;
+    const machines = pairedMachines();
+    if (machines.length === 0) return null;
     const runtime = physical || remoteDestination || release ? null : simulatorRuntime(udid);
     const unsupported = physical
       ? 'device builds build here'
@@ -699,7 +701,8 @@ export async function acquireIosArtifact(
     const here = machineCapacity();
     const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported });
     if (!placement.offload) {
-      phase('build', `placement: here (${placement.reason})`);
+      hereReason = placement.reason;
+      if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
     return { mode, here, reason: placement.reason, runtime: runtime!, machines };
@@ -721,6 +724,7 @@ export async function acquireIosArtifact(
       machines: candidate.machines,
     });
     if (typeof choice === 'string') {
+      if (candidate.machines.length === 1) fallbackMachine = candidate.machines[0]!.machine;
       fallBack(choice);
       return null;
     }
@@ -730,7 +734,14 @@ export async function acquireIosArtifact(
   }
 
   /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
-  async function compileElsewhere({ choice, runtime }: { choice: OffloadChoice; runtime: string }): Promise<boolean> {
+  async function compileElsewhere({
+    choice,
+    candidate,
+  }: {
+    choice: OffloadChoice;
+    candidate: Candidate;
+  }): Promise<boolean> {
+    const runtime = candidate.runtime;
     if (!storeKey || !storeHash) return false;
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
@@ -776,6 +787,7 @@ export async function acquireIosArtifact(
     const prepared = stored ? await installableCachedApp(stored) : null;
     if (!outcome.ok || !prepared) {
       const why = reason ?? 'the stored app is not installable';
+      fallbackMachine = choice.machine;
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`);
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
@@ -783,6 +795,12 @@ export async function acquireIosArtifact(
     const { timings } = outcome;
     appPath = prepared;
     offloadedTo = outcome.machine;
+    stats.setPlacement({
+      decision: 'offloaded',
+      machine: outcome.machine,
+      reason: `${candidate.reason}${placementLoad(choice)}`,
+      buildMs: timings.totalMs,
+    });
     phase(
       'build',
       `built on ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
@@ -935,12 +953,21 @@ export async function acquireIosArtifact(
         if (!storeKey)
           fallBack('no cache key to store the app under', 'offload failed: no cache key to store the app under');
         const choice = storeKey ? await chooseMachine(offload) : null;
-        if (!choice || !(await compileElsewhere({ choice, runtime: offload.runtime }))) await takeBuildSlot();
+        if (!choice || !(await compileElsewhere({ choice, candidate: offload }))) await takeBuildSlot();
       }
 
       if (!appPath) {
         if (!offload) explainMiss(rekeyedBy);
         step('compile');
+        if (offload) {
+          stats.setPlacement({
+            decision: 'fell-back',
+            reason: offloadFallback ?? 'offload failed',
+            ...(fallbackMachine ? { machine: fallbackMachine } : {}),
+          });
+        } else if (hereReason) {
+          stats.setPlacement({ decision: 'here', reason: hereReason });
+        }
         phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
         const result = await d.buildIos({
           root,

@@ -363,7 +363,10 @@ builds on the machine, fails the fingerprint check there and builds here, so
 set `offload.mode` to `off` for it. The `--json` payload and `lastBuilds` carry
 `offloadedTo`, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and
-`stim stats` counts offloaded runs apart from cold runs.
+`stim stats` counts offloaded runs apart from cold runs and keeps where each
+compiling build ran and why (see [`stats`](./commands.md#stats)). On the
+build machine, stim-server's `machine.details` reports the builds it ran for
+each client Mac.
 
 On the build machine, `offload.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,

@@ -24,7 +24,15 @@ import { homedir, tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { loadConfig, saveConfig, setDevice, setProjectSetting, upsertProject } from '../workspace/config.ts';
+import {
+  loadConfig,
+  saveConfig,
+  setDevice,
+  setProjectSetting,
+  upsertProject,
+  writeConfigSetting,
+} from '../workspace/config.ts';
+import { buildMachinesFile } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -5893,6 +5901,29 @@ describe('run statistics', () => {
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a compiling run with a paired build machine records where it built and why', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    const credential = {
+      machine: 'mini',
+      nodeId: 'nMini',
+      dnsName: 'mini.tail1.ts.net',
+      deviceId: 'ab12',
+      deviceToken: 'secret',
+      state: 'approved',
+      requestedAt: '2026-09-01T00:00:00.000Z',
+    };
+    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
+    process.env.STIM_OFFLOAD_MODE = 'off';
+    const { runs, recordStats } = recorder();
+    try {
+      expect((await harness({ recordStats }).run()).ok).toBe(true);
+    } finally {
+      delete process.env.STIM_OFFLOAD_MODE;
+    }
+
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
   });
 
   test('the run enters each phase at its real step, and a cache hit skips compile', async () => {
