@@ -7,13 +7,14 @@ import SwiftUI
 struct SetupIllustration: View {
   var step: SetupStep
   var complete = false
+  var stimVersion: String?
 
   var body: some View {
     Group {
       switch step {
       case .welcome: JarArt(showsCheck: false)
       case .done: JarArt(showsCheck: complete)
-      case .cli: TerminalArt()
+      case .cli: TerminalArt(version: stimVersion)
       case .skill: SkillArt()
       case .notifications: NotificationArt()
       case .check: DoctorArt()
@@ -102,12 +103,15 @@ private struct JarArt: View {
 }
 
 private struct TerminalArt: View {
-  private static let lines = ["$ npm install --global stim", "added 1 package", "$ stim --version"]
+  var version: String?
+  private var lines: [String] {
+    ["$ npm install --global stim", "added 1 package", "$ stim --version", version ?? "1.0.0"]
+  }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var typed = 0
   @State private var cursorOn = true
 
-  private var total: Int { Self.lines.reduce(0) { $0 + $1.count } }
+  private var total: Int { lines.reduce(0) { $0 + $1.count } }
 
   var body: some View {
     ZStack {
@@ -148,7 +152,7 @@ private struct TerminalArt: View {
         for count in 0...total {
           typed = count
           cursorOn = true
-          try? await Task.sleep(for: .milliseconds(Self.lines[0].count > count ? 55 : 30))
+          try? await Task.sleep(for: .milliseconds(lines[0].count > count ? 55 : 30))
         }
         for _ in 0..<6 {
           try? await Task.sleep(for: .milliseconds(450))
@@ -161,7 +165,7 @@ private struct TerminalArt: View {
   private var visibleLines: [String] {
     var left = typed
     var out: [String] = []
-    for line in Self.lines {
+    for line in lines {
       guard left > 0 || out.isEmpty else { break }
       out.append(String(line.prefix(left)))
       left -= min(left, line.count)

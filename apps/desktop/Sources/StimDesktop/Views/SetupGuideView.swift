@@ -12,6 +12,10 @@ struct SetupGuideView: View {
 
   private var step: SetupStep { onboarding.guideStep }
   private var setup: SetupChecks { onboarding.setup }
+  private var installedVersion: String? {
+    if case .compatible(let version)? = onboarding.report?.stim { return "\(version)" }
+    return nil
+  }
   private var busy: Bool { actions.active(for: Onboarding.actionKey) != nil }
 
   var body: some View {
@@ -22,7 +26,8 @@ struct SetupGuideView: View {
         ScrollViewReader { proxy in
           ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
-              SetupIllustration(step: step, complete: setup.isComplete)
+              SetupIllustration(
+                step: step, complete: setup.isComplete, stimVersion: installedVersion)
               content
               Color.clear.frame(height: 0).id(Self.end)
             }
