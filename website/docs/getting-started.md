@@ -153,8 +153,9 @@ and build-miss behavior.
 
 ## Run work in parallel
 
-The current checkout is the default. An agent creates a separate worktree only
-when the task needs isolation or parallel work, or when you ask for one:
+An agent works in a separate worktree by default. It works in the current
+checkout only when you ask for that, or when the task depends on your
+uncommitted changes there:
 
 <StimTabs
 code={`git worktree add -b feature-name ../feature-name HEAD
