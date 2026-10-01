@@ -52,11 +52,17 @@ function materialSymbol(name: IconName, color: string): string {
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 }
 
+const HIDDEN = {
+  accessible: false,
+  accessibilityElementsHidden: true,
+  importantForAccessibility: 'no',
+} as const;
+
 /** An SF Symbol on iOS and the matching Material Symbol on Android. */
 export function Icon({ name, size, color }: { name: IconName; size: number; color: string }) {
   const style = { width: size, height: size };
   if (Platform.OS === 'ios') {
-    return <Image source={`sf:${name}`} tintColor={color} style={style} contentFit="contain" />;
+    return <Image source={`sf:${name}`} tintColor={color} style={style} contentFit="contain" {...HIDDEN} />;
   }
-  return <Image source={{ uri: materialSymbol(name, color) }} style={style} contentFit="contain" />;
+  return <Image source={{ uri: materialSymbol(name, color) }} style={style} contentFit="contain" {...HIDDEN} />;
 }
