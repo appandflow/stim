@@ -15,35 +15,6 @@ struct StatusDot: View {
   }
 }
 
-/// A worktree's git state for a sidebar row: the uncommitted count after a plus-minus sign, arrows for commits ahead
-/// and behind, and "merged". Shows nothing for a clean branch level with its upstream.
-struct GitIndicator: View {
-  var git: WorktreeGit?
-
-  var body: some View {
-    if let git, git.isNotable {
-      HStack(spacing: Space.xs) {
-        if git.uncommitted > 0 {
-          Text("\u{00B1}\(git.uncommitted)").foregroundStyle(Palette.secondary)
-        }
-        if let arrows = git.arrows { Text(arrows).foregroundStyle(Palette.secondary) }
-        if git.mergedInto != nil {
-          Text("merged")
-            .foregroundStyle(Palette.primary)
-            .padding(.horizontal, Space.xs)
-            .background(RoundedRectangle(cornerRadius: Radius.small).fill(Palette.primary.opacity(Opacity.tint)))
-        }
-      }
-      .font(.stim(.caption2, weight: .semibold))
-      .monospacedDigit()
-      .fixedSize()
-      .help(git.summary)
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel(git.summary)
-    }
-  }
-}
-
 /// The workspace's memory from `stim status`: its processes' footprint, or a fixed estimate as `source` says.
 struct MemoryPill: View {
   var mb: Int

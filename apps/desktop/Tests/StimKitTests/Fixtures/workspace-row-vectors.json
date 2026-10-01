@@ -1,0 +1,1042 @@
+{
+  "now": "2026-09-30T12:00:00.000Z",
+  "cases": [
+    {
+      "name": "a running build reads Building, even while an agent drives a device",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-30T11:59:00.000Z",
+          "phaseStartedAt": "2026-09-30T11:59:30.000Z",
+          "outcome": "cold",
+          "expectedMs": null,
+          "expectedPhaseMs": null,
+          "basis": 0
+        },
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-30T11:55:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        }
+      },
+      "status": {
+        "kind": "building",
+        "text": "Building iOS",
+        "label": "Building iOS",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS",
+        "drivers": "agent-device",
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a driven workspace reads how long its most recently started driver has driven",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-30T11:30:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        },
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "state": "detected",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "maestro",
+              "pid": 1,
+              "since": "2026-09-30T11:56:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        }
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven 4m",
+        "label": "Driven by an agent for 4 minutes",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS, Android",
+        "drivers": "agent-device, maestro",
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a driver with no start reads Driven",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device"
+            },
+            "basis": []
+          }
+        }
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven",
+        "label": "Driven by an agent",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS",
+        "drivers": "agent-device",
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a workspace held only by a leased phone reads Running",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "physicalDevices": [
+          {
+            "platform": "ios",
+            "slot": "default",
+            "id": "PHONE-1",
+            "name": "iPhone",
+            "model": "iPhone 17",
+            "owned": false,
+            "physical": true,
+            "connection": "connected",
+            "lease": {
+              "holder": "h",
+              "kind": "declared",
+              "grantedAt": null,
+              "expiresAt": "2026-09-30T13:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS device",
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a workspace held only by EAS sessions reads Running and counts them",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "remoteDevices": [
+          {
+            "platform": "ios",
+            "backend": "eas",
+            "sessionId": "a",
+            "state": "running",
+            "startedAt": "2026-09-30T11:55:00.000Z"
+          },
+          {
+            "platform": "ios",
+            "backend": "eas",
+            "sessionId": "b",
+            "state": "running",
+            "startedAt": "2026-09-30T11:55:00.000Z"
+          }
+        ]
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 2
+      }
+    },
+    {
+      "name": "a live workspace with nothing driven reads Running",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted"
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS",
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "warming reads how long it has warmed",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "phase": "warming",
+        "phaseSince": "2026-09-30T11:57:00.000Z",
+        "warmStep": "refresh"
+      },
+      "status": {
+        "kind": "warming",
+        "text": "Warming 3m",
+        "label": "Warming for 3 minutes",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "warming without a start reads Warming",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "phase": "warming"
+      },
+      "status": {
+        "kind": "warming",
+        "text": "Warming",
+        "label": "Warming",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a warmed workspace nothing has run in reads Ready",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "phase": "ready",
+        "phaseSince": "2026-09-30T11:40:00.000Z"
+      },
+      "status": {
+        "kind": "ready",
+        "text": "Ready",
+        "label": "Ready",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "idle reads how long ago Metro stopped",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "phase": "idle",
+        "metro": {
+          "port": 8081,
+          "running": false,
+          "lastStop": {
+            "reason": "stop",
+            "at": "2026-09-30T11:15:00.000Z"
+          }
+        }
+      },
+      "status": {
+        "kind": "idle",
+        "text": "Idle 45m",
+        "label": "Idle for 45 minutes",
+        "tone": "tertiary"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "idle speaks hours and minutes",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8081,
+          "running": false,
+          "lastStop": {
+            "reason": "idle",
+            "at": "2026-09-30T10:55:00.000Z"
+          }
+        }
+      },
+      "status": {
+        "kind": "idle",
+        "text": "Idle 1h05m",
+        "label": "Idle for 1 hour 5 minutes",
+        "tone": "tertiary"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "idle with no Metro stop reads Idle",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": []
+      },
+      "status": {
+        "kind": "idle",
+        "text": "Idle",
+        "label": "Idle",
+        "tone": "tertiary"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "errors come first, and a failed build shows while the workspace is live",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": ["w"],
+        "logs": {
+          "dir": "/l",
+          "errorsSinceMarker": 3
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:59:59.000Z",
+            "finishedAt": "2026-09-27T12:00:00.000Z"
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [
+        {
+          "kind": "errors",
+          "text": "3 errors",
+          "tone": "error"
+        },
+        {
+          "kind": "build-failed",
+          "text": "iOS build failed",
+          "tone": "error"
+        },
+        {
+          "kind": "warnings",
+          "text": "1 warning",
+          "tone": "warning"
+        }
+      ],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "an idle workspace keeps a failed build for a day",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-30T11:57:59.000Z",
+            "finishedAt": "2026-09-30T11:58:00.000Z"
+          }
+        }
+      },
+      "status": {
+        "kind": "idle",
+        "text": "Idle",
+        "label": "Idle",
+        "tone": "tertiary"
+      },
+      "problems": [
+        {
+          "kind": "build-failed",
+          "text": "iOS build failed",
+          "tone": "error"
+        }
+      ],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "an idle workspace drops a failed build after a day",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-29T10:59:59.000Z",
+            "finishedAt": "2026-09-29T11:00:00.000Z"
+          }
+        }
+      },
+      "status": {
+        "kind": "idle",
+        "text": "Idle",
+        "label": "Idle",
+        "tone": "tertiary"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a platform that is building again drops its failed build",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-30T11:59:00.000Z",
+          "phaseStartedAt": "2026-09-30T11:59:30.000Z",
+          "outcome": "cold",
+          "expectedMs": null,
+          "expectedPhaseMs": null,
+          "basis": 0
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-30T11:57:59.000Z",
+            "finishedAt": "2026-09-30T11:58:00.000Z"
+          }
+        }
+      },
+      "status": {
+        "kind": "building",
+        "text": "Building iOS",
+        "label": "Building iOS",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a closed app, failing CI and an unhealthy supervisor follow the errors",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "logs": {
+          "dir": "/l",
+          "errorsSinceMarker": 1
+        },
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.app",
+            "state": "stopped"
+          }
+        },
+        "supervisor": {
+          "pid": 1,
+          "mode": "metro",
+          "startedAt": "2026-09-30T11:50:00.000Z",
+          "healthy": false
+        },
+        "worktree": {
+          "path": "/w",
+          "branch": "feat/x",
+          "pullRequest": {
+            "number": 12,
+            "url": "https://github.com/o/r/pull/12",
+            "title": "x",
+            "state": "open",
+            "checks": {
+              "passing": 3,
+              "failing": 1,
+              "pending": 0
+            }
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [
+        {
+          "kind": "errors",
+          "text": "1 error",
+          "tone": "error"
+        },
+        {
+          "kind": "app-closed",
+          "text": "iOS app closed",
+          "tone": "error"
+        },
+        {
+          "kind": "ci-failing",
+          "text": "CI failing",
+          "tone": "error"
+        },
+        {
+          "kind": "supervisor",
+          "text": "Supervisor unhealthy",
+          "tone": "warning"
+        }
+      ],
+      "devices": {
+        "names": "iOS",
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "warnings count as issues in red when a status issue is an error",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "memoryMb": 0,
+        "warnings": ["a", "b"],
+        "issues": [
+          {
+            "code": "port-not-ours",
+            "severity": "error",
+            "message": "m",
+            "remedy": "r",
+            "workspace": "/w"
+          }
+        ]
+      },
+      "status": {
+        "kind": "idle",
+        "text": "Idle",
+        "label": "Idle",
+        "tone": "tertiary"
+      },
+      "problems": [
+        {
+          "kind": "issues",
+          "text": "2 issues",
+          "tone": "error"
+        }
+      ],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "devices are counted by kind and each driving tool is named once",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-30T11:59:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        },
+        "slots": [
+          {
+            "slot": "ipad",
+            "ios": {
+              "name": "stim-w (iPhone 18 27.0)",
+              "udid": "SIM-2",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "agent-device",
+                  "pid": 1,
+                  "since": "2026-09-30T11:58:00.000Z"
+                },
+                "basis": ["agent-action"]
+              }
+            }
+          }
+        ],
+        "physicalDevices": [
+          {
+            "platform": "ios",
+            "slot": "default",
+            "id": "PHONE-1",
+            "name": "iPhone",
+            "model": "iPhone 17",
+            "owned": false,
+            "physical": true,
+            "connection": "connected",
+            "lease": {
+              "holder": "h",
+              "kind": "declared",
+              "grantedAt": null,
+              "expiresAt": "2026-09-30T13:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven 1m",
+        "label": "Driven by an agent for 1 minute",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "2 iOS, iOS device",
+        "drivers": "agent-device",
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "devices read idle once every running one has been idle for 10 minutes",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-30T11:35:00.000Z",
+            "basis": []
+          }
+        },
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "state": "detected",
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-30T11:48:00.000Z",
+            "basis": []
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS, Android",
+        "drivers": null,
+        "idle": {
+          "text": "idle 12m",
+          "label": "idle for 12 minutes"
+        },
+        "remote": 0
+      }
+    },
+    {
+      "name": "devices used in the last 10 minutes do not read idle",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-30T11:35:00.000Z",
+            "basis": []
+          }
+        },
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "state": "detected",
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-30T11:59:00.000Z",
+            "basis": []
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS, Android",
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a running Stim-owned Chrome counts as Web and can be driven",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "web": {
+          "running": true,
+          "pid": 1,
+          "url": "http://localhost:8081",
+          "headless": false,
+          "viewport": "desktop",
+          "profile": "/p",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "playwright",
+              "pid": 1,
+              "since": "2026-09-30T11:58:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        }
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven 2m",
+        "label": "Driven by an agent for 2 minutes",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "Web",
+        "drivers": "playwright",
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "each closed app is named, in device order",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "slots": [
+          {
+            "slot": "ipad",
+            "ios": {
+              "name": "stim-w (iPhone 18 27.0)",
+              "udid": "SIM-2",
+              "owned": true,
+              "state": "Booted",
+              "app": {
+                "id": "com.app",
+                "state": "stopped"
+              }
+            }
+          }
+        ],
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "state": "detected",
+          "app": {
+            "id": "com.app",
+            "state": "stopped"
+          }
+        },
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.app",
+            "state": "stopped"
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [
+        {
+          "kind": "app-closed",
+          "text": "iOS app closed",
+          "tone": "error"
+        },
+        {
+          "kind": "app-closed",
+          "text": "iOS app closed",
+          "tone": "error"
+        },
+        {
+          "kind": "app-closed",
+          "text": "Android app closed",
+          "tone": "error"
+        }
+      ],
+      "devices": {
+        "names": "2 iOS, Android",
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a driven device that is not running is left out",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Shutdown",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 1,
+              "since": "2026-09-30T11:57:00.000Z"
+            },
+            "basis": ["agent-action"]
+          }
+        }
+      },
+      "status": {
+        "kind": "running",
+        "text": "Running",
+        "label": "Running",
+        "tone": "success"
+      },
+      "problems": [],
+      "devices": {
+        "names": null,
+        "drivers": null,
+        "idle": null,
+        "remote": 0
+      }
+    },
+    {
+      "name": "a driver start that does not parse reads Driven",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 18 27.0)",
+          "udid": "SIM-1",
+          "owned": true,
+          "state": "Booted",
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "maestro",
+              "since": "soon"
+            },
+            "basis": []
+          }
+        }
+      },
+      "status": {
+        "kind": "driven",
+        "text": "Driven",
+        "label": "Driven by an agent",
+        "tone": "brand"
+      },
+      "problems": [],
+      "devices": {
+        "names": "iOS",
+        "drivers": "maestro",
+        "idle": null,
+        "remote": 0
+      }
+    }
+  ]
+}

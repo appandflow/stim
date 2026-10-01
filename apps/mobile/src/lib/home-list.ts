@@ -75,6 +75,8 @@ const drivenSince = (devices: DeviceRef[], now: number): number | null => {
 /**
  * What the workspace is doing, for the row's trailing word. It follows the list's own live and idle split, so a row
  * under Live never reads Idle. `lastSeenAt` is set for a machine that is not connected, whose status is stale.
+ * This, `rowProblems` and `rowDevices` have Stim Desktop twins in `WorkspaceRow.swift`; both replay
+ * apps/desktop/Tests/StimKitTests/Fixtures/workspace-row-vectors.json.
  */
 export function rowStatus(
   env: EnvironmentState,
