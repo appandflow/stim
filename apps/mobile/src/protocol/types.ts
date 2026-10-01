@@ -783,12 +783,6 @@ export interface Methods {
 
 export type Method = keyof Methods;
 
-export interface Request<M extends Method = Method> {
-  id: number;
-  method: M;
-  params: Methods[M]['params'];
-}
-
 export interface ProtocolError {
   code: string;
   message: string;

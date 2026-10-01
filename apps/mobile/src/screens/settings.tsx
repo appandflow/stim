@@ -65,7 +65,7 @@ export function Settings() {
   const { prefs, enable, update: updateNotifications } = useNotificationPrefs();
   const setLevel = (category: OversightCategory, level: NotifyLevel) =>
     updateNotifications({ levels: { ...prefs.levels, [category]: level } });
-  const switchColors = { checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary };
+  const switchColors = switchColorsFor(colors);
   const showIdle = filters.activity !== 'live';
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
 
@@ -104,7 +104,7 @@ export function Settings() {
               <Switch
                 value={showIdle}
                 onCheckedChange={(show) => update({ activity: show ? 'all' : 'live' })}
-                colors={{ checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary }}
+                colors={switchColors}
               />
             }
           />
@@ -220,6 +220,11 @@ export function Settings() {
 const FULL = 20;
 const JOIN = 4;
 
+const switchColorsFor = (colors: Theme['colors']) => ({
+  checkedTrackColor: colors.primary,
+  checkedThumbColor: colors.onPrimary,
+});
+
 function RecordingRow({
   colors,
   name,
@@ -245,7 +250,7 @@ function RecordingRow({
           value={setting.enabled}
           enabled={!locked}
           onCheckedChange={setting.set}
-          colors={{ checkedTrackColor: colors.primary, checkedThumbColor: colors.onPrimary }}
+          colors={switchColorsFor(colors)}
         />
       }
     />
