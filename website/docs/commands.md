@@ -1209,6 +1209,14 @@ directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
 
+`stim status` caches each folder's size and each worktree's pull request under
+`$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops
+the entries of the worktree it removes, but not the size entries of its owned
+devices' data folders. `gc` lists the entries of a folder or
+worktree that is gone from a mounted volume under "Stale status cache entries",
+and `--delete` removes them. An entry that records no readable path, or whose
+volume is not mounted, is kept and counted under "Skipped".
+
 `--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
 `android-cas/` and `cache-provider/`) of every workspace that is not in use. The
 workspace keeps its state, logs, devices and ports. See

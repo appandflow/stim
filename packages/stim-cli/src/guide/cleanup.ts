@@ -229,6 +229,20 @@ ORPHANED WORKSPACE DIRECTORIES
   it. A directory with a missing or unparseable workspace.json, or a root on
   an unmounted volume, is reported under Skipped and never deleted.
 
+STALE STATUS CACHE ENTRIES
+  \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
+  each worktree's pull request under $STIM_HOME/pull-requests. \`worktree
+  remove\` drops the entries of the worktree it removed (its checkout,
+  node_modules and workspace folder, and its pull request), not the size
+  entries of its owned devices' data folders. \`gc\` reports the
+  entries of a folder or worktree that was removed some other way under "Stale
+  status cache entries", and \`gc --delete\` removes them. An entry counts as
+  stale only when the path it records is gone and its volume is mounted (a
+  measured node_modules folder follows its checkout). An entry that records no
+  readable path, one whose path cannot be checked, and one on an unmounted
+  volume are kept and counted under Skipped. \`status\` measures a folder again
+  if it comes back.
+
 NAMED SERVER PORTS
   worktree remove stops TCP listeners on each named allocation and releases
   the ports. gc reports named allocations for missing workspaces; gc --delete

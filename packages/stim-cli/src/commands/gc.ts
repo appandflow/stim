@@ -69,6 +69,7 @@ import {
   isInsideWorkspaces,
 } from './gc/workspaces.ts';
 import { collectWorktreeSweep, removeWorktrees } from './gc/worktrees.ts';
+import { collectStaleStatusCaches, deleteStaleStatusCaches } from './gc/status-caches.ts';
 import {
   findStaleAndroidLedgerEntries,
   findStaleLedgerEntries,
@@ -232,6 +233,7 @@ export async function collectGcReport(
       staleDevices: [],
       staleDeviceRecords: [],
       staleLedgerEntries: [],
+      staleStatusCaches: [],
       buildLocks: { stale: [], live: [], unresolved: [] },
       buildSlots: { stale: [], live: [], unresolved: [] },
       deviceLeases: { expired: [], kept: [] },
@@ -278,6 +280,8 @@ export async function collectGcReport(
   const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg, mountedVolumes);
   const workspaceDirs = collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes);
   skipped.push(...workspaceDirs.skipped);
+  const statusCaches = collectStaleStatusCaches(mountedVolumes);
+  skipped.push(...statusCaches.skipped);
 
   const deviceSweepNotices: string[] = [];
   let orphanedDevices: OrphanedDevice[] = [];
@@ -422,6 +426,7 @@ export async function collectGcReport(
     staleDevices,
     staleDeviceRecords,
     staleLedgerEntries,
+    staleStatusCaches: statusCaches.stale,
     buildLocks: {
       stale: locks.filter((l) => !l.alive && !l.unresolved),
       live: locks.filter((l) => l.alive),
@@ -628,6 +633,11 @@ function dryRunHint(cache: string | null, all: boolean, actionable: boolean, cac
   return null;
 }
 
+function pruneStatusCaches(report: GcReport): number {
+  if (report.cacheScope !== null) return 0;
+  return deleteStaleStatusCaches(collectStaleStatusCaches(listMountedVolumes()).stale);
+}
+
 function reclaimParkedDevices(report: GcReport, deps: GcDependencies): number {
   return report.cacheScope
     ? eraseParkedDevices(report.parkedSims, report.parkedAvds)
@@ -690,6 +700,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     staleDevices.length > 0 ||
     staleDeviceRecords.length > 0 ||
     report.staleLedgerEntries.length > 0 ||
+    report.staleStatusCaches.length > 0 ||
     buildLocks.stale.length > 0 ||
     buildSlots.stale.length > 0 ||
     deviceLeases.expired.length > 0 ||
@@ -744,6 +755,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
 
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
+  deleteFailures += pruneStatusCaches(report);
 
   for (const lock of buildLocks.stale) {
     const cleared = clearFreeClaimSet({ root: lock.path, label: `${lock.platform} build` });

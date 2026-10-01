@@ -79,6 +79,7 @@ public struct GcPreview: Sendable {
     ("staleDevices", "Stale devices"),
     ("staleDeviceRecords", "Stale device records"),
     ("staleLedgerEntries", "Stale device ledger entries"),
+    ("staleStatusCaches", "Stale status cache entries"),
     ("idleDevices", "Idle devices"),
     ("orphanedEasSessions", "Orphaned EAS sessions"),
     ("staleBuildLocks", "Stale build locks"),

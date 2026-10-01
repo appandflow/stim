@@ -15,6 +15,7 @@ import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { appProjectProblem, findProjectRoot } from '../workspace/project.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
@@ -988,6 +989,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         return;
       }
       onRemoved();
+      forgetStatusMeasures(path, result.reclaimedKeys);
       const finish = (): void => {
         printRemovalCleanup(result, false);
         console.error(chalk.dim(phaseLine('removed', path)));

@@ -3606,6 +3606,7 @@ describe('gc --json', () => {
       'staleDevices',
       'staleDeviceRecords',
       'staleLedgerEntries',
+      'staleStatusCaches',
       'idleDevices',
       'orphanedEasSessions',
       'staleBuildLocks',

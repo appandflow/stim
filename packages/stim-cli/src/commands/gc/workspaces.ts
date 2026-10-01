@@ -120,7 +120,7 @@ export function classifyWorkspaceDirs(
   return { orphaned, skipped };
 }
 
-function rootPresence(path: string): boolean | null {
+export function rootPresence(path: string): boolean | null {
   try {
     lstatSync(path);
     return true;

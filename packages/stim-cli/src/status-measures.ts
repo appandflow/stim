@@ -52,6 +52,23 @@ function writeCacheFile(file: string, entry: object): void {
   }
 }
 
+export function forgetStatusMeasures(worktree: string, workspaces: readonly string[]): void {
+  const roots = [...new Set([worktree, ...workspaces])];
+  const files = [
+    pullRequestCacheFile(worktree),
+    ...roots.flatMap((root) => [
+      diskUsageCacheFile(root),
+      diskUsageCacheFile(join(root, 'node_modules')),
+      diskUsageCacheFile(workspaceDir(root)),
+    ]),
+  ];
+  for (const file of files) {
+    try {
+      rmSync(file, { force: true });
+    } catch {}
+  }
+}
+
 function simulatorDataDir(udid: string): string {
   return join(homedir(), 'Library', 'Developer', 'CoreSimulator', 'Devices', udid);
 }
