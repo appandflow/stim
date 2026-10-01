@@ -24,7 +24,6 @@ const KEPT_REASON: Record<'unreadable' | 'unknown' | 'unmounted', string> = {
   unmounted: 'the volume of the folder it measures is not mounted',
 };
 
-/** A measured `node_modules` folder is cached as empty while it is missing, so its checkout decides. */
 function witnessPath(path: string): string {
   return basename(path).startsWith('node_modules') ? dirname(path) : path;
 }

@@ -52,7 +52,6 @@ function writeCacheFile(file: string, entry: object): void {
   }
 }
 
-/** Drops the cached sizes and pull request of a removed worktree and of the workspaces it held. */
 export function forgetStatusMeasures(worktree: string, workspaces: readonly string[]): void {
   const roots = [...new Set([worktree, ...workspaces])];
   const files = [
