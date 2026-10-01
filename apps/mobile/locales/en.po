@@ -2575,6 +2575,10 @@ msgstr "Open repository"
 msgid "Open Settings"
 msgstr "Open Settings"
 
+#: src/screens/about.tsx
+msgid "Open source by App&Flow"
+msgstr "Open source by App&Flow"
+
 #: src/app/_layout.tsx
 #: src/screens/about.tsx
 #: src/screens/settings.ios.tsx

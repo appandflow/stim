@@ -1,4 +1,5 @@
 import {
+  appAndFlowLibraries,
   bugReportUrl,
   diagnosticText,
   shortId,
@@ -23,6 +24,21 @@ const app: AboutApp = {
 const device: AboutDevice = { os: 'ios', osVersion: '27.0', model: 'iPhone 18 Pro', locale: 'en-CA' };
 
 describe('about', () => {
+  it('lists the App&Flow libraries whatever the case of their GitHub owner, without Stim', () => {
+    const packages = [
+      { name: 'Stim', url: 'https://github.com/appandflow/stim' },
+      { name: 'react-native-ease', url: 'https://github.com/AppAndFlow/react-native-ease' },
+      { name: 'react-native-hinges', url: 'https://github.com/appandflow/react-native-hinges' },
+      { name: 'react-native-screens', url: 'https://github.com/software-mansion/react-native-screens' },
+      { name: 'appandflow-lookalike', url: 'https://github.com/appandflowx/lookalike' },
+      { name: 'no-repo', url: null },
+    ];
+    expect(appAndFlowLibraries(packages).map((entry) => entry.name)).toEqual([
+      'react-native-ease',
+      'react-native-hinges',
+    ]);
+  });
+
   it('appends the build number only when the app has one', () => {
     expect(versionWithBuild(app)).toBe('0.1.0 (12)');
     expect(versionWithBuild({ ...app, build: null })).toBe('0.1.0');

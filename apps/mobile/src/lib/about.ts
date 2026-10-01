@@ -24,6 +24,18 @@ export interface AboutDevice {
   locale: string;
 }
 
+const APP_AND_FLOW_REPOSITORY = /^https:\/\/github\.com\/appandflow\//i;
+
+/** The App&Flow libraries in this build's license list, without Stim's own entry. */
+export function appAndFlowLibraries<T extends { name: string; url: string | null }>(
+  packages: readonly T[],
+): (T & { url: string })[] {
+  return packages.filter(
+    (entry): entry is T & { url: string } =>
+      entry.name !== 'Stim' && entry.url !== null && APP_AND_FLOW_REPOSITORY.test(entry.url),
+  );
+}
+
 export function versionWithBuild({ version, build }: Pick<AboutApp, 'version' | 'build'>): string {
   return build ? `${version} (${build})` : version;
 }
