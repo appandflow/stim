@@ -9,6 +9,7 @@ struct NeedsAttentionTests {
       var now: String
       var stuckMinutes: Int
       var easSessionMinutes: Int
+      var ownLeases: [String]?
       var volumes: [Volume]?
       var environments: [Workspace]
     }
@@ -37,7 +38,8 @@ struct NeedsAttentionTests {
     let now = try #require(formatter.date(from: c.input.now))
     let items = needsAttention(
       c.input.environments, volumes: c.input.volumes?.map(\.freeBytes), now: now,
-      stuckMinutes: c.input.stuckMinutes, easSessionMinutes: c.input.easSessionMinutes)
+      stuckMinutes: c.input.stuckMinutes, easSessionMinutes: c.input.easSessionMinutes,
+      ownLeases: c.input.ownLeases ?? [])
     #expect(items == c.items)
   }
 }

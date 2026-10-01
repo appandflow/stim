@@ -80,6 +80,7 @@ export function homeAttention(machines: AttentionMachine[], now: number, stuckMi
       now,
       stuckMinutes,
       easSessionMinutes: EAS_SESSION_MINUTES,
+      ownLeases: mac.status?.ownLeases,
     });
     for (const item of items) {
       const env = item.workspace === null ? undefined : byPath.get(item.workspace);

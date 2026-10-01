@@ -786,7 +786,7 @@ request ready for review; a merged branch notifies once git finds it merged. The
 phone's "Someone takes over your device" is a push to a phone and never fires
 here. A phone controlling a simulator
 through stim-server counts as an agent driving it, because Desktop cannot read
-stim-server's leases.
+stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
 **Off**. Every category is Silent by default, except **A Mac asks to build

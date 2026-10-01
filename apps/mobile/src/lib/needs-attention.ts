@@ -27,6 +27,8 @@ export interface NeedsAttentionInput {
   now: number;
   stuckMinutes: number;
   easSessionMinutes: number;
+  /** `grantedAt` of the device leases stim-server holds for phones, so a person controlling a device is no agent. */
+  ownLeases?: readonly string[];
 }
 
 const PERSON_ISSUES = new Set(['port-not-ours', 'supervisor-unverified', 'browser-unverified', 'avd-unchecked']);
@@ -182,9 +184,17 @@ function quietSince(env: EnvironmentState, devices: Device[]): number | null {
   return finite.length ? Math.max(...finite) : null;
 }
 
+/** Whether an agent drives the device: a lease stim-server holds for a phone is a person controlling it. */
+function agentDriven(device: Device, ownLeases: readonly string[]): boolean {
+  const { activity } = device;
+  if (activity?.state !== 'driven') return false;
+  const since = activity.driver?.since;
+  return !(activity.driver?.tool === 'stim device lock' && since && ownLeases.includes(since));
+}
+
 function stuckItem(env: EnvironmentState, input: NeedsAttentionInput): NeedsAttentionItem | null {
   const devices = devicesOf(env);
-  const driven = devices.find((d) => d.running && d.activity?.state === 'driven');
+  const driven = devices.find((d) => d.running && agentDriven(d, input.ownLeases ?? []));
   if (!driven || env.build?.state === 'running') return null;
   const since = quietSince(env, devices);
   if (since === null || input.now - since < input.stuckMinutes * 60_000) return null;
@@ -240,7 +250,7 @@ function workspaceItems(env: EnvironmentState, input: NeedsAttentionInput): Need
       remedy: `stim device unlock ${device.platform}${slot}`,
     });
   }
-  const driven = devicesOf(env).some((d) => d.running && d.activity?.state === 'driven');
+  const driven = devicesOf(env).some((d) => d.running && agentDriven(d, input.ownLeases ?? []));
   for (const session of env.remoteDevices ?? []) {
     const started = time(session.startedAt);
     if (driven || !(input.now - started >= input.easSessionMinutes * 60_000)) continue;

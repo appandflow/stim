@@ -110,7 +110,12 @@ private struct OverseenDevice {
   var activity: DeviceActivity?
   var web: Bool
 
-  var driven: Bool { running && activity?.state == "driven" }
+  /// Whether an agent drives it: a lease stim-server holds for a phone, named in `ownLeases`, is a person.
+  func driven(by ownLeases: [String]) -> Bool {
+    guard running, activity?.state == "driven" else { return false }
+    let driver = activity?.driver
+    return !(driver?.tool == "stim device lock" && driver?.since.map { !$0.isEmpty && ownLeases.contains($0) } == true)
+  }
 }
 
 private func overseenDevices(_ env: Workspace) -> [OverseenDevice] {
@@ -152,9 +157,9 @@ private func quietSince(_ env: Workspace, _ devices: [OverseenDevice]) -> Double
   return times.compactMap { $0 }.max()
 }
 
-private func stuckItem(_ env: Workspace, now: Double, stuckMinutes: Int) -> NeedsAttentionItem? {
+private func stuckItem(_ env: Workspace, now: Double, stuckMinutes: Int, ownLeases: [String]) -> NeedsAttentionItem? {
   let devices = overseenDevices(env)
-  guard let driven = devices.first(where: \.driven), env.build?.isRunning != true,
+  guard let driven = devices.first(where: { $0.driven(by: ownLeases) }), env.build?.isRunning != true,
     let since = quietSince(env, devices), now - since >= Double(stuckMinutes) * 60_000
   else { return nil }
   let minutes = Int(((now - since) / 60_000).rounded(.down))
@@ -168,7 +173,9 @@ private func stuckItem(_ env: Workspace, now: Double, stuckMinutes: Int) -> Need
     body: "No agent activity for \(minutes) min\(after); \(driven.model) still up", remedy: nil)
 }
 
-private func workspaceItems(_ env: Workspace, now: Double, stuckMinutes: Int, easSessionMinutes: Int)
+private func workspaceItems(
+  _ env: Workspace, now: Double, stuckMinutes: Int, easSessionMinutes: Int, ownLeases: [String]
+)
   -> [NeedsAttentionItem]
 {
   var items: [NeedsAttentionItem] = []
@@ -194,7 +201,7 @@ private func workspaceItems(_ env: Workspace, now: Double, stuckMinutes: Int, ea
         workspace: env.path, body: "Lease on \(device.name ?? device.model ?? device.id) expired",
         remedy: "stim device unlock \(device.platform)\(slot)"))
   }
-  let driven = overseenDevices(env).contains(where: \.driven)
+  let driven = overseenDevices(env).contains { $0.driven(by: ownLeases) }
   for session in env.remoteDevices ?? [] {
     guard !driven, let started = epochMs(session.startedAt), now - started >= Double(easSessionMinutes) * 60_000
     else { continue }
@@ -204,15 +211,17 @@ private func workspaceItems(_ env: Workspace, now: Double, stuckMinutes: Int, ea
         id: "eas-\(session.sessionId):\(env.path)", category: .attention, severity: "warning", workspace: env.path,
         body: "EAS session running for \(minutes) min with no agent; billed while it runs", remedy: "stim stop"))
   }
-  if let stuck = stuckItem(env, now: now, stuckMinutes: stuckMinutes) { items.append(stuck) }
+  if let stuck = stuckItem(env, now: now, stuckMinutes: stuckMinutes, ownLeases: ownLeases) { items.append(stuck) }
   return items
 }
 
 /// The items, errors first, then the machine's, then live workspaces' before idle ones', each in status order. Log
 /// errors, a single failed run, and issues an agent's next `stim` command repairs are left out: agents handle them.
-/// `volumes` holds the free bytes of each volume Stim uses, nil when not measured.
+/// `volumes` holds the free bytes of each volume Stim uses, nil when not measured. `ownLeases` is `grantedAt` of the
+/// device leases stim-server holds for phones, so a person controlling a device is no agent.
 public func needsAttention(
-  _ environments: [Workspace], volumes: [Double]?, now: Date, stuckMinutes: Int, easSessionMinutes: Int
+  _ environments: [Workspace], volumes: [Double]?, now: Date, stuckMinutes: Int, easSessionMinutes: Int,
+  ownLeases: [String] = []
 ) -> [NeedsAttentionItem] {
   let nowMs = now.timeIntervalSince1970 * 1000
   var ranked: [(item: NeedsAttentionItem, scope: Int)] = []
@@ -225,7 +234,9 @@ public func needsAttention(
       ))
   }
   for env in environments {
-    for item in workspaceItems(env, now: nowMs, stuckMinutes: stuckMinutes, easSessionMinutes: easSessionMinutes) {
+    for item in workspaceItems(
+      env, now: nowMs, stuckMinutes: stuckMinutes, easSessionMinutes: easSessionMinutes, ownLeases: ownLeases)
+    {
       ranked.append((item, env.live ? 1 : 2))
     }
   }
