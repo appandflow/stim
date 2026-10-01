@@ -187,6 +187,7 @@ struct StimDesktopApp: App {
     let autopilot = AutopilotRunner(
       status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
+    oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {

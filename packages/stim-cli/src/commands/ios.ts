@@ -840,6 +840,7 @@ async function runIos(
             stats,
             step: progress.step,
             miss: progress.miss,
+            hit: progress.hit,
             place: progress.place,
           },
         },

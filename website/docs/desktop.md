@@ -54,7 +54,11 @@ performance traces. Every release is listed under
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
   **Serve to phones**.
 - **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing, and
-  automatic removal of worktrees after their pull request merges.
+  automatic removal of worktrees after their pull request merges. The **Needs
+  you** category lists only what agents cannot handle, such as a doctor
+  finding, a signing failure or an expired device lease, with **Run**, **Copy
+  command**, **Fix**, **Open logs** or **Show in Finder** on its row in
+  **Notifications**. It is Silent by default.
 
 ![A device viewer: the simulator screen with the agent's recent actions, including two that failed](/img/desktop/viewer.webp)
 

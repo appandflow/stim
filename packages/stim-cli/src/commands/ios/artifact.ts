@@ -109,7 +109,8 @@ interface IosArtifactRequest {
     estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs' | 'setPlacement'>;
     step: (phase: BuildPhase) => void;
-    miss: (reason: BuildMissReason) => void;
+    miss: (reason: BuildMissReason, provisional?: boolean) => void;
+    hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
   };
 }
@@ -204,7 +205,7 @@ export async function acquireIosArtifact(
   }: IosArtifactRequest,
   d: IosArtifactDeps,
 ): Promise<IosArtifactResult> {
-  const { phase, note, logWriter, estimates, stats, step, miss, place } = progress;
+  const { phase, note, logWriter, estimates, stats, step, miss, hit: lateHit, place } = progress;
   const physical = device !== null;
   const keyOptions = {
     scheme: buildScheme,
@@ -577,33 +578,55 @@ export async function acquireIosArtifact(
     }
   }
 
-  function explainMiss(rekeyedBy: string[]): void {
+  function reasonForMiss(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null } {
     if (swapFellBack) {
-      missReason = skippedMissReason('the cached app could not be reused, so this run built it fresh');
-    } else if (!useBuildCache) {
-      missReason = skippedMissReason(
-        cache.disabledByFlag ? 'cache reuse turned off by --no-build-cache' : 'cache reuse off in config',
-      );
-    } else {
-      const current = { hash: storeHash ?? fingerprint, sources: storeSources };
-      const explained = explainBuildMiss({
-        root,
-        platform: PLATFORM,
-        current,
-        rekeyedBy,
-        baselineDeps: { readState: d.readWorkspaceState },
-      });
-      missReason = explained.reason;
-      if (explained.previousHash && explained.changedNames.length) {
-        logWriter().write(
-          fingerprintDiffRecord({
-            changed: explained.changedNames,
-            previousHash: explained.previousHash,
-            hash: current.hash,
-          }),
-        );
-      }
+      return {
+        reason: skippedMissReason('the cached app could not be reused, so this run built it fresh'),
+        diff: null,
+      };
     }
+    if (!useBuildCache) {
+      return {
+        reason: skippedMissReason(
+          cache.disabledByFlag ? 'cache reuse turned off by --no-build-cache' : 'cache reuse off in config',
+        ),
+        diff: null,
+      };
+    }
+    const current = { hash: storeHash ?? fingerprint, sources: storeSources };
+    const explained = explainBuildMiss({
+      root,
+      platform: PLATFORM,
+      current,
+      rekeyedBy,
+      baselineDeps: { readState: d.readWorkspaceState },
+    });
+    return {
+      reason: explained.reason,
+      diff:
+        explained.previousHash && explained.changedNames.length
+          ? fingerprintDiffRecord({
+              changed: explained.changedNames,
+              previousHash: explained.previousHash,
+              hash: current.hash,
+            })
+          : null,
+    };
+  }
+
+  function reportPendingRecheck(prebuild: ReturnType<IosArtifactDeps['planPrebuild']>): void {
+    const pods = d.readPodState(root);
+    const mutates =
+      prebuild === 'generate' ||
+      prebuild === 'regenerate' ||
+      podAction(pods, d.podsAreStale(pods.lockText, pods.manifestText)).install;
+    if (mutates && useBuildCache) miss(reasonForMiss([]).reason, true);
+  }
+
+  function explainMiss(rekeyedBy: string[]): void {
+    const explained = reasonForMiss(rekeyedBy);
+    missReason = explained.reason;
+    if (explained.diff) logWriter().write(explained.diff);
     buildFailure = { ...buildFailure, missReason };
     miss(missReason);
     phase('cache', `miss: ${missReason.summary}`);
@@ -832,6 +855,7 @@ export async function acquireIosArtifact(
       if (prebuild === 'refuse') {
         fail({ ...staleNativeDirRefusal(PLATFORM), build: buildFailure });
       }
+      reportPendingRecheck(prebuild);
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
         recordPrebuild(root, PLATFORM, null);
@@ -935,6 +959,7 @@ export async function acquireIosArtifact(
             if (prepared) {
               appPath = prepared;
               cacheHit = 'local';
+              lateHit();
               phase('cache', `hit ${shortHash(storeHash)} (post-${mutatingSteps.join('/')} key)`);
               if (releasedWait) {
                 waitedForBuild = releasedWait.facts;

@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { PhaseBar } from '@/components/build-progress';
 import { Icon } from '@/components/icon';
-import { Pill, StatusDot } from '@/components/pill';
+import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { toneColor } from '@/design/tone';
@@ -74,7 +74,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   if (devices.drivers) {
     context.push(
       <View key="drivers" style={styles.inline}>
-        <StatusDot color={offline ? theme.colors.tertiary : theme.colors.primary} />
+        <Icon name="cursorarrow.rays" size={13} color={offline ? theme.colors.tertiary : theme.colors.primary} />
         <Text variant="footnote" weight="medium" tone={offline ? 'tertiary' : 'brand'}>
           {devices.drivers}
         </Text>
