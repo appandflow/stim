@@ -170,13 +170,35 @@ struct SetupGuideView: View {
             Button("Check Again") { onboarding.check() }.buttonStyle(.stim())
           }
         }
-      } else {
+      } else if let command = onboarding.installCLICommand {
+        if setup.stim == .missing { installerTabs }
         CommandBlock(
-          command: onboarding.installCLICommand, run: onboarding.guideRuns[onboarding.installCLICommand], busy: busy,
+          command: command, run: onboarding.guideRuns[command], busy: busy,
           isDefault: setup.state(of: .cli) == .pending,
-          caption: setup.stim.map { $0 == .missing ? "Installs stim for your user." : "Updates stim to the latest version." }
-        ) { onboarding.runGuide("Install stim", onboarding.installCLICommand) }
+          caption: setup.stim.map {
+            $0 == .missing
+              ? "Installs stim for your user with \(command.program)."
+              : "Updates stim to the latest version with \(command.program)."
+          }
+        ) { onboarding.runGuide("Install stim", command) }
+      } else if onboarding.report?.stim.isCompatible == false {
+        Text("No package manager installed this stim, so update it where it came from, or choose another.")
+          .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
+    }
+  }
+
+  /// Tabs for the managers on this Mac; a Mac with only npm has nothing to choose.
+  @ViewBuilder private var installerTabs: some View {
+    let installers = onboarding.report?.installers ?? []
+    if installers.count > 1 {
+      Picker("Package manager", selection: Binding(get: { onboarding.installer }, set: { onboarding.installerChoice = $0 })) {
+        ForEach(installers, id: \.self) { Text($0.rawValue).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .frame(width: 220)
+      .disabled(busy)
     }
   }
 
