@@ -11,13 +11,16 @@ import type {
   BuildReport,
   DeviceActivity,
   EnvironmentState,
+  GitChipFacts,
   LastBuild,
   MachineOwner,
   MachineUsageState,
   Platform,
   PullRequestFacts,
+  StageFacts,
   StatusUsage,
   WorktreeFacts,
+  WorktreeGit,
 } from '@/protocol/types';
 
 export type StageTone = Extract<Tone, 'success' | 'brand' | 'error' | 'warning' | 'tertiary'>;
@@ -42,12 +45,18 @@ function latestBuild(env: EnvironmentState): LastBuild | null {
   );
 }
 
+/** The app presence `stim` reports on the device, or for an older `stim` the same rule run here. */
+export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
+  if (!env.stage) return localAppPresence(env, device);
+  return device.physical || device.platform === 'web' ? null : (device.presence ?? null);
+}
+
 /**
  * Status reports `app` whenever it knows the bundle id, and a process that is not running cannot tell a closed app
  * from one never installed. A device counts as having no app only when its platform never built successfully here
  * and the latest build failed.
  */
-export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
+function localAppPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
   if (!device.running || device.platform === 'web' || device.physical || device.app?.state === 'running') return null;
   const last = env.lastBuilds?.[device.platform];
   const everBuilt = env.builds?.[device.platform]?.some((entry) => entry.result === 'succeeded') ?? true;
@@ -55,8 +64,36 @@ export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 
   return device.app?.state === 'stopped' ? 'closed' : null;
 }
 
-function closedApps(env: EnvironmentState, devices: DeviceRef[]): DeviceRef[] {
-  return devices.filter((d) => appPresence(env, d) === 'closed');
+const STAGE_KINDS: readonly StageFacts['kind'][] = [
+  'building',
+  'warming',
+  'ready',
+  'build-failed',
+  'running',
+  'stopped',
+];
+
+function stageFacts(kind: StageFacts['kind'], since: string | null | undefined, platform: Platform | null = null) {
+  return { kind, since: since ?? null, platform, closedApps: [] } satisfies StageFacts;
+}
+
+/** The stage `stim` decided, for an older `stim` the same rule run here. */
+export function localStageFacts(env: EnvironmentState, devices: DeviceRef[]): StageFacts {
+  const build = runningBuild(env);
+  if (build) return stageFacts('building', build.startedAt, build.platform);
+  if (!env.live && env.phase === 'warming') return stageFacts('warming', env.phaseSince);
+  if (!env.live && env.phase === 'ready') return stageFacts('ready', env.phaseSince);
+  const latest = latestBuild(env);
+  if (latest?.status === 'failed') {
+    return stageFacts('build-failed', latest.finishedAt ?? latest.startedAt, latest.platform);
+  }
+  if (env.live || (env.remoteDevices?.length ?? 0) > 0) {
+    const closedApps = devices
+      .filter((d): d is DeviceRef & { platform: Platform } => localAppPresence(env, d) === 'closed')
+      .map((d) => ({ platform: d.platform, slot: d.slot }));
+    return { ...stageFacts('running', env.supervisor?.startedAt), closedApps };
+  }
+  return stageFacts('stopped', env.metro?.lastStop?.at);
 }
 
 /**
@@ -64,56 +101,58 @@ function closedApps(env: EnvironmentState, devices: DeviceRef[]): DeviceRef[] {
  * `WorkspaceView.swift`; both replay apps/desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json.
  */
 export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now: number): WorkspaceStage {
-  const build = runningBuild(env);
-  if (build) {
-    const since = ago(now, build.startedAt);
-    const platform = platformName(build.platform);
-    return {
-      kind: 'building',
-      label: t`Building`,
-      tone: 'brand',
-      subtitle: since ? t`${platform} \u00B7 started ${since} ago` : platform,
-    };
+  const reported = env.stage && STAGE_KINDS.includes(env.stage.kind) ? env.stage : null;
+  const facts = reported ?? localStageFacts(env, devices);
+  const since = ago(now, facts.since);
+  const platform = facts.platform ? platformName(facts.platform) : '';
+  switch (facts.kind) {
+    case 'building':
+      return {
+        kind: 'building',
+        label: t`Building`,
+        tone: 'brand',
+        subtitle: since ? t`${platform} \u00B7 started ${since} ago` : platform,
+      };
+    case 'warming': {
+      const step = env.warmStep === 'copy' ? t`copying ignored files` : t`installing dependencies`;
+      return {
+        kind: 'warming',
+        label: t`Warming`,
+        tone: 'warning',
+        subtitle: since ? t`${step} \u00B7 ${since}` : step,
+      };
+    }
+    case 'ready':
+      return { kind: 'ready', label: t`Ready`, tone: 'success', subtitle: since ? t`warmed ${since} ago` : null };
+    case 'build-failed':
+      return {
+        kind: 'build-failed',
+        label: t`Build failed`,
+        tone: 'error',
+        subtitle: since ? t`${platform} \u00B7 ${since} ago` : platform,
+      };
+    case 'running': {
+      const errors = env.logs?.errorsSinceMarker ?? 0;
+      const problems = [
+        errors > 0 ? plural(errors, { one: '# error', other: '# errors' }) : null,
+        ...facts.closedApps.map((app) => {
+          const platform = platformName(app.platform);
+          return t`${platform} app closed`;
+        }),
+      ].filter((p): p is string => p !== null);
+      const up = since;
+      return {
+        kind: 'running',
+        label: t`Running`,
+        tone: problems.length ? 'error' : 'success',
+        subtitle: [up ? t`up ${up}` : null, ...problems].filter(Boolean).join(' \u00B7 ') || null,
+      };
+    }
+    case 'stopped': {
+      const stopped = since;
+      return { kind: 'stopped', label: t`Stopped`, tone: 'tertiary', subtitle: stopped ? t`${stopped} ago` : null };
+    }
   }
-  if (!env.live && env.phase === 'warming') {
-    const step = env.warmStep === 'copy' ? t`copying ignored files` : t`installing dependencies`;
-    const since = ago(now, env.phaseSince);
-    return { kind: 'warming', label: t`Warming`, tone: 'warning', subtitle: since ? t`${step} \u00B7 ${since}` : step };
-  }
-  if (!env.live && env.phase === 'ready') {
-    const since = ago(now, env.phaseSince);
-    return { kind: 'ready', label: t`Ready`, tone: 'success', subtitle: since ? t`warmed ${since} ago` : null };
-  }
-  const latest = latestBuild(env);
-  if (latest?.status === 'failed') {
-    const since = ago(now, latest.finishedAt ?? latest.startedAt);
-    const platform = platformName(latest.platform);
-    return {
-      kind: 'build-failed',
-      label: t`Build failed`,
-      tone: 'error',
-      subtitle: since ? t`${platform} \u00B7 ${since} ago` : platform,
-    };
-  }
-  if (env.live || (env.remoteDevices?.length ?? 0) > 0) {
-    const errors = env.logs?.errorsSinceMarker ?? 0;
-    const problems = [
-      errors > 0 ? plural(errors, { one: '# error', other: '# errors' }) : null,
-      ...closedApps(env, devices).map((d) => {
-        const platform = platformName(d.platform);
-        return t`${platform} app closed`;
-      }),
-    ].filter((p): p is string => p !== null);
-    const up = ago(now, env.supervisor?.startedAt);
-    return {
-      kind: 'running',
-      label: t`Running`,
-      tone: problems.length ? 'error' : 'success',
-      subtitle: [up ? t`up ${up}` : null, ...problems].filter(Boolean).join(' \u00B7 ') || null,
-    };
-  }
-  const stopped = ago(now, env.metro?.lastStop?.at);
-  return { kind: 'stopped', label: t`Stopped`, tone: 'tertiary', subtitle: stopped ? t`${stopped} ago` : null };
 }
 
 /** `ps` CPU, where 100 is one core, so a busy workspace reads above 100%. */
@@ -805,28 +844,58 @@ function checksLabel(ci: CiState): string {
   }
 }
 
+/** The chip `stim` reports, for an older `stim` the same rule run here. */
+export function localGitChipFacts(git: WorktreeGit, pull: PullRequestFacts | null | undefined): GitChipFacts {
+  const parts: GitChipFacts['parts'] = [];
+  const ahead = git.ahead ?? 0;
+  const behind = git.behind ?? 0;
+  if (ahead || behind) parts.push({ kind: 'arrows', ahead, behind });
+  const uncommitted = git.changed + git.untracked;
+  if (uncommitted) parts.push({ kind: 'changed', count: uncommitted });
+  if (git.mergedInto !== null) {
+    if (pull?.state !== 'merged') parts.push({ kind: 'merged', into: git.mergedInto });
+  } else if (git.upstream === null) {
+    parts.push({ kind: 'no-upstream' });
+  }
+  return { parts, ci: pull ? ciState(pull.checks) : null };
+}
+
+function chipPart(part: GitChipFacts['parts'][number]): GitChip['parts'][number] | null {
+  switch (part.kind) {
+    case 'arrows': {
+      const arrows = [part.ahead ? `\u2191${part.ahead}` : '', part.behind ? `\u2193${part.behind}` : '']
+        .filter(Boolean)
+        .join(' ');
+      return arrows ? { text: arrows, tone: 'default' } : null;
+    }
+    case 'changed': {
+      const uncommitted = part.count;
+      return { text: t`${uncommitted} changed`, tone: 'secondary' };
+    }
+    case 'merged': {
+      const mergedInto = part.into;
+      return { text: t`merged into ${mergedInto}`, tone: 'brand' };
+    }
+    case 'no-upstream':
+      return { text: t`no upstream`, tone: 'tertiary' };
+    default:
+      return null;
+  }
+}
+
 export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | null {
   const git = worktree?.git;
   if (!git) return null;
   const badges = gitBadges(git);
   const pull = worktree.pullRequest;
-  const parts: GitChip['parts'] = [];
-  if (badges?.arrows) parts.push({ text: badges.arrows, tone: 'default' });
-  if (badges?.uncommitted) {
-    const { uncommitted } = badges;
-    parts.push({ text: t`${uncommitted} changed`, tone: 'secondary' });
-  }
-  if (badges?.merged && pull?.state !== 'merged') {
-    const mergedInto = git.mergedInto ?? '';
-    parts.push({ text: t`merged into ${mergedInto}`, tone: 'brand' });
-  }
-  if (!badges?.merged && git.upstream === null) parts.push({ text: t`no upstream`, tone: 'tertiary' });
-  const ci = pull ? ciState(pull.checks) : null;
+  const facts = worktree.gitChip ?? localGitChipFacts(git, pull);
+  const parts = facts.parts.map(chipPart).filter((part) => part !== null);
+  const ci = pull ? facts.ci : null;
   const label = [
     pull ? pullRequestLabel(pull.number, pull.state) : t`Branch`,
     ci ? checksLabel(ci) : null,
     badges?.label,
-    !badges?.merged && git.upstream === null ? t`no upstream` : null,
+    facts.parts.some((part) => part.kind === 'no-upstream') ? t`no upstream` : null,
     !pull && parts.length === 0 ? t`up to date` : null,
   ]
     .filter(Boolean)

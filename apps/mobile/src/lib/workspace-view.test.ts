@@ -18,6 +18,8 @@ import {
   diskParts,
   diskPartsLabel,
   gitChip,
+  localGitChipFacts,
+  localStageFacts,
   namesPhases,
   phaseSteps,
   type PhaseStep,
@@ -35,9 +37,11 @@ import type {
   DeviceActivity,
   BuildReport,
   EnvironmentState,
+  GitChipFacts,
   LastBuild,
   MachineUsageState,
   PullRequestFacts,
+  StageFacts,
   WorktreeFacts,
 } from '@/protocol/types';
 
@@ -170,6 +174,14 @@ describe('appPresence', () => {
     expect(
       presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed'), entry('succeeded')] } }),
     ).toBe('closed');
+  });
+
+  it('takes the presence stim reports once it reports the stage', () => {
+    const stage: StageFacts = { kind: 'running', since: null, platform: null, closedApps: [] };
+    const reported = env({ ios: { ...stopped, appPresence: 'none' }, stage });
+    expect(appPresence(reported, devicesOf(reported)[0]!)).toBe('none');
+    const cleared = env({ ios: { ...stopped, appPresence: null }, stage });
+    expect(appPresence(cleared, devicesOf(cleared)[0]!)).toBeNull();
   });
 
   it('does not guess from a missing app, which status leaves out when it does not know the bundle id', () => {
@@ -666,19 +678,42 @@ const expectedSteps = (steps: VectorStep[]) =>
 describe('workspace view vectors', () => {
   it.each(vectors.stage.map((c) => [c.name, c] as const))('stage: %s', (_, c) => {
     const e = c.workspace as unknown as EnvironmentState;
-    const stage = workspaceStage(e, devicesOf(e), vectorNow);
-    expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
+    const derived = c.derived as StageFacts;
+    expect(localStageFacts(e, devicesOf(e))).toEqual(derived);
+    for (const env of [e, { ...e, stage: derived }]) {
+      const stage = workspaceStage(env, devicesOf(env), vectorNow);
+      expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
+    }
   });
 
   it.each(vectors.gitChip.map((c) => [c.name, c] as const))('git chip: %s', (_, c) => {
-    const chip = gitChip(c.worktree as unknown as WorktreeFacts);
-    const pr = chip?.pr ? { text: chip.pr.text, tone: chip.pr.tone, checks: chip.pr.ci } : null;
+    const worktree = c.worktree as unknown as WorktreeFacts;
+    const derived = c.derived as GitChipFacts;
+    expect(localGitChipFacts(worktree.git!, worktree.pullRequest)).toEqual(derived);
     const toneOf = (tone: string) => (tone === 'default' ? 'normal' : tone === 'secondary' ? 'neutral' : tone);
-    expect({
-      parts: chip?.parts.map((p) => ({ text: p.text, tone: toneOf(p.tone) })),
-      pullRequest: pr,
-      label: chip?.label,
-    }).toEqual(c.chip);
+    for (const facts of [worktree, { ...worktree, gitChip: derived }]) {
+      const chip = gitChip(facts);
+      const pr = chip?.pr ? { text: chip.pr.text, tone: chip.pr.tone, checks: chip.pr.ci } : null;
+      expect({
+        parts: chip?.parts.map((p) => ({ text: p.text, tone: toneOf(p.tone) })),
+        pullRequest: pr,
+        label: chip?.label,
+      }).toEqual(c.chip);
+    }
+  });
+
+  it('decides the stage itself when stim reports a kind this app does not know', () => {
+    const e = {
+      ...(vectors.stage[0]!.workspace as unknown as EnvironmentState),
+      stage: { kind: 'paused', since: null, platform: null, closedApps: [] } as unknown as StageFacts,
+    };
+    expect(workspaceStage(e, devicesOf(e), vectorNow).subtitle).toBe(vectors.stage[0]!.stage.subtitle);
+  });
+
+  it.each(vectors.appPresence.map((c) => [c.name, c] as const))('app presence: %s', (_, c) => {
+    const e = c.workspace as unknown as EnvironmentState;
+    const device = devicesOf(e).find((d) => d.platform === c.platform && d.slot === c.slot)!;
+    expect(appPresence(e, device)).toBe(c.presence);
   });
 
   it.each(vectors.checksSummary.map((c) => [c.name, c] as const))('checks summary: %s', (_, c) => {
