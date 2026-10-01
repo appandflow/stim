@@ -48,3 +48,34 @@ import Testing
     }
   }
 }
+
+@Suite struct DuoHingeTests {
+  @Test func everyPostureRestsOutsideThePanelTurnOnItsOwnSide() {
+    for posture in DuoPosture.allCases {
+      let angle = posture.hingeAngle
+      #expect(posture.isFolded ? angle <= DuoHinge.coverRestAngle : angle >= DuoHinge.innerRestAngle)
+    }
+  }
+
+  @Test func foldingSweepsThroughTheTurnWithoutJumping() {
+    let angles = DuoHinge.sweep(from: 180, to: 0)
+    #expect(angles.last == 0)
+    #expect((30...120).contains(angles.count))
+    #expect(angles.filter { $0 > DuoHinge.coverRestAngle && $0 < DuoHinge.innerRestAngle }.count >= 10)
+    let phases = [DuoHinge.phase(for: 180)] + angles.map(DuoHinge.phase(for:))
+    for (previous, next) in zip(phases, phases.dropFirst()) {
+      #expect(next <= previous)
+      #expect(previous - next <= 1.0 / 60 + 0.0001)
+    }
+  }
+
+  @Test func halfOpeningFromFoldedEndsAtTheHalfOpenAngle() {
+    let angles = DuoHinge.sweep(from: 0, to: DuoPosture.halfOpen.hingeAngle)
+    #expect(abs(angles.last! - 120) < 0.001)
+    #expect(zip(angles, angles.dropFirst()).allSatisfy { $0 <= $1 })
+  }
+
+  @Test func sweepingToTheCurrentAngleSendsNothing() {
+    #expect(DuoHinge.sweep(from: 120, to: 120).isEmpty)
+  }
+}

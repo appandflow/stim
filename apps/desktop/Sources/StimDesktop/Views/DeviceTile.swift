@@ -33,6 +33,8 @@ struct DeviceTile: View {
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
+  @State private var hingeAvailable = false
+  @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
   @State private var foldError: String?
   @State private var emulatorPosture: EmulatorPosture?
@@ -204,7 +206,7 @@ struct DeviceTile: View {
             .font(.stim(.caption))
             .accessibilityElement(children: .combine)
         }
-        if let posture = posture ?? emulatorPosture?.label {
+        if let posture = duoPosture?.label ?? emulatorPosture?.label {
           Pill { Text(posture) }.help("Current posture")
         }
       }
@@ -213,7 +215,7 @@ struct DeviceTile: View {
 
   /// Home, Back, Apps and Lock as the device has them, then rotation and fold or posture, in a column beside the
   /// screen. The buttons go through the screen's own input and press only while the device is taken over; rotation,
-  /// fold and posture use simctl or adb and work at any time. A physical device has none.
+  /// fold and posture use simctl, adb or the simulator's HID service and work at any time. A physical device has none.
   private var buttonStrip: some View {
     VStack(spacing: Space.sm) {
       switch device {
@@ -231,8 +233,18 @@ struct DeviceTile: View {
       Rectangle().fill(Palette.border).frame(width: 16, height: 1)
       rotateButton(clockwise: false)
       rotateButton(clockwise: true)
-      if device.formFactor == .dual, screenIDs.count > 1, SimulatorFold.isAvailable, case .ios(_, let sim) = device {
-        foldButton(udid: sim.udid)
+      if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
+        Group {
+          if hingeAvailable {
+            Rectangle().fill(Palette.border).frame(width: 16, height: 1)
+            ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
+          } else if SimulatorFold.isAvailable {
+            foldButton(udid: sim.udid)
+          }
+        }
+        .task(id: sim.udid) {
+          hingeAvailable = await Task.detached { SimulatorPosture.isAvailable(udid: sim.udid) }.value
+        }
       }
       if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
         postureMenu(serial: serial, current: emulatorPosture)
@@ -352,6 +364,45 @@ struct DeviceTile: View {
     .disabled(folding)
     .help(
       foldError.map { "\(title): \($0)" } ?? "\(title): sweeps the hinge to the other posture, which lights the other screen.")
+  }
+
+  private func postureButton(_ target: DuoPosture, udid: String) -> some View {
+    let selected = duoPosture == target
+    let failed = foldError != nil && postureTarget == target
+    return Button(target.label, systemImage: failed ? "exclamationmark.triangle" : target.systemImage) {
+      folding = true
+      postureTarget = target
+      foldError = nil
+      Task {
+        let from = duoPosture ?? SimulatorPosture.lastPosture(udid: udid) ?? .closed
+        foldError = await SimulatorPosture.move(udid: udid, from: from.hingeAngle, to: target)
+        if foldError == nil {
+          try? await Task.sleep(for: .seconds(3))
+          if let posture, (posture == "Folded") != target.isFolded {
+            foldError = "The hinge moved, but the simulator did not switch screens."
+          }
+        }
+        folding = false
+      }
+    }
+    .labelStyle(.iconOnly)
+    .buttonStyle(.stim(selected ? .primary : .secondary))
+    .disabled(folding)
+    .help(
+      failed
+        ? "\(target.label) failed: \(foldError ?? "")"
+        : "\(target.label): moves the simulated hinge to \(Int(target.hingeAngle)) degrees."
+    )
+    .accessibilityLabel(failed ? "\(target.label) failed, retry" : target.label)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+
+  /// The iPhone Duo's posture: folded when the cover is lit, else the open posture Stim Desktop last set, since the
+  /// lit panel is the same at 120 and 180 degrees.
+  private var duoPosture: DuoPosture? {
+    guard let posture, case .ios(_, let sim) = device else { return nil }
+    if posture == "Folded" { return .closed }
+    return SimulatorPosture.lastPosture(udid: sim.udid) == .halfOpen ? .halfOpen : .open
   }
 
   private func postureMenu(serial: String, current: EmulatorPosture) -> some View {

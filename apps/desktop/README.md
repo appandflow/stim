@@ -517,11 +517,19 @@ is taken over; rotation works at any time.
 
 A simulator with more than one display, such as the iPhone Duo, shows every
 display side by side, and touches go to the display you click. Only the
-display the posture lights shows content; the other stays black. **Fold /
-Unfold** in the column sweeps the simulated hinge to the other posture.
-It runs the bundled `sim-fold` helper inside the simulator with `xcrun simctl
-spawn`. The helper calls SpringBoard's private display tool service, so the
-button appears only in the bundled app, and an iOS release can break it.
+display the posture lights shows content; the other stays black. **Folded**,
+**Half open** and **Unfolded** in the column move the simulated hinge to 0,
+120 or 180 degrees, as the posture buttons in Xcode's Device Hub do. They sweep
+the angle through the simulator's vendor-defined HID service
+(`com.apple.coredevice.feature.remote.hid.vendordefined`), which iOS needs to
+swap panels; the path is adapted from
+[Siniulator](https://github.com/kmagiera/Siniulator) under its MIT licence.
+The lit panel cannot tell Half open from Unfolded, so the selected button and
+the posture chip show the open posture Stim Desktop last set. On a
+CoreSimulator without that service the column shows **Fold / Unfold** instead,
+which runs the bundled `sim-fold` helper inside the simulator with `xcrun
+simctl spawn` to toggle SpringBoard's private display tool service; it appears
+only in the bundled app, and an iOS release can break it.
 
 An Android emulator with a hinge, such as one Stim created with
 `--device-profile pixel_fold`, shows its posture as a chip: **Folded**,

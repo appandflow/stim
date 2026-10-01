@@ -81,7 +81,7 @@ final class SimulatorHID {
 
   init?(udid: String) {
     guard let device = CoreSimulator.device(udid: udid) else { return nil }
-    if let coreDevice = CoreDeviceHID(device: device) {
+    if let coreDevice = CoreDeviceHID(device: device, feature: CoreDeviceHID.digitizer) {
       transport = .coreDevice(coreDevice)
     } else if let legacy = LegacyHID(device: device) {
       transport = .legacy(legacy)
@@ -125,8 +125,9 @@ final class SimulatorHID {
 // own service takes input in both states. The message shapes follow dtuhidd's
 // IndigoHIDServer as Siniulator uses it
 // (github.com/kmagiera/Siniulator, Sources/Siniulator/Input.swift).
-private final class CoreDeviceHID {
-  private static let feature = "com.apple.coredevice.feature.remote.hid.digitizer"
+final class CoreDeviceHID {
+  static let digitizer = "com.apple.coredevice.feature.remote.hid.digitizer"
+  static let vendorDefined = "com.apple.coredevice.feature.remote.hid.vendordefined"
   private static let lookupSelector = NSSelectorFromString("lookup:error:")
 
   private typealias LookupFn =
@@ -136,19 +137,21 @@ private final class CoreDeviceHID {
   private typealias EndpointFn = @convention(c) (mach_port_t, UInt64, UInt64) -> xpc_object_t?
   private typealias EnableFn = @convention(c) (xpc_connection_t) -> Void
 
+  private let feature: String
   private let connection: xpc_connection_t
   private let lock = NSLock()
   private var closed = false
   private var pending: [xpc_object_t]? = []
 
-  init?(device: NSObject) {
+  init?(device: NSObject, feature: String) {
+    self.feature = feature
     let process = dlopen(nil, RTLD_NOW)
     guard device.responds(to: Self.lookupSelector),
       let createEndpoint = dlsym(process, "xpc_endpoint_create_mach_port_4sim"),
       let enableSimToHost = dlsym(process, "xpc_connection_enable_sim2host_4sim")
     else { return nil }
     let lookup = unsafeBitCast(device.method(for: Self.lookupSelector), to: LookupFn.self)
-    let port = lookup(device, Self.lookupSelector, Self.feature as NSString, nil)
+    let port = lookup(device, Self.lookupSelector, feature as NSString, nil)
     guard port != 0, let endpoint = unsafeBitCast(createEndpoint, to: EndpointFn.self)(port, 0, 0) else { return nil }
     connection = xpc_connection_create_from_endpoint(endpoint)
     unsafeBitCast(enableSimToHost, to: EnableFn.self)(connection)
@@ -194,6 +197,13 @@ private final class CoreDeviceHID {
     return !closed
   }
 
+  /// Whether dtuhidd answered the activating barrier, so a message sent now is not queued.
+  var isReady: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return !closed && pending == nil
+  }
+
   // dtuhidd's DigitizerTarget is 0 for the main screen and the screen ID for any other display.
   func touch(_ phase: TouchPhase, at point: CGPoint, screenID: UInt32) {
     let contact = xpc_dictionary_create(nil, nil, 0)
@@ -212,6 +222,14 @@ private final class CoreDeviceHID {
 
   func button(usage: UInt64, down: Bool) {
     send("IndigoButtonEvent", ["usagePage": 0x0c, "usageCode": usage, "state": down ? 1 : 2])
+  }
+
+  /// Sends a vendor-defined HID report on usage page 0xff61, usage 0x5b, which
+  /// is where the simulator's Virtualization provider takes hinge input.
+  func vendorDefined(_ data: Data) {
+    let payload = dictionary(["usagePage": 0xff61, "usage": 0x5b, "version": 0])
+    data.withUnsafeBytes { xpc_dictionary_set_data(payload, "data", $0.baseAddress!, $0.count) }
+    send("IndigoVendorDefinedEvent", payload)
   }
 
   private func send(_ type: String, _ values: [String: UInt64]) {
@@ -234,7 +252,7 @@ private final class CoreDeviceHID {
     let message = xpc_dictionary_create(nil, nil, 0)
     xpc_dictionary_set_string(message, "messageType", type)
     xpc_dictionary_set_bool(message, "isBarrier", barrier)
-    xpc_dictionary_set_string(message, "featureIdentifier", Self.feature)
+    xpc_dictionary_set_string(message, "featureIdentifier", feature)
     xpc_dictionary_set_value(message, "payload", payload)
     return message
   }
