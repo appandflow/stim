@@ -63,6 +63,11 @@ msgstr ": {summary}"
 msgid "{0, plural, one {# action} other {# actions}}"
 msgstr "{0, plural, one {# action} other {# actions}}"
 
+#. placeholder {0}: total.fallbacks
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {# fallback} other {# fallbacks}}"
+msgstr "{0, plural, one {# fallback} other {# fallbacks}}"
+
 #. placeholder {0}: capacity.liveCount
 #: src/screens/mac-status.tsx
 msgid "{0, plural, one {# live workspace} other {# live workspaces}}"
@@ -115,6 +120,10 @@ msgstr "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits
 #: src/lib/format.ts
 msgid "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 msgstr "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
+
+#: src/screens/mac-status.tsx
+msgid "{builds} in all"
+msgstr "{builds} in all"
 
 #: src/lib/format.ts
 msgid "{cacheHit} cache hit"
@@ -171,6 +180,7 @@ msgstr "{errors, plural, one { error} other { errors}}"
 msgid "{errors, plural, one {# error} other {# errors}}"
 msgstr "{errors, plural, one {# error} other {# errors}}"
 
+#: src/screens/mac-status.tsx
 #: src/screens/mac-status.tsx
 msgid "{failed} failed"
 msgstr "{failed} failed"
@@ -561,6 +571,10 @@ msgstr "{text}. Shows why."
 msgid "{time} · {age} ago"
 msgstr "{time} · {age} ago"
 
+#: src/screens/mac-status.tsx
+msgid "{time} building"
+msgstr "{time} building"
+
 #: src/screens/agent-actions.tsx
 msgid "{time}, {msg}"
 msgstr "{time}, {msg}"
@@ -589,9 +603,21 @@ msgstr "{title}, live"
 msgid "{title}: {label}"
 msgstr "{title}: {label}"
 
+#: src/screens/mac-status.tsx
+msgid "{today} today"
+msgstr "{today} today"
+
+#: src/screens/mac-status.tsx
+msgid "{todayCount} offloaded today"
+msgstr "{todayCount} offloaded today"
+
 #: src/components/device-tile.tsx
 msgid "{tool}, {text}"
 msgstr "{tool}, {text}"
+
+#: src/screens/mac-status.tsx
+msgid "{totalCount} in all"
+msgstr "{totalCount} in all"
 
 #: src/lib/format.ts
 msgid "{uncommitted, plural, one {# uncommitted change} other {# uncommitted changes}}"
@@ -649,6 +675,14 @@ msgstr "+{others}"
 #: src/intl/format.ts
 msgid "<1m"
 msgstr "<1m"
+
+#: src/screens/mac-status.tsx
+msgid "~{saved} saved"
+msgstr "~{saved} saved"
+
+#: src/screens/mac-status.tsx
+msgid "~{saved} slower"
+msgstr "~{saved} slower"
 
 #: src/lib/settings-options.ts
 msgid "10 PM to 7 AM"
@@ -959,10 +993,34 @@ msgstr "Building {platform}"
 msgid "Building {platform}, slot {slot}"
 msgstr "Building {platform}, slot {slot}"
 
+#: src/screens/mac-status.tsx
+msgid "Builds for other Macs"
+msgstr "Builds for other Macs"
+
+#: src/lib/build-machines.ts
+msgid "Built here"
+msgstr "Built here"
+
+#: src/lib/build-machines.ts
+msgid "Built here after {name}"
+msgstr "Built here after {name}"
+
+#: src/lib/build-machines.ts
+msgid "Built here after offloading"
+msgstr "Built here after offloading"
+
 #: src/lib/format.ts
 #: src/lib/format.ts
 msgid "Built on {machine}"
 msgstr "Built on {machine}"
+
+#: src/lib/build-machines.ts
+msgid "Built on {name}"
+msgstr "Built on {name}"
+
+#: src/lib/build-machines.ts
+msgid "Built on a build machine"
+msgstr "Built on a build machine"
 
 #: src/screens/about.tsx
 msgid "Built-in"
@@ -1559,6 +1617,10 @@ msgstr "Expands the section"
 #: src/screens/mac-status.tsx
 msgid "Expired"
 msgstr "Expired"
+
+#: src/screens/mac-status.tsx
+msgid "failed"
+msgstr "failed"
 
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
@@ -3436,6 +3498,10 @@ msgstr "This workspace is no longer in the status."
 msgid "Today"
 msgstr "Today"
 
+#: src/screens/mac-status.tsx
+msgid "Today: {here} here, {offloaded} on a build machine, {fellBack} here after trying one."
+msgstr "Today: {here} here, {offloaded} on a build machine, {fellBack} here after trying one."
+
 #: src/app/_layout.tsx
 #: src/components/route-error-boundary.tsx
 msgid "Try again"
@@ -3633,6 +3699,10 @@ msgstr "Website"
 #: src/screens/inbox.tsx
 msgid "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
 msgstr "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
+
+#: src/screens/mac-status.tsx
+msgid "Where builds ran"
+msgstr "Where builds ran"
 
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx

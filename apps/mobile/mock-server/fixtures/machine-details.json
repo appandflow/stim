@@ -1731,6 +1731,84 @@
         "lastRunAt": "2026-09-24T16:23:09.000Z",
         "lastColdBuildMs": 130382
       }
+    },
+    "offload": {
+      "today": {
+        "here": 1,
+        "offloaded": 2,
+        "fellBack": 1
+      },
+      "machines": {
+        "janics-mac-mini:7869": {
+          "today": {
+            "offloaded": 2,
+            "offloadedMs": 369000,
+            "savedMs": 134000,
+            "fallbacks": 0
+          },
+          "total": {
+            "offloaded": 14,
+            "offloadedMs": 2604000,
+            "savedMs": 731000,
+            "fallbacks": 1,
+            "lastOffloadAt": "2026-09-25T03:45:09.000Z"
+          }
+        },
+        "old-mini": {
+          "today": {
+            "offloaded": 0,
+            "offloadedMs": 0,
+            "savedMs": 0,
+            "fallbacks": 1
+          },
+          "total": {
+            "offloaded": 3,
+            "offloadedMs": 690000,
+            "savedMs": -42000,
+            "fallbacks": 4,
+            "lastFallbackAt": "2026-09-25T03:28:09.000Z"
+          }
+        }
+      },
+      "placements": [
+        {
+          "at": "2026-09-25T04:19:09.000Z",
+          "project": "/Users/janic/Developer/stim/apps/mobile",
+          "platform": "ios",
+          "decision": "here",
+          "reason": "load 0.6/core, 1 of 3 build slots busy here",
+          "buildMs": 212000,
+          "localEstimateMs": 205000
+        },
+        {
+          "at": "2026-09-25T03:45:09.000Z",
+          "project": "/Users/janic/Developer/acme-app",
+          "platform": "android",
+          "decision": "offloaded",
+          "machine": "janics-mac-mini:7869",
+          "reason": "this Mac is busy: 3 of 3 build slots busy (load 2.4/core, 3 of 3 build slots busy); load 0.4/core, 0 builds there",
+          "buildMs": 171000,
+          "localEstimateMs": 262000
+        },
+        {
+          "at": "2026-09-25T03:28:09.000Z",
+          "project": "/Users/janic/Developer/acme-app",
+          "platform": "ios",
+          "decision": "fell-back",
+          "machine": "old-mini",
+          "reason": "old-mini: Stim build 6bbe9 there, e774c here"
+        },
+        {
+          "at": "2026-09-25T03:13:09.000Z",
+          "project": "/Users/janic/Developer/stim/apps/mobile",
+          "platform": "ios",
+          "decision": "offloaded",
+          "machine": "janics-mac-mini:7869",
+          "reason": "this Mac is busy: load 2.1/core over 2; load 0.3/core, 0 builds there",
+          "buildMs": 198000,
+          "localEstimateMs": 241000
+        }
+      ]
     }
   },
   "buildMachines": [
@@ -1809,6 +1887,21 @@
         "maxLoadPerCore": 2,
         "declined": null
       }
+    }
+  ],
+  "buildClients": [
+    {
+      "id": "c0ffee12",
+      "name": "Janic's MacBook Pro",
+      "builds": 21,
+      "failed": 2,
+      "buildMs": 4320000,
+      "today": {
+        "builds": 3,
+        "failed": 0,
+        "buildMs": 610000
+      },
+      "lastAt": "2026-09-25T04:11:09.000Z"
     }
   ],
   "measuredAt": "2026-09-25T04:23:09.012Z"
