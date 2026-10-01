@@ -152,10 +152,10 @@ export function buildClients(records: AuditRecord[], now: number): BuildClientSu
 
 export async function loadMachineDetails(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
-  audit: () => AuditRecord[],
+  audit: () => Promise<AuditRecord[]>,
 ): Promise<Omit<MachineDetails, 'buildMachines'>> {
   const measuredAt = new Date().toISOString();
-  const [gc, stats] = await Promise.all([run(GC_DRY_RUN), run(STATS)]);
+  const [gc, stats, records] = await Promise.all([run(GC_DRY_RUN), run(STATS), audit()]);
   const gcPart = part(gc, 'stim gc');
   const statsPart = part(stats, 'stim stats');
   return {
@@ -163,7 +163,7 @@ export async function loadMachineDetails(
     ...(gcPart.error ? { gcError: gcPart.error } : {}),
     stats: statsPart.payload,
     ...(statsPart.error ? { statsError: statsPart.error } : {}),
-    buildClients: buildClients(audit(), Date.parse(measuredAt)),
+    buildClients: buildClients(records, Date.parse(measuredAt)),
     measuredAt,
   };
 }

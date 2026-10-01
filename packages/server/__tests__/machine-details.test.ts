@@ -54,7 +54,7 @@ describe('loadMachineDetails', () => {
       calls.push(args[0]!);
       return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
     };
-    expect(await loadMachineDetails(run, () => [])).toMatchObject({
+    expect(await loadMachineDetails(run, async () => [])).toMatchObject({
       gc: { args: ['gc', '--json'] },
       stats: { args: ['stats', '--json'] },
       buildClients: [],

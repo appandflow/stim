@@ -139,7 +139,7 @@ const PLATFORMS: StatsPlatform[] = ['ios', 'android'];
 const OUTCOMES: RunOutcomeKind[] = ['hit', 'cold'];
 export const HISTORY_LIMIT = 10;
 export const PLACEMENT_LIMIT = 100;
-const PLACEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const PLACEMENT_MAX_AGE_MS: number = 7 * 24 * 60 * 60_000;
 
 export function statsFile(): string {
   return join(getConfigDir(), 'stats.json');

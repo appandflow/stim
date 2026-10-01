@@ -1478,11 +1478,11 @@ BUILD PLACEMENT (\`offload\`)
   records where it built and why, in a placement: { at, project, platform,
   decision, reason, machine?, buildMs?, localEstimateMs?, failed? }.
   decision is "here", "offloaded", or "fell-back" (it tried a build machine
-  and built here). reason is the same text as the run's \`placement:\` or
-  \`-> building here\` line, for example "load 0.6/core, 1 of 3 build slots
-  busy here" (auto keeps the build here while this Mac has room),
-  "offload.mode is off", or "mini: no less loaded (load 1.2/core there,
-  0.6/core here)". buildMs is the compile here, or the offloaded build's
+  and built here). reason is why: the run's \`placement:\` reason, such as
+  "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
+  while this Mac has room) or "offload.mode is off" (which prints no line),
+  or for a fallback the cause, prefixed by the machine it concerns, such as
+  "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
   total (offer, sync, build and fetch); localEstimateMs is this project's
   last cold build here before the run. A run that hits the cache or waits
   for another workspace's build compiles nothing and records none.

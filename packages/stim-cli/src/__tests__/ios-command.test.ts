@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
+import { buildMachinesFile } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -6569,7 +6570,7 @@ describe('run statistics', () => {
       state: 'approved',
       requestedAt: '2026-09-01T00:00:00.000Z',
     };
-    writeFileSync(join(tmpHome, 'build-machines.json'), JSON.stringify({ version: 1, machines: [credential] }));
+    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
     process.env.STIM_OFFLOAD_MODE = 'off';
     const { runs, recordStats } = recorder();
     try {

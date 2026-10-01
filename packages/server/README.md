@@ -680,9 +680,9 @@ Events are `{ "event", "subscription", ... }`.
   settled a result yet, or the settled one is 60 seconds old or older. A client
   that wants the refreshed result asks `machine.details` again. It also
   carries `buildClients`, the builds this Mac ran as a build machine, one entry
-  per client Mac read from the `build` records of the audit log:
-  `{ id, name, builds, failed, buildMs, today: { builds, failed, buildMs },
-lastAt }`, most recent client first, with `today` on this Mac's local
+  per client Mac read from the `build` records of the audit log, with `id`,
+  `name`, `builds`, `failed`, `buildMs`, `lastAt` and the same three counts
+  for `today`, most recent client first, with `today` on this Mac's local
   calendar day. Servers that predate it leave it out.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more

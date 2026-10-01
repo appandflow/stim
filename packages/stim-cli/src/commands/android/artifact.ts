@@ -618,7 +618,8 @@ export async function acquireAndroidArtifact(
       machines: candidate.machines,
     });
     if (typeof choice === 'string') {
-      if (candidate.machines.length === 1) fallbackMachine = candidate.machines[0]!.machine;
+      const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
+      if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
       fallBack(choice);
       return null;
     }
