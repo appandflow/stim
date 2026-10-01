@@ -554,6 +554,7 @@ private struct RunOutput: View {
           .padding(Space.md)
           .textSelection(.enabled)
         }
+        .frame(maxWidth: .infinity)
         .frame(height: 100)
         .background(RoundedRectangle(cornerRadius: Radius.control).fill(Media.screen))
         .onChange(of: run.logLines.count) {
