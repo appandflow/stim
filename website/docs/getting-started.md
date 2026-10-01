@@ -63,11 +63,15 @@ wrapper.
 The agent normally runs:
 
 <StimTabs
-code={`stim doctor           # inspect the source checkout and warm-state gaps
+code={`git worktree add -b <branch> <path> HEAD   # unless a harness made one
+cd <path>
+stim worktree warm    # copy ignored state from the source checkout
+stim doctor           # inspect the source checkout and warm-state gaps
 stim start            # optional: start this workspace's dev server early
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
-stim stop             # release the live environment`}
+stim stop             # release the live environment
+stim worktree remove  # after the work is preserved`}
 />
 
 Use `stim android` for Android. Stim works with React Native Community CLI and
