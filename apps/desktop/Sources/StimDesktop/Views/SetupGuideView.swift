@@ -405,7 +405,7 @@ struct SetupGuideView: View {
       }
       Spacer()
       if let previous = step.previous {
-        Button("Back") { onboarding.guideStep = previous }.buttonStyle(.stim())
+        Button("Back") { onboarding.guideStep = previous }.buttonStyle(.stim(.secondary, .regular))
       }
       if let next = step.next {
         let finished = [.done, .notApplicable].contains(setup.state(of: step))
