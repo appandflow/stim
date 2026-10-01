@@ -1076,7 +1076,7 @@ app crashed, was killed, or never launched), or `unknown` when the process list
 or the app's `Info.plist` could not be read. `app` is absent when the device is
 not owned or Stim knows no app id for it. Each of those device records also
 carries `appPresence`: `none` when the device runs, its platform's latest run
-failed and no run ever succeeded, `closed` when it runs and the app is
+failed and `builds` carries the platform with no succeeded run, `closed` when it runs and the app is
 `stopped`, else `null`. This is the app's current process state, not a record of
 the last launch. Stim reads it from one host `ps` for every simulator and the
 same `adb shell ps` it reads for activity, so `status --watch` notices an app

@@ -927,7 +927,8 @@ RULES
               metro.lastStop.at; null when unknown
   platform    "ios" or "android" for "building" and "build-failed", else null
   closedApps  for "running", [{ platform, slot }] of the devices whose
-              appPresence is "closed"; empty otherwise
+              appPresence is "closed", the default slot first, then each
+              slot in order, iOS before Android; empty otherwise
 
   A warm records warming under its own ownership claim, so a warm that was
   killed or failed reads as idle, never as warming. Plain \`stim status\`
@@ -1118,7 +1119,8 @@ RULES
   appPresence, whether the device lacks the app:
 
   appPresence  "none"    the device runs, its platform's latest run failed
-                         and no run in builds ever succeeded
+                         and builds carries the platform with no
+                         succeeded run
                "closed"  the device runs and app.state is "stopped"
                null      otherwise, including a device that is not running
                          and a physical device
