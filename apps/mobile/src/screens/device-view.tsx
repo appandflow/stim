@@ -740,6 +740,7 @@ function Banner({
   readOnly: boolean;
   onTakeOver: () => void;
 }) {
+  const { theme } = useUnistyles();
   const ended = control.kind === 'off' ? control.ended : undefined;
   const message =
     control.kind === 'busy'
@@ -762,7 +763,7 @@ function Banner({
         <Touch
           onPress={onTakeOver}
           disabled={readOnly}
-          defaultOpacity={readOnly ? 0.6 : 1}
+          defaultOpacity={readOnly ? theme.opacity.disabled : 1}
           accessibilityHint={readOnly ? readOnlyReason() : undefined}
           style={styles.bannerButton}
           hitSlop={6}
@@ -805,11 +806,12 @@ function controlsSpan(left: number, width: number, windowWidth: number, insetLef
 }
 
 function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
+  const { theme } = useUnistyles();
   return (
     <Touch
       onPress={onPress}
       disabled={disabled}
-      defaultOpacity={disabled ? 0.6 : 1}
+      defaultOpacity={disabled ? theme.opacity.disabled : 1}
       accessibilityState={{ disabled }}
       style={styles.tool}
       hitSlop={4}
