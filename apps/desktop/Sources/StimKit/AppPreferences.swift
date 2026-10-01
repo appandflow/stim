@@ -15,6 +15,7 @@ public enum AppPreferences {
     public static let expandedProjects = "sidebar.expandedProjects"
     public static let defaultView = "defaultView"
     public static let lastProjectPath = "lastProjectPath"
+    public static let dismissedStimUpdate = "dismissedStimUpdate"
     public static let tileSize = "tileSize"
     public static let maxFramesPerSecond = "maxFramesPerSecond"
     public static let pausesHiddenFrames = "pausesHiddenFrames"

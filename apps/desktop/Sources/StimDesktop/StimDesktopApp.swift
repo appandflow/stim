@@ -8,6 +8,8 @@ import SwiftUI
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
+  /// Whether a main window existed when `device` arrived; a request that opens the window finds nothing to lose.
+  var deviceArrivedWithWindow = false
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
@@ -65,7 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
     guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
-    MainActor.assumeIsolated { OpenRequests.shared.device = request }
+    MainActor.assumeIsolated {
+      OpenRequests.shared.deviceArrivedWithWindow = MainWindow.isOpen
+      OpenRequests.shared.device = request
+    }
   }
 
   func applicationWillFinishLaunching(_ notification: Notification) {

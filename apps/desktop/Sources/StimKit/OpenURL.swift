@@ -21,6 +21,30 @@ public func deviceOpenRequest(fromOpenURL url: URL) -> DeviceOpenRequest? {
   return nil
 }
 
+/// What the main window shows when a device open request arrives.
+public enum LaunchPage: Equatable, Sendable {
+  case allDevices
+  case workspace(String)
+  case other
+}
+
+public enum LaunchResponse: Equatable, Sendable {
+  case navigate
+  case notice
+}
+
+/// A device open request comes from `stim ios` or `stim android` launching on its own, so it navigates only when
+/// nothing the user was looking at is replaced: no main window was open, or the window already shows the launched
+/// workspace or the All devices grid. Any other page keeps the selection and gets a notice card with a Show action.
+public func launchResponse(page: LaunchPage, mainWindowOpen: Bool, workspacePath: String) -> LaunchResponse {
+  guard mainWindowOpen else { return .navigate }
+  switch page {
+  case .allDevices: return .navigate
+  case .workspace(let path): return path == workspacePath ? .navigate : .notice
+  case .other: return .notice
+  }
+}
+
 extension StatusPayload {
   /// The workspace that records the requested device, in its default devices or a slot.
   public func owner(of request: DeviceOpenRequest) -> (workspace: Workspace, device: DeviceRef)? {
