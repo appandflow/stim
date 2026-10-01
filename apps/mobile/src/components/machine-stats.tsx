@@ -9,6 +9,7 @@ export function MachineStatsRow({ usage, large }: { usage: MachineUsage | null; 
   return (
     <StatRow
       wrap
+      accessible
       stats={stats.map((stat) => ({ kind: stat.kind, value: stat.value, tone: usageTone(stat.tone) }))}
       iconSize={large ? 15 : 12}
       variant={large ? 'callout' : 'caption'}

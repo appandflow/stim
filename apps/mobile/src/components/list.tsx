@@ -10,7 +10,7 @@ import { Touch } from '@/components/touch';
 export function SectionHeader({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <View style={styles.header}>
-      <Text variant="footnote" weight="semibold" tone="tertiary" style={styles.title}>
+      <Text variant="footnote" weight="semibold" tone="tertiary" accessibilityRole="header" style={styles.title}>
         {title}
       </Text>
       {action}
@@ -101,7 +101,12 @@ export function ListRow({
   );
   if (onPress) {
     return (
-      <Touch feedback="row" onPress={onPress} accessibilityLabel={accessibilityLabel} style={styles.row(true)}>
+      <Touch
+        feedback="row"
+        onPress={onPress}
+        accessibilityLabel={accessibilityLabel ?? [title, value, subtitle].filter(Boolean).join(', ')}
+        style={styles.row(true)}
+      >
         {content}
       </Touch>
     );

@@ -146,7 +146,7 @@ export function MacStatus({ id }: { id: string }) {
       ) : null}
 
       <View style={styles.block}>
-        <Text variant="headline">
+        <Text variant="headline" accessibilityRole="header">
           <Trans>Now</Trans>
         </Text>
         {usage ? (
@@ -313,7 +313,7 @@ export function MacStatus({ id }: { id: string }) {
 
       {builds.length > 0 ? (
         <View style={styles.block}>
-          <Text variant="headline">
+          <Text variant="headline" accessibilityRole="header">
             <Trans>Native builds</Trans>
           </Text>
           <Card>
@@ -339,7 +339,7 @@ export function MacStatus({ id }: { id: string }) {
 
       {placements && placements.placements.length > 0 ? (
         <View style={styles.block}>
-          <Text variant="headline">
+          <Text variant="headline" accessibilityRole="header">
             <Trans>Where builds ran</Trans>
           </Text>
           <Text variant="footnote" tone="secondary">
@@ -368,7 +368,7 @@ export function MacStatus({ id }: { id: string }) {
 
       {machines.length > 0 || machinesError || machinesPending ? (
         <View style={styles.block}>
-          <Text variant="headline">
+          <Text variant="headline" accessibilityRole="header">
             <Trans>Build machines</Trans>
           </Text>
           {machinesPending && machines.length === 0 && !machinesError ? (
@@ -422,7 +422,7 @@ export function MacStatus({ id }: { id: string }) {
 
       {clients.length > 0 ? (
         <View style={styles.block}>
-          <Text variant="headline">
+          <Text variant="headline" accessibilityRole="header">
             <Trans>Builds for other Macs</Trans>
           </Text>
           <Card>
@@ -445,7 +445,7 @@ export function MacStatus({ id }: { id: string }) {
 
       {budgets && budgets.length > 0 ? (
         <View style={styles.block}>
-          <Text variant="headline">
+          <Text variant="headline" accessibilityRole="header">
             <Trans>Budgets</Trans>
           </Text>
           <Card>
@@ -628,7 +628,7 @@ function DiskHeadline({
   return (
     <View style={styles.block}>
       <View style={styles.headerRow}>
-        <Text variant="headline" style={styles.grow}>
+        <Text variant="headline" accessibilityRole="header" style={styles.grow}>
           <Trans>Disk</Trans>
         </Text>
         {measured ? (

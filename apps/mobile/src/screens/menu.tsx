@@ -121,7 +121,13 @@ export function Menu({ onClose }: { onClose: () => void }) {
         ) : null}
         {recentRows.length > 0 ? (
           <>
-            <Text variant="callout" weight="medium" tone="secondary" style={styles.sectionTitle}>
+            <Text
+              variant="callout"
+              weight="medium"
+              tone="secondary"
+              accessibilityRole="header"
+              style={styles.sectionTitle}
+            >
               <Trans>Recent workspaces</Trans>
             </Text>
             {recentRows.map((recent) => {

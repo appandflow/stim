@@ -123,7 +123,7 @@ export function Inbox() {
           <RefreshControl refreshing={inbox.refreshing} onRefresh={inbox.refresh} tintColor={theme.colors.tertiary} />
         }
         renderSectionHeader={({ section }) => (
-          <Text variant="body" weight="medium" tone="tertiary" style={styles.sectionHeader}>
+          <Text variant="body" weight="medium" tone="tertiary" accessibilityRole="header" style={styles.sectionHeader}>
             {section.title}
           </Text>
         )}

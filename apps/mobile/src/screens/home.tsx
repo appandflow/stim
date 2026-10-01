@@ -169,7 +169,7 @@ export function Home() {
   const listHeader = (
     <View>
       <View style={styles.sectionHeader}>
-        <Text variant="body" weight="medium" tone="tertiary">
+        <Text variant="body" weight="medium" tone="tertiary" accessibilityRole="header">
           <Trans>Machines</Trans>
         </Text>
         <Touch onPress={() => router.push('/pair')} accessibilityLabel={t`Pair a machine`} hitSlop={11}>
