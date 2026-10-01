@@ -12,6 +12,7 @@ import { ScopeChip } from '@/components/read-only';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMacs } from '@/hooks/machines';
+import { useLargeText } from '@/hooks/large-text';
 import { forgetInbox } from '@/hooks/inbox';
 import { unregisterPush } from '@/hooks/notifications';
 import { forgetMac, type PairedMac } from '@/lib/macs';
@@ -20,6 +21,7 @@ export function MacList() {
   const { theme } = useUnistyles();
   const router = useRouter();
   const { reload, connections } = useMacs();
+  const large = useLargeText();
 
   const forget = (mac: PairedMac) => {
     const { name } = mac;
@@ -47,7 +49,7 @@ export function MacList() {
         const { name } = item;
         return (
           <Card>
-            <View style={styles.row}>
+            <View style={large ? styles.rowStacked : styles.row}>
               <Touch
                 feedback="row"
                 accessibilityRole="link"
@@ -57,7 +59,7 @@ export function MacList() {
                 <StatusDot color={connectionColor(state, missing, theme.colors)} />
                 <View style={styles.rowText}>
                   <View style={styles.nameRow}>
-                    <Text variant="headline" style={styles.shrink} numberOfLines={1}>
+                    <Text variant="headline" style={styles.shrink} numberOfLines={large ? 3 : 1}>
                       {item.name}
                     </Text>
                     <ScopeChip state={state} />
@@ -65,12 +67,12 @@ export function MacList() {
                   <Text variant="footnote" tone="secondary" numberOfLines={1}>
                     {describeState(state, missing)}
                   </Text>
-                  <Text variant="caption" tone="secondary" mono numberOfLines={1}>
+                  <Text variant="caption" tone="secondary" mono numberOfLines={large ? 3 : 1}>
                     {item.endpoint}
                   </Text>
                 </View>
               </Touch>
-              <View style={styles.buttons}>
+              <View style={large ? styles.buttonsStacked : styles.buttons}>
                 <Button
                   title={t`Rename`}
                   variant="plain"
@@ -97,8 +99,16 @@ export function MacList() {
 const styles = StyleSheet.create((theme) => ({
   list: { padding: theme.space.xl, gap: theme.space.lg },
   row: { flexDirection: 'row', alignItems: 'center' },
+  rowStacked: { gap: theme.space.sm },
   open: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.lg, padding: theme.space.lg },
   buttons: { flexDirection: 'row', alignItems: 'center', gap: theme.space.lg, paddingRight: theme.space.lg },
+  buttonsStacked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.lg,
+    paddingBottom: theme.space.lg,
+  },
   rowText: { flex: 1, gap: theme.space.xs },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
   shrink: { flexShrink: 1 },

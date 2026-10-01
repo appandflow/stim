@@ -591,17 +591,34 @@ export function DeviceView({
                   },
                 ]}
               >
-                <Text variant="body" weight="semibold" style={styles.mediaText} numberOfLines={1}>
+                <Text
+                  variant="body"
+                  weight="semibold"
+                  style={styles.mediaText}
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                >
                   {title}
                 </Text>
                 <View style={styles.subtitleRow}>
-                  <Text variant="caption" style={styles.subtitle} numberOfLines={1}>
+                  <Text
+                    variant="caption"
+                    style={styles.subtitle}
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                  >
                     {subtitle}
                   </Text>
                   {range?.recording && !replayOff ? (
                     <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
                       <View style={styles.recordingDot} />
-                      <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
+                      <Text
+                        variant="caption2"
+                        weight="medium"
+                        style={styles.driverText}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                      >
                         <Trans>Recording</Trans>
                       </Text>
                     </View>
@@ -613,7 +630,13 @@ export function DeviceView({
                       accessibilityLabel={controlling ? t`Also driven by ${driver}` : t`Driven by ${driver}`}
                     >
                       <Icon name="cursorarrow.rays" size={11} color={theme.colors.accent} />
-                      <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
+                      <Text
+                        variant="caption2"
+                        weight="medium"
+                        style={styles.driverText}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                      >
                         {driver}
                       </Text>
                     </View>
@@ -780,6 +803,8 @@ function Banner({
   );
 }
 
+const BAR_MAX_FONT_SCALE = 1.5;
+
 function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boolean; onPress: () => void }) {
   const { theme } = useUnistyles();
   return (
@@ -794,7 +819,7 @@ function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boole
       style={styles.control(on)}
     >
       {on ? <Icon name="checkmark" size={13} color={theme.colors.onPrimary} /> : null}
-      <Text weight="semibold" style={styles.controlText(on)}>
+      <Text weight="semibold" style={styles.controlText(on)} maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}>
         <Trans>Control</Trans>
       </Text>
     </Touch>

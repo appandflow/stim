@@ -6,6 +6,7 @@ import { Drawer, useDrawerProgress } from 'react-native-drawer-layout';
 import Animated, { interpolate, useAnimatedStyle } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useLargeText } from '@/hooks/large-text';
 import { Menu } from '@/screens/menu';
 
 const DISPLAY_RADIUS = Platform.select({ ios: 55, default: 28 });
@@ -18,6 +19,7 @@ export function useMenuDrawer() {
 
 export function MenuDrawer({ children }: { children: ReactNode }) {
   const { theme } = useUnistyles();
+  const large = useLargeText();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const value = useMemo(() => ({ open: () => setOpen(true) }), []);
@@ -40,7 +42,7 @@ export function MenuDrawer({ children }: { children: ReactNode }) {
         drawerType="back"
         swipeEnabled={open || pathname === '/'}
         style={{ backgroundColor: theme.colors.sidebar }}
-        drawerStyle={{ width: '80%', backgroundColor: theme.colors.sidebar }}
+        drawerStyle={{ width: large ? '95%' : '80%', backgroundColor: theme.colors.sidebar }}
         overlayStyle={styles.overlay}
         overlayAccessibilityLabel={t`Close menu`}
         renderDrawerContent={() => <Menu onClose={() => setOpen(false)} />}
