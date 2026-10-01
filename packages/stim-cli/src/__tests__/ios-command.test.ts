@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
+import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -2164,6 +2165,38 @@ describe('single-flight builds', () => {
 });
 
 describe('pods', () => {
+  test("status reports the first lookup's miss as provisional while pods install, and the final miss at compile", async () => {
+    reserve();
+    const seen: Array<{ phase?: string; provisional?: boolean; kind?: string; outcome?: string } | null> = [];
+    const active = () => {
+      const record = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
+      return record
+        ? {
+            phase: record.phase,
+            provisional: record.missProvisional === true,
+            kind: record.missReason?.kind,
+            outcome: record.outcome,
+          }
+        : null;
+    };
+    await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: 'PODS: A', manifestText: 'PODS: B' }),
+        runPodInstall: async () => {
+          seen.push(active());
+          return { ok: true, durationMs: 1 };
+        },
+        buildIos: async () => {
+          seen.push(active());
+          return makeIosBuildSuccess({ appPath: '/x.app', bundleId: 'b', durationMs: 1, scheme: 'F' });
+        },
+      },
+    );
+    expect(seen[0]).toMatchObject({ phase: 'pods', provisional: true, kind: 'no-baseline', outcome: 'cold' });
+    expect(seen[1]).toMatchObject({ phase: 'compile', provisional: false, kind: 'no-baseline' });
+  });
+
   test('a sandbox that does not match the lock is installed before the build', async () => {
     reserve();
     const { calls, errs } = await run(

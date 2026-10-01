@@ -1126,7 +1126,7 @@ RULES
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis,
-            plannedPhases, missReason?, detail?, placement }
+            plannedPhases, missReason?, missProvisional?, detail?, placement }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1146,10 +1146,13 @@ RULES
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
   startedAt        when the run started; phaseStartedAt when its phase did
-  outcome          "cold" once the run reached prebuild, pods or compile,
-                   "hit" once it reached device after the cache lookup,
-                   or install, without them. Before that, the outcome of
-                   this project's most recent run.
+  outcome          "cold" once the first cache lookup missed and the run
+                   will prebuild or install pods, or once it reached
+                   prebuild, pods or compile; "hit" once it reached device
+                   after the cache lookup, or install, without them, or
+                   once the lookup repeated after prebuild or pods hit.
+                   Before that, the outcome of this project's most recent
+                   run.
   outcomeKnown     true once outcome is this run's own, false while it is
                    the project's most recent one
   expectedMs       the median duration of this project's last successful
@@ -1174,6 +1177,13 @@ RULES
                    workspace's runs and includes offloaded ones
   missReason       once the run knows its cache lookup missed, why, in the
                    shape of lastBuilds missReason below
+  missProvisional  true while missReason is the first lookup's miss and the
+                   run will prebuild or install pods and look the key up
+                   again, because those can change the fingerprint. A hit on
+                   that second lookup removes missReason and sets outcome to
+                   hit; otherwise missReason is replaced with the final one,
+                   whose rekeyedBy lists what changed the key, and
+                   missProvisional goes away before compile
   detail           during compile, once the build tool printed a line Stim
                    reads: { step, unit, done, total, line, updatedAt }
     step           the tool's step: configure, compile, link, resources,
