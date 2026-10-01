@@ -101,6 +101,8 @@ struct LogTable: NSViewRepresentable {
           let height = CGFloat(removed) * LogRowView.height(lines: 1) + CGFloat(lines - removed) * LogRowView.lineHeight
           scrollProgrammatically(to: NSPoint(x: origin.x, y: max(0, origin.y - height)))
         }
+      case .slotColumnWidened:
+        table.reloadData()
       case .jumpToLatest:
         scrollToLatest()
       case .reveal(let row):
@@ -157,8 +159,8 @@ struct LogTable: NSViewRepresentable {
       let id = NSUserInterfaceItemIdentifier("logRow")
       let view = tableView.makeView(withIdentifier: id, owner: nil) as? LogRowView ?? LogRowView()
       view.identifier = id
-      view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row]) : []
-      view.indent = row < model.rows.count ? LogRowText.messageColumn(model.rows[row].entry.lead) : 0
+      view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row], slotWidth: model.slotWidth) : []
+      view.indent = LogRowText.messageColumn(slotWidth: model.slotWidth)
       view.row = row < model.rows.count ? model.rows[row] : nil
       return view
     }
@@ -226,8 +228,8 @@ enum LogRowText {
 
   private static let characterWidth = NSAttributedString(string: "0", attributes: [.font: font]).size().width
 
-  static func messageColumn(_ record: LogRecord) -> CGFloat {
-    LogRowView.inset + CGFloat(27 + (record.slot.map { $0.count + 3 } ?? 0)) * characterWidth
+  static func messageColumn(slotWidth: Int) -> CGFloat {
+    LogRowView.inset + CGFloat(27 + slotWidth) * characterWidth
   }
 
   private static let paragraph: NSParagraphStyle = {
@@ -260,7 +262,7 @@ enum LogRowText {
     let summary = row.entry.lead.accessibilityLabel(
       source: sourceLabel(row.entry.lead.src), title: row.view.title.replacingOccurrences(of: "\t", with: "  "),
       recordCount: row.entry.related.count + 1)
-    return ([summary] + lines(row).dropFirst().map(\.string)).joined(separator: ". ")
+    return ([summary] + lines(row, slotWidth: 0).dropFirst().map(\.string)).joined(separator: ". ")
   }
 
   /// JetBrains Mono ships only its regular weight here, so bold is drawn as a stroke around each glyph.
@@ -272,7 +274,7 @@ enum LogRowText {
     return attributes
   }
 
-  static func lines(_ row: LogsModel.Row) -> [NSAttributedString] {
+  static func lines(_ row: LogsModel.Row, slotWidth: Int) -> [NSAttributedString] {
     let record = row.entry.lead
     let head = NSMutableAttributedString()
     func add(_ string: String, _ color: Color) {
@@ -281,7 +283,9 @@ enum LogRowText {
     add(record.date.formatted(LogRecord.timeFormat) + "  ", Palette.tertiary)
     add(record.level.rawValue.uppercased().padding(toLength: 6, withPad: " ", startingAt: 0), color(record.level))
     add(sourceLabel(record.src).padding(toLength: 7, withPad: " ", startingAt: 0), Palette.primary)
-    if let slot = record.slot { add("[\(slot)] ", Palette.accent) }
+    if slotWidth > 0 {
+      add((record.slot.map { "[\($0)] " } ?? "").padding(toLength: slotWidth, withPad: " ", startingAt: 0), Palette.accent)
+    }
     add(row.view.title.replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Palette.error : Palette.text)
     if !row.entry.related.isEmpty { add("  \(row.entry.related.count + 1) records", Palette.tertiary) }
     let extra = row.view.codeFrame.count + row.view.notes.count - row.entry.related.count
