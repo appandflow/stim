@@ -946,6 +946,17 @@ import Testing
     #expect(payload.owner(of: .emulator(serial: "emulator-5556")) == nil)
   }
 
+  @Test func aLaunchNavigatesOnlyWhenNothingIsReplaced() {
+    func response(_ page: LaunchPage, open: Bool = true) -> LaunchResponse {
+      launchResponse(page: page, mainWindowOpen: open, workspacePath: "/w/a")
+    }
+    #expect(response(.other, open: false) == .navigate)
+    #expect(response(.allDevices) == .navigate)
+    #expect(response(.workspace("/w/a")) == .navigate)
+    #expect(response(.workspace("/w/b")) == .notice)
+    #expect(response(.other) == .notice)
+  }
+
   @Test func readsAWorkspaceLink() {
     func link(_ string: String) -> WorkspaceLink? { workspaceLink(fromOpenURL: URL(string: string)!) }
     #expect(

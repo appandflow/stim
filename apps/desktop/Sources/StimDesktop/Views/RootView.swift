@@ -38,6 +38,8 @@ struct RootView: View {
   @State private var columnVisibility = NavigationSplitViewVisibility.all
   @ObservedObject private var openRequests = OpenRequests.shared
   private let toasts = ToastCenter.shared
+  private let notices = NoticeCenter.shared
+  @AppStorage(AppPreferences.Key.dismissedStimUpdate) private var dismissedStimUpdate = ""
   @State private var pendingLink: PendingWorkspaceLink?
   @Environment(\.openWindow) private var openWindow
 
@@ -79,6 +81,7 @@ struct RootView: View {
         .toolbarBackdrop(showsWorkspace ? .clear : Palette.background)
         .overlay(alignment: .bottom) { onboardingPopup }
         .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
+        .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
         .onGeometryChange(for: CGFloat.self) {
           $0.size.width
         } action: {
@@ -134,6 +137,8 @@ struct RootView: View {
       store.start()
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
+    .onDisappear { notices.removeAll() }
+    .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
     .onReceive(openRequests.$workspaceLink) { link in
@@ -238,8 +243,43 @@ struct RootView: View {
   private func showDevice(_ request: DeviceOpenRequest?, in payload: StatusPayload?) {
     guard let request, let owner = payload?.owner(of: request) else { return }
     openRequests.device = nil
-    selection = .environment(owner.workspace.path)
-    focusedDeviceID = owner.device.id
+    let path = owner.workspace.path
+    let deviceID = owner.device.id
+    let page: LaunchPage
+    switch selection {
+    case .wall: page = .allDevices
+    case .environment(let current): page = .workspace(current)
+    default: page = .other
+    }
+    switch launchResponse(page: page, mainWindowOpen: openRequests.deviceArrivedWithWindow, workspacePath: path) {
+    case .navigate:
+      selection = .environment(path)
+      focusedDeviceID = deviceID
+    case .notice:
+      notices.show(
+        Notice(
+          icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
+          detail: abbreviatingHome(path), actionTitle: "Show",
+          perform: {
+            selection = .environment(path)
+            focusedDeviceID = deviceID
+          }, key: "device-launch:\(deviceID)"))
+    }
+  }
+
+  private func showStimUpdate(_ latest: SemanticVersion?) {
+    guard let latest, latest.description != dismissedStimUpdate,
+      case .compatible(let installed)? = onboarding.report?.stim
+    else {
+      notices.remove(key: "stim-update")
+      return
+    }
+    notices.show(
+      Notice(
+        icon: "arrow.down.circle", title: "stim \(latest.description) available",
+        detail: "You have \(installed.description)", actionTitle: "Update",
+        perform: onboarding.installStim,
+        onDismiss: { dismissedStimUpdate = latest.description }, key: "stim-update"))
   }
 
   /// `@Published` emits before the property changes, so the link is read once the assignment has landed.
