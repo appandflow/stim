@@ -1,5 +1,6 @@
 import type { ProjectRecord, StimConfig } from '@stim-cli/core/state';
-import type { BuildMachineReport, MachineDetails } from './protocol.ts';
+import type { AuditRecord } from './actions.ts';
+import type { BuildClientSummary, BuildMachineReport, MachineDetails } from './protocol.ts';
 import type { CommandOutcome } from './stim-command.ts';
 
 /**
@@ -116,11 +117,45 @@ export class BuildMachinesCache {
   }
 }
 
+/** The `build` audit records grouped by client, most recent client first; `today` is `now`'s local calendar day. */
+export function buildClients(records: AuditRecord[], now: number): BuildClientSummary[] {
+  const day = new Date(now).toDateString();
+  const clients = new Map<string, BuildClientSummary>();
+  for (const record of records) {
+    if (record.action !== 'build' || typeof record.device?.id !== 'string') continue;
+    const durationMs =
+      typeof record.durationMs === 'number' && record.durationMs > 0 ? Math.round(record.durationMs) : 0;
+    const entry = clients.get(record.device.id) ?? {
+      id: record.device.id,
+      name: record.device.name,
+      builds: 0,
+      failed: 0,
+      buildMs: 0,
+      today: { builds: 0, failed: 0, buildMs: 0 },
+      lastAt: record.at,
+    };
+    const failed = record.ok ? 0 : 1;
+    entry.name = record.device.name;
+    entry.builds += 1;
+    entry.failed += failed;
+    entry.buildMs += durationMs;
+    entry.lastAt = record.at;
+    if (new Date(record.at).toDateString() === day) {
+      entry.today.builds += 1;
+      entry.today.failed += failed;
+      entry.today.buildMs += durationMs;
+    }
+    clients.set(record.device.id, entry);
+  }
+  return [...clients.values()].toSorted((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
+}
+
 export async function loadMachineDetails(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
+  audit: () => Promise<AuditRecord[]>,
 ): Promise<Omit<MachineDetails, 'buildMachines'>> {
   const measuredAt = new Date().toISOString();
-  const [gc, stats] = await Promise.all([run(GC_DRY_RUN), run(STATS)]);
+  const [gc, stats, records] = await Promise.all([run(GC_DRY_RUN), run(STATS), audit()]);
   const gcPart = part(gc, 'stim gc');
   const statsPart = part(stats, 'stim stats');
   return {
@@ -128,6 +163,7 @@ export async function loadMachineDetails(
     ...(gcPart.error ? { gcError: gcPart.error } : {}),
     stats: statsPart.payload,
     ...(statsPart.error ? { statsError: statsPart.error } : {}),
+    buildClients: buildClients(records, Date.parse(measuredAt)),
     measuredAt,
   };
 }

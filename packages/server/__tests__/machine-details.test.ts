@@ -1,4 +1,4 @@
-import { BuildMachinesCache, loadMachineDetails, MachineDetailsCache } from '../src/machine-details.ts';
+import { BuildMachinesCache, buildClients, loadMachineDetails, MachineDetailsCache } from '../src/machine-details.ts';
 import type { MachineDetails } from '../src/protocol.ts';
 
 type GcStats = Omit<MachineDetails, 'buildMachines'>;
@@ -54,11 +54,56 @@ describe('loadMachineDetails', () => {
       calls.push(args[0]!);
       return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
     };
-    expect(await loadMachineDetails(run)).toMatchObject({
+    expect(await loadMachineDetails(run, async () => [])).toMatchObject({
       gc: { args: ['gc', '--json'] },
       stats: { args: ['stats', '--json'] },
+      buildClients: [],
     });
     expect(calls.toSorted()).toEqual(['gc', 'stats']);
+  });
+});
+
+describe('buildClients', () => {
+  const build = (id: string, name: string, when: string, ok: boolean, durationMs: number) => ({
+    at: when,
+    device: { id, name },
+    action: 'build',
+    workspace: 'github.com/acme/app',
+    ok,
+    durationMs,
+  });
+
+  it('groups build records per client, counts today on the local day, and ignores other actions', () => {
+    const now = new Date(2026, 8, 30, 15, 0).getTime();
+    const today = new Date(2026, 8, 30, 9, 0).toISOString();
+    const yesterday = new Date(2026, 8, 29, 9, 0).toISOString();
+    const records = [
+      build('ab12', 'old-name', yesterday, true, 200_000),
+      build('cd34', 'laptop-2', yesterday, true, 100_000),
+      build('ab12', 'laptop', today, false, 50_000),
+      { at: today, device: { id: 'ab12', name: 'laptop' }, action: 'reload', workspace: null, ok: true },
+    ];
+
+    expect(buildClients(records, now)).toEqual([
+      {
+        id: 'ab12',
+        name: 'laptop',
+        builds: 2,
+        failed: 1,
+        buildMs: 250_000,
+        today: { builds: 1, failed: 1, buildMs: 50_000 },
+        lastAt: today,
+      },
+      {
+        id: 'cd34',
+        name: 'laptop-2',
+        builds: 1,
+        failed: 0,
+        buildMs: 100_000,
+        today: { builds: 0, failed: 0, buildMs: 0 },
+        lastAt: yesterday,
+      },
+    ]);
   });
 });
 

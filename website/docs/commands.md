@@ -1092,7 +1092,12 @@ machine section prints. There is no reset flag: delete that file to start over.
 {
   "version": 1,
   "project": { "key": "/path/to/app", "ios": {}, "android": null },
-  "machine": { "ios": {}, "android": null }
+  "machine": { "ios": {}, "android": null },
+  "offload": {
+    "today": { "here": 3, "offloaded": 0, "fellBack": 0 },
+    "machines": {},
+    "placements": []
+  }
 }
 ```
 
@@ -1104,6 +1109,24 @@ compiled or installed pods; those two size the progress line a long build
 prints (`build       still compiling (1m00s of ~3m10s)`). The saved figure is
 an estimate: each cache hit is credited this project's mean cold run at that
 moment, minus its own duration, floored at zero.
+
+While a [build machine](./settings.md#machine-settings) is paired, every run
+that compiles also records its placement: where it built (`here`,
+`offloaded`, or `fell-back` when it tried a machine and built here), the
+reason the run printed on its `placement:` line, the build time and this
+project's last cold build here to compare it with. `offload.placements` lists
+the last 100 from the last 7 days, newest first. `offload.machines` gives each
+build machine's offloaded builds, offloaded time, estimated time saved and
+fallbacks, for today (this Mac's calendar day) and in total. The plain output
+adds a `build placement` section with the same counts and the last 5
+placements. `stim guide facts stats` has every field.
+
+Try it with an agent:
+
+```text
+Run `stim stats --json` and tell me whether any build was offloaded to a build
+machine today, and why each of the last few builds stayed on this Mac.
+```
 
 ## `worktree warm`
 

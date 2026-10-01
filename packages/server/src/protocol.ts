@@ -715,7 +715,22 @@ export interface MachineDetails {
   buildMachinesError?: string;
   buildMachinesAt?: string;
   buildMachinesPending?: boolean;
+  /**
+   * The builds this Mac ran for other Macs as a build machine, one entry per client, from the audit log. `today` is
+   * this Mac's local calendar day. Absent from a server older than this field.
+   */
+  buildClients?: BuildClientSummary[];
   measuredAt: string;
+}
+
+export interface BuildClientSummary {
+  id: string;
+  name: string;
+  builds: number;
+  failed: number;
+  buildMs: number;
+  today: { builds: number; failed: number; buildMs: number };
+  lastAt: string;
 }
 
 /** One `offload.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
@@ -1374,6 +1389,33 @@ export function protocolJsonSchema(): JsonSchema {
           buildMachinesError: { type: 'string' },
           buildMachinesAt: { type: 'string' },
           buildMachinesPending: { type: 'boolean' },
+          buildClients: {
+            type: 'array',
+            description: 'The builds this Mac ran for each client as a build machine, from the audit log.',
+            items: {
+              type: 'object',
+              required: ['id', 'name', 'builds', 'failed', 'buildMs', 'today', 'lastAt'],
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                builds: { type: 'integer' },
+                failed: { type: 'integer' },
+                buildMs: { type: 'integer' },
+                today: {
+                  type: 'object',
+                  required: ['builds', 'failed', 'buildMs'],
+                  additionalProperties: false,
+                  properties: {
+                    builds: { type: 'integer' },
+                    failed: { type: 'integer' },
+                    buildMs: { type: 'integer' },
+                  },
+                },
+                lastAt: { type: 'string' },
+              },
+            },
+          },
           measuredAt: { type: 'string' },
         },
       },

@@ -1426,7 +1426,11 @@ RULES
   { "version": 1,
     "project": { "key": "<path>", "ios": <bucket|null>,
                  "android": <bucket|null> } | null,
-    "machine": { "ios": <bucket|null>, "android": <bucket|null> } }
+    "machine": { "ios": <bucket|null>, "android": <bucket|null> },
+    "offload": { "today": { "here", "offloaded", "fellBack" },
+                 "machines": { "<machine>": { "today": <day>,
+                                              "total": <totals> } },
+                 "placements": [<placement>, ...] } }
 
   \`project\` is null outside a project; a platform with no run yet is null.
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
@@ -1478,7 +1482,30 @@ HOW A RUN IS COUNTED (\`stats\`)
   a hang. A project with no record yet gets \`(1m00s)\`, the elapsed alone,
   and a warm run has no long phase to size. That read takes no lock and
   ignores what it cannot read, so nothing about statistics can change a
-  run's outcome.`,
+  run's outcome.
+
+BUILD PLACEMENT (\`offload\`)
+  While at least one build machine is paired, every run that compiles
+  records where it built and why, in a placement: { at, project, platform,
+  decision, reason, machine?, buildMs?, localEstimateMs?, failed? }.
+  decision is "here", "offloaded", or "fell-back" (it tried a build machine
+  and built here). reason is why: the run's \`placement:\` reason, such as
+  "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
+  while this Mac has room) or "offload.mode is off" (which prints no line),
+  or for a fallback the cause, prefixed by the machine it concerns, such as
+  "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
+  total (offer, sync, build and fetch); localEstimateMs is this project's
+  last cold build here before the run. A run that hits the cache or waits
+  for another workspace's build compiles nothing and records none.
+  placements lists them newest first: the last 100 from the last 7 days.
+  Per machine, \`total\` keeps { offloaded, offloadedMs, savedMs, fallbacks,
+  lastOffloadAt?, lastFallbackAt? } for good and \`today\` counts { offloaded,
+  offloadedMs, savedMs, fallbacks } from the placements on this Mac's local
+  calendar day. savedMs sums localEstimateMs minus buildMs over offloaded
+  builds that had an estimate, so it is an ESTIMATE and is negative when the
+  machine was slower. \`offload.today\` counts the day's placements by
+  decision. A fallback counts against a machine only when the run knows
+  which one: the machine that failed, or the only one paired.`,
     },
   },
 };

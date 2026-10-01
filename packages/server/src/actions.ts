@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import {
@@ -99,6 +100,19 @@ export function readAudit(): AuditRecord[] {
   } catch {
     return [];
   }
+  return parseAudit(text);
+}
+
+/** `readAudit` without blocking the event loop on the read. */
+export async function loadAudit(): Promise<AuditRecord[]> {
+  try {
+    return parseAudit(await readFile(auditFile(), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function parseAudit(text: string): AuditRecord[] {
   return text.split('\n').flatMap((line) => {
     try {
       const value: unknown = JSON.parse(line);

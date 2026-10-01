@@ -24,6 +24,7 @@ import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-deskt
 import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
 import { buildReport } from '../engine/build-progress.ts';
+import { PLACEMENT_DECISIONS, PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
 import {
   topicNames,
   renderTopic,
@@ -715,6 +716,13 @@ test('the facts topic documents every build result and the history length status
   assert(body);
   for (const result of BUILD_RESULTS) expect(body).toContain(`"${result}"`);
   expect(body).toContain(`last ${BUILD_HISTORY_LIMIT} runs`);
+});
+
+test('the stats facts document every placement decision and the placement retention', () => {
+  const body = renderSection('facts', 'stats');
+  assert(body);
+  for (const decision of PLACEMENT_DECISIONS) expect(body).toContain(`"${decision}"`);
+  expect(body).toContain(`the last ${PLACEMENT_LIMIT} from the last ${PLACEMENT_MAX_AGE_MS / 86_400_000} days`);
 });
 
 test('the facts topic documents every native build step a running build can report', () => {

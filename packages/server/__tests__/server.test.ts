@@ -1573,6 +1573,7 @@ describe('machine.details', () => {
       gc: { command: 'gc', cwd: home },
       stats: { command: 'stats', cwd: home },
       buildMachines: [],
+      buildClients: [],
       measuredAt: expect.any(String),
     };
     const reply = await first.request('machine.details');

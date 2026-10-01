@@ -39,11 +39,49 @@ export interface RunSample {
 
 export type RunHistory = Partial<Record<StatsPlatform, Partial<Record<RunOutcomeKind, RunSample[]>>>>;
 
+/** Where a compiling build ran: here, on a build machine, or here after offloading it failed. */
+export const PLACEMENT_DECISIONS = ['here', 'offloaded', 'fell-back'] as const;
+
+type PlacementDecision = (typeof PLACEMENT_DECISIONS)[number];
+
+interface RunPlacement {
+  decision: PlacementDecision;
+  reason: string;
+  machine?: string;
+  /** The offloaded build's total time; a build here takes the run's compile time instead. */
+  buildMs?: number;
+}
+
+interface BuildPlacement {
+  at: string;
+  project: string;
+  platform: StatsPlatform;
+  decision: PlacementDecision;
+  reason: string;
+  machine?: string;
+  buildMs?: number;
+  /** The project's last cold build here before this run. */
+  localEstimateMs?: number;
+  failed?: true;
+}
+
+interface BuildMachineTotals {
+  offloaded: number;
+  offloadedMs: number;
+  /** Sum of local estimate minus offloaded build time, over offloaded builds that had an estimate; can be negative. */
+  savedMs: number;
+  fallbacks: number;
+  lastOffloadAt?: string;
+  lastFallbackAt?: string;
+}
+
 export interface StatsRecord {
   version: number;
   machine: StatsScope;
   projects: Record<string, StatsScope>;
   history?: Record<string, RunHistory>;
+  placements?: BuildPlacement[];
+  buildMachines?: Record<string, BuildMachineTotals>;
 }
 
 export interface StatsRun {
@@ -58,6 +96,7 @@ export interface StatsRun {
   podsMs?: number;
   phases?: Record<string, number>;
   deviceSetup?: boolean;
+  placement?: RunPlacement;
 }
 
 /**
@@ -92,12 +131,15 @@ export interface RunRecorder {
   setCacheKey(key: string): void;
   setBuildMs(ms: number): void;
   setPodsMs(ms: number): void;
+  setPlacement(placement: RunPlacement): void;
   record(outcome: RunOutcome): void;
 }
 
 const PLATFORMS: StatsPlatform[] = ['ios', 'android'];
 const OUTCOMES: RunOutcomeKind[] = ['hit', 'cold'];
 export const HISTORY_LIMIT = 10;
+export const PLACEMENT_LIMIT = 100;
+export const PLACEMENT_MAX_AGE_MS: number = 7 * 24 * 60 * 60_000;
 
 export function statsFile(): string {
   return join(getConfigDir(), 'stats.json');
@@ -125,16 +167,29 @@ export function statsProjectKey({
 export function updateStats(record: StatsRecord, run: StatsRun, now: number): StatsRecord {
   const at = new Date(now).toISOString();
   const durationMs = wholeMs(run.durationMs);
-  const phases = { coldBuildMs: wholeMs(run.coldBuildMs), podsMs: wholeMs(run.podsMs) };
+  const phases = {
+    coldBuildMs: wholeMs(run.coldBuildMs),
+    podsMs: wholeMs(run.podsMs),
+  };
   const projects: Record<string, StatsScope> = { ...record.projects };
   const scope: StatsScope = { ...projects[run.projectKey] };
   const machine: StatsScope = { ...record.machine };
   const before = scope[run.platform] ?? null;
   const credit = creditMs(before, run, durationMs);
 
-  scope[run.platform] = applyRun(before, run, { at, durationMs, credit, phases });
+  scope[run.platform] = applyRun(before, run, {
+    at,
+    durationMs,
+    credit,
+    phases,
+  });
   projects[run.projectKey] = scope;
-  machine[run.platform] = applyRun(machine[run.platform] ?? null, run, { at, durationMs, credit, phases });
+  machine[run.platform] = applyRun(machine[run.platform] ?? null, run, {
+    at,
+    durationMs,
+    credit,
+    phases,
+  });
 
   const history = { ...record.history };
   if (run.phases && !run.failed && !run.waitedForBuild && !run.offloadedTo) {
@@ -152,7 +207,114 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
     history[run.projectKey] = project;
   }
 
-  return { version: STATS_VERSION, machine, projects, ...(Object.keys(history).length ? { history } : {}) };
+  let placements = record.placements;
+  let buildMachines = record.buildMachines;
+  if (run.placement) {
+    const placement = buildPlacement(run, before, at);
+    placements = trimPlacements([...(placements ?? []), placement], now);
+    if (placement.machine && placement.decision !== 'here') {
+      buildMachines = {
+        ...buildMachines,
+        [placement.machine]: applyPlacement(buildMachines?.[placement.machine], placement),
+      };
+    }
+  }
+
+  return {
+    version: STATS_VERSION,
+    machine,
+    projects,
+    ...(Object.keys(history).length ? { history } : {}),
+    ...(placements?.length ? { placements } : {}),
+    ...(buildMachines && Object.keys(buildMachines).length ? { buildMachines } : {}),
+  };
+}
+
+interface BuildMachineDay {
+  offloaded: number;
+  offloadedMs: number;
+  savedMs: number;
+  fallbacks: number;
+}
+
+export interface OffloadSummary {
+  today: { here: number; offloaded: number; fellBack: number };
+  machines: Record<string, { today: BuildMachineDay; total: BuildMachineTotals }>;
+  /** Newest first. */
+  placements: BuildPlacement[];
+}
+
+/** Placement counts for the local calendar day of `now`, per-machine totals, and the retained placements. */
+export function offloadSummary(record: StatsRecord | null, now: number): OffloadSummary {
+  const day = new Date(now).toDateString();
+  const placements = record?.placements ?? [];
+  const today = { here: 0, offloaded: 0, fellBack: 0 };
+  const machines: OffloadSummary['machines'] = {};
+  const machine = (name: string) =>
+    (machines[name] ??= {
+      today: { offloaded: 0, offloadedMs: 0, savedMs: 0, fallbacks: 0 },
+      total: record?.buildMachines?.[name] ?? {
+        offloaded: 0,
+        offloadedMs: 0,
+        savedMs: 0,
+        fallbacks: 0,
+      },
+    });
+  for (const name of Object.keys(record?.buildMachines ?? {})) machine(name);
+  for (const placement of placements) {
+    if (new Date(placement.at).toDateString() !== day) continue;
+    if (placement.decision === 'here') {
+      today.here += 1;
+      continue;
+    }
+    if (placement.decision === 'fell-back') today.fellBack += 1;
+    else today.offloaded += 1;
+    if (!placement.machine) continue;
+    const entry = machine(placement.machine).today;
+    if (placement.decision === 'fell-back') {
+      entry.fallbacks += 1;
+      continue;
+    }
+    entry.offloaded += 1;
+    entry.offloadedMs += placement.buildMs ?? 0;
+    if (placement.localEstimateMs && placement.buildMs) entry.savedMs += placement.localEstimateMs - placement.buildMs;
+  }
+  return { today, machines, placements: placements.toReversed() };
+}
+
+function buildPlacement(run: StatsRun, before: StatsBucket | null, at: string): BuildPlacement {
+  const placement = run.placement!;
+  const buildMs = wholeMs(placement.decision === 'offloaded' ? placement.buildMs : run.coldBuildMs);
+  const localEstimateMs = wholeMs(before?.lastColdBuildMs);
+  return {
+    at,
+    project: run.projectKey,
+    platform: run.platform,
+    decision: placement.decision,
+    reason: placement.reason,
+    ...(placement.machine ? { machine: placement.machine } : {}),
+    ...(buildMs > 0 ? { buildMs } : {}),
+    ...(localEstimateMs > 0 ? { localEstimateMs } : {}),
+    ...(run.failed ? { failed: true as const } : {}),
+  };
+}
+
+function applyPlacement(totals: BuildMachineTotals | undefined, placement: BuildPlacement): BuildMachineTotals {
+  const next: BuildMachineTotals = totals ? { ...totals } : { offloaded: 0, offloadedMs: 0, savedMs: 0, fallbacks: 0 };
+  if (placement.decision === 'fell-back') {
+    next.fallbacks += 1;
+    next.lastFallbackAt = placement.at;
+    return next;
+  }
+  next.offloaded += 1;
+  next.offloadedMs += placement.buildMs ?? 0;
+  if (placement.localEstimateMs && placement.buildMs) next.savedMs += placement.localEstimateMs - placement.buildMs;
+  next.lastOffloadAt = placement.at;
+  return next;
+}
+
+function trimPlacements(placements: BuildPlacement[], now: number): BuildPlacement[] {
+  return placements.filter((each) => now - Date.parse(each.at) <= PLACEMENT_MAX_AGE_MS).slice(-PLACEMENT_LIMIT);
 }
 
 function trimSamples(samples: RunSample[]): RunSample[] {
@@ -252,6 +414,7 @@ export function createRunRecorder({
   let cacheKey: string | null = null;
   let coldBuildMs = 0;
   let podsMs = 0;
+  let placement: RunPlacement | null = null;
   let recorded = false;
   return {
     setProject(key: string): void {
@@ -265,6 +428,9 @@ export function createRunRecorder({
     },
     setPodsMs(ms: number): void {
       podsMs = wholeMs(ms);
+    },
+    setPlacement(next: RunPlacement): void {
+      placement = next;
     },
     record({ failed, cacheHit = false, waited = null, durationMs, offloadedTo = null }: RunOutcome): void {
       if (!projectKey || !cacheKey || recorded) return;
@@ -284,6 +450,7 @@ export function createRunRecorder({
             ...(podsMs > 0 ? { podsMs } : {}),
             ...(Object.keys(ran).length ? { phases: ran } : {}),
             ...(failed || deviceSetup?.() === undefined ? {} : { deviceSetup: deviceSetup()! }),
+            ...(placement ? { placement } : {}),
           },
           now(),
         );
@@ -358,11 +525,55 @@ function normalize(record: StatsRecord): StatsRecord {
       if (Object.keys(normalized).length) history[key] = normalized;
     }
   }
+  const placements = Array.isArray(record.placements) ? record.placements.flatMap(normalizePlacement) : [];
+  const buildMachines: Record<string, BuildMachineTotals> = {};
+  if (isObject(record.buildMachines)) {
+    for (const [name, totals] of Object.entries(record.buildMachines)) {
+      if (isObject(totals)) buildMachines[name] = normalizeMachineTotals(totals);
+    }
+  }
   return {
     version: STATS_VERSION,
     machine: normalizeScope(record.machine),
     projects,
     ...(Object.keys(history).length ? { history } : {}),
+    ...(placements.length ? { placements } : {}),
+    ...(Object.keys(buildMachines).length ? { buildMachines } : {}),
+  };
+}
+
+function normalizePlacement(value: unknown): BuildPlacement[] {
+  if (!isObject(value)) return [];
+  const { decision, platform, reason, project, machine } = value;
+  if (!PLACEMENT_DECISIONS.includes(decision as PlacementDecision) || !PLATFORMS.includes(platform as StatsPlatform))
+    return [];
+  if (typeof reason !== 'string' || typeof project !== 'string') return [];
+  const buildMs = wholeMs(value.buildMs);
+  const localEstimateMs = wholeMs(value.localEstimateMs);
+  return [
+    {
+      at: timestamp(value.at),
+      project,
+      platform: platform as StatsPlatform,
+      decision: decision as PlacementDecision,
+      reason,
+      ...(typeof machine === 'string' && machine !== '' ? { machine } : {}),
+      ...(buildMs > 0 ? { buildMs } : {}),
+      ...(localEstimateMs > 0 ? { localEstimateMs } : {}),
+      ...(value.failed === true ? { failed: true as const } : {}),
+    },
+  ];
+}
+
+function normalizeMachineTotals(totals: Record<string, unknown>): BuildMachineTotals {
+  const savedMs = Number(totals.savedMs);
+  return {
+    offloaded: count(totals.offloaded),
+    offloadedMs: count(totals.offloadedMs),
+    savedMs: Number.isFinite(savedMs) ? Math.round(savedMs) : 0,
+    fallbacks: count(totals.fallbacks),
+    ...(typeof totals.lastOffloadAt === 'string' ? { lastOffloadAt: totals.lastOffloadAt } : {}),
+    ...(typeof totals.lastFallbackAt === 'string' ? { lastFallbackAt: totals.lastFallbackAt } : {}),
   };
 }
 
@@ -437,7 +648,10 @@ function normalizeBucket(bucket: Record<string, unknown>): StatsBucket {
     ...(count(bucket.lastColdBuildMs) > 0 ? { lastColdBuildMs: count(bucket.lastColdBuildMs) } : {}),
     ...(count(bucket.lastPodsMs) > 0 ? { lastPodsMs: count(bucket.lastPodsMs) } : {}),
     ...(count(bucket.offloadedRuns) > 0
-      ? { offloadedRuns: count(bucket.offloadedRuns), offloadedRunMs: count(bucket.offloadedRunMs) }
+      ? {
+          offloadedRuns: count(bucket.offloadedRuns),
+          offloadedRunMs: count(bucket.offloadedRunMs),
+        }
       : {}),
     ...(typeof bucket.lastOffloadHost === 'string' ? { lastOffloadHost: bucket.lastOffloadHost } : {}),
   };
@@ -451,7 +665,12 @@ function applyRun(
     durationMs,
     credit,
     phases,
-  }: { at: string; durationMs: number; credit: number; phases: { coldBuildMs: number; podsMs: number } },
+  }: {
+    at: string;
+    durationMs: number;
+    credit: number;
+    phases: { coldBuildMs: number; podsMs: number };
+  },
 ): StatsBucket {
   const next: StatsBucket = bucket
     ? { ...bucket }

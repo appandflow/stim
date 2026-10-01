@@ -13,7 +13,7 @@ import {
   type NdjsonRecord,
   type StatusPayload,
 } from '@stim-cli/core/state';
-import { actionArgs, actionOutcome, appendAudit, parseAction, type AuditRecord } from './actions.ts';
+import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
@@ -448,7 +448,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(run.cancel);
     return run.outcome.finally(() => running.delete(run.cancel));
   };
-  const machineDetails = new MachineDetailsCache(() => loadMachineDetails(runDetailsCommand));
+  const machineDetails = new MachineDetailsCache(() => loadMachineDetails(runDetailsCommand, loadAudit));
   const buildMachines = new BuildMachinesCache();
   let recordingTurn: Promise<void> = Promise.resolve();
   let closing = false;

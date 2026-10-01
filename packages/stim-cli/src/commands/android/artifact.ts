@@ -104,7 +104,7 @@ interface AndroidArtifactRequest {
     phase: (label: unknown, text: string) => void;
     out: (line: string) => void;
     estimates: () => RunEstimates;
-    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs'>;
+    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPlacement'>;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason) => void;
     place: (remote: { host: string; phase: string } | null) => void;
@@ -219,6 +219,8 @@ export async function acquireAndroidArtifact(
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
   const { phase, out, estimates, stats, step, miss, place } = progress;
+  let fallbackMachine: string | null = null;
+  let hereReason: string | null = null;
   const fallBack = (reason: string, line: string = reason) => {
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
@@ -580,8 +582,8 @@ export async function acquireAndroidArtifact(
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
     const mode = offloadMode();
-    const machines = mode === 'off' ? [] : pairedMachines();
-    if (mode === 'off' || machines.length === 0) return null;
+    const machines = pairedMachines();
+    if (machines.length === 0) return null;
     const unsupported = physical
       ? 'device builds build here'
       : remoteTarget
@@ -596,7 +598,8 @@ export async function acquireAndroidArtifact(
     const here = machineCapacity();
     const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported });
     if (!placement.offload) {
-      phase('build', `placement: here (${placement.reason})`);
+      hereReason = placement.reason;
+      if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
     return { mode, here, reason: placement.reason, machines };
@@ -615,6 +618,8 @@ export async function acquireAndroidArtifact(
       machines: candidate.machines,
     });
     if (typeof choice === 'string') {
+      const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
+      if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
       fallBack(choice);
       return null;
     }
@@ -624,7 +629,7 @@ export async function acquireAndroidArtifact(
   }
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead. */
-  async function compileElsewhere(choice: OffloadChoice): Promise<boolean> {
+  async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,
@@ -678,6 +683,7 @@ export async function acquireAndroidArtifact(
     step('compile');
     if (!outcome.ok || !stored) {
       const why = reason ?? 'the APK was not stored';
+      fallbackMachine = choice.machine;
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`);
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
@@ -685,6 +691,12 @@ export async function acquireAndroidArtifact(
     const { timings } = outcome;
     apkPath = stored;
     record.offloadedTo = outcome.machine;
+    stats.setPlacement({
+      decision: 'offloaded',
+      machine: outcome.machine,
+      reason: `${candidate.reason}${placementLoad(choice)}`,
+      buildMs: timings.totalMs,
+    });
     ccacheActivity = outcome.ccache;
     phase(
       'build',
@@ -785,7 +797,7 @@ export async function acquireAndroidArtifact(
             );
           } else {
             const choice = await chooseMachine(offload);
-            if (choice) built = await compileElsewhere(choice);
+            if (choice) built = await compileElsewhere(choice, offload);
           }
           if (!built && !(await takeBuildSlot())) return false;
         }
@@ -794,6 +806,15 @@ export async function acquireAndroidArtifact(
           if (!offload) {
             explainMiss(rekeyedBy);
             step('compile');
+          }
+          if (offload) {
+            stats.setPlacement({
+              decision: 'fell-back',
+              reason: record.offloadFallback ?? 'offload failed',
+              ...(fallbackMachine ? { machine: fallbackMachine } : {}),
+            });
+          } else if (hereReason) {
+            stats.setPlacement({ decision: 'here', reason: hereReason });
           }
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(

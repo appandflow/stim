@@ -8,6 +8,8 @@ import statsCommand from '../commands/stats.ts';
 import {
   createRunRecorder,
   emptyStats,
+  offloadSummary,
+  PLACEMENT_LIMIT,
   readRunEstimates,
   readStats,
   recordRunStats,
@@ -259,6 +261,122 @@ describe('the update rule', () => {
   });
 });
 
+describe('build placements', () => {
+  const here = { decision: 'here' as const, reason: 'load 0.6/core, 1 of 3 build slots busy here' };
+
+  test('a compiling run records where it built, why, and the local estimate it is compared with', () => {
+    let record = updateStats(emptyStats(), run({ coldBuildMs: 300_000 }), T0);
+    record = updateStats(
+      record,
+      run({
+        placement: { decision: 'offloaded', machine: 'mini', reason: 'this Mac is busy: slots', buildMs: 180_000 },
+      }),
+      T0 + 1000,
+    );
+
+    expect(record.placements).toEqual([
+      {
+        at: new Date(T0 + 1000).toISOString(),
+        project: '/repo/app',
+        platform: 'ios',
+        decision: 'offloaded',
+        reason: 'this Mac is busy: slots',
+        machine: 'mini',
+        buildMs: 180_000,
+        localEstimateMs: 300_000,
+      },
+    ]);
+    expect(record.buildMachines).toEqual({
+      mini: {
+        offloaded: 1,
+        offloadedMs: 180_000,
+        savedMs: 120_000,
+        fallbacks: 0,
+        lastOffloadAt: new Date(T0 + 1000).toISOString(),
+      },
+    });
+  });
+
+  test('a build here takes its compile time, counts for no machine, and a failed one is marked', () => {
+    const record = updateStats(emptyStats(), run({ failed: true, coldBuildMs: 250_000, placement: here }), T0);
+
+    expect(record.placements?.[0]).toMatchObject({ decision: 'here', buildMs: 250_000, failed: true });
+    expect(record.buildMachines).toBeUndefined();
+  });
+
+  test('a fallback counts against its machine', () => {
+    const record = updateStats(
+      emptyStats(),
+      run({
+        placement: { decision: 'fell-back', machine: 'mini', reason: 'mini: toolchain mismatch: Xcode 26.1 there' },
+      }),
+      T0,
+    );
+
+    expect(record.buildMachines?.mini).toEqual({
+      offloaded: 0,
+      offloadedMs: 0,
+      savedMs: 0,
+      fallbacks: 1,
+      lastFallbackAt: new Date(T0).toISOString(),
+    });
+  });
+
+  test('a run without a placement leaves the list alone', () => {
+    const record = updateStats(emptyStats(), run({ cacheHit: 'local' }), T0);
+
+    expect(record).not.toHaveProperty('placements');
+  });
+
+  test('the list keeps the newest entries within a week', () => {
+    let record = updateStats(emptyStats(), run({ placement: { ...here, reason: 'old' } }), T0);
+    for (let i = 0; i < PLACEMENT_LIMIT + 5; i++) {
+      record = updateStats(record, run({ placement: { ...here, reason: `r${i}` } }), T0 + 8 * 86_400_000 + i);
+    }
+
+    expect(record.placements).toHaveLength(PLACEMENT_LIMIT);
+    expect(record.placements?.[0]?.reason).toBe('r5');
+    expect(record.placements?.some((each) => each.reason === 'old')).toBe(false);
+  });
+
+  test('today counts only the local calendar day, while totals keep everything', () => {
+    let record = updateStats(
+      emptyStats(),
+      run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'busy', buildMs: 100_000 } }),
+      T0,
+    );
+    record = updateStats(record, run({ placement: here }), T1);
+    const summary = offloadSummary(record, T1);
+
+    expect(summary.today).toEqual({ here: 1, offloaded: 0, fellBack: 0 });
+    expect(summary.machines.mini?.today.offloaded).toBe(0);
+    expect(summary.machines.mini?.total.offloaded).toBe(1);
+    expect(summary.placements[0]?.decision).toBe('here');
+  });
+
+  test('a file written before placements, or with malformed ones, still reads', () => {
+    writeFileSync(
+      statsFile(),
+      JSON.stringify({
+        version: 1,
+        machine: {},
+        projects: {},
+        placements: [
+          { decision: 'teleported', platform: 'ios', reason: 'x', project: '/p' },
+          'junk',
+          { ...here, platform: 'ios', project: '/p', at: 'x' },
+        ],
+        buildMachines: { mini: { offloaded: 'two', savedMs: -5 } },
+      }),
+    );
+
+    const { record } = readStats();
+
+    expect(record?.placements).toEqual([{ ...here, platform: 'ios', project: '/p', at: 'x' }]);
+    expect(record?.buildMachines?.mini).toEqual({ offloaded: 0, offloadedMs: 0, savedMs: -5, fallbacks: 0 });
+  });
+});
+
 describe('the stats file', () => {
   test('a run is written under the config lock and read back', () => {
     const outcome = recordRunStats(run({ projectKey: root, durationMs: 240_000 }), T0);
@@ -349,6 +467,15 @@ describe('the run recorder', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0]?.run.coldBuildMs).toBe(190_000);
     expect(writes[0]?.run.podsMs).toBe(100_000);
+  });
+
+  test('the placement set during the run reaches the record, failed or not', () => {
+    const writes: { run: StatsRun; now: number }[] = [];
+    const recorder = recorderFor(writes);
+    recorder.setPlacement({ decision: 'fell-back', machine: 'mini', reason: 'mini: unreachable' });
+    recorder.record({ failed: true, durationMs: 5_000 });
+
+    expect(writes[0]?.run.placement).toEqual({ decision: 'fell-back', machine: 'mini', reason: 'mini: unreachable' });
   });
 
   test('a run with neither phase sends neither field', () => {
@@ -554,8 +681,39 @@ describe('stim stats', () => {
       version: 1,
       project: null,
       machine: { ios: null, android: null },
+      offload: { today: { here: 0, offloaded: 0, fellBack: 0 }, machines: {}, placements: [] },
     });
 
     rmSync(outside, { recursive: true, force: true });
+  });
+
+  test('--json and the plain output carry the build placements', () => {
+    const now = Date.now();
+    let record = updateStats(emptyStats(), run({ coldBuildMs: 300_000 }), now);
+    record = updateStats(
+      record,
+      run({ coldBuildMs: 290_000, placement: { decision: 'here', reason: 'load 0.6/core, 1 build here' } }),
+      now,
+    );
+    record = updateStats(
+      record,
+      run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'this Mac is busy', buildMs: 200_000 } }),
+      now,
+    );
+    writeFileSync(statsFile(), JSON.stringify(record));
+
+    const json = JSON.parse(inDir(root, () => runStats(['--json'])).out[0] as string);
+    const plain = inDir(root, () => runStats()).out;
+
+    expect(json.offload.today).toEqual({ here: 1, offloaded: 1, fellBack: 0 });
+    expect(json.offload.machines.mini.today).toEqual({
+      offloaded: 1,
+      offloadedMs: 200_000,
+      savedMs: 90_000,
+      fallbacks: 0,
+    });
+    expect(json.offload.placements.map((each: { decision: string }) => each.decision)).toEqual(['offloaded', 'here']);
+    expect(plain).toContain('build placement');
+    expect(plain.some((line) => line.includes('here: load 0.6/core, 1 build here'))).toBe(true);
   });
 });

@@ -24,7 +24,15 @@ import { homedir, tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { loadConfig, saveConfig, setDevice, setProjectSetting, upsertProject } from '../workspace/config.ts';
+import {
+  loadConfig,
+  saveConfig,
+  setDevice,
+  setProjectSetting,
+  upsertProject,
+  writeConfigSetting,
+} from '../workspace/config.ts';
+import { buildMachinesFile } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -5893,6 +5901,56 @@ describe('run statistics', () => {
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  function pairMini() {
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    const credential = {
+      machine: 'mini',
+      nodeId: 'nMini',
+      dnsName: 'mini.tail1.ts.net',
+      deviceId: 'ab12',
+      deviceToken: 'secret',
+      state: 'approved',
+      requestedAt: '2026-09-01T00:00:00.000Z',
+    };
+    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
+  }
+
+  async function runWithMode(mode: string, overrides: Parameters<typeof harness>[0]) {
+    process.env.STIM_OFFLOAD_MODE = mode;
+    try {
+      return await harness(overrides).run();
+    } finally {
+      delete process.env.STIM_OFFLOAD_MODE;
+    }
+  }
+
+  test('a compiling run with a paired build machine records where it built and why', async () => {
+    pairMini();
+    const { runs, recordStats } = recorder();
+
+    expect((await runWithMode('off', { recordStats })).ok).toBe(true);
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
+  });
+
+  test('a fallback that no machine caused counts against none', async () => {
+    pairMini();
+    const { runs, recordStats } = recorder();
+
+    expect((await runWithMode('force', { recordStats })).ok).toBe(true);
+    expect(runs[0]?.run.placement).toEqual({
+      decision: 'fell-back',
+      reason: expect.stringMatching(/^this app is not in a git checkout/),
+    });
+  });
+
+  test('a cache hit with a paired build machine compiles nothing and records no placement', async () => {
+    pairMini();
+    const { runs, recordStats } = recorder();
+
+    await runWithMode('force', { recordStats, resolveCached: () => fakeApk(), build: never('the build') });
+    expect(runs[0]?.run).not.toHaveProperty('placement');
   });
 
   test('the run enters each phase at its real step, and a cache hit skips compile', async () => {
