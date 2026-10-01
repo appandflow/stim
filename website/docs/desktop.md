@@ -60,6 +60,11 @@ performance traces. Every release is listed under
 
 ![The Machine page: free disk split by category, and a checklist of what Stim can free](/img/desktop/machine.webp)
 
+Closing the window leaves Stim Desktop running, so notifications and the phone
+server keep working. Click the Dock icon to reopen the window, or press
+Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
+Notifications and Machine.
+
 ## First steps
 
 Unless you are already set up, the first launch opens a setup guide that

@@ -67,7 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
       MainActor.assumeIsolated {
         OpenRequests.shared.workspaceLink = link
-        NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true }?.makeKeyAndOrderFront(nil)
+        if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
+          window.makeKeyAndOrderFront(nil)
+        } else {
+          OpenRequests.shared.openMainWindow?()
+        }
         NSApp.activate(ignoringOtherApps: true)
       }
     }
@@ -116,7 +120,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    !UserDefaults.standard.bool(forKey: AppPreferences.Key.showsMenuBarExtra)
+    false
+  }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+    MainActor.assumeIsolated {
+      if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+      } else {
+        OpenRequests.shared.openMainWindow?()
+      }
+    }
+    return true
   }
 }
 
@@ -184,7 +200,7 @@ struct StimDesktopApp: App {
   }
 
   var body: some Scene {
-    WindowGroup("Stim", id: "main") {
+    Window("Stim", id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
         buildMachines: buildMachines
@@ -201,6 +217,7 @@ struct StimDesktopApp: App {
       }
       SidebarCommands()
       InspectorCommands()
+      NavigationCommands()
     }
 
     #if DEBUG
@@ -256,6 +273,25 @@ struct InspectorCommands: Commands {
       Button(inspector?.isShown == true ? "Hide Inspector" : "Show Inspector") { inspector?.toggle() }
         .keyboardShortcut("i", modifiers: [.command, .option])
         .disabled(inspector == nil)
+    }
+  }
+}
+
+struct NavigationCommands: Commands {
+  @FocusedValue(\.sidebarNavigation) private var navigation
+
+  var body: some Commands {
+    CommandGroup(after: .sidebar) {
+      Divider()
+      Button("All devices") { navigation?.go(.wall) }
+        .keyboardShortcut("1", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Notifications") { navigation?.go(.notifications) }
+        .keyboardShortcut("2", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Machine") { navigation?.go(.machine) }
+        .keyboardShortcut("3", modifiers: .command)
+        .disabled(navigation == nil)
     }
   }
 }

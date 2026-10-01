@@ -114,6 +114,7 @@ struct RootView: View {
       \.inspectorToggle,
       showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
     )
+    .focusedSceneValue(\.sidebarNavigation, SidebarNavigation { selection = $0 })
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
     .onGeometryChange(for: CGSize.self) {
       $0.size
@@ -599,8 +600,13 @@ struct InspectorToggle {
   var toggle: () -> Void
 }
 
+struct SidebarNavigation {
+  var go: (SidebarItem) -> Void
+}
+
 extension FocusedValues {
   @Entry var inspectorToggle: InspectorToggle?
+  @Entry var sidebarNavigation: SidebarNavigation?
 }
 
 extension EnvironmentValues {
