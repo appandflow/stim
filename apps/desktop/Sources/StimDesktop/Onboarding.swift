@@ -131,7 +131,7 @@ final class Onboarding: ObservableObject {
   var xcodeCommand: StimCommand { StimCommand(["-version"], cwd: home, program: "xcodebuild") }
   var javaCommand: StimCommand { StimCommand(["-version"], cwd: home, program: "java") }
 
-  static func doctorCommand(in folder: String) -> StimCommand { StimCommand(["doctor"], cwd: folder) }
+  static func doctorCommand(in folder: String) -> StimCommand { StimCommand(["doctor", "--json"], cwd: folder) }
 
   /// Whether the `stim` this launch resolved is the one installed now, so the app can run it.
   var runsStim: Bool { report.map { $0.stim.isCompatible && !$0.needsRelaunch } ?? false }
@@ -154,15 +154,30 @@ final class Onboarding: ObservableObject {
     showsGuide = false
   }
 
-  func runGuide(_ title: String, _ command: StimCommand) {
+  func runGuide(_ title: String, _ command: StimCommand, then: (() -> Void)? = nil) {
     guard
       let run = actions.run(
         title, steps: [command], key: Self.actionKey, present: false,
-        completion: { [weak self] _ in
+        completion: { [weak self] run in
+          self?.recordCheck(command, run)
           self?.check()
+          then?()
         })
     else { return }
     guideRuns[command] = run
+  }
+
+  private func recordCheck(_ command: StimCommand, _ run: ActionRun) {
+    let output = run.lines.map(\.text).joined(separator: "\n")
+    let succeeded = run.exitStatus == 0
+    func outcome(_ passed: Bool) -> CheckOutcome { passed ? .passed : .failed }
+    if command == xcodeCommand {
+      setup.xcodeCheck = outcome(succeeded && MachineCheck.xcode(output) != nil)
+    } else if command == javaCommand {
+      setup.javaCheck = outcome(succeeded && MachineCheck.java(output) != nil)
+    } else if command == projectFolder.map(Self.doctorCommand(in:)) {
+      setup.projectCheck = outcome(succeeded && DoctorReport.decode(run.stdout)?.costFindings.isEmpty == true)
+    }
   }
 
   func chooseProjectFolder() {
@@ -172,6 +187,7 @@ final class Onboarding: ObservableObject {
     panel.prompt = "Choose"
     panel.message = "Choose a React Native or Expo project"
     guard panel.runModal() == .OK, let url = panel.url else { return }
+    if url.path != projectFolder { setup.projectCheck = nil }
     projectFolder = url.path
   }
 

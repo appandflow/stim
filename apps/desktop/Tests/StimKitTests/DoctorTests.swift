@@ -23,6 +23,14 @@ struct DoctorTests {
     #expect(doctorRemedy(nil) == nil)
   }
 
+  @Test func offersFixOnlyForFindingsThatNameDoctorFix() throws {
+    let url = try #require(Bundle.module.url(forResource: "doctor", withExtension: "json", subdirectory: "Fixtures"))
+    let report = try #require(DoctorReport.decode(Data(contentsOf: url)))
+    #expect(
+      report.costFindings.map { $0.repairCommand(cwd: "/p")?.arguments } == [nil, ["doctor", "--fix", "--platform", "android"]])
+    #expect(DoctorReport.decode(Data("not json".utf8)) == nil)
+  }
+
   @Test func listsAFailedDoctorRunWithItsMessageAndARunnableRetry() {
     let items = doctorFailureItems(["/b": "stim exited with status 1: error: boom", "/a": "Could not find stim."])
     #expect(items.map(\.workspace) == ["/a", "/b"])

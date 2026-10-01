@@ -338,7 +338,7 @@ struct SetupGuideView: View {
     VStack(alignment: .leading, spacing: Space.md) {
       Text("Check a project").font(.stim(.callout, weight: .semibold))
       Text(
-        "stim doctor reports what a React Native or Expo project needs for fast worktrees and builds, with the fix for each finding. It repairs nothing, and adds the folder to the projects Stim lists."
+        "stim doctor reports what a React Native or Expo project needs for fast worktrees and builds, with the fix for each finding. It repairs nothing unless you choose Fix, and adds the folder to the projects Stim lists."
       )
       .foregroundStyle(Palette.secondary)
       HStack(spacing: Space.md) {
@@ -359,9 +359,13 @@ struct SetupGuideView: View {
           tone: .neutral, icon: "info.circle")
       } else if let folder = onboarding.projectFolder {
         let command = Onboarding.doctorCommand(in: folder)
-        CommandBlock(command: command, run: onboarding.guideRuns[command], busy: busy, isDefault: true, caption: nil) {
+        CommandBlock(
+          command: command, run: onboarding.guideRuns[command], busy: busy, isDefault: true, caption: nil,
+          showsOutput: false
+        ) {
           onboarding.runGuide("Check \((folder as NSString).lastPathComponent)", command)
         }
+        SetupDoctorFindings(onboarding: onboarding, folder: folder, busy: busy)
       }
     }
   }
@@ -540,7 +544,7 @@ private struct CommandBlock: View {
   }
 }
 
-private struct RunOutput: View {
+struct RunOutput: View {
   @ObservedObject var run: ActionRun
 
   var body: some View {

@@ -45,6 +45,12 @@ public enum SetupStepState: Equatable, Sendable {
   case notApplicable
 }
 
+/// How one command of the check step ended.
+public enum CheckOutcome: Equatable, Sendable {
+  case passed
+  case failed
+}
+
 /// What the setup guide found on this Mac. A nil field has not been checked yet.
 public struct SetupChecks: Equatable, Sendable {
   /// `engines.node` of the `stim` package.
@@ -60,10 +66,16 @@ public struct SetupChecks: Equatable, Sendable {
   public var skillPath: String?
   public var skillChecked = false
   public var notifications: NotificationAccess?
+  /// The commands of the check step as run in this session: `xcodebuild -version`, `java -version` and `stim doctor`
+  /// in the chosen project. Nil until the command has run.
+  public var xcodeCheck: CheckOutcome?
+  public var javaCheck: CheckOutcome?
+  public var projectCheck: CheckOutcome?
 
   public init(
     stim: CLICompatibility? = nil, node: CLICompatibility? = nil, brewPath: String? = nil, skillPath: String? = nil,
-    skillChecked: Bool = false, notifications: NotificationAccess? = nil
+    skillChecked: Bool = false, notifications: NotificationAccess? = nil, xcodeCheck: CheckOutcome? = nil,
+    javaCheck: CheckOutcome? = nil, projectCheck: CheckOutcome? = nil
   ) {
     self.stim = stim
     self.node = node
@@ -71,6 +83,9 @@ public struct SetupChecks: Equatable, Sendable {
     self.skillPath = skillPath
     self.skillChecked = skillChecked
     self.notifications = notifications
+    self.xcodeCheck = xcodeCheck
+    self.javaCheck = javaCheck
+    self.projectCheck = projectCheck
   }
 
   public func state(of step: SetupStep) -> SetupStepState {
@@ -94,7 +109,9 @@ public struct SetupChecks: Equatable, Sendable {
       case .allowed: return .done
       }
     case .check:
-      return .notApplicable
+      let outcomes = [xcodeCheck, javaCheck, projectCheck]
+      if outcomes.contains(.failed) { return .blocked }
+      return outcomes.allSatisfy { $0 == .passed } ? .done : .notApplicable
     }
   }
 

@@ -906,8 +906,15 @@ Later**.
 4. **Notifications**: asks macOS for permission, or opens System Settings
    after a denial, and sets the level of the notifications that ask for you.
 5. **Check your setup**, optional: `xcodebuild -version` and `java -version`,
-   the Android SDK found the way `stim` finds it, and `stim doctor` in a
-   project folder the user chooses, which needs the restart above first.
+   the Android SDK found the way `stim` finds it, and `stim doctor --json` in a
+   project folder the user chooses, which needs the restart above first. The
+   findings show as rows with their severity, detail and fix, and the raw
+   output stays behind a disclosure. A finding whose fix names
+   `stim doctor --fix` gets a Fix button that runs that command after the
+   confirmation the Needs attention page uses, then runs doctor again. The
+   step shows a green check once the three commands ran this session and
+   doctor reported no finding that costs time, and the warning mark when one of
+   them failed or doctor reported such a finding.
 6. **You're set**: the state of steps 2 to 4.
 
 When the CLI, skill and notifications are already set up at a launch without
