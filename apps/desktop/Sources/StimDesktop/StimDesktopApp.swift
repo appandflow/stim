@@ -110,8 +110,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     false
   }
 
-  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    if !flag { MainActor.assumeIsolated { OpenRequests.shared.openMainWindow?() } }
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+    MainActor.assumeIsolated {
+      if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+      } else {
+        OpenRequests.shared.openMainWindow?()
+      }
+    }
     return true
   }
 }
