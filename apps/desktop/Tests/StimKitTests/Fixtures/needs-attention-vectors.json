@@ -819,6 +819,117 @@
       ]
     },
     {
+      "name": "a phone's own lease is a person controlling the device, not a stuck agent",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/stuck",
+            "live": true,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "ok",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:25:00.000Z",
+                "finishedAt": "2026-09-28T11:30:00.000Z"
+              }
+            },
+            "ios": {
+              "name": "stim-a (iPhone 17 Pro 26.0)",
+              "udid": "SIM-1",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "stim device lock",
+                  "pid": 1,
+                  "since": "2026-09-28T11:20:00.000Z"
+                },
+                "lastActivityAt": "2026-09-28T11:59:00.000Z",
+                "basis": ["agent-action", "app-log"],
+                "recent": {
+                  "agent-action": "2026-09-28T11:40:00.000Z",
+                  "app-log": "2026-09-28T11:59:00.000Z"
+                }
+              }
+            }
+          }
+        ],
+        "ownLeases": ["2026-09-28T11:20:00.000Z"]
+      },
+      "items": []
+    },
+    {
+      "name": "an agent holding a device lock other than the server's still looks stuck",
+      "input": {
+        "now": "2026-09-28T12:00:00.000Z",
+        "stuckMinutes": 15,
+        "easSessionMinutes": 30,
+        "volumes": [
+          {
+            "freeBytes": 80000000000
+          }
+        ],
+        "environments": [
+          {
+            "path": "/w/stuck",
+            "live": true,
+            "warnings": [],
+            "lastBuilds": {
+              "ios": {
+                "platform": "ios",
+                "status": "ok",
+                "cacheHit": "none",
+                "startedAt": "2026-09-28T11:25:00.000Z",
+                "finishedAt": "2026-09-28T11:30:00.000Z"
+              }
+            },
+            "ios": {
+              "name": "stim-a (iPhone 17 Pro 26.0)",
+              "udid": "SIM-1",
+              "owned": true,
+              "state": "Booted",
+              "activity": {
+                "state": "driven",
+                "driver": {
+                  "tool": "stim device lock",
+                  "pid": 1,
+                  "since": "2026-09-28T11:20:00.000Z"
+                },
+                "lastActivityAt": "2026-09-28T11:59:00.000Z",
+                "basis": ["agent-action", "app-log"],
+                "recent": {
+                  "agent-action": "2026-09-28T11:40:00.000Z",
+                  "app-log": "2026-09-28T11:59:00.000Z"
+                }
+              }
+            }
+          }
+        ],
+        "ownLeases": ["2026-09-28T09:00:00.000Z"]
+      },
+      "items": [
+        {
+          "id": "stuck:/w/stuck",
+          "category": "stuck",
+          "severity": "warning",
+          "workspace": "/w/stuck",
+          "body": "No agent activity for 20 min after a green iOS build; iPhone 17 Pro 26.0 still up",
+          "remedy": null
+        }
+      ]
+    },
+    {
       "name": "keeps an expired lease",
       "input": {
         "now": "2026-09-28T12:00:00.000Z",

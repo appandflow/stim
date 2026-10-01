@@ -466,6 +466,8 @@ export interface StatusPayload {
   simctlAvailable: boolean;
   /** Null when nothing runs that status attributes; absent from a `stim` that predates it. */
   machine?: MachineUsageState | null;
+  /** `grantedAt` of the device leases stim-server holds for phones; added by the server, absent from an older one. */
+  ownLeases?: string[];
 }
 
 export type MachineOwnerKind = 'simulator' | 'emulator' | 'metro' | 'build' | 'browser' | 'server' | 'shared';
@@ -843,6 +845,8 @@ export interface StatusEvent {
   payload: StatusPayload;
   /** Absent from a server that does not record usage history. */
   usage?: StatusUsage;
+  /** `grantedAt` of the device leases the server holds for phones; absent from a server that predates it. */
+  ownLeases?: string[];
 }
 
 export interface LogsEvent {

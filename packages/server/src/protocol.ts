@@ -939,6 +939,8 @@ export interface StatusEvent {
   subscription: string;
   payload: StatusPayload;
   usage?: UsageHistory;
+  /** `grantedAt` of the device leases this server holds for phones; absent when it holds none. */
+  ownLeases?: string[];
 }
 
 /**
@@ -1861,6 +1863,7 @@ export function protocolJsonSchema(): JsonSchema {
               subscription: { type: 'string' },
               payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
               usage: { $ref: '#/$defs/UsageHistory' },
+              ownLeases: { type: 'array', items: { type: 'string' } },
             },
           },
           {

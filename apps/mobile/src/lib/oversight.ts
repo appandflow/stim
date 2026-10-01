@@ -589,6 +589,7 @@ function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev:
     now: run.now,
     stuckMinutes: run.prefs.stuckMinutes,
     easSessionMinutes: EAS_SESSION_MINUTES,
+    ownLeases: run.input.ownLeases,
   });
   for (const item of items) {
     if (item.category !== 'attention') continue;
@@ -718,6 +719,8 @@ export interface NeedsAttentionInput {
   now: number;
   stuckMinutes: number;
   easSessionMinutes: number;
+  /** `grantedAt` of the device leases stim-server holds for phones, so a person controlling a device is no agent. */
+  ownLeases?: readonly string[];
 }
 
 const PERSON_ISSUES = new Set(['port-not-ours', 'supervisor-unverified', 'browser-unverified', 'avd-unchecked']);
@@ -730,7 +733,7 @@ const recent = (env: OversightEnvironment, at: string | null | undefined, now: n
 
 function workspaceItems(
   env: OversightEnvironment,
-  input: Pick<NeedsAttentionInput, 'now' | 'stuckMinutes' | 'easSessionMinutes'>,
+  input: Pick<NeedsAttentionInput, 'now' | 'stuckMinutes' | 'easSessionMinutes' | 'ownLeases'>,
 ): NeedsAttentionItem[] {
   const { now } = input;
   const items: NeedsAttentionItem[] = [];
@@ -789,7 +792,7 @@ function workspaceItems(
     });
   }
   const devices = devicesOf(env);
-  const driven = devices.find((d) => d.running && d.activity?.state === 'driven');
+  const driven = devices.find((d) => d.running && agentDriven(d, input.ownLeases ?? []));
   for (const session of env.remoteDevices ?? []) {
     const started = time(session.startedAt);
     if (driven || !(now - started >= input.easSessionMinutes * 60_000)) continue;

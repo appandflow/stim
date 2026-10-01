@@ -409,7 +409,11 @@ Events are `{ "event", "subscription", ... }`.
   `devices` entry is `{ "kind", "id", "workspace", "slot"?, "cpuPercent",
 "memoryMb" }` for a simulator (`id` its UDID) or emulator (`id` its AVD name).
   `cpuPercent` is ps %CPU, where 100 is one core. The history lives in the
-  server's memory only.
+  server's memory only. While the server holds `stim device lock` leases for
+  phones that control a device, every `status` event also carries their
+  `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
+  device from an agent driving it: an `activity.driver` of `stim device lock`
+  whose `since` is in `ownLeases` is a phone.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
   Both take the Stim Desktop log viewer's filters: `workspace` (required),

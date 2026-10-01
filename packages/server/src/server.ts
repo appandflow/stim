@@ -786,7 +786,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const unsubscribe = feeds.subscribe(STATUS_FEED, {
         item: (_payload, text) => {
           const history = usage.history();
-          send(socket, `${envelope}${text}${history ? `,"usage":${JSON.stringify(history)}` : ''}}`);
+          const leases = control.ownLeaseTimes();
+          send(
+            socket,
+            `${envelope}${text}${history ? `,"usage":${JSON.stringify(history)}` : ''}${
+              leases.length ? `,"ownLeases":${JSON.stringify(leases)}` : ''
+            }}`,
+          );
         },
         failed: (message) => {
           stopUsage();

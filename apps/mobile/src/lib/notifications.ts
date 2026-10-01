@@ -178,7 +178,7 @@ export function localNotifications(
         memoryPressure: live ? (mac.usage?.memory.pressure ?? null) : null,
         link: live ? null : link(mac),
         pullRequests: {},
-        ownLeases: [],
+        ownLeases: mac.status?.ownLeases ?? [],
       },
       { categories, stuckMinutes: prefs.stuckMinutes, quiet },
       now,
