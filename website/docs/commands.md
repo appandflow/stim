@@ -768,6 +768,19 @@ carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
 
+Each environment also carries `stage`, the conclusion Stim Desktop and the
+phone app show beside the git chip: `{ kind, since, platform, closedApps }`.
+`kind` is the first of these that applies: `building` while a build runs,
+`warming` or `ready` from `phase` when nothing is live, `build-failed` when the
+newest run of either platform failed, `running` when the workspace is live or
+holds a remote session, else `stopped`. `since` is when that began, `platform`
+names the build for `building` and `build-failed`, and `closedApps` lists, for
+`running`, the `{ platform, slot }` of each device whose app is closed. A
+worktree entry with git facts also carries `gitChip: { parts, ci }`: the
+commits ahead and behind, the uncommitted count, the branch it is merged into
+(unless its pull request is merged) or a missing upstream, in display order,
+and the pull request's checks as `failing`, `pending`, `passing` or `null`.
+
 A workspace that needs attention prints each issue under it with the command
 that fixes it:
 
@@ -982,7 +995,9 @@ considered offloading built here instead, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose
 compiler reported errors carries `diagnostics`: up to five
 `{ file, line, column, message }`, with `null` for a position the compiler
-did not give.
+did not give. Every failed run carries `cause: { key, file, line }`: its first
+diagnostic with a file and a line, keyed `<file>:<line>`, else its `errorCode`
+(or `failed`). Failed runs in a row with the same `key` failed the same way.
 
 A run that did not install a cached app (it compiled, or failed before finding
 one) carries `missReason`: why the cache had no app for it.
@@ -1059,7 +1074,10 @@ In `--json`, those devices carry `app: { id, state }`. `id` is the bundle
 identifier or package Stim checked, and `state` is `running`, `stopped` (the
 app crashed, was killed, or never launched), or `unknown` when the process list
 or the app's `Info.plist` could not be read. `app` is absent when the device is
-not owned or Stim knows no app id for it. This is the app's current process state, not a record of
+not owned or Stim knows no app id for it. Each of those device records also
+carries `appPresence`: `none` when the device runs, its platform's latest run
+failed and no run ever succeeded, `closed` when it runs and the app is
+`stopped`, else `null`. This is the app's current process state, not a record of
 the last launch. Stim reads it from one host `ps` for every simulator and the
 same `adb shell ps` it reads for activity, so `status --watch` notices an app
 that exits within 30 seconds. Run `stim ios` or `stim android` to launch it

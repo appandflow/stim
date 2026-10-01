@@ -108,6 +108,18 @@ export interface LastBuildReport {
   offloadFallback?: string;
   /** The first compiler diagnostics of a failed build, when the build tool reported any. */
   diagnostics?: BuildDiagnostic[];
+  /** Present on a failed run: what failed, from `buildCause`. */
+  cause?: BuildCause;
+}
+
+/**
+ * A failed run's cause: the first diagnostic with a file and a line, keyed `file:line`, else the run's error code
+ * (or `failed`), with null `file` and `line`. Consecutive failures with the same `key` failed the same way.
+ */
+export interface BuildCause {
+  key: string;
+  file: string | null;
+  line: number | null;
 }
 
 /** How a recorded build ended. `interrupted` is a run whose process ended without recording a result. */
@@ -272,6 +284,8 @@ export interface WorktreeFacts {
   git?: WorktreeGit | null;
   /** Null when GitHub has no pull request for the branch; absent when unknown, such as without `gh`. */
   pullRequest?: WorktreePullRequest | null;
+  /** Present with `git`: what the worktree's git chip shows, from `gitChip`. */
+  gitChip?: GitChip;
 }
 
 /** Every coding-agent tool whose sessions status can attribute to an environment. */
@@ -345,6 +359,47 @@ export interface RemoteDeviceState {
   state: 'claimed' | 'unclaimed' | 'unknown';
   startedAt: string | null;
   webPreviewUrl: string | null;
+}
+
+/**
+ * One part of a worktree's git chip, in display order: commits ahead of and behind the upstream, uncommitted files
+ * (changed plus untracked), the base branch the branch is merged into (left out when its pull request is merged,
+ * whose own mark says so), and a branch with no upstream that is not merged.
+ */
+export type GitChipPart =
+  | { kind: 'arrows'; ahead: number; behind: number }
+  | { kind: 'changed'; count: number }
+  | { kind: 'merged'; into: string }
+  | { kind: 'no-upstream' };
+
+/** A pull request's checks at a glance: any failing, else any pending, else any passing; null without checks. */
+export type ChecksState = 'passing' | 'failing' | 'pending' | null;
+
+export interface GitChip {
+  parts: GitChipPart[];
+  ci: ChecksState;
+}
+
+/**
+ * Whether a running owned simulator or emulator lacks the workspace's app: `none` when its platform never built
+ * successfully here and the latest build failed, `closed` when status saw no app process, else null.
+ */
+export type AppPresence = 'none' | 'closed' | null;
+
+export const WORKSPACE_STAGE_KINDS = ['building', 'warming', 'ready', 'build-failed', 'running', 'stopped'] as const;
+
+/**
+ * Where a workspace is, first match wins: `building` while a build runs, `warming` and `ready` from `phase` when
+ * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live or holds
+ * a remote device, else `stopped`. `since` is when that began: the build's start, the warm phase's time, the failed
+ * run's end (else start), the supervisor's start, or Metro's last stop. `platform` names the build for `building`
+ * and `build-failed`. `closedApps` lists, for `running`, the devices whose `appPresence` is `closed`.
+ */
+export interface WorkspaceStage {
+  kind: (typeof WORKSPACE_STAGE_KINDS)[number];
+  since: string | null;
+  platform: StatsPlatform | null;
+  closedApps: { platform: StatsPlatform; slot: string }[];
 }
 
 /** Every code a status issue can carry. */
@@ -480,6 +535,8 @@ export interface EnvironmentState {
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
   recording?: { enabled: boolean };
+  /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
+  stage?: WorkspaceStage;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**
@@ -499,6 +556,7 @@ export interface EnvironmentState {
     state: string;
     activity?: DeviceActivity;
     app?: DeviceAppProcess;
+    appPresence?: AppPresence;
     /** The simulator's data folder, for an owned simulator once measured. */
     disk?: DiskMeasure;
     /** Present while the device is not booted after the supervisor shut it down for `devices.idleShutdownMinutes`. */
@@ -513,6 +571,7 @@ export interface EnvironmentState {
     deviceProfile?: string | null;
     activity?: DeviceActivity;
     app?: DeviceAppProcess;
+    appPresence?: AppPresence;
     /** The AVD's folder, for an owned emulator once measured. */
     disk?: DiskMeasure;
     /** Present while the emulator is not running after the supervisor shut it down for `devices.idleShutdownMinutes`. */

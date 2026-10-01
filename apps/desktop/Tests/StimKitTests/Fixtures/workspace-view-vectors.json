@@ -14,6 +14,12 @@
           "healthy": true
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T11:18:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Running",
         "tone": "success",
@@ -28,6 +34,12 @@
         "phase": "live",
         "memoryMb": 0,
         "warnings": []
+      },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Running",
@@ -47,6 +59,12 @@
           "startedAt": "2026-09-27T11:59:40.000Z"
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T11:59:40.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Running",
         "tone": "success",
@@ -65,6 +83,12 @@
           "startedAt": "2026-09-27T10:57:00.000Z"
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T10:57:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Running",
         "tone": "success",
@@ -82,6 +106,12 @@
         "supervisor": {
           "startedAt": "2026-09-25T10:00:00.000Z"
         }
+      },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-25T10:00:00.000Z",
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Running",
@@ -105,6 +135,12 @@
           "startedAt": "2026-09-27T11:55:00.000Z"
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T11:55:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Running",
         "tone": "error",
@@ -123,6 +159,12 @@
           "dir": "",
           "errorsSinceMarker": 1
         }
+      },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Running",
@@ -149,6 +191,17 @@
           }
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": [
+          {
+            "platform": "ios",
+            "slot": "default"
+          }
+        ]
+      },
       "stage": {
         "label": "Running",
         "tone": "error",
@@ -174,6 +227,17 @@
             "state": "stopped"
           }
         }
+      },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": [
+          {
+            "platform": "android",
+            "slot": "default"
+          }
+        ]
       },
       "stage": {
         "label": "Running",
@@ -204,6 +268,17 @@
           }
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": [
+          {
+            "platform": "ios",
+            "slot": "default"
+          }
+        ]
+      },
       "stage": {
         "label": "Running",
         "tone": "error",
@@ -228,6 +303,12 @@
             "state": "running"
           }
         }
+      },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Running",
@@ -256,6 +337,12 @@
           "basis": 3
         }
       },
+      "derived": {
+        "kind": "building",
+        "since": "2026-09-27T11:58:48.000Z",
+        "platform": "ios",
+        "closedApps": []
+      },
       "stage": {
         "label": "Building",
         "tone": "brand",
@@ -282,6 +369,12 @@
           "expectedPhaseMs": 94000,
           "basis": 3
         }
+      },
+      "derived": {
+        "kind": "building",
+        "since": "2026-09-27T11:59:40.000Z",
+        "platform": "android",
+        "closedApps": []
       },
       "stage": {
         "label": "Building",
@@ -312,6 +405,12 @@
           "basis": 3
         }
       },
+      "derived": {
+        "kind": "building",
+        "since": "2026-09-27T11:58:48.000Z",
+        "platform": "ios",
+        "closedApps": []
+      },
       "stage": {
         "label": "Building",
         "tone": "brand",
@@ -338,6 +437,12 @@
           "expectedPhaseMs": 94000,
           "basis": 3
         }
+      },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Running",
@@ -366,6 +471,12 @@
           }
         }
       },
+      "derived": {
+        "kind": "build-failed",
+        "since": "2026-09-27T11:57:00.000Z",
+        "platform": "ios",
+        "closedApps": []
+      },
       "stage": {
         "label": "Build failed",
         "tone": "error",
@@ -392,6 +503,12 @@
             "finishedAt": null
           }
         }
+      },
+      "derived": {
+        "kind": "build-failed",
+        "since": "2026-09-27T10:00:00.000Z",
+        "platform": "android",
+        "closedApps": []
       },
       "stage": {
         "label": "Build failed",
@@ -422,6 +539,12 @@
             "finishedAt": "2026-09-27T11:57:00.000Z"
           }
         }
+      },
+      "derived": {
+        "kind": "build-failed",
+        "since": "2026-09-27T11:57:00.000Z",
+        "platform": "ios",
+        "closedApps": []
       },
       "stage": {
         "label": "Build failed",
@@ -460,6 +583,12 @@
           }
         }
       },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Running",
         "tone": "success",
@@ -497,6 +626,12 @@
           }
         }
       },
+      "derived": {
+        "kind": "build-failed",
+        "since": "2026-09-27T11:56:00.000Z",
+        "platform": "android",
+        "closedApps": []
+      },
       "stage": {
         "label": "Build failed",
         "tone": "error",
@@ -513,6 +648,12 @@
         "warnings": [],
         "warmStep": "refresh",
         "phaseSince": "2026-09-27T11:58:00.000Z"
+      },
+      "derived": {
+        "kind": "warming",
+        "since": "2026-09-27T11:58:00.000Z",
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Warming",
@@ -531,6 +672,12 @@
         "warmStep": "copy",
         "phaseSince": "2026-09-27T11:59:10.000Z"
       },
+      "derived": {
+        "kind": "warming",
+        "since": "2026-09-27T11:59:10.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Warming",
         "tone": "warning",
@@ -546,6 +693,12 @@
         "memoryMb": 0,
         "warnings": [],
         "warmStep": "copy"
+      },
+      "derived": {
+        "kind": "warming",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Warming",
@@ -575,6 +728,12 @@
           }
         }
       },
+      "derived": {
+        "kind": "warming",
+        "since": "2026-09-27T11:59:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Warming",
         "tone": "warning",
@@ -591,6 +750,12 @@
         "warnings": [],
         "phaseSince": "2026-09-27T11:12:00.000Z"
       },
+      "derived": {
+        "kind": "ready",
+        "since": "2026-09-27T11:12:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Ready",
         "tone": "success",
@@ -605,6 +770,12 @@
         "phase": "ready",
         "memoryMb": 0,
         "warnings": []
+      },
+      "derived": {
+        "kind": "ready",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Ready",
@@ -621,6 +792,12 @@
         "memoryMb": 0,
         "warnings": [],
         "phaseSince": "2026-09-27T11:59:00.000Z"
+      },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Running",
@@ -645,6 +822,12 @@
           }
         }
       },
+      "derived": {
+        "kind": "stopped",
+        "since": "2026-09-27T10:00:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Stopped",
         "tone": "tertiary",
@@ -659,6 +842,12 @@
         "phase": "idle",
         "memoryMb": 0,
         "warnings": []
+      },
+      "derived": {
+        "kind": "stopped",
+        "since": null,
+        "platform": null,
+        "closedApps": []
       },
       "stage": {
         "label": "Stopped",
@@ -683,6 +872,12 @@
           }
         ]
       },
+      "derived": {
+        "kind": "running",
+        "since": null,
+        "platform": null,
+        "closedApps": []
+      },
       "stage": {
         "label": "Running",
         "tone": "success",
@@ -706,6 +901,10 @@
           "mergedInto": null
         }
       },
+      "derived": {
+        "parts": [],
+        "ci": null
+      },
       "chip": {
         "parts": [],
         "pullRequest": null,
@@ -726,6 +925,14 @@
           "behind": null,
           "mergedInto": null
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "no-upstream"
+          }
+        ],
+        "ci": null
       },
       "chip": {
         "parts": [
@@ -753,6 +960,15 @@
           "mergedInto": null
         }
       },
+      "derived": {
+        "parts": [
+          {
+            "kind": "changed",
+            "count": 2
+          }
+        ],
+        "ci": null
+      },
       "chip": {
         "parts": [
           {
@@ -778,6 +994,15 @@
           "behind": 0,
           "mergedInto": null
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "changed",
+            "count": 1
+          }
+        ],
+        "ci": null
       },
       "chip": {
         "parts": [
@@ -805,6 +1030,16 @@
           "mergedInto": null
         }
       },
+      "derived": {
+        "parts": [
+          {
+            "kind": "arrows",
+            "ahead": 2,
+            "behind": 1
+          }
+        ],
+        "ci": null
+      },
       "chip": {
         "parts": [
           {
@@ -831,6 +1066,16 @@
           "mergedInto": null
         }
       },
+      "derived": {
+        "parts": [
+          {
+            "kind": "arrows",
+            "ahead": 1,
+            "behind": 0
+          }
+        ],
+        "ci": null
+      },
       "chip": {
         "parts": [
           {
@@ -856,6 +1101,19 @@
           "behind": null,
           "mergedInto": null
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "arrows",
+            "ahead": 2,
+            "behind": 0
+          },
+          {
+            "kind": "no-upstream"
+          }
+        ],
+        "ci": null
       },
       "chip": {
         "parts": [
@@ -887,6 +1145,16 @@
           "mergedInto": null
         }
       },
+      "derived": {
+        "parts": [
+          {
+            "kind": "arrows",
+            "ahead": 0,
+            "behind": 3
+          }
+        ],
+        "ci": null
+      },
       "chip": {
         "parts": [
           {
@@ -912,6 +1180,20 @@
           "behind": 0,
           "mergedInto": null
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "arrows",
+            "ahead": 1,
+            "behind": 0
+          },
+          {
+            "kind": "changed",
+            "count": 3
+          }
+        ],
+        "ci": null
       },
       "chip": {
         "parts": [
@@ -943,6 +1225,15 @@
           "mergedInto": "main"
         }
       },
+      "derived": {
+        "parts": [
+          {
+            "kind": "merged",
+            "into": "main"
+          }
+        ],
+        "ci": null
+      },
       "chip": {
         "parts": [
           {
@@ -968,6 +1259,19 @@
           "behind": 0,
           "mergedInto": "main"
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "changed",
+            "count": 2
+          },
+          {
+            "kind": "merged",
+            "into": "main"
+          }
+        ],
+        "ci": null
       },
       "chip": {
         "parts": [
@@ -998,6 +1302,15 @@
           "behind": null,
           "mergedInto": "main"
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "merged",
+            "into": "main"
+          }
+        ],
+        "ci": null
       },
       "chip": {
         "parts": [
@@ -1036,6 +1349,10 @@
           }
         }
       },
+      "derived": {
+        "parts": [],
+        "ci": "passing"
+      },
       "chip": {
         "parts": [],
         "pullRequest": {
@@ -1071,6 +1388,10 @@
             "pending": 2
           }
         }
+      },
+      "derived": {
+        "parts": [],
+        "ci": "failing"
       },
       "chip": {
         "parts": [],
@@ -1108,6 +1429,10 @@
           }
         }
       },
+      "derived": {
+        "parts": [],
+        "ci": "pending"
+      },
       "chip": {
         "parts": [],
         "pullRequest": {
@@ -1144,6 +1469,10 @@
           }
         }
       },
+      "derived": {
+        "parts": [],
+        "ci": null
+      },
       "chip": {
         "parts": [],
         "pullRequest": {
@@ -1174,6 +1503,10 @@
           "title": "t",
           "state": "open"
         }
+      },
+      "derived": {
+        "parts": [],
+        "ci": null
       },
       "chip": {
         "parts": [],
@@ -1206,6 +1539,10 @@
           "state": "draft"
         }
       },
+      "derived": {
+        "parts": [],
+        "ci": null
+      },
       "chip": {
         "parts": [],
         "pullRequest": {
@@ -1237,6 +1574,10 @@
           "state": "closed"
         }
       },
+      "derived": {
+        "parts": [],
+        "ci": null
+      },
       "chip": {
         "parts": [],
         "pullRequest": {
@@ -1267,6 +1608,10 @@
           "title": "t",
           "state": "merged"
         }
+      },
+      "derived": {
+        "parts": [],
+        "ci": null
       },
       "chip": {
         "parts": [],
@@ -1303,6 +1648,15 @@
             "pending": 0
           }
         }
+      },
+      "derived": {
+        "parts": [
+          {
+            "kind": "changed",
+            "count": 1
+          }
+        ],
+        "ci": "passing"
       },
       "chip": {
         "parts": [
@@ -1345,6 +1699,14 @@
           }
         }
       },
+      "derived": {
+        "parts": [
+          {
+            "kind": "no-upstream"
+          }
+        ],
+        "ci": "passing"
+      },
       "chip": {
         "parts": [
           {
@@ -1380,6 +1742,10 @@
           "title": "t",
           "state": "open"
         }
+      },
+      "derived": {
+        "parts": [],
+        "ci": null
       },
       "chip": {
         "parts": [],
@@ -3257,6 +3623,317 @@
         }
       },
       "parts": null
+    }
+  ],
+  "appPresence": [
+    {
+      "name": "an app status does not report is not guessed",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted"
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": null
+    },
+    {
+      "name": "a stopped app is closed",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.w",
+            "state": "stopped"
+          }
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": "closed"
+    },
+    {
+      "name": "a running app is present",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.w",
+            "state": "running"
+          }
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": null
+    },
+    {
+      "name": "a shut down simulator reports nothing",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Shutdown",
+          "app": {
+            "id": "com.w",
+            "state": "stopped"
+          }
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": null
+    },
+    {
+      "name": "no app when the latest build failed and none ever succeeded",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.w",
+            "state": "stopped"
+          }
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:50:00.000Z",
+            "finishedAt": "2026-09-27T11:51:00.000Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 1000,
+              "fingerprint": null,
+              "startedAt": "2026-09-27T11:50:00.000Z",
+              "finishedAt": "2026-09-27T11:51:00.000Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {}
+            }
+          ]
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": "none"
+    },
+    {
+      "name": "an earlier success means the app is only closed",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.w",
+            "state": "stopped"
+          }
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:50:00.000Z",
+            "finishedAt": "2026-09-27T11:51:00.000Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 1000,
+              "fingerprint": null,
+              "startedAt": "2026-09-27T11:50:00.000Z",
+              "finishedAt": "2026-09-27T11:51:00.000Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {}
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 1000,
+              "fingerprint": null,
+              "startedAt": "2026-09-27T11:50:00.000Z",
+              "finishedAt": "2026-09-27T11:51:00.000Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {}
+            }
+          ]
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": "closed"
+    },
+    {
+      "name": "without build history a failed build does not prove the app missing",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.w",
+            "state": "stopped"
+          }
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 1000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:50:00.000Z",
+            "finishedAt": "2026-09-27T11:51:00.000Z"
+          }
+        }
+      },
+      "platform": "ios",
+      "slot": "default",
+      "presence": "closed"
+    },
+    {
+      "name": "a detected emulator with a stopped app is closed",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "android": {
+          "name": "stim-w",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5554",
+          "state": "detected",
+          "app": {
+            "id": "com.w",
+            "state": "stopped"
+          }
+        }
+      },
+      "platform": "android",
+      "slot": "default",
+      "presence": "closed"
+    },
+    {
+      "name": "a slot device is judged on its own",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "ios": {
+          "name": "stim-w (iPhone 17 26.2)",
+          "udid": "U",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.w",
+            "state": "running"
+          }
+        },
+        "slots": [
+          {
+            "slot": "b",
+            "ios": {
+              "name": "stim-w (iPhone 17 26.2)",
+              "udid": "U",
+              "owned": true,
+              "state": "Booted",
+              "app": {
+                "id": "com.w",
+                "state": "stopped"
+              }
+            },
+            "android": null
+          }
+        ]
+      },
+      "platform": "ios",
+      "slot": "b",
+      "presence": "closed"
     }
   ]
 }
