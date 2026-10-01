@@ -745,8 +745,8 @@ revoke <id>`, and **Later** closes the dialog; Allow is never the default
 button, and nothing approves a request without it. The card and the macOS
 notification go away once the request is answered or lapses.
 
-The **Machines** page shows where builds ran. Under **This Mac**, **Where builds
-ran** counts today's compiling builds that built here, on a build machine, or
+The **Machines** page shows where builds ran. While `offload.machines` names a
+machine, **Where builds ran** under **This Mac** counts today's compiling builds that built here, on a build machine, or
 here after trying one, and lists the latest placements with the reason Stim
 gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Then each
 `offload.machines` entry has its own section: its state and first reason from

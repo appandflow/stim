@@ -39,6 +39,14 @@ import Testing
     #expect(offload.placements(for: "mini").map(\.title) == ["Built here after mini", "Built on mini"])
     #expect(offload.here.map(\.failed) == [true])
     #expect(offload.placements.last?.decision == .unknown)
+    let fellBack = try JSONDecoder().decode(
+      BuildPlacements.Placement.self,
+      from: Data(#"{"at":"x","project":"/p","platform":"ios","decision":"fell-back","reason":"git"}"#.utf8))
+    #expect(fellBack.title == "Built here after offloading")
+    let ported = try JSONDecoder().decode(
+      BuildPlacements.Placement.self,
+      from: Data(#"{"at":"x","project":"/p","platform":"ios","decision":"offloaded","machine":"mini:7444","reason":"r"}"#.utf8))
+    #expect(ported.title == "Built on mini")
     #expect(try JSONDecoder().decode(MachineStats.self, from: Data(#"{"version":1}"#.utf8)).offload == nil)
   }
 

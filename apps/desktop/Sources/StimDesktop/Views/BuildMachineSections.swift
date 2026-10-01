@@ -3,12 +3,12 @@ import StimStores
 import SwiftUI
 
 /// Where this Mac's compiling builds ran today and the latest placements with their reasons, from `stim stats`;
-/// hidden until a build machine is paired and a build has compiled.
+/// hidden while `offload.machines` names no machine or no build has compiled.
 struct ThisMacPlacements: View {
   var model: BuildMachinesModel
 
   var body: some View {
-    if let offload = model.stats.value?.offload, !offload.placements.isEmpty {
+    if !(model.entries ?? []).isEmpty, let offload = model.stats.value?.offload, !offload.placements.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
         Text("Where builds ran").font(.stim(.headline))
         Text(
@@ -91,7 +91,7 @@ struct MachineBuildMachines: View {
           tile("Time saved", saved(counts.total.savedMs), "estimated against builds here")
           tile("Fell back", "\(counts.total.fallbacks)", "\(counts.today.fallbacks) today")
         }
-      } else {
+      } else if offload != nil {
         Text("No build has gone to it yet.").foregroundStyle(Palette.tertiary)
       }
       if !recent.isEmpty { PlacementList(placements: recent) }

@@ -26,6 +26,7 @@ final class BuildMachinesModel {
   let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
   @ObservationIgnored private var latestRun: [String: Int] = [:]
+  @ObservationIgnored private var latestStatsRun = 0
 
   init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore) {
     self.cli = cli
@@ -48,15 +49,17 @@ final class BuildMachinesModel {
 
   func refresh(checkout: String?) async {
     await settings.refresh()
-    async let placements: Void = refreshPlacements()
+    async let placements: Void = (entries ?? []).isEmpty ? () : refreshPlacements()
     await refreshStatuses(checkout: checkout, ask: false)
     await placements
   }
 
   private func refreshPlacements() async {
+    latestStatsRun += 1
+    let run = latestStatsRun
     let cli = await cli.value
     let result = await Result.awaiting { try await cli.machineStats() }
-    guard !Task.isCancelled else { return }
+    guard run == latestStatsRun, !Task.isCancelled else { return }
     stats.record(result)
   }
 

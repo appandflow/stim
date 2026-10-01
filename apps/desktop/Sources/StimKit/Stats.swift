@@ -37,7 +37,6 @@ public struct BuildPlacements: Decodable, Sendable {
     /// Local estimate minus offloaded build time, summed; negative when the machine was slower.
     public var savedMs: Double
     public var fallbacks: Int
-    public var lastOffloadAt: String?
   }
 
   public struct Machine: Decodable, Sendable {
@@ -67,10 +66,11 @@ public struct BuildPlacements: Decodable, Sendable {
 
     /// "Built here", "Built on mini", "Built here after mini".
     public var title: String {
+      let name = machine.map(machineName)
       switch decision {
       case .here: return "Built here"
-      case .offloaded: return "Built on \(machine ?? "a build machine")"
-      case .fellBack: return machine.map { "Built here after \($0)" } ?? "Built here after offloading"
+      case .offloaded: return "Built on \(name ?? "a build machine")"
+      case .fellBack: return name.map { "Built here after \($0)" } ?? "Built here after offloading"
       case .unknown: return "Built"
       }
     }
