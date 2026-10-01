@@ -47,7 +47,6 @@ final class MetricsStore {
     self.disks = disks
   }
 
-  /// Samples every 3 s while the main window is on screen, and not at all otherwise.
   func start() {
     guard poller == nil else { return }
     let poller = VisiblePoller(
