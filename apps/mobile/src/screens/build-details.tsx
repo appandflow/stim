@@ -29,6 +29,7 @@ import {
   nextBuild,
   planDetail,
   buildTiming,
+  recheckNote,
 } from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
@@ -304,7 +305,9 @@ function RunningBuild({
       <View style={styles.elapsed}>
         <Text style={styles.big}>{elapsed}</Text>
         <Text variant="callout" tone="secondary" style={styles.grow}>
-          {[estimate ? t`of ${estimate}` : null, miss ? t`cache miss, ${miss}` : null].filter(Boolean).join(' \u00B7 ')}
+          {[estimate ? t`of ${estimate}` : null, miss ? t`cache miss, ${miss}` : null, recheckNote(build)]
+            .filter(Boolean)
+            .join(' \u00B7 ')}
         </Text>
       </View>
       <PhaseList

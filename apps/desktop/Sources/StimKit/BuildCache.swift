@@ -234,6 +234,16 @@ public enum BuildPlanOutcome: Hashable, Sendable {
 }
 
 extension Build {
+  /// What the build card says while `missReason` is the first lookup's miss, which prebuild or pods can still turn into a hit.
+  public var recheckNote: String? {
+    guard missProvisional == true, missReason != nil else { return nil }
+    switch phase {
+    case "prebuild": return "Checks the cache again after prebuild"
+    case "pods": return "Checks the cache again after pods"
+    default: return "Checks the cache again after prebuild or pods"
+    }
+  }
+
   /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run. An older stim sends
   /// no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
   public var outcomeLabel: String? {
@@ -242,7 +252,7 @@ extension Build {
     switch (outcome, settled) {
     case ("hit", true): return "Cache hit"
     case ("hit", false): return "Likely cache hit"
-    case ("cold", true): return "Cold build"
+    case ("cold", true): return missReason == nil ? "Cold build" : "Cache miss"
     case ("cold", false): return "Likely cold"
     default: return nil
     }

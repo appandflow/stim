@@ -1094,6 +1094,10 @@ msgstr "Cache hit (remote){took}"
 msgid "Cache lookup"
 msgstr "Cache lookup"
 
+#: src/lib/format.ts
+msgid "Cache miss"
+msgstr "Cache miss"
+
 #: src/screens/build-details.tsx
 msgid "cache miss, {miss}"
 msgstr "cache miss, {miss}"
@@ -1215,6 +1219,18 @@ msgstr "checks passing"
 #: src/lib/workspace-view.ts
 msgid "checks pending"
 msgstr "checks pending"
+
+#: src/lib/format.ts
+msgid "Checks the cache again after pods"
+msgstr "Checks the cache again after pods"
+
+#: src/lib/format.ts
+msgid "Checks the cache again after prebuild"
+msgstr "Checks the cache again after prebuild"
+
+#: src/lib/format.ts
+msgid "Checks the cache again after prebuild or pods"
+msgstr "Checks the cache again after prebuild or pods"
 
 #: src/lib/device-tile.ts
 #: src/lib/needs-attention.ts

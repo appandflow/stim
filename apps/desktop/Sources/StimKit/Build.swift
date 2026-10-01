@@ -21,6 +21,8 @@ public struct Build: Decodable, Hashable, Sendable {
   public var detail: BuildDetail?
   /// Present once the run knows why the cache missed.
   public var missReason: BuildMissReason?
+  /// True while `missReason` is the first lookup's miss and the run looks the key up again after prebuild or pods.
+  public var missProvisional: Bool?
   /// Where it compiles; nil from a `stim` older than build offload.
   public var placement: BuildPlacement?
 

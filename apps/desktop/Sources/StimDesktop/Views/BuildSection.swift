@@ -202,6 +202,9 @@ private struct RunningBuildDetail: View {
     .onDisappear { output.stop() }
     if let miss = build.missReason {
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
+      if let note = build.recheckNote {
+        Text(note).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
     }
     if !output.lines.isEmpty {
       BuildOutputTail(lines: output.lines)

@@ -138,11 +138,22 @@ export function buildTiming(build: BuildReport, now: number): { elapsed: string;
  * Until the run knows its outcome, `stim status` reports the outcome of the project's previous run. An older stim
  * sends no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
  */
-export function outcomeLabel(build: Pick<BuildReport, 'outcome' | 'phase' | 'outcomeKnown'>): string | null {
+export function outcomeLabel(
+  build: Pick<BuildReport, 'outcome' | 'phase' | 'outcomeKnown' | 'missReason'>,
+): string | null {
   if (!build.outcome) return null;
   const settled = build.outcomeKnown ?? !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
   if (build.outcome === 'hit') return settled ? t`Cache hit` : t`Likely cache hit`;
-  return settled ? t`Cold build` : t`Likely cold`;
+  if (!settled) return t`Likely cold`;
+  return build.missReason ? t`Cache miss` : t`Cold build`;
+}
+
+/** What a running build says while its cache miss is the first lookup's, which prebuild or pods can still turn into a hit. */
+export function recheckNote(build: Pick<BuildReport, 'phase' | 'missProvisional'>): string | null {
+  if (!build.missProvisional) return null;
+  if (build.phase === 'prebuild') return t`Checks the cache again after prebuild`;
+  if (build.phase === 'pods') return t`Checks the cache again after pods`;
+  return t`Checks the cache again after prebuild or pods`;
 }
 
 export function lastBuildSummary(last: LastBuild, now: number, withReason = true): string {
