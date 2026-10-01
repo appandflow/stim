@@ -535,7 +535,7 @@ export function DeviceView({
                         </ScrollView>
                         {agentFeed}
                       </View>
-                    ) : landscape ? (
+                    ) : landscape && !table ? (
                       controlling || readOnly ? (
                         <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
                           {readOnlyBanner}
