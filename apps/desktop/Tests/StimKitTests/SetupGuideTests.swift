@@ -133,3 +133,11 @@ private let setUp = SetupChecks(
     #expect(progress.stepAtLaunch(stillChecking) == .welcome)
   }
 }
+
+@Test func commandOutputLosesItsColorCodes() {
+  #expect(
+    "\u{1B}[38;5;250m\u{2588}\u{2588}\u{1B}[0m skills \u{1B}[1;38;2;1;2;3mv1\u{1B}[39m".strippingANSI
+      == "\u{2588}\u{2588} skills v1")
+  #expect("\u{1B}]8;;https://example.com\u{07}link\u{1B}]8;;\u{07}\u{1B}[2K".strippingANSI == "link")
+  #expect("added 1 package".strippingANSI == "added 1 package")
+}
