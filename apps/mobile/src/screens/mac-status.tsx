@@ -559,7 +559,9 @@ function todayLine(today: { here: number; offloaded: number; fellBack: number })
 
 function placementMeta(entry: Placement, now: number): string {
   const ago = agoLabel(entry.at, now);
-  return [entry.buildMs ? clockDuration(entry.buildMs) : null, ago].filter(Boolean).join('\n');
+  return [entry.failed ? t`failed` : null, entry.buildMs ? clockDuration(entry.buildMs) : null, ago]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function clientLine(today: number, builds: number, failed: number, buildMs: number): string {

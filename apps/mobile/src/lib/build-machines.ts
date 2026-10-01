@@ -168,7 +168,7 @@ function placement(value: unknown): Placement[] {
       decision,
       reason,
       machine: typeof machine === 'string' ? machine : null,
-      buildMs: typeof buildMs === 'number' ? buildMs : null,
+      buildMs: num(buildMs) > 0 ? num(buildMs) : null,
       failed: value.failed === true,
     },
   ];
