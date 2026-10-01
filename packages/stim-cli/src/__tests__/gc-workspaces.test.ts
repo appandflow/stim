@@ -1686,6 +1686,7 @@ test('--cache workspaces leaves the build outputs of a dead project to the unsco
   ]);
   expect(existsSync(join(live.dir, 'derived-data'))).toBe(false);
   expect(existsSync(join(dead.dir, 'derived-data'))).toBe(true);
+});
 
 describe('status cache entries of gone workspaces', () => {
   const seedDisk = (path: string) => {
