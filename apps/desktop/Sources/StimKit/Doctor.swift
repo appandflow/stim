@@ -25,7 +25,6 @@ public func doctorRemedy(_ fix: String?) -> String? {
 }
 
 extension DoctorReport {
-  /// The findings that need action, as setup items do.
   public var costFindings: [Finding] { findings.filter { $0.level == "cost" } }
 
   /// The report `stim doctor --json` printed, or nil when `stdout` is not one.

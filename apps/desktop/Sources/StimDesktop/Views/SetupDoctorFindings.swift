@@ -3,8 +3,6 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// The result of `stim doctor --json` in the setup guide: one row per finding, a Fix action for those
-/// `stim doctor --fix` repairs, and the raw output behind a disclosure.
 struct SetupDoctorFindings: View {
   @ObservedObject var onboarding: Onboarding
   var folder: String
@@ -17,7 +15,7 @@ struct SetupDoctorFindings: View {
 
   var body: some View {
     let run = onboarding.guideRuns[checkCommand]
-    let fix = lastFix.flatMap { onboarding.guideRuns[$0] }
+    let fix = lastFix.flatMap { $0.cwd == folder ? onboarding.guideRuns[$0] : nil }
     VStack(alignment: .leading, spacing: Space.md) {
       if let fix, fix.isRunning {
         HStack(spacing: Space.sm) {
@@ -92,7 +90,7 @@ struct SetupDoctorFindings: View {
       Image(systemName: costs ? "exclamationmark.triangle.fill" : "info.circle")
         .foregroundStyle(costs ? Palette.warning : Palette.tertiary)
         .frame(width: 18)
-        .accessibilityLabel(costs ? "Costs time" : "Note")
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xs) {
         Text(finding.title).font(.stim(.callout, weight: .semibold))
         Text(costs ? "Costs time" : "Note").font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
@@ -107,7 +105,7 @@ struct SetupDoctorFindings: View {
           Button("Fix\u{2026}") { fixing = repair }
             .buttonStyle(.stim(.primary))
             .disabled(busy)
-            .accessibilityLabel("Fix, \(repair.displayLine())")
+            .accessibilityLabel("Fix, \(finding.title)")
             .help(repair.displayLine())
         }
         if let text = copied ?? finding.fix, !text.isEmpty {

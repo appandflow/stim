@@ -175,7 +175,7 @@ final class Onboarding: ObservableObject {
       setup.xcodeCheck = outcome(succeeded && MachineCheck.xcode(output) != nil)
     } else if command == javaCommand {
       setup.javaCheck = outcome(succeeded && MachineCheck.java(output) != nil)
-    } else if command.arguments == Self.doctorCommand(in: command.cwd).arguments {
+    } else if command == projectFolder.map(Self.doctorCommand(in:)) {
       setup.projectCheck = outcome(succeeded && DoctorReport.decode(run.stdout)?.costFindings.isEmpty == true)
     }
   }
