@@ -1228,7 +1228,11 @@ there.
   those parked at least that many days.
 - `--cache <name|all|workspaces|recordings|parked>` with `--delete` empties the caches whose name
   or directory carries `<name>` whole, or every cache and the workspace build
-  outputs with `all`. `workspaces` clears only the workspace build outputs.
+  outputs with `all`. `workspaces` clears only the workspace build outputs,
+  and skips the workspace directories that plain `--delete` removes whole
+  (those of dead projects and orphaned directories). A plain `gc --json` dry run
+  carries `scopedEmpty` on each cache, which says whether `--delete --cache`
+  without `--older-than` would empty it or leave it alone, and why.
   When several caches share a name, as the Metro transform cache of each
   project does, gc names each one `<name>: <directory>` using its directory's
   last component, so the report and `--cache` tell them apart.

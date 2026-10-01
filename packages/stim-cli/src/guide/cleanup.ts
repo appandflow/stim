@@ -540,9 +540,11 @@ WORKSPACE BUILD OUTPUTS
   \`gc --delete\` clears them for every workspace not in use (see \`guide
   cleanup gc\`), before anything else. \`--older-than <days>\` limits that to
   workspaces idle at least that long, and keeps one whose last use is
-  unknown. \`--cache workspaces\` acts on them alone; \`--cache all\` includes
-  them. Only those four directories go: workspace.json, state.json, logs/,
-  locks and device records stay, so the workspace keeps its devices and ports.
+  unknown. \`--cache workspaces\` acts on them alone, except in the workspace
+  directories that plain \`gc --delete\` removes whole (dead projects and
+  orphaned directories); \`--cache all\` includes them. Only those four
+  directories go: workspace.json, state.json, logs/, locks and device records
+  stay, so the workspace keeps its devices and ports.
     stim gc --delete --cache workspaces --older-than 7
   Last use is the newest of the lastUsedAt that start, ios, android, reload
   and worktree warm record in state.json, lastBuild.startedAt,

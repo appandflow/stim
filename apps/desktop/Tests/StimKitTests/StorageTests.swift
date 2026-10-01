@@ -227,6 +227,26 @@ import Testing
   }
 }
 
+@Suite struct FreeCacheTests {
+  let paths = StoragePaths(home: "/Users/me")
+
+  /// Catches a cache that `stim gc --delete --cache` leaves alone still being offered as freeable and counted in the
+  /// Free total.
+  @Test func hidesACacheTheScopedDeleteLeavesAlone() throws {
+    let json = """
+      {"sections":{"caches":[
+        {"name":"Build cache","dir":"/s/build-cache","bytes":4096,"scopedEmpty":{"willEmpty":true,"emptySkipped":null}},
+        {"name":"Gradle build cache","dir":"/g","bytes":9000,
+         "scopedEmpty":{"willEmpty":false,"emptySkipped":"report-only shared cache; Stim never deletes it"}},
+        {"name":"Older CLI cache","dir":"/s/older","bytes":2048}]}}
+      """
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let report = StorageReport.make(environments: [], gc: gc, disk: DiskMeasurements(), paths: paths)
+    #expect(report.free.map(\.title) == ["Build cache", "Older CLI cache"])
+    #expect(report.allCaches.count == 3)
+  }
+}
+
 @Suite struct FreePlanTests {
   let home = "/Users/me"
   let worktree = FreeAction.removeWorktree(path: "/r/.w/a", repository: "/r")

@@ -3277,6 +3277,41 @@ test('--delete --older-than keeps a current Metro store that is also a current o
   expect(existsSync(childTransform)).toBe(true);
 });
 
+test('an unscoped dry run says which caches --delete --cache would empty, as the scoped run does', async () => {
+  const parent = join(tmpHome, 'metro-cache', 'first-app');
+  const child = join(parent, 'second-app');
+  const plain = join(tmpHome, 'plain-cache');
+  for (const dir of [child, plain]) mkdirSync(dir, { recursive: true });
+  const store = (dir: string) => ({
+    dir,
+    name: 'Metro transform cache',
+    prune: 'entries' as const,
+    entriesDepth: 2,
+    layout: METRO_NAMED_CACHE_LAYOUT,
+  });
+  register(store(parent));
+  register(store(child));
+  register({ dir: plain, name: 'Plain cache', prune: 'entries' });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  installExecutor();
+
+  const unscoped = await collectGcReport({});
+
+  expect(unscoped.caches.find((cache) => cache.dir === parent)?.scopedEmpty).toEqual({
+    willEmpty: false,
+    emptySkipped: 'report-only shared cache; Stim never deletes it',
+  });
+  expect(unscoped.caches.find((cache) => cache.dir === plain)?.scopedEmpty).toEqual({
+    willEmpty: true,
+    emptySkipped: null,
+  });
+  expect(unscoped.caches.every((cache) => cache.willEmpty === undefined)).toBe(true);
+  for (const { dir, scopedEmpty } of unscoped.caches) {
+    const scoped = (await collectGcReport({ cache: dir })).caches.find((cache) => cache.dir === dir);
+    expect(scoped).toMatchObject(scopedEmpty ?? {});
+  }
+});
+
 test('--delete --cache all empties an index-backed cache that --older-than cannot trim', async () => {
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
