@@ -30,15 +30,20 @@ struct MachineView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
+        MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
+          EmptyView()
+        }
         NowBand(status: status, metrics: metrics, gc: gc)
         if let plan = autopilot.pressure { pressureBanner(plan) }
+        ThisMacPlacements(model: buildMachines)
+        MachineBuildMachines(model: buildMachines, status: status)
+        MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
         headline(report)
         safeToFree(report)
         projects(report)
         devices(report)
         runtimes(report)
         otherTools(report)
-        MachineBuildMachines(model: buildMachines, status: status)
       }
       .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -82,8 +87,8 @@ struct MachineView: View {
   private var header: some View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
-        Text("Machine").font(.stim(.title))
-        Text("What uses this Mac's CPU and memory now, what uses its disk, and what Stim can free.")
+        Text("Machines").font(.stim(.title))
+        Text("This Mac, the build machines it offloads builds to, then this Mac's disk and what Stim can free.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
@@ -768,70 +773,5 @@ private final class StorageReportCache {
     self.inputs = inputs
     self.report = report
     return report
-  }
-}
-
-/// The build machines in `offload.machines` and whether each takes builds now, from `stim doctor` in the workspace
-/// Settings > Build Machines uses, checked each minute while the page is open; hidden when none is named. Read-only:
-/// that tab changes them.
-private struct MachineBuildMachines: View {
-  var model: BuildMachinesModel
-  @ObservedObject var status: StatusStore
-
-  private var checkout: String? {
-    doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
-  }
-
-  private var machines: [BuildMachineStatus] { model.check(in: checkout)?.statuses ?? [] }
-
-  private var failure: String? {
-    guard let problem = model.check(in: checkout)?.problem else { return nil }
-    switch problem {
-    case .unsupported: return "This stim does not report build machines; update it."
-    case .failed(let message): return "Cannot check build machines: \(message)"
-    }
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Space.md) {
-      if !machines.isEmpty || failure != nil {
-        Text("Build machines").font(.stim(.headline))
-        if let failure {
-          Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        }
-        if !machines.isEmpty {
-          Card {
-            VStack(spacing: 0) {
-              ForEach(Array(machines.enumerated()), id: \.element.id) { index, machine in
-                if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-                row(machine)
-              }
-            }
-          }
-        }
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .task(id: checkout) {
-      while !Task.isCancelled {
-        if checkout != nil { await model.refresh(checkout: checkout) }
-        try? await Task.sleep(for: .seconds(60))
-      }
-    }
-  }
-
-  private func row(_ machine: BuildMachineStatus) -> some View {
-    let ready = machine.readiness
-    return HStack(spacing: Space.lg) {
-      Image(systemName: "desktopcomputer").foregroundStyle(Palette.tertiary).frame(width: 16)
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(verbatim: machineName(machine.machine))
-        Text(ready.line).font(.stim(.caption)).foregroundStyle(Color(ready.tone))
-      }
-      Spacer()
-    }
-    .padding(.horizontal, Space.xl)
-    .padding(.vertical, Space.md)
-    .help(ready.reasons ?? "")
   }
 }

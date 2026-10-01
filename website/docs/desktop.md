@@ -47,7 +47,9 @@ performance traces. Every release is listed under
   grouped.
 - **Builds.** Progress, the reason for a cache miss, and a prediction of the
   next build. Run iOS or Android from a menu.
-- **Machine.** What fills the disk and memory, and what Stim can free.
+- **Machines.** What fills the disk and memory, what Stim can free, and for
+  each build machine whether it takes builds, the builds it ran for this Mac and
+  why recent builds stayed here.
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
   **Serve to phones**.

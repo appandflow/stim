@@ -47,7 +47,7 @@ in the workspace directory:
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
 
-**All devices**, **Needs attention** and **Machine** stay pinned at the top of
+**All devices**, **Needs attention** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
@@ -286,9 +286,11 @@ volume holding the repositories, `$STIM_HOME`, and CoreSimulator, and
 what `stim gc --delete` would reclaim; the reclaimable figure needs a Stim
 version with `gc --json`.
 
-## Machine
+## Machines
 
-**Machine** starts with **Now**: what uses the Mac's CPU and memory at this
+**Machines** shows this Mac's **Now** and where its builds ran, then one
+section per build machine (see [Build machines](#build-machines)), then
+**Disk on this Mac**. **Now** is what uses the Mac's CPU and memory at this
 moment, from the `machine` section of the status watch, which refreshes it
 every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
@@ -303,7 +305,7 @@ seconds while the window is visible, so the CPU line steps with the 15-second
 refresh. When workspaces are live but `machine` is missing, the band says live
 usage is unavailable instead of listing nothing.
 
-Below it, the page shows what uses disk space, largest first,
+Under **Disk on this Mac**, the page shows what uses disk space, largest first,
 and what Stim can free. It never blocks on a measurement: the device, runtime
 and cache sizes come from `stim gc --json`, and the app sizes only folders
 outside `$STIM_HOME` with `du`, each path on its own, three at a time. A path
@@ -742,6 +744,19 @@ request id and when it lapses, and what building here allows. **Allow** runs
 revoke <id>`, and **Later** closes the dialog; Allow is never the default
 button, and nothing approves a request without it. The card and the macOS
 notification go away once the request is answered or lapses.
+
+The **Machines** page shows where builds ran. Under **This Mac**, **Where builds
+ran** counts today's compiling builds that built here, on a build machine, or
+here after trying one, and lists the latest placements with the reason Stim
+gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Then each
+`offload.machines` entry has its own section: its state and first reason from
+doctor (the same check as Settings, each minute while the page is open), its
+load per core, cores, offloaded builds running and free disk from its offer,
+and the builds it ran for this Mac today and in total, their average time, the
+time they saved against this project's last build here (an estimate), and the
+fallbacks. Below are its latest placements. The counts and placements come from
+`stim stats --json` run in the home directory. **Pair or remove build machines
+in Settings** opens **Build Machines**; the page itself changes nothing.
 
 ## Notifications
 
