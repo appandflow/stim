@@ -4,6 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Share, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
@@ -50,6 +51,7 @@ export function Logs({
   params: { errors?: string; source?: string; slot?: string; at?: string };
 }) {
   const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const { state, home, connection } = useMacConnection();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
@@ -226,6 +228,7 @@ export function Logs({
         ref={list}
         data={entries}
         keyExtractor={(entry) => entry.key}
+        contentContainerStyle={{ paddingBottom: insets.bottom + theme.space.xl }}
         onScrollBeginDrag={() => {
           dragging.current = true;
         }}
@@ -266,7 +269,7 @@ export function Logs({
             setFollowing(true);
             list.current?.scrollToEnd({ animated: true });
           }}
-          style={styles.jump}
+          style={[styles.jump, { bottom: insets.bottom + theme.space.huge }]}
         >
           <Text weight="semibold" tone="onBrand">
             <Trans>Jump to latest</Trans>
@@ -495,7 +498,6 @@ const styles = StyleSheet.create((theme) => ({
   jump: {
     position: 'absolute',
     alignSelf: 'center',
-    bottom: theme.space.huge,
     paddingHorizontal: theme.space.xl,
     paddingVertical: theme.space.md,
     borderRadius: theme.radius.sheet,
