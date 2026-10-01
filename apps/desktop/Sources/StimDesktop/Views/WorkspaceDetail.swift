@@ -179,8 +179,8 @@ struct WorkspaceDetail: View {
             aspects: devices.map(\.canvasAspect),
             canvas: CGSize(width: geo.size.width - Space.xxl * 2, height: geo.size.height - Space.xxl * 2),
             spacing: Space.xl, chrome: 100, padding: 24, minimumWidth: DeviceTile.minimumWidth, minimum: 260,
-            maximum: 640)
-          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
+            maximum: 900)
+          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
             ForEach(devices) { device in
               tile(device, focused: device.id == focused?.id, screenHeight: screenHeight)
             }

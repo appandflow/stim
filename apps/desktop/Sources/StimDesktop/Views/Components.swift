@@ -73,6 +73,7 @@ struct FlowLayout: Layout {
   var spacing: CGFloat = 6
   var lineSpacing: CGFloat = 6
   var topAligned = false
+  var centered = false
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
     let width = proposal.width ?? .infinity
@@ -86,7 +87,7 @@ struct FlowLayout: Layout {
     let rows = rowsFor(subviews: subviews, width: bounds.width)
     var y = bounds.minY
     for row in rows {
-      var x = bounds.minX
+      var x = bounds.minX + (centered ? max(0, bounds.width - row.width) / 2 : 0)
       for item in row.items {
         item.subview.place(
           at: CGPoint(x: x, y: topAligned ? y : y + (row.height - item.size.height) / 2),
