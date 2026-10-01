@@ -119,7 +119,9 @@ export function DeviceView({
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
   const landscape = window.width > window.height;
-  const fold = foldOf(useReservedRegions(), window.width, window.height);
+  const [rootHeight, setRootHeight] = useState(0);
+  const [rootWidth, setRootWidth] = useState(0);
+  const fold = foldOf(useReservedRegions(), rootWidth || window.width, rootHeight || window.height);
   const book = fold?.axis === 'vertical' ? fold : null;
   const sideBySide = landscape || book !== null;
   const { videoQuality } = useSettings();
@@ -217,7 +219,6 @@ export function DeviceView({
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
-  const [rootHeight, setRootHeight] = useState(0);
   const [barBottom, setBarBottom] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
   const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
@@ -467,7 +468,10 @@ export function DeviceView({
           ref={root}
           style={styles.root}
           collapsable={false}
-          onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
+          onLayout={(event) => {
+            setRootHeight(event.nativeEvent.layout.height);
+            setRootWidth(event.nativeEvent.layout.width);
+          }}
         >
           <Animated.View style={[styles.backdrop, zoom.fadeStyle]} pointerEvents="none" />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
@@ -485,24 +489,26 @@ export function DeviceView({
               <View style={styles.root}>
                 <View style={{ height: barBottom + headerGap }} />
                 {sideBySide ? null : readOnlyBanner}
-                <Banner
-                  control={control.state}
-                  canTakeOver={control.allowed === true && !replaying}
-                  readOnly={readOnly}
-                  onTakeOver={takeOver}
-                />
-                {stream.delayed || replayOff ? (
-                  <View style={styles.chips}>
-                    {stream.delayed ? (
-                      <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
-                    ) : null}
-                    {replayOff ? (
-                      <Pill>
-                        <Trans>Replay off</Trans>
-                      </Pill>
-                    ) : null}
-                  </View>
-                ) : null}
+                <View style={book && { width: book.start - insets.left }}>
+                  <Banner
+                    control={control.state}
+                    canTakeOver={control.allowed === true && !replaying}
+                    readOnly={readOnly}
+                    onTakeOver={takeOver}
+                  />
+                  {stream.delayed || replayOff ? (
+                    <View style={styles.chips}>
+                      {stream.delayed ? (
+                        <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
+                      ) : null}
+                      {replayOff ? (
+                        <Pill>
+                          <Trans>Replay off</Trans>
+                        </Pill>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
                 <View style={sideBySide ? styles.row : styles.root}>
                   <View
                     ref={stage}
@@ -574,7 +580,12 @@ export function DeviceView({
           <Animated.View
             style={[
               styles.header,
-              { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right },
+              {
+                paddingTop: insets.top,
+                paddingLeft: insets.left,
+                paddingRight: book ? 0 : insets.right,
+                right: book ? rootWidth - book.start : 0,
+              },
               zoom.fadeStyle,
             ]}
           >
@@ -839,7 +850,6 @@ function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boole
   );
 }
 
-/** The landscape controls' place: the screen's width, widened about its center to fit the buttons, between `from` and `to`. */
 function controlsSpan(left: number, width: number, from: number, to: number) {
   const span = Math.min(Math.max(width, CONTROLS_MIN_WIDTH), to - from);
   return { left: Math.min(Math.max(left + width / 2 - span / 2, from), to - span), width: span };

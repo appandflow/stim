@@ -442,8 +442,10 @@ viewer, so the column can scroll.
 On a foldable folded like a book, such as an iPhone Duo or a Pixel Fold
 half open, the viewer splits at the fold: the device screen and its replay
 controls on the leading side, and the read-only banner, the Control toolbars
-and the agent actions on the other. The title stays across the top. The
-viewer reads the fold from `react-native-reserved-regions`; the safe area
+and the agent actions on the other. The title, the control banner and the
+replay chips stay on the leading side. The viewer reads the fold from
+`react-native-reserved-regions`, which needs iOS 27.1 or Android with
+WindowManager fold support; elsewhere the layout is unchanged. The safe area
 insets already keep it clear of the Dynamic Island and camera cutouts.
 
 With **Control** on, the server starts a control session (`control.begin`)
