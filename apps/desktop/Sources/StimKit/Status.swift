@@ -34,10 +34,13 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
   /// The repository's main checkout, or its git directory when it is bare.
   public var repository: String?
   public var git: WorktreeGit?
+  public var gitChip: GitChipFacts?
 
   public var names: PathNames { PathNames(path: path, branch: branch, worktree: path) }
 
-  public var info: WorktreeInfo { WorktreeInfo(path: path, branch: branch, repository: repository, git: git) }
+  public var info: WorktreeInfo {
+    WorktreeInfo(path: path, branch: branch, repository: repository, git: git, gitChip: gitChip)
+  }
 }
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
@@ -49,6 +52,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var phaseSince: String?
   /// `refresh` or `copy` while `phase` is `warming`.
   public var warmStep: String?
+  /// Where the workspace is, as `stim` decided it; absent from an older `stim`, which leaves it to `stage(now:)`.
+  public var stageFacts: StageFacts?
   public var memoryMb: Int?
   /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
   public var memorySource: MemorySource?
@@ -87,6 +92,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk
+    case stageFacts = "stage"
   }
 
   public struct Recording: Decodable, Hashable, Sendable {
@@ -174,12 +180,52 @@ public struct StatusIssue: Decodable, Hashable, Sendable {
   public var slot: String?
 }
 
+/// `stim status --json` `stage`: `kind` is `building`, `warming`, `ready`, `build-failed`, `running` or `stopped`;
+/// `since` is when it began, `platform` names the build, and `closedApps` the devices whose app is closed.
+public struct StageFacts: Decodable, Hashable, Sendable {
+  public struct ClosedApp: Decodable, Hashable, Sendable {
+    public var platform: String
+    public var slot: String
+  }
+
+  public var kind: String
+  public var since: String?
+  public var platform: String?
+  public var closedApps: [ClosedApp]
+}
+
+/// `stim status --json` `gitChip`: the chip's parts in order, and the pull request's checks at a glance.
+public struct GitChipFacts: Decodable, Hashable, Sendable {
+  public struct Part: Decodable, Hashable, Sendable {
+    /// `arrows`, `changed`, `merged` or `no-upstream`.
+    public var kind: String
+    public var ahead: Int?
+    public var behind: Int?
+    public var count: Int?
+    public var into: String?
+
+    public init(kind: String, ahead: Int? = nil, behind: Int? = nil, count: Int? = nil, into: String? = nil) {
+      self.kind = kind
+      self.ahead = ahead
+      self.behind = behind
+      self.count = count
+      self.into = into
+    }
+  }
+
+  public var parts: [Part]
+  /// `passing`, `failing`, `pending`, or nil.
+  public var ci: String?
+}
+
 /// The git worktree that holds a workspace.
 public struct WorktreeInfo: Decodable, Hashable, Sendable {
   public var path: String
   public var branch: String?
   public var repository: String?
   public var git: WorktreeGit?
+  /// What the git chip shows, as `stim` decided it; absent from an older `stim` and without `git`.
+  public var gitChip: GitChipFacts?
   /// The branch's pull request as Stim last asked GitHub; nil when it has none or `stim` did not say.
   public var pullRequest: PullRequestFacts?
 }
@@ -242,9 +288,10 @@ public struct WorktreeGit: Decodable, Hashable, Sendable {
   public var uncommitted: Int { changed + untracked }
 
   /// `\u{2191}2 \u{2193}1` for commits ahead of and behind the upstream, or nil when level with it.
-  public var arrows: String? {
-    let parts = [(ahead ?? 0) > 0 ? "\u{2191}\(ahead!)" : nil, (behind ?? 0) > 0 ? "\u{2193}\(behind!)" : nil]
-      .compactMap { $0 }
+  public var arrows: String? { Self.arrows(ahead: ahead ?? 0, behind: behind ?? 0) }
+
+  public static func arrows(ahead: Int, behind: Int) -> String? {
+    let parts = [ahead > 0 ? "\u{2191}\(ahead)" : nil, behind > 0 ? "\u{2193}\(behind)" : nil].compactMap { $0 }
     return parts.isEmpty ? nil : parts.joined(separator: " ")
   }
 
@@ -285,13 +332,15 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var state: String
   public var activity: DeviceActivity?
   public var app: AppProcess?
+  /// `none`, `closed`, or nil; read only when the workspace carries `stageFacts`, as an older `stim` omits it.
+  public var appPresence: String?
   public var disk: DeviceDisk?
   /// Set only on a device built from `physicalDevices`, never decoded from the `ios` record.
   public var physical = false
   public var model: String?
   public var leaseExpiresAt: String?
 
-  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, disk }
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk }
 
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
@@ -309,6 +358,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
     state = try c.decode(String.self, forKey: .state)
     activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)
     app = try c.decodeIfPresent(AppProcess.self, forKey: .app)
+    appPresence = try c.decodeIfPresent(String.self, forKey: .appPresence)
     disk = try c.decodeIfPresent(DeviceDisk.self, forKey: .disk)
   }
 }
@@ -329,6 +379,8 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var deviceProfile: String?
   public var activity: DeviceActivity?
   public var app: AppProcess?
+  /// `none`, `closed`, or nil; read only when the workspace carries `stageFacts`, as an older `stim` omits it.
+  public var appPresence: String?
   public var disk: DeviceDisk?
   public var model: String?
   public var leaseExpiresAt: String?
