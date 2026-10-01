@@ -102,6 +102,12 @@ enum BrandAssets {
     return art
   }()
 
+  static func agentMark(_ agent: String) -> NSImage? {
+    let art = image("agent-\(agent).svg")
+    art?.isTemplate = agent != "claude"
+    return art
+  }
+
   private static func image(_ name: String) -> NSImage? {
     url(name, websitePath: "static/img/branding").flatMap(NSImage.init(contentsOf:))
   }

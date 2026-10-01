@@ -175,7 +175,7 @@ private struct TerminalArt: View {
 }
 
 private struct SkillArt: View {
-  private static let agents = ["Claude Code", "Codex", "Cursor"]
+  private static let agents = [("claude", "Claude Code"), ("codex", "Codex"), ("cursor", "Cursor")]
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var floating = false
 
@@ -184,17 +184,27 @@ private struct SkillArt: View {
       BrandHalo(size: 150)
       BrandBadge(systemImage: "sparkles")
         .symbolEffect(.pulse, isActive: !reduceMotion)
-      ForEach(Array(Self.agents.enumerated()), id: \.offset) { index, name in
-        Text(name)
-          .font(.stim(.caption, weight: .semibold))
-          .foregroundStyle(Palette.primary)
-          .padding(.horizontal, Space.md)
-          .padding(.vertical, Space.xs)
-          .background(Capsule().fill(Palette.surface))
-          .overlay(Capsule().strokeBorder(Palette.border))
-          .shadow(color: Palette.shadow.opacity(0.08), radius: 4, y: 2)
-          .offset(chipOffset(index))
-          .offset(y: floating ? (index.isMultiple(of: 2) ? -4 : 4) : 0)
+      ForEach(Array(Self.agents.enumerated()), id: \.offset) { index, agent in
+        HStack(spacing: Space.xs) {
+          if let mark = BrandAssets.agentMark(agent.0) {
+            Image(nsImage: mark)
+              .resizable()
+              .aspectRatio(contentMode: .fit)
+              .frame(width: 11, height: 11)
+              .foregroundStyle(Palette.text)
+              .accessibilityHidden(true)
+          }
+          Text(agent.1)
+            .font(.stim(.caption, weight: .semibold))
+            .foregroundStyle(Palette.primary)
+        }
+        .padding(.horizontal, Space.md)
+        .padding(.vertical, Space.xs)
+        .background(Capsule().fill(Palette.surface))
+        .overlay(Capsule().strokeBorder(Palette.border))
+        .shadow(color: Palette.shadow.opacity(0.08), radius: 4, y: 2)
+        .offset(chipOffset(index))
+        .offset(y: floating ? (index.isMultiple(of: 2) ? -4 : 4) : 0)
       }
     }
     .onAppear {
