@@ -39,6 +39,7 @@ private struct StimButtonBody: View {
   var size: ButtonSize
   @Environment(\.isEnabled) private var isEnabled
   @Environment(\.isFocused) private var isFocused
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var hovering = false
 
   var body: some View {
@@ -51,7 +52,7 @@ private struct StimButtonBody: View {
       .overlay(Capsule().strokeBorder(Palette.accent.opacity(isFocused ? 0.8 : 0), lineWidth: 2))
       .contentShape(Capsule())
       .opacity(isEnabled ? 1 : Opacity.disabled)
-      .scaleEffect(configuration.isPressed ? 0.97 : 1)
+      .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
       .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
       .animation(.easeOut(duration: 0.1), value: hovering)
       .onHover { hovering = $0 }

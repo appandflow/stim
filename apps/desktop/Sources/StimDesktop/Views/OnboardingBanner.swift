@@ -8,17 +8,18 @@ struct OnboardingBanner: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsCommand = false
 
   var body: some View {
     Group {
       if let report = onboarding.report, let kind = currentKind(report) {
         popup(kind, report)
-          .transition(.move(edge: .bottom).combined(with: .opacity))
+          .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
       }
     }
     .frame(maxWidth: .infinity)
-    .animation(.easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
     .onChange(of: servesPhones) { onboarding.check() }
   }
 
