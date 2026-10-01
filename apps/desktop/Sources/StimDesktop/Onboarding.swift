@@ -12,10 +12,7 @@ final class Onboarding: ObservableObject {
   struct Report: Equatable {
     var stim: CLICompatibility
     var stimPath: String?
-    /// The package manager whose global directory holds the `stim` at `stimPath`; nil for a linked checkout, a
-    /// project-local copy or a missing `stim`.
     var stimOwner: PackageManager?
-    /// The managers on the login shell's PATH, and the one a fresh install defaults to.
     var installers: [PackageManager]
     var defaultInstaller: PackageManager
     /// The executable the launch resolved differs from the one the preferences resolve now.
@@ -49,7 +46,6 @@ final class Onboarding: ObservableObject {
   @Published var guideStep = SetupStep.welcome
   @Published private(set) var guideRuns: [StimCommand: ActionRun] = [:]
   @Published var projectFolder: String?
-  /// The manager picked in the install tabs; nil until the user picks one.
   @Published var installerChoice: PackageManager?
   private let progress = SetupGuideProgress()
   private var launchDecided = false
@@ -133,12 +129,12 @@ final class Onboarding: ObservableObject {
   private var home: String { report?.home ?? NSHomeDirectory() }
 
   var installNodeCommand: StimCommand { StimCommand(["install", "node"], cwd: home, program: "brew") }
-  /// The manager a fresh install uses: the tab picked, else the default for this Mac.
   var installer: PackageManager { installerChoice ?? report?.defaultInstaller ?? .npm }
   /// Installs `stim`, or updates it with the manager that owns it; nil when `stim` is installed but no package
   /// manager owns it, as a linked checkout, so there is nothing for the app to update.
   var installCLICommand: StimCommand? {
-    guard let report, report.stim != .missing else { return installer.installCommand("stim@latest", cwd: home) }
+    guard let report else { return nil }
+    guard report.stim != .missing else { return installer.installCommand("stim@latest", cwd: home) }
     return report.stimOwner?.installCommand("stim@latest", cwd: home)
   }
   /// The skills CLI asks which agents to install to unless `--yes` is given, and the runner has no terminal. Run

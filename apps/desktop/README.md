@@ -875,7 +875,9 @@ it against `npm prefix -g`, `pnpm root -g` and `bun pm bin -g`, and runs
 linked checkout or a project-local copy, gets no Run button and a note, since
 the app cannot tell what installed it. **Install stim** uses the manager picked
 in the setup guide's tabs; the banner uses the default, pnpm or bun when its
-global bin directory is on the login shell's `PATH`, else npm. A newly found `stim` at another path asks for a
+global bin directory is on the login shell's `PATH`, else npm. A pnpm whose
+global bin directory is not on the `PATH` is not offered, because pnpm refuses
+global installs then. `stim-server` is still installed and updated with npm. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
 served, `stim-server --version` gets the same check, installing
 `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once

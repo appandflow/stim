@@ -92,6 +92,9 @@ extension PackageManagerLayout {
     if layout.installed.contains(.pnpm) {
       layout.pnpmRoot = await query(.pnpm, ["root", "-g"])
       layout.pnpmBin = await query(.pnpm, ["bin", "-g"])
+      // Without its global bin directory on PATH, pnpm refuses `root -g`, `bin -g` and `add --global` alike
+      // (ERR_PNPM_GLOBAL_BIN_DIR_NOT_IN_PATH), so it cannot install `stim` for the user.
+      if layout.pnpmRoot == nil || layout.pnpmBin == nil { layout.installed.removeAll { $0 == .pnpm } }
     }
     if layout.installed.contains(.bun) { layout.bunBin = await query(.bun, ["pm", "bin", "-g"]) }
     return layout

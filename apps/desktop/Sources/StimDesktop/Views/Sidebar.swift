@@ -554,7 +554,7 @@ struct SidebarFooter: View {
       if onboarding.installCLICommand == nil {
         statusLabel(dot: Palette.warning, text: text)
           .help(
-            "This stim is older than Stim Desktop needs, and no package manager installed it. Update it where it came from, or choose another in Settings"
+            "This stim is older than Stim Desktop needs, and no package manager installed it. Update it where it came from"
           )
       } else {
         Button(action: onboarding.installStim) {
