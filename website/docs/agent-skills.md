@@ -17,6 +17,15 @@ Install the bundled skill from the repository:
 npx skills add appandflow/stim
 ```
 
+In a terminal, the skills CLI asks which agents to install to when it cannot
+tell. Without a terminal, as in a script or Stim Desktop's setup guide, add
+`--yes`: it installs to the agents it detects, or to `~/.agents/skills` when it
+detects none.
+
+```bash
+npx skills add appandflow/stim --yes
+```
+
 The installed skill is named `stim`. It is a small discovery router that asks
 the agent to load `stim guide agent` before using Stim, or `npx stim guide
 agent` when `stim` is not on PATH. The normal workflow,

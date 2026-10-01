@@ -886,9 +886,11 @@ Later**.
    project folder the user chooses, which needs the restart above first.
 6. **You're set**: the state of steps 2 to 4.
 
-When every step is already done at the first launch, the guide opens on the
-summary. **Start Using Stim** or **Set Up Later** sets `setupGuide.completed` in the app's
-`UserDefaults`, so Stim and Stim Dev each show it once. The `stim` banner stays
+When the CLI, skill and notifications are already set up at a launch without
+`setupGuide.completed`, the app sets the flag and does not show the guide;
+opened from the menu, it starts on the summary. **Start Using Stim** or **Set
+Up Later** also sets the flag, which lives in the app's `UserDefaults`, so Stim
+and Stim Dev each track their own. The `stim` banner stays
 hidden while the guide is open.
 
 ## Develop

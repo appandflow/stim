@@ -182,8 +182,18 @@ public struct SetupGuideProgress {
     self.defaults = defaults
   }
 
-  /// The guide opens by itself until it is finished or closed once, or when a restart saved a step to return to.
-  public var opensAtLaunch: Bool { !defaults.bool(forKey: Self.completedKey) || resumeStep != nil }
+  /// The screen the guide opens on by itself at launch, or nil. A saved step reopens after a restart. Until the guide
+  /// is finished or closed once, a launch opens it on the welcome, unless `checks` find everything already set up:
+  /// then it counts as finished without showing.
+  public func stepAtLaunch(_ checks: SetupChecks) -> SetupStep? {
+    if let saved = resumeStep { return saved }
+    guard !defaults.bool(forKey: Self.completedKey) else { return nil }
+    guard !checks.isComplete else {
+      finish()
+      return nil
+    }
+    return .welcome
+  }
 
   public var resumeStep: SetupStep? {
     defaults.string(forKey: Self.resumeKey).flatMap(SetupStep.init(rawValue:))

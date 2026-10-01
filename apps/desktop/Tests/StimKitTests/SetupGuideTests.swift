@@ -88,26 +88,48 @@ private func node(_ output: String?) -> CLICompatibility {
   #expect(MachineCheck.androidSDK(environment: ["ANDROID_HOME": "/gone"], home: "/Users/me", exists: exists) == nil)
 }
 
-@Test func guideOpensUntilClosedAndReopensOnTheStepARestartSaved() throws {
+private func withProgress(_ body: (SetupGuideProgress) -> Void) throws {
   let suite = "SetupGuideTests-\(UUID().uuidString)"
   let defaults = try #require(UserDefaults(suiteName: suite))
   defer { defaults.removePersistentDomain(forName: suite) }
-  let progress = SetupGuideProgress(defaults)
+  body(SetupGuideProgress(defaults))
+}
 
-  #expect(progress.opensAtLaunch)
-  progress.saveForRestart(at: .check)
-  #expect(progress.resumeStep == .check)
-  progress.resumed()
-  #expect(progress.resumeStep == nil)
-  #expect(progress.opensAtLaunch)
+private let setUp = SetupChecks(
+  stim: stim, node: node("v22.22.2\n"), skillPath: "/Users/me/.agents/skills/stim/SKILL.md", skillChecked: true,
+  notifications: .allowed)
 
-  progress.finish()
-  #expect(!progress.opensAtLaunch)
+@Test func guideOpensUntilClosedAndReopensOnTheStepARestartSaved() throws {
+  var missing = setUp
+  missing.skillPath = nil
+  try withProgress { progress in
+    #expect(progress.stepAtLaunch(missing) == .welcome)
+    progress.saveForRestart(at: .check)
+    #expect(progress.stepAtLaunch(missing) == .check)
+    progress.resumed()
+    #expect(progress.stepAtLaunch(missing) == .welcome)
 
-  progress.saveForRestart(at: .cli)
-  #expect(progress.opensAtLaunch)
-  #expect(progress.resumeStep == .cli)
-  progress.finish()
-  #expect(progress.resumeStep == nil)
-  #expect(!progress.opensAtLaunch)
+    progress.finish()
+    #expect(progress.stepAtLaunch(missing) == nil)
+
+    progress.saveForRestart(at: .cli)
+    #expect(progress.stepAtLaunch(missing) == .cli)
+    progress.finish()
+    #expect(progress.resumeStep == nil)
+    #expect(progress.stepAtLaunch(missing) == nil)
+  }
+}
+
+@Test func anExistingUserWhoIsAlreadySetUpNeverSeesTheGuideAtLaunch() throws {
+  try withProgress { progress in
+    #expect(progress.stepAtLaunch(setUp) == nil)
+    var lostSkill = setUp
+    lostSkill.skillPath = nil
+    #expect(progress.stepAtLaunch(lostSkill) == nil)
+  }
+  try withProgress { progress in
+    var stillChecking = setUp
+    stillChecking.notifications = nil
+    #expect(progress.stepAtLaunch(stillChecking) == .welcome)
+  }
 }

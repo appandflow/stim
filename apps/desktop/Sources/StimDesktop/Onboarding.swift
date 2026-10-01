@@ -113,7 +113,7 @@ final class Onboarding: ObservableObject {
       setup.notifications = await Self.notificationAccess()
       if !launchDecided {
         launchDecided = true
-        if progress.opensAtLaunch { presentGuide(at: progress.resumeStep) }
+        if let step = progress.stepAtLaunch(setup) { presentGuide(at: step) }
       }
     }
   }
