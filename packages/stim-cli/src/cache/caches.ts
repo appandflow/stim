@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
@@ -93,7 +93,24 @@ export function discoverCaches(): CacheDescriptor[] {
   const detected = [compilationCache(), gradle, metroFileMaps()]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
-  return mergeCacheDescriptors([...registered, ...detected], gradleDir);
+  return distinguishSharedNames(mergeCacheDescriptors([...registered, ...detected], gradleDir));
+}
+
+function distinguishSharedNames(caches: CacheDescriptor[]): CacheDescriptor[] {
+  const counts = new Map<string, number>();
+  for (const cache of caches) counts.set(cache.name, (counts.get(cache.name) ?? 0) + 1);
+  const labelled = caches.map((cache) =>
+    (counts.get(cache.name) ?? 0) < 2
+      ? cache
+      : Object.assign({}, cache, { name: `${cache.name}: ${basename(cache.dir) || cache.dir}` }),
+  );
+  const labels = new Map<string, number>();
+  for (const cache of labelled) labels.set(cache.name, (labels.get(cache.name) ?? 0) + 1);
+  return labelled.map((cache, i) =>
+    (labels.get(cache.name) ?? 0) < 2 || cache === caches[i]
+      ? cache
+      : Object.assign({}, cache, { name: `${(caches[i] as CacheDescriptor).name}: ${cache.dir}` }),
+  );
 }
 
 function suppressLegacyMetroAncestors(caches: CacheDescriptor[]): CacheDescriptor[] {
