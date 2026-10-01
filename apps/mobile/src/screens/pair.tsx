@@ -236,6 +236,7 @@ function Field({
 }) {
   const { theme } = useUnistyles();
   const [revealed, setRevealed] = useState(false);
+  const [initialValue] = useState(value);
   const shared = {
     accessibilityLabel: label,
     autoCapitalize: 'none',
@@ -253,7 +254,7 @@ function Field({
         {tokenRef ? (
           <TransformerTextInput
             {...input}
-            defaultValue={value}
+            defaultValue={initialValue}
             ref={tokenRef}
             transformer={tokenTransformer}
             {...shared}
