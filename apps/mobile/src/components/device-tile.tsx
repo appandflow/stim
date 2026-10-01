@@ -19,17 +19,9 @@ import { useMacConnection } from '@/hooks/machines';
 import { useAgentActions } from '@/hooks/workspace-logs';
 import { formatDuration } from '@/intl/format';
 import { tildeHome } from '@/lib/paths';
-import {
-  agentRow,
-  appPresence,
-  currentPhaseLabel,
-  deviceTitle,
-  usageLabel,
-  usageParts,
-  type Usage,
-} from '@/lib/workspace-view';
+import { agentRow, appPresence, deviceTitle, usageLabel, usageParts, type Usage } from '@/lib/workspace-view';
 import { platformName, runningBuild, streamsFrames, unservedReason, type DeviceRef } from '@/lib/workspaces';
-import type { BuildReport, EnvironmentState } from '@/protocol/types';
+import type { EnvironmentState } from '@/protocol/types';
 
 const SCREEN_HEIGHT = 480;
 const SCREEN_PADDING = 12;
@@ -131,8 +123,9 @@ export function DeviceTile({
   const fallbackAspect = device.platform === 'web' ? 1.6 : device.platform === 'ios' ? 0.46 : 0.45;
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : fallbackAspect;
   const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
+  const buildName = build ? platformName(build.platform) : '';
   const placeholder = build ? (
-    <BuildPlaceholder name={platformName(build.platform)} build={build} />
+    <Placeholder title={t`Waiting for the ${buildName} build`} />
   ) : noApp ? (
     <Placeholder title={t`No app installed`} subtitle={t`Fix the build and run it again`} />
   ) : !streams ? (
@@ -210,13 +203,6 @@ function Placeholder({ title, subtitle, children }: { title: string; subtitle?: 
       ) : null}
       {children}
     </View>
-  );
-}
-
-function BuildPlaceholder({ name, build }: { name: string; build: BuildReport }) {
-  const { phase, counts } = currentPhaseLabel(build);
-  return (
-    <Placeholder title={t`Waiting for the ${name} build`} subtitle={[phase, counts].filter(Boolean).join(' \u00B7 ')} />
   );
 }
 
