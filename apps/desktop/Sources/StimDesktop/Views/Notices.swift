@@ -69,11 +69,12 @@ struct NoticeStack: View {
         let behind = min(center.notices.count - 1, 2)
         ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
           RoundedRectangle(cornerRadius: Radius.card)
-            .fill(.regularMaterial)
-            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+            .fill(Palette.raised)
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.separator))
+            .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
             .padding(.horizontal, CGFloat(depth + 1) * Space.md)
             .frame(height: 40)
-            .offset(y: CGFloat(depth + 1) * Space.sm)
+            .offset(y: CGFloat(depth + 1) * Space.md)
             .accessibilityHidden(true)
         }
         NoticeCard(notice: notice, center: center)
@@ -83,7 +84,7 @@ struct NoticeStack: View {
     }
     .frame(width: 320)
     .padding(.leading, Space.xl)
-    .padding(.bottom, Space.xl + CGFloat(min(max(center.notices.count - 1, 0), 2)) * Space.sm)
+    .padding(.bottom, Space.xl + CGFloat(min(max(center.notices.count - 1, 0), 2)) * Space.md)
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.notices.map(\.id))
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.index)
   }
