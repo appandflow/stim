@@ -1,7 +1,7 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { Fragment, memo, type ReactNode } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
@@ -180,12 +180,9 @@ export const WorkspaceRow = memo(function WorkspaceRow({
         {build && offline ? <RowBuild env={env} build={build} now={at} /> : null}
         {build && !offline ? <TickingRowBuild env={env} build={build} /> : null}
         {isSettingUp(env) && env.phase === 'warming' ? (
-          <View style={styles.inline}>
-            {offline ? null : <ActivityIndicator size="small" color={theme.colors.accent} />}
-            <Text variant="footnote" tone="secondary">
-              {warmStepText(env)}
-            </Text>
-          </View>
+          <Text variant="footnote" tone="secondary">
+            {warmStepText(env)}
+          </Text>
         ) : null}
         {context.length ? <Line parts={context} /> : null}
         {gitParts.length ? <Line parts={gitParts} /> : null}
