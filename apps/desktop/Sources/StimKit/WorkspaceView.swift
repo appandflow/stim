@@ -45,10 +45,26 @@ extension Workspace {
     }
   }
 
+  /// The app presence `stim` reports on the device, or for an older `stim` the same rule run here.
+  public func appPresence(_ device: DeviceRef) -> AppPresence? {
+    guard stageFacts != nil else { return localAppPresence(device) }
+    let reported: String?
+    switch device {
+    case .ios(_, let d): reported = d.physical ? nil : d.appPresence
+    case .android(_, let d): reported = d.physical ? nil : d.appPresence
+    case .web, .remote: reported = nil
+    }
+    switch reported {
+    case "none": return AppPresence.none
+    case "closed": return .closed
+    default: return nil
+    }
+  }
+
   /// Status reports `app` whenever it knows the bundle id, and a process that is not running cannot tell a closed
   /// app from one never installed, so a device has no app only when its platform never built successfully here and
   /// the latest build failed.
-  public func appPresence(_ device: DeviceRef) -> AppPresence? {
+  func localAppPresence(_ device: DeviceRef) -> AppPresence? {
     guard device.isRunning, !device.isPhysical, device.app?.state != "running" else { return nil }
     switch device {
     case .ios, .android: break
@@ -60,34 +76,64 @@ extension Workspace {
     return device.app?.state == "stopped" ? .closed : nil
   }
 
-  public func stage(now: Date) -> WorkspaceStage {
-    if let build, build.isRunning {
-      let since = ago(now, build.startedAt).map { " \u{00B7} started \($0) ago" } ?? ""
-      return WorkspaceStage(label: .building, tone: .brand, subtitle: platformName(build.platform) + since)
+  /// The order `orderedDevices` gives running simulators and emulators: iOS before Android, then by slot.
+  static func deviceOrder(_ a: StageFacts.ClosedApp, _ b: StageFacts.ClosedApp) -> Bool {
+    if a.platform != b.platform { return a.platform == "ios" }
+    return a.slot.localizedCompare(b.slot) == .orderedAscending
+  }
+
+  static let stageKinds: Set = ["building", "warming", "ready", "build-failed", "running", "stopped"]
+
+  /// The stage `stim` decided, for an older `stim` the same rule run here.
+  func localStageFacts() -> StageFacts {
+    func facts(_ kind: String, _ since: String?, _ platform: String? = nil) -> StageFacts {
+      StageFacts(kind: kind, since: since, platform: platform, closedApps: [])
     }
-    if !live, phase == "warming" {
-      let step = warmStep == "copy" ? "copying ignored files" : "installing dependencies"
-      return WorkspaceStage(
-        label: .warming, tone: .warning, subtitle: ago(now, phaseSince).map { "\(step) \u{00B7} \($0)" } ?? step)
-    }
-    if !live, phase == "ready" {
-      return WorkspaceStage(label: .ready, tone: .success, subtitle: ago(now, phaseSince).map { "warmed \($0) ago" })
-    }
+    if let build, build.isRunning { return facts("building", build.startedAt, build.platform) }
+    if !live, phase == "warming" { return facts("warming", phaseSince) }
+    if !live, phase == "ready" { return facts("ready", phaseSince) }
     if let latest = latestBuild, latest.status == "failed" {
-      let since = ago(now, latest.finishedAt ?? latest.startedAt).map { " \u{00B7} \($0) ago" } ?? ""
-      return WorkspaceStage(label: .buildFailed, tone: .error, subtitle: platformName(latest.platform) + since)
+      return facts("build-failed", latest.finishedAt ?? latest.startedAt, latest.platform)
     }
     if live || remoteDevices?.isEmpty == false {
+      var running = facts("running", supervisor?.startedAt)
+      running.closedApps = orderedDevices.filter { localAppPresence($0) == .closed }.map {
+        StageFacts.ClosedApp(platform: $0.platform, slot: $0.slot)
+      }
+      return running
+    }
+    return facts("stopped", metro?.lastStop?.at)
+  }
+
+  public func stage(now: Date) -> WorkspaceStage {
+    let reported = stageFacts.flatMap { Self.stageKinds.contains($0.kind) ? $0 : nil }
+    let facts = reported ?? localStageFacts()
+    let platform = facts.platform.map(platformName) ?? ""
+    switch facts.kind {
+    case "building":
+      let since = ago(now, facts.since).map { " \u{00B7} started \($0) ago" } ?? ""
+      return WorkspaceStage(label: .building, tone: .brand, subtitle: platform + since)
+    case "warming":
+      let step = warmStep == "copy" ? "copying ignored files" : "installing dependencies"
+      return WorkspaceStage(
+        label: .warming, tone: .warning, subtitle: ago(now, facts.since).map { "\(step) \u{00B7} \($0)" } ?? step)
+    case "ready":
+      return WorkspaceStage(label: .ready, tone: .success, subtitle: ago(now, facts.since).map { "warmed \($0) ago" })
+    case "build-failed":
+      let since = ago(now, facts.since).map { " \u{00B7} \($0) ago" } ?? ""
+      return WorkspaceStage(label: .buildFailed, tone: .error, subtitle: platform + since)
+    case "running":
       let errors = logs?.errorsSinceMarker ?? 0
       let problems =
         (errors > 0 ? [countLabel(errors, "error")] : [])
-        + orderedDevices.filter { appPresence($0) == .closed }.map { "\(platformName($0.platform)) app closed" }
-      let parts = (ago(now, supervisor?.startedAt).map { ["up \($0)"] } ?? []) + problems
+        + facts.closedApps.sorted(by: Self.deviceOrder).map { "\(platformName($0.platform)) app closed" }
+      let parts = (ago(now, facts.since).map { ["up \($0)"] } ?? []) + problems
       return WorkspaceStage(
         label: .running, tone: problems.isEmpty ? .success : .error,
         subtitle: parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} "))
+    default:
+      return WorkspaceStage(label: .stopped, tone: .tertiary, subtitle: ago(now, facts.since).map { "\($0) ago" })
     }
-    return WorkspaceStage(label: .stopped, tone: .tertiary, subtitle: ago(now, metro?.lastStop?.at).map { "\($0) ago" })
   }
 }
 
@@ -284,7 +330,7 @@ extension Workspace {
 /// The git and pull request chip beside the stage: the pull request coloured by its state with one CI mark, and
 /// git details only when there are some.
 public struct GitChip: Equatable, Sendable {
-  public enum Checks: Sendable {
+  public enum Checks: String, Sendable {
     case passing, failing, pending
   }
 
@@ -308,16 +354,19 @@ public struct GitChip: Equatable, Sendable {
   public init?(_ worktree: WorktreeInfo?) {
     guard let worktree, let git = worktree.git else { return nil }
     let pull = worktree.pullRequest
-    var parts: [Part] = []
-    if let arrows = git.arrows { parts.append(Part(text: arrows, tone: .normal)) }
-    if git.uncommitted > 0 { parts.append(Part(text: "\(git.uncommitted) changed", tone: .neutral)) }
-    if let merged = git.mergedInto {
-      if pull?.state != "merged" { parts.append(Part(text: "merged into \(merged)", tone: .brand)) }
-    } else if git.upstream == nil {
-      parts.append(Part(text: "no upstream", tone: .tertiary))
+    let facts = worktree.gitChip ?? Self.localFacts(git, pull)
+    let parts = facts.parts.compactMap { part -> Part? in
+      switch part.kind {
+      case "arrows":
+        return WorktreeGit.arrows(ahead: part.ahead ?? 0, behind: part.behind ?? 0).map { Part(text: $0, tone: .normal) }
+      case "changed": return Part(text: "\(part.count ?? 0) changed", tone: .neutral)
+      case "merged": return Part(text: "merged into \(part.into ?? "")", tone: .brand)
+      case "no-upstream": return Part(text: "no upstream", tone: .tertiary)
+      default: return nil
+      }
     }
     self.parts = parts
-    let checks = pull.flatMap { Self.checks($0.checks) }
+    let checks: Checks? = pull == nil ? nil : facts.ci.flatMap { Checks(rawValue: $0) }
     pullRequest = pull.map {
       PullRequest(
         text: "PR #\($0.number)", tone: Self.tone(ofPullRequest: $0.state), checks: checks, url: URL(string: $0.url))
@@ -326,9 +375,24 @@ public struct GitChip: Equatable, Sendable {
       pull.map { "Pull request \($0.number), \($0.state)" } ?? "Branch",
       checks.map { "checks \($0)" },
       git.isNotable ? git.summary : nil,
-      git.mergedInto == nil && git.upstream == nil ? "no upstream" : nil,
+      facts.parts.contains { $0.kind == "no-upstream" } ? "no upstream" : nil,
       pull == nil && parts.isEmpty ? "up to date" : nil,
     ].compactMap { $0 }.joined(separator: ", ")
+  }
+
+  /// The chip `stim` reports, for an older `stim` the same rule run here.
+  static func localFacts(_ git: WorktreeGit, _ pull: PullRequestFacts?) -> GitChipFacts {
+    var parts: [GitChipFacts.Part] = []
+    if (git.ahead ?? 0) > 0 || (git.behind ?? 0) > 0 {
+      parts.append(.init(kind: "arrows", ahead: git.ahead ?? 0, behind: git.behind ?? 0))
+    }
+    if git.uncommitted > 0 { parts.append(.init(kind: "changed", count: git.uncommitted)) }
+    if let merged = git.mergedInto {
+      if pull?.state != "merged" { parts.append(.init(kind: "merged", into: merged)) }
+    } else if git.upstream == nil {
+      parts.append(.init(kind: "no-upstream"))
+    }
+    return GitChipFacts(parts: parts, ci: pull.flatMap { checks($0.checks) }?.rawValue)
   }
 
   public static func tone(ofPullRequest state: String) -> Tone {
