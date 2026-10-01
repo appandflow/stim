@@ -88,7 +88,7 @@ public struct ProjectSummary: Hashable, Sendable {
   public var total: Int
   /// Workspaces `stim worktree warm` is preparing or has just prepared.
   public var settingUp = 0
-  /// Workspaces the Live filter shows: live, building or setting up.
+  /// Workspaces the Live filter shows: live, building, held by an EAS session or a leased phone, or setting up.
   public var active = 0
 
   public var hasActive: Bool { active > 0 }

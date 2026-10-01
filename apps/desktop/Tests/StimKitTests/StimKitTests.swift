@@ -395,7 +395,8 @@ import Testing
     #expect(
       sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
         .map(\.path) == ["/r/app/.worktrees/eas"])
-    #expect(envs[0].rowStatus(now: Date()).kind == .running)
+    let summary = projectSummaries(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:))
+    #expect(summary.map(\.active) == [1])
   }
 
   @Test func countsOnlyExistingHiddenProjectsAsAChangedOption() {
