@@ -110,16 +110,7 @@ export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; u
 
 const LINE_TONE: Record<BuildLine['tone'], TextTone> = { default: 'default', error: 'error', secondary: 'secondary' };
 
-export function BuildCard({
-  lines,
-  building,
-  onPress,
-}: {
-  lines: BuildLine[];
-  building: BuildReport | null;
-  onPress: () => void;
-}) {
-  if (building) return <BuildingCard build={building} onPress={onPress} />;
+export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () => void }) {
   const spoken = lines.map((line) => line.spoken).join(', ');
   return (
     <SmallCard
@@ -150,44 +141,6 @@ export function BuildCard({
           </Text>
         </View>
       ))}
-    </SmallCard>
-  );
-}
-
-function BuildingCard({ build, onPress }: { build: BuildReport; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const now = useNow(1000);
-  const { elapsed, estimate } = buildTiming(build, now);
-  const { phase } = currentPhaseLabel(build);
-  const remote = remoteBuild(build, now);
-  const name = platformName(build.platform);
-  const host = remote?.host;
-  const what = host ? t`building ${name} on ${host}` : t`building ${name}`;
-  const timing = timingText(elapsed, estimate);
-  return (
-    <SmallCard
-      title={t`Build`}
-      onPress={onPress}
-      accessibilityLabel={t`Build: ${what}, ${phase}, ${timing}`}
-      accessibilityHint={t`Shows the build`}
-    >
-      <View style={styles.stat}>
-        <View style={styles.glyphBox}>
-          <PlatformGlyph platform={build.platform} size={build.platform === 'ios' ? 14 : 12} />
-        </View>
-        <Text variant={VALUE} weight={VALUE_WEIGHT} tone="brand" numberOfLines={1} style={styles.shrink}>
-          {phase}
-        </Text>
-        {remote ? <Icon name="desktopcomputer" size={13} color={theme.colors.secondary} /> : null}
-      </View>
-      <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1} style={styles.tabular}>
-        {elapsed}
-        {estimate ? (
-          <Text variant={VALUE} weight="regular" tone="tertiary">
-            {` / ${estimate}`}
-          </Text>
-        ) : null}
-      </Text>
     </SmallCard>
   );
 }

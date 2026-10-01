@@ -904,7 +904,6 @@ msgid "Budgets"
 msgstr "Budgets"
 
 #: src/components/workspace-cards.tsx
-#: src/components/workspace-cards.tsx
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
 #: src/screens/build-details.tsx
@@ -935,10 +934,6 @@ msgstr "Build-tools missing"
 msgid "Build: {spoken}"
 msgstr "Build: {spoken}"
 
-#: src/components/workspace-cards.tsx
-msgid "Build: {what}, {phase}, {timing}"
-msgstr "Build: {what}, {phase}, {timing}"
-
 #: src/lib/workspace-view.ts
 msgid "Building"
 msgstr "Building"
@@ -948,16 +943,8 @@ msgid "Building · {elapsed}"
 msgstr "Building · {elapsed}"
 
 #: src/components/workspace-cards.tsx
-msgid "building {name}"
-msgstr "building {name}"
-
-#: src/components/workspace-cards.tsx
 msgid "Building {name}"
 msgstr "Building {name}"
-
-#: src/components/workspace-cards.tsx
-msgid "building {name} on {host}"
-msgstr "building {name} on {host}"
 
 #: src/components/workspace-cards.tsx
 msgid "Building {name} on {host}"
@@ -3084,7 +3071,6 @@ msgid "Shows the agent sessions and the branch"
 msgstr "Shows the agent sessions and the branch"
 
 #: src/components/workspace-cards.tsx
-#: src/components/workspace-cards.tsx
 msgid "Shows the build"
 msgstr "Shows the build"
 
@@ -3595,8 +3581,8 @@ msgid "Waiting for frames"
 msgstr "Waiting for frames"
 
 #: src/components/device-tile.tsx
-msgid "Waiting for the {name} build"
-msgstr "Waiting for the {name} build"
+msgid "Waiting for the {buildName} build"
+msgstr "Waiting for the {buildName} build"
 
 #: src/lib/workspace-view.ts
 msgid "warmed {since} ago"

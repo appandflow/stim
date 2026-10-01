@@ -253,11 +253,9 @@ export function WorkspaceDetail({ path }: { path: string }) {
         {header}
         <CardGrid>
           <StatusCard stage={stage} usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
-          <BuildCard
-            lines={lines}
-            building={build}
-            onPress={() => open('/mac/[id]/build', build?.platform ?? failed ?? lines[0]?.platform)}
-          />
+          {build ? null : (
+            <BuildCard lines={lines} onPress={() => open('/mac/[id]/build', failed ?? lines[0]?.platform)} />
+          )}
           <LogsCard
             errors={env.logs ? env.logs.errorsSinceMarker : null}
             metro={health}
