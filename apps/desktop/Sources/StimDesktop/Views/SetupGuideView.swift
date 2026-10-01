@@ -498,6 +498,11 @@ private struct CommandBlock: View {
         .buttonStyle(.stim(.plain))
         .help("Copy the command")
         .accessibilityLabel(copied ? "Copied" : "Copy \(text)")
+        .task(id: copied) {
+          guard copied else { return }
+          try? await Task.sleep(for: .seconds(2))
+          copied = false
+        }
         runButton
       }
       .padding(.leading, Space.lg)
