@@ -11,6 +11,7 @@ extension OversightCategory {
     case .machine: return "Machine in trouble"
     case .control: return "Someone takes over your device"
     case .buildRequest: return "A Mac asks to build here"
+    case .attention: return "Needs you"
     }
   }
 
@@ -24,19 +25,20 @@ extension OversightCategory {
     case .machine: return "exclamationmark.triangle"
     case .control: return "hand.raised"
     case .buildRequest: return "hammer"
+    case .attention: return "exclamationmark.bubble"
     }
   }
 
   /// Whether a toast of the category stays until dismissed: it asks for the user, not just reports.
   public var needsAttention: Bool {
     switch self {
-    case .stuck, .looping, .machine, .control, .buildRequest: return true
+    case .stuck, .looping, .machine, .control, .buildRequest, .attention: return true
     case .started, .finished: return false
     }
   }
 
   /// The categories that can fire on Stim Desktop; `control` is a stim-server push to a phone.
-  public static let desktop: [OversightCategory] = [.started, .stuck, .looping, .finished, .machine, .buildRequest]
+  public static let desktop: [OversightCategory] = [.started, .stuck, .looping, .finished, .machine, .attention, .buildRequest]
 }
 
 extension OversightTarget {
@@ -76,6 +78,8 @@ extension OversightCategory {
 public enum NotificationSettings {
   public static let stuckMinutesKey = "notify.stuckMinutes"
   public static let quietHoursKey = "notify.quietHours"
+  /// The ids of the `attention` notifications still in their episode, kept so a restart does not repeat them.
+  public static let attentionKey = "notify.attention"
   public static let stuckMinuteChoices = [5, 10, 15, 30, 60]
   /// The phone's quiet hours choices, stored as `start-end` minutes after midnight.
   public static let quietHoursChoices: [(label: String, value: String)] = [
