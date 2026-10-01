@@ -9,6 +9,7 @@ import {
   SETTINGS,
   STATUS_ISSUE_CODES,
   WORKSPACE_PHASES,
+  WORKSPACE_STAGE_KINDS,
   MACHINE_OWNER_KINDS,
   MEMORY_SOURCES,
   NATIVE_BUILD_STEPS,
@@ -673,6 +674,12 @@ test('the facts topic documents every workspace phase', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   for (const phase of WORKSPACE_PHASES) expect(body).toMatch(new RegExp(`^ +(phase +)?"${phase}" `, 'm'));
+});
+
+test('the facts topic documents every workspace stage kind', () => {
+  const body = renderSection('facts', 'status');
+  assert(body);
+  for (const kind of WORKSPACE_STAGE_KINDS) expect(body).toMatch(new RegExp(`^ +(kind +)?"${kind}" `, 'm'));
 });
 
 test('the facts topic documents every machine owner kind', () => {

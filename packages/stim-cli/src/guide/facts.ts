@@ -76,6 +76,19 @@ branch and HEAD, once \`status --watch\` has looked it up:
   reviewDecision  "approved", "changes-requested", "review-required" or null
   checkedAt       when Stim last asked GitHub
 
+A worktree entry with git also carries gitChip, the git chip Stim Desktop and
+the phone app show for it:
+
+  gitChip   { parts, ci }
+  parts     in order: { kind: "arrows", ahead, behind } when either is above
+            0; { kind: "changed", count } of changed plus untracked entries;
+            { kind: "merged", into } when mergedInto is set and the pull
+            request is not merged; { kind: "no-upstream" } when the branch is
+            not merged and upstream is null
+  ci        "failing" when a check fails, else "pending" when one is pending,
+            else "passing" when one passes; null without a pull request or
+            checks
+
 \`status --watch\` asks GitHub off its refresh path, through the same gh api
 graphql lookup gc uses, one call per repository, for a worktree whose lookup
 is over 5 minutes old or whose branch or HEAD moved. It runs git in the
@@ -879,7 +892,7 @@ RULES
     },
     status: {
       summary:
-        "the status payload's lifecycle phase, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
+        "the status payload's lifecycle phase and stage, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
 
   Each environment carries phase, where the workspace is in its lifecycle:
@@ -897,6 +910,25 @@ RULES
               absent in other phases
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
+
+  Each environment also carries stage, where the workspace is as Stim
+  Desktop and the phone app show it: { kind, since, platform, closedApps }.
+  The first kind that applies wins:
+
+  kind        "building"      a build runs; platform names it
+              "warming"       phase is "warming" and nothing is live
+              "ready"         phase is "ready" and nothing is live
+              "build-failed"  the newest run of either platform failed;
+                              platform names it
+              "running"       live is true or a remote session runs
+              "stopped"       none of these
+  since       when it began: the build's start, phaseSince, the failed
+              run's finishedAt (else startedAt), the supervisor's start or
+              metro.lastStop.at; null when unknown
+  platform    "ios" or "android" for "building" and "build-failed", else null
+  closedApps  for "running", [{ platform, slot }] of the devices whose
+              appPresence is "closed", the default slot first, then each
+              slot in order, iOS before Android; empty otherwise
 
   A warm records warming under its own ownership claim, so a warm that was
   killed or failed reads as idle, never as warming. Plain \`stim status\`
@@ -1083,6 +1115,16 @@ RULES
   app is absent when the device is not owned or no app id is known: the
   process was not checked.
 
+  Each ios and android device record, in every slot, also carries
+  appPresence, whether the device lacks the app:
+
+  appPresence  "none"    the device runs, its platform's latest run failed
+                         and builds carries the platform with no
+                         succeeded run
+               "closed"  the device runs and app.state is "stopped"
+               null      otherwise, including a device that is not running
+                         and a physical device
+
   This is current process state, read from one host ps (simulator apps are
   host processes) and the same adb shell ps as activity, so a status --watch
   refresh notices an exit within its 30-second fallback. It is not launch
@@ -1229,6 +1271,10 @@ RULES
   diagnostics  only on a failed run whose compiler reported errors: up to
                5 { file, line, column, message }, null where the compiler
                gave no position.
+  cause        only on a failed run: { key, file, line }, the first
+               diagnostic with a file and a line, keyed "<file>:<line>",
+               else the errorCode (or "failed") with null file and line.
+               Failed runs in a row with the same key failed the same way.
   offloadedTo  only on a run a build machine compiled: its name
   offloadFallback
                only on a run that considered offloading and built here: one
