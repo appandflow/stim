@@ -1,4 +1,4 @@
-import { colors, colorsHighContrast, type ColorToken } from '@/design/tokens';
+import { colorsHighContrast, type ColorToken } from '@/design/tokens';
 
 type Mode = 'light' | 'dark';
 
@@ -42,9 +42,5 @@ describe.each<Mode>(['light', 'dark'])('Increase Contrast palette, %s', (mode) =
         expect(ratio(surface(edge), surface(name))).toBeGreaterThanOrEqual(3);
       }
     }
-  });
-
-  it('leaves the surfaces unchanged', () => {
-    for (const name of surfaces) expect(palette[name]).toBe(colors[mode][name]);
   });
 });

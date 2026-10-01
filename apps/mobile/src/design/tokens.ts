@@ -142,10 +142,6 @@ const dark: Record<ColorToken, string> = {
 
 export const colors = { light, dark };
 
-/**
- * Colors under Increase Contrast. Text and tone colors reach WCAG AAA (7:1) on every surface, including tone text over
- * its 16% tint, and `border` and `separator` reach 3:1 against every surface. Everything else matches `colors`.
- */
 export const colorsHighContrast: Record<'light' | 'dark', Record<ColorToken, string>> = {
   light: {
     ...light,
