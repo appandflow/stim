@@ -450,6 +450,14 @@ support. Older iOS SDK builds receive no fold divisions and keep the default
 layout. The safe area
 insets already keep it clear of the Dynamic Island and camera cutouts.
 
+Half folded with the fold across the screen, like a laptop on a table, the
+viewer takes a tabletop layout: the title and the device screen above the
+fold, and the read-only banner, the Control toolbars, the replay controls and
+the agent actions below it. It takes that layout only while
+`react-native-hinges` reports the hinge partly open, and the fold's position
+comes from the reserved regions. Every control stays available in every
+posture.
+
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your

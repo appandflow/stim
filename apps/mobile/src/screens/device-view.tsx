@@ -31,6 +31,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
+import { useHinges } from 'react-native-hinges';
 import { useReservedRegions } from 'react-native-reserved-regions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -123,7 +124,9 @@ export function DeviceView({
   const [rootWidth, setRootWidth] = useState(0);
   const fold = foldOf(useReservedRegions(), rootWidth || window.width, rootHeight || window.height);
   const book = fold?.axis === 'vertical' ? fold : null;
-  const sideBySide = landscape || book !== null;
+  const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
+  const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
+  const sideBySide = (landscape && !table) || book !== null;
   const { videoQuality } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
@@ -388,7 +391,7 @@ export function DeviceView({
       />
     ) : null;
   const agentFeed =
-    (!landscape || book) && !physical && device?.id && streams ? (
+    (!landscape || book || table) && !physical && device?.id && streams ? (
       <AgentFeed
         workspace={workspace}
         slot={slot}
@@ -402,7 +405,7 @@ export function DeviceView({
         }
       />
     ) : null;
-  const overlayControls = replayBar !== null && streams && rest !== null && rootHeight > 0;
+  const overlayControls = !table && replayBar !== null && streams && rest !== null && rootHeight > 0;
   const buttons =
     controlling || readOnly ? (
       <>
@@ -487,61 +490,72 @@ export function DeviceView({
               ]}
             >
               <View style={styles.root}>
-                <View style={{ height: barBottom + headerGap }} />
-                {sideBySide ? null : readOnlyBanner}
-                <View style={book && { width: book.start - insets.left }}>
-                  <Banner
-                    control={control.state}
-                    canTakeOver={control.allowed === true && !replaying}
-                    readOnly={readOnly}
-                    onTakeOver={takeOver}
-                  />
-                  {stream.delayed || replayOff ? (
-                    <View style={styles.chips}>
-                      {stream.delayed ? (
-                        <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
-                      ) : null}
-                      {replayOff ? (
-                        <Pill>
-                          <Trans>Replay off</Trans>
-                        </Pill>
-                      ) : null}
+                <View style={table ? { height: table.start - insets.top } : styles.root}>
+                  <View style={{ height: barBottom + headerGap }} />
+                  {sideBySide || table ? null : readOnlyBanner}
+                  <View style={book && { width: book.start - insets.left }}>
+                    <Banner
+                      control={control.state}
+                      canTakeOver={control.allowed === true && !replaying}
+                      readOnly={readOnly}
+                      onTakeOver={takeOver}
+                    />
+                    {stream.delayed || replayOff ? (
+                      <View style={styles.chips}>
+                        {stream.delayed ? (
+                          <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
+                        ) : null}
+                        {replayOff ? (
+                          <Pill>
+                            <Trans>Replay off</Trans>
+                          </Pill>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={sideBySide ? styles.row : styles.root}>
+                    <View
+                      ref={stage}
+                      style={[styles.stage, book && { flex: 0, width: book.start - insets.left }]}
+                      onLayout={barBottom > 0 ? zoom.measure : undefined}
+                      collapsable={false}
+                    >
+                      {streams ? null : (
+                        <Text style={styles.placeholder}>
+                          {device?.running ? unservedReason(device) : (device?.state ?? t`This device is not running.`)}
+                          {canReplay ? ` ${scrubHint}` : ''}
+                        </Text>
+                      )}
                     </View>
-                  ) : null}
-                </View>
-                <View style={sideBySide ? styles.row : styles.root}>
-                  <View
-                    ref={stage}
-                    style={[styles.stage, book && { flex: 0, width: book.start - insets.left }]}
-                    onLayout={barBottom > 0 ? zoom.measure : undefined}
-                    collapsable={false}
-                  >
-                    {streams ? null : (
-                      <Text style={styles.placeholder}>
-                        {device?.running ? unservedReason(device) : (device?.state ?? t`This device is not running.`)}
-                        {canReplay ? ` ${scrubHint}` : ''}
-                      </Text>
+                    {book ? (
+                      <View style={[styles.pane, { marginLeft: book.end - book.start }]}>
+                        <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
+                          {readOnlyBanner}
+                          {toolbars}
+                        </ScrollView>
+                        {agentFeed}
+                      </View>
+                    ) : landscape ? (
+                      controlling || readOnly ? (
+                        <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
+                          {readOnlyBanner}
+                          {toolbars}
+                        </ScrollView>
+                      ) : null
+                    ) : table ? null : (
+                      toolbars
                     )}
                   </View>
-                  {book ? (
-                    <View style={[styles.pane, { marginLeft: book.end - book.start }]}>
-                      <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
-                        {readOnlyBanner}
-                        {toolbars}
-                      </ScrollView>
-                      {agentFeed}
-                    </View>
-                  ) : landscape ? (
-                    controlling || readOnly ? (
-                      <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
-                        {readOnlyBanner}
-                        {toolbars}
-                      </ScrollView>
-                    ) : null
-                  ) : (
-                    toolbars
-                  )}
                 </View>
+                {table ? (
+                  <>
+                    <View style={{ height: table.end - table.start }} />
+                    <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
+                      {readOnlyBanner}
+                      {toolbars}
+                    </ScrollView>
+                  </>
+                ) : null}
                 {overlayControls || !replayBar ? null : (
                   <View style={book && { width: book.start - insets.left }}>{replayBar}</View>
                 )}
