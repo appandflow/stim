@@ -172,7 +172,7 @@ export function Home() {
         <Text variant="body" weight="medium" tone="tertiary">
           <Trans>Machines</Trans>
         </Text>
-        <Touch onPress={() => router.push('/pair')} accessibilityLabel={t`Pair a machine`} hitSlop={10}>
+        <Touch onPress={() => router.push('/pair')} accessibilityLabel={t`Pair a machine`} hitSlop={11}>
           <Icon name="plus" size={22} color={theme.colors.text} />
         </Touch>
       </View>

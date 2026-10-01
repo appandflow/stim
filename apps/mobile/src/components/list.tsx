@@ -101,12 +101,12 @@ export function ListRow({
   );
   if (onPress) {
     return (
-      <Touch feedback="row" onPress={onPress} accessibilityLabel={accessibilityLabel} style={styles.row}>
+      <Touch feedback="row" onPress={onPress} accessibilityLabel={accessibilityLabel} style={styles.row(true)}>
         {content}
       </Touch>
     );
   }
-  return <View style={styles.row}>{content}</View>;
+  return <View style={styles.row(false)}>{content}</View>;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -123,13 +123,14 @@ const styles = StyleSheet.create((theme) => ({
     overflow: 'hidden',
   },
   footer: { paddingHorizontal: theme.space.xs },
-  row: {
+  row: (pressable: boolean) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.lg,
     paddingHorizontal: theme.space.lg,
     paddingVertical: theme.space.sm,
-  },
+    minHeight: pressable ? 44 : undefined,
+  }),
   titles: { flex: 1, gap: theme.space.xxs },
   value: { fontVariant: ['tabular-nums'], textAlign: 'right' },
 }));
