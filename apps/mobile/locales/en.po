@@ -1587,6 +1587,7 @@ msgid "Enter the pairing token Stim Desktop shows."
 msgstr "Enter the pairing token Stim Desktop shows."
 
 #: src/lib/replay.ts
+#: src/screens/logs.tsx
 msgid "Error"
 msgstr "Error"
 
@@ -1634,6 +1635,10 @@ msgstr "Failed ({code})"
 #: src/lib/format.ts
 msgid "Failed ({code}){took}"
 msgstr "Failed ({code}){took}"
+
+#: src/screens/logs.tsx
+msgid "Fatal"
+msgstr "Fatal"
 
 #: src/screens/home.tsx
 msgid "Filter"
@@ -3675,6 +3680,10 @@ msgstr "Warming for {spoken}"
 #: src/components/device-tile.tsx
 msgid "Warming the workspace"
 msgstr "Warming the workspace"
+
+#: src/screens/logs.tsx
+msgid "Warning"
+msgstr "Warning"
 
 #: src/components/attention-strip.tsx
 msgid "Warning: {title} on {macName}, {detail}"

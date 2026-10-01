@@ -309,6 +309,13 @@ function levelColor(theme: Theme, level: string): string {
   return theme.colors.tertiary;
 }
 
+function levelBadge(level: string): { label: string; tone: 'warning' | 'error' } | null {
+  if (level === 'warn') return { label: t`Warning`, tone: 'warning' };
+  if (level === 'error') return { label: t`Error`, tone: 'error' };
+  if (level === 'fatal') return { label: t`Fatal`, tone: 'error' };
+  return null;
+}
+
 const LogRow = memo(function LogRow({
   entry,
   workspace,
@@ -326,6 +333,7 @@ const LogRow = memo(function LogRow({
   const record = entry.lead;
   const time = new Date(record.ts).toTimeString().slice(0, 8);
   const error = record.level === 'error' || record.level === 'fatal';
+  const level = levelBadge(record.level);
   const chip = chipOf(record);
   const view = useMemo(() => viewEntry(entry, workspace, home), [entry, workspace, home]);
   const preview = useMemo(
@@ -338,9 +346,19 @@ const LogRow = memo(function LogRow({
   const records = plural(entry.related.length + 1, { one: '# record', other: '# records' });
   return (
     <View style={styles.logRow}>
-      <Touch feedback="row" onPress={() => onToggle(entry, expanded)} accessibilityRole="none" style={styles.logBody}>
+      <Touch
+        feedback="row"
+        onPress={() => onToggle(entry, expanded)}
+        accessibilityState={{ expanded }}
+        style={styles.logBody}
+      >
         <View style={styles.meta}>
           <StatusDot color={levelColor(theme, record.level)} />
+          {level ? (
+            <Text variant="caption2" weight="semibold" tone={level.tone} style={styles.level}>
+              {level.label}
+            </Text>
+          ) : null}
           <View style={styles.tag}>
             <Text variant="caption2" tone="secondary">
               {chip ? chipLabel(chip) : record.src}
@@ -461,6 +479,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   details: { paddingHorizontal: theme.space.lg, paddingBottom: theme.space.md },
   meta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  level: { textTransform: 'uppercase' },
   tag: {
     paddingHorizontal: theme.space.sm,
     paddingVertical: 1,
