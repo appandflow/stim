@@ -688,7 +688,7 @@ export function inQuietHours(quietHours: { start: number; end: number } | null, 
 }
 
 /** How long a billable EAS session may run with no agent before it needs a person. */
-export const EAS_SESSION_MINUTES = 30;
+const EAS_SESSION_MINUTES = 30;
 
 /**
  * What only a person can act on or decide. apps/desktop/Sources/StimKit/NeedsAttention.swift and
@@ -815,6 +815,8 @@ function workspaceItems(
   return items;
 }
 
+const severityRank = (item: NeedsAttentionItem) => (item.severity === 'error' ? 0 : 1);
+
 /**
  * The items, errors first, then the machine's, then live workspaces' before idle ones', each in status order. Log
  * errors, a single failed run, and issues an agent's next `stim` command repairs are left out: agents handle them.
@@ -841,9 +843,10 @@ export function needsAttention(input: NeedsAttentionInput): NeedsAttentionItem[]
   for (const env of input.environments) {
     for (const item of workspaceItems(env, input)) ranked.push({ item, scope: env.live ? 1 : 2 });
   }
-  const severity = (item: NeedsAttentionItem) => (item.severity === 'error' ? 0 : 1);
-  return ranked
-    .map((entry, index) => ({ ...entry, index }))
-    .sort((a, b) => severity(a.item) - severity(b.item) || a.scope - b.scope || a.index - b.index)
-    .map((entry) => entry.item);
+  const order = ranked.map((entry, index) => ({ entry, index }));
+  order.sort(
+    (a, b) =>
+      severityRank(a.entry.item) - severityRank(b.entry.item) || a.entry.scope - b.entry.scope || a.index - b.index,
+  );
+  return order.map(({ entry }) => entry.item);
 }
