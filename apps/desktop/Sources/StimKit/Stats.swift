@@ -64,6 +64,12 @@ public struct BuildPlacements: Decodable, Sendable {
     public var localEstimateMs: Double?
     public var failed: Bool?
 
+    /// The reason without the `<machine>: ` prefix a fallback carries, since `title` already names the machine.
+    public var shortReason: String {
+      guard let machine, reason.hasPrefix("\(machine): ") else { return reason }
+      return String(reason.dropFirst(machine.count + 2))
+    }
+
     /// "Built here", "Built on mini", "Built here after mini".
     public var title: String {
       let name = machine.map(machineName)

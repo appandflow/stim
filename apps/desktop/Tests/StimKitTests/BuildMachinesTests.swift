@@ -37,6 +37,7 @@ import Testing
     let offload = try #require(stats.offload)
     #expect(offload.machines["mini"]?.total.savedMs == -5000)
     #expect(offload.placements(for: "mini").map(\.title) == ["Built here after mini", "Built on mini"])
+    #expect(offload.placements(for: "mini").map(\.shortReason) == ["busy", "this Mac is busy"])
     #expect(offload.here.map(\.failed) == [true])
     #expect(offload.placements.last?.decision == .unknown)
     let fellBack = try JSONDecoder().decode(

@@ -170,7 +170,7 @@ private struct PlacementList: View {
             .foregroundStyle(Palette.tertiary)
           if placement.failed == true { Pill("failed", tone: .error, size: .small) }
         }
-        Text(placement.reason).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        Text(placement.shortReason).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
       Spacer()
       VStack(alignment: .trailing, spacing: Space.xxs) {
