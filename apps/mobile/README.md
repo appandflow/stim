@@ -141,7 +141,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
-  in; the token field is masked, with a button that shows it. The device token
+  in; the token field is masked, with a button that shows it, and drops
+  what a token cannot hold, such as the spaces and line breaks of a paste, as you
+  type, without moving the cursor. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
 - **Workspace**: under the title, four small cards in a 2x2 grid open more:

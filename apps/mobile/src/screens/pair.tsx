@@ -3,9 +3,14 @@ import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useRef, useState, type Ref } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, TextInput, View, type TextInputProps } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
+import {
+  Transformer,
+  TransformerTextInput,
+  type TransformerTextInputInstance,
+} from 'react-native-transformer-text-input';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Button, IconButton } from '@/components/button';
@@ -19,6 +24,15 @@ import { manualPairing, parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
 
 const FALLBACK_DEVICE_NAME = 'Phone';
+
+const tokenTransformer = new Transformer(({ value, selection }) => {
+  'worklet';
+  const invalid = /[^A-Za-z0-9_-]/g;
+  const cleaned = value.replace(invalid, '');
+  if (cleaned === value) return null;
+  const caret = value.slice(0, selection.end).replace(invalid, '').length;
+  return { value: cleaned, selection: { start: caret, end: caret } };
+});
 
 type Step =
   | { kind: 'scan' }
@@ -46,6 +60,7 @@ export function Pair() {
   const [error, setError] = useState<string | null>(null);
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
+  const tokenInput = useRef<TransformerTextInputInstance>(null);
   const [name, setName] = useState('');
   const busy = useRef(false);
   const connectingTo = step.kind === 'connecting' ? step.endpoint : '';
@@ -79,6 +94,7 @@ export function Pair() {
     if (!parsed.ok) return setError(parsed.error);
     // iOS offers to save a password when a secure text field leaves the screen with text in it, so the
     // field is emptied, and that change reaches the native view, before the form is replaced.
+    tokenInput.current?.clear();
     setToken('');
     requestAnimationFrame(() => void start(parsed.payload, 'manual'));
   };
@@ -117,6 +133,7 @@ export function Pair() {
               mono
               secret
               label={t`Pairing token`}
+              tokenRef={tokenInput}
               value={token}
               onChangeText={setToken}
               placeholder={t`From Pair a phone in Stim Desktop`}
@@ -202,36 +219,49 @@ function Field({
   label,
   mono: monospaced = false,
   secret = false,
+  tokenRef,
+  value,
   ...input
 }: {
   label: string;
   mono?: boolean;
   secret?: boolean;
+  tokenRef?: Ref<TransformerTextInputInstance>;
   value: string;
   onChangeText: (text: string) => void;
   placeholder: string;
   textContentType?: TextInputProps['textContentType'];
-  autoComplete?: TextInputProps['autoComplete'];
+  autoComplete?: 'off';
   importantForAutofill?: TextInputProps['importantForAutofill'];
 }) {
   const { theme } = useUnistyles();
   const [revealed, setRevealed] = useState(false);
+  const shared = {
+    accessibilityLabel: label,
+    autoCapitalize: 'none',
+    autoCorrect: false,
+    spellCheck: false,
+    placeholderTextColor: theme.colors.tertiary,
+    style: styles.input(monospaced),
+  } satisfies TextInputProps;
   return (
     <View style={styles.field}>
       <Text variant="footnote" weight="medium" tone="secondary">
         {label}
       </Text>
       <View style={styles.inputRow}>
-        <TextInput
-          {...input}
-          accessibilityLabel={label}
-          autoCapitalize="none"
-          autoCorrect={false}
-          spellCheck={false}
-          secureTextEntry={secret && !revealed}
-          placeholderTextColor={theme.colors.tertiary}
-          style={styles.input(monospaced)}
-        />
+        {tokenRef ? (
+          <TransformerTextInput
+            {...input}
+            defaultValue={value}
+            ref={tokenRef}
+            transformer={tokenTransformer}
+            {...shared}
+            secureTextEntry={secret && !revealed}
+          />
+        ) : (
+          <TextInput {...input} value={value} {...shared} secureTextEntry={secret && !revealed} />
+        )}
         {secret ? (
           <Touch
             onPress={() => setRevealed((r) => !r)}
