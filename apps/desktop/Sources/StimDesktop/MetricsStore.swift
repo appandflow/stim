@@ -35,26 +35,34 @@ final class MetricsStore {
 
   private let status: StatusStore
   private let gc: GcReportStore
+  private let disks: DiskVolumeStore
   @ObservationIgnored private var sampler = ResourceSampler()
-  @ObservationIgnored private var timer: Timer?
+  @ObservationIgnored private var poller: VisiblePoller?
+  @ObservationIgnored private var observers: [NSObjectProtocol] = []
   @ObservationIgnored private var sampling = false
 
-  init(status: StatusStore, gc: GcReportStore) {
+  init(status: StatusStore, gc: GcReportStore, disks: DiskVolumeStore) {
     self.status = status
     self.gc = gc
+    self.disks = disks
   }
 
+  /// Samples every 3 s while the main window is on screen, and not at all otherwise.
   func start() {
-    guard timer == nil else { return }
-    tick()
-    timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-      Task { @MainActor in self?.tick() }
+    guard poller == nil else { return }
+    let poller = VisiblePoller(
+      interval: .seconds(3), isVisible: { MainWindow.isInFront }, tick: { [weak self] in self?.tick() })
+    self.poller = poller
+    let names = [
+      NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+      NSWindow.didChangeOcclusionStateNotification,
+    ]
+    observers = names.map { name in
+      NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+        MainActor.assumeIsolated { poller.update() }
+      }
     }
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.tick() }
-    }
+    poller.update()
   }
 
   private static var cores: Int { ProcessInfo.processInfo.activeProcessorCount }
@@ -66,12 +74,7 @@ final class MetricsStore {
       ? nil : UsageThresholds.cpuFraction(percentOfOneCore: values.reduce(0, +), cores: Self.cores)
   }
 
-  private var onScreen: Bool {
-    NSApp.isActive && NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) }
-  }
-
   private func tick() {
-    guard onScreen else { return }
     sample()
     if !gc.running, gc.at.map({ Date().timeIntervalSince($0) > 300 }) ?? true { gc.refresh() }
   }
@@ -80,13 +83,13 @@ final class MetricsStore {
     guard !sampling, let payload = status.payload else { return }
     sampling = true
     let workspaces = payload.environments
-    let locations = stimDiskLocations(workspaces, status: status)
     let base = sampler
+    let disks = disks
     Task.detached {
       let processes = (try? ProcessTable.snapshot()) ?? []
       var sampler = base
       let result = processes.isEmpty ? [:] : sampler.sample(workspaces, processes: processes, at: Date())
-      let volumes = DiskUsage.volumes(for: locations)
+      let volumes = await disks.volumes(maxAge: 1)
       let memory = MachineMemory.read()
       let updated = processes.isEmpty ? nil : sampler
       await MainActor.run {
@@ -115,16 +118,6 @@ final class MetricsStore {
       }
     }
   }
-}
-
-@MainActor
-func stimDiskLocations(_ workspaces: [Workspace], status: StatusStore) -> [(label: String, path: String)] {
-  let home = NSHomeDirectory()
-  let repositories = Set(workspaces.map { status.project(of: $0).root }).sorted()
-  return repositories.map { (label: "Repositories", path: $0) } + [
-    (label: "Stim home", path: status.stimHome),
-    (label: "Simulators", path: "\(home)/Library/Developer/CoreSimulator"),
-  ]
 }
 
 func formatPercent(_ percent: Double) -> String {

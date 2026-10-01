@@ -20,13 +20,7 @@ final class OpenRequests: ObservableObject {
 
   /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
   func showSetupGuide() {
-    NSApp.activate(ignoringOtherApps: true)
-    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
-      if window.isMiniaturized { window.deminiaturize(nil) }
-      window.makeKeyAndOrderFront(nil)
-    } else {
-      openMainWindow?()
-    }
+    MainWindow.show()
     showsSetupGuide = true
   }
 }
@@ -67,12 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
       MainActor.assumeIsolated {
         OpenRequests.shared.workspaceLink = link
-        if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
-          window.makeKeyAndOrderFront(nil)
-        } else {
-          OpenRequests.shared.openMainWindow?()
-        }
-        NSApp.activate(ignoringOtherApps: true)
+        MainWindow.show()
       }
     }
     guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
@@ -124,14 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-    MainActor.assumeIsolated {
-      if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
-      } else {
-        OpenRequests.shared.openMainWindow?()
-      }
-    }
+    MainActor.assumeIsolated { MainWindow.show() }
     return true
   }
 }
@@ -147,6 +129,9 @@ struct StimDesktopApp: App {
   private let gc: GcReportStore
   private let machineSettings: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
+  private let metrics: MetricsStore
+  private let storage: StorageStore
+  private let planChecks: BuildPlanChecks
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   private let cli: Task<StimCLI, Never>
 
@@ -170,12 +155,19 @@ struct StimDesktopApp: App {
     let store = StatusStore(cli: cli)
     self.store = store
     notifier = Notifier(store: store)
-    let oversight = OversightNotifier(store: store)
-    self.oversight = oversight
     let actions = ActionCenter(cli: cli)
     self.actions = actions
     let gc = GcReportStore(cli: cli)
     self.gc = gc
+    let disks = DiskVolumeStore(status: store)
+    let oversight = OversightNotifier(store: store, disks: disks)
+    self.oversight = oversight
+    let metrics = MetricsStore(status: store, gc: gc, disks: disks)
+    self.metrics = metrics
+    storage = StorageStore(status: store, cli: cli)
+    planChecks = BuildPlanChecks { platform, workspace in
+      try await cli.value.plan(platform: platform, workspace: workspace)
+    }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
       if !store.watching || worktree { store.refresh() }
@@ -187,13 +179,15 @@ struct StimDesktopApp: App {
     let machineSettings = MachineSettingsStore(cli: cli)
     self.machineSettings = machineSettings
     self.buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings)
-    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, settings: machineSettings, cli: cli)
+    let autopilot = AutopilotRunner(
+      status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {
       store.start()
       oversight.start()
+      metrics.start()
       autopilot.start()
       onboarding.check()
     }
@@ -203,7 +197,7 @@ struct StimDesktopApp: App {
     Window("Stim", id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
-        buildMachines: buildMachines
+        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks
       )
       .frame(minWidth: 700, minHeight: 720)
       .onAppear { notifier.start() }

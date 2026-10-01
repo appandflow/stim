@@ -28,6 +28,7 @@ final class AutopilotRunner: ObservableObject {
   private let status: StatusStore
   private let actions: ActionCenter
   private let gc: GcReportStore
+  private let disks: DiskVolumeStore
   private let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
   private var timer: Timer?
@@ -43,10 +44,14 @@ final class AutopilotRunner: ObservableObject {
   private var pullRequestVerdict: (candidates: Set<String>, at: Date, nextEligible: Date?)?
   private var activation: NSObjectProtocol?
 
-  init(status: StatusStore, actions: ActionCenter, gc: GcReportStore, settings: MachineSettingsStore, cli: Task<StimCLI, Never>) {
+  init(
+    status: StatusStore, actions: ActionCenter, gc: GcReportStore, disks: DiskVolumeStore, settings: MachineSettingsStore,
+    cli: Task<StimCLI, Never>
+  ) {
     self.status = status
     self.actions = actions
     self.gc = gc
+    self.disks = disks
     self.settings = settings
     self.cli = cli
     log = AutopilotLog.decode(UserDefaults.standard.data(forKey: AppPreferences.Key.autopilotLog))
@@ -135,7 +140,7 @@ final class AutopilotRunner: ObservableObject {
         present: false)
       return
     }
-    checkPressure()
+    checkPressure(maxAge: Self.tick / 2)
   }
 
   /// Booted devices of workspaces with no build running, which `gc --idle` skips.
@@ -148,16 +153,16 @@ final class AutopilotRunner: ObservableObject {
     }
   }
 
-  private func checkPressure() {
+  private func checkPressure(maxAge: TimeInterval) {
     guard !checking else { return }
     checking = true
     let now = Date()
-    let locations = stimDiskLocations(status.payload?.environments ?? [], status: status)
+    let disks = disks
     let budget = budgetAt.map { now.timeIntervalSince($0) < Self.budgetMaxAge } == true ? self.budget : nil
     let gc = gc
     let machineSettings = settings
     Task.detached(priority: .utility) {
-      let volumes = DiskUsage.volumes(for: locations)
+      let volumes = await disks.volumes(maxAge: maxAge)
       let lowest = volumes.min { $0.freeBytes < $1.freeBytes }
       let free = lowest?.freeBytes
       var settings: SettingsPayload?
@@ -222,7 +227,7 @@ final class AutopilotRunner: ObservableObject {
     let command = StimCommand(arguments, cwd: NSHomeDirectory())
     actions.run(title, steps: [command], key: ActionCenter.machineKey, present: present) { [weak self] run in
       guard let self else { return }
-      self.checkPressure()
+      self.checkPressure(maxAge: 0)
       self.record(
         AutopilotLogEntry(
           date: Date(), trigger: trigger, command: "stim \(arguments.joined(separator: " "))",

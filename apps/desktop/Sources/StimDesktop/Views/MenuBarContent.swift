@@ -28,11 +28,6 @@ struct MenuBarContent: View {
 
   private func open(_ path: String?) {
     OpenRequests.shared.workspacePath = path
-    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
-      window.makeKeyAndOrderFront(nil)
-    } else {
-      openWindow(id: "main")
-    }
-    NSApp.activate(ignoringOtherApps: true)
+    MainWindow.show { openWindow(id: "main") }
   }
 }

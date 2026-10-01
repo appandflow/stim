@@ -14,14 +14,14 @@ enum SidebarItem: Hashable {
 
 struct RootView: View {
   @ObservedObject private var store: StatusStore
-  @State private var metrics: MetricsStore
+  private let metrics: MetricsStore
   private let gc: GcReportStore
   private let buildMachines: BuildMachinesModel
   @ObservedObject private var actions: ActionCenter
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
-  @State private var storage: StorageStore
-  @State private var planChecks: BuildPlanChecks
+  private let storage: StorageStore
+  private let planChecks: BuildPlanChecks
   @State private var selection: SidebarItem? = .wall
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
@@ -46,7 +46,8 @@ struct RootView: View {
 
   init(
     cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
-    onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel
+    onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
+    storage: StorageStore, planChecks: BuildPlanChecks
   ) {
     self.buildMachines = buildMachines
     self.cli = cli
@@ -55,12 +56,9 @@ struct RootView: View {
     self.actions = actions
     self.autopilot = autopilot
     self.gc = gc
-    _metrics = State(initialValue: MetricsStore(status: store, gc: gc))
-    _storage = State(initialValue: StorageStore(status: store, cli: cli))
-    _planChecks = State(
-      initialValue: BuildPlanChecks { platform, workspace in
-        try await cli.value.plan(platform: platform, workspace: workspace)
-      })
+    self.metrics = metrics
+    self.storage = storage
+    self.planChecks = planChecks
   }
 
   var body: some View {
@@ -135,7 +133,6 @@ struct RootView: View {
     .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
     .onAppear {
       store.start()
-      metrics.start()
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
