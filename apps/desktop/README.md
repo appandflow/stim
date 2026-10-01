@@ -856,7 +856,8 @@ that the installed `stim` does not list. **Not now** hides the offer for good.
 
 ### Setup guide
 
-The first launch opens a setup guide over the main window; **Help > Setup
+The first launch opens a setup guide over the main window, unless everything it
+sets up is already in place; **Help > Setup
 Guide…** and **Open Setup Guide…** in **Settings > App** reopen it. Each step
 shows what it found, the exact command its **Run** button runs with the
 directory it runs in, and that command's output. Nothing runs until Run is

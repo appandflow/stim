@@ -62,7 +62,8 @@ performance traces. Every release is listed under
 
 ## First steps
 
-The first launch opens a setup guide that installs the `stim` CLI and the
+Unless you are already set up, the first launch opens a setup guide that
+installs the `stim` CLI and the
 agent skill, asks for notification permission and checks Xcode, the Android SDK
 and a project with `stim doctor`. Each step shows the command it runs and runs
 it only when you press **Run**. Reopen it from **Help > Setup Guide…**.
