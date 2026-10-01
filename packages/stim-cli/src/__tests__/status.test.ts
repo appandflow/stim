@@ -911,6 +911,9 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
     }[scenario];
     expect(state.android).toMatchObject({ serial: expected.serial, state: expected.state, owned: true });
     expect(state.warnings.join(' ')).toMatch(expected.warning);
+    if (scenario === 'missing') {
+      expect(state.issues).toEqual([expect.objectContaining({ code: 'avd-missing', severity: 'info' })]);
+    }
     expect(state.live).toBe(scenario === 'moved');
     expect(loadConfig()).toEqual(before);
     expect(commands.some((cmd) => /reverse|emu kill|\bboot\b/.test(cmd))).toBe(false);
