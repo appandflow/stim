@@ -13,9 +13,9 @@ struct NotificationSettingsTests {
   @Test func defaultsEveryCategoryButBuildRequestsToSilentAndRunsEveryCategory() throws {
     let defaults = try defaults("NotificationSettingsTests.fresh")
     let levels = OversightCategory.desktop.map { NotificationSettings.level($0, defaults) }
-    #expect(levels == [.silent, .silent, .silent, .silent, .silent, .alert])
+    #expect(levels == [.silent, .silent, .silent, .silent, .silent, .silent, .alert])
     let prefs = NotificationSettings.prefs(defaults)
-    #expect(prefs.categories == [.started, .stuck, .looping, .finished, .machine, .buildRequest])
+    #expect(prefs.categories == [.started, .stuck, .looping, .finished, .machine, .attention, .buildRequest])
     #expect(prefs.stuckMinutes == 15)
     #expect(prefs.quiet == false)
   }

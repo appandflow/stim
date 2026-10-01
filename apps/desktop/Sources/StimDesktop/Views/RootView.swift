@@ -8,7 +8,6 @@ enum SidebarItem: Hashable {
   case environment(String)
   case worktree(String)
   case notifications
-  case attention
   case machine
 }
 

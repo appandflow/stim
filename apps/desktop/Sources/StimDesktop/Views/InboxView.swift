@@ -53,7 +53,8 @@ struct InboxView: View {
     ) { fix in
       Button("Run the fix") { actions.run("Fix \(fix.title)", fix.command) }
     } message: { fix in
-      Text("\(fix.command.displayLine())\n\nStop native builds in this checkout first. Doctor repairs only what its report names.")
+      Text(
+        "\(fix.command.displayLine())\n\nStop native builds in this checkout first. Doctor repairs only what its report names.")
     }
     .confirmationDialog("Clear these notifications?", isPresented: $confirmsClear) {
       Button("Clear", role: .destructive) { inbox.clear(filter) }
