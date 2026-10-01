@@ -877,7 +877,9 @@ the app cannot tell what installed it. **Install stim** uses the manager picked
 in the setup guide's tabs; the banner uses the default, pnpm or bun when its
 global bin directory is on the login shell's `PATH`, else npm. A pnpm whose
 global bin directory is not on the `PATH` is not offered, because pnpm refuses
-global installs then. `stim-server` is still installed and updated with npm. Once a day, and at launch, the app also reads the
+global installs then. `stim-server` is still installed and updated with npm.
+
+Once a day, and at launch, the app also reads the
 `latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
 check when the registry cannot be reached. When the `stim` it runs is owned by a
 package manager and older than `latest`, the sidebar footer shows **stim
