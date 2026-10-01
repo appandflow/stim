@@ -2,8 +2,6 @@ import AppKit
 import StimKit
 import SwiftUI
 
-/// A card at the main window's bottom left for news the user can act on later: it stays until it is acted on or
-/// dismissed, so it never competes with the page they are on.
 struct Notice: Identifiable {
   let id = UUID()
   var icon: String
@@ -13,7 +11,6 @@ struct Notice: Identifiable {
   var actionTitle: String
   var perform: @MainActor () -> Void
   var onDismiss: (@MainActor () -> Void)?
-  /// Showing a notice replaces any shown one with the same key.
   var key: String?
 }
 
@@ -42,10 +39,16 @@ final class NoticeCenter: ObservableObject {
     index = (index + offset + notices.count) % notices.count
   }
 
-  /// Takes the notice away after the user acted on it or it stopped applying; `onDismiss` runs only for a dismissal.
   func remove(_ id: Notice.ID) {
-    notices.removeAll { $0.id == id }
+    guard let position = notices.firstIndex(where: { $0.id == id }) else { return }
+    notices.remove(at: position)
+    if position < index { index -= 1 }
     index = min(index, max(notices.count - 1, 0))
+  }
+
+  func removeAll() {
+    notices = []
+    index = 0
   }
 
   func dismiss(_ id: Notice.ID) {

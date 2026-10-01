@@ -8,7 +8,6 @@ import SwiftUI
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
-  /// Whether a main window existed when `device` arrived; a request that opens the window finds nothing to lose.
   var deviceArrivedWithWindow = false
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?

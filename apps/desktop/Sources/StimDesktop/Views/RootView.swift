@@ -137,6 +137,7 @@ struct RootView: View {
       store.start()
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
+    .onDisappear { notices.removeAll() }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
@@ -266,8 +267,6 @@ struct RootView: View {
     }
   }
 
-  /// One notice per offered version; dismissing it keeps it away until a newer stim is released. The sidebar footer
-  /// keeps showing the update either way.
   private func showStimUpdate(_ latest: SemanticVersion?) {
     guard let latest, latest.description != dismissedStimUpdate,
       case .compatible(let installed)? = onboarding.report?.stim
