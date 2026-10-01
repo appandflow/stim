@@ -38,8 +38,8 @@ NORMAL WORKFLOW
 
 Create a linked worktree with Git and warm its ignored state. If a harness
 already created this linked worktree, run stim worktree warm here instead of
-creating another one. It copies missing ignored paths from the source checkout, including eligible .env
-and local configuration files. It preserves the branch, tracked files, and
+creating another one. It copies missing ignored paths from the source checkout,
+including eligible .env and local configuration files. It preserves the branch, tracked files, and
 every existing destination entry; existing ignored directories are skipped
 whole, not filled in. Add --refresh to fast-forward the source checkout and
 install what moved there before the copy; it refuses a source checkout with local
