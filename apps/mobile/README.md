@@ -439,6 +439,13 @@ every screen follows the iPad's orientation; Android tablets follow the phone
 rules. On a read-only pairing in landscape, dragging down does not close the
 viewer, so the column can scroll.
 
+On a foldable folded like a book, such as an iPhone Duo or a Pixel Fold
+half open, the viewer splits at the fold: the device screen and its replay
+controls on the leading side, and the read-only banner, the Control toolbars
+and the agent actions on the other. The title stays across the top. The
+viewer reads the fold from `react-native-reserved-regions`; the safe area
+insets already keep it clear of the Dynamic Island and camera cutouts.
+
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your

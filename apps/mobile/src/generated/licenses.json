@@ -561,6 +561,13 @@
    "text": 37
   },
   {
+   "name": "react-native-reserved-regions",
+   "version": "0.2.0",
+   "license": "MIT",
+   "url": "https://github.com/appandflow/react-native-reserved-regions",
+   "text": 36
+  },
+  {
    "name": "react-native-safe-area-context",
    "version": "5.9.1",
    "license": "MIT",
