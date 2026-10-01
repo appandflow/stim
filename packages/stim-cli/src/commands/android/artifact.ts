@@ -109,6 +109,7 @@ interface AndroidArtifactRequest {
     miss: (reason: BuildMissReason, provisional?: boolean) => void;
     hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
+    waitingOn: (root: string | null) => void;
   };
 }
 
@@ -219,7 +220,7 @@ export async function acquireAndroidArtifact(
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats, step, miss, hit: lateHit, place } = progress;
+  const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn } = progress;
   let fallbackMachine: string | null = null;
   let hereReason: string | null = null;
   const fallBack = (reason: string, line: string = reason) => {
@@ -451,6 +452,7 @@ export async function acquireAndroidArtifact(
         step('wait');
         phase('build', text);
       },
+      waitingOn,
       warn: (text) => phase('build', chalk.yellow(text)),
       out,
     });

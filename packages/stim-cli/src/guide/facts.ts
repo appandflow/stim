@@ -1168,7 +1168,8 @@ RULES
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis,
-            plannedPhases, missReason?, missProvisional?, detail?, placement }
+            plannedPhases, missReason?, missProvisional?, detail?, placement,
+            waitingOn? }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1248,6 +1249,10 @@ RULES
                    startedAt is when the offload started and phaseStartedAt
                    when that step did. Meanwhile phase above follows it as
                    prebuild, pods or compile.
+  waitingOn        while phase is "wait" and the holder is known: { path },
+                   the workspace whose build of the same artifact this run
+                   waits for; absent otherwise. path matches an entry of
+                   environments.
 
   Plain \`stim status\` prints the same as one line per workspace:
 

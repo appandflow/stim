@@ -420,6 +420,15 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 }
 
+@Suite struct WaitingBuildTests {
+  @Test func readsTheWorkspaceWhoseBuildItWaitsFor() throws {
+    let waiting = #","waitingOn":{"path":"/w/app-a"}"#
+    let build = try #require(try workspace(#""build":\#(runningBuild(waiting))"#).build)
+    #expect(build.waitingOn == WaitingOn(path: "/w/app-a"))
+    #expect(try #require(try workspace(#""build":\#(runningBuild())"#).build).waitingOn == nil)
+  }
+}
+
 @Suite struct OffloadedBuildTests {
   @Test func namesTheBuildMachineWithoutItsPortAndTheStepItRunsThere() throws {
     let placement =

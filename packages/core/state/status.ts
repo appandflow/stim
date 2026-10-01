@@ -54,6 +54,8 @@ export interface BuildReport {
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
   placement: BuildPlacement;
+  /** While `phase` is `wait`: the workspace whose build of the same artifact this run waits on, when it is known. */
+  waitingOn?: { path: string };
 }
 
 /** One phase a running build is expected to go through, and its median duration in comparable runs. */

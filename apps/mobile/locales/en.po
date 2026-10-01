@@ -3668,6 +3668,10 @@ msgstr "Video quality"
 msgid "Wait"
 msgstr "Wait"
 
+#: src/screens/build-details.tsx
+msgid "Waiting for {name}'s build of the same app"
+msgstr "Waiting for {name}'s build of the same app"
+
 #: src/components/device-grid-tile.tsx
 msgid "Waiting for a frame"
 msgstr "Waiting for a frame"
@@ -3684,6 +3688,10 @@ msgstr "Waiting for frames"
 #: src/components/device-tile.tsx
 msgid "Waiting for the {buildName} build"
 msgstr "Waiting for the {buildName} build"
+
+#: src/screens/build-details.tsx
+msgid "Waiting for the build of {name}. Open {name}"
+msgstr "Waiting for the build of {name}. Open {name}"
 
 #: src/lib/workspace-view.ts
 msgid "warmed {since} ago"

@@ -842,6 +842,7 @@ async function runIos(
             miss: progress.miss,
             hit: progress.hit,
             place: progress.place,
+            waitingOn: progress.waitingOn,
           },
         },
         d,

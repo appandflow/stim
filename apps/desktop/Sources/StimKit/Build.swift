@@ -25,6 +25,9 @@ public struct Build: Decodable, Hashable, Sendable {
   public var missProvisional: Bool?
   /// Where it compiles; nil from a `stim` older than build offload.
   public var placement: BuildPlacement?
+  /// While `phase` is `wait`: the workspace whose build of the same artifact this run waits for; nil from an older stim
+  /// or when the holder is not known.
+  public var waitingOn: WaitingOn?
 
   public var isRunning: Bool { state == "running" }
 
@@ -55,6 +58,10 @@ public struct Build: Decodable, Hashable, Sendable {
     let fraction = steadyFraction("\(key)|top", min(elapsedMs / expectedMs, 0.99))
     return BuildProgress(elapsedMs: elapsedMs, fraction: fraction, remaining: remaining)
   }
+}
+
+public struct WaitingOn: Decodable, Hashable, Sendable {
+  public var path: String
 }
 
 public struct PlannedPhase: Decodable, Hashable, Sendable {

@@ -112,6 +112,7 @@ interface IosArtifactRequest {
     miss: (reason: BuildMissReason, provisional?: boolean) => void;
     hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
+    waitingOn: (root: string | null) => void;
   };
 }
 
@@ -205,7 +206,7 @@ export async function acquireIosArtifact(
   }: IosArtifactRequest,
   d: IosArtifactDeps,
 ): Promise<IosArtifactResult> {
-  const { phase, note, logWriter, estimates, stats, step, miss, hit: lateHit, place } = progress;
+  const { phase, note, logWriter, estimates, stats, step, miss, hit: lateHit, place, waitingOn } = progress;
   const physical = device !== null;
   const keyOptions = {
     scheme: buildScheme,
@@ -455,6 +456,7 @@ export async function acquireIosArtifact(
         step('wait');
         phase('build', text);
       },
+      waitingOn,
       warn: (text) => note(chalk.yellow(phaseLine('build', text))),
       out: note,
     });

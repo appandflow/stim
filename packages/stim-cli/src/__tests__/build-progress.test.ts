@@ -131,6 +131,31 @@ describe('active build record', () => {
     releaseClaim(claim);
   });
 
+  test('names the workspace a waiting build waits on and drops it when the run leaves the wait', () => {
+    const claim = takeClaim();
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+    expect(report().waitingOn).toBeUndefined();
+
+    now += 10_000;
+    progress.step('wait');
+    progress.waitingOn('/w/app-a');
+    expect(report().waitingOn).toEqual({ path: '/w/app-a' });
+    expect(buildStatusLine(report(), now + 5_000)).toBe('build: ios wait on /w/app-a, 15s elapsed');
+
+    progress.waitingOn('/w/app-b');
+    expect(report().waitingOn).toEqual({ path: '/w/app-b' });
+    progress.waitingOn(null);
+    expect(report().waitingOn).toBeUndefined();
+
+    progress.waitingOn('/w/app-a');
+    progress.step('device');
+    expect(report().waitingOn).toBeUndefined();
+    progress.clear();
+    releaseClaim(claim);
+  });
+
   test('records phase transitions under the run claim, reports running, and clears on exit', () => {
     const claim = takeClaim();
     let now = T0;

@@ -318,6 +318,7 @@ interface SharedBuildWaitOptions {
   wait: typeof waitForBuild;
   now: () => number;
   phase: (text: string) => void;
+  waitingOn: (root: string | null) => void;
   warn: (text: string) => void;
   out: (line: string) => void;
 }
@@ -342,6 +343,7 @@ export async function waitForSharedBuild({
   wait,
   now,
   phase,
+  waitingOn,
   warn,
   out,
 }: SharedBuildWaitOptions): Promise<SharedBuildWait> {
@@ -372,6 +374,7 @@ export async function waitForSharedBuild({
       `${who} is already building ${shortHash(fingerprint)} (pid ${holder.pid})` +
         `${holder.logFile ? ` -- tail ${holder.logFile}` : ''} -- stim guide lifecycle concurrency`,
     );
+    waitingOn(holder.projectRoot || null);
 
     let waited: WaitForBuildResult;
     try {

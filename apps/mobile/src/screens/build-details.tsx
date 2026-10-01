@@ -1,5 +1,6 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
+import { useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { EaseView, type Transition } from 'react-native-ease';
@@ -44,6 +45,7 @@ import {
   type PhaseStep,
   type RemoteBuild,
 } from '@/lib/workspace-view';
+import { workspaceTitleAt } from '@/lib/workspace-names';
 import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
 import type {
   BuildDiagnostic,
@@ -310,6 +312,7 @@ function RunningBuild({
             .join(' \u00B7 ')}
         </Text>
       </View>
+      {build.phase === 'wait' && build.waitingOn ? <WaitingOn path={build.waitingOn.path} /> : null}
       <PhaseList
         steps={phaseSteps(build, history, now)}
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
@@ -332,6 +335,32 @@ function RunningBuild({
         </Section>
       ) : null}
     </>
+  );
+}
+
+function WaitingOn({ path }: { path: string }) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const { mac } = useMacConnection();
+  const status = useStatus();
+  const name = workspaceTitleAt(path, status);
+  if (!mac) return null;
+  const open = () => {
+    router.dismiss();
+    router.push({ pathname: '/mac/[id]/workspace', params: { id: mac.id, path } });
+  };
+  return (
+    <Touch
+      onPress={open}
+      accessibilityRole="link"
+      accessibilityLabel={t`Waiting for the build of ${name}. Open ${name}`}
+      style={styles.refresh}
+    >
+      <Text variant="callout" tone="brand" style={styles.grow}>
+        {t`Waiting for ${name}'s build of the same app`}
+      </Text>
+      <Icon name="chevron.right" size={12} color={theme.colors.primary} />
+    </Touch>
   );
 }
 

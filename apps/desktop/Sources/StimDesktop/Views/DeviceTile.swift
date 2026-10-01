@@ -712,6 +712,7 @@ private struct WebScreen: View {
 private struct BuildCover: View {
   var build: Build
   var opaque: Bool
+  @Environment(\.workspaceTitle) private var title
 
   var body: some View {
     TimelineView(.buildSeconds(build)) { context in
@@ -719,7 +720,12 @@ private struct BuildCover: View {
       let (phase, counts) = build.currentPhaseLabel
       let estimate = build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? ""
       VStack(spacing: Space.sm) {
-        Text("Waiting for the \(platformName(build.platform)) build").font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+        Text(
+          build.phase == "wait" && build.waitingOn != nil
+            ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
+            : "Waiting for the \(platformName(build.platform)) build"
+        )
+        .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
         Text([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
           .font(.stim(.caption))
           .foregroundStyle(.white.opacity(0.6))
