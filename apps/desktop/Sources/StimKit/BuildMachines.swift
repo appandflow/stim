@@ -112,6 +112,24 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
 
   public struct Capacity: Decodable, Hashable, Sendable {
     public var loadPerCore: Double?
+    public var cpus: Int?
+    /// Offloaded builds it runs now, and how many it takes at once.
+    public var running: Int?
+    public var max: Int?
+    public var diskFreeBytes: Double?
+    public var maxLoadPerCore: Double?
+
+    /// The load, cores, offloaded builds and free disk it reported, separated by middle dots.
+    public var line: String {
+      var parts: [String] = []
+      if let loadPerCore {
+        parts.append("load \(formatLoad(loadPerCore))/core" + (maxLoadPerCore.map { " of \(formatLoad($0))" } ?? ""))
+      }
+      if let cpus { parts.append("\(cpus) cores") }
+      if let running, let max { parts.append("\(running) of \(max) offloaded builds") }
+      if let diskFreeBytes { parts.append("\(Format.freeSpace(diskFreeBytes)) free") }
+      return parts.joined(separator: " \u{00B7} ")
+    }
   }
 
   public var machine: String

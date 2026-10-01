@@ -19,6 +19,47 @@ import Testing
     #expect(Tailnet.macs(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8)) == nil)
   }
 
+  @Test func readsPlacementsFromStatsAndSplitsThemByMachine() throws {
+    let stats = try JSONDecoder().decode(
+      MachineStats.self,
+      from: Data(
+        #"""
+        {"version":1,"project":null,"machine":{"ios":null,"android":null},"offload":{
+          "today":{"here":1,"offloaded":1,"fellBack":1},
+          "machines":{"mini":{"today":{"offloaded":1,"offloadedMs":200000,"savedMs":90000,"fallbacks":1},
+                              "total":{"offloaded":4,"offloadedMs":800000,"savedMs":-5000,"fallbacks":2}}},
+          "placements":[
+            {"at":"2026-09-30T12:03:00.000Z","project":"/r/app","platform":"ios","decision":"fell-back","machine":"mini","reason":"mini: busy"},
+            {"at":"2026-09-30T12:02:00.000Z","project":"/r/app","platform":"ios","decision":"offloaded","machine":"mini","reason":"this Mac is busy","buildMs":200000,"localEstimateMs":290000},
+            {"at":"2026-09-30T12:01:00.000Z","project":"/r/app","platform":"android","decision":"here","reason":"load 0.6/core here","failed":true},
+            {"at":"2026-09-30T12:00:00.000Z","project":"/r/app","platform":"ios","decision":"teleported","reason":"?"}]}}
+        """#.utf8))
+    let offload = try #require(stats.offload)
+    #expect(offload.machines["mini"]?.total.savedMs == -5000)
+    #expect(offload.placements(for: "mini").map(\.title) == ["Built here after mini", "Built on mini"])
+    #expect(offload.placements(for: "mini").map(\.shortReason) == ["busy", "this Mac is busy"])
+    #expect(offload.here.map(\.failed) == [true])
+    #expect(offload.placements.last?.decision == .unknown)
+    let fellBack = try JSONDecoder().decode(
+      BuildPlacements.Placement.self,
+      from: Data(#"{"at":"x","project":"/p","platform":"ios","decision":"fell-back","reason":"git"}"#.utf8))
+    #expect(fellBack.title == "Built here after offloading")
+    let ported = try JSONDecoder().decode(
+      BuildPlacements.Placement.self,
+      from: Data(#"{"at":"x","project":"/p","platform":"ios","decision":"offloaded","machine":"mini:7444","reason":"r"}"#.utf8))
+    #expect(ported.title == "Built on mini")
+    #expect(try JSONDecoder().decode(MachineStats.self, from: Data(#"{"version":1}"#.utf8)).offload == nil)
+  }
+
+  @Test func describesOnlyTheCapacityAMachineReported() throws {
+    let full = try JSONDecoder().decode(
+      BuildMachineStatus.Capacity.self,
+      from: Data(#"{"loadPerCore":0.3,"maxLoadPerCore":2,"cpus":10,"running":0,"max":1,"diskFreeBytes":812e9}"#.utf8))
+    #expect(full.line == "load 0.3/core of 2 \u{00B7} 10 cores \u{00B7} 0 of 1 offloaded builds \u{00B7} 812 GB free")
+    let old = try JSONDecoder().decode(BuildMachineStatus.Capacity.self, from: Data(#"{"loadPerCore":1.5}"#.utf8))
+    #expect(old.line == "load 1.5/core")
+  }
+
   @Test func readsEachMachineStateFromDoctorAndToleratesNewOnes() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,

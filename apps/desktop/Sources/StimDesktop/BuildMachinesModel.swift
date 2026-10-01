@@ -20,11 +20,13 @@ final class BuildMachinesModel {
   private(set) var working: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
+  private(set) var stats = Fetched<MachineStats>()
   private var checks: [String: Check] = [:]
 
   let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
   @ObservationIgnored private var latestRun: [String: Int] = [:]
+  @ObservationIgnored private var latestStatsRun = 0
 
   init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore) {
     self.cli = cli
@@ -47,7 +49,18 @@ final class BuildMachinesModel {
 
   func refresh(checkout: String?) async {
     await settings.refresh()
+    async let placements: Void = (entries ?? []).isEmpty ? () : refreshPlacements()
     await refreshStatuses(checkout: checkout, ask: false)
+    await placements
+  }
+
+  private func refreshPlacements() async {
+    latestStatsRun += 1
+    let run = latestStatsRun
+    let cli = await cli.value
+    let result = await Result.awaiting { try await cli.machineStats() }
+    guard run == latestStatsRun, !Task.isCancelled else { return }
+    stats.record(result)
   }
 
   func load(checkout: String?) async {

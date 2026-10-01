@@ -81,7 +81,7 @@ struct Sidebar: View {
         AttentionCount(store: store, autopilot: autopilot)
       }
       PinnedRow(item: .machine, selection: $selection) {
-        SidebarLabel(title: "Machine", icon: "internaldrive", selected: selection == .machine)
+        SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
         Spacer()
         if autopilot.pressure != nil {
           Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.warning)
