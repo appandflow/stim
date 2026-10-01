@@ -230,14 +230,14 @@ struct SetupGuideView: View {
         "The skill tells Claude Code, Codex, Cursor and other agents to use Stim when they build, run or debug your app. It only points the agent at stim guide agent, so the guidance always matches the installed stim and upgrades need no reinstall."
       )
       .foregroundStyle(Palette.secondary)
+      if let path = setup.skillPath {
+        statusLine("Installed at \(abbreviatingHome(path))", tone: .success, icon: "checkmark.circle.fill")
+      }
       CommandBlock(
         command: onboarding.installSkillCommand, run: onboarding.guideRuns[onboarding.installSkillCommand], busy: busy,
         isDefault: setup.state(of: .skill) == .pending,
         caption: "Installs it for the agents on this Mac, in every project."
       ) { onboarding.runGuide("Install the Stim skill", onboarding.installSkillCommand) }
-      if let path = setup.skillPath {
-        statusLine("Installed at \(abbreviatingHome(path))", tone: .success, icon: "checkmark.circle.fill")
-      }
     }
   }
 
