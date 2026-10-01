@@ -550,14 +550,23 @@ struct SidebarFooter: View {
   @ViewBuilder private var leftStatus: some View {
     switch status {
     case .stimUnavailable(let compatibility):
-      Button(action: onboarding.installStim) {
-        statusLabel(dot: Palette.warning, text: compatibility == .missing ? "Install stim" : "stim update available")
+      let text = compatibility == .missing ? "Install stim" : "stim update available"
+      if onboarding.installCLICommand == nil {
+        statusLabel(dot: Palette.warning, text: text)
+          .help(
+            "This stim is older than Stim Desktop needs, and no package manager installed it. Update it where it came from, or choose another in Settings"
+          )
+      } else {
+        Button(action: onboarding.installStim) {
+          statusLabel(dot: Palette.warning, text: text)
+        }
+        .buttonStyle(.hoverRow(outset: Space.sm))
+        .help(
+          compatibility == .missing
+            ? "Stim Desktop cannot find stim \u{2014} click to install it with \(onboarding.installer.rawValue)"
+            : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
+        )
       }
-      .buttonStyle(.hoverRow(outset: Space.sm))
-      .help(
-        compatibility == .missing
-          ? "Stim Desktop cannot find stim \u{2014} click to install it with npm"
-          : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with npm")
     case .diskCritical(let freeBytes):
       Button {
         selection = .machine
