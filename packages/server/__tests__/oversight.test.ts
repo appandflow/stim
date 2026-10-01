@@ -697,6 +697,27 @@ describe('oversee, what needs a person', () => {
     expect(watch(T0 + 2 * MIN, [env({ physicalDevices: [lease(T0)] })])).toEqual([]);
   });
 
+  it('reads state saved before the category existed', () => {
+    watch(T0, [env()]);
+    const saved = JSON.parse(JSON.stringify(stateOf.state)) as OversightState;
+    for (const workspace of Object.values(saved.workspaces)) delete (workspace as { attention?: string[] }).attention;
+    stateOf.state = saved;
+    expect(watch(T0 + MIN, [env({ physicalDevices: [lease(T0)] })])).toHaveLength(1);
+  });
+
+  it('notifies a signing failure that repeats once, as the repeated failure', () => {
+    watch(T0, [env()]);
+    const code = 'STIM_NO_PROFILE';
+    const repeated = env({
+      ...builds(
+        { status: 'failed', at: T0, code },
+        { status: 'failed', at: T0 - 2 * MIN, code },
+        { status: 'failed', at: T0 - 4 * MIN, code },
+      ),
+    });
+    expect(watch(T0 + MIN, [repeated]).map((text) => text.split(' ')[0])).toEqual(['looping']);
+  });
+
   it('leaves stuck and looping items to their own categories and points a signing failure at the build', () => {
     watch(T0, [env()]);
     const signing = env({ ...builds({ status: 'failed', at: T0, code: 'STIM_NO_PROFILE' }) });

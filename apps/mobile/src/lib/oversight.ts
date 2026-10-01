@@ -592,11 +592,14 @@ function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev:
   });
   for (const item of items) {
     if (item.category !== 'attention') continue;
-    const target: OversightTarget = item.id.startsWith('run-')
-      ? { kind: 'build', path: env.path, platform: item.id.startsWith('run-ios') ? 'ios' : 'android' }
-      : { kind: 'workspace', path: env.path };
+    let target: OversightTarget = { kind: 'workspace', path: env.path };
+    if (item.id.startsWith('run-')) {
+      const platform = item.id.startsWith('run-ios') ? 'ios' : 'android';
+      if ((failureStreak(platform, env.builds?.[platform])?.count ?? 0) >= LOOP_COUNT) continue;
+      target = { kind: 'build', path: env.path, platform };
+    }
     const notification = { ...notify('attention', item.body, target), id: item.id };
-    if (prev?.attention.includes(item.id) || lasting(run, notification)) entry.attention.push(item.id);
+    if (prev?.attention?.includes(item.id) || lasting(run, notification)) entry.attention.push(item.id);
   }
 }
 
