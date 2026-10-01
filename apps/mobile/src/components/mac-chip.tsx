@@ -7,6 +7,7 @@ import { Icon } from '@/components/icon';
 import { MachineStatsRow } from '@/components/machine-stats';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { useLargeText } from '@/hooks/large-text';
 import { useMachineLink, useMachineUsage } from '@/hooks/machines';
 import type { ConnectionState } from '@/lib/connection';
 import { machineStats } from '@/lib/home';
@@ -21,6 +22,7 @@ export function connectionColor(state: ConnectionState, missing: boolean, colors
 
 export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void }) {
   const { theme } = useUnistyles();
+  const large = useLargeText();
   const { state, missing } = useMachineLink(mac.id);
   const usage = useMachineUsage(mac.id);
   const dot = connectionColor(state, missing, theme.colors);
@@ -31,19 +33,24 @@ export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void 
     ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || t`Loading`
     : describeState(state, missing);
   return (
-    <Touch feedback="card" onPress={onPress} accessibilityLabel={t`${name}, ${detail}`} style={styles.chip}>
+    <Touch
+      feedback="card"
+      onPress={onPress}
+      accessibilityLabel={t`${name}, ${detail}`}
+      style={[styles.chip, large && styles.chipLarge]}
+    >
       <View>
         <Icon name="laptopcomputer" size={20} color={theme.colors.text} />
         <View style={[styles.dot, { backgroundColor: dot }]} />
       </View>
       <View style={styles.text}>
-        <Text variant="body" weight="semibold" numberOfLines={1}>
+        <Text variant="body" weight="semibold" numberOfLines={large ? 3 : 1}>
           {name}
         </Text>
         {open && stats.length > 0 ? (
           <MachineStatsRow usage={usage} />
         ) : (
-          <Text variant="caption" tone="secondary" style={styles.detail} numberOfLines={1}>
+          <Text variant="caption" tone="secondary" style={styles.detail} numberOfLines={large ? 3 : 1}>
             {open ? <Trans>Loading</Trans> : detail}
           </Text>
         )}
@@ -86,6 +93,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface,
     borderColor: theme.colors.border,
   },
+  chipLarge: { borderRadius: theme.radius.card },
   dot: {
     position: 'absolute',
     top: -2,

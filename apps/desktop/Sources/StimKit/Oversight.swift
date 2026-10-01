@@ -5,6 +5,8 @@ import Foundation
 /// `Fixtures/oversight-vectors.json`, so the two fail until they agree.
 public enum OversightCategory: String, Codable, CaseIterable, Hashable, Sendable {
   case started, stuck, looping, finished, machine, control
+  /// Stim Desktop only: something only a person can fix, from the needs-attention rule.
+  case attention
   /// Stim Desktop only: another Mac asks to build on this one.
   case buildRequest = "build-request"
 }
@@ -251,10 +253,12 @@ public struct OversightNotification: Codable, Hashable, Sendable {
   /// Groups notifications in the notification list; nil leaves them ungrouped.
   public var thread: String?
   public var target: OversightTarget
+  /// The `stim` command that fixes what it reports, run from the target's workspace; nil when none does.
+  public var remedy: String?
 
   public init(
     id: String, category: OversightCategory, title: String, body: String, quiet: Bool, thread: String?,
-    target: OversightTarget
+    target: OversightTarget, remedy: String? = nil
   ) {
     self.id = id
     self.category = category
@@ -263,6 +267,7 @@ public struct OversightNotification: Codable, Hashable, Sendable {
     self.quiet = quiet
     self.thread = thread
     self.target = target
+    self.remedy = remedy
   }
 }
 

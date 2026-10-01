@@ -2,6 +2,7 @@ import { t } from '@lingui/core/macro';
 
 import type {
   AndroidState,
+  AppPresence,
   BuildReport,
   DeviceActivity,
   DeviceAppProcess,
@@ -44,6 +45,8 @@ export interface DeviceRef {
   physical: boolean;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** The app presence `stim` reported on the device record; read only when the environment carries `stage`. */
+  presence?: AppPresence;
   /** The AVD's device profile id, such as `pixel_9`, for an Android emulator. */
   profile?: string | null;
   /** The Stim-owned Chrome's current page and, when its latest load failed, why. */
@@ -92,6 +95,7 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
     physical: false,
     activity: sim.activity,
     app: sim.app,
+    presence: sim.appPresence,
     diskBytes: sim.disk?.bytes ?? null,
   };
 }
@@ -109,6 +113,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     physical: avd.physical,
     activity: avd.activity,
     app: avd.app,
+    presence: avd.appPresence,
     profile: avd.deviceProfile,
     diskBytes: avd.disk?.bytes ?? null,
   };

@@ -92,4 +92,13 @@ struct InboxTests {
     let decoded = try JSONDecoder().decode(Inbox.self, from: Data(json.utf8))
     #expect(decoded.entries.map(\.id) == ["a"])
   }
+
+  @Test func readsAStoredEntryWrittenBeforeItCarriedARemedy() throws {
+    var inbox = Inbox()
+    inbox.add(entry("a", .stuck, .workspace(path: "/a"), ago: 60), now: now)
+    let json = try #require(String(data: JSONEncoder().encode(inbox), encoding: .utf8))
+    #expect(!json.contains("remedy"))
+    let decoded = try JSONDecoder().decode(Inbox.self, from: Data(json.utf8))
+    #expect(decoded.entries.first?.remedy == nil)
+  }
 }

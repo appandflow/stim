@@ -6,6 +6,10 @@ enum MainWindow {
     window.identifier?.rawValue.hasPrefix("main") == true
   }
 
+  static var isOpen: Bool {
+    NSApp.windows.contains { isMain($0) && ($0.isVisible || $0.isMiniaturized) }
+  }
+
   static var isInFront: Bool {
     NSApp.isActive && NSApp.windows.contains { isMain($0) && $0.isVisible && $0.occlusionState.contains(.visible) }
   }

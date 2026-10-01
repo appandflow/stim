@@ -233,7 +233,14 @@ function NavRow({
       style={styles.row(selected)}
     >
       <Icon name={icon} size={20} color={theme.colors.text} />
-      <Text variant="headline" weight="medium" style={styles.grow}>
+      <Text
+        variant="headline"
+        weight="medium"
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+        style={styles.grow}
+      >
         {title}
       </Text>
       {count > 0 ? (
@@ -314,7 +321,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   count: {
     minWidth: 22,
-    height: 22,
+    minHeight: 22,
     paddingHorizontal: theme.space.sm,
     borderRadius: theme.radius.round,
     alignItems: 'center',

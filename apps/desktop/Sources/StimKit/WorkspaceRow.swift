@@ -106,7 +106,7 @@ extension Workspace {
     return RowStatus(kind: .running, text: "Running", label: "Running", tone: .success)
   }
 
-  /// A failed build shows while the workspace is live, or for a day after it failed, as in Needs attention.
+  /// A failed build shows while the workspace is live, or for a day after it failed, like the Needs you notification.
   public func rowProblems(now: Date) -> [RowProblem] {
     var problems: [RowProblem] = []
     let errors = logs?.errorsSinceMarker ?? 0

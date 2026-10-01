@@ -63,9 +63,10 @@ function textStyles(text, macos) {
   ].join('\n');
 }
 
-function palette(colors) {
+function palette(colors, highContrast) {
   const lines = Object.keys(colors.light).map(
-    (key) => `  static let ${key} = Color(light: ${rgba(colors.light[key])}, dark: ${rgba(colors.dark[key])})`,
+    (key) =>
+      `  static let ${key} = Color(light: ${rgba(colors.light[key])}, dark: ${rgba(colors.dark[key])}, lightHighContrast: ${rgba(highContrast.light[key])}, darkHighContrast: ${rgba(highContrast.dark[key])})`,
   );
   const all = Object.keys(colors.light).map((key) => `("${key}", ${key})`);
   return `enum Palette {\n${lines.join('\n')}\n\n  static let all: [(name: String, color: Color)] = [\n    ${all.join(',\n    ')},\n  ]\n}`;
@@ -92,7 +93,7 @@ ${Object.entries(tokens.opacity)
 
 ${textStyles(tokens.text, tokens.macosText)}
 
-${palette(tokens.colors)}
+${palette(tokens.colors, tokens.colorsHighContrast)}
 
 ${media(tokens.media)}
 

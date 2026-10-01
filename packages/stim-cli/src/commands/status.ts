@@ -60,6 +60,8 @@ import {
   readIdleStop,
   readBuildHistory,
   readLastBuilds,
+  withDerivedFacts,
+  withGitChip,
   withStateReadCache,
   type AgentSession,
   type DeviceAppProcess,
@@ -465,10 +467,12 @@ function renderStatus(
   if (json) {
     out.push(
       JSON.stringify({
-        environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
+        environments: states.map((state, i) =>
+          withDerivedFacts(labelOnlyRoots[i] ? { ...state, labelOnly: true as const } : state),
+        ),
         capacity: cap,
         deviceLeases: leases,
-        unprovisionedWorktrees: orphanWorktrees,
+        unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
         simctlAvailable: simsAvailable,
         machine,
       } satisfies StatusPayload),

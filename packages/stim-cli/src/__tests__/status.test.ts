@@ -1008,6 +1008,13 @@ test('status lists worktrees with no environment for every registered repository
         branch: 'loose',
         repository: first,
         git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
+        gitChip: {
+          parts: [
+            { kind: 'arrows', ahead: 1, behind: 0 },
+            { kind: 'changed', count: 4 },
+          ],
+          ci: null,
+        },
       },
       { path: deleted, branch: 'deleted', repository: second, git: null },
       {
@@ -1015,6 +1022,7 @@ test('status lists worktrees with no environment for every registered repository
         branch: 'other',
         repository: second,
         git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
+        gitChip: { parts: [{ kind: 'no-upstream' }], ci: null },
       },
     ]);
     const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
@@ -1023,6 +1031,7 @@ test('status lists worktrees with no environment for every registered repository
       branch: 'nested',
       repository: first,
       git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: 'origin/main' },
+      gitChip: { parts: [{ kind: 'merged', into: 'origin/main' }], ci: null },
     });
   } finally {
     rmSync(base, { recursive: true, force: true });

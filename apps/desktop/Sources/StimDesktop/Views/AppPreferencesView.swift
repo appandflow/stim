@@ -27,6 +27,7 @@ struct AppPreferencesView: View {
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
   @EnvironmentObject private var autopilot: AutopilotRunner
+  @EnvironmentObject private var onboarding: Onboarding
   @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
@@ -108,7 +109,7 @@ struct AppPreferencesView: View {
         Text("Autopilot")
       } footer: {
         Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check. Finished pull requests: every 5 minutes and when the app becomes active, gh lists each repository's merged and closed pull requests. When a linked worktree's branch is among them, stim gc checks it, and stim worktree remove removes it only when it is clean, has no commit that exists only locally (a merged pull request's own commits excepted), no Metro, build, device or warm of it is live, and 2 hours have passed since the merge or its last activity (gc.worktreeGraceMinutes). A worktree it keeps is listed in Needs attention with the reason."
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check. Finished pull requests: every 5 minutes and when the app becomes active, gh lists each repository's merged and closed pull requests. When a linked worktree's branch is among them, stim gc checks it, and stim worktree remove removes it only when it is clean, has no commit that exists only locally (a merged pull request's own commits excepted), no Metro, build, device or warm of it is live, and 2 hours have passed since the merge or its last activity (gc.worktreeGraceMinutes). A worktree it keeps is notified as Needs you with the reason."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -192,7 +193,8 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Stim executable") {
+      Section("Stim CLI") {
+        stimVersionRow
         HStack {
           TextField("stim on the login shell's PATH", text: $stimExecutable)
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
@@ -204,6 +206,26 @@ struct AppPreferencesView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(Palette.background)
+  }
+
+  @ViewBuilder private var stimVersionRow: some View {
+    if case .compatible(let installed)? = onboarding.report?.stim {
+      LabeledContent("Installed") { Text(installed.description).font(.stim(.body, mono: true)) }
+      if let latest = onboarding.latestStim {
+        LabeledContent("Latest") {
+          HStack(spacing: Space.md) {
+            Text(latest.description).font(.stim(.body, mono: true))
+            if onboarding.stimUpdate != nil {
+              Button("Update", action: onboarding.installStim).buttonStyle(.stim(.primary))
+            }
+          }
+        }
+        if installed < latest, onboarding.stimUpdate == nil {
+          Text("No package manager installed this stim, so update it where it came from.")
+            .foregroundStyle(Palette.tertiary)
+        }
+      }
+    }
   }
 
   private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {

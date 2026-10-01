@@ -12,6 +12,7 @@ export * from './recordings.ts';
 export * from './settings-registry.ts';
 export * from './settings-schema.ts';
 export * from './status.ts';
+export * from './status-derived.ts';
 export * from './status-measures.ts';
 export * from './stim-build.ts';
 export * from './workspace-state.ts';

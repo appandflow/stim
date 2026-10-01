@@ -648,6 +648,86 @@ describe('inQuietHours', () => {
   });
 });
 
+describe('oversee, what needs a person', () => {
+  const lease = (expiresAt: number) => ({
+    platform: 'ios',
+    slot: 'default',
+    id: 'U1',
+    name: 'Old iPhone',
+    model: null,
+    lease: { expiresAt: iso(expiresAt) },
+  });
+  const stateOf: { state: OversightState | null } = { state: null };
+  const watch = (at: number, environments: Env[], prefs = ALL) => {
+    const result = oversee(stateOf.state, input(environments), prefs, at);
+    stateOf.state = result.state;
+    return result.notifications.map((n) => `${n.category} ${n.id}: ${n.body}`);
+  };
+  beforeEach(() => {
+    stateOf.state = null;
+  });
+
+  it('notifies an expired lease once per episode and again after it went away', () => {
+    const expired = env({ physicalDevices: [lease(T0)] });
+    expect(watch(T0 + MIN, [env()])).toEqual([]);
+    expect(watch(T0 + 2 * MIN, [expired])).toEqual([
+      `attention lease-ios-default:${PATH}: Lease on Old iPhone expired`,
+    ]);
+    expect(watch(T0 + 3 * MIN, [expired])).toEqual([]);
+    expect(watch(T0 + 4 * MIN, [env()])).toEqual([]);
+    expect(watch(T0 + 5 * MIN, [expired])).toHaveLength(1);
+  });
+
+  it('records what is already true at the first look without notifying', () => {
+    expect(watch(T0 + MIN, [env({ physicalDevices: [lease(T0)] })])).toEqual([]);
+    expect(watch(T0 + 2 * MIN, [env({ physicalDevices: [lease(T0)] })])).toEqual([]);
+  });
+
+  it('holds an item back during quiet hours and notifies it afterwards', () => {
+    watch(T0, [env()]);
+    const expired = env({ physicalDevices: [lease(T0)] });
+    expect(watch(T0 + MIN, [expired], { ...ALL, quiet: true })).toEqual([]);
+    expect(watch(T0 + 2 * MIN, [expired])).toHaveLength(1);
+  });
+
+  it('drops an item whose category is off', () => {
+    watch(T0, [env()]);
+    const off = { ...ALL, categories: OVERSIGHT_CATEGORIES.filter((c) => c !== 'attention') };
+    expect(watch(T0 + MIN, [env({ physicalDevices: [lease(T0)] })], off)).toEqual([]);
+    expect(watch(T0 + 2 * MIN, [env({ physicalDevices: [lease(T0)] })])).toEqual([]);
+  });
+
+  it('reads state saved before the category existed', () => {
+    watch(T0, [env()]);
+    const saved = JSON.parse(JSON.stringify(stateOf.state)) as OversightState;
+    for (const workspace of Object.values(saved.workspaces)) delete (workspace as { attention?: string[] }).attention;
+    stateOf.state = saved;
+    expect(watch(T0 + MIN, [env({ physicalDevices: [lease(T0)] })])).toHaveLength(1);
+  });
+
+  it('notifies a signing failure that repeats once, as the repeated failure', () => {
+    watch(T0, [env()]);
+    const code = 'STIM_NO_PROFILE';
+    const repeated = env({
+      ...builds(
+        { status: 'failed', at: T0, code },
+        { status: 'failed', at: T0 - 2 * MIN, code },
+        { status: 'failed', at: T0 - 4 * MIN, code },
+      ),
+    });
+    expect(watch(T0 + MIN, [repeated]).map((text) => text.split(' ')[0])).toEqual(['looping']);
+  });
+
+  it('leaves stuck and looping items to their own categories and points a signing failure at the build', () => {
+    watch(T0, [env()]);
+    const signing = env({ ...builds({ status: 'failed', at: T0, code: 'STIM_NO_PROFILE' }) });
+    const result = oversee(stateOf.state, input([signing]), ALL, T0 + MIN);
+    expect(result.notifications.map((n) => [n.category, n.target])).toEqual([
+      ['attention', { kind: 'build', path: PATH, platform: 'ios' }],
+    ]);
+  });
+});
+
 describe('the Swift port in Stim Desktop', () => {
   it('replays the same runs, recorded in its test fixtures', async () => {
     expect(vectors.length).toBeGreaterThan(20);

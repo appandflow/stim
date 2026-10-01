@@ -6,7 +6,7 @@ import { Text } from '@/components/text';
 export function HeaderTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <View style={styles.headerTitle}>
-      <Text variant="headline" numberOfLines={1} ellipsizeMode="middle" maxFontSizeMultiplier={1.3}>
+      <Text variant="headline" numberOfLines={1} ellipsizeMode="middle" maxFontSizeMultiplier={2}>
         {title}
       </Text>
       {subtitle ? (

@@ -1,10 +1,15 @@
+import AppKit
 import StimKit
+import StimStores
 import SwiftUI
 
 struct InboxView: View {
   @ObservedObject var inbox: NotificationInbox
+  var openLogs: (String) -> Void
+  @EnvironmentObject private var actions: ActionCenter
   @State private var filter = InboxFilter()
   @State private var confirmsClear = false
+  @State private var fixing: (title: String, command: StimCommand)?
 
   var body: some View {
     let days = inbox.inbox.days(filter)
@@ -29,7 +34,10 @@ struct InboxView: View {
               VStack(spacing: 0) {
                 ForEach(Array(day.entries.enumerated()), id: \.element.id) { index, entry in
                   if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-                  InboxRow(entry: entry, title: titles[entry.id] ?? entry.title) { inbox.open(entry) }
+                  InboxRow(
+                    entry: entry, title: titles[entry.id] ?? entry.title, openLogs: openLogs,
+                    run: { actions.run("Fix \($0)", $1) }, fix: { fixing = ($0, $1) }
+                  ) { inbox.open(entry) }
                 }
               }
             }
@@ -38,6 +46,15 @@ struct InboxView: View {
       }
       .padding(Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .confirmationDialog(
+      "Run stim doctor --fix?", isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } }),
+      titleVisibility: .visible, presenting: fixing
+    ) { fix in
+      Button("Run the fix") { actions.run("Fix \(fix.title)", fix.command) }
+    } message: { fix in
+      Text(
+        "\(fix.command.displayLine())\n\nStop native builds in this checkout first. Doctor repairs only what its report names.")
     }
     .confirmationDialog("Clear these notifications?", isPresented: $confirmsClear) {
       Button("Clear", role: .destructive) { inbox.clear(filter) }
@@ -114,7 +131,11 @@ struct InboxView: View {
 private struct InboxRow: View {
   var entry: InboxEntry
   var title: String
+  var openLogs: (String) -> Void
+  var run: (String, StimCommand) -> Void
+  var fix: (String, StimCommand) -> Void
   var open: () -> Void
+  @EnvironmentObject private var actions: ActionCenter
 
   var body: some View {
     HStack(alignment: .center, spacing: Space.lg) {
@@ -128,6 +149,7 @@ private struct InboxRow: View {
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(title).textStyle(.callout, weight: entry.read ? nil : .semibold).lineLimit(1)
         Text(entry.body).textStyle(.footnote).foregroundStyle(Palette.secondary).lineLimit(2)
+        if entry.category == .attention { remedies }
       }
       Spacer(minLength: Space.md)
       Text(detail).textStyle(.caption).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
@@ -143,6 +165,58 @@ private struct InboxRow: View {
     )
     .accessibilityAddTraits(.isButton)
     .accessibilityAction(named: entry.target.actionTitle, open)
+  }
+
+  private var command: StimCommand? { remedyCommand(entry.remedy, workspace: entry.target.path) }
+
+  @ViewBuilder private var remedies: some View {
+    let path = entry.target.path
+    HStack(spacing: Space.sm) {
+      if case .build = entry.target, let path {
+        Button("Open logs") { openLogs(path) }
+          .accessibilityLabel("Open logs, \(title)")
+          .help("Show this workspace's errors")
+      }
+      if case .url = entry.target, let path {
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+          .accessibilityLabel("Show in Finder, \(title)")
+          .help("The autopilot keeps this worktree. Review it, then run stim worktree remove yourself.")
+      }
+      if let command {
+        Button("Copy command") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(command.shellLine, forType: .string)
+        }
+        .accessibilityLabel("Copy command, \(command.displayLine())")
+        .help(command.displayLine())
+        if command.isRunnable && command.isFix {
+          Button("Fix\u{2026}") { fix(title, command) }
+            .accessibilityLabel("Fix, \(command.displayLine())")
+            .help(command.displayLine())
+        } else if command.isRunnable {
+          runButton(command)
+        }
+      }
+    }
+    .buttonStyle(.stim())
+    .padding(.top, Space.xs)
+  }
+
+  @ViewBuilder private func runButton(_ command: StimCommand) -> some View {
+    if let active = actions.active(for: command.cwd) {
+      Button {
+        actions.presented = active
+      } label: {
+        HStack(spacing: Space.sm) {
+          ProgressView().controlSize(.small)
+          Text("Running")
+        }
+      }
+    } else {
+      Button("Run") { run(title, command) }
+        .accessibilityLabel("Run, \(command.displayLine())")
+        .help(command.displayLine())
+    }
   }
 
   private var detail: String {

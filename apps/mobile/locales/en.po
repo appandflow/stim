@@ -2218,6 +2218,10 @@ msgstr "Needs an update"
 msgid "Needs attention"
 msgstr "Needs attention"
 
+#: src/lib/settings-options.ts
+msgid "Needs you"
+msgstr "Needs you"
+
 #: src/lib/home.ts
 msgid "never"
 msgstr "never"
@@ -2490,6 +2494,8 @@ msgid "nothing yet"
 msgstr "nothing yet"
 
 #: src/app/_layout.tsx
+#: src/components/attention-strip.tsx
+#: src/components/attention-strip.tsx
 #: src/screens/menu.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -2499,6 +2505,10 @@ msgstr "Notifications"
 #: src/hooks/notifications.tsx
 msgid "Notifications are off for Stim"
 msgstr "Notifications are off for Stim"
+
+#: src/components/attention-strip.tsx
+msgid "Notifications, {unread} unread"
+msgstr "Notifications, {unread} unread"
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx

@@ -7,6 +7,7 @@ import { Collapsible } from '@/components/collapsible';
 import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { useLargeText } from '@/hooks/large-text';
 import type { HomeAttentionItem } from '@/lib/attention';
 
 const COLLAPSED = 3;
@@ -14,13 +15,18 @@ const COLLAPSED = 3;
 export function AttentionStrip({
   items,
   onOpen,
+  notifications,
 }: {
   items: HomeAttentionItem[];
   onOpen: (item: HomeAttentionItem) => void;
+  /** The notification inbox, which keeps what the strip shows and what came before; absent where there is none. */
+  notifications?: { unread: number; onOpen: () => void };
 }) {
   const { theme } = useUnistyles();
+  const large = useLargeText();
   const [expandedState, setExpanded] = useState(false);
   if (items.length === 0) return null;
+  const unread = notifications?.unread ?? 0;
   const expanded = expandedState && items.length > COLLAPSED;
   const more = items.length - COLLAPSED;
   const renderItem = (item: HomeAttentionItem, index: number) => {
@@ -40,10 +46,15 @@ export function AttentionStrip({
       >
         <View style={styles.dot(tone)} />
         <View style={styles.text}>
-          <Text variant="callout" weight="semibold" numberOfLines={1} ellipsizeMode="middle">
+          <Text
+            variant="callout"
+            weight="semibold"
+            numberOfLines={large ? 3 : 1}
+            ellipsizeMode={large ? 'tail' : 'middle'}
+          >
             {item.title}
           </Text>
-          <Text variant="footnote" tone={tone} numberOfLines={2}>
+          <Text variant="footnote" tone={tone} numberOfLines={large ? 5 : 2}>
             {item.detail}
           </Text>
         </View>
@@ -64,6 +75,26 @@ export function AttentionStrip({
           <Text variant="footnote" weight="medium" tone="brand">
             {expanded ? t`Show fewer` : t`${more} more`}
           </Text>
+        </Touch>
+      ) : null}
+      {notifications ? (
+        <Touch
+          feedback="row"
+          onPress={notifications.onOpen}
+          accessibilityLabel={unread > 0 ? t`Notifications, ${unread} unread` : t`Notifications`}
+          style={[styles.row, styles.divider]}
+        >
+          <Text variant="callout" weight="semibold" style={styles.text}>
+            {t`Notifications`}
+          </Text>
+          {unread > 0 ? (
+            <View style={styles.count}>
+              <Text variant="caption" weight="semibold" style={styles.countText}>
+                {unread > 99 ? '99+' : unread}
+              </Text>
+            </View>
+          ) : null}
+          <Icon name="chevron.right" size={13} color={theme.colors.tertiary} />
         </Touch>
       ) : null}
     </View>
@@ -96,4 +127,14 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors[tone],
   }),
   text: { flex: 1, gap: 1 },
+  count: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: theme.space.sm,
+    borderRadius: theme.radius.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+  },
+  countText: { color: theme.colors.onPrimary, fontVariant: ['tabular-nums'] },
 }));

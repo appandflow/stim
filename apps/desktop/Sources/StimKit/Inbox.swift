@@ -23,6 +23,7 @@ public struct InboxEntry: Codable, Hashable, Identifiable, Sendable {
   public var date: Date
   public var read: Bool
   public var suppressed: NoticeSuppression?
+  public var remedy: String?
 
   public init(
     id: String = UUID().uuidString, notification: OversightNotification, date: Date,
@@ -36,6 +37,7 @@ public struct InboxEntry: Codable, Hashable, Identifiable, Sendable {
     self.date = date
     read = false
     self.suppressed = suppressed
+    remedy = notification.remedy
   }
 }
 

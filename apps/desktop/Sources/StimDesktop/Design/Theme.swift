@@ -38,31 +38,76 @@ extension TextVariant {
     let name = mono ? FontFamily.mono : FontFamily.sans
     return NSFont(name: name, size: size) ?? .systemFont(ofSize: size)
   }
+
+  var scalingStyle: Font.TextStyle {
+    switch self {
+    case .caption2: .caption2
+    case .caption: .caption
+    case .footnote: .footnote
+    case .callout: .callout
+    case .body: .body
+    case .headline: .headline
+    case .title: .title
+    }
+  }
 }
 
 extension Font {
   static func stim(_ style: TextVariant, weight: Font.Weight? = nil, mono: Bool = false) -> Font {
     mono
-      ? .custom(FontFamily.mono, size: style.size)
-      : .custom(FontFamily.sans, size: style.size).weight(weight ?? style.weight)
+      ? .custom(FontFamily.mono, size: style.size, relativeTo: style.scalingStyle)
+      : .custom(FontFamily.sans, size: style.size, relativeTo: style.scalingStyle).weight(weight ?? style.weight)
+  }
+}
+
+private struct StimTextStyle: ViewModifier {
+  let style: TextVariant
+  let weight: Font.Weight?
+  let mono: Bool
+  @ScaledMetric private var scale: CGFloat
+
+  init(style: TextVariant, weight: Font.Weight?, mono: Bool) {
+    self.style = style
+    self.weight = weight
+    self.mono = mono
+    _scale = ScaledMetric(wrappedValue: 1, relativeTo: style.scalingStyle)
+  }
+
+  func body(content: Content) -> some View {
+    let font = style.nsFont(mono: mono)
+    let natural = font.ascender - font.descender + font.leading
+    return content.font(.stim(style, weight: weight, mono: mono))
+      .lineSpacing(max(0, style.lineHeight - natural) * scale)
   }
 }
 
 extension View {
   /// Sets a text style's font and the line spacing that brings its lines to the style's line height.
   func textStyle(_ style: TextVariant, weight: Font.Weight? = nil, mono: Bool = false) -> some View {
-    let font = style.nsFont(mono: mono)
-    let natural = font.ascender - font.descender + font.leading
-    return self.font(.stim(style, weight: weight, mono: mono)).lineSpacing(max(0, style.lineHeight - natural))
+    modifier(StimTextStyle(style: style, weight: weight, mono: mono))
   }
 }
 
 extension Color {
   /// A color that follows the effective appearance, including Desktop's own Appearance setting.
-  init(light: UInt32, dark: UInt32) {
+  init(light: UInt32, dark: UInt32, lightHighContrast: UInt32, darkHighContrast: UInt32) {
     self.init(
       nsColor: NSColor(name: nil) { appearance in
-        NSColor(rgba: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light)
+        let match = appearance.bestMatch(from: [
+          .darkAqua, .aqua, .accessibilityHighContrastDarkAqua, .accessibilityHighContrastAqua,
+        ])
+        let isDark = match == .darkAqua || match == .accessibilityHighContrastDarkAqua
+        let increased =
+          match == .accessibilityHighContrastDarkAqua || match == .accessibilityHighContrastAqua
+          || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let rgba: UInt32 =
+          switch (isDark, increased) {
+          case (true, true): darkHighContrast
+          case (true, false): dark
+          case (false, true): lightHighContrast
+          case (false, false): light
+          }
+        return NSColor(rgba: rgba)
       })
   }
 
@@ -101,6 +146,12 @@ enum BrandAssets {
     art?.isTemplate = true
     return art
   }()
+
+  static func agentMark(_ agent: String) -> NSImage? {
+    let art = image("agent-\(agent).svg")
+    art?.isTemplate = agent != "claude"
+    return art
+  }
 
   private static func image(_ name: String) -> NSImage? {
     url(name, websitePath: "static/img/branding").flatMap(NSImage.init(contentsOf:))

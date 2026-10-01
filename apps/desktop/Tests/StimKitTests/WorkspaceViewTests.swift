@@ -30,6 +30,27 @@ private func runningBuild(_ extra: String = "") -> String {
 private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":true,"state":"Booted""#
 
 @Suite struct WorkspaceStageTests {
+  @Test func listsClosedAppsInSidebarOrderWhicheverOrderStimReports() throws {
+    let stopped = #"\#(booted),"app":{"id":"a","state":"stopped"}"#
+    let android = #"{"name":"stim-w","owned":true,"physical":false,"state":"detected","app":{"id":"a","state":"stopped"}}"#
+    let local = try workspace(#""android":\#(android),"slots":[{"slot":"b","ios":\#(stopped)}}]"#)
+    var reported = local
+    reported.stageFacts = StageFacts(
+      kind: "running", since: nil, platform: nil,
+      closedApps: [.init(platform: "android", slot: "default"), .init(platform: "ios", slot: "b")])
+    let expected = WorkspaceStage(
+      label: .running, tone: .error, subtitle: "iOS app closed \u{00B7} Android app closed")
+    #expect(local.stage(now: now) == expected)
+    #expect(reported.stage(now: now) == expected)
+  }
+
+  @Test func derivesTheStageItselfWhenStimReportsAKindItDoesNotKnow() throws {
+    let env = try workspace(
+      #""supervisor":{"startedAt":"\#(iso(42 * 60))","healthy":true},"stage":{"kind":"paused","since":null,"platform":null,"closedApps":[]}"#
+    )
+    #expect(env.stage(now: now) == WorkspaceStage(label: .running, tone: .success, subtitle: "up 42m"))
+  }
+
   @Test func namesEachStageWithItsSubtitle() throws {
     #expect(
       try workspace(#""supervisor":{"startedAt":"\#(iso(42 * 60))","healthy":true}"#).stage(now: now)
@@ -68,6 +89,14 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 }
 
 @Suite struct AppPresenceTests {
+  @Test func readsThePresenceStimReportsOnceItReportsTheStage() throws {
+    let stage = #""stage":{"kind":"running","since":null,"platform":null,"closedApps":[]}"#
+    let reported = try workspace(#""ios":\#(booted),"app":{"id":"a","state":"stopped"},"appPresence":"none"},\#(stage)"#)
+    #expect(reported.appPresence(reported.devices[0]) == AppPresence.none)
+    let cleared = try workspace(#""ios":\#(booted),"app":{"id":"a","state":"stopped"},"appPresence":null},\#(stage)"#)
+    #expect(cleared.appPresence(cleared.devices[0]) == nil)
+  }
+
   private func entry(_ result: String) -> String {
     String(lastBuild().dropLast()) + #","result":"\#(result)","slot":"default","phases":{}}"#
   }
@@ -444,7 +473,16 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     struct StageCase: Decodable {
       var name: String
       var workspace: Workspace
+      var derived: StageFacts
       var stage: Stage
+    }
+
+    struct PresenceCase: Decodable {
+      var name: String
+      var workspace: Workspace
+      var platform: String
+      var slot: String
+      var presence: String?
     }
 
     struct Part: Decodable, Equatable {
@@ -467,6 +505,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     struct ChipCase: Decodable {
       var name: String
       var worktree: WorktreeInfo
+      var derived: GitChipFacts
       var chip: Chip
     }
 
@@ -538,6 +577,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     var now: String
     var stage: [StageCase]
     var gitChip: [ChipCase]
+    var appPresence: [PresenceCase]
     var checksSummary: [ChecksCase]
     var phases: [PhaseCase]
     var activity: Activity
@@ -555,23 +595,40 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   @Test(arguments: vectors.stage.map(\.name))
   func wordsTheStageAsThePhoneDoes(name: String) throws {
     let c = try #require(Self.vectors.stage.first { $0.name == name })
-    let stage = c.workspace.stage(now: Self.now)
-    #expect(stage.label.rawValue == c.stage.label)
-    #expect(String(describing: stage.tone) == c.stage.tone)
-    #expect(stage.subtitle == c.stage.subtitle)
+    #expect(c.workspace.localStageFacts() == c.derived)
+    var reported = c.workspace
+    reported.stageFacts = c.derived
+    for env in [c.workspace, reported] {
+      let stage = env.stage(now: Self.now)
+      #expect(stage.label.rawValue == c.stage.label)
+      #expect(String(describing: stage.tone) == c.stage.tone)
+      #expect(stage.subtitle == c.stage.subtitle)
+    }
   }
 
   @Test(arguments: vectors.gitChip.map(\.name))
   func wordsTheGitChipAsThePhoneDoes(name: String) throws {
     let c = try #require(Self.vectors.gitChip.first { $0.name == name })
-    let chip = try #require(GitChip(c.worktree))
-    #expect(chip.parts.map { Vectors.Part(text: $0.text, tone: String(describing: $0.tone)) } == c.chip.parts)
-    #expect(
-      chip.pullRequest.map {
-        Vectors.ChipPullRequest(
-          text: $0.text, tone: String(describing: $0.tone), checks: $0.checks.map { String(describing: $0) })
-      } == c.chip.pullRequest)
-    #expect(chip.label == c.chip.label)
+    #expect(GitChip.localFacts(try #require(c.worktree.git), c.worktree.pullRequest) == c.derived)
+    var reported = c.worktree
+    reported.gitChip = c.derived
+    for worktree in [c.worktree, reported] {
+      let chip = try #require(GitChip(worktree))
+      #expect(chip.parts.map { Vectors.Part(text: $0.text, tone: String(describing: $0.tone)) } == c.chip.parts)
+      #expect(
+        chip.pullRequest.map {
+          Vectors.ChipPullRequest(
+            text: $0.text, tone: String(describing: $0.tone), checks: $0.checks.map { String(describing: $0) })
+        } == c.chip.pullRequest)
+      #expect(chip.label == c.chip.label)
+    }
+  }
+
+  @Test(arguments: vectors.appPresence.map(\.name))
+  func judgesAppPresenceAsStimDoes(name: String) throws {
+    let c = try #require(Self.vectors.appPresence.first { $0.name == name })
+    let device = try #require(c.workspace.devices.first { $0.platform == c.platform && $0.slot == c.slot })
+    #expect(c.workspace.appPresence(device).map { $0 == .none ? "none" : "closed" } == c.presence)
   }
 
   @Test(arguments: vectors.checksSummary.map(\.name))

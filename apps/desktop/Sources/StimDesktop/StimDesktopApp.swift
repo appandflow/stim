@@ -8,6 +8,7 @@ import SwiftUI
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
+  var deviceArrivedWithWindow = false
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
@@ -65,7 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
     guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
-    MainActor.assumeIsolated { OpenRequests.shared.device = request }
+    MainActor.assumeIsolated {
+      OpenRequests.shared.deviceArrivedWithWindow = MainWindow.isOpen
+      OpenRequests.shared.device = request
+    }
   }
 
   func applicationWillFinishLaunching(_ notification: Notification) {
@@ -182,6 +186,7 @@ struct StimDesktopApp: App {
     let autopilot = AutopilotRunner(
       status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
+    oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {
@@ -219,7 +224,9 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines).environmentObject(autopilot)
+      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines)
+        .environmentObject(autopilot)
+        .environmentObject(onboarding)
     }
 
     MenuBarExtra(isInserted: menuBarExtraInserted) {

@@ -22,15 +22,26 @@ public struct NeedsAttentionItem: Decodable, Hashable, Sendable {
   public var isError: Bool { severity == "error" }
 
   /// `remedy` as a command, run from the workspace.
-  public var command: StimCommand? {
-    guard let workspace, let words = remedy?.split(separator: " ").map(String.init), words.first == "stim" else {
-      return nil
-    }
-    return StimCommand(Array(words.dropFirst()), cwd: workspace)
-  }
+  public var command: StimCommand? { remedyCommand(remedy, workspace: workspace) }
 
   /// False for a remedy that only explains, such as a `stim guide` topic.
-  public var runnable: Bool { command.map { $0.arguments.first != "guide" } ?? false }
+  public var runnable: Bool { command?.isRunnable ?? false }
+}
+
+/// A remedy line such as `stim doctor --fix` as a command in `workspace`; nil unless it starts with `stim`.
+public func remedyCommand(_ remedy: String?, workspace: String?) -> StimCommand? {
+  guard let workspace, let words = remedy?.split(separator: " ").map(String.init), words.first == "stim" else {
+    return nil
+  }
+  return StimCommand(Array(words.dropFirst()), cwd: workspace)
+}
+
+extension StimCommand {
+  /// False for a command that only explains, such as a `stim guide` topic.
+  public var isRunnable: Bool { arguments.first != "guide" }
+
+  /// Whether it is `stim doctor --fix`, which asks for confirmation first.
+  public var isFix: Bool { arguments.contains("--fix") }
 }
 
 private let personIssues: Set<String> = ["port-not-ours", "supervisor-unverified", "browser-unverified", "avd-unchecked"]

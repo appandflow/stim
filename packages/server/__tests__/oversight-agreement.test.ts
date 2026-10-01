@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import type { StatusPayload as ServerStatus } from '@stim-cli/core/state';
 import fixture from '../../../apps/mobile/mock-server/fixtures/status.json' with { type: 'json' };
 import { oversightTitle as phoneTitle } from '../../../apps/mobile/src/lib/oversight.ts';
 import { repositoryRoots, workspaceTitle } from '../../../apps/mobile/src/lib/workspace-names.ts';
 import type { StatusPayload as PhoneStatus } from '../../../apps/mobile/src/protocol/types.ts';
-import { OVERSIGHT_CATEGORIES, oversightTitle } from '../src/oversight.ts';
+import vectors from '../../../apps/desktop/Tests/StimKitTests/Fixtures/needs-attention-vectors.json' with { type: 'json' };
+import { needsAttention, OVERSIGHT_CATEGORIES, oversightTitle, type NeedsAttentionInput } from '../src/oversight.ts';
 import { PUSH_EVENTS } from '../src/protocol.ts';
 
 const withoutHeader = (path: string) => {
@@ -29,5 +31,18 @@ describe("the phone's copy of the notification rules", () => {
       expect(oversightTitle(env, status as unknown as ServerStatus)).toBe(workspaceTitle(env, roots));
       expect(phoneTitle(env, status)).toBe(workspaceTitle(env, roots));
     }
+  });
+
+  it('lists what the phone and Stim Desktop list', () => {
+    const cases = (
+      vectors as unknown as {
+        cases: { name: string; input: NeedsAttentionInput & { now: string }; items: unknown[] }[];
+      }
+    ).cases;
+    expect(cases.length).toBeGreaterThan(10);
+    const differing = cases
+      .filter(({ input, items }) => !isDeepStrictEqual(needsAttention({ ...input, now: Date.parse(input.now) }), items))
+      .map(({ name }) => name);
+    expect(differing).toEqual([]);
   });
 });

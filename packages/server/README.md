@@ -687,7 +687,7 @@ Events are `{ "event", "subscription", ... }`.
 - `unsubscribe` ends a subscription.
 - `push.register` takes `token`, an Expo push token, `events`, one or more
   [push notifications](#push-notifications) the phone wants (`started`,
-  `stuck`, `looping`, `finished`, `machine`, `control`), `ref`, an opaque
+  `stuck`, `looping`, `finished`, `machine`, `control`, `attention`), `ref`, an opaque
   string of up to 128 characters that every push carries back as `data.ref`,
   and optionally `stuckMinutes` (1 to 240, default 15), `quietHours`
   (`{ "start", "end", "timeZone" }`, minutes after midnight in an IANA time
@@ -807,6 +807,14 @@ the events the device chose:
   minute. It opens the machine sheet.
 - `control`: another client took over a device this phone controls, or an
   agent started driving it. It opens the device viewer.
+- `attention`: something only a person can fix, from the needs-attention rule
+  (`needsAttention` in `src/oversight.ts`): a port held by another app, a
+  supervisor or owned Chrome Stim cannot verify, an owned AVD it could not
+  check, a failed run with a signing or provisioning error code, a physical
+  device lease that expired, or an EAS session running for 30 minutes with no
+  agent driving the workspace. It opens the workspace, or the build for a
+  signing failure. A stuck agent, a loop and a full disk notify through their
+  own categories.
 
 Stuck and finished are read from device activity, so two cases blur them. An
 agent that finishes without closing its agent-device session still holds the

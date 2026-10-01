@@ -29,6 +29,8 @@ export interface SimState {
   state: string;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** Read only when the environment carries `stage`; absent from an older `stim`. */
+  appPresence?: AppPresence;
   /** The simulator's data folder, once a status watcher has measured it. */
   disk?: DeviceDisk;
 }
@@ -47,9 +49,14 @@ export interface AndroidState {
   deviceProfile?: string | null;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;
+  /** Read only when the environment carries `stage`; absent from an older `stim`. */
+  appPresence?: AppPresence;
   /** The emulator's AVD folder, once a status watcher has measured it. */
   disk?: DeviceDisk;
 }
+
+/** Whether a running owned device lacks the app: `none` when it was never built here, `closed` when not running. */
+export type AppPresence = 'none' | 'closed' | null;
 
 export interface DeviceAppProcess {
   id: string;
@@ -213,6 +220,30 @@ export interface WorktreeFacts {
   git?: WorktreeGit | null;
   /** Null when GitHub has no pull request for the branch and HEAD; absent when unknown. */
   pullRequest?: PullRequestFacts | null;
+  /** What the git chip shows, as `stim` decided it; absent without `git` and from an older `stim`. */
+  gitChip?: GitChipFacts;
+}
+
+export type GitChipPart =
+  | { kind: 'arrows'; ahead: number; behind: number }
+  | { kind: 'changed'; count: number }
+  | { kind: 'merged'; into: string }
+  | { kind: 'no-upstream' };
+
+export interface GitChipFacts {
+  parts: GitChipPart[];
+  ci: 'passing' | 'failing' | 'pending' | null;
+}
+
+/**
+ * Where a workspace is, as `stim` decided it: `since` is when that began, `platform` names the build for `building`
+ * and `build-failed`, and `closedApps` the devices whose app is closed while `running`.
+ */
+export interface StageFacts {
+  kind: 'building' | 'warming' | 'ready' | 'build-failed' | 'running' | 'stopped';
+  since: string | null;
+  platform: Platform | null;
+  closedApps: { platform: Platform; slot: string }[];
 }
 
 /** The branch's pull request as Stim last asked GitHub; `checks` counts the head commit's checks. */
@@ -270,6 +301,8 @@ export interface EnvironmentState {
   phaseSince?: string | null;
   /** The step a `warming` workspace's warm is in. */
   warmStep?: 'refresh' | 'copy';
+  /** Absent from a `stim` that does not decide the stage; `workspaceStage` then decides it here. */
+  stage?: StageFacts;
   /** Whether stim-server may record this workspace's screens for replay; absent from an older `stim`. */
   recording?: { enabled: boolean };
   memoryMb: number;
@@ -686,7 +719,7 @@ export interface BuildMachineReport {
 export type ClientAuth = { deviceToken: string } | { pairingToken: string; deviceName: string };
 
 /** What stim-server can push, the categories of `@/lib/oversight`. */
-export type PushEvent = 'started' | 'stuck' | 'looping' | 'finished' | 'machine' | 'control';
+export type PushEvent = 'started' | 'stuck' | 'looping' | 'finished' | 'machine' | 'control' | 'attention';
 
 /** How a pushed event is delivered: `alert` with a banner and sound, `silent` to the notification list only. */
 export type NotificationLevel = 'alert' | 'silent';

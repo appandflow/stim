@@ -13,18 +13,13 @@ Phones tab runs or found, over loopback; see [Replay](#replay) and [Physical dev
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
-- Needs attention: preview `stim gc --json`, then run `stim gc --delete` after a
-  confirmation. Status issues are grouped by workspace, live workspaces first,
-  then those with an error; past three workspaces the rest collapse behind a
-  button. Each issue runs its remedy from the workspace, such as
-  `stim android --slot fold`, and can copy it; a `stim guide` remedy is copy
-  only. With a `stim` that reports only warning text, `stim android` still
-  answers an undetected emulator and `stim stop` a stale supervisor record.
-  A workspace whose last iOS or Android run failed (not cancelled) is listed
-  with **Open logs** and a rerun of `stim ios` or `stim android` with default
-  options; one with errors in its logs since the last marker and no failed run
-  is listed with **Open logs**. The sidebar count is the number of listed items
-  plus finished pull requests.
+- Needs you notifications: a notification in **Notifications** whose category
+  is **Needs you** carries the actions of what it reports. **Run** runs the
+  remedy from the workspace, such as `stim android --slot fold`; **Copy
+  command** copies it as a `cd` and `stim` line; a `stim guide` remedy is copy
+  only; **Fix** runs `stim doctor --fix` after a confirmation; **Open logs**
+  opens the workspace's logs for a failed signing run; **Show in Finder**
+  selects a kept worktree.
 - Run: **Run on iOS** and **Run on Android** in a workspace's context menu and
   "..." menu, and **Run** on each platform of the inspector's **Build**
   section (**Rebuild** when that platform's last build failed), run
@@ -47,7 +42,7 @@ in the workspace directory:
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
 
-**All devices**, **Needs attention** and **Machines** stay pinned at the top of
+**All devices**, **Notifications** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
@@ -188,7 +183,7 @@ wall are previews too; clicking one opens its workspace.
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens
 them in a drawer below the devices, resized by dragging its top edge; the app
-remembers both. **Open logs** from Needs attention, a notification or a
+remembers both. **Open logs** from a notification or a
 workspace menu opens the drawer too.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
@@ -430,9 +425,8 @@ status under **Autopilot activity**.
   `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
   `stim status` shows live, building or on another branch; a `stim start` in the seconds
   between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
-  keeps for another reason is listed under **Finished pull requests** in Needs
-  attention, as "PR #123 merged, 2 uncommitted or untracked files", with
-  **Open PR** and **Show in Finder**; the autopilot never forces a removal.
+  keeps for another reason notifies in the **Needs you** category, as "PR #123 merged, 2 uncommitted or untracked files", with
+  **Open pull request** and **Show in Finder**; the autopilot never forces a removal.
   Each run is logged, and the **Autopilot removes worktrees of finished pull
   requests** notification, on by default, reads "Removed 3 worktrees for
   merged PRs". Without `gh`, or signed out, nothing is removed by this option;
@@ -546,8 +540,8 @@ status names. **Take over** sends clicks, drags, hover, trackpad scrolls and
 keys to the page; Command shortcuts stay with the Mac. The viewer's buttons open
 the URL in your default browser (never the Stim profile), run `stim reload web`,
 and **Close** runs `stim stop --slot web`, which keeps Metro, the devices and the
-profile. A failed page load shows a "Page failed to load" pill and a Needs
-attention item that reruns `stim web`, and a tool attached to the DevTools
+profile. A failed page load shows a "Page failed to load" pill and an
+item that reruns `stim web`, and a tool attached to the DevTools
 endpoint, such as Playwright MCP, shows as the driver.
 
 ## Replay
@@ -722,7 +716,7 @@ state from the `buildMachines` field of `stim doctor --json --platform ios`:
 name now belongs to another tailnet node than the one this Mac asked, so Stim
 does not connect to it), **Not on the tailnet**, **Tailscale is off**,
 **Unreachable** or **Not a tailnet name**. Doctor runs in the first workspace
-`stim status` lists, like the doctor checks under Needs attention; with no
+`stim status` lists, like the doctor checks that notify as **Needs you**; with no
 workspace listed, the tab says so. While a machine waits for approval the tab
 checks again every 15 seconds. Below, **Macs on your tailnet** lists the other
 online macOS peers from `tailscale status --json` whose `tailscale serve` route
@@ -768,10 +762,18 @@ started** (a workspace begins warming, or an agent starts driving a device),
 threshold), **Agent repeats the same failure** (the third build failure in a row
 with the same cause), **Work finished or PR ready** (an agent stopped after a
 green build, or git finds the branch merged), and **Machine in trouble** (free
-disk under Stim's floor, or critical memory pressure for a minute). Each
+disk under Stim's floor, or critical memory pressure for a minute). **Needs
+you** lists what agents cannot handle, from the needs-attention rule
+(`StimKit/NeedsAttention.swift`): `stim doctor` findings that cost time, a port
+held by another app, a supervisor or browser Stim cannot verify, a signing or
+provisioning failure, an expired device lease, a billable EAS session left
+running, and a finished pull request's worktree the autopilot keeps. Each item
+notifies once per episode, and the ids still active are kept in the app's
+preferences so a restart does not repeat them. Each
 workspace notifies once per episode, and a later notification replaces the
 earlier one. The first payload after launch records what is already true without
-notifying. Desktop does not look up pull requests, so it never notifies a pull
+notifying, except for Needs you, which notifies each item it has not notified
+before. Desktop does not look up pull requests, so it never notifies a pull
 request ready for review; a merged branch notifies once git finds it merged. The
 phone's "Someone takes over your device" is a push to a phone and never fires
 here. A phone controlling a simulator
@@ -785,7 +787,7 @@ appears as a card in the main window's top right corner while that window is in
 front, newest on top, with its call to action (**Open workspace**, **Show
 device**, **Show page**, **Show build**, **Show machine**) and a dismiss button; clicking the
 card opens its target. Work started and finished cards leave after 6 seconds,
-unless the pointer is over them; stuck, repeated failure and machine cards stay
+unless the pointer is over them; stuck, repeated failure, machine and needs-you cards stay
 until dismissed. Otherwise an Alert is a macOS notification with sound, and
 clicking it brings Stim Desktop up on the target. macOS asks for permission the
 first time one is posted. Silent and Off never interrupt.
@@ -846,6 +848,20 @@ does not open another. **Quit Stim** (Command-Q) is the only way to stop the app
 and it stops `stim-server` and the log followers. Command-1, Command-2 and
 Command-3 in the View menu open All devices, Notifications and Machine.
 
+## Notice cards
+
+News the user can act on later shows as a card at the main window's bottom
+left: a title, one line of detail, a primary action and a dismiss button. A
+card stays until it is acted on or dismissed, with or without VoiceOver. Several
+cards stack, newest first, with a counter and previous and next buttons.
+Two things use them. When `stim ios` or `stim android` launches on a device
+Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
+Desktop navigates straight to the device only when nothing would be replaced: no
+main window was open, or the window already shows that workspace or All
+devices. Another page keeps its selection. A newer `stim` shows a card with
+**Update** (see below); dismissing it keeps it away until a newer version is
+released. Agent and build notifications keep appearing as cards at the top right.
+
 ## Workspace links
 
 `stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>]`,
@@ -877,7 +893,19 @@ the app cannot tell what installed it. **Install stim** uses the manager picked
 in the setup guide's tabs; the banner uses the default, pnpm or bun when its
 global bin directory is on the login shell's `PATH`, else npm. A pnpm whose
 global bin directory is not on the `PATH` is not offered, because pnpm refuses
-global installs then. `stim-server` is still installed and updated with npm. A newly found `stim` at another path asks for a
+global installs then. `stim-server` is still installed and updated with npm.
+
+Once a day, and at launch, the app also reads the
+`latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
+check when the registry cannot be reached. When the `stim` it runs is owned by a
+package manager and older than `latest`, a notice card offers **Update** once
+per version, the sidebar footer shows **stim
+<version> available** and **Settings > App > Stim CLI** shows the installed and
+latest versions with an **Update** button, which runs the same package manager
+command as **Update stim**. It only notifies: nothing updates in the
+background, because replacing `stim` while agents run commands would break them,
+and a `stim` that no package manager owns, such as a linked checkout, is never
+offered an update. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
 served, `stim-server --version` gets the same check, installing
 `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once

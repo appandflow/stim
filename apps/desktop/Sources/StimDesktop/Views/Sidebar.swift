@@ -75,11 +75,6 @@ struct Sidebar: View {
             .help("\(unread) unread notification\(unread == 1 ? "" : "s")")
         }
       }
-      PinnedRow(item: .attention, selection: $selection) {
-        SidebarLabel(title: "Needs attention", icon: "exclamationmark.triangle", selected: selection == .attention)
-        Spacer()
-        AttentionCount(store: store, autopilot: autopilot)
-      }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
         Spacer()
@@ -132,21 +127,6 @@ struct Sidebar: View {
         updated[root] = expanded
         expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
       })
-  }
-}
-
-private struct AttentionCount: View {
-  @ObservedObject var store: StatusStore
-  @ObservedObject var autopilot: AutopilotRunner
-
-  var body: some View {
-    TimelineView(.periodic(from: .now, by: 60)) { _ in
-      let count = store.attention(lowestVolume: autopilot.lowestVolume).count + autopilot.finishedPullRequests.count
-      if count > 0 {
-        Pill("\(count)", tone: .warning, size: .small)
-          .help("\(count) item\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") attention")
-      }
-    }
   }
 }
 
@@ -527,7 +507,7 @@ struct SidebarFooter: View {
   private var status: SidebarFooterStatus {
     SidebarFooterStatus.decide(
       stim: onboarding.report?.stim, pressure: autopilot.pressure,
-      desktopUpdateAvailable: updater.isAvailable && updater.updateAvailable)
+      desktopUpdateAvailable: updater.isAvailable && updater.updateAvailable, stimUpdate: onboarding.stimUpdate)
   }
 
   private var drivenDevices: [DrivenDevice] { DrivenDevice.all(in: store.payload?.environments ?? []) }
@@ -567,6 +547,14 @@ struct SidebarFooter: View {
             : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
         )
       }
+    case .stimUpdateAvailable(let installed, let latest):
+      Button(action: onboarding.installStim) {
+        statusLabel(dot: Palette.primary, text: "stim \(latest.description) available")
+      }
+      .buttonStyle(.hoverRow(outset: Space.sm))
+      .help(
+        "stim \(installed.description) is installed \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
+      )
     case .diskCritical(let freeBytes):
       Button {
         selection = .machine

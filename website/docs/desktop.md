@@ -54,7 +54,11 @@ performance traces. Every release is listed under
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
   **Serve to phones**.
 - **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing, and
-  automatic removal of worktrees after their pull request merges.
+  automatic removal of worktrees after their pull request merges. The **Needs
+  you** category lists only what agents cannot handle, such as a doctor
+  finding, a signing failure or an expired device lease, with **Run**, **Copy
+  command**, **Fix**, **Open logs** or **Show in Finder** on its row in
+  **Notifications**. It is Silent by default.
 
 ![A device viewer: the simulator screen with the agent's recent actions, including two that failed](/img/desktop/viewer.webp)
 
@@ -66,6 +70,13 @@ Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
 Notifications and Machine.
+
+Stim Desktop checks the npm registry once a day for a newer `stim`. When the
+`stim` it runs was installed by npm, pnpm or bun and is older, the sidebar
+footer says so and **Settings > App > Stim CLI** has an **Update** button that
+runs that package manager's update command. It never updates by itself, and it
+never offers an update for a `stim` that no package manager installed, such as a
+linked checkout.
 
 ## First steps
 
