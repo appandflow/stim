@@ -50,6 +50,7 @@ import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream, useReplayAt } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
+import { useAnnounce } from '@/hooks/screen-reader';
 import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
@@ -234,6 +235,7 @@ export function DeviceView({
   });
   const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
   const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
+  useAnnounce(rotateNote?.text);
   useEffect(() => {
     if (!rotateNote) return;
     const timer = setTimeout(() => setRotateNote(null), ROTATE_NOTE_MS);

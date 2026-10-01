@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AccessibilityInfo } from 'react-native';
+
+import { useScreenReaderEnabled } from '@/hooks/screen-reader';
 
 const HIDE_AFTER_MS = 4000;
 
@@ -11,18 +12,7 @@ const HIDE_AFTER_MS = 4000;
 export function useAutoHide(pinned: boolean, screenReaderHolds = true) {
   const [shown, setShown] = useState(true);
   const [revealed, setRevealed] = useState(0);
-  const [screenReader, setScreenReader] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    void AccessibilityInfo.isScreenReaderEnabled().then((on) => {
-      if (!cancelled) setScreenReader(on);
-    });
-    const subscription = AccessibilityInfo.addEventListener('screenReaderChanged', setScreenReader);
-    return () => {
-      cancelled = true;
-      subscription.remove();
-    };
-  }, []);
+  const screenReader = useScreenReaderEnabled();
   const held = pinned || (screenReaderHolds && screenReader);
   useEffect(() => {
     if (held || !shown) return;
