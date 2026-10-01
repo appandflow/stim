@@ -3,11 +3,10 @@ import { Image } from 'expo-image';
 import * as Linking from 'expo-linking';
 import { memo, useEffect, useRef } from 'react';
 import { View, type ViewInstance } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { Card } from '@/components/card';
-import { PlatformLogo } from '@/components/platform-logo';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
@@ -18,7 +17,7 @@ import { agentWebUrl, agentsSummary, workspaceAgentSessions } from '@/lib/agents
 import { deviceTileName, deviceTileState } from '@/lib/device-tile';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
 import { deviceTileStatusLabels } from '@/lib/spoken-status';
-import { runningBuild, streamsFrames, unservedReason } from '@/lib/workspaces';
+import { platformName, runningBuild, streamsFrames, unservedReason } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -40,7 +39,6 @@ const sameTile = (a: TileProps, b: TileProps) =>
   a.onOpen === b.onOpen;
 
 export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible, onAspect, onOpen }: TileProps) {
-  const { theme } = useUnistyles();
   const showsMachine = (usePairedMacs()?.length ?? 0) > 1;
   const { connection, state: link } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
@@ -77,7 +75,8 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const zoomedAway = useZoomedAway(zoomKey(target));
   const { macName } = item;
   const where = [...new Set([item.title, item.project])].join(', ');
-  const deviceLabel = detail ? `${name}, ${detail}` : name;
+  const platform = platformName(device.platform);
+  const deviceLabel = [name, detail, detail?.includes(platform) ? null : platform].filter(Boolean).join(', ');
   const workspaceLabel = showsMachine ? t`workspace ${where}, on ${macName}` : t`workspace ${where}`;
   const tileLabel = [
     deviceLabel,
@@ -143,24 +142,14 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         </Text>
       ) : null}
       <View style={styles.meta}>
-        <View style={styles.name}>
-          <PlatformLogo platform={device.platform} size={14} color={theme.colors.text} />
-          <Text
-            variant="footnote"
-            weight="semibold"
-            style={styles.shrink}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.8}
-          >
-            {name}
-            {detail ? (
-              <Text variant="caption" weight="regular" tone="secondary">
-                {` \u00B7 ${detail}`}
-              </Text>
-            ) : null}
-          </Text>
-        </View>
+        <Text variant="callout" weight="semibold" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+          {name}
+          {detail ? (
+            <Text variant="footnote" weight="regular" tone="secondary">
+              {` \u00B7 ${detail}`}
+            </Text>
+          ) : null}
+        </Text>
         <Text variant="caption" weight="medium" tone={state.tone} style={styles.state} numberOfLines={2}>
           {state.text}
         </Text>
@@ -206,6 +195,5 @@ const styles = StyleSheet.create((theme) => ({
   shrink: { flexShrink: 1 },
   workspace: { flexDirection: 'row', alignItems: 'center' },
   context: { flexShrink: 0, maxWidth: '45%' },
-  name: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
   state: { marginVertical: theme.space.xs },
 }));
