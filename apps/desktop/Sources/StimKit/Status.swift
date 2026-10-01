@@ -109,9 +109,11 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// A workspace `stim worktree warm` is preparing or has just prepared, before its first run.
   public var isSettingUp: Bool { isWarming || phase == "ready" }
 
-  /// Whether the Live views show the workspace: something runs, a build runs, or it is being set up.
+  /// Whether the Live views show the workspace: something runs, a build runs, an EAS session or a leased phone is
+  /// held, or it is being set up.
   public var isActive: Bool {
-    live || build?.isRunning == true || isSettingUp || physicalDevices?.isEmpty == false
+    live || build?.isRunning == true || isSettingUp || remoteDevices?.isEmpty == false
+      || physicalDevices?.isEmpty == false
   }
 
   /// The workspace's default devices, its Stim-owned Chrome, each named slot's devices, then its leased physical

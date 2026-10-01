@@ -59,13 +59,6 @@ extension Format {
 extension Workspace {
   private var settingUp: Bool { !live && isSettingUp }
 
-  /// Whether the row reads as live: something runs, a build runs, an EAS session or a leased phone is held, or it is
-  /// being set up. Wider than `isActive`, which leaves out a workspace held only by an EAS session.
-  public var isShownLive: Bool {
-    live || build?.isRunning == true || remoteDevices?.isEmpty == false || physicalDevices?.isEmpty == false
-      || settingUp
-  }
-
   /// The running local devices in `orderedDevices` order; EAS sessions are counted apart.
   private var runningLocalDevices: [DeviceRef] {
     orderedDevices.filter {
@@ -92,7 +85,7 @@ extension Workspace {
         kind: .warming, text: "Warming \(Format.duration(seconds))",
         label: "Warming for \(Format.spokenDuration(seconds))", tone: .brand)
     }
-    if !isShownLive {
+    if !isActive {
       guard let seconds = since(metro?.lastStop?.at, now) else {
         return RowStatus(kind: .idle, text: "Idle", label: "Idle", tone: .tertiary)
       }
@@ -122,7 +115,7 @@ extension Workspace {
     for platform in ["ios", "android"] {
       guard let last = lastBuilds?.build(for: platform), last.status == "failed", building != platform else { continue }
       let age = since(last.finishedAt ?? last.startedAt, now)
-      if !isShownLive, age.map({ $0 * 1000 >= staleMs }) ?? true { continue }
+      if !isActive, age.map({ $0 * 1000 >= staleMs }) ?? true { continue }
       problems.append(RowProblem(kind: .buildFailed, text: "\(platformName(platform)) build failed", tone: .error))
     }
     for device in orderedDevices where appPresence(device) == .closed {
