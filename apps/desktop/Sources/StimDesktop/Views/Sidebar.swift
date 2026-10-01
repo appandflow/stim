@@ -178,6 +178,7 @@ private struct PinnedRow<Content: View>: View {
         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
     }
     .buttonStyle(.hoverRow(selected: selection == item))
+    .accessibilityAddTraits(selection == item ? .isSelected : [])
   }
 }
 

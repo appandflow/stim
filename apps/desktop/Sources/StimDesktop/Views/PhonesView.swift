@@ -151,7 +151,9 @@ struct PhonesView: View {
     case .running(let health, let owned):
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(spacing: Space.md) {
-          StatusDot(color: health.tailscale.isRunning ? Palette.success : Palette.warning)
+          StatusDot(
+            color: health.tailscale.isRunning ? Palette.success : Palette.warning,
+            label: health.tailscale.isRunning ? "Tailscale running" : "Tailscale not running")
           Text(
             "stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")"
           )
