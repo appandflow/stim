@@ -63,11 +63,15 @@ wrapper.
 The agent normally runs:
 
 <StimTabs
-code={`stim doctor           # inspect the source checkout and warm-state gaps
+code={`git worktree add -b <branch> <path> HEAD   # unless a harness made one
+cd <path>
+stim worktree warm    # copy ignored state from the source checkout
+stim doctor           # inspect the source checkout and warm-state gaps
 stim start            # optional: start this workspace's dev server early
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
-stim stop             # release the live environment`}
+stim stop             # release the live environment
+stim worktree remove  # after the work is preserved`}
 />
 
 Use `stim android` for Android. Stim works with React Native Community CLI and
@@ -153,8 +157,9 @@ and build-miss behavior.
 
 ## Run work in parallel
 
-The current checkout is the default. An agent creates a separate worktree only
-when the task needs isolation or parallel work, or when you ask for one:
+An agent works in a separate worktree by default. It works in the current
+checkout only when you ask for that, or when the task depends on your
+uncommitted changes there:
 
 <StimTabs
 code={`git worktree add -b feature-name ../feature-name HEAD

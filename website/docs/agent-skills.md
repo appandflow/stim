@@ -37,9 +37,9 @@ recent app errors", or "run this on my connected phone". Those requests match
 the skill without naming Stim. Add "use Stim" only when you want to override a
 project wrapper or another tool choice.
 
-Stim uses the current checkout by default. Ask for a separate worktree when you
-want isolated or parallel work; the agent may also choose one when the task
-already requires that isolation.
+An agent works in a separate worktree by default. Ask it to work in the current
+checkout when you want that; it also does so when the task depends on your
+uncommitted changes there, and says so.
 
 Upgrading Stim also upgrades the guidance. The static skill does not need to be
 reinstalled when commands or behavior change.

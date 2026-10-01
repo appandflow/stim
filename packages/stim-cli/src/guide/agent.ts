@@ -9,6 +9,10 @@ parse a stable payload.
 
 TWO WORKFLOWS
 
+WORKTREE is the default. Take SINGLE CHECKOUT only when the user asks to work in
+place, or the task depends on the user's uncommitted changes in the current
+checkout; say why.
+
 SINGLE CHECKOUT: work in place, on whatever branch the task needs, in one
 directory. start, ios, android, logs, stop, and never a linked worktree. That
 directory is your workspace, and no rule below about keeping the source checkout
@@ -32,12 +36,10 @@ Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
 NORMAL WORKFLOW
 
-Work in the current checkout by default. When the task needs another branch or
-an isolated environment, take the worktree workflow: create a linked worktree
-with Git and warm its ignored state. If a harness already created this linked
-worktree, run stim worktree warm here instead of creating another one. It
-copies missing ignored paths from the source checkout, including eligible .env
-and local configuration files. It preserves the branch, tracked files, and
+Create a linked worktree with Git and warm its ignored state. If a harness
+already created this linked worktree, run stim worktree warm here instead of
+creating another one. It copies missing ignored paths from the source checkout,
+including eligible .env and local configuration files. It preserves the branch, tracked files, and
 every existing destination entry; existing ignored directories are skipped
 whole, not filled in. Add --refresh to fast-forward the source checkout and
 install what moved there before the copy; it refuses a source checkout with local
@@ -67,7 +69,8 @@ other apps or other workspaces' devices.
 
   stim doctor --platform ios          # or: --platform android
 
-  # Skip Git creation if the harness already created this linked worktree.
+  # Worktree workflow. Skip Git creation if the harness already created this
+  # linked worktree.
   git worktree add -b <branch> <worktree-path> HEAD
   cd <worktree-path>
   stim worktree warm
