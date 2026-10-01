@@ -90,7 +90,7 @@ public final class ActionRun: ObservableObject, Identifiable {
     do {
       try launch(
         command,
-        { line in batcher.receive(line) },
+        { line in batcher.receive(OutputLine(line.channel, line.text.strippingANSI)) },
         { status in
           DispatchQueue.main.async {
             MainActor.assumeIsolated {

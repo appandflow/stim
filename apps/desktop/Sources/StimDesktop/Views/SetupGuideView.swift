@@ -12,6 +12,10 @@ struct SetupGuideView: View {
 
   private var step: SetupStep { onboarding.guideStep }
   private var setup: SetupChecks { onboarding.setup }
+  private var installedVersion: String? {
+    if case .compatible(let version)? = onboarding.report?.stim { return "\(version)" }
+    return nil
+  }
   private var busy: Bool { actions.active(for: Onboarding.actionKey) != nil }
 
   var body: some View {
@@ -22,7 +26,8 @@ struct SetupGuideView: View {
         ScrollViewReader { proxy in
           ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
-              SetupIllustration(step: step, complete: setup.isComplete)
+              SetupIllustration(
+                step: step, complete: setup.isComplete, stimVersion: installedVersion)
               content
               Color.clear.frame(height: 0).id(Self.end)
             }
@@ -201,6 +206,7 @@ struct SetupGuideView: View {
             statusLine(
               "stim \(version) at \(abbreviatingHome(report.stimPath ?? "stim"))", tone: .success,
               icon: "checkmark.circle.fill")
+            Spacer(minLength: 0)
             Button("Choose Another\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim(.plain))
           }
           if report.needsRelaunch {
@@ -224,14 +230,14 @@ struct SetupGuideView: View {
         "The skill tells Claude Code, Codex, Cursor and other agents to use Stim when they build, run or debug your app. It only points the agent at stim guide agent, so the guidance always matches the installed stim and upgrades need no reinstall."
       )
       .foregroundStyle(Palette.secondary)
+      if let path = setup.skillPath {
+        statusLine("Installed at \(abbreviatingHome(path))", tone: .success, icon: "checkmark.circle.fill")
+      }
       CommandBlock(
         command: onboarding.installSkillCommand, run: onboarding.guideRuns[onboarding.installSkillCommand], busy: busy,
         isDefault: setup.state(of: .skill) == .pending,
         caption: "Installs it for the agents on this Mac, in every project."
       ) { onboarding.runGuide("Install the Stim skill", onboarding.installSkillCommand) }
-      if let path = setup.skillPath {
-        statusLine("Installed at \(abbreviatingHome(path))", tone: .success, icon: "checkmark.circle.fill")
-      }
     }
   }
 
@@ -399,7 +405,7 @@ struct SetupGuideView: View {
       }
       Spacer()
       if let previous = step.previous {
-        Button("Back") { onboarding.guideStep = previous }.buttonStyle(.stim())
+        Button("Back") { onboarding.guideStep = previous }.buttonStyle(.stim(.secondary, .regular))
       }
       if let next = step.next {
         let finished = [.done, .notApplicable].contains(setup.state(of: step))
@@ -492,6 +498,11 @@ private struct CommandBlock: View {
         .buttonStyle(.stim(.plain))
         .help("Copy the command")
         .accessibilityLabel(copied ? "Copied" : "Copy \(text)")
+        .task(id: copied) {
+          guard copied else { return }
+          try? await Task.sleep(for: .seconds(2))
+          copied = false
+        }
         runButton
       }
       .padding(.leading, Space.lg)
@@ -548,6 +559,7 @@ private struct RunOutput: View {
           .padding(Space.md)
           .textSelection(.enabled)
         }
+        .frame(maxWidth: .infinity)
         .frame(height: 100)
         .background(RoundedRectangle(cornerRadius: Radius.control).fill(Media.screen))
         .onChange(of: run.logLines.count) {

@@ -147,6 +147,8 @@ public struct StimCLI: Sendable {
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
     var environment = environment
+    environment["NO_COLOR"] = "1"
+    environment["FORCE_COLOR"] = "0"
     let executable: String
     if command.program == "stim" {
       guard let stim = self.executable else { throw Failure.notFound }

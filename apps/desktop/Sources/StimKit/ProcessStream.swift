@@ -15,6 +15,15 @@ public struct OutputLine: Hashable, Sendable {
   }
 }
 
+extension String {
+  /// The text without ANSI CSI sequences (colors, cursor moves) and OSC sequences (titles, links).
+  public var strippingANSI: String {
+    replacingOccurrences(
+      of: "\u{1B}\\[[0-?]*[ -/]*[@-~]|\u{1B}\\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)", with: "",
+      options: .regularExpression)
+  }
+}
+
 /// Splits a byte stream into lines. A chunk can end inside a line or inside a
 /// UTF-8 sequence, so bytes after the last newline wait for the next chunk.
 public struct LineBuffer: Sendable {
