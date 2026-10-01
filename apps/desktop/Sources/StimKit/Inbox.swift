@@ -139,6 +139,8 @@ public struct Inbox: Codable, Equatable, Sendable {
     return seen
   }
 
+  /// Workspaces in one checkout, such as `apps/web` and `apps/mobile`, share a qualifier: telling them apart would
+  /// need the path inside the checkout, which the title already omits.
   private func qualifiers() -> [String: String] {
     nameQualifiers(
       newestTitles.map { item in
