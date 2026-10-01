@@ -2197,6 +2197,55 @@ describe('pods', () => {
     expect(seen[1]).toMatchObject({ phase: 'compile', provisional: false, kind: 'no-baseline' });
   });
 
+  test('a hit on the lookup after pods replaces the provisional miss', async () => {
+    reserve();
+    const seen: unknown[] = [];
+    const active = () => {
+      const record = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
+      return {
+        provisional: record?.missProvisional === true,
+        miss: record?.missReason?.kind,
+        outcome: record?.outcome,
+      };
+    };
+    let installed = false;
+    await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: 'PODS: A', manifestText: 'PODS: B' }),
+        runPodInstall: async () => {
+          seen.push(active());
+          installed = true;
+          return { ok: true, durationMs: 1 };
+        },
+        fingerprintProject: async () => ({ hash: installed ? 'b'.repeat(40) : FINGERPRINT, sources: [] }),
+        resolveBuild: () => (installed ? '/cache/Fixture.app' : null),
+        installIosApp: async () => {
+          seen.push(active());
+          return { ok: true };
+        },
+      },
+    );
+    expect(seen[0]).toEqual({ provisional: true, miss: 'no-baseline', outcome: 'cold' });
+    expect(seen[1]).toEqual({ provisional: false, miss: undefined, outcome: 'hit' });
+  });
+
+  test('a run with nothing to prebuild or install never reports a provisional miss', async () => {
+    reserve();
+    const seen: boolean[] = [];
+    await run(
+      {},
+      {
+        buildIos: async () => {
+          const record = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
+          seen.push(record?.missProvisional === true);
+          return makeIosBuildSuccess({ appPath: '/x.app', bundleId: 'b', durationMs: 1, scheme: 'F' });
+        },
+      },
+    );
+    expect(seen).toEqual([false]);
+  });
+
   test('a sandbox that does not match the lock is installed before the build', async () => {
     reserve();
     const { calls, errs } = await run(

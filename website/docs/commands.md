@@ -932,10 +932,10 @@ for a run that reuses its device until three tagged ones exist. Runs that
 finish while this one is running do not change its estimate.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
-in the shape of `lastBuilds.<platform>.missReason` below. While prebuild or
-pod install is still to run, the miss is that of the key looked up first and
-`build.missProvisional` is `true`: those steps can change the fingerprint, so
-the run looks the key up again afterwards. A hit then removes `missReason` and
+in the shape of `lastBuilds.<platform>.missReason` below. When prebuild or
+pod install will run, the miss is that of the key looked up first and
+`build.missProvisional` is `true` until the run looks the key up again after
+them, because they can change the fingerprint. A hit then removes `missReason` and
 sets `outcome` to `hit`; a miss replaces it with the final reason. Once the native
 build tool prints a line Stim reads, `build` also carries `detail` while the
 run is in `compile`:

@@ -44,7 +44,6 @@ export interface ActiveBuildRecord {
   phases: { phase: BuildPhase; startedAt: string }[];
   claim: ActiveBuildClaim;
   missReason?: BuildMissReason;
-  /** Set while `missReason` is the pre-mutation key's miss and prebuild or pod install will re-check the key. */
   missProvisional?: true;
   placement?: Exclude<BuildPlacement, 'local'>;
   /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */

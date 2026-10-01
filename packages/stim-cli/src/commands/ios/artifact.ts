@@ -614,14 +614,13 @@ export async function acquireIosArtifact(
     };
   }
 
-  /** Reports the first lookup's miss while prebuild or pod install, which can change the key, is still to run. */
   function reportPendingRecheck(prebuild: ReturnType<IosArtifactDeps['planPrebuild']>): void {
     const pods = d.readPodState(root);
     const mutates =
       prebuild === 'generate' ||
       prebuild === 'regenerate' ||
       podAction(pods, d.podsAreStale(pods.lockText, pods.manifestText)).install;
-    if (mutates) miss(reasonForMiss([]).reason, true);
+    if (mutates && useBuildCache) miss(reasonForMiss([]).reason, true);
   }
 
   function explainMiss(rekeyedBy: string[]): void {
