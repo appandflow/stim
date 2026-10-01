@@ -59,10 +59,24 @@ extension View {
 
 extension Color {
   /// A color that follows the effective appearance, including Desktop's own Appearance setting.
-  init(light: UInt32, dark: UInt32) {
+  init(light: UInt32, dark: UInt32, lightHighContrast: UInt32, darkHighContrast: UInt32) {
     self.init(
       nsColor: NSColor(name: nil) { appearance in
-        NSColor(rgba: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light)
+        let match = appearance.bestMatch(from: [
+          .darkAqua, .aqua, .accessibilityHighContrastDarkAqua, .accessibilityHighContrastAqua,
+        ])
+        let isDark = match == .darkAqua || match == .accessibilityHighContrastDarkAqua
+        let increased =
+          match == .accessibilityHighContrastDarkAqua || match == .accessibilityHighContrastAqua
+          || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let rgba: UInt32 =
+          switch (isDark, increased) {
+          case (true, true): darkHighContrast
+          case (true, false): dark
+          case (false, true): lightHighContrast
+          case (false, false): light
+          }
+        return NSColor(rgba: rgba)
       })
   }
 

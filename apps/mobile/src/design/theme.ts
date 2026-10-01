@@ -2,6 +2,7 @@ import { Platform, type TextStyle } from 'react-native';
 
 import {
   colors,
+  colorsHighContrast,
   fonts,
   fontWeight,
   media,
@@ -40,6 +41,11 @@ function buildTheme(palette: Record<ColorToken, string>) {
 export const themes = {
   light: buildTheme(colors.light),
   dark: buildTheme(colors.dark),
+};
+
+export const highContrastThemes = {
+  light: buildTheme(colorsHighContrast.light),
+  dark: buildTheme(colorsHighContrast.dark),
 };
 
 export type Theme = typeof themes.light;

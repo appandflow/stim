@@ -1,7 +1,7 @@
-import { Appearance } from 'react-native';
+import { AccessibilityInfo, Appearance, Platform } from 'react-native';
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 
-import { themes } from '@/design/theme';
+import { highContrastThemes, themes } from '@/design/theme';
 import { breakpoints } from '@/design/tokens';
 
 type Themes = typeof themes;
@@ -26,3 +26,17 @@ Appearance.addChangeListener(() => {
   const next = themeForScheme();
   if (UnistylesRuntime.themeName !== next) UnistylesRuntime.setTheme(next);
 });
+
+const applyContrast = (increased: boolean) => {
+  const source = increased ? highContrastThemes : themes;
+  for (const name of ['light', 'dark'] as const) {
+    UnistylesRuntime.updateTheme(name, (theme) => ({ ...theme, colors: source[name].colors }));
+  }
+};
+
+if (Platform.OS === 'ios') {
+  void AccessibilityInfo.isDarkerSystemColorsEnabled().then((increased) => {
+    if (increased) applyContrast(true);
+  });
+  AccessibilityInfo.addEventListener('darkerSystemColorsChanged', applyContrast);
+}
