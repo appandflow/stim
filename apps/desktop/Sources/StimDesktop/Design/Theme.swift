@@ -38,22 +38,53 @@ extension TextVariant {
     let name = mono ? FontFamily.mono : FontFamily.sans
     return NSFont(name: name, size: size) ?? .systemFont(ofSize: size)
   }
+
+  var scalingStyle: Font.TextStyle {
+    switch self {
+    case .caption2: .caption2
+    case .caption: .caption
+    case .footnote: .footnote
+    case .callout: .callout
+    case .body: .body
+    case .headline: .headline
+    case .title: .title
+    }
+  }
 }
 
 extension Font {
   static func stim(_ style: TextVariant, weight: Font.Weight? = nil, mono: Bool = false) -> Font {
     mono
-      ? .custom(FontFamily.mono, size: style.size)
-      : .custom(FontFamily.sans, size: style.size).weight(weight ?? style.weight)
+      ? .custom(FontFamily.mono, size: style.size, relativeTo: style.scalingStyle)
+      : .custom(FontFamily.sans, size: style.size, relativeTo: style.scalingStyle).weight(weight ?? style.weight)
+  }
+}
+
+private struct StimTextStyle: ViewModifier {
+  let style: TextVariant
+  let weight: Font.Weight?
+  let mono: Bool
+  @ScaledMetric private var scale: CGFloat
+
+  init(style: TextVariant, weight: Font.Weight?, mono: Bool) {
+    self.style = style
+    self.weight = weight
+    self.mono = mono
+    _scale = ScaledMetric(wrappedValue: 1, relativeTo: style.scalingStyle)
+  }
+
+  func body(content: Content) -> some View {
+    let font = style.nsFont(mono: mono)
+    let natural = font.ascender - font.descender + font.leading
+    return content.font(.stim(style, weight: weight, mono: mono))
+      .lineSpacing(max(0, style.lineHeight - natural) * scale)
   }
 }
 
 extension View {
   /// Sets a text style's font and the line spacing that brings its lines to the style's line height.
   func textStyle(_ style: TextVariant, weight: Font.Weight? = nil, mono: Bool = false) -> some View {
-    let font = style.nsFont(mono: mono)
-    let natural = font.ascender - font.descender + font.leading
-    return self.font(.stim(style, weight: weight, mono: mono)).lineSpacing(max(0, style.lineHeight - natural))
+    modifier(StimTextStyle(style: style, weight: weight, mono: mono))
   }
 }
 
