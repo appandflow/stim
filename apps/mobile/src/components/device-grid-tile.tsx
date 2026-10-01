@@ -1,23 +1,23 @@
 import { t } from '@lingui/core/macro';
-import { Trans } from '@lingui/react/macro';
 import { Image } from 'expo-image';
+import * as Linking from 'expo-linking';
 import { memo, useEffect, useRef } from 'react';
 import { View, type ViewInstance } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
-import { ActivityChip } from '@/components/activity-chip';
+import { AgentSessionLine } from '@/components/agent-sessions';
 import { Card } from '@/components/card';
-import { Icon } from '@/components/icon';
-import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
 import { useFrameSnapshot } from '@/hooks/frames';
-import { useMachineLink } from '@/hooks/machines';
+import { useMachineLink, usePairedMacs } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
+import { agentWebUrl, agentsSummary, workspaceAgentSessions } from '@/lib/agents';
+import { deviceTileName, deviceTileState } from '@/lib/device-tile';
 import type { DeviceTileItem, HomeItem } from '@/lib/home';
 import { deviceTileStatusLabels } from '@/lib/spoken-status';
-import { shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
+import { platformName, runningBuild, streamsFrames, unservedReason } from '@/lib/workspaces';
 
 const SCREEN_HEIGHT = 250;
 const REFRESH_MS = 2000;
@@ -39,10 +39,10 @@ const sameTile = (a: TileProps, b: TileProps) =>
   a.onOpen === b.onOpen;
 
 export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible, onAspect, onOpen }: TileProps) {
-  const { theme } = useUnistyles();
-  const now = useNow(30_000);
+  const showsMachine = (usePairedMacs()?.length ?? 0) > 1;
   const { connection, state: link } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
+  const now = useNow(runningBuild(item.env, device) ? 1_000 : 30_000);
   const streams = streamsFrames(device, link.kind === 'open' ? link.features : null);
   const { frame, error } = useFrameSnapshot(
     connection,
@@ -57,7 +57,13 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   useEffect(() => {
     if (frame) onAspect(tile.key, aspect);
   }, [frame, aspect, tile.key, onAspect]);
-  const where = [...new Set([item.title, item.project])].join(' \u00B7 ');
+  const { name, detail } = deviceTileName(device);
+  const state = deviceTileState(device, item.env, now);
+  const context = [item.project !== item.title ? item.project : null, showsMachine ? item.macName : null]
+    .filter(Boolean)
+    .join(' \u00B7 ');
+  const sessions = workspaceAgentSessions(item.env);
+  const sessionUrl = sessions[0] ? agentWebUrl(sessions[0]) : null;
   const thumbnail = useRef<ViewInstance>(null);
   const target = {
     macId: item.macId,
@@ -67,20 +73,39 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     physical: device.physical,
   };
   const zoomedAway = useZoomedAway(zoomKey(target));
-  const { model } = device;
   const { macName } = item;
-  const tileLabel = [t`${model}, ${where}, on ${macName}`, ...deviceTileStatusLabels(device, now)].join(', ');
-  const openLabel = t`Open the live screen of ${model}`;
+  const where = [...new Set([item.title, item.project])].join(', ');
+  const platform = platformName(device.platform);
+  const deviceLabel = [name, detail, detail?.includes(platform) ? null : platform].filter(Boolean).join(', ');
+  const workspaceLabel = showsMachine ? t`workspace ${where}, on ${macName}` : t`workspace ${where}`;
+  const tileLabel = [
+    deviceLabel,
+    ...deviceTileStatusLabels(device, now, item.env),
+    workspaceLabel,
+    agentsSummary(sessions),
+  ]
+    .filter(Boolean)
+    .join(', ');
+  const openLabel = t`Open the live screen of ${name}`;
+  const openSessionLabel = t`Open the agent session`;
   const openLive = () => {
     if (frame) openDeviceViewer(thumbnail.current, target, frame);
   };
+  const openSession = () => {
+    if (sessionUrl) void Linking.openURL(sessionUrl);
+  };
+  const actions = [
+    ...(frame ? [{ name: 'live', label: openLabel }] : []),
+    ...(sessionUrl ? [{ name: 'session', label: openSessionLabel }] : []),
+  ];
   return (
     <Card
       onPress={() => onOpen(item, false)}
       accessibilityLabel={tileLabel}
-      accessibilityActions={frame ? [{ name: 'live', label: openLabel }] : undefined}
+      accessibilityActions={actions.length ? actions : undefined}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'live') openLive();
+        if (event.nativeEvent.actionName === 'session') openSession();
       }}
       style={[styles.tile, wide && styles.wide]}
     >
@@ -117,41 +142,36 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
         </Text>
       ) : null}
       <View style={styles.meta}>
-        <Text variant="callout" weight="semibold" numberOfLines={1}>
-          {device.physical ? device.name : device.model}
+        <Text variant="callout" weight="semibold" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+          {name}
+          {detail ? (
+            <Text variant="footnote" weight="regular" tone="secondary">
+              {` \u00B7 ${detail}`}
+            </Text>
+          ) : null}
         </Text>
-        {device.physical && device.name !== device.model ? (
-          <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1}>
-            {device.model}
-          </Text>
-        ) : null}
-        {device.page ? (
+        <Text variant="caption" weight="medium" tone={state.tone} style={styles.state} numberOfLines={2}>
+          {state.text}
+        </Text>
+        <View style={styles.workspace}>
           <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
-            {shortUrl(device.page.url)}
+            {item.title}
           </Text>
+          {context ? (
+            <Text variant="caption" tone="tertiary" style={styles.context} numberOfLines={1}>
+              {` \u00B7 ${context}`}
+            </Text>
+          ) : null}
+        </View>
+        {sessions.length ? (
+          sessionUrl ? (
+            <Touch onPress={openSession} accessible={false} hitSlop={8}>
+              <AgentSessionLine sessions={sessions} variant="caption" tone="secondary" />
+            </Touch>
+          ) : (
+            <AgentSessionLine sessions={sessions} variant="caption" tone="secondary" />
+          )
         ) : null}
-        <Text variant="caption" tone="secondary" style={styles.shrink} numberOfLines={1} ellipsizeMode="middle">
-          {item.title}
-        </Text>
-        <View style={styles.mac}>
-          <Icon name="laptopcomputer" size={13} color={theme.colors.tertiary} />
-          <Text variant="caption" tone="tertiary" style={styles.shrink} numberOfLines={1}>
-            {item.macName}
-          </Text>
-        </View>
-        <View style={styles.badge}>
-          <ActivityChip activity={device.activity} />
-          {device.physical ? (
-            <Pill>
-              <Trans>Physical</Trans>
-            </Pill>
-          ) : null}
-          {device.page?.error ? (
-            <Pill tone="warning">
-              <Trans>Page failed to load</Trans>
-            </Pill>
-          ) : null}
-        </View>
       </View>
     </Card>
   );
@@ -170,9 +190,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   frame: { ...StyleSheet.absoluteFillObject, borderRadius: theme.radius.small },
   placeholder: { textAlign: 'center', paddingHorizontal: theme.space.md },
-  meta: { padding: theme.space.md, gap: theme.space.xxs },
-  stale: { paddingHorizontal: theme.space.md, paddingTop: theme.space.md },
+  meta: { paddingHorizontal: theme.space.sm, paddingVertical: theme.space.md, gap: theme.space.xxs },
+  stale: { paddingHorizontal: theme.space.sm, paddingTop: theme.space.md },
   shrink: { flexShrink: 1 },
-  mac: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
-  badge: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.xs, marginTop: theme.space.xs },
+  workspace: { flexDirection: 'row', alignItems: 'center' },
+  context: { flexShrink: 0, maxWidth: '45%' },
+  state: { marginVertical: theme.space.xs },
 }));
