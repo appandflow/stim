@@ -12,6 +12,7 @@ import { Button } from '@/components/button';
 import { Card } from '@/components/card';
 import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
+import { HeaderTitle } from '@/components/header-title';
 import { Icon } from '@/components/icon';
 import { FlatList, ScrollView, SectionList } from '@/components/lists';
 import { MacChip } from '@/components/mac-chip';
@@ -103,7 +104,7 @@ export function Home() {
                 accessibilityLabel={t`Stim`}
               />
             ) : (
-              <Text variant="headline">{view === 'devices' ? t`Devices` : t`Machines`}</Text>
+              <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
             ),
         }}
       />
