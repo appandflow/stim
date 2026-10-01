@@ -612,7 +612,7 @@ export function DeviceView({
                       accessible
                       accessibilityLabel={controlling ? t`Also driven by ${driver}` : t`Driven by ${driver}`}
                     >
-                      <View style={styles.driverDot} />
+                      <Icon name="cursorarrow.rays" size={11} color={theme.colors.accent} />
                       <Text variant="caption2" weight="medium" style={styles.driverText} numberOfLines={1}>
                         {driver}
                       </Text>
@@ -860,7 +860,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.chip,
     backgroundColor: theme.media.fill,
   },
-  driverDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.accent },
   recordingDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.error },
   driverText: { color: theme.media.textSecondary },
   chips: {

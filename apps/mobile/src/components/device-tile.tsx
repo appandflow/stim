@@ -238,6 +238,7 @@ function AgentRow({ env, device, deviceId }: { env: EnvironmentState; device: De
       accessibilityHint={t`Shows the agent actions on this device`}
       style={styles.agent}
     >
+      {row.tool ? <Icon name="cursorarrow.rays" size={13} color={theme.colors.primary} /> : null}
       <Text variant="footnote" weight="semibold" tone={row.tool ? 'brand' : 'tertiary'}>
         {tool}
       </Text>

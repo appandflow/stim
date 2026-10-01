@@ -459,8 +459,8 @@ support rotating; the phone cannot tell that apart from a rotate the device
 did not apply.
 
 When status reports the device driven by something else, such as
-agent-device, a `stim device lock`, or another phone, a small chip with a dot
-next to the model names it. **Control** then asks for confirmation before it
+agent-device, a `stim device lock`, or another phone, a small chip with a
+cursor icon next to the model names it. **Control** then asks for confirmation before it
 takes over, and starts control anyway; the Mac records the takeover in its
 action log. The chip stays while you have control, because that driver can
 still send input to the device. When the server refuses
