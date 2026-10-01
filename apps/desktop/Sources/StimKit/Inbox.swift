@@ -140,7 +140,11 @@ public struct Inbox: Codable, Equatable, Sendable {
   }
 
   private func qualifiers() -> [String: String] {
-    nameQualifiers(newestTitles.map { ($0.path, $0.title) })
+    nameQualifiers(
+      newestTitles.map { item in
+        let root = checkoutRoot(item.path) as NSString
+        return (item.path, item.title, root.lastPathComponent == item.title ? root.deletingLastPathComponent : root as String)
+      })
   }
 
   private static func qualified(_ title: String, _ qualifier: String?) -> String {
@@ -158,9 +162,12 @@ public struct Inbox: Codable, Equatable, Sendable {
   /// workspace in the inbox shares that title.
   public var displayTitles: [String: String] {
     let qualifiers = qualifiers()
+    let newest = Dictionary(newestTitles.map { ($0.path, $0.title) }, uniquingKeysWith: { first, _ in first })
     var titles: [String: String] = [:]
     for entry in entries {
-      titles[entry.id] = Self.qualified(entry.title, entry.target.path.flatMap { qualifiers[$0] })
+      let path = entry.target.path
+      let collides = path.flatMap { newest[$0] } == entry.title
+      titles[entry.id] = Self.qualified(entry.title, collides ? path.flatMap { qualifiers[$0] } : nil)
     }
     return titles
   }

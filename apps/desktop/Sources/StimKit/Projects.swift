@@ -113,24 +113,22 @@ public func projectSummaries(
   }
 }
 
-/// The enclosing folders that tell apart paths sharing a name, for as many levels as it takes: `code` for
-/// `/w/code/app` beside `/w/work/app`. A path whose name is unique gets no entry.
-public func nameQualifiers(_ items: [(path: String, name: String)]) -> [String: String] {
+/// The trailing folders of `qualifyBy` that tell apart items sharing a name, for as many levels as it takes. An
+/// item whose name is unique gets no entry.
+public func nameQualifiers(_ items: [(path: String, name: String, qualifyBy: String)]) -> [String: String] {
   var qualifiers: [String: String] = [:]
   for group in Dictionary(grouping: items, by: \.name).values {
-    let paths = Set(group.map(\.path))
-    guard paths.count > 1 else { continue }
-    let parents = paths.map { path in
-      (path, (path as NSString).deletingLastPathComponent.split(separator: "/").map(String.init))
-    }
+    var byPath: [String: [String]] = [:]
+    for item in group { byPath[item.path] = item.qualifyBy.split(separator: "/").map(String.init) }
+    guard byPath.count > 1 else { continue }
     var depth = 1
-    func qualifier(_ parents: [String], _ depth: Int) -> String { parents.suffix(depth).joined(separator: "/") }
-    while depth < (parents.map(\.1.count).max() ?? 0),
-      Set(parents.map { qualifier($0.1, depth) }).count < parents.count
+    func qualifier(_ components: [String], _ depth: Int) -> String { components.suffix(depth).joined(separator: "/") }
+    while depth < (byPath.values.map(\.count).max() ?? 0),
+      Set(byPath.values.map { qualifier($0, depth) }).count < byPath.count
     {
       depth += 1
     }
-    for (path, components) in parents {
+    for (path, components) in byPath {
       let qualified = qualifier(components, depth)
       if !qualified.isEmpty { qualifiers[path] = qualified }
     }
@@ -142,7 +140,8 @@ public func nameQualifiers(_ items: [(path: String, name: String)]) -> [String: 
 /// takes to tell apart projects whose folders share a name, such as `app (work)` and `app (code)`.
 public func projectTitles(roots: [String]) -> [String: String] {
   let unique = Set(roots)
-  let qualifiers = nameQualifiers(unique.map { ($0, ($0 as NSString).lastPathComponent) })
+  let qualifiers = nameQualifiers(
+    unique.map { ($0, ($0 as NSString).lastPathComponent, ($0 as NSString).deletingLastPathComponent) })
   return Dictionary(
     uniqueKeysWithValues: unique.map { root in
       let name = (root as NSString).lastPathComponent
