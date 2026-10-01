@@ -206,6 +206,7 @@ struct SetupGuideView: View {
             statusLine(
               "stim \(version) at \(abbreviatingHome(report.stimPath ?? "stim"))", tone: .success,
               icon: "checkmark.circle.fill")
+            Spacer(minLength: 0)
             Button("Choose Another\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim(.plain))
           }
           if report.needsRelaunch {
