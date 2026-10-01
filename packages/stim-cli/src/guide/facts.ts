@@ -779,6 +779,10 @@ RULES
                               root, and browser profile paths whose
                               directory is gone; --delete forgets the
                               ledger entry only
+    staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
+                              file, bytes }  entries of $STIM_HOME/disk-usage
+                              and pull-requests whose path is gone from a
+                              mounted volume; --delete removes the file
     idleDevices             { kind, id, name, project, slot, lastActivityAt,
                               idleForMs, buildInProgress }  booted owned
                               devices whose status activity is "idle";

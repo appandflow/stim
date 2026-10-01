@@ -14,10 +14,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
+import { classifyStatusCaches } from '../commands/gc/status-caches.ts';
 import { classifyWorkspaceDirs, listWorkspaceDirs, planWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { worktreeSkipReason, type WorktreeFacts } from '../commands/gc/worktrees.ts';
 import { mergeState, type MergeState } from '../workspace/merge-state.ts';
@@ -38,6 +39,7 @@ import { claimRemoveCommand, exclusiveClaimDir } from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { registerCollector } from '../collector/state.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { diskUsageCacheFile, pullRequestCacheFile } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 let tmpHome: string;
@@ -1684,4 +1686,78 @@ test('--cache workspaces leaves the build outputs of a dead project to the unsco
   ]);
   expect(existsSync(join(live.dir, 'derived-data'))).toBe(false);
   expect(existsSync(join(dead.dir, 'derived-data'))).toBe(true);
+
+describe('status cache entries of gone workspaces', () => {
+  const seedDisk = (path: string) => {
+    const file = diskUsageCacheFile(path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ path, bytes: 10, measuredAt: '2026-09-01T00:00:00.000Z' }));
+    return file;
+  };
+  const seedPullRequest = (path: string) => {
+    const file = pullRequestCacheFile(path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({ path, branch: 'b', head: 'h', checkedAt: '2026-09-01T00:00:00.000Z', pullRequest: null }),
+    );
+    return file;
+  };
+
+  test('gc reports and --delete removes entries whose path is gone, and keeps the rest', async () => {
+    const live = join(projects, 'live');
+    mkdirSync(join(live, 'node_modules'), { recursive: true });
+    const gone = join(projects, 'gone');
+    const stale = [seedDisk(gone), seedDisk(join(gone, 'node_modules')), seedPullRequest(gone)];
+    const kept = [seedDisk(live), seedPullRequest(live), seedDisk(join(live, 'node_modules'))];
+    const unreadable = join(dirname(diskUsageCacheFile(live)), `${'0'.repeat(32)}.json`);
+    writeFileSync(unreadable, 'not json');
+    const foreign = diskUsageCacheFile(join(projects, 'elsewhere'));
+    writeFileSync(foreign, JSON.stringify({ path: join(projects, 'other'), bytes: 1, measuredAt: 'x' }));
+
+    const dry = (await gcJson({})).payload;
+    expect(dry.sections.staleStatusCaches.map((e: { file: string }) => e.file).toSorted()).toEqual(stale.toSorted());
+    expect(dry.sections.skipped).toContainEqual({
+      path: dirname(unreadable),
+      detail: '2 entries kept: the file records no readable path of its own',
+    });
+    expect(dry.actionable).toBe(true);
+    for (const file of stale) expect(existsSync(file)).toBe(true);
+
+    const { payload } = await gcJson({ delete: true });
+    for (const file of stale) expect(existsSync(file)).toBe(false);
+    for (const file of [...kept, unreadable, foreign]) expect(existsSync(file)).toBe(true);
+    expect(payload.results).toContainEqual(
+      expect.objectContaining({ kind: 'statusCache', status: 'done', label: '2 stale disk-usage cache entries' }),
+    );
+    expect(payload.failures).toBe(0);
+  });
+
+  test('entries whose volume is not mounted are kept', () => {
+    const file = seedDisk('/Volumes/never-mounted/app');
+    const entry = { kind: 'disk-usage' as const, file, path: '/Volumes/never-mounted/app', bytes: 1 };
+    expect(classifyStatusCaches([entry], [])).toEqual({
+      stale: [],
+      skipped: [{ dir: dirname(file), reason: '1 entry kept: the volume of the folder it measures is not mounted' }],
+    });
+  });
+
+  test("worktree remove drops that worktree's entries and no other", async () => {
+    const { worktrees } = gitRepoWithWorktrees(['going', 'staying']);
+    const going = worktrees.going!;
+    const staying = worktrees.staying!;
+    const goingFiles = [
+      seedDisk(going),
+      seedDisk(join(going, 'node_modules')),
+      seedDisk(workspaceDir(going)),
+      seedPullRequest(going),
+    ];
+    const stayingFiles = [seedDisk(staying), seedDisk(workspaceDir(staying)), seedPullRequest(staying)];
+
+    await captureLog(() => removeWorktreeTarget(going));
+
+    expect(existsSync(going)).toBe(false);
+    for (const file of goingFiles) expect(existsSync(file)).toBe(false);
+    for (const file of stayingFiles) expect(existsSync(file)).toBe(true);
+  }, 60_000);
 });

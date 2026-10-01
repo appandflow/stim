@@ -31,6 +31,7 @@ import type {
 } from './devices.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
 import type { StaleLedgerEntry } from './ledger.ts';
+import { statusCacheLines, type StaleStatusCache } from './status-caches.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
@@ -49,6 +50,7 @@ export interface GcReport {
   staleDevices: StaleProjectDevice[];
   staleDeviceRecords: StaleDeviceRecord[];
   staleLedgerEntries: StaleLedgerEntry[];
+  staleStatusCaches: StaleStatusCache[];
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[]; unresolved?: BuildSlotInfo[] };
   deviceLeases: DeviceLeaseGarbage;
@@ -157,6 +159,7 @@ export function formatGcReport(
     staleDevices = [],
     staleDeviceRecords = [],
     staleLedgerEntries = [],
+    staleStatusCaches = [],
     buildLocks = { stale: [], live: [], unresolved: [] },
     buildSlots = { stale: [], live: [], unresolved: [] },
     deviceLeases = { expired: [], kept: [] },
@@ -193,6 +196,7 @@ export function formatGcReport(
       staleDevices,
       staleDeviceRecords,
       staleLedgerEntries,
+      staleStatusCaches,
       staleLocks,
       staleSlots,
       expiredLeases,
@@ -276,6 +280,8 @@ export function formatGcReport(
     for (const entry of staleLedgerEntries) lines.push(`  ${entry.kind} ${entry.id} is not on this machine`);
     lines.push('              --delete forgets the LEDGER ENTRY only; there is no device left to touch.');
   }
+
+  lines.push(...statusCacheLines(staleStatusCaches));
 
   if (easSessionSweep.orphaned.length) {
     lines.push(`Orphaned EAS sessions (${easSessionSweep.orphaned.length}) - current EAS project only:`);
@@ -542,6 +548,7 @@ export interface GcJsonSections {
   }[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
   staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
+  staleStatusCaches: { kind: 'disk-usage' | 'pull-request'; path: string; file: string; bytes: number }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;
@@ -623,6 +630,7 @@ export function gcReportSections({
   staleDevices = [],
   staleDeviceRecords = [],
   staleLedgerEntries = [],
+  staleStatusCaches = [],
   buildLocks = { stale: [], live: [], unresolved: [] },
   buildSlots = { stale: [], live: [], unresolved: [] },
   deviceLeases = { expired: [], kept: [] },
@@ -703,6 +711,7 @@ export function gcReportSections({
       slot: r.slot ?? null,
     })),
     staleLedgerEntries: staleLedgerEntries.map(({ kind, id }) => ({ kind, id })),
+    staleStatusCaches: staleStatusCaches.map(({ kind, path, file, bytes }) => ({ kind, path, file, bytes })),
     idleDevices: idleDevices.map(({ kind, id, name, project, slot, lastActivityAt, idleForMs, buildInProgress }) => ({
       kind,
       id,

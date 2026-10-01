@@ -13,6 +13,7 @@ export type GcResultKind =
   | 'easSession'
   | 'worktree'
   | 'cache'
+  | 'statusCache'
   | 'watchmanRoot'
   | 'watchman'
   | 'gradleDaemon'

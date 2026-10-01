@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { readdirSync, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { readJsonObject } from './json-file.ts';
 import {
   agentSessionsCacheFile,
@@ -30,6 +31,46 @@ export function diskUsageCacheFile(path: string): string {
 /** The file that caches the pull request of the worktree at `path`. */
 export function pullRequestCacheFile(path: string): string {
   return join(pullRequestCacheDir(), cacheName(path));
+}
+
+/** One file of the disk-usage or pull-request cache. */
+export interface StatusCacheEntry {
+  kind: 'disk-usage' | 'pull-request';
+  file: string;
+  /** The folder or worktree the file caches, or null when the file does not record one under its own name. */
+  path: string | null;
+  bytes: number;
+}
+
+/** Every finished file in the disk-usage and pull-request caches; a file being written is not listed. */
+export function listStatusCacheEntries(): StatusCacheEntry[] {
+  const entries: StatusCacheEntry[] = [];
+  for (const [kind, dir] of [
+    ['disk-usage', diskUsageCacheDir()],
+    ['pull-request', pullRequestCacheDir()],
+  ] as const) {
+    let names: string[];
+    try {
+      names = readdirSync(dir).toSorted();
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!/^[0-9a-f]{32}\.json$/.test(name)) continue;
+      const file = join(dir, name);
+      let bytes: number;
+      try {
+        bytes = statSync(file).size;
+      } catch {
+        continue;
+      }
+      const recorded = readJsonObject(file)?.path;
+      const path =
+        typeof recorded === 'string' && isAbsolute(recorded) && cacheName(recorded) === name ? recorded : null;
+      entries.push({ kind, file, path, bytes });
+    }
+  }
+  return entries;
 }
 
 /** A worktree's cached pull request lookup: the branch and HEAD it was looked up for, and when. */
