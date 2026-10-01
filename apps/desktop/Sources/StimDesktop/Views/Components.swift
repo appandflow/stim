@@ -3,15 +3,23 @@ import Lottie
 import StimKit
 import SwiftUI
 
+/// A state shown by color and fill. VoiceOver skips it unless `label` names the state, so give one when no text beside
+/// the dot says it.
 struct StatusDot: View {
   var color: Color
   var filled = true
+  var label: String?
 
   var body: some View {
-    Circle()
+    let dot = Circle()
       .fill(filled ? color : .clear)
       .overlay(Circle().strokeBorder(filled ? .clear : color, lineWidth: 1))
       .frame(width: 7, height: 7)
+    if let label {
+      dot.accessibilityElement().accessibilityLabel(label)
+    } else {
+      dot.accessibilityHidden(true)
+    }
   }
 }
 

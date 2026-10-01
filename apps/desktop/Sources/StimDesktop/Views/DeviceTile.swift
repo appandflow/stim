@@ -141,9 +141,12 @@ struct DeviceTile: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       HStack(spacing: Space.md) {
-        StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
-          .contentShape(Circle())
-          .help("State: \(device.state)")
+        StatusDot(
+          color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning,
+          label: "State: \(device.state)"
+        )
+        .contentShape(Circle())
+        .help("State: \(device.state)")
         ViewThatFits(in: .horizontal) {
           HStack(spacing: Space.xs) {
             Text(device.label).font(.stim(.callout, weight: .semibold))

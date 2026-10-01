@@ -85,6 +85,7 @@ struct LogsView: View {
           ToggleChip(on: on, tone: .brand) { Text(Self.title(source)) }
         }
         .buttonStyle(.hoverRow())
+        .accessibilityAddTraits(on ? .isSelected : [])
         .help(Self.help(source))
       }
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
@@ -114,6 +115,7 @@ struct LogsView: View {
         }
       }
       .buttonStyle(.hoverRow())
+      .accessibilityAddTraits(query.errorsOnly ? .isSelected : [])
       .help("stim logs --errors: errors and fatals since the last marker")
       TextField("Search (regular expression)", text: $search)
         .textFieldStyle(.roundedBorder)

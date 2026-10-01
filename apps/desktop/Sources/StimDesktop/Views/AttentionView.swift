@@ -108,6 +108,7 @@ struct AttentionView: View {
       }
     } else {
       Button(title) { actions.run(runTitle ?? title, command) }
+        .accessibilityLabel("\(title), \(command.displayLine())")
         .help(command.displayLine())
     }
   }
@@ -132,6 +133,7 @@ struct AttentionView: View {
     HStack(spacing: Space.lg) {
       Image(systemName: icon(item))
         .foregroundStyle(item.isError ? Palette.error : Palette.warning)
+        .accessibilityLabel(item.isError ? "Error" : "Warning")
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(abbreviatingHome(item.body)).lineLimit(2)
         if let command = item.command {
@@ -142,6 +144,7 @@ struct AttentionView: View {
       Spacer()
       if let workspace, item.category == .looping || item.id.hasPrefix("run-") {
         Button("Open logs") { openLogs(workspace) }
+          .accessibilityLabel("Open logs, \(store.names(ofPath: workspace).title)")
           .help("Show this workspace's errors")
       }
       if let command = item.command {
@@ -149,9 +152,11 @@ struct AttentionView: View {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(command.shellLine, forType: .string)
         }
+        .accessibilityLabel("Copy command, \(command.displayLine())")
         .help(command.displayLine())
         if item.runnable && command.arguments.contains("--fix") {
           Button("Fix\u{2026}") { fixing = command }
+            .accessibilityLabel("Fix, \(command.displayLine())")
             .help(command.displayLine())
         } else if item.runnable {
           runButton("Run", command, runTitle: "Fix \(store.names(ofPath: command.cwd).title)")

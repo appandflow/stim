@@ -112,6 +112,7 @@ struct NowBand: View {
       Image(systemName: Self.icon(owner.kind))
         .foregroundStyle(owner.owned ? Palette.primary : Palette.tertiary)
         .frame(width: 18)
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(owner.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text(ownerLine(owner)).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)
@@ -142,6 +143,11 @@ struct NowBand: View {
       .buttonStyle(.stim(.destructive))
       .fixedSize()
       .disabled(actions.active(for: workspace) != nil)
+      .accessibilityLabel(
+        owner.kind == .metro
+          ? "\(title) \(status.names(ofPath: workspace).title)"
+          : "\(title) \(owner.name), \(status.names(ofPath: workspace).title)"
+      )
       .help(
         owner.kind == .metro
           ? "stim stop: stops this workspace's dev server and its devices"

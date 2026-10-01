@@ -563,6 +563,7 @@ struct MachineView: View {
       Image(systemName: device.kind == "ios" ? "iphone" : "smartphone")
         .foregroundStyle(entry.isStim ? Palette.accent : Palette.tertiary)
         .frame(width: 16)
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(device.name).lineLimit(1).truncationMode(.middle)
         Text(subtitle).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1)

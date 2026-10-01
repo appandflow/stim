@@ -52,9 +52,11 @@ struct DeviceViewerToolbar: View {
 
   private var identity: some View {
     HStack(spacing: Space.sm) {
-      StatusDot(color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning)
-        .help("State: \(device.state)")
-        .accessibilityLabel("State: \(device.state)")
+      StatusDot(
+        color: device.isRunning ? Palette.success : Palette.tertiary, filled: device.isRunning,
+        label: "State: \(device.state)"
+      )
+      .help("State: \(device.state)")
       Text(device.label).font(.stim(.callout, weight: .semibold))
       if let detail = device.detail {
         Text(detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)

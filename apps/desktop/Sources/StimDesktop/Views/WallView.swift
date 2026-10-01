@@ -123,6 +123,8 @@ struct WorkspaceHeader: View {
           Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
         }
         .help("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
       }
       if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
         DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
