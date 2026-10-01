@@ -361,8 +361,9 @@ test('warm reports carried node_modules installed from an older lockfile that bo
   expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
 }, 30_000);
 
-test('warm copies literal ignored filenames and skips Finder, IDE, and derived data', () => {
-  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n');
+test('warm copies literal ignored filenames and skips Finder, IDE, jj, and derived data', () => {
+  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n.jj/\n');
+  write(root, '.jj/repo/op_heads', 'source jj state');
   write(root, 'tracked-app/.idea/codeStyles.xml', 'shared IDE settings');
   git(root, 'add', '-f', 'tracked-app/.idea/codeStyles.xml');
   git(root, 'commit', '-qm', 'tracked IDE settings');
@@ -383,6 +384,8 @@ test('warm copies literal ignored filenames and skips Finder, IDE, and derived d
   expect(result.failed).toEqual([]);
   expect(result.copied).not.toContain('.DS_Store');
   expect(result.copied).not.toContain('.idea');
+  expect(result.copied).not.toContain('.jj');
+  expect(existsSync(join(target, '.jj'))).toBe(false);
   expect(readFileSync(join(target, literalName), 'utf-8')).toBe('literal env');
   expect(existsSync(join(target, '.DS_Store'))).toBe(false);
   expect(existsSync(join(target, 'node_modules/pkg/.DS_Store'))).toBe(false);
