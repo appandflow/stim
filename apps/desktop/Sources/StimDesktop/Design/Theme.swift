@@ -26,7 +26,7 @@ extension Color {
     case .accent: self = Palette.accent
     case .info: self = Palette.info
     case .success: self = Palette.success
-    case .caution: self = Color(light: 0x94600DFF, dark: 0xF5B454FF)
+    case .caution: self = Palette.warning
     case .warning: self = Palette.warning
     case .error: self = Palette.error
     }
