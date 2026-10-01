@@ -40,7 +40,7 @@ struct Inspector: View {
             }
             if let project {
               ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: Space.md) { statCards(project) }
+                HStack(spacing: Space.md) { statCards(project) }.fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: Space.md) { statCards(project) }
               }
             }
@@ -73,8 +73,8 @@ struct Inspector: View {
       Text(title).foregroundStyle(Palette.secondary)
       Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
       ProgressView(value: platform.hitRate).tint(Palette.accent)
-      Text("\(countLabel(platform.hits, "hit")) \u{00B7} \(countLabel(platform.misses, "miss", plural: "misses"))")
-        .foregroundStyle(Palette.secondary)
+      Text(countLabel(platform.hits, "hit")).foregroundStyle(Palette.secondary)
+      Text(countLabel(platform.misses, "miss", plural: "misses")).foregroundStyle(Palette.secondary)
       if let cold = platform.lastColdBuildMs {
         Text("Last cold \(Format.elapsed(ms: cold))").foregroundStyle(Palette.secondary)
       }
@@ -83,7 +83,7 @@ struct Inspector: View {
       }
     }
     .padding(Space.lg)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 }
