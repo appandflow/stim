@@ -2940,6 +2940,21 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
+  test.skipIf(!fakeTailscale)('tells status subscribers which device leases it holds for phones', async () => {
+    const port = await startControl();
+    const client = await authed(port, true);
+    const watcher = await authed(port, true);
+    await watcher.request('status.subscribe');
+    expect(((await watcher.next()) as StatusEvent).ownLeases).toBeUndefined();
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+    await until(() => lockCalls().length === 1);
+    await watcher.request('status.subscribe');
+    const event = (await watcher.next()) as StatusEvent;
+    expect(event.ownLeases).toEqual([expect.stringMatching(/^\d{4}-\d\d-\d\dT/)]);
+    await client.request('control.end', { session: (begun.result as { session: string }).session });
+  });
+
   test.skipIf(!fakeTailscale)('types and presses buttons on an emulator with adb', async () => {
     const port = await startControl();
     const client = await authed(port, true);
