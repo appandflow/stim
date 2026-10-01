@@ -11,6 +11,7 @@ import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { toneColor } from '@/design/tone';
+import { useLargeText } from '@/hooks/large-text';
 import { useMachinePresence } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { workspaceAgentSessions } from '@/lib/agents';
@@ -39,6 +40,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   onOpen: (item: HomeItem, errors: boolean) => void;
 }) {
   const { theme } = useUnistyles();
+  const large = useLargeText();
+  const lines = large ? 3 : 1;
   const { online, cached, lastSeenAt } = useMachinePresence(item.macId);
   const offline = !online || cached;
   const at = offline ? (lastSeenAt ?? now) : now;
@@ -58,7 +61,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     context.push(
       <View key="mac" style={styles.inline}>
         <Icon name="laptopcomputer" size={13} color={offline ? theme.colors.tertiary : theme.colors.success} />
-        <Text variant="footnote" tone="secondary" numberOfLines={1}>
+        <Text variant="footnote" tone="secondary" numberOfLines={lines}>
           {item.macName}
         </Text>
       </View>,
@@ -103,8 +106,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
         key="folder"
         variant="footnote"
         tone="tertiary"
-        numberOfLines={1}
-        ellipsizeMode="middle"
+        numberOfLines={lines}
+        ellipsizeMode={lines > 1 ? 'tail' : 'middle'}
         style={styles.shrink}
       >
         {item.inCheckout}
@@ -148,13 +151,13 @@ export const WorkspaceRow = memo(function WorkspaceRow({
         <View style={[styles.dot, { borderColor: color, backgroundColor: live && !offline ? color : 'transparent' }]} />
       </View>
       <View style={[styles.body, offline && styles.dimmed]}>
-        <View style={styles.titleLine}>
+        <View style={[styles.titleLine, large && styles.titleLineStacked]}>
           <Text
             variant="headline"
             weight="medium"
             tone={live ? 'default' : 'secondary'}
-            numberOfLines={1}
-            ellipsizeMode="middle"
+            numberOfLines={lines}
+            ellipsizeMode={lines > 1 ? 'tail' : 'middle'}
             style={styles.title}
           >
             {item.title}
@@ -269,6 +272,7 @@ const styles = StyleSheet.create((theme) => ({
   title: { flex: 1 },
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
   build: { gap: theme.space.sm, paddingVertical: theme.space.xxs },
+  titleLineStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: theme.space.xs },
   inline: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
   line: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.sm, rowGap: 2 },
   shrink: { flexShrink: 1 },
