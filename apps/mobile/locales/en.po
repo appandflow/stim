@@ -2633,6 +2633,10 @@ msgstr "Open the live screen of {deviceName}, app closed"
 msgid "Open the live screen of {name}"
 msgstr "Open the live screen of {name}"
 
+#: src/screens/build-details.tsx
+msgid "Opens {name}"
+msgstr "Opens {name}"
+
 #: src/components/workspace-cards.tsx
 msgid "Opens the logs"
 msgstr "Opens the logs"
@@ -3676,6 +3680,10 @@ msgstr "Waiting for {name}'s build of the same app"
 msgid "Waiting for a frame"
 msgstr "Waiting for a frame"
 
+#: src/screens/build-details.tsx
+msgid "Waiting for another build of the same app"
+msgstr "Waiting for another build of the same app"
+
 #: src/lib/build-machines.ts
 msgid "Waiting for approval"
 msgstr "Waiting for approval"
@@ -3688,10 +3696,6 @@ msgstr "Waiting for frames"
 #: src/components/device-tile.tsx
 msgid "Waiting for the {buildName} build"
 msgstr "Waiting for the {buildName} build"
-
-#: src/screens/build-details.tsx
-msgid "Waiting for the build of {name}. Open {name}"
-msgstr "Waiting for the build of {name}. Open {name}"
 
 #: src/lib/workspace-view.ts
 msgid "warmed {since} ago"

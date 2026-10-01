@@ -14,6 +14,7 @@ import {
   releaseBuildLock,
   takeoverLine,
   waitForBuild,
+  waitForSharedBuild,
   waitingLine,
 } from '../engine/build-lock.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
@@ -705,5 +706,29 @@ describe('takeoverLine', () => {
 
   test('carries no phase prefix of its own', () => {
     expect(takeoverLine({ projectRoot: null, pid: 1, logFile: null }).startsWith('RETRY:')).toBe(true);
+  });
+});
+
+describe('waitForSharedBuild', () => {
+  test('reports the holder while it waits and drops it when the wait ends', async () => {
+    const holder = { projectRoot: '/w/app-a', pid: 4242, logFile: null, startedAt: '2026-09-24T10:00:00.000Z' };
+    const reported: (string | null)[] = [];
+    const result = await waitForSharedBuild({
+      platform: PLATFORM,
+      key: KEY,
+      fingerprint: 'a3f9b1c2d3e4f5',
+      root,
+      logFile: join(root, 'build.ndjson'),
+      command: 'stim ios',
+      acquire: (() => ({ held: holder })) as unknown as typeof acquireBuildLock,
+      wait: (async () => ({ hit: '/cache/App.app', waitedMs: 1000 })) as unknown as typeof waitForBuild,
+      now: Date.now,
+      phase: () => {},
+      waitingOn: (path) => reported.push(path),
+      warn: () => {},
+      out: () => {},
+    });
+    expect(result.refusal).toBeNull();
+    expect(reported).toEqual(['/w/app-a', null]);
   });
 });

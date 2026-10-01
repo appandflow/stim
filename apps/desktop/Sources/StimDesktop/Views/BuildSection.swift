@@ -166,11 +166,11 @@ struct BuildSection: View {
   }
 }
 
-/// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
-/// cache missed, and the latest output.
 /// The names the app shows for the workspaces at their paths.
 struct WorkspaceTitles: Sendable {
   var titles: [String: String] = [:]
+
+  func knows(_ path: String) -> Bool { titles[path] != nil }
 
   func callAsFunction(_ path: String) -> String { titles[path] ?? (path as NSString).lastPathComponent }
 }
@@ -186,6 +186,8 @@ extension EnvironmentValues {
   }
 }
 
+/// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
+/// cache missed, and the latest output.
 private struct RunningBuildDetail: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
@@ -219,7 +221,7 @@ private struct RunningBuildDetail: View {
     }
     .onDisappear { output.stop() }
     if build.phase == "wait", let holder = build.waitingOn {
-      WaitingOnButton(path: holder.path)
+      WaitingOnButton(path: holder.path, current: env.path)
     }
     if let miss = build.missReason {
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
@@ -362,9 +364,18 @@ struct BuildDiagnosticsView: View {
 /// Jumps to the workspace whose build of the same app this run waits for.
 private struct WaitingOnButton: View {
   var path: String
+  var current: String
   @Environment(\.workspaceTitle) private var title
 
   var body: some View {
+    if path == current || !title.knows(path) {
+      Text("Waiting for another build of the same app").foregroundStyle(Palette.secondary)
+    } else {
+      link
+    }
+  }
+
+  private var link: some View {
     Button {
       OpenRequests.shared.workspacePath = path
     } label: {
@@ -372,7 +383,7 @@ private struct WaitingOnButton: View {
         Text("Waiting for \(title(path))'s build of the same app")
           .multilineTextAlignment(.leading)
           .fixedSize(horizontal: false, vertical: true)
-        Image(systemName: "arrow.right.circle")
+        Image(systemName: "arrow.right.circle").accessibilityHidden(true)
       }
       .foregroundStyle(Palette.primary)
     }

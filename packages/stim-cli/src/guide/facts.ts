@@ -1251,8 +1251,9 @@ RULES
                    prebuild, pods or compile.
   waitingOn        while phase is "wait" and the holder is known: { path },
                    the workspace whose build of the same artifact this run
-                   waits for; absent otherwise. path matches an entry of
-                   environments.
+                   waits for; absent otherwise. The lock is machine-wide, so
+                   path is usually an entry of environments but can name a
+                   workspace that is not listed.
 
   Plain \`stim status\` prints the same as one line per workspace:
 

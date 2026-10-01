@@ -312,7 +312,7 @@ function RunningBuild({
             .join(' \u00B7 ')}
         </Text>
       </View>
-      {build.phase === 'wait' && build.waitingOn ? <WaitingOn path={build.waitingOn.path} /> : null}
+      {build.phase === 'wait' && build.waitingOn ? <WaitingOn path={build.waitingOn.path} current={path} /> : null}
       <PhaseList
         steps={phaseSteps(build, history, now)}
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
@@ -338,13 +338,20 @@ function RunningBuild({
   );
 }
 
-function WaitingOn({ path }: { path: string }) {
+function WaitingOn({ path, current }: { path: string; current: string }) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const { mac } = useMacConnection();
   const status = useStatus();
   const name = workspaceTitleAt(path, status);
-  if (!mac) return null;
+  const line = t`Waiting for ${name}'s build of the same app`;
+  if (!mac || path === current || !status?.environments.some((e) => e.path === path)) {
+    return (
+      <Text variant="callout" tone="secondary">
+        <Trans>Waiting for another build of the same app</Trans>
+      </Text>
+    );
+  }
   const open = () => {
     router.dismiss();
     router.push({ pathname: '/mac/[id]/workspace', params: { id: mac.id, path } });
@@ -353,11 +360,12 @@ function WaitingOn({ path }: { path: string }) {
     <Touch
       onPress={open}
       accessibilityRole="link"
-      accessibilityLabel={t`Waiting for the build of ${name}. Open ${name}`}
+      accessibilityLabel={line}
+      accessibilityHint={t`Opens ${name}`}
       style={styles.refresh}
     >
       <Text variant="callout" tone="brand" style={styles.grow}>
-        {t`Waiting for ${name}'s build of the same app`}
+        {line}
       </Text>
       <Icon name="chevron.right" size={12} color={theme.colors.primary} />
     </Touch>
