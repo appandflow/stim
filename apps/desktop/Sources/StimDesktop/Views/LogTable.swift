@@ -102,9 +102,7 @@ struct LogTable: NSViewRepresentable {
           scrollProgrammatically(to: NSPoint(x: origin.x, y: max(0, origin.y - height)))
         }
       case .slotColumnWidened:
-        let visible = table.rows(in: table.visibleRect)
-        let rows = IndexSet(integersIn: visible.location..<(visible.location + visible.length))
-        table.reloadData(forRowIndexes: rows, columnIndexes: [0])
+        table.reloadData()
       case .jumpToLatest:
         scrollToLatest()
       case .reveal(let row):
@@ -163,7 +161,6 @@ struct LogTable: NSViewRepresentable {
       view.identifier = id
       view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row], slotWidth: model.slotWidth) : []
       view.indent = LogRowText.messageColumn(slotWidth: model.slotWidth)
-      view.slotWidth = model.slotWidth
       view.row = row < model.rows.count ? model.rows[row] : nil
       return view
     }
@@ -208,11 +205,10 @@ final class LogRowView: NSView {
   }
   var indent: CGFloat = 0
   var row: LogsModel.Row?
-  var slotWidth = 0
 
   override var isFlipped: Bool { true }
 
-  override func accessibilityLabel() -> String? { row.map { LogRowText.accessibilityLabel($0, slotWidth: slotWidth) } }
+  override func accessibilityLabel() -> String? { row.map(LogRowText.accessibilityLabel) }
 
   override func draw(_ dirtyRect: NSRect) {
     for (i, line) in lines.enumerated() {
@@ -262,11 +258,11 @@ enum LogRowText {
     }
   }
 
-  static func accessibilityLabel(_ row: LogsModel.Row, slotWidth: Int) -> String {
+  static func accessibilityLabel(_ row: LogsModel.Row) -> String {
     let summary = row.entry.lead.accessibilityLabel(
       source: sourceLabel(row.entry.lead.src), title: row.view.title.replacingOccurrences(of: "\t", with: "  "),
       recordCount: row.entry.related.count + 1)
-    return ([summary] + lines(row, slotWidth: slotWidth).dropFirst().map(\.string)).joined(separator: ". ")
+    return ([summary] + lines(row, slotWidth: 0).dropFirst().map(\.string)).joined(separator: ". ")
   }
 
   /// JetBrains Mono ships only its regular weight here, so bold is drawn as a stroke around each glyph.
