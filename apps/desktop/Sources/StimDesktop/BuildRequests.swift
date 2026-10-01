@@ -46,7 +46,7 @@ final class BuildRequestNotifier {
     let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
     NotificationInbox.shared.add(entry)
     guard delivery.interrupts else { return entry.id }
-    if OversightNotifier.mainWindowInFront {
+    if MainWindow.isInFront {
       ToastCenter.shared.show(OversightNotifier.toast(notification, entry: entry.id))
     } else {
       Notifier.postOversight(notification, entry: entry.id)

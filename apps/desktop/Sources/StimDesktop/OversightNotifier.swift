@@ -9,6 +9,7 @@ final class OversightNotifier: ObservableObject {
   static let tick: TimeInterval = 30
 
   private let store: StatusStore
+  private let disks: DiskVolumeStore
   private let machine: String
   private let awakeSince = Date().timeIntervalSince1970 * 1000
   private var state: OversightState?
@@ -18,8 +19,9 @@ final class OversightNotifier: ObservableObject {
   private var timer: Timer?
   private var wakeTimer: Timer?
 
-  init(store: StatusStore) {
+  init(store: StatusStore, disks: DiskVolumeStore) {
     self.store = store
+    self.disks = disks
     machine = (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName
   }
 
@@ -32,16 +34,13 @@ final class OversightNotifier: ObservableObject {
   }
 
   private func probeVolumes() {
-    guard !probing, let payload = store.payload else { return }
+    guard !probing, store.payload != nil else { return }
     probing = true
-    let locations = stimDiskLocations(payload.environments, status: store)
-    Task.detached {
-      let volumes = DiskUsage.volumes(for: locations).map { OversightInput.Volume(freeBytes: Double($0.freeBytes)) }
-      await MainActor.run {
-        self.probing = false
-        self.volumes = volumes
-        self.evaluate(nil)
-      }
+    Task {
+      let volumes = await disks.volumes(maxAge: Self.tick / 2)
+      probing = false
+      self.volumes = volumes.map { OversightInput.Volume(freeBytes: Double($0.freeBytes)) }
+      evaluate(nil)
     }
   }
 
@@ -84,18 +83,11 @@ final class OversightNotifier: ObservableObject {
     let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
     NotificationInbox.shared.add(entry)
     guard delivery.interrupts else { return }
-    if Self.mainWindowInFront {
+    if MainWindow.isInFront {
       ToastCenter.shared.show(Self.toast(notification, entry: entry.id))
     } else {
       Notifier.postOversight(notification, entry: entry.id)
     }
-  }
-
-  static var mainWindowInFront: Bool {
-    NSApp.isActive
-      && NSApp.windows.contains {
-        $0.identifier?.rawValue.hasPrefix("main") == true && $0.isVisible && $0.occlusionState.contains(.visible)
-      }
   }
 
   static func toast(_ notification: OversightNotification, entry: String) -> Toast {
@@ -131,13 +123,7 @@ enum NoticeRouter {
       DispatchQueue.main.async { MainActor.assumeIsolated { BuildRequestPrompt.present(id: id) } }
       return
     }
-    NSApp.activate(ignoringOtherApps: true)
-    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
-      if window.isMiniaturized { window.deminiaturize(nil) }
-      window.makeKeyAndOrderFront(nil)
-    } else {
-      OpenRequests.shared.openMainWindow?()
-    }
+    MainWindow.show()
     OpenRequests.shared.target = target
   }
 }
