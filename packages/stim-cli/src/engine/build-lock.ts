@@ -318,6 +318,7 @@ interface SharedBuildWaitOptions {
   wait: typeof waitForBuild;
   now: () => number;
   phase: (text: string) => void;
+  waitingOn: (root: string | null) => void;
   warn: (text: string) => void;
   out: (line: string) => void;
 }
@@ -342,6 +343,7 @@ export async function waitForSharedBuild({
   wait,
   now,
   phase,
+  waitingOn,
   warn,
   out,
 }: SharedBuildWaitOptions): Promise<SharedBuildWait> {
@@ -361,9 +363,13 @@ export async function waitForSharedBuild({
     if (attempt?.acquired) {
       const previous = attempt.tookOver ?? failedHolder;
       if (previous) warn(takeoverLine(previous));
+      waitingOn(null);
       return { refusal: null, lock: attempt, hit: null, released };
     }
-    if (!attempt?.held) return { refusal: null, lock: null, hit: null, released };
+    if (!attempt?.held) {
+      waitingOn(null);
+      return { refusal: null, lock: null, hit: null, released };
+    }
 
     released = null;
     const holder = attempt.held;
@@ -372,6 +378,7 @@ export async function waitForSharedBuild({
       `${who} is already building ${shortHash(fingerprint)} (pid ${holder.pid})` +
         `${holder.logFile ? ` -- tail ${holder.logFile}` : ''} -- stim guide lifecycle concurrency`,
     );
+    waitingOn(holder.projectRoot || null);
 
     let waited: WaitForBuildResult;
     try {
@@ -403,6 +410,7 @@ export async function waitForSharedBuild({
     }
 
     if (waited.hit) {
+      waitingOn(null);
       phase(
         `waited ${formatDuration(waited.waitedMs)} for ${who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
       );

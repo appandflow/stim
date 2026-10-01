@@ -1,5 +1,6 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
+import { useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { EaseView, type Transition } from 'react-native-ease';
@@ -44,6 +45,7 @@ import {
   type PhaseStep,
   type RemoteBuild,
 } from '@/lib/workspace-view';
+import { workspaceTitleAt } from '@/lib/workspace-names';
 import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
 import type {
   BuildDiagnostic,
@@ -310,6 +312,7 @@ function RunningBuild({
             .join(' \u00B7 ')}
         </Text>
       </View>
+      {build.phase === 'wait' && build.waitingOn ? <WaitingOn path={build.waitingOn.path} current={path} /> : null}
       <PhaseList
         steps={phaseSteps(build, history, now)}
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
@@ -332,6 +335,40 @@ function RunningBuild({
         </Section>
       ) : null}
     </>
+  );
+}
+
+function WaitingOn({ path, current }: { path: string; current: string }) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const { mac } = useMacConnection();
+  const status = useStatus();
+  const name = workspaceTitleAt(path, status);
+  const line = t`Waiting for ${name}'s build of the same app`;
+  if (!mac || path === current || !status?.environments.some((e) => e.path === path)) {
+    return (
+      <Text variant="callout" tone="secondary">
+        <Trans>Waiting for another build of the same app</Trans>
+      </Text>
+    );
+  }
+  const open = () => {
+    router.dismiss();
+    router.push({ pathname: '/mac/[id]/workspace', params: { id: mac.id, path } });
+  };
+  return (
+    <Touch
+      onPress={open}
+      accessibilityRole="link"
+      accessibilityLabel={line}
+      accessibilityHint={t`Opens ${name}`}
+      style={styles.refresh}
+    >
+      <Text variant="callout" tone="brand" style={styles.grow}>
+        {line}
+      </Text>
+      <Icon name="chevron.right" size={12} color={theme.colors.primary} />
+    </Touch>
   );
 }
 

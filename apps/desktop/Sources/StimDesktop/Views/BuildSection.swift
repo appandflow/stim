@@ -166,6 +166,26 @@ struct BuildSection: View {
   }
 }
 
+/// The names the app shows for the workspaces at their paths.
+struct WorkspaceTitles: Sendable {
+  var titles: [String: String] = [:]
+
+  func knows(_ path: String) -> Bool { titles[path] != nil }
+
+  func callAsFunction(_ path: String) -> String { titles[path] ?? (path as NSString).lastPathComponent }
+}
+
+private struct WorkspaceTitlesKey: EnvironmentKey {
+  static let defaultValue = WorkspaceTitles()
+}
+
+extension EnvironmentValues {
+  var workspaceTitle: WorkspaceTitles {
+    get { self[WorkspaceTitlesKey.self] }
+    set { self[WorkspaceTitlesKey.self] = newValue }
+  }
+}
+
 /// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
 /// cache missed, and the latest output.
 private struct RunningBuildDetail: View {
@@ -200,6 +220,9 @@ private struct RunningBuildDetail: View {
       await output.follow(cli: cli, workspace: env.path, build: build, limit: 6)
     }
     .onDisappear { output.stop() }
+    if build.phase == "wait", let holder = build.waitingOn {
+      WaitingOnButton(path: holder.path, current: env.path)
+    }
     if let miss = build.missReason {
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
       if let note = build.recheckNote {
@@ -335,6 +358,37 @@ struct BuildDiagnosticsView: View {
         .font(.stim(.caption))
       }
     }
+  }
+}
+
+/// Jumps to the workspace whose build of the same app this run waits for.
+private struct WaitingOnButton: View {
+  var path: String
+  var current: String
+  @Environment(\.workspaceTitle) private var title
+
+  var body: some View {
+    if path == current || !title.knows(path) {
+      Text("Waiting for another build of the same app").foregroundStyle(Palette.secondary)
+    } else {
+      link
+    }
+  }
+
+  private var link: some View {
+    Button {
+      OpenRequests.shared.workspacePath = path
+    } label: {
+      HStack(spacing: Space.xs) {
+        Text("Waiting for \(title(path))'s build of the same app")
+          .multilineTextAlignment(.leading)
+          .fixedSize(horizontal: false, vertical: true)
+        Image(systemName: "arrow.right.circle").accessibilityHidden(true)
+      }
+      .foregroundStyle(Palette.primary)
+    }
+    .buttonStyle(.hoverRow(outset: Space.xs))
+    .help("Open \(title(path))")
   }
 }
 

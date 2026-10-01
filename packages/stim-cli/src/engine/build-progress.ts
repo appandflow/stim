@@ -46,6 +46,8 @@ export interface ActiveBuildRecord {
   missReason?: BuildMissReason;
   missProvisional?: true;
   placement?: Exclude<BuildPlacement, 'local'>;
+  /** The workspace whose identical build this run waits on, while its phase is `wait`. */
+  waitingOn?: { path: string };
   /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */
   deviceSetup?: boolean;
   /** The run's cache outcome, once it entered a phase that settles it. */
@@ -83,6 +85,8 @@ export interface BuildProgress {
   deviceSetupKnown(): boolean | undefined;
   /** Records the build machine the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
+  /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
+  waitingOn(root: string | null): void;
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
@@ -97,6 +101,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   deviceSetup: () => {},
   deviceSetupKnown: () => undefined,
   place: () => {},
+  waitingOn: () => {},
   output: () => {},
   durations: () => ({}),
   clear: () => {},
@@ -218,6 +223,7 @@ export function startBuildProgress({
       record.phase = phase;
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
+      if (phase !== 'wait') delete record.waitingOn;
       const outcome = record.outcome ? null : settledOutcome(phase, record.phases);
       if (outcome) settle(outcome);
       write();
@@ -271,6 +277,16 @@ export function startBuildProgress({
         startedAt: current?.host === remote.host ? current.startedAt : at,
         phaseStartedAt: at,
       };
+      write();
+    },
+    waitingOn(holder) {
+      if (holder === null) {
+        if (!record.waitingOn) return;
+        delete record.waitingOn;
+      } else {
+        if (record.waitingOn?.path === holder) return;
+        record.waitingOn = { path: holder };
+      }
       write();
     },
     output(line) {
@@ -400,6 +416,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     : [];
   const missReason = parseMissReason(record.missReason);
   const placement = parsePlacement(record.placement);
+  const waitingOn = parseWaitingOn(record.waitingOn);
   const estimate = parseEstimate(record.estimate);
   return {
     platform: record.platform,
@@ -411,6 +428,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(missReason ? { missReason } : {}),
     ...(missReason && record.missProvisional === true ? { missProvisional: true as const } : {}),
     ...(placement ? { placement } : {}),
+    ...(waitingOn ? { waitingOn } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
@@ -433,6 +451,11 @@ function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
     startedAt: startedAt as string,
     phaseStartedAt: phaseStartedAt as string,
   };
+}
+
+function parseWaitingOn(value: unknown): ActiveBuildRecord['waitingOn'] | null {
+  const path = (value as { path?: unknown } | null | undefined)?.path;
+  return typeof path === 'string' && path ? { path } : null;
 }
 
 function parseEstimate(value: unknown): BuildEstimate | null {
@@ -546,6 +569,7 @@ export function buildReport(
     ...(record.missReason ? { missReason: record.missReason } : {}),
     ...(record.missReason && record.missProvisional ? { missProvisional: true as const } : {}),
     placement: record.placement ?? 'local',
+    ...(record.waitingOn ? { waitingOn: record.waitingOn } : {}),
   };
 }
 
@@ -563,7 +587,8 @@ export function buildStatusLine(report: BuildReport, now: number): string {
     typeof report.placement === 'object'
       ? ` on ${report.placement.host} (${report.placement.phase}, ${formatElapsed(Math.max(0, now - Date.parse(report.placement.phaseStartedAt)))})`
       : '';
-  const head = `build: ${report.platform}${slot} ${report.phase}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
+  const waiting = report.waitingOn ? ` on ${report.waitingOn.path}` : '';
+  const head = `build: ${report.platform}${slot} ${report.phase}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
   if (report.state === 'unknown') return `${head} (its native-run claim cannot be resolved, so it may not be running)`;
   if (report.expectedMs === null) return head;
   const basis = `median of ${plural(report.basis, `${report.outcome} run`)}`;

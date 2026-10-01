@@ -107,6 +107,8 @@ export interface BuildReport {
   missProvisional?: boolean;
   /** Where it compiles; absent from a stim older than build offload. */
   placement?: BuildPlacement;
+  /** While `phase` is `wait`: the workspace whose build of the same artifact this run waits for, when known. */
+  waitingOn?: { path: string };
 }
 
 /**

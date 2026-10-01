@@ -1098,6 +1098,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           miss: progress.miss,
           hit: progress.hit,
           place: progress.place,
+          waitingOn: progress.waitingOn,
         },
       },
       {

@@ -2633,6 +2633,10 @@ msgstr "Open the live screen of {deviceName}, app closed"
 msgid "Open the live screen of {name}"
 msgstr "Open the live screen of {name}"
 
+#: src/screens/build-details.tsx
+msgid "Opens {name}"
+msgstr "Opens {name}"
+
 #: src/components/workspace-cards.tsx
 msgid "Opens the logs"
 msgstr "Opens the logs"
@@ -3668,9 +3672,17 @@ msgstr "Video quality"
 msgid "Wait"
 msgstr "Wait"
 
+#: src/screens/build-details.tsx
+msgid "Waiting for {name}'s build of the same app"
+msgstr "Waiting for {name}'s build of the same app"
+
 #: src/components/device-grid-tile.tsx
 msgid "Waiting for a frame"
 msgstr "Waiting for a frame"
+
+#: src/screens/build-details.tsx
+msgid "Waiting for another build of the same app"
+msgstr "Waiting for another build of the same app"
 
 #: src/lib/build-machines.ts
 msgid "Waiting for approval"

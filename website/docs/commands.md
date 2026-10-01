@@ -979,6 +979,12 @@ follows it as `prebuild`, `pods` or `compile`.
 }
 ```
 
+`build.waitingOn` is present while `build.phase` is `wait`: another workspace
+is already building the same artifact, and this run waits for it instead of
+building. `waitingOn.path` is that workspace's root, usually the `path` of another entry
+in `environments`; the build lock is machine-wide, so it can name a workspace
+that is not listed. It is absent when the holder is not known.
+
 Plain `status` adds the machine to the build line:
 
 ```text

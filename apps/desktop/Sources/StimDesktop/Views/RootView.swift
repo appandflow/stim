@@ -128,6 +128,7 @@ struct RootView: View {
     .foregroundStyle(Palette.text)
     .environmentObject(actions)
     .environmentObject(planChecks)
+    .environment(\.workspaceTitle, workspaceTitles)
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)
     }
@@ -201,6 +202,12 @@ struct RootView: View {
   private var inspector: InspectorPresentation {
     if inspectorFits { return showsInspector ? .column : .hidden }
     return showsInspectorOverlay ? .overlay : .hidden
+  }
+
+  private var workspaceTitles: WorkspaceTitles {
+    WorkspaceTitles(
+      titles: Dictionary(
+        (store.payload?.environments ?? []).map { ($0.path, $0.names.title) }, uniquingKeysWith: { first, _ in first }))
   }
 
   private func toggleInspector() {
