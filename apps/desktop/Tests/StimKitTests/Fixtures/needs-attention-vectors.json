@@ -69,7 +69,7 @@
             "issues": [
               {
                 "code": "sim-without-metro",
-                "severity": "warning",
+                "severity": "info",
                 "message": "simulator is booted with no Metro serving it",
                 "remedy": "stim start",
                 "workspace": "/w/a"

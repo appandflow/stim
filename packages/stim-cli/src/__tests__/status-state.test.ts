@@ -102,16 +102,18 @@ test("a port held by another workspace's Metro names that workspace", () => {
   expect(s.issues[0]?.message).toMatch(/^port 8082 is in use by Metro for workspace b;/);
 });
 
-test('a booted sim with no Metro is called out as abandoned', () => {
+test('a booted sim with no Metro is an info note, not a warning', () => {
   const s = environmentState(project(), { simsByUdid: { U1: BOOTED }, metro: { missing: true } });
-  expect(s.warnings.join(' ')).toMatch(/booted with no Metro/);
+  expect(s.issues).toEqual([expect.objectContaining({ code: 'sim-without-metro', severity: 'info' })]);
+  expect(s.warnings).toEqual([]);
 });
 
 test('a recorded device that no longer exists is reported rather than shown as fine', () => {
   const s = environmentState(project(), { simsByUdid: {}, metro: { missing: true } });
   assert(s.ios);
   expect(s.ios.state).toBe('missing');
-  expect(s.warnings.join(' ')).toMatch(/no longer exists/);
+  expect(s.issues).toEqual([expect.objectContaining({ code: 'sim-missing', severity: 'info', remedy: 'stim ios' })]);
+  expect(s.warnings).toEqual([]);
 });
 
 test('an unreadable sim listing leaves the state unknown instead of warning per project', () => {

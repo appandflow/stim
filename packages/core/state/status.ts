@@ -368,6 +368,15 @@ export type StatusIssueCode = (typeof STATUS_ISSUE_CODES)[number];
  * One thing in a workspace that needs the user, or with severity `info` a note that needs nothing. `remedy` is a
  * command to run from `workspace`; `slot` is absent for the default device slot. `warnings` carries the `error` and
  * `warning` issues as text.
+ *
+ * Severity:
+ * - `error`: Stim cannot verify or safely act on something; a person resolves it, following the teardown guide.
+ * - `warning`: something is broken now and needs someone to act, such as an app that cannot reach Metro, a held
+ *   port or a device that vanished while expected.
+ * - `info`: a fact the next normal Stim command handles by itself, so it needs no action.
+ *
+ * The phone app and Stim Desktop show `error` and `warning` and hide `info`; plain `stim status` prints `info` as a
+ * dim note with no remedy.
  */
 export interface StatusIssue {
   code: StatusIssueCode;

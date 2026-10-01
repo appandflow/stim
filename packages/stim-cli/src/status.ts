@@ -238,16 +238,16 @@ export function environmentState(
     );
   }
   if (ios && !sim && simsAvailable) {
-    add('sim-missing', `recorded sim ${ios.deviceUdid} no longer exists`, `stim ios${slotFlag}`);
+    add('sim-missing', `recorded sim ${ios.deviceUdid} no longer exists`, `stim ios${slotFlag}`, 'info');
   }
   if (simBooted && project.metroPort && !metroRunning) {
-    add('sim-without-metro', 'simulator is booted with no Metro serving it', 'stim start');
+    add('sim-without-metro', 'simulator is booted with no Metro serving it', 'stim start', 'info');
   }
   if (androidRuntime && android?.avdName) {
     const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
     const expected = avdExpected({ slot, serial: recordedSerial, launches, leasedIds, running, now });
-    for (const [code, message] of androidIssues(android, recordedSerial, androidRuntime, expected)) {
-      add(code, message, code === 'avd-unchecked' ? 'stim doctor' : `stim android${slotFlag}`);
+    for (const [code, message, severity] of androidIssues(android, recordedSerial, androidRuntime, expected)) {
+      add(code, message, code === 'avd-unchecked' ? 'stim doctor' : `stim android${slotFlag}`, severity);
     }
   }
   if (supervisor?.status === 'unverified') {
@@ -397,15 +397,16 @@ function androidIssues(
   recordedSerial: string | undefined,
   runtime: AndroidRuntimeFacts,
   expected: boolean,
-): [StatusIssueCode, string][] {
-  const issues: [StatusIssueCode, string][] = [];
+): [StatusIssueCode, string, StatusIssue['severity']?][] {
+  const issues: [StatusIssueCode, string, StatusIssue['severity']?][] = [];
   if (runtime.serial && recordedSerial && runtime.serial !== recordedSerial) {
     issues.push([
       'avd-serial-changed',
       `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${runtime.serial}), so Metro forwarding is lost; rerun with the same build options, then reopen agent-device on ${runtime.serial}`,
     ]);
   }
-  if (runtime.state === 'missing') issues.push(['avd-missing', `recorded AVD ${android.avdName} no longer exists`]);
+  if (runtime.state === 'missing')
+    issues.push(['avd-missing', `recorded AVD ${android.avdName} no longer exists`, 'info']);
   if (runtime.state === 'not-detected' && expected) {
     issues.push(['avd-not-detected', `owned AVD ${android.avdName} is not detected by adb`]);
   }
