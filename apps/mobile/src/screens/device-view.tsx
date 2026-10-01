@@ -80,7 +80,6 @@ const CONTROLS_MIN_WIDTH = 320;
 
 /** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
 const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
-  // `maxEdge: null` keeps the window-sized cap computed below.
   auto: { fps: LIVE_FPS, maxEdge: null, video: ['h264'] },
   high: { fps: LIVE_FPS, maxEdge: MAX_EDGE, video: ['h264'] },
   dataSaver: { fps: DATA_SAVER_FPS, maxEdge: DATA_SAVER_MAX_EDGE, video: [] },
