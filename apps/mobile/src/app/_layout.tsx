@@ -80,6 +80,7 @@ function RootLayoutContent() {
       sheetAllowedDetents: detents,
       contentStyle: { backgroundColor: colors.background },
     }) as const;
+  const opaqueHeader = { headerTransparent: false, headerBlurEffect: undefined } as const;
   return (
     <ThemeProvider value={theme}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
@@ -99,6 +100,11 @@ function RootLayoutContent() {
                       headerTitleStyle: { color: colors.text },
                       headerBackButtonDisplayMode: 'minimal',
                       headerShadowVisible: false,
+                      headerTransparent: Platform.OS === 'ios',
+                      headerBlurEffect:
+                        Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) < 26
+                          ? 'systemMaterial'
+                          : undefined,
                     }}
                   >
                     <Stack.Screen name="index" options={{ title: t`Stim` }} />
@@ -119,11 +125,17 @@ function RootLayoutContent() {
                     <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
                     <Stack.Screen name="license" options={{ title: '' }} />
                     <Stack.Screen name="inbox" options={{ title: t`Notifications` }} />
-                    <Stack.Screen name="pair" options={{ title: t`Pair a machine`, presentation: 'modal' }} />
-                    <Stack.Screen name="rename" options={{ title: t`Rename machine`, presentation: 'modal' }} />
+                    <Stack.Screen
+                      name="pair"
+                      options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
+                    />
+                    <Stack.Screen
+                      name="rename"
+                      options={{ title: t`Rename machine`, presentation: 'modal', ...opaqueHeader }}
+                    />
                     <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
                     <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
-                    <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs` }} />
+                    <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs`, ...opaqueHeader }} />
                     <Stack.Screen
                       name="mac/[id]/device"
                       options={{
