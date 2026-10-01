@@ -383,6 +383,22 @@ import Testing
       ])
   }
 
+  @Test func listsAWorkspaceHeldOnlyByAnEasSessionUnderLive() throws {
+    let json = #"""
+      [{"path":"/r/app/.worktrees/eas","live":false,"warnings":[],
+        "remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"S","state":"running"}]},
+       {"path":"/r/app/.worktrees/idle","live":false,"warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    var options = SidebarOptions()
+    options.status = .live
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
+        .map(\.path) == ["/r/app/.worktrees/eas"])
+    let summary = projectSummaries(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:))
+    #expect(summary.map(\.active) == [1])
+  }
+
   @Test func countsOnlyExistingHiddenProjectsAsAChangedOption() {
     var options = SidebarOptions()
     options.hiddenProjects = ["/r/gone"]

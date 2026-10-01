@@ -320,7 +320,7 @@ private struct WorkspaceRowContent: View {
   var body: some View {
     let status = env.rowStatus(now: now)
     let sessions = AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents)
-    let live = env.isShownLive
+    let live = env.isActive
     HStack(alignment: .top, spacing: Space.md) {
       StatusDot(color: Color(status.tone), filled: live)
         .padding(.top, Space.sm - 1)
