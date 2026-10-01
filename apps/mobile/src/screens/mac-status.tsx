@@ -32,6 +32,7 @@ import { formatBytes, formatMemoryMb } from '@/intl/format';
 import {
   buildPlacements,
   machineReadiness,
+  placementReason,
   placementTitle,
   type OffloadCounts,
   type Placement,
@@ -353,7 +354,7 @@ export function MacStatus({ id }: { id: string }) {
                     {placementTitle(entry)}
                   </Text>
                   <Text variant="footnote" tone="secondary" numberOfLines={3}>
-                    {entry.reason}
+                    {placementReason(entry)}
                   </Text>
                 </View>
                 <Text variant="footnote" tone="tertiary" style={styles.tabular}>
@@ -407,7 +408,7 @@ export function MacStatus({ id }: { id: string }) {
                       ) : null}
                       {last ? (
                         <Text variant="footnote" tone="tertiary" numberOfLines={2}>
-                          {placementTitle(last)}: {last.reason}
+                          {placementTitle(last)}: {placementReason(last)}
                         </Text>
                       ) : null}
                     </View>

@@ -1,4 +1,4 @@
-import { buildPlacements, machineReadiness, placementTitle } from '@/lib/build-machines';
+import { buildPlacements, machineReadiness, placementReason, placementTitle } from '@/lib/build-machines';
 import type { BuildMachineReport } from '@/protocol/types';
 
 const approved = (patch: Partial<BuildMachineReport> = {}): BuildMachineReport => ({
@@ -92,6 +92,9 @@ describe('buildPlacements', () => {
     expect(read?.machines['mini:7444']?.total).toEqual({ offloaded: 3, offloadedMs: 0, savedMs: -4000, fallbacks: 0 });
     expect(read?.placements.map(placementTitle)).toEqual(['Built on mini', 'Built here after offloading']);
     expect(read?.placements[1]?.failed).toBe(true);
+    const fellBack = { ...read!.placements[1]!, machine: 'old-mini', reason: 'old-mini: Stim build 6bbe there' };
+    expect(placementReason(fellBack)).toBe('Stim build 6bbe there');
+    expect(placementReason(read!.placements[0]!)).toBe('busy');
   });
 
   it('is null for a stim that predates placements', () => {

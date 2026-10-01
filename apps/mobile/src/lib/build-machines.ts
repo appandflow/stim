@@ -199,3 +199,9 @@ export function placementTitle(entry: Placement): string {
   if (entry.decision === 'offloaded') return name ? t`Built on ${name}` : t`Built on a build machine`;
   return name ? t`Built here after ${name}` : t`Built here after offloading`;
 }
+
+/** The reason without the `<machine>: ` prefix a fallback carries, since the title already names the machine. */
+export function placementReason(entry: Placement): string {
+  const prefix = entry.machine ? `${entry.machine}: ` : null;
+  return prefix && entry.reason.startsWith(prefix) ? entry.reason.slice(prefix.length) : entry.reason;
+}
