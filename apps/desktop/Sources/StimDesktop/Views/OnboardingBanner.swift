@@ -19,7 +19,7 @@ struct OnboardingBanner: View {
       }
     }
     .frame(maxWidth: .infinity)
-    .animation(.easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
     .onChange(of: servesPhones) { onboarding.check() }
   }
 

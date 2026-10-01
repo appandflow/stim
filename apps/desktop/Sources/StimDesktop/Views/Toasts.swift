@@ -114,7 +114,7 @@ struct ToastStack: View {
     .frame(width: 360)
     .padding(.horizontal, Space.xl)
     .padding(.top, Self.topInset)
-    .animation(.easeOut(duration: 0.2), value: center.toasts.map(\.id))
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.toasts.map(\.id))
   }
 }
 
