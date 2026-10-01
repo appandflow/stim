@@ -20,6 +20,8 @@ final class LogsModel: ObservableObject {
     case updated(from: Int, replaced: [Row.Lead])
     /// These rows were removed from the front, together `lines` lines tall.
     case trimmed(rows: Int, lines: Int)
+    /// The slot column grew, so rows already drawn pad their slot label to the new width.
+    case slotColumnWidened
     case jumpToLatest
     case reveal(Int)
   }
@@ -46,6 +48,7 @@ final class LogsModel: ObservableObject {
   @Published private(set) var count = 0
   @Published private(set) var phase = Phase.idle
   @Published var pinnedToLatest = true
+  var slotWidth: Int { list.slotWidth }
   var onChange: ((Change) -> Void)?
 
   private var list = LogEntryList()
@@ -109,6 +112,7 @@ final class LogsModel: ObservableObject {
   private func handle(_ event: LogFollower.Event) {
     switch event {
     case .records(let batch):
+      let width = list.slotWidth
       let from = list.append(batch)
       let replaced = rows[from...].map(\.lead)
       rows.removeSubrange(from...)
@@ -120,6 +124,7 @@ final class LogsModel: ObservableObject {
         rows.removeFirst(dropped)
         onChange?(.trimmed(rows: dropped, lines: lines))
       }
+      if list.slotWidth != width { onChange?(.slotColumnWidened) }
       count = list.records.count
       revealPending()
     case .exited(let status, let stderr):

@@ -322,6 +322,20 @@ import Testing
     #expect(before - dropped == list.entries.count)
   }
 
+  @Test func keepsTheWidestSlotLabelWidthAfterItsRecordIsDropped() {
+    var list = LogEntryList()
+    var wide = Self.stream[0]
+    wide.slot = "pixel-9"
+    var narrow = Self.stream[1]
+    narrow.slot = "a"
+    list.append([narrow])
+    #expect(list.slotWidth == 4)
+    list.append([wide])
+    #expect(list.slotWidth == 10)
+    _ = list.dropOldest(2)
+    #expect(list.slotWidth == 10)
+  }
+
   @Test(arguments: vectors.previews.map(\.name))
   func previewsWhatThePhonePreviews(name: String) throws {
     let c = try #require(Self.vectors.previews.first { $0.name == name })

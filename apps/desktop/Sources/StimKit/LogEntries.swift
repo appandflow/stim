@@ -57,6 +57,9 @@ private func isExpoContext(_ record: LogRecord) -> Bool {
 public struct LogEntryList: Sendable {
   public private(set) var records: [LogRecord] = []
   public private(set) var entries: [LogEntry] = []
+  /// The characters of the widest `[slot] ` label among the records appended so far, which stays after the record
+  /// is dropped, so every row's message starts in one column.
+  public private(set) var slotWidth = 0
 
   private enum State: Sendable {
     case lookahead
@@ -91,6 +94,7 @@ public struct LogEntryList: Sendable {
     for record in batch {
       let n = records.count
       records.append(record)
+      if let slot = record.slot { slotWidth = max(slotWidth, slot.count + 3) }
       if let g = offer(n) {
         changed = min(changed, g)
         continue
