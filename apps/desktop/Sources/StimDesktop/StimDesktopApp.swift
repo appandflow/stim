@@ -14,8 +14,21 @@ final class OpenRequests: ObservableObject {
   @Published var selectedWorkspace: String?
   @Published var showsMachine = false
   @Published var pairsPhone = false
+  @Published var showsSetupGuide = false
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
+
+  /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
+  func showSetupGuide() {
+    NSApp.activate(ignoringOtherApps: true)
+    if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true }) {
+      if window.isMiniaturized { window.deminiaturize(nil) }
+      window.makeKeyAndOrderFront(nil)
+    } else {
+      openMainWindow?()
+    }
+    showsSetupGuide = true
+  }
 }
 
 extension Notification.Name {
@@ -183,6 +196,9 @@ struct StimDesktopApp: App {
     .handlesExternalEvents(matching: [])
     .commands {
       UpdateCommands()
+      CommandGroup(replacing: .help) {
+        Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
+      }
       SidebarCommands()
       InspectorCommands()
     }

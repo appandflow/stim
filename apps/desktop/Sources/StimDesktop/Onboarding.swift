@@ -2,9 +2,11 @@ import AppKit
 import Foundation
 import StimKit
 import StimStores
+@preconcurrency import UserNotifications
 
 /// Checks at launch that the `stim` and, while phones are served, `stim-server` Stim Desktop runs are
-/// recent enough, and whether Stim already opens its devices here.
+/// recent enough, and whether Stim already opens its devices here. It also drives the setup guide, which opens at
+/// the first launch and from the Help menu.
 @MainActor
 final class Onboarding: ObservableObject {
   struct Report: Equatable {
@@ -15,6 +17,13 @@ final class Onboarding: ObservableObject {
     var server: CLICompatibility?
     var serverPath: String?
     var viewerKeys: [String]
+    var node: CLICompatibility
+    var brewPath: String?
+    var skillPath: String?
+    /// `HOME` in the login shell's environment, where the setup commands run and the skills CLI installs.
+    var home: String
+    var androidSDK: String?
+    var javaHome: String?
   }
 
   enum PopupKind {
@@ -29,6 +38,13 @@ final class Onboarding: ObservableObject {
   @Published private(set) var report: Report?
   /// Dismissed for this launch only; a relaunch clears it, so a persisting problem returns.
   @Published private(set) var dismissedPopups: Set<PopupKind> = []
+  @Published private(set) var setup = SetupChecks()
+  @Published var showsGuide = false
+  @Published var guideStep = SetupStep.welcome
+  @Published private(set) var guideRuns: [StimCommand: ActionRun] = [:]
+  @Published var projectFolder: String?
+  private let progress = SetupGuideProgress()
+  private var launchDecided = false
   private let environment: Task<[String: String], Never>
   private let cli: Task<StimCLI, Never>
   private let actions: ActionCenter
@@ -60,6 +76,11 @@ final class Onboarding: ObservableObject {
           compatibility.isCompatible && offersViewer
           ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
           : []
+        let node = await SetupChecks.version(of: "node", environment: environment)
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        let skillPath = SetupChecks.installedSkill(home: home) {
+          FileManager.default.fileExists(atPath: $0)
+        }
         var serverCompatibility: CLICompatibility?
         if let server {
           serverCompatibility = CLICompatibility.check(
@@ -72,10 +93,125 @@ final class Onboarding: ObservableObject {
           needsRelaunch: compatibility.isCompatible && stim.executable != launched,
           server: serverCompatibility,
           serverPath: server?.executable,
-          viewerKeys: viewerKeys)
+          viewerKeys: viewerKeys,
+          node: CLICompatibility.check(
+            executable: node.path, versionOutput: node.output, minimum: SetupChecks.nodeMinimum),
+          brewPath: SetupChecks.tool("brew", environment: environment),
+          skillPath: skillPath,
+          home: home,
+          androidSDK: MachineCheck.androidSDK(environment: environment, home: home) {
+            FileManager.default.fileExists(atPath: $0)
+          },
+          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 })
       }.value
       self.report = report
+      setup.stim = report.stim
+      setup.node = report.node
+      setup.brewPath = report.brewPath
+      setup.skillPath = report.skillPath
+      setup.skillChecked = true
+      setup.notifications = await Self.notificationAccess()
+      if !launchDecided {
+        launchDecided = true
+        if let step = progress.stepAtLaunch(setup) { presentGuide(at: step) }
+      }
     }
+  }
+
+  private var home: String { report?.home ?? NSHomeDirectory() }
+
+  var installNodeCommand: StimCommand { StimCommand(["install", "node"], cwd: home, program: "brew") }
+  var installCLICommand: StimCommand { StimCommand(["install", "--global", "stim"], cwd: home, program: "npm") }
+  /// The skills CLI asks which agents to install to unless `--yes` is given, and the runner has no terminal. Run
+  /// from the home folder, its project scope is the user's own agent folders, such as `~/.agents/skills`, so the
+  /// skill applies to every project.
+  var installSkillCommand: StimCommand {
+    StimCommand(["skills", "add", "appandflow/stim", "--yes"], cwd: home, program: "npx")
+  }
+  var xcodeCommand: StimCommand { StimCommand(["-version"], cwd: home, program: "xcodebuild") }
+  var javaCommand: StimCommand { StimCommand(["-version"], cwd: home, program: "java") }
+
+  static func doctorCommand(in folder: String) -> StimCommand { StimCommand(["doctor"], cwd: folder) }
+
+  /// Whether the `stim` this launch resolved is the one installed now, so the app can run it.
+  var runsStim: Bool { report.map { $0.stim.isCompatible && !$0.needsRelaunch } ?? false }
+
+  func openGuide() {
+    guard !showsGuide else { return }
+    presentGuide(at: nil)
+    check()
+  }
+
+  private func presentGuide(at step: SetupStep?) {
+    guideStep = setup.startStep(resuming: step)
+    progress.resumed()
+    showsGuide = true
+  }
+
+  /// Closes the guide for good; the Help menu and Settings reopen it.
+  func finishGuide() {
+    progress.finish()
+    showsGuide = false
+  }
+
+  func runGuide(_ title: String, _ command: StimCommand) {
+    guard
+      let run = actions.run(
+        title, steps: [command], key: Self.actionKey, present: false,
+        completion: { [weak self] _ in
+          self?.check()
+        })
+    else { return }
+    guideRuns[command] = run
+  }
+
+  func chooseProjectFolder() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.prompt = "Choose"
+    panel.message = "Choose a React Native or Expo project"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    projectFolder = url.path
+  }
+
+  func finishAndRestart() {
+    progress.finish()
+    relaunch()
+  }
+
+  func restartForSetup() {
+    progress.saveForRestart(at: guideStep)
+    relaunch()
+  }
+
+  private static func notificationAccess() async -> NotificationAccess {
+    guard Notifier.isAvailable else { return .unavailable }
+    switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+    case .notDetermined: return .notDetermined
+    case .denied: return .denied
+    default: return .allowed
+    }
+  }
+
+  func requestNotifications() {
+    guard Notifier.isAvailable else { return }
+    Task {
+      _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+      setup.notifications = await Self.notificationAccess()
+    }
+  }
+
+  func refreshNotifications() {
+    Task { setup.notifications = await Self.notificationAccess() }
+  }
+
+  func openNotificationSettings() {
+    let id = Bundle.main.bundleIdentifier ?? ""
+    guard let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)") else {
+      return
+    }
+    NSWorkspace.shared.open(url)
   }
 
   func installStim() {

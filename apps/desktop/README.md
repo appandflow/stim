@@ -854,6 +854,46 @@ to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
 `stim settings set … --scope machine`. It skips a key that is already set or
 that the installed `stim` does not list. **Not now** hides the offer for good.
 
+### Setup guide
+
+The first launch opens a setup guide over the main window, unless everything it
+sets up is already in place; **Help > Setup
+Guide…** and **Open Setup Guide…** in **Settings > App** reopen it. Each step
+shows what it found, the exact command its **Run** button runs with the
+directory it runs in, and that command's output. Nothing runs until Run is
+pressed, commands run one at a time through the same runner as the banner, and
+the step checks again when the command ends. Return presses the step's Run
+button, or **Continue** once the step is done, and never skips a step; Escape is **Set Up
+Later**.
+
+1. **Welcome**.
+2. **Install the CLI**: `node --version` from the login shell must report
+   22.12.0 or later. Without it, the step offers `brew install node` when
+   `brew` is on the `PATH`, else a link to nodejs.org. Then it runs
+   `npm install --global stim` in the home folder and shows the `stim` found
+   afterwards with its version. A `stim` the app did not resolve at launch
+   asks for a restart, which reopens the guide on the same step. Checks use
+   the `PATH` captured at launch, so a Node.js installed into a new
+   directory, as nvm does, needs a restart to be found.
+3. **Add the agent skill**: `npx skills add appandflow/stim --yes` in the
+   home folder, where the skills CLI's project scope is the user's own agent
+   folders. `--yes` keeps the skills CLI from asking which agents to install
+   to, which fails without a terminal. It counts as installed when `~/.agents/skills/stim/SKILL.md`,
+   `~/.claude/skills/stim/SKILL.md` or `~/.codex/skills/stim/SKILL.md` exists.
+4. **Notifications**: asks macOS for permission, or opens System Settings
+   after a denial, and sets the level of the notifications that ask for you.
+5. **Check your setup**, optional: `xcodebuild -version` and `java -version`,
+   the Android SDK found the way `stim` finds it, and `stim doctor` in a
+   project folder the user chooses, which needs the restart above first.
+6. **You're set**: the state of steps 2 to 4.
+
+When the CLI, skill and notifications are already set up at a launch without
+`setupGuide.completed`, the app sets the flag and does not show the guide;
+opened from the menu, it starts on the summary. **Start Using Stim** or **Set
+Up Later** also sets the flag, which lives in the app's `UserDefaults`, so Stim
+and Stim Dev each track their own. The `stim` banner stays
+hidden while the guide is open.
+
 ## Develop
 
 ```bash
