@@ -130,13 +130,38 @@ public struct Inbox: Codable, Equatable, Sendable {
     return out
   }
 
-  /// The workspaces with entries, by path, each named by its newest entry's title, in first-seen order.
-  public var workspaces: [(path: String, title: String)] {
+  private var newestTitles: [(path: String, title: String)] {
     var seen: [(path: String, title: String)] = []
     for entry in entries {
       guard let path = entry.target.path, !seen.contains(where: { $0.path == path }) else { continue }
       seen.append((path, entry.title))
     }
     return seen
+  }
+
+  private func qualifiers() -> [String: String] {
+    nameQualifiers(newestTitles.map { ($0.path, $0.title) })
+  }
+
+  private static func qualified(_ title: String, _ qualifier: String?) -> String {
+    qualifier.map { "\(title) (\($0))" } ?? title
+  }
+
+  /// The workspaces with entries, by path, each named by its newest entry's title, in first-seen order. Workspaces
+  /// sharing a title carry their enclosing folders, such as `app (work)`.
+  public var workspaces: [(path: String, title: String)] {
+    let qualifiers = qualifiers()
+    return newestTitles.map { ($0.path, Self.qualified($0.title, qualifiers[$0.path])) }
+  }
+
+  /// What each entry shows as its title, by entry id: its own, with the workspace's enclosing folders when another
+  /// workspace in the inbox shares that title.
+  public var displayTitles: [String: String] {
+    let qualifiers = qualifiers()
+    var titles: [String: String] = [:]
+    for entry in entries {
+      titles[entry.id] = Self.qualified(entry.title, entry.target.path.flatMap { qualifiers[$0] })
+    }
+    return titles
   }
 }
