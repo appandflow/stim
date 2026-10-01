@@ -176,6 +176,7 @@ const CATEGORY_SYMBOLS: Record<OversightCategory, SFSymbol> = {
   finished: 'checkmark.circle',
   machine: 'laptopcomputer.trianglebadge.exclamationmark',
   control: 'hand.raised',
+  attention: 'exclamationmark.bubble',
 };
 
 function NotificationsSection({

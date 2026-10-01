@@ -59,7 +59,9 @@ reload and stop a workspace:
   that failed in the last day; the machine status sheet lists every issue. A
   disconnected machine shows only its offline item, because its status is
   stale. It shows three items until you expand it. A machine item opens the machine's status, log errors
-  open the workspace's errors, and every other item opens the workspace.
+  open the workspace's errors, and every other item opens the workspace. A
+  **Notifications** row at the bottom of the strip, with the unread count, opens
+  the notification inbox when a paired Mac keeps one.
 - **Devices**: the Workspaces / Devices toggle under the machine chips switches
   the list to a grid of every running simulator and emulator on every paired
   machine, with its latest frame, model, workspace name and machine, by project
@@ -539,6 +541,12 @@ AppDelegate.swift:71`), or with the same error code, such as an app that
   sheet.
 - **Someone takes over your device**: another phone took over a device you
   control, or an agent started driving it. It opens the device viewer.
+- **Needs you**: something only a person can fix, such as a port held by
+  another app, a supervisor or browser Stim cannot verify, a signing or
+  provisioning failure, an expired device lease or a billable EAS session left
+  running. It opens the workspace, or the build for a signing failure. These are
+  the strip's items that are not already a stuck agent, a repeated failure or a
+  machine problem.
 
 A single failed build, new log errors, a stopped app and a slow build do not
 notify; they stay in the **Needs attention** strip. Each notification names the
@@ -763,7 +771,7 @@ status event carries a usage history drawn around those owners, and
 with the status. Android and Web devices show `frame-android.jpg` and
 `frame-web.jpg`.
 
-The mock server answers `notifications.list` with eight entries of every
+The mock server answers `notifications.list` with nine entries of every
 category, two of them held back (`suppressed`), and sends a new `notification`
 event every 2 minutes to each connection that listed.
 

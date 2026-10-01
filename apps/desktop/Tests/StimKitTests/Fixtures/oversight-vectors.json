@@ -115,7 +115,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -173,7 +174,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -248,7 +250,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -316,7 +319,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -353,7 +357,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -399,7 +404,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -458,7 +464,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -516,7 +523,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -589,7 +597,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -644,7 +653,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -712,7 +722,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -795,7 +806,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -871,7 +883,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -931,7 +944,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1006,7 +1020,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1063,7 +1078,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1119,7 +1135,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1189,7 +1206,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1249,7 +1267,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1304,7 +1323,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1362,7 +1382,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1435,7 +1456,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1490,7 +1512,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1548,7 +1571,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1621,7 +1645,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1679,7 +1704,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1752,7 +1778,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1810,7 +1837,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1868,7 +1896,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -1938,7 +1967,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 30,
             "quiet": false
@@ -1996,7 +2026,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 30,
             "quiet": false
@@ -2072,7 +2103,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 30,
             "quiet": false
@@ -2137,7 +2169,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 30,
             "quiet": false
@@ -2198,7 +2231,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 30,
             "quiet": false
@@ -2259,7 +2293,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 30,
             "quiet": false
@@ -2329,7 +2364,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2407,7 +2443,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2500,7 +2537,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2570,7 +2608,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2632,7 +2671,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2709,7 +2749,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2786,7 +2827,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2848,7 +2890,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2903,7 +2946,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -2961,7 +3005,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3030,7 +3075,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3081,7 +3127,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3161,7 +3208,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3255,7 +3303,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3363,7 +3412,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3499,7 +3549,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3550,7 +3601,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3658,7 +3710,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3752,7 +3805,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3836,7 +3890,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3905,7 +3960,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -3963,7 +4019,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4052,7 +4109,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4107,7 +4165,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4165,7 +4224,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4254,7 +4314,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4328,7 +4389,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4415,7 +4477,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4470,7 +4533,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4528,7 +4592,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4613,7 +4678,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4681,7 +4747,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4739,7 +4806,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4826,7 +4894,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4898,7 +4967,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4949,7 +5019,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -4997,7 +5068,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5050,7 +5122,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5103,7 +5176,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5170,7 +5244,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5223,7 +5298,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5289,7 +5365,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5340,7 +5417,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5393,7 +5471,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5446,7 +5525,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5496,7 +5576,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5541,7 +5622,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5584,7 +5666,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5629,7 +5712,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5674,7 +5758,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5732,7 +5817,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5769,7 +5855,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5801,7 +5888,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5845,7 +5933,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5877,7 +5966,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5909,7 +5999,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5951,7 +6042,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -5981,7 +6073,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6011,7 +6104,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6060,7 +6154,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6090,7 +6185,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6139,7 +6235,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6181,7 +6278,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6212,7 +6310,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6249,7 +6348,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6281,7 +6381,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6325,7 +6426,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6357,7 +6459,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6389,7 +6492,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6421,7 +6525,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6470,7 +6575,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6554,7 +6660,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": true
@@ -6638,7 +6745,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": true
@@ -6722,7 +6830,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6773,7 +6882,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6856,7 +6966,8 @@
               "stuck",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false
@@ -6940,7 +7051,8 @@
               "looping",
               "finished",
               "machine",
-              "control"
+              "control",
+              "attention"
             ],
             "stuckMinutes": 15,
             "quiet": false

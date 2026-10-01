@@ -296,13 +296,21 @@ function RepoHeader({ section }: { section: HomeSection }) {
 }
 
 function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttentionItem) => void }) {
+  const router = useRouter();
+  const inbox = useInbox();
   const { connections } = useMacs();
   const { prefs } = useNotificationPrefs();
   const items = useMemo(
     () => homeAttention(connections.map(toAttentionMachine), now, prefs.stuckMinutes),
     [connections, now, prefs.stuckMinutes],
   );
-  return <AttentionStrip items={items} onOpen={onOpen} />;
+  return (
+    <AttentionStrip
+      items={items}
+      onOpen={onOpen}
+      notifications={inbox.supported ? { unread: inbox.unread, onOpen: () => router.push('/inbox') } : undefined}
+    />
+  );
 }
 
 function HomeEmpty({

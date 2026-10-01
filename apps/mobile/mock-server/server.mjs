@@ -123,6 +123,14 @@ const notificationSamples = (() => {
       target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
     },
     {
+      ago: 30,
+      id: `lease-ios-default:${login}`,
+      category: 'attention',
+      title: 'web-login',
+      body: 'Lease on Old iPhone expired',
+      target: { kind: 'workspace', path: login },
+    },
+    {
       ago: 47,
       id: `looping-android:${hinges}`,
       category: 'looping',

@@ -327,7 +327,15 @@ describe('parsePrefs', () => {
       ),
     ).toEqual({
       enabled: true,
-      levels: { started: 'off', stuck: 'silent', looping: 'off', finished: 'off', machine: 'off', control: 'off' },
+      levels: {
+        started: 'off',
+        stuck: 'silent',
+        looping: 'off',
+        finished: 'off',
+        machine: 'off',
+        control: 'off',
+        attention: 'silent',
+      },
       stuckMinutes: 30,
       quietHours: { start: 1, end: 2 },
     });
@@ -343,6 +351,7 @@ describe('parsePrefs', () => {
       finished: 'off',
       machine: 'silent',
       control: 'silent',
+      attention: 'silent',
     });
     expect(parsePrefs(JSON.stringify(migrated))).toEqual(migrated);
   });
