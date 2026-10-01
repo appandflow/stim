@@ -25,7 +25,7 @@ extension OversightCategory {
     case .machine: return "exclamationmark.triangle"
     case .control: return "hand.raised"
     case .buildRequest: return "hammer"
-    case .attention: return "person.crop.circle.badge.exclamationmark"
+    case .attention: return "exclamationmark.bubble"
     }
   }
 
