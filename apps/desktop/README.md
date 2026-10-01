@@ -846,6 +846,20 @@ does not open another. **Quit Stim** (Command-Q) is the only way to stop the app
 and it stops `stim-server` and the log followers. Command-1, Command-2 and
 Command-3 in the View menu open All devices, Notifications and Machine.
 
+## Notice cards
+
+News the user can act on later shows as a card at the main window's bottom
+left: a title, one line of detail, a primary action and a dismiss button. A
+card stays until it is acted on or dismissed, with or without VoiceOver. Several
+cards stack, newest first, with a counter and previous and next buttons.
+Two things use them. When `stim ios` or `stim android` launches on a device
+Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
+Desktop navigates straight to the device only when nothing would be replaced: no
+main window was open, or the window already shows that workspace or All
+devices. Another page keeps its selection. A newer `stim` shows a card with
+**Update** (see below); dismissing it keeps it away until a newer version is
+released. Agent and build notifications keep appearing as cards at the top right.
+
 ## Workspace links
 
 `stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>]`,
@@ -882,7 +896,8 @@ global installs then. `stim-server` is still installed and updated with npm.
 Once a day, and at launch, the app also reads the
 `latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
 check when the registry cannot be reached. When the `stim` it runs is owned by a
-package manager and older than `latest`, the sidebar footer shows **stim
+package manager and older than `latest`, a notice card offers **Update** once
+per version, the sidebar footer shows **stim
 <version> available** and **Settings > App > Stim CLI** shows the installed and
 latest versions with an **Update** button, which runs the same package manager
 command as **Update stim**. It only notifies: nothing updates in the
