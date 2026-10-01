@@ -143,6 +143,39 @@ const dark: Record<ColorToken, string> = {
 export const colors = { light, dark };
 
 /**
+ * Colors under Increase Contrast. Text and tone colors reach WCAG AAA (7:1) on every surface, including tone text over
+ * its 16% tint, and `border` and `separator` reach 3:1 against every surface. Everything else matches `colors`.
+ */
+export const colorsHighContrast: Record<'light' | 'dark', Record<ColorToken, string>> = {
+  light: {
+    ...light,
+    primary: '#3C00FF',
+    accent: '#3B01FF',
+    border: '#8C869C',
+    separator: '#8C869C',
+    secondary: '#515151',
+    tertiary: '#534F5A',
+    success: '#0A4921',
+    warning: '#57390F',
+    error: '#7B1414',
+    info: '#0030A5',
+  },
+  dark: {
+    ...dark,
+    primary: '#BDA9FF',
+    accent: '#BEAAFF',
+    border: '#7A6F92',
+    separator: '#7A6F92',
+    secondary: '#BAB2CD',
+    tertiary: '#B8B3C6',
+    success: '#A2EEBE',
+    warning: '#FADAAB',
+    error: '#FFD5D5',
+    info: '#D1E0FF',
+  },
+};
+
+/**
  * Colors drawn over a simulator or emulator frame and the viewer's dark backdrop. They stay the same in light and
  * dark mode because the media behind them is always dark.
  */
