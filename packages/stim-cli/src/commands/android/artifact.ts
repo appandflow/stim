@@ -106,7 +106,8 @@ interface AndroidArtifactRequest {
     estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPlacement'>;
     step: (phase: BuildPhase) => void;
-    miss: (reason: BuildMissReason) => void;
+    miss: (reason: BuildMissReason, provisional?: boolean) => void;
+    hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
   };
 }
@@ -218,7 +219,7 @@ export async function acquireAndroidArtifact(
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats, step, miss, place } = progress;
+  const { phase, out, estimates, stats, step, miss, hit: lateHit, place } = progress;
   let fallbackMachine: string | null = null;
   let hereReason: string | null = null;
   const fallBack = (reason: string, line: string = reason) => {
@@ -522,33 +523,46 @@ export async function acquireAndroidArtifact(
     }
   }
 
-  function explainMiss(rekeyedBy: string[]): void {
+  function reasonForMiss(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null } {
     if (swapFellBack) {
-      record.missReason = skippedMissReason('the cached APK could not be reused, so this run built it fresh');
-    } else if (!useBuildCache) {
-      record.missReason = skippedMissReason(
-        requestedBuildCache ? 'cache reuse off in config' : 'cache reuse turned off by --no-build-cache',
-      );
-    } else {
-      const current = { hash: storeHash, sources: storeSources };
-      const explained = explainBuildMiss({
-        root,
-        platform: PLATFORM,
-        current,
-        rekeyedBy,
-        baselineDeps: { readState },
-      });
-      record.missReason = explained.reason;
-      if (explained.previousHash && explained.changedNames.length) {
-        writer.write(
-          fingerprintDiffRecord({
-            changed: explained.changedNames,
-            previousHash: explained.previousHash,
-            hash: current.hash,
-          }),
-        );
-      }
+      return {
+        reason: skippedMissReason('the cached APK could not be reused, so this run built it fresh'),
+        diff: null,
+      };
     }
+    if (!useBuildCache) {
+      return {
+        reason: skippedMissReason(
+          requestedBuildCache ? 'cache reuse off in config' : 'cache reuse turned off by --no-build-cache',
+        ),
+        diff: null,
+      };
+    }
+    const current = { hash: storeHash, sources: storeSources };
+    const explained = explainBuildMiss({
+      root,
+      platform: PLATFORM,
+      current,
+      rekeyedBy,
+      baselineDeps: { readState },
+    });
+    return {
+      reason: explained.reason,
+      diff:
+        explained.previousHash && explained.changedNames.length
+          ? fingerprintDiffRecord({
+              changed: explained.changedNames,
+              previousHash: explained.previousHash,
+              hash: current.hash,
+            })
+          : null,
+    };
+  }
+
+  function explainMiss(rekeyedBy: string[]): void {
+    const explained = reasonForMiss(rekeyedBy);
+    record.missReason = explained.reason;
+    if (explained.diff) writer.write(explained.diff);
     miss(record.missReason);
     phase('cache', `miss: ${record.missReason.summary}`);
     if (record.missReason.kind === 'no-baseline') {
@@ -728,6 +742,7 @@ export async function acquireAndroidArtifact(
           return false;
         }
         if (prebuildRan) {
+          miss(reasonForMiss([]).reason, true);
           step('prebuild');
           recordPrebuild(root, PLATFORM, null);
           const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, {
@@ -773,6 +788,7 @@ export async function acquireAndroidArtifact(
               if (prepared) {
                 apkPath = prepared;
                 record.cacheHit = 'local';
+                lateHit();
                 phase('cache', `hit ${shortHash(storeHash)} (post-prebuild key)`);
                 if (releasedWait) {
                   waitedForBuild = releasedWait.facts;

@@ -529,6 +529,48 @@ describe('estimates', () => {
       releaseClaim(claim);
     });
 
+    test("a miss before prebuild or pods is this run's cold outcome until the re-check hits", () => {
+      const { claim, progress, report } = live();
+      const reason = {
+        kind: 'changed' as const,
+        summary: 'native dependency added: expo-clipboard',
+        changes: [],
+        changeCount: 1,
+        baseline: null,
+        rekeyedBy: [],
+      };
+      progress.estimate(projectKey);
+      progress.step('cache-lookup');
+      progress.miss(reason, true);
+      progress.step('pods');
+      expect(report()).toMatchObject({
+        outcome: 'cold',
+        outcomeKnown: true,
+        missProvisional: true,
+        missReason: reason,
+      });
+
+      progress.hit();
+      progress.step('device');
+      const hit = report();
+      expect(hit).toMatchObject({ outcome: 'hit', outcomeKnown: true });
+      expect(hit).not.toHaveProperty('missReason');
+      expect(hit).not.toHaveProperty('missProvisional');
+      progress.clear();
+      releaseClaim(claim);
+    });
+
+    test('the final miss settles a provisional one', () => {
+      const { claim, progress, report } = live();
+      const reason = { kind: 'changed' as const, summary: 'x', changes: [], changeCount: 0, baseline: null };
+      progress.miss({ ...reason, rekeyedBy: [] }, true);
+      progress.miss({ ...reason, rekeyedBy: ['pod install'] });
+      expect(report()).toMatchObject({ missReason: { rekeyedBy: ['pod install'] } });
+      expect(report()).not.toHaveProperty('missProvisional');
+      progress.clear();
+      releaseClaim(claim);
+    });
+
     test('a native build step settles a cold outcome, and a run that set up its device uses setup runs', () => {
       const { claim, progress, report } = live();
       progress.estimate(projectKey);

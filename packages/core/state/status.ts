@@ -46,6 +46,11 @@ export interface BuildReport {
   plannedPhases: PlannedPhase[] | null;
   /** Why the run's cache lookup missed, once the run knows; `baseline` omits `cacheKey`. */
   missReason?: BuildMissReason;
+  /**
+   * True while `missReason` is the miss of the key the run looked up first and the run will prebuild or install pods,
+   * then look the key up again. A hit on the second lookup removes `missReason` and sets `outcome` to `hit`.
+   */
+  missProvisional?: true;
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
   placement: BuildPlacement;

@@ -44,6 +44,7 @@ export interface ActiveBuildRecord {
   phases: { phase: BuildPhase; startedAt: string }[];
   claim: ActiveBuildClaim;
   missReason?: BuildMissReason;
+  missProvisional?: true;
   placement?: Exclude<BuildPlacement, 'local'>;
   /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */
   deviceSetup?: boolean;
@@ -69,8 +70,13 @@ export interface BuildProgress {
   step(phase: BuildPhase): void;
   /** Estimates the run from the recent runs of the project with `projectKey`, and again once its outcome is known. */
   estimate(projectKey: string): void;
-  /** Records why the run's cache lookup missed. */
-  miss(reason: BuildMissReason): void;
+  /**
+   * Records why the run's cache lookup missed. `provisional` marks a miss of the pre-mutation key that prebuild or
+   * pod install will re-check; the run counts as a cold one unless `hit` says otherwise.
+   */
+  miss(reason: BuildMissReason, provisional?: boolean): void;
+  /** Records that the key re-checked after prebuild or pod install hit the cache, replacing a provisional miss. */
+  hit(): void;
   /** Records whether the run set up its device (created, adopted or cold-booted) rather than reusing a booted one. */
   deviceSetup(setup: boolean | undefined): void;
   /** What `deviceSetup` recorded, or undefined before the run knows. */
@@ -87,6 +93,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
   estimate: () => {},
   miss: () => {},
+  hit: () => {},
   deviceSetup: () => {},
   deviceSetupKnown: () => undefined,
   place: () => {},
@@ -200,6 +207,10 @@ export function startBuildProgress({
     const detail = parser.detail(new Date(detailWrittenAt).toISOString());
     if (detail) guard(() => writeBuildDetail(root, record.claim.claimId, detail));
   };
+  const settle = (outcome: RunOutcomeKind): void => {
+    record.outcome = outcome;
+    if (projectKey) record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
+  };
   return {
     step(phase) {
       if (phase === record.phase) return;
@@ -208,11 +219,7 @@ export function startBuildProgress({
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
       const outcome = record.outcome ? null : settledOutcome(phase, record.phases);
-      if (outcome) {
-        record.outcome = outcome;
-        if (projectKey)
-          record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
-      }
+      if (outcome) settle(outcome);
       write();
     },
     estimate(key) {
@@ -225,8 +232,20 @@ export function startBuildProgress({
       );
       write();
     },
-    miss(reason) {
+    miss(reason, provisional = false) {
       record.missReason = reason;
+      if (provisional) {
+        record.missProvisional = true;
+        settle('cold');
+      } else {
+        delete record.missProvisional;
+      }
+      write();
+    },
+    hit() {
+      delete record.missReason;
+      delete record.missProvisional;
+      settle('hit');
       write();
     },
     deviceSetup(setup) {
@@ -390,6 +409,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     phaseStartedAt: record.phaseStartedAt,
     phases,
     ...(missReason ? { missReason } : {}),
+    ...(missReason && record.missProvisional === true ? { missProvisional: true as const } : {}),
     ...(placement ? { placement } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
@@ -524,6 +544,7 @@ export function buildReport(
     basis: estimate.basis,
     plannedPhases: plannedPhases.length ? plannedPhases : null,
     ...(record.missReason ? { missReason: record.missReason } : {}),
+    ...(record.missReason && record.missProvisional ? { missProvisional: true as const } : {}),
     placement: record.placement ?? 'local',
   };
 }

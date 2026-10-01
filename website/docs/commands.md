@@ -926,9 +926,11 @@ boot, adoption cleanup, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
-`cold` once the run reaches prebuild, pods or compile, and `hit` once it
-reaches `device` after the cache lookup, or install, without them; before that it follows the project's most recent
-run, and `outcomeKnown` is `false`. `expectedMs` and `expectedPhaseMs` are
+`cold` once the first cache lookup misses and the run will prebuild or install
+pods, or once it reaches prebuild, pods or compile, and `hit` once it reaches
+`device` after the cache lookup, or install, without them, or once the lookup
+repeated after prebuild or pods hits; before that it follows the project's
+most recent run, and `outcomeKnown` is `false`. `expectedMs` and `expectedPhaseMs` are
 medians of this project's last successful runs with that outcome, and `basis`
 counts the runs behind `expectedMs`. Both are `null` until the project has such
 a run. `plannedPhases` lists, in order, the phases at least half of those runs
@@ -943,7 +945,11 @@ for a run that reuses its device until three tagged ones exist. Runs that
 finish while this one is running do not change its estimate.
 
 Once the run knows why its cache lookup missed, `build` carries `missReason`,
-in the shape of `lastBuilds.<platform>.missReason` below. Once the native
+in the shape of `lastBuilds.<platform>.missReason` below. When prebuild or
+pod install will run, the miss is that of the key looked up first and
+`build.missProvisional` is `true` until the run looks the key up again after
+them, because they can change the fingerprint. A hit then removes `missReason` and
+sets `outcome` to `hit`; a miss replaces it with the final reason. Once the native
 build tool prints a line Stim reads, `build` also carries `detail` while the
 run is in `compile`:
 `{ step, unit, done, total, line, updatedAt }`. `step` is the tool's step:
