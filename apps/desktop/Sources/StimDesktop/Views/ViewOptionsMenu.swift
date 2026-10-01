@@ -171,35 +171,32 @@ private struct MenuList: View {
   private var submenu: [MenuItem]? { items.first { $0.id == openSubmenu }?.submenu }
 
   var body: some View {
-    MenuRows(items: items, highlighted: $highlighted, pinned: openSubmenu, activate: activate)
-      .popover(isPresented: submenuShown, arrowEdge: .trailing) {
-        if let submenu {
-          MenuRows(items: submenu, highlighted: $subHighlighted, pinned: nil, activate: activate)
-        }
-      }
-      .focusable()
-      .focusEffectDisabled()
-      .focused($focused)
-      .onAppear { focused = true }
-      .onKeyPress(.downArrow) { move(1) }
-      .onKeyPress(.upArrow) { move(-1) }
-      .onKeyPress(.return) { activateHighlighted() }
-      .onKeyPress(.space) { activateHighlighted() }
-      .onKeyPress(.rightArrow) {
-        guard openSubmenu == nil, let item = items.first(where: { $0.id == highlighted }), item.submenu != nil
-        else { return .ignored }
-        activate(item)
-        return .handled
-      }
-      .onKeyPress(.leftArrow) {
-        guard openSubmenu != nil else { return .ignored }
-        openSubmenu = nil
-        return .handled
-      }
-  }
-
-  private var submenuShown: Binding<Bool> {
-    Binding(get: { openSubmenu != nil }, set: { if !$0 { openSubmenu = nil } })
+    MenuRows(
+      items: items, highlighted: $highlighted, pinned: openSubmenu, openSubmenu: $openSubmenu, activate: activate
+    ) { submenu in
+      MenuRows(
+        items: submenu, highlighted: $subHighlighted, pinned: nil, openSubmenu: .constant(nil), activate: activate
+      ) { _ in EmptyView() }
+    }
+    .focusable()
+    .focusEffectDisabled()
+    .focused($focused)
+    .onAppear { focused = true }
+    .onKeyPress(.downArrow) { move(1) }
+    .onKeyPress(.upArrow) { move(-1) }
+    .onKeyPress(.return) { activateHighlighted() }
+    .onKeyPress(.space) { activateHighlighted() }
+    .onKeyPress(.rightArrow) {
+      guard openSubmenu == nil, let item = items.first(where: { $0.id == highlighted }), item.submenu != nil
+      else { return .ignored }
+      activate(item)
+      return .handled
+    }
+    .onKeyPress(.leftArrow) {
+      guard openSubmenu != nil else { return .ignored }
+      openSubmenu = nil
+      return .handled
+    }
   }
 
   private func activate(_ item: MenuItem) {
@@ -231,11 +228,13 @@ private struct MenuList: View {
   }
 }
 
-private struct MenuRows: View {
+private struct MenuRows<Submenu: View>: View {
   var items: [MenuItem]
   @Binding var highlighted: String?
   var pinned: String?
+  @Binding var openSubmenu: String?
   var activate: (MenuItem) -> Void
+  @ViewBuilder var submenu: ([MenuItem]) -> Submenu
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -252,11 +251,20 @@ private struct MenuRows: View {
         .onHover { inside in
           if inside { highlighted = item.id } else if highlighted == item.id { highlighted = nil }
         }
+        .popover(isPresented: shown(item), arrowEdge: .trailing) {
+          if let children = item.submenu { submenu(children) }
+        }
       }
     }
     .padding(Space.xs)
     .frame(minWidth: 250, alignment: .leading)
     .fixedSize()
+  }
+
+  private func shown(_ item: MenuItem) -> Binding<Bool> {
+    Binding(
+      get: { item.submenu != nil && openSubmenu == item.id },
+      set: { if !$0 && openSubmenu == item.id { openSubmenu = nil } })
   }
 }
 
