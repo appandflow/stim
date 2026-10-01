@@ -19,7 +19,7 @@ import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { agentLabel } from '@/lib/agents';
-import { buildKey, buildTiming } from '@/lib/format';
+import { buildKey, buildTiming, recheckNote } from '@/lib/format';
 import {
   barSteps,
   currentPhaseLabel,
@@ -324,6 +324,7 @@ export function BuildInProgressCard({
   const line = build.detail?.line ?? output.at(-1)?.msg ?? null;
   const other = otherPlatformLine(env, build.platform, now);
   const miss = build.missReason?.summary;
+  const recheck = recheckNote(build);
   const remote = remoteBuild(build, now);
   const detail = remote?.phaseElapsedMs != null ? formatDuration(remote.phaseElapsedMs, { seconds: true }) : counts;
   const name = platformName(build.platform);
@@ -380,6 +381,11 @@ export function BuildInProgressCard({
       {miss ? (
         <Text variant="caption" tone="secondary">
           {t`Cache miss: ${miss}`}
+        </Text>
+      ) : null}
+      {recheck ? (
+        <Text variant="caption" tone="tertiary">
+          {recheck}
         </Text>
       ) : null}
       {other ? (

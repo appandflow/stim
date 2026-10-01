@@ -10,6 +10,7 @@ import {
   historyTitle,
   lastBuildSummary,
   outcomeLabel,
+  recheckNote,
   nextBuild,
   planDetail,
 } from '@/lib/format';
@@ -147,6 +148,18 @@ describe('build cache outcome', () => {
     expect(outcomeLabel({ outcome: null, phase: 'prepare' })).toBeNull();
     expect(outcomeLabel({ outcome: 'hit', phase: 'device', outcomeKnown: false })).toBe('Likely cache hit');
     expect(outcomeLabel({ outcome: 'hit', phase: 'device', outcomeKnown: true })).toBe('Cache hit');
+    const missReason: BuildMissReason = {
+      kind: 'changed',
+      summary: 'x',
+      changes: [],
+      changeCount: 0,
+      baseline: null,
+      rekeyedBy: [],
+    };
+    expect(outcomeLabel({ outcome: 'cold', phase: 'pods', outcomeKnown: true, missReason })).toBe('Cache miss');
+    expect(outcomeLabel({ outcome: 'cold', phase: 'pods', outcomeKnown: true })).toBe('Cold build');
+    expect(recheckNote({ phase: 'pods', missProvisional: true })).toBe('Checks the cache again after pods');
+    expect(recheckNote({ phase: 'compile' })).toBeNull();
   });
 
   it('reads a last build whose cacheHit is false as compiled, and a failed one by its code', () => {

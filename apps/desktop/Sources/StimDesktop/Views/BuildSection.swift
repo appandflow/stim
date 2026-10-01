@@ -197,6 +197,9 @@ private struct RunningBuildDetail: View {
     }
     if let miss = build.missReason {
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
+      if let note = build.recheckNote {
+        Text(note).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
     }
     BuildOutputTail(cli: cli, workspace: env.path, build: build, limit: 6)
       .padding(Space.md)

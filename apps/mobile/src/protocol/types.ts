@@ -96,6 +96,8 @@ export interface BuildReport {
   detail?: BuildDetail;
   /** Present once the run knows why the cache missed. */
   missReason?: BuildMissReason;
+  /** True while `missReason` is the first lookup's miss and the run looks the key up again after prebuild or pods. */
+  missProvisional?: boolean;
   /** Where it compiles; absent from a stim older than build offload. */
   placement?: BuildPlacement;
 }

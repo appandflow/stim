@@ -133,6 +133,25 @@ import Testing
     #expect(build.outcomeLabel == "Cache hit")
   }
 
+  @Test func showsAMissBeforePodsAsACacheMissAndNotesTheRecheck() throws {
+    let build = try decode(
+      Build.self,
+      """
+      {"platform":"ios","slot":"default","state":"running","phase":"pods","startedAt":"2026-09-25T12:00:00Z",
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":true,"expectedMs":null,
+       "expectedPhaseMs":null,"basis":0,"missProvisional":true,
+       "missReason":{"kind":"changed","summary":"native dependency added: expo-clipboard","changes":[],
+                     "changeCount":1,"baseline":null,"rekeyedBy":[]}}
+      """)
+    #expect(build.outcomeLabel == "Cache miss")
+    #expect(build.recheckNote == "Checks the cache again after pods")
+    var compiling = build
+    compiling.phase = "compile"
+    compiling.missProvisional = nil
+    #expect(compiling.outcomeLabel == "Cache miss")
+    #expect(compiling.recheckNote == nil)
+  }
+
   @Test func returnsTheCLIRefusalWhenAPlanCannotBeComputed() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
