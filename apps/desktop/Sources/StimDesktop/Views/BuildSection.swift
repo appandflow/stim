@@ -172,6 +172,7 @@ private struct RunningBuildDetail: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var build: Build
+  @StateObject private var output = BuildOutputModel()
 
   var body: some View {
     TimelineView(.buildSeconds(build)) { context in
@@ -195,13 +196,16 @@ private struct RunningBuildDetail: View {
       }
       .accessibilityElement(children: .combine)
     }
+    .task(id: "\(env.path)|\(build.slot)|\(build.startedAt)") {
+      await output.follow(cli: cli, workspace: env.path, build: build, limit: 6)
+    }
+    .onDisappear { output.stop() }
     if let miss = build.missReason {
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
     }
-    BuildOutputTail(cli: cli, workspace: env.path, build: build, limit: 6)
-      .padding(Space.md)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
+    if !output.lines.isEmpty {
+      BuildOutputTail(lines: output.lines)
+    }
   }
 }
 

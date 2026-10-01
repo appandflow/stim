@@ -34,17 +34,24 @@ final class BuildOutputModel: ObservableObject {
   }
 }
 
-/// Follows the build output of `build` while the view is on screen.
+extension BuildOutputModel {
+  /// Follows the build output of `build` until the calling task is cancelled.
+  func follow(cli: Task<StimCLI, Never>, workspace: String, build: Build, limit: Int) async {
+    let cli = await cli.value
+    guard !Task.isCancelled else { return }
+    let started =
+      ISO8601DateFormatter.fractional.date(from: build.startedAt) ?? ISO8601DateFormatter().date(from: build.startedAt)
+    start(cli: cli, workspace: workspace, slot: build.slot, since: started ?? .distantPast, limit: limit)
+  }
+}
+
+/// The latest build output lines, in a box.
 struct BuildOutputTail: View {
-  var cli: Task<StimCLI, Never>
-  var workspace: String
-  var build: Build
-  var limit: Int
-  @StateObject private var model = BuildOutputModel()
+  var lines: [LogRecord]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 1) {
-      ForEach(Array(model.lines.enumerated()), id: \.offset) { _, record in
+      ForEach(Array(lines.enumerated()), id: \.offset) { _, record in
         Text(record.msg)
           .font(.stim(.caption, mono: true))
           .foregroundStyle(record.level >= .error ? Palette.error : Palette.tertiary)
@@ -52,14 +59,9 @@ struct BuildOutputTail: View {
           .truncationMode(.middle)
       }
     }
-    .task(id: "\(workspace)|\(build.slot)|\(build.startedAt)") {
-      let cli = await cli.value
-      guard !Task.isCancelled else { return }
-      let started =
-        ISO8601DateFormatter.fractional.date(from: build.startedAt) ?? ISO8601DateFormatter().date(from: build.startedAt)
-      model.start(cli: cli, workspace: workspace, slot: build.slot, since: started ?? .distantPast, limit: limit)
-    }
-    .onDisappear { model.stop() }
+    .padding(Space.md)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
   }
 }
 
