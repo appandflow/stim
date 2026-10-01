@@ -772,7 +772,8 @@ notifies once per episode, and the ids still active are kept in the app's
 preferences so a restart does not repeat them. Each
 workspace notifies once per episode, and a later notification replaces the
 earlier one. The first payload after launch records what is already true without
-notifying. Desktop does not look up pull requests, so it never notifies a pull
+notifying, except for Needs you, which notifies each item it has not notified
+before. Desktop does not look up pull requests, so it never notifies a pull
 request ready for review; a merged branch notifies once git finds it merged. The
 phone's "Someone takes over your device" is a push to a phone and never fires
 here. A phone controlling a simulator

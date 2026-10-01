@@ -72,11 +72,16 @@ final class OversightNotifier: ObservableObject {
   }
 
   private func overseeAttention() -> [OversightNotification] {
-    let doctorKnown = Set(store.doctor.keys)
+    let doctorKnown = Set(store.doctor.keys).union(store.doctor.values.compactMap { $0.value?.project })
+    let kept = keptWorktrees()
+    let worktrees = Set((store.payload?.environments ?? []).flatMap { [$0.path, $0.worktree?.path].compactMap { $0 } })
     let result = AttentionNotices.update(
-      previous: attention, items: store.attention(lowestVolume: nil), kept: keptWorktrees(), machine: machine,
+      previous: attention, items: store.attention(lowestVolume: nil), kept: kept, machine: machine,
       title: { store.names(ofPath: $0).title },
       pending: { id in
+        if id.hasPrefix(AttentionNotices.keptPrefix) {
+          return kept.isEmpty && worktrees.contains(String(id.dropFirst(AttentionNotices.keptPrefix.count)))
+        }
         guard id.hasPrefix("setup-") || id.hasPrefix("doctor-failed:"), let split = id.range(of: ":/") else {
           return false
         }
