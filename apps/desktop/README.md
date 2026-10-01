@@ -829,9 +829,17 @@ card for that workspace with **Open**; the app navigates only when Open is
 clicked. A malformed link, or a path `stim status` does not list within 10
 seconds, shows **Workspace not found**; if the workspace appears within the
 next minute, its card replaces that one. Another link to the same workspace
-replaces its card. With only the menu bar extra running and the main window
-closed, the card appears when the window next opens, because the link cannot
-open a window from the app delegate.
+replaces its card. With the main window closed, the link reopens it.
+
+## Window and shortcuts
+
+Closing the main window, with Command-W or the close button, leaves the app
+running: the Dock icon stays, the status watch, notifications, autopilot and
+`stim-server` keep working, and clicking the Dock icon or choosing **Open Stim**
+in the menu bar extra reopens the window. There is one main window; Command-N
+does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
+and it stops `stim-server` and the log followers. Command-1, Command-2 and
+Command-3 in the View menu open All devices, Notifications and Machine.
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
 - `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup
