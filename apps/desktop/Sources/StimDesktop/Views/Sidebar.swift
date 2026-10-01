@@ -319,7 +319,6 @@ private struct WorkspaceRowContent: View {
 
   var body: some View {
     let status = env.rowStatus(now: now)
-    let problems = env.rowProblems(now: now)
     let sessions = AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents)
     let live = env.isShownLive
     HStack(alignment: .top, spacing: Space.md) {
@@ -335,22 +334,6 @@ private struct WorkspaceRowContent: View {
         }
         if let session = sessions.first {
           SessionLine(session: session, others: sessions.count - 1)
-        }
-        if !problems.isEmpty {
-          FlowLayout(spacing: Space.xs, lineSpacing: Space.xs) {
-            ForEach(problems.indices, id: \.self) { index in
-              ProblemPill(problem: problems[index], warnings: env.warnings) { openLogs(env.path) }
-            }
-          }
-        }
-        if let build = env.build, build.isRunning {
-          RowBuild(env: env, build: build)
-        } else if status.kind == .warming {
-          HStack(spacing: Space.xs) {
-            ProgressView().controlSize(.mini)
-            Text(env.warmStepText).foregroundStyle(Palette.secondary).lineLimit(1)
-          }
-          .font(.stim(.caption))
         }
         RowDetailLine(
           context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
@@ -395,57 +378,6 @@ private struct SessionLine: View {
     }
     .font(.stim(.caption))
     .foregroundStyle(Palette.secondary)
-  }
-}
-
-private struct ProblemPill: View {
-  var problem: RowProblem
-  var warnings: [String]
-  var openLogs: () -> Void
-
-  var body: some View {
-    switch problem.kind {
-    case .errors:
-      Button(action: openLogs) { Pill(problem.text, tone: problem.tone, size: .small) }
-        .buttonStyle(.plain)
-        .help("Show the logs")
-    case .warnings, .issues:
-      Pill(problem.text, tone: problem.tone, size: .small)
-        .help(warnings.map { abbreviatingHome($0) }.joined(separator: "\n"))
-    default:
-      Pill(problem.text, tone: problem.tone, size: .small)
-    }
-  }
-}
-
-private struct RowBuild: View {
-  var env: Workspace
-  var build: Build
-
-  var body: some View {
-    TimelineView(.buildSeconds(build)) { context in
-      let progress = build.progress(at: context.date)
-      let (phase, counts) = build.currentPhaseLabel
-      VStack(alignment: .leading, spacing: Space.xs) {
-        HStack(spacing: Space.xs) {
-          Text(phase).font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary).fixedSize()
-          if let counts {
-            Text(counts).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
-          }
-          Spacer(minLength: Space.xs)
-          (Text(Format.clock(ms: progress.elapsedMs))
-            + Text(build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? "").foregroundStyle(Palette.tertiary))
-            .fixedSize()
-        }
-        .font(.stim(.caption))
-        .monospacedDigit()
-        PhaseBar(
-          steps: barSteps(
-            build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)),
-          key: build.key, names: false)
-      }
-      .padding(.vertical, Space.xxs)
-    }
   }
 }
 
