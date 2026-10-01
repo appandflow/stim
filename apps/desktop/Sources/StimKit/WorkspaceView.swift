@@ -76,6 +76,12 @@ extension Workspace {
     return device.app?.state == "stopped" ? .closed : nil
   }
 
+  /// The order `orderedDevices` gives running simulators and emulators: iOS before Android, then by slot.
+  static func deviceOrder(_ a: StageFacts.ClosedApp, _ b: StageFacts.ClosedApp) -> Bool {
+    if a.platform != b.platform { return a.platform == "ios" }
+    return a.slot.localizedCompare(b.slot) == .orderedAscending
+  }
+
   static let stageKinds: Set = ["building", "warming", "ready", "build-failed", "running", "stopped"]
 
   /// The stage `stim` decided, for an older `stim` the same rule run here.
@@ -120,7 +126,7 @@ extension Workspace {
       let errors = logs?.errorsSinceMarker ?? 0
       let problems =
         (errors > 0 ? [countLabel(errors, "error")] : [])
-        + facts.closedApps.map { "\(platformName($0.platform)) app closed" }
+        + facts.closedApps.sorted(by: Self.deviceOrder).map { "\(platformName($0.platform)) app closed" }
       let parts = (ago(now, facts.since).map { ["up \($0)"] } ?? []) + problems
       return WorkspaceStage(
         label: .running, tone: problems.isEmpty ? .success : .error,

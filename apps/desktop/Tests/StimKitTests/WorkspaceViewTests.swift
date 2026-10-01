@@ -30,6 +30,20 @@ private func runningBuild(_ extra: String = "") -> String {
 private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":true,"state":"Booted""#
 
 @Suite struct WorkspaceStageTests {
+  @Test func listsClosedAppsInSidebarOrderWhicheverOrderStimReports() throws {
+    let stopped = #"\#(booted),"app":{"id":"a","state":"stopped"}"#
+    let android = #"{"name":"stim-w","owned":true,"physical":false,"state":"detected","app":{"id":"a","state":"stopped"}}"#
+    let local = try workspace(#""android":\#(android),"slots":[{"slot":"b","ios":\#(stopped)}}]"#)
+    var reported = local
+    reported.stageFacts = StageFacts(
+      kind: "running", since: nil, platform: nil,
+      closedApps: [.init(platform: "android", slot: "default"), .init(platform: "ios", slot: "b")])
+    let expected = WorkspaceStage(
+      label: .running, tone: .error, subtitle: "iOS app closed \u{00B7} Android app closed")
+    #expect(local.stage(now: now) == expected)
+    #expect(reported.stage(now: now) == expected)
+  }
+
   @Test func derivesTheStageItselfWhenStimReportsAKindItDoesNotKnow() throws {
     let env = try workspace(
       #""supervisor":{"startedAt":"\#(iso(42 * 60))","healthy":true},"stage":{"kind":"paused","since":null,"platform":null,"closedApps":[]}"#
