@@ -94,11 +94,13 @@ final class ToastCenter: ObservableObject {
 struct ToastStack: View {
   static let topInset: CGFloat = 56
   @ObservedObject var center: ToastCenter
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     VStack(alignment: .trailing, spacing: Space.md) {
       ForEach(center.toasts.prefix(ToastCenter.maxVisible)) { toast in
-        ToastCard(toast: toast, center: center).transition(.move(edge: .trailing).combined(with: .opacity))
+        ToastCard(toast: toast, center: center).transition(
+          reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
       }
       if center.toasts.count > ToastCenter.maxVisible {
         Text("\(center.toasts.count - ToastCenter.maxVisible) more")
