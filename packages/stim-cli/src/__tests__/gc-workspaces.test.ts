@@ -1745,8 +1745,8 @@ describe('status cache entries of gone workspaces', () => {
 
   test("worktree remove drops that worktree's entries and no other", async () => {
     const { worktrees } = gitRepoWithWorktrees(['going', 'staying']);
-    const going = worktrees.going!;
-    const staying = worktrees.staying!;
+    const going = realpathSync.native(worktrees.going!);
+    const staying = realpathSync.native(worktrees.staying!);
     const goingFiles = [
       seedDisk(going),
       seedDisk(join(going, 'node_modules')),

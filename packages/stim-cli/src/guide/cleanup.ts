@@ -232,7 +232,9 @@ ORPHANED WORKSPACE DIRECTORIES
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
   each worktree's pull request under $STIM_HOME/pull-requests. \`worktree
-  remove\` drops the entries of the worktree it removed. \`gc\` reports the
+  remove\` drops the entries of the worktree it removed (its checkout,
+  node_modules and workspace folder, and its pull request), not the size
+  entries of its owned devices' data folders. \`gc\` reports the
   entries of a folder or worktree that was removed some other way under "Stale
   status cache entries", and \`gc --delete\` removes them. An entry counts as
   stale only when the path it records is gone and its volume is mounted (a
