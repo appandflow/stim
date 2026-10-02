@@ -235,6 +235,7 @@ interface SlotDevice {
   platform: Platform;
   slot: string;
   model: string;
+  modelLabel?: 'ios-simulator' | 'android-device' | 'android-emulator' | 'chrome';
   running: boolean;
   activity: Activity | undefined;
 }
@@ -243,10 +244,12 @@ function devicesOf(env: OversightEnvironment): SlotDevice[] {
   const out: SlotDevice[] = [];
   const add = (slot: string, ios?: Device | null, android?: Device | null) => {
     if (ios) {
+      const model = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(ios.name ?? '')?.[1];
       out.push({
         platform: 'ios',
         slot,
-        model: /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(ios.name ?? '')?.[1] ?? 'iOS Simulator',
+        model: model ?? 'iOS Simulator',
+        ...(model === undefined ? { modelLabel: 'ios-simulator' as const } : {}),
         running: ios.state === 'Booted',
         activity: ios.activity,
       });
@@ -256,6 +259,7 @@ function devicesOf(env: OversightEnvironment): SlotDevice[] {
         platform: 'android',
         slot,
         model: android.physical ? 'Android device' : 'Android Emulator',
+        modelLabel: android.physical ? 'android-device' : 'android-emulator',
         running: android.state === 'detected',
         activity: android.activity,
       });
@@ -268,6 +272,7 @@ function devicesOf(env: OversightEnvironment): SlotDevice[] {
       platform: 'web',
       slot: 'default',
       model: 'Chrome',
+      modelLabel: 'chrome',
       running: env.web.running,
       activity: env.web.activity,
     });
@@ -339,7 +344,7 @@ function failureStreak(
 ): {
   signature: string;
   count: number;
-  body: (count: number) => string;
+  body: (count: number, format?: AttentionFormatter) => string;
 } | null {
   const head = history?.[0];
   if (!head || !failed(head)) return null;
@@ -349,16 +354,14 @@ function failureStreak(
     if (!failed(build) || causeOf(build).key !== cause.key) break;
     count++;
   }
-  const name = platformName(platform);
-  const body = (n: number) => {
+  const body = (n: number, format: AttentionFormatter = attentionBody) => {
     if (cause.at) {
       const file = basename(cause.at.file!);
       const language = LANGUAGES[file.split('.').at(-1)?.toLowerCase() ?? ''];
-      return `Same ${language ? `${language} ` : `${name} build `}error ${n}x at ${file}:${cause.at.line}`;
+      return format({ kind: 'diagnostic-loop', platform, count: n, file, line: cause.at.line!, language });
     }
-    if (head.errorCode === 'STIM_LAUNCH_FAILED') return `App failed to launch on ${name} ${n}x in a row`;
-    const code = head.errorCode ? ` (${head.errorCode})` : '';
-    return `${name} build failed ${n}x in a row${code}`;
+    if (head.errorCode === 'STIM_LAUNCH_FAILED') return format({ kind: 'launch-loop', platform, count: n });
+    return format({ kind: 'build-loop', platform, count: n, errorCode: head.errorCode });
   };
   return { signature: cause.key, count, body };
 }
@@ -687,11 +690,7 @@ export function inQuietHours(quietHours: { start: number; end: number } | null, 
 /** How long a billable EAS session may run with no agent before it needs a person. */
 const EAS_SESSION_MINUTES = 30;
 
-/**
- * What only a person can act on or decide. apps/desktop/Sources/StimKit/NeedsAttention.swift and
- * apps/mobile/src/lib/needs-attention.ts hold the same rule; the three replay
- * apps/desktop/Tests/StimKitTests/Fixtures/needs-attention-vectors.json.
- */
+/** What only a person can act on or decide. */
 export interface NeedsAttentionItem {
   /** Stable while the problem lasts; `stuck`, `looping` and `machine` items use the oversight notification ids. */
   id: string;
@@ -716,10 +715,67 @@ export interface NeedsAttentionInput {
   ownLeases?: readonly string[];
 }
 
+/** Selected attention facts for rendering a body without repeating the rule that selected the item. */
+export type AttentionMessage =
+  | { kind: 'issue'; slot?: string; message: string }
+  | { kind: 'signing'; platform: 'ios' | 'android'; code: string }
+  | {
+      kind: 'diagnostic-loop';
+      platform: 'ios' | 'android';
+      count: number;
+      file: string;
+      line: number;
+      language: string | undefined;
+    }
+  | { kind: 'launch-loop'; platform: 'ios' | 'android'; count: number }
+  | { kind: 'build-loop'; platform: 'ios' | 'android'; count: number; errorCode: string | undefined }
+  | { kind: 'lease'; leased: string }
+  | { kind: 'eas'; minutes: number }
+  | {
+      kind: 'stuck';
+      minutes: number;
+      green: 'ios' | 'android' | null;
+      model: string;
+      modelLabel: SlotDevice['modelLabel'];
+    }
+  | { kind: 'disk'; freeBytes: number };
+
+/** Formats only an attention item's body; identity, remedy and ordering stay with the policy. */
+export type AttentionFormatter = (message: AttentionMessage) => string;
+
+function attentionBody(message: AttentionMessage): string {
+  switch (message.kind) {
+    case 'issue':
+      return message.slot ? `${message.slot}: ${message.message}` : message.message;
+    case 'signing':
+      return `${platformName(message.platform)} signing or provisioning failed (${message.code})`;
+    case 'diagnostic-loop': {
+      const language = message.language ? `${message.language} ` : `${platformName(message.platform)} build `;
+      return `Same ${language}error ${message.count}x at ${message.file}:${message.line}`;
+    }
+    case 'launch-loop':
+      return `App failed to launch on ${platformName(message.platform)} ${message.count}x in a row`;
+    case 'build-loop': {
+      const code = message.errorCode ? ` (${message.errorCode})` : '';
+      return `${platformName(message.platform)} build failed ${message.count}x in a row${code}`;
+    }
+    case 'lease':
+      return `Lease on ${message.leased} expired`;
+    case 'eas':
+      return `EAS session running for ${message.minutes} min with no agent; billed while it runs`;
+    case 'stuck': {
+      const after = message.green ? ` after a green ${platformName(message.green)} build` : '';
+      return `No agent activity for ${message.minutes} min${after}; ${message.model} still up`;
+    }
+    case 'disk':
+      return `${formatBytes(message.freeBytes)} free, below Stim's floor`;
+  }
+}
+
 const PERSON_ISSUES = new Set(['port-not-ours', 'supervisor-unverified', 'browser-unverified', 'avd-unchecked']);
 const SIGNING_CODES = ['STIM_NO_SIGNING_IDENTITY', 'STIM_CODESIGN_FAILED', 'STIM_NO_PROFILE', 'STIM_PROFILE_MISMATCH'];
 /** A failed run older than this on an idle workspace is history, not a problem. */
-const STALE_MS = 24 * 60 * 60 * 1000;
+export const STALE_MS: number = 24 * 60 * 60 * 1000;
 
 const recent = (env: OversightEnvironment, at: string | null | undefined, now: number) =>
   env.live || now - time(at) < STALE_MS;
@@ -727,6 +783,7 @@ const recent = (env: OversightEnvironment, at: string | null | undefined, now: n
 function workspaceItems(
   env: OversightEnvironment,
   input: Pick<NeedsAttentionInput, 'now' | 'stuckMinutes' | 'easSessionMinutes' | 'ownLeases'>,
+  format: AttentionFormatter = attentionBody,
 ): NeedsAttentionItem[] {
   const { now } = input;
   const items: NeedsAttentionItem[] = [];
@@ -737,7 +794,7 @@ function workspaceItems(
       category: 'attention',
       severity: issue.severity,
       workspace: env.path,
-      body: issue.slot ? `${issue.slot}: ${issue.message}` : issue.message,
+      body: format({ kind: 'issue', slot: issue.slot, message: issue.message }),
       remedy: issue.remedy,
     });
   }
@@ -752,7 +809,7 @@ function workspaceItems(
           category: 'attention',
           severity: 'error',
           workspace: env.path,
-          body: `${platformName(platform)} signing or provisioning failed (${code})`,
+          body: format({ kind: 'signing', platform, code }),
           remedy: null,
         });
         continue;
@@ -767,7 +824,7 @@ function workspaceItems(
         category: 'looping',
         severity: 'error',
         workspace: env.path,
-        body: streak.body(streak.count),
+        body: streak.body(streak.count, format),
         remedy: null,
       });
     }
@@ -780,7 +837,7 @@ function workspaceItems(
       category: 'attention',
       severity: 'warning',
       workspace: env.path,
-      body: `Lease on ${device.name ?? device.model ?? device.id} expired`,
+      body: format({ kind: 'lease', leased: device.name ?? device.model ?? device.id }),
       remedy: `stim device unlock ${device.platform}${slot}`,
     });
   }
@@ -794,20 +851,25 @@ function workspaceItems(
       category: 'attention',
       severity: 'warning',
       workspace: env.path,
-      body: `EAS session running for ${Math.floor((now - started) / 60_000)} min with no agent; billed while it runs`,
+      body: format({ kind: 'eas', minutes: Math.floor((now - started) / 60_000) }),
       remedy: 'stim stop',
     });
   }
   const since = lastActivityAt(env, devices, []);
   if (driven && env.build?.state !== 'running' && since !== null && now - since >= input.stuckMinutes * 60_000) {
     const newest = newestBuild(env);
-    const after = newest?.status === 'ok' ? ` after a green ${platformName(newest.platform)} build` : '';
     items.push({
       id: `stuck:${env.path}`,
       category: 'stuck',
       severity: 'warning',
       workspace: env.path,
-      body: `No agent activity for ${Math.floor((now - since) / 60_000)} min${after}; ${driven.model} still up`,
+      body: format({
+        kind: 'stuck',
+        minutes: Math.floor((now - since) / 60_000),
+        green: newest?.status === 'ok' ? newest.platform : null,
+        model: driven.model,
+        modelLabel: driven.modelLabel,
+      }),
       remedy: null,
     });
   }
@@ -820,7 +882,10 @@ const severityRank = (item: NeedsAttentionItem) => (item.severity === 'error' ? 
  * The items, errors first, then the machine's, then live workspaces' before idle ones', each in status order. Log
  * errors, a single failed run, and issues an agent's next `stim` command repairs are left out: agents handle them.
  */
-export function needsAttention(input: NeedsAttentionInput): NeedsAttentionItem[] {
+export function needsAttention(
+  input: NeedsAttentionInput,
+  format: AttentionFormatter = attentionBody,
+): NeedsAttentionItem[] {
   const ranked: { item: NeedsAttentionItem; scope: number }[] = [];
   const lowest = input.volumes?.reduce<number | null>(
     (min, v) => (min === null ? v.freeBytes : Math.min(min, v.freeBytes)),
@@ -834,13 +899,13 @@ export function needsAttention(input: NeedsAttentionInput): NeedsAttentionItem[]
         category: 'machine',
         severity: 'error',
         workspace: null,
-        body: `${formatBytes(lowest)} free, below Stim's floor`,
+        body: format({ kind: 'disk', freeBytes: lowest }),
         remedy: null,
       },
     });
   }
   for (const env of input.environments) {
-    for (const item of workspaceItems(env, input)) ranked.push({ item, scope: env.live ? 1 : 2 });
+    for (const item of workspaceItems(env, input, format)) ranked.push({ item, scope: env.live ? 1 : 2 });
   }
   const order = ranked.map((entry, index) => ({ entry, index }));
   order.sort(

@@ -884,6 +884,7 @@ silent only when every notification it sums up is. An older server ignores
 `levels` and alerts for every event but `started`.
 
 The server and phone import the same pure rules from `@stim-cli/core/oversight`.
+The phone formats home attention messages locally from the facts the shared rule selects.
 `__tests__/oversight-agreement.test.ts` checks their categories, workspace names
 and needs-attention vectors. Notification delivery remains local to each.
 
