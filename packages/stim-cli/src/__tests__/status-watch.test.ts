@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
@@ -159,7 +160,9 @@ test('a log append or build detail needs only a log refresh; other state changes
 test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] });
   const home = mkdtempSync(join(tmpdir(), 'stim-watch-sims-'));
-  process.env.STIM_HOME = home;
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
   const listing = (state: string) =>
     JSON.stringify({
       devices: {
@@ -205,7 +208,7 @@ test('the simulator poller shares its last readable listing until it ages out or
     resetExecutor();
     vi.useRealTimers();
     rmSync(home, { recursive: true, force: true });
-    delete process.env.STIM_HOME;
+    vi.unstubAllEnvs();
   }
 });
 
@@ -233,10 +236,19 @@ describe('stim status --watch --json', () => {
   const cli = join(import.meta.dirname, '..', '..', 'bin', 'cli.ts');
 
   function watchEnv() {
-    return { STIM_HOME: process.env.STIM_HOME, ANDROID_HOME: join(root, 'sdk'), PATH: join(root, 'bin'), HOME: root };
+    return {
+      STIM_HOME: process.env.STIM_HOME,
+      ANDROID_HOME: join(root, 'sdk'),
+      PATH: join(root, 'bin'),
+      HOME: root,
+      USERPROFILE: root,
+    };
   }
 
   function startWatch(controlledWatch = false) {
+    if (controlledWatch) {
+      writeFileSync(agentSessionsCacheFile(), JSON.stringify({ discoveredAt: new Date().toISOString(), sessions: [] }));
+    }
     const androidHome = join(root, 'sdk');
     mkdirSync(join(androidHome, 'platform-tools'), { recursive: true });
     const adb = join(androidHome, 'platform-tools', 'adb');
