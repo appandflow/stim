@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { Command } from 'commander';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import statsCommand from '../commands/stats.ts';
@@ -740,7 +740,10 @@ describe('stim stats', () => {
 
 test('CLI and the server read child agree for a real monorepo worktree and its symlink', async () => {
   resetExecutor();
-  const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+  root = realpathSync.native(root);
+  tmpHome = realpathSync.native(tmpHome);
+  process.env.STIM_HOME = tmpHome;
+  const git = (args: string[], cwd = root) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
   git(['init']);
   const app = join(root, 'apps', 'example');
   mkdirSync(app, { recursive: true });
@@ -763,7 +766,18 @@ test('CLI and the server read child agree for a real monorepo worktree and its s
   symlinkSync(join(worktree, 'apps', 'example'), alias, process.platform === 'win32' ? 'junction' : 'dir');
   const record = updateStats(emptyStats(), run({ projectKey: app, coldBuildMs: 1200 }), T0);
   writeFileSync(statsFile(), JSON.stringify(record));
-  for (const cwd of [app, join(worktree, 'apps', 'example'), alias]) {
+  for (const [cwd, repository] of [
+    [app, root],
+    [join(worktree, 'apps', 'example'), worktree],
+    [alias, worktree],
+  ] as const) {
+    const gitPath = (args: string[]) =>
+      git(['rev-parse', ...args], cwd)
+        .toString()
+        .trim()
+        .replaceAll('/', sep);
+    expect(gitPath(['--path-format=absolute', '--git-common-dir'])).toBe(join(root, '.git'));
+    expect(gitPath(['--show-toplevel'])).toBe(repository);
     const cli = inDir(cwd, () => runStats(['--json']));
     const child = runServerStats({ ...process.env }, cwd, { timeoutMs: 10_000, maxOutputBytes: 1024 * 1024 });
     try {
