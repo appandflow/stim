@@ -1001,7 +1001,17 @@ import Testing
   }
 
   @Test func capturesTheLoginShellEnvironment() async throws {
-    let environment = try #require(await LoginShell.environment())
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("export STIM_LOGIN_SHELL_TEST=controlled\n".utf8).write(to: dir.appendingPathComponent(".zprofile"))
+    let shell = dir.appendingPathComponent("shell")
+    let script = "#!/bin/sh\nexport ZDOTDIR=\"${0%/*}\"\nexec /bin/zsh \"$@\"\n"
+    FileManager.default.createFile(
+      atPath: shell.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+
+    let environment = try #require(await LoginShell.environment(shell: shell.path))
+    #expect(environment["STIM_LOGIN_SHELL_TEST"] == "controlled")
     #expect(environment["HOME"] == NSHomeDirectory())
     #expect(environment["PATH"]?.contains("/usr/bin") == true)
   }
