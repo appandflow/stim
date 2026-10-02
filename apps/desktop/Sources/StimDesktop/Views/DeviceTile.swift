@@ -81,7 +81,7 @@ struct DeviceTile: View {
         .background(Media.screen)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
-        if Self.hasButtons(device) {
+        if interactive, Self.hasButtons(device) {
           buttonStrip
         }
       }
@@ -220,9 +220,6 @@ struct DeviceTile: View {
     }
   }
 
-  /// Home, Back, Apps and Lock as the device has them, then rotation and fold or posture, in a column beside the
-  /// screen. The buttons go through the screen's own input and press only while the device is taken over; rotation,
-  /// fold and posture use simctl, adb or the simulator's HID service and work at any time. A physical device has none.
   private var buttonStrip: some View {
     VStack(spacing: Space.sm) {
       switch device {

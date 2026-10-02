@@ -145,10 +145,11 @@ struct DeviceViewer: View {
   private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {
     GeometryReader { geo in
       let padding = Space.xxl
-      let strip = DeviceTile.hasButtons(device) ? DeviceTile.buttonStripWidth + Space.lg : 0
+      let interactive = device.isRunning && takenOver && !replaying
+      let strip = interactive && DeviceTile.hasButtons(device) ? DeviceTile.buttonStripWidth + Space.lg : 0
       DeviceTile(
         device: device, screenHeight: max(160, geo.size.height - padding * 2),
-        interactive: device.isRunning && takenOver && !replaying, workspace: env.path,
+        interactive: interactive, workspace: env.path,
         build: env.runningBuild(for: device),
         replay: replay, replaying: replaying,
         presence: env.appPresence(device),

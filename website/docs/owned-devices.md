@@ -71,7 +71,7 @@ counts the iPhone's screen as a camera, so the first stream asks for Camera
 access for Stim, the app that runs `stim-server`.
 
 While a workspace holds an Android phone's lease, the phone app and Stim Desktop
-also show the phone's screen live through `stim-server`. Take over in Stim
+also show the phone's screen live through `stim-server`. **Control** in Stim
 Desktop, or a phone paired with control, can tap, swipe, type and press Home,
 Back, Apps and Lock on it. Stim Desktop also shows a cabled iPhone's screen,
 view only. The stream runs over
@@ -138,7 +138,7 @@ stim settings set androidEmulatorApp emulator
 ```
 
 An iPhone Duo simulator shows both of its screens side by side, and the
-unlit one stays black. While **Take over** is on, its tile has a **Fold /
+unlit one stays black. While **Control** is on, its tile has a **Fold /
 Unfold** button that sweeps the simulated hinge to the other posture. The
 button needs the bundled app, and because it uses private iOS interfaces, a
 new iOS runtime can break it. **Rotate left** and **Rotate right** work in
