@@ -15,6 +15,7 @@ on:
     branches: [main]
     paths:
       - '**'
+      - '!website/docs/**'
       - '!apps/desktop/**'
       - '!.github/workflows/desktop.yml'
       - '!apps/mobile/**'
@@ -28,6 +29,7 @@ on:
   pull_request:
     paths:
       - '**'
+      - '!website/docs/**'
       - '!apps/desktop/**'
       - '!.github/workflows/desktop.yml'
       - '!apps/mobile/**'
