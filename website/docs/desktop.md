@@ -47,9 +47,11 @@ performance traces. Every release is listed under
   grouped.
 - **Builds.** Progress, the reason for a cache miss, and a prediction of the
   next build. Run iOS or Android from a menu.
-- **Machines.** What fills the disk and memory, what Stim can free, and for
-  each build machine whether it takes builds, the builds it ran for this Mac and
-  why recent builds stayed here. Select checklist items to enable **Free space**;
+- **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
+  configured build machine for its readiness, capacity and build history.
+  **Link machine** opens the existing **Build Machines** settings flow.
+  A removed selection returns to **This Mac**; remote selections have no local
+  cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.
   Build-cache stats and placement totals use the
   existing local server connection when it allows reads for the same Stim home;

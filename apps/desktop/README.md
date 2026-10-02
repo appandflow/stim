@@ -297,9 +297,13 @@ version with `gc --json`.
 
 ## Machines
 
-**Machines** shows this Mac's **Now** and where its builds ran, then one
-section per build machine (see [Build machines](#build-machines)), then
-**Disk on this Mac**. **Now** is what uses the Mac's CPU and memory at this
+**Machines** has a selector for **This Mac** and its configured build machines
+(see [Build machines](#build-machines)), with visible choices across the top and
+a menu when they do not fit. **Link machine** opens **Settings >
+Build Machines**. Select **This Mac** for **Now**, where its builds ran and
+**Disk on this Mac**; select a build machine for its readiness, capacity and
+build history. Removing a selected machine returns the page to **This Mac**.
+**Now** is what uses the Mac's CPU and memory at this
 moment, from the `machine` section of the status watch, which refreshes it
 every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
@@ -769,16 +773,19 @@ notification go away once the request is answered or lapses.
 The **Machines** page shows where builds ran. While `offload.machines` names a
 machine, **Where builds ran** under **This Mac** counts today's compiling builds that built here, on a build machine, or
 here after trying one, and lists the latest placements with the reason Stim
-gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Then each
-`offload.machines` entry has its own section: its state and first reason from
+gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Selecting an
+`offload.machines` entry shows its state and first reason from
 doctor (the same check as Settings, each minute while the page is open), its
 load per core, cores, offloaded builds running and free disk from its offer,
 and the builds it ran for this Mac today and in total, their average time, the
 time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
 fresh `stats.get` requests through the matching local server session, or `stim stats --json` run in the
-home directory when that session is unavailable. **Pair or remove build machines
-in Settings** opens **Build Machines**; the page itself changes nothing.
+home directory when that session is unavailable. The page keeps checking once a
+minute regardless of the selection. Pending, unreachable and failed checks stay
+visible. **Link machine** opens **Settings > Build Machines** for pairing and
+removal; the selector itself changes no settings. Remote selections have no
+local disk cleanup actions.
 
 ## Notifications
 
