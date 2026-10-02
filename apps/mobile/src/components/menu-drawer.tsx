@@ -26,23 +26,33 @@ export function useMenuDrawer() {
   return useContext(MenuDrawerContext);
 }
 
-export function MenuDrawer({ children }: { children: ReactNode }) {
+export function MenuDrawer({ children, homeVisible }: { children: ReactNode; homeVisible: boolean }) {
   const window = useWindowDimensions();
   const [layout, setLayout] = useState({ width: window.width, height: window.height });
   return (
     <ReservedRegionsProvider style={styles.root} onLayout={({ nativeEvent }) => setLayout(nativeEvent.layout)}>
-      <DrawerContent layout={layout}>{children}</DrawerContent>
+      <DrawerContent layout={layout} homeVisible={homeVisible}>
+        {children}
+      </DrawerContent>
     </ReservedRegionsProvider>
   );
 }
 
-function DrawerContent({ children, layout }: { children: ReactNode; layout: { width: number; height: number } }) {
+function DrawerContent({
+  children,
+  layout,
+  homeVisible,
+}: {
+  children: ReactNode;
+  layout: { width: number; height: number };
+  homeVisible: boolean;
+}) {
   const { theme } = useUnistyles();
   const large = useLargeText();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const sidebar = sidebarOf(useReservedRegions(), layout.width, layout.height);
-  const permanent = pathname === '/' && sidebar !== null;
+  const permanent = homeVisible && sidebar !== null;
   const reducedMotion = useReducedMotion();
   const value = useMemo(() => ({ open: () => setOpen(true), permanent }), [permanent]);
   const drawerStyle: ViewStyle & CSSTransitionProperties = {
@@ -63,7 +73,7 @@ function DrawerContent({ children, layout }: { children: ReactNode; layout: { wi
   return (
     <MenuDrawerContext.Provider value={value}>
       <Drawer
-        open={pathname === '/' && (permanent || open)}
+        open={permanent || (pathname === '/' && open)}
         layout={layout}
         onOpen={() => {
           if (!permanent && pathname === '/') setOpen(true);
