@@ -50,6 +50,10 @@ in the workspace directory:
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
   touches them.
 
+Click the toolbar's CPU, memory or disk figure for its details. Each popover
+includes **Open Machines** to see the local machine's resources and cleanup.
+CPU covers live workspace processes; memory covers the whole Mac.
+
 **All devices**, **Notifications** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls. The sidebar lists projects as a
 tree. Each project expands to its workspaces,

@@ -49,6 +49,9 @@ performance traces. Every release is listed under
   next build. Run iOS or Android from a menu.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
+  Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
+  in each popover opens the local machine. CPU covers live workspace processes,
+  while memory covers the whole Mac.
   **Link machine** opens the existing **Build Machines** settings flow.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;

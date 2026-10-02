@@ -97,7 +97,7 @@ struct RootView: View {
             }
           }
           ToolbarItem(id: summaryItemID, placement: .navigation) {
-            MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth)
+            MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) { selection = .machine }
           }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
@@ -435,6 +435,9 @@ struct MachineSummary: View {
   var metrics: MetricsStore
   var gc: GcReportStore
   var width: CGFloat
+  var openMachine: () -> Void
+  @State private var showsCPU = false
+  @State private var showsMemoryDetails = false
   @State private var showsDisk = false
 
   var body: some View {
@@ -464,20 +467,36 @@ struct MachineSummary: View {
         }
         .help("\(countLabel(cap.liveCount, "live workspace")) on this Mac")
         if let cpu = metrics.totalCpuFraction {
-          statItem(icon: "cpu", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
-            .help("CPU of every live workspace's processes, simulators and emulators, as a percent of this Mac's cores")
+          Button {
+            showsCPU.toggle()
+          } label: {
+            statItem(icon: "cpu", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
+          }
+          .buttonStyle(.hoverRow(outset: Space.sm))
+          .accessibilityLabel("CPU details")
+          .accessibilityValue(formatPercent(cpu * 100))
+          .help("CPU of every live workspace's processes, simulators and emulators, as a percent of this Mac's cores")
+          .popover(isPresented: $showsCPU, arrowEdge: .bottom) { cpuPopover }
         }
         if showsMemory, let memory = metrics.memory {
-          HStack(spacing: Space.sm) {
-            statItem(
-              icon: "memorychip", value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
-              tone: UsageThresholds.memory(memory.pressure))
-            if showsBar {
-              ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
-                .tint(Color(UsageThresholds.memory(memory.pressure)))
-                .frame(width: 50)
+          Button {
+            showsMemoryDetails.toggle()
+          } label: {
+            HStack(spacing: Space.sm) {
+              statItem(
+                icon: "memorychip", value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
+                tone: UsageThresholds.memory(memory.pressure))
+              if showsBar {
+                ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
+                  .tint(Color(UsageThresholds.memory(memory.pressure)))
+                  .frame(width: 50)
+              }
             }
           }
+          .buttonStyle(.hoverRow(outset: Space.sm))
+          .accessibilityLabel("Memory details")
+          .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
+          .popover(isPresented: $showsMemoryDetails, arrowEdge: .bottom) { memoryPopover }
           .help(
             "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
           )
@@ -497,9 +516,11 @@ struct MachineSummary: View {
           }
         }
         .buttonStyle(.hoverRow(outset: Space.sm))
+        .accessibilityLabel("Disk details")
+        .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
         .popover(isPresented: $showsDisk, arrowEdge: .bottom) {
-          DiskPopover(metrics: metrics, gc: gc).presentationBackground(Palette.surface)
+          DiskPopover(metrics: metrics, gc: gc, openMachine: openMachine).presentationBackground(Palette.surface)
         }
       }
       if !store.watching, let at = store.updatedAt {
@@ -512,6 +533,37 @@ struct MachineSummary: View {
       }
     }
     .padding(.horizontal, Space.md)
+  }
+
+  private var cpuPopover: some View {
+    MachineResourcePopover(title: "CPU", icon: "cpu", openMachine: openMachine) {
+      if let cpu = metrics.totalCpuFraction {
+        Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
+        ProgressView(value: min(1, cpu)).tint(Color(UsageThresholds.cpu(fraction: cpu)))
+        Text("Used by live workspaces' processes, simulators and emulators. 100% means all of this Mac's cores.")
+          .foregroundStyle(Palette.secondary)
+        if let cap = store.payload?.capacity {
+          Text(countLabel(cap.liveCount, "live workspace")).foregroundStyle(Palette.tertiary)
+        }
+      }
+    }
+  }
+
+  private var memoryPopover: some View {
+    MachineResourcePopover(title: "Memory", icon: "memorychip", openMachine: openMachine) {
+      if let memory = metrics.memory {
+        Text("\(Format.memory(memory.usedBytes)) of \(Format.memory(memory.totalBytes))")
+          .font(.stim(.headline)).monospacedDigit()
+        Sparkline(values: metrics.memoryUsed, minimumPeak: Double(memory.totalBytes)).frame(height: 48)
+        Text("Memory used on this Mac, as Activity Monitor counts it.").foregroundStyle(Palette.secondary)
+        if let cap = store.payload?.capacity {
+          Text(
+            "Live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb))."
+          )
+          .foregroundStyle(Palette.secondary)
+        }
+      }
+    }
   }
 
   private func statItem(icon: String, value: String, tone: Tone) -> some View {
@@ -539,12 +591,12 @@ private struct ProposedWidth: Layout {
 struct DiskPopover: View {
   var metrics: MetricsStore
   var gc: GcReportStore
+  var openMachine: () -> Void
 
   var body: some View {
     let volumes = metrics.volumes
     let reclaimable = gc.report?.reclaimable
-    VStack(alignment: .leading, spacing: Space.xl) {
-      SectionLabel(title: "Disk")
+    MachineResourcePopover(title: "Disk", icon: "internaldrive", openMachine: openMachine) {
       ForEach(volumes) { volume in
         VStack(alignment: .leading, spacing: Space.sm) {
           HStack {
@@ -577,11 +629,35 @@ struct DiskPopover: View {
         Text("Needs a stim version with gc --json.").foregroundStyle(Palette.secondary)
       }
     }
+  }
+}
+
+private struct MachineResourcePopover<Content: View>: View {
+  var title: String
+  var icon: String
+  var openMachine: () -> Void
+  @ViewBuilder var content: Content
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Label(title, systemImage: icon).font(.stim(.headline))
+        Text("This Mac").font(.stim(.caption)).foregroundStyle(Palette.tertiary)
+      }
+      content
+      Rectangle().fill(Palette.border).frame(height: 1)
+      Button("Open Machines", systemImage: "laptopcomputer") {
+        dismiss()
+        openMachine()
+      }
+      .buttonStyle(.stim())
+    }
     .font(.stim(.callout))
     .foregroundStyle(Palette.text)
     .padding(Space.xl)
     .frame(width: 340)
-    .background(Palette.sidebar)
+    .background(Palette.surface)
   }
 }
 
