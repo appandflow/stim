@@ -92,7 +92,11 @@ keeps 20 points of outer padding. Stopped devices use compact, consistently size
 cards up to 420 points wide. **Boot** runs the device's platform and slot through
 Stim, building and launching when needed; the button is disabled while the workspace
 has an action running. Unowned and physical devices have no Boot button. Closed web
-cards offer **Open** instead. Clicking the rest of the card opens the viewer.
+cards offer **Open** instead. Workspace cards show **Control** for a running
+controllable device, or **View** otherwise. Clicking the rest of the card opens the
+viewer, with Control already on when the device allows it. Physical iOS devices
+and remote previews stay view-only; Android phones require a valid lease and a
+control-capable pairing. **Release control** or Escape returns to viewing.
 
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,

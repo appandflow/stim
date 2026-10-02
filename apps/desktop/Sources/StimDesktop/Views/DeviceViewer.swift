@@ -23,6 +23,7 @@ struct DeviceViewer: View {
   @FocusState private var actionsFocused: Bool
   @AppStorage(AppPreferences.Key.viewerShowsActions) private var showsActions = true
   @EnvironmentObject private var actions: ActionCenter
+  @ObservedObject private var server = ServerSession.shared
 
   static let minimumSize = CGSize(width: 560, height: 480)
   static let actionsWidth: CGFloat = 360
@@ -72,7 +73,11 @@ struct DeviceViewer: View {
     .background(WindowReader(found: window))
     .onAppear {
       watchEscape()
-      actionsFocused = true
+      takenOver =
+        device.map {
+          $0.isInteractive && (!$0.isPhysical || PhysicalScreen(device: $0, link: server.link, now: Date()).canControl)
+        } ?? false
+      actionsFocused = !takenOver
     }
     .onDisappear(perform: unwatchEscape)
     .sheet(item: $actions.presented) { run in

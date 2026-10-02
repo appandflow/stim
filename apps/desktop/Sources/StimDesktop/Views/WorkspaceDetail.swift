@@ -19,6 +19,7 @@ struct WorkspaceDetail: View {
   @State private var viewing: ViewedDevice?
   @State private var logMoment: LogMoment?
   @EnvironmentObject private var actions: ActionCenter
+  @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
@@ -224,6 +225,10 @@ struct WorkspaceDetail: View {
   }
 
   private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat) -> some View {
+    let canControl =
+      device.isInteractive
+      && (!device.isPhysical || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
+    let viewerAction = canControl ? "Control" : "View"
     let tile = DeviceTile(
       device: device, screenHeight: 900, workspace: env.path,
       build: env.runningBuild(for: device),
@@ -231,6 +236,7 @@ struct WorkspaceDetail: View {
       presence: env.appPresence(device),
       showsCovers: true,
       focused: focused,
+      viewerAction: viewerAction,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
       showsScreen: viewing?.id != device.id
     )
@@ -245,8 +251,8 @@ struct WorkspaceDetail: View {
           Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Open \(device.label) to control it or replay what it recorded")
-        .accessibilityLabel("Open \(device.label)")
+        .help(canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)")
+        .accessibilityLabel("\(viewerAction) \(device.label)")
       }
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }

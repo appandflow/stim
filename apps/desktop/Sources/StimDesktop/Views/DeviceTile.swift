@@ -20,6 +20,7 @@ struct DeviceTile: View {
   var presence: AppPresence? = nil
   var showsCovers = false
   var focused = false
+  var viewerAction: String? = nil
   /// The device viewer's canvas: only the screen, with the device's buttons beside it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
@@ -209,6 +210,12 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
+        if let viewerAction {
+          Label(viewerAction, systemImage: viewerAction == "Control" ? "hand.raised" : "arrow.up.right")
+            .font(.stim(.callout, weight: .semibold))
+            .foregroundStyle(Palette.primary)
+            .accessibilityHidden(true)
+        }
         if case .remote = device {
           Pill(tone: .warning) { Text("billable") }
             .help("This remote session is billed while it runs.")

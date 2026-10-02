@@ -164,7 +164,8 @@ compact 420-point maximum width, centered and wrapping with the available space.
 Their **Boot** button runs the device's platform and slot through Stim, building,
 installing and launching the app if needed. It is disabled while a workspace action
 runs; unowned and physical devices have no Boot action. A closed web card offers
-**Open** instead. Clicking the rest of a card still opens the device viewer.
+**Open** instead. Workspace cards show **Control** for a running controllable device,
+or **View** otherwise. Clicking anywhere else on the card opens the device viewer.
 
 Clicking a tile opens the **device viewer**, a sheet as large as the main
 window allows, with a minimum of 560 by 480 points. One toolbar names the
@@ -525,10 +526,11 @@ which needs a Stim version that reports it.
 
 ## Control a device
 
-Device frames are view-only until you turn on **Control** (the hand button)
-in the device viewer of a booted iOS simulator or a running owned Android
-emulator. Only the device open in the viewer can be taken over, and closing the
-viewer releases it.
+Workspace previews are view-only. Opening a running controllable device starts the
+viewer with **Control** on. Physical iOS devices and remote previews remain view-only;
+an Android phone also needs a valid lease and a control-capable server pairing.
+Only the device open in the viewer is controlled, and closing the viewer releases it.
+**Release control** (or Escape) returns to viewing; **Control** turns it on again.
 While it is on, the app sends that device your clicks and drags as touches,
 trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
