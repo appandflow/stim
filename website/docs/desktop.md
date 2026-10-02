@@ -86,6 +86,13 @@ keeps 20 points of outer padding.
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.
 
+On a foldable held like a book, the phone app's device viewer places the screen
+and replay controls on the leading side of a vertical fold, with Control
+toolbars and agent actions on the other side. An iPhone Duo needs a build
+compiled with iOS SDK 27.1 or newer and an iOS 27.1 or newer runtime. Android
+needs WindowManager fold support. Builds using an older iOS SDK receive no fold
+divisions and keep the default viewer layout.
+
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,

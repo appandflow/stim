@@ -31,6 +31,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
+import { useReservedRegions } from 'react-native-reserved-regions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { NavigationBar } from 'expo-navigation-bar';
@@ -58,6 +59,7 @@ import { useDeviceControl } from '@/hooks/device-control';
 import { useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
+import { foldOf } from '@/lib/fold';
 import { buildTimeline } from '@/lib/replay';
 import { LIVE_VIEW, replayView } from '@/lib/replay-view';
 import { aspectOf, liftAbove } from '@/lib/zoom';
@@ -117,6 +119,11 @@ export function DeviceView({
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
   const landscape = window.width > window.height;
+  const [rootHeight, setRootHeight] = useState(0);
+  const [rootWidth, setRootWidth] = useState(0);
+  const fold = foldOf(useReservedRegions(), rootWidth || window.width, rootHeight || window.height);
+  const book = fold?.axis === 'vertical' ? fold : null;
+  const sideBySide = landscape || book !== null;
   const { videoQuality } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
@@ -193,7 +200,7 @@ export function DeviceView({
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
     platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
-    !controlling && !(landscape && readOnly) && !screenZoom.zoomed && !scrubbing,
+    !controlling && !(sideBySide && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,
     screenZoom.lens,
@@ -212,7 +219,6 @@ export function DeviceView({
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
-  const [rootHeight, setRootHeight] = useState(0);
   const [barBottom, setBarBottom] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
   const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
@@ -382,7 +388,7 @@ export function DeviceView({
       />
     ) : null;
   const agentFeed =
-    !landscape && !physical && device?.id && streams ? (
+    (!landscape || book) && !physical && device?.id && streams ? (
       <AgentFeed
         workspace={workspace}
         slot={slot}
@@ -433,7 +439,7 @@ export function DeviceView({
       </>
     ) : null;
   const toolbars = buttons ? (
-    landscape ? (
+    sideBySide ? (
       <View style={styles.toolbar}>{buttons}</View>
     ) : (
       <ScrollView
@@ -462,7 +468,10 @@ export function DeviceView({
           ref={root}
           style={styles.root}
           collapsable={false}
-          onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
+          onLayout={(event) => {
+            setRootHeight(event.nativeEvent.layout.height);
+            setRootWidth(event.nativeEvent.layout.width);
+          }}
         >
           <Animated.View style={[styles.backdrop, zoom.fadeStyle]} pointerEvents="none" />
           <Animated.View style={[styles.root, zoom.fadeStyle]}>
@@ -479,29 +488,31 @@ export function DeviceView({
             >
               <View style={styles.root}>
                 <View style={{ height: barBottom + headerGap }} />
-                {landscape ? null : readOnlyBanner}
-                <Banner
-                  control={control.state}
-                  canTakeOver={control.allowed === true && !replaying}
-                  readOnly={readOnly}
-                  onTakeOver={takeOver}
-                />
-                {stream.delayed || replayOff ? (
-                  <View style={styles.chips}>
-                    {stream.delayed ? (
-                      <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
-                    ) : null}
-                    {replayOff ? (
-                      <Pill>
-                        <Trans>Replay off</Trans>
-                      </Pill>
-                    ) : null}
-                  </View>
-                ) : null}
-                <View style={landscape ? styles.row : styles.root}>
+                {sideBySide ? null : readOnlyBanner}
+                <View style={book && { width: book.start - insets.left }}>
+                  <Banner
+                    control={control.state}
+                    canTakeOver={control.allowed === true && !replaying}
+                    readOnly={readOnly}
+                    onTakeOver={takeOver}
+                  />
+                  {stream.delayed || replayOff ? (
+                    <View style={styles.chips}>
+                      {stream.delayed ? (
+                        <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
+                      ) : null}
+                      {replayOff ? (
+                        <Pill>
+                          <Trans>Replay off</Trans>
+                        </Pill>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+                <View style={sideBySide ? styles.row : styles.root}>
                   <View
                     ref={stage}
-                    style={styles.stage}
+                    style={[styles.stage, book && { flex: 0, width: book.start - insets.left }]}
                     onLayout={barBottom > 0 ? zoom.measure : undefined}
                     collapsable={false}
                   >
@@ -512,7 +523,15 @@ export function DeviceView({
                       </Text>
                     )}
                   </View>
-                  {landscape ? (
+                  {book ? (
+                    <View style={[styles.pane, { marginLeft: book.end - book.start }]}>
+                      <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
+                        {readOnlyBanner}
+                        {toolbars}
+                      </ScrollView>
+                      {agentFeed}
+                    </View>
+                  ) : landscape ? (
                     controlling || readOnly ? (
                       <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
                         {readOnlyBanner}
@@ -523,8 +542,10 @@ export function DeviceView({
                     toolbars
                   )}
                 </View>
-                {overlayControls ? null : replayBar}
-                {agentFeed}
+                {overlayControls || !replayBar ? null : (
+                  <View style={book && { width: book.start - insets.left }}>{replayBar}</View>
+                )}
+                {book ? null : agentFeed}
               </View>
             </View>
           </Animated.View>
@@ -561,7 +582,12 @@ export function DeviceView({
           <Animated.View
             style={[
               styles.header,
-              { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right },
+              {
+                paddingTop: insets.top,
+                paddingLeft: insets.left,
+                paddingRight: book ? 0 : insets.right,
+                right: book ? rootWidth - book.start : 0,
+              },
               zoom.fadeStyle,
             ]}
           >
@@ -663,7 +689,7 @@ export function DeviceView({
               style={[
                 styles.controlsLayer,
                 {
-                  ...controlsSpan(rest[0], rest[2], window.width, insets.left, insets.right),
+                  ...controlsSpan(rest[0], rest[2], insets.left, book ? book.start : window.width - insets.right),
                   bottom: rootHeight - rest[1] - rest[3],
                 },
                 zoom.fadeStyle,
@@ -826,11 +852,9 @@ function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boole
   );
 }
 
-/** The landscape controls' place: the screen's width, widened about its center to fit the buttons, inside the insets. */
-function controlsSpan(left: number, width: number, windowWidth: number, insetLeft: number, insetRight: number) {
-  const span = Math.min(Math.max(width, CONTROLS_MIN_WIDTH), windowWidth - insetLeft - insetRight);
-  const from = Math.min(Math.max(left + width / 2 - span / 2, insetLeft), windowWidth - insetRight - span);
-  return { left: from, width: span };
+function controlsSpan(left: number, width: number, from: number, to: number) {
+  const span = Math.min(Math.max(width, CONTROLS_MIN_WIDTH), to - from);
+  return { left: Math.min(Math.max(left + width / 2 - span / 2, from), to - span), width: span };
 }
 
 function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
@@ -913,6 +937,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   row: { flex: 1, flexDirection: 'row' },
   side: { width: SIDE_WIDTH, flexGrow: 0 },
+  pane: { flex: 1 },
   sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: theme.space.md },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   flying: { position: 'absolute', overflow: 'hidden' },
