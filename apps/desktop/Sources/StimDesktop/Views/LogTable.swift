@@ -159,9 +159,11 @@ struct LogTable: NSViewRepresentable {
       let id = NSUserInterfaceItemIdentifier("logRow")
       let view = tableView.makeView(withIdentifier: id, owner: nil) as? LogRowView ?? LogRowView()
       view.identifier = id
-      view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row], slotWidth: model.slotWidth) : []
+      view.lines = row < model.rows.count ? LogRowText.lines(model.rows[row]) : []
       view.indent = LogRowText.messageColumn(slotWidth: model.slotWidth)
       view.row = row < model.rows.count ? model.rows[row] : nil
+      view.columns = view.row.map { LogRowText.columns($0, slotWidth: model.slotWidth) } ?? []
+      view.toolTip = view.row.map { LogRowText.sourceLabel($0.entry.lead.src) }
       return view
     }
 
@@ -204,6 +206,7 @@ final class LogRowView: NSView {
     didSet { needsDisplay = true }
   }
   var indent: CGFloat = 0
+  var columns: [(x: CGFloat, text: NSAttributedString)] = []
   var row: LogsModel.Row?
 
   override var isFlipped: Bool { true }
@@ -211,8 +214,13 @@ final class LogRowView: NSView {
   override func accessibilityLabel() -> String? { row.map(LogRowText.accessibilityLabel) }
 
   override func draw(_ dirtyRect: NSRect) {
+    for (i, column) in columns.enumerated() {
+      let end = i + 1 < columns.count ? columns[i + 1].x : indent
+      let rect = NSRect(x: column.x, y: Self.inset, width: max(0, end - column.x - 2), height: Self.lineHeight)
+      column.text.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
     for (i, line) in lines.enumerated() {
-      let x = i == 0 ? Self.inset : indent
+      let x = indent
       let rect = NSRect(
         x: x, y: Self.inset + CGFloat(i) * Self.lineHeight, width: max(0, bounds.width - x - Self.inset),
         height: Self.lineHeight)
@@ -262,7 +270,7 @@ enum LogRowText {
     let summary = row.entry.lead.accessibilityLabel(
       source: sourceLabel(row.entry.lead.src), title: row.view.title.replacingOccurrences(of: "\t", with: "  "),
       recordCount: row.entry.related.count + 1)
-    return ([summary] + lines(row, slotWidth: 0).dropFirst().map(\.string)).joined(separator: ". ")
+    return ([summary] + lines(row).dropFirst().map(\.string)).joined(separator: ". ")
   }
 
   /// JetBrains Mono ships only its regular weight here, so bold is drawn as a stroke around each glyph.
@@ -274,17 +282,24 @@ enum LogRowText {
     return attributes
   }
 
-  static func lines(_ row: LogsModel.Row, slotWidth: Int) -> [NSAttributedString] {
+  static func columns(_ row: LogsModel.Row, slotWidth: Int) -> [(x: CGFloat, text: NSAttributedString)] {
+    let record = row.entry.lead
+    var fields: [(Int, String, Color)] = [
+      (0, record.date.formatted(LogRecord.timeFormat), Palette.tertiary),
+      (14, record.level.rawValue.uppercased(), color(record.level)),
+      (20, sourceLabel(record.src), Palette.primary),
+    ]
+    if slotWidth > 0 { fields.append((27, record.slot.map { "[\($0)]" } ?? "", Palette.accent)) }
+    return fields.map { offset, text, color in
+      (LogRowView.inset + CGFloat(offset) * characterWidth, NSAttributedString(string: text, attributes: attributes(color)))
+    }
+  }
+
+  static func lines(_ row: LogsModel.Row) -> [NSAttributedString] {
     let record = row.entry.lead
     let head = NSMutableAttributedString()
     func add(_ string: String, _ color: Color) {
       head.append(NSAttributedString(string: string, attributes: attributes(color)))
-    }
-    add(record.date.formatted(LogRecord.timeFormat) + "  ", Palette.tertiary)
-    add(record.level.rawValue.uppercased().padding(toLength: 6, withPad: " ", startingAt: 0), color(record.level))
-    add(sourceLabel(record.src).padding(toLength: 7, withPad: " ", startingAt: 0), Palette.primary)
-    if slotWidth > 0 {
-      add((record.slot.map { "[\($0)] " } ?? "").padding(toLength: slotWidth, withPad: " ", startingAt: 0), Palette.accent)
     }
     add(row.view.title.replacingOccurrences(of: "\t", with: "  "), record.level >= .error ? Palette.error : Palette.text)
     if !row.entry.related.isEmpty { add("  \(row.entry.related.count + 1) records", Palette.tertiary) }
