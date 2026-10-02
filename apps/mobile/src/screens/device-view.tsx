@@ -120,10 +120,12 @@ export function DeviceView({
   const router = useRouter();
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
-  const landscape = window.width > window.height;
   const [rootHeight, setRootHeight] = useState(0);
   const [rootWidth, setRootWidth] = useState(0);
-  const fold = foldOf(useReservedRegions(), rootWidth || window.width, rootHeight || window.height);
+  const paneWidth = rootWidth || window.width;
+  const paneHeight = rootHeight || window.height;
+  const landscape = paneWidth > paneHeight;
+  const fold = foldOf(useReservedRegions(), paneWidth, paneHeight);
   const book = fold?.axis === 'vertical' ? fold : null;
   const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
   const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
@@ -717,7 +719,7 @@ export function DeviceView({
               style={[
                 styles.controlsLayer,
                 {
-                  ...controlsSpan(rest[0], rest[2], insets.left, book ? book.start : window.width - insets.right),
+                  ...controlsSpan(rest[0], rest[2], insets.left, book ? book.start : paneWidth - insets.right),
                   bottom: rootHeight - rest[1] - rest[3],
                 },
                 zoom.fadeStyle,

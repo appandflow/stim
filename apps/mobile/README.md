@@ -5,6 +5,16 @@ the Stim server on a Mac (`stim-server`, from the `@stim-cli/server` package)
 and shows what Stim Desktop shows. A phone the Mac grants control can also
 reload and stop a workspace:
 
+On wide iPad and Duo windows, the main screen shows its navigation menu
+in the leading third. A book fold places the menu and content on opposite
+panels, leaving the division clear. Detail screens and the device viewer
+use the whole window. The narrow cover screen uses the menu drawer, retaining
+its open or closed state when rotating through a wide layout. Each pane
+uses its own safe area. Pane widths transition when the fold changes;
+Reduce Motion disables that transition.
+Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
+27.1 runtime.
+
 - **Home**: one screen for every paired machine; the app keeps a connection
   to each. The **Machines** row has a chip per machine with its connection dot and basic
   usage: live workspaces, the machine's memory used of total (as Activity

@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 import { Stack, useIsFocused, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, View, type ListViewToken } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AttentionStrip } from '@/components/attention-strip';
@@ -94,34 +95,40 @@ export function Home() {
     <>
       <Stack.Screen
         options={{
-          headerTitle: () =>
-            view === 'workspaces' ? (
-              <Image
-                source={WORDMARK}
-                tintColor={theme.colors.primary}
-                style={styles.wordmark}
-                contentFit="contain"
-                accessibilityLabel={t`Stim`}
-              />
-            ) : (
-              <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
-            ),
+          orientation: Platform.OS === 'ios' && Platform.isPad ? undefined : menu.permanent ? 'default' : 'portrait_up',
+          headerTitle:
+            view === 'workspaces' && menu.permanent
+              ? ''
+              : () =>
+                  view === 'workspaces' ? (
+                    <Image
+                      source={WORDMARK}
+                      tintColor={theme.colors.primary}
+                      style={styles.wordmark}
+                      contentFit="contain"
+                      accessibilityLabel={t`Stim`}
+                    />
+                  ) : (
+                    <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
+                  ),
         }}
       />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button
-          icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
-          tintColor={theme.colors.text}
-          accessibilityLabel={unread > 0 ? t`Menu, ${unread} unread notifications` : t`Menu`}
-          onPress={menu.open}
-        >
-          {unread > 0 ? (
-            <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary, color: theme.colors.onPrimary }}>
-              {unread > 99 ? '99+' : String(unread)}
-            </Stack.Toolbar.Badge>
-          ) : null}
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      {menu.permanent ? null : (
+        <Stack.Toolbar placement="left">
+          <Stack.Toolbar.Button
+            icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
+            tintColor={theme.colors.text}
+            accessibilityLabel={unread > 0 ? t`Menu, ${unread} unread notifications` : t`Menu`}
+            onPress={menu.open}
+          >
+            {unread > 0 ? (
+              <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary, color: theme.colors.onPrimary }}>
+                {unread > 99 ? '99+' : String(unread)}
+              </Stack.Toolbar.Badge>
+            ) : null}
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      )}
       <Stack.Toolbar placement="right">
         {view === 'machines' ? (
           <Stack.Toolbar.Button
@@ -150,7 +157,7 @@ export function Home() {
 
   if (macs?.length === 0) {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <EmptyState
           title={t`No machine paired`}
@@ -158,7 +165,7 @@ export function Home() {
         >
           <Button title={t`Pair a machine`} onPress={() => router.push('/pair')} style={styles.primaryButton} />
         </EmptyState>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -192,16 +199,16 @@ export function Home() {
 
   if (view === 'machines') {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <MacList />
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (view === 'devices') {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <FlatList
           data={rows}
@@ -229,12 +236,12 @@ export function Home() {
             <HomeEmpty view="devices" items={items.length} noFilterSet={noFilterSet} focused={focused} />
           }
         />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={['left', 'right']}>
       {header}
       <SectionList
         sections={sections}
@@ -269,7 +276,7 @@ export function Home() {
           ) : undefined
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 

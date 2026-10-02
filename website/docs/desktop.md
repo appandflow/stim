@@ -63,7 +63,10 @@ performance traces. Every release is listed under
   without retrying through the CLI.
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
-  **Serve to phones**.
+  **Serve to phones**. On wide iPad and Duo windows, the app keeps its navigation
+  beside the main screen; details use the full window. A book fold aligns the panes with the display
+  division; a narrow cover screen uses the menu drawer. Duo fold detection
+  needs an app built with the iOS 27.1 SDK and an iOS 27.1 runtime.
 - **Tablet phone-app layout.** Workspace summary cards use one row when the
   content pane has room for all four, and wrap on smaller panes. Device cards
   stay centered, fill available width up to 640 points, and form extra columns

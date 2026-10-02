@@ -1,53 +1,91 @@
 import { t } from '@lingui/core/macro';
 import { usePathname } from 'expo-router';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { BackHandler, Platform } from 'react-native';
+import { BackHandler, Platform, useWindowDimensions, type ViewStyle } from 'react-native';
 import { Drawer, useDrawerProgress } from 'react-native-drawer-layout';
-import Animated, { interpolate, useAnimatedStyle } from 'react-native-reanimated';
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useReducedMotion,
+  type CSSTransitionProperties,
+} from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { ReservedRegionsProvider, useReservedRegions } from 'react-native-reserved-regions';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useLargeText } from '@/hooks/large-text';
+import { sidebarOf } from '@/lib/sidebar';
 import { Menu } from '@/screens/menu';
 
 const DISPLAY_RADIUS = Platform.select({ ios: 55, default: 28 });
+const PANE_TRANSITION = '200ms cubic-bezier(0.77, 0, 0.175, 1)';
 
-const MenuDrawerContext = createContext<{ open: () => void }>({ open: () => {} });
+const MenuDrawerContext = createContext<{ open: () => void; permanent: boolean }>({ open: () => {}, permanent: false });
 
 export function useMenuDrawer() {
   return useContext(MenuDrawerContext);
 }
 
 export function MenuDrawer({ children }: { children: ReactNode }) {
+  const window = useWindowDimensions();
+  const [layout, setLayout] = useState({ width: window.width, height: window.height });
+  return (
+    <ReservedRegionsProvider style={styles.root} onLayout={({ nativeEvent }) => setLayout(nativeEvent.layout)}>
+      <DrawerContent layout={layout}>{children}</DrawerContent>
+    </ReservedRegionsProvider>
+  );
+}
+
+function DrawerContent({ children, layout }: { children: ReactNode; layout: { width: number; height: number } }) {
   const { theme } = useUnistyles();
   const large = useLargeText();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const value = useMemo(() => ({ open: () => setOpen(true) }), []);
+  const sidebar = sidebarOf(useReservedRegions(), layout.width, layout.height);
+  const permanent = pathname === '/' && sidebar !== null;
+  const reducedMotion = useReducedMotion();
+  const value = useMemo(() => ({ open: () => setOpen(true), permanent }), [permanent]);
+  const drawerStyle: ViewStyle & CSSTransitionProperties = {
+    width: (permanent ? sidebar?.width : undefined) ?? (large ? '95%' : '80%'),
+    backgroundColor: theme.colors.sidebar,
+    transition: permanent && !reducedMotion ? `width ${PANE_TRANSITION}` : 'none',
+  };
 
   useEffect(() => {
-    if (!open) return;
+    if (permanent || !open || pathname !== '/') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       setOpen(false);
       return true;
     });
     return () => sub.remove();
-  }, [open]);
+  }, [open, permanent, pathname]);
 
   return (
     <MenuDrawerContext.Provider value={value}>
       <Drawer
-        open={open}
-        onOpen={() => setOpen(true)}
-        onClose={() => setOpen(false)}
-        drawerType="back"
-        swipeEnabled={open || pathname === '/'}
+        open={pathname === '/' && (permanent || open)}
+        layout={layout}
+        onOpen={() => {
+          if (!permanent && pathname === '/') setOpen(true);
+        }}
+        onClose={() => {
+          if (!permanent && pathname === '/') setOpen(false);
+        }}
+        drawerType={permanent ? 'permanent' : 'back'}
+        swipeEnabled={!permanent && pathname === '/'}
         style={{ backgroundColor: theme.colors.sidebar }}
-        drawerStyle={{ width: large ? '95%' : '80%', backgroundColor: theme.colors.sidebar }}
+        drawerStyle={drawerStyle}
         overlayStyle={styles.overlay}
         overlayAccessibilityLabel={t`Close menu`}
-        renderDrawerContent={() => <Menu onClose={() => setOpen(false)} />}
+        renderDrawerContent={() => (
+          <SafeAreaProvider style={styles.root}>
+            <Menu onClose={() => setOpen(false)} />
+          </SafeAreaProvider>
+        )}
       >
-        <SceneCard>{children}</SceneCard>
+        <SceneCard permanent={permanent} gap={permanent ? sidebar.gap : 0}>
+          {children}
+        </SceneCard>
       </Drawer>
     </MenuDrawerContext.Provider>
   );
@@ -57,22 +95,35 @@ export function MenuDrawer({ children }: { children: ReactNode }) {
  * The background is an inline value: Reanimated can overwrite a Unistyles update on a view that also has an animated
  * style (jpudysz/react-native-unistyles#1170).
  */
-function SceneCard({ children }: { children: ReactNode }) {
+function SceneCard({ children, permanent, gap }: { children: ReactNode; permanent: boolean; gap: number }) {
   const { theme } = useUnistyles();
   const progress = useDrawerProgress();
+  const reducedMotion = useReducedMotion();
   const corners = useAnimatedStyle(() => ({
-    borderRadius: interpolate(progress.value, [0, 0.02], [0, DISPLAY_RADIUS], 'clamp'),
+    borderRadius: permanent ? 0 : interpolate(progress.value, [0, 0.02], [0, DISPLAY_RADIUS], 'clamp'),
   }));
   return (
-    <Animated.View style={[styles.card, corners]}>
+    <Animated.View
+      style={[
+        styles.card,
+        permanent && styles.permanent,
+        {
+          marginLeft: gap,
+          transition: permanent && !reducedMotion ? `marginLeft ${PANE_TRANSITION}` : 'none',
+        },
+        corners,
+      ]}
+    >
       <Animated.View style={[styles.clip, { backgroundColor: theme.colors.background }, corners]}>
-        {children}
+        <SafeAreaProvider style={styles.root}>{children}</SafeAreaProvider>
       </Animated.View>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  root: { flex: 1 },
+  permanent: { boxShadow: 'none' },
   overlay: { backgroundColor: 'transparent' },
   card: { flex: 1, borderCurve: 'continuous', boxShadow: `-6px 0 24px ${theme.colors.scrim}` },
   clip: { flex: 1, borderCurve: 'continuous', overflow: 'hidden' },
