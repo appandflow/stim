@@ -675,6 +675,8 @@ struct InspectorToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
+    .nativeIconStyle(active: isShown)
+    .accessibilityAddTraits(isShown ? .isSelected : [])
     .help(isShown ? "Hide the inspector" : "Show the inspector")
   }
 }
@@ -689,6 +691,8 @@ struct LogsToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
     }
+    .nativeIconStyle(active: isShown)
+    .accessibilityAddTraits(isShown ? .isSelected : [])
     .overlay(alignment: .topTrailing) {
       if errors > 0, !isShown {
         Text(errors > 99 ? "99+" : String(errors))
