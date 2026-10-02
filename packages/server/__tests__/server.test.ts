@@ -35,6 +35,17 @@ import { startServer, type RunningServer, type ServerOptions } from '../src/serv
 import { workspaceStateDir } from '@stim-cli/core';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 
+const registryWatch = vi.hoisted(() => ({ dropEvents: false }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (path: string, listener: (event: string, filename: string | null) => void) =>
+      fs.watch(path, registryWatch.dropEvents ? () => {} : listener),
+  };
+});
+
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -368,6 +379,7 @@ async function records(client: Client, count: number): Promise<unknown[]> {
 }
 
 beforeEach(() => {
+  registryWatch.dropEvents = false;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-server-')));
   pids = join(root, 'pids');
   calls = join(root, 'calls.ndjson');
@@ -485,20 +497,26 @@ describe('pairing', () => {
     );
   });
 
-  it('closes live sessions of a revoked device and refuses its token afterwards', async () => {
-    const port = await start();
-    const { id, token } = await pair(port);
-    const live = await connect(port);
-    await live.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+  it.each([false, true])(
+    'closes revoked sessions and refuses the token with watch events dropped: %s',
+    async (dropEvents) => {
+      registryWatch.dropEvents = dropEvents;
+      const port = await start();
+      const { id, token } = await pair(port);
+      const live = await connect(port);
+      await live.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
 
-    expect(revokeDevice(id)).toBe(true);
-    expect(await live.closed).toBe(4401);
-    const after = await connect(port);
-    expect(await after.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject({
-      error: { code: 'unauthorized', message: expect.stringContaining('does not recognize') },
-    });
-    expect(revokeDevice(id)).toBe(false);
-  });
+      expect(revokeDevice(id)).toBe(true);
+      expect(await live.closed).toBe(4401);
+      const after = await connect(port);
+      expect(await after.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject(
+        {
+          error: { code: 'unauthorized', message: expect.stringContaining('does not recognize') },
+        },
+      );
+      expect(revokeDevice(id)).toBe(false);
+    },
+  );
 });
 
 describe('build access', () => {
@@ -907,9 +925,11 @@ describe('offloaded builds', () => {
     },
   );
 
-  test.skipIf(!fakeTailscale)(
-    'stops the build when the client is revoked and frees the claim once the process is gone',
-    async () => {
+  test.each([false, true])(
+    'stops a revoked build and frees its claim with watch events dropped: %s',
+    { skip: !fakeTailscale },
+    async (dropEvents) => {
+      registryWatch.dropEvents = dropEvents;
       const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
@@ -1326,7 +1346,8 @@ describe('push.register', () => {
     expect(readDevices().map((device) => device.push?.token)).toEqual([undefined, PUSH.token]);
   });
 
-  it('drops the registration with a revoked pairing', async () => {
+  it.each([false, true])('drops a revoked push registration with watch events dropped: %s', async (dropEvents) => {
+    registryWatch.dropEvents = dropEvents;
     const port = await start();
     const client = await authed(port);
     await client.request('push.register', PUSH);
@@ -3318,19 +3339,24 @@ describe('frames.subscribe', () => {
     await until(() => lockCalls().includes('device unlock ios --json'));
   });
 
-  test.skipIf(!fakeTailscale)('ends a session when the device loses control', async () => {
-    const port = await startControl();
-    const { id, token } = await pair(port, undefined, true);
-    const client = await connect(port);
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
-    const { session } = (begun as { result: { session: string } }).result;
-    grantDevice(id, capabilitiesFor(false));
-    expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
-    await server!.close();
-    server = null;
-    expect(lockCalls()).toContain('device unlock ios --json');
-  });
+  test.each([false, true])(
+    'ends a control session with watch events dropped: %s',
+    { skip: !fakeTailscale },
+    async (dropEvents) => {
+      registryWatch.dropEvents = dropEvents;
+      const port = await startControl();
+      const { id, token } = await pair(port, undefined, true);
+      const client = await connect(port);
+      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      const { session } = (begun as { result: { session: string } }).result;
+      grantDevice(id, capabilitiesFor(false));
+      expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
+      await server!.close();
+      server = null;
+      expect(lockCalls()).toContain('device unlock ios --json');
+    },
+  );
 
   function leasedPhone(leases: Record<string, unknown>[]): string {
     const lease = {

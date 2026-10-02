@@ -539,24 +539,35 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
   let revocationCheck: NodeJS.Timeout | null = null;
+  let checkedRegistry: string | null = null;
+  const checkRevocations = () => {
+    const devices = [...readDevices(), ...readBuildClients()];
+    const registry = JSON.stringify(devices);
+    if (registry === checkedRegistry) return;
+    checkedRegistry = registry;
+    const paired = new Map(devices.map((device) => [device.id, device]));
+    push.refresh();
+    for (const [socket, device] of sessions) {
+      if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
+    }
+    builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
+    void builds.sweepDaemons();
+    for (const [socket, controller] of controllers) {
+      if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
+        control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
+        controllers.delete(socket);
+      }
+    }
+  };
   const watcher: FSWatcher = watch(serverDir(), () => {
     revocationCheck ??= setTimeout(() => {
       revocationCheck = null;
-      const paired = new Map([...readDevices(), ...readBuildClients()].map((device) => [device.id, device]));
-      push.refresh();
-      for (const [socket, device] of sessions) {
-        if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
-      }
-      builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
-      void builds.sweepDaemons();
-      for (const [socket, controller] of controllers) {
-        if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
-          control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
-          controllers.delete(socket);
-        }
-      }
+      checkRevocations();
     }, 50);
   });
+  // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
+  const revocationPoll = setInterval(checkRevocations, 1000);
+  revocationPoll.unref();
 
   function connection(socket: WebSocket, peer: string | null): void {
     const limitKey = peer ?? 'local';
@@ -1676,6 +1687,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     closing = true;
     push.close();
     watcher.close();
+    clearInterval(revocationPoll);
     helperAbort.abort();
     sampler.stop();
     if (revocationCheck) clearTimeout(revocationCheck);
