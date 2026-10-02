@@ -625,7 +625,9 @@ struct DeviceTile: View {
             udid: sim.udid, screenID: screenID, interactive: interactive && displayedScreenIDs.contains(screenID),
             onPixelSizeChange: { pixelSizes[screenID] = $0 },
             onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil,
-            buttons: screenID == mainScreenID ? simulatorButtons : nil
+            buttons: screenID == mainScreenID ? simulatorButtons : nil,
+            hingeAngle: viewer && device.formFactor == .dual && posture == "Unfolded" && screenID == mainScreenID
+              ? observedHingeAngle : nil
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
