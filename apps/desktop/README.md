@@ -155,8 +155,8 @@ Clicking a tile opens the **device viewer**, a sheet as large as the main
 window allows, with a minimum of 560 by 480 points. One toolbar names the
 device, its model and its workspace, with the driver or idle badge, **App not
 running**, **Physical** and the lease, and the device's CPU and memory when
-they fit. On its right are **Run** when the app is not running, **Take over**
-(see [Take over a device](#take-over-a-device)), and **Stop** (a simulator,
+they fit. On its right are **Run** when the app is not running, **Control**
+(see [Control a device](#control-a-device)), and **Stop** (a simulator,
 emulator or remote session; a web page has Open in browser, Reload and Close;
 a physical device has none), then the agent actions toggle and Close. The
 device sits on a plain canvas, as large as it fits, with its buttons in a
@@ -494,9 +494,9 @@ inspector's **Build** section shows the phase checklist. With no finished run
 to compare against, the bars are indeterminate. The figures come from the `build` field of `stim status --json`,
 which needs a Stim version that reports it.
 
-## Take over a device
+## Control a device
 
-Device frames are view-only until you turn on **Take over** (the hand button)
+Device frames are view-only until you turn on **Control** (the hand button)
 in the device viewer of a booted iOS simulator or a running owned Android
 emulator. Only the device open in the viewer can be taken over, and closing the
 viewer releases it.
@@ -505,15 +505,15 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
-A column beside the screen of a running simulator or emulator has its
+While **Control** is on, a column beside the screen of a running simulator or emulator has its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
 on an emulator, sent with gRPC `sendKey` (Lock, and every button on an emulator
 without a hardware keyboard, with `adb shell input keyevent`); then **Rotate
 left** and **Rotate right**. An iPhone Duo rotates through its Virtualization
 provider in each posture. Apps keep their supported orientations, and its home
-screen stays portrait. The hardware buttons press only while the device
-is taken over; rotation works at any time.
+screen stays portrait. Hardware buttons, rotation and posture controls are
+available only while **Control** is on.
 
 A simulator with more than one display, such as the iPhone Duo, shows every
 display side by side, and touches go to the display you click. Only the
@@ -550,7 +550,7 @@ on the wall and on the workspace page, labelled with the page's URL,
 the in-app route (`web.page.route`) when one moved it after the load.
 Desktop reads the page's frames itself, over the loopback DevTools endpoint
 `stim status --json` reports, and connects only when Chrome reports the pid
-status names. **Take over** sends clicks, drags, hover, trackpad scrolls and
+status names. **Control** sends clicks, drags, hover, trackpad scrolls and
 keys to the page; Command shortcuts stay with the Mac. The viewer's buttons open
 the URL in your default browser (never the Stim profile), run `stim reload web`,
 and **Close** runs `stim stop --slot web`, which keeps Metro, the devices and the
@@ -599,7 +599,7 @@ pointer. The first seek opens a `frames.subscribe` with `video: ["h264"]` and
 `at`, which also works for a device that is not running; later seeks send
 `frames.seek`. The app decodes the H.264 itself. A server that answers without
 H.264 cannot replay, and the bar says so. **Live** closes the subscription and
-shows the device's own live screen again. Take over is disabled while
+shows the device's own live screen again. Control is disabled while
 replaying, and a seek releases it. After a lost connection the replay resumes,
 paused at the frame shown.
 
@@ -634,7 +634,7 @@ The tile streams the device's screen from the local stim-server (see
 [Replay](#replay) for the connection) with `frames.subscribe`, `physical:
 true` and `video: ["h264"]`, as the phone app does, and decodes the H.264
 itself. An iPhone streams only over a USB cable and is view only. An Android
-phone streams over adb, and **Take over** in the viewer sends clicks and drags as touches,
+phone streams over adb, and **Control** in the viewer sends clicks and drags as touches,
 trackpad scrolls as one-finger drags, and typed ASCII, Return, Tab and Delete
 as text, through a `control.begin` session with `physical: true`. While taken
 over, the viewer shows Home, Back, Apps and Lock buttons. The server accepts
@@ -654,7 +654,7 @@ Instead of a screen, the tile says:
 
 A delayed stream shows the server's reason, such as a locked iPhone. When the
 server ends control (no input for 5 minutes, the device gone, the lease
-ended), Take over turns off and the tile says why.
+ended), Control turns off and the tile says why.
 
 ## Phones
 

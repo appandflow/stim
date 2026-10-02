@@ -3,8 +3,6 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// The device viewer's one toolbar: the device, its workspace and state on the leading side; Run, Take over and the
-/// device's own controls, then the action list toggle and Close on the trailing side.
 struct DeviceViewerToolbar: View {
   var device: DeviceRef
   var env: Workspace
@@ -177,20 +175,20 @@ struct DeviceViewerToolbar: View {
       !device.isPhysical || takenOver || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
     {
       if takenOver {
-        Button("Release", systemImage: "hand.raised.fill") { takenOver = false }
+        Button("Release control", systemImage: "hand.raised.fill") { takenOver = false }
           .buttonStyle(.stim(.primary))
           .fixedSize()
           .help("Release control so an agent can drive this device again (Escape).")
           .accessibilityLabel("Release control")
       } else {
-        Button("Take over", systemImage: "hand.raised") { takenOver = true }
+        Button("Control", systemImage: "hand.raised") { takenOver = true }
           .buttonStyle(.stim())
           .fixedSize()
           .disabled(replaying)
           .help(
             replaying
-              ? "Go live to take over this device."
-              : "Take over: send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, taking over may disrupt it."
+              ? "Go live to control this device."
+              : "Control: send your clicks, trackpad scrolls and keys to this device. If an agent is driving it, controlling it may disrupt it."
           )
       }
     }
