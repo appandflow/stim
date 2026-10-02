@@ -58,9 +58,12 @@ struct WorkspaceDetail: View {
       if inspector == .overlay {
         inspectorPanel
           .frame(width: Self.inspectorWidth)
-          .background(Palette.sidebar, ignoresSafeAreaEdges: [])
-          .clipped()
-          .overlay(alignment: .leading) { Rectangle().fill(Palette.border).frame(width: 1) }
+          .background(Palette.sidebar)
+          .toolbarBackdrop(Palette.sidebar)
+          .overlay(alignment: .leading) {
+            Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
+          }
+          .compositingGroup()
           .shadow(color: .black.opacity(0.25), radius: 16)
       }
     }

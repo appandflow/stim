@@ -36,6 +36,7 @@ struct SettingsView: View {
       scopeTab(.workspace, title: "Workspace", icon: "square.stack.3d.up")
       scopeTab(.committed, title: ".stim.json", icon: "doc.text")
     }
+    .modifier(SettingsTabsStyle())
     .frame(width: 780, height: 640)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
@@ -69,6 +70,16 @@ struct SettingsView: View {
     var paths = (store.payload?.environments ?? []).map(\.path)
     if let workspace, !paths.contains(workspace) { paths.insert(workspace, at: 0) }
     return paths
+  }
+}
+
+private struct SettingsTabsStyle: ViewModifier {
+  @ViewBuilder func body(content: Content) -> some View {
+    if #available(macOS 26, *) {
+      content.tabViewStyle(.grouped)
+    } else {
+      content
+    }
   }
 }
 

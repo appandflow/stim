@@ -118,8 +118,9 @@ Clicking it opens a popover with the branch, its upstream, the pull request's
 title, checks and review, and **Open on GitHub**. The "..." menu at the end of
 the line holds the workspace actions.
 
-The inspector, toggled from the toolbar, holds the workspace's details, in
-this order:
+The inspector, toggled from the toolbar, floats over the workspace in narrow
+windows with its background reaching the top edge behind the toolbar controls.
+It holds the workspace's details, in this order:
 
 - **Build**: one card per platform. While a build runs, its card shows the
   phase or the build tool's step with its counts ("Compiling 45 of 180
@@ -205,6 +206,11 @@ tile stops streaming and says "Open in the viewer". Tiles on the All devices
 wall are previews too; clicking one opens its workspace. Active workspaces without
 running or building devices use compact cards with Metro status, warnings and
 positive-error log links; CPU and RAM stay on the workspace page.
+
+On macOS 26 and later, sidebar controls and device viewer buttons use native
+Liquid Glass when built with Xcode 26 or later, and Settings uses grouped native
+tabs. Older Xcode builds keep the existing button styles. Older macOS versions
+keep their existing button and tab styles.
 
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens
