@@ -1,5 +1,4 @@
 import StimKit
-import StimStores
 import SwiftUI
 
 /// Where this Mac's compiling builds ran today and the latest placements with their reasons, from `stim stats`;
@@ -22,19 +21,11 @@ struct ThisMacPlacements: View {
   }
 }
 
-/// One section per `offload.machines` entry: whether it takes builds now and why not, its load, slots and disk from
-/// its last offer, the builds it ran for this Mac and the estimated time they saved, and the latest placements that
-/// went to it or fell back from it. Read-only: Settings > Build Machines pairs and removes them. Checked each minute
-/// while the page is open.
+/// The selected build machine's readiness, capacity and build history from the page's minute refresh.
 struct MachineBuildMachines: View {
   var model: BuildMachinesModel
-  @ObservedObject var status: StatusStore
-  @AppStorage("settingsTab") private var settingsTab = "app"
-  @Environment(\.openSettings) private var openSettings
-
-  private var checkout: String? {
-    doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
-  }
+  var checkout: String?
+  var selectedMachine: String
 
   private var machines: [BuildMachineStatus] { model.check(in: checkout)?.statuses ?? [] }
 
@@ -51,22 +42,21 @@ struct MachineBuildMachines: View {
       if let failure {
         Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
-      ForEach(machines) { machine in section(machine) }
-      if !machines.isEmpty || failure != nil {
-        Button("Pair or remove build machines in Settings") {
-          settingsTab = "build-machines"
-          openSettings()
+      if let machine = machines.first(where: { $0.machine == selectedMachine }) {
+        section(machine)
+      } else {
+        MachineHeading(icon: "desktopcomputer", title: machineName(selectedMachine), subtitle: nil) {
+          EmptyView()
         }
-        .buttonStyle(.stim(.plain))
+        Text(
+          checkout == nil
+            ? "Start a workspace with Stim to check this build machine."
+            : model.isBusy ? "Checking build machine\u{2026}" : "No status reported for this machine yet."
+        )
+        .foregroundStyle(Palette.secondary)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .task(id: checkout) {
-      while !Task.isCancelled {
-        await model.refresh(checkout: checkout)
-        try? await Task.sleep(for: .seconds(60))
-      }
-    }
   }
 
   private func section(_ machine: BuildMachineStatus) -> some View {

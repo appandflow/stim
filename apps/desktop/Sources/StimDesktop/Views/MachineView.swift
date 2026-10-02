@@ -11,6 +11,9 @@ struct MachineView: View {
   @ObservedObject var storage: StorageStore
   @ObservedObject var autopilot: AutopilotRunner
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.openSettings) private var openSettings
+  @AppStorage("settingsTab") private var settingsTab = "app"
+  @State private var selectedMachine: String?
   @State private var selection: Set<FreeAction>?
   @State private var confirming: [StimCommand]?
   @State private var removing: WorkspaceStorage?
@@ -21,6 +24,14 @@ struct MachineView: View {
   private static let sizeWidth: CGFloat = 84
   private var compact: Bool { width < 860 }
 
+  private var checkout: String? {
+    doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
+  }
+
+  private var machine: String? {
+    selectedMachine.flatMap { (buildMachines.entries ?? []).contains($0) ? $0 : nil }
+  }
+
   var body: some View {
     let report = reportCache.value(
       for: StorageReportInputs(
@@ -30,25 +41,53 @@ struct MachineView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
-        MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
-          EmptyView()
+        HStack(spacing: Space.lg) {
+          machineChoices
+            .frame(maxWidth: .infinity, alignment: .leading)
+          Button("Link machine", systemImage: "plus") {
+            settingsTab = "build-machines"
+            openSettings()
+          }
+          .buttonStyle(.stim())
         }
-        NowBand(status: status, metrics: metrics, gc: gc)
-        if let plan = autopilot.pressure { pressureBanner(plan) }
-        ThisMacPlacements(model: buildMachines)
-        MachineBuildMachines(model: buildMachines, status: status)
-        MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
-        headline(report)
-        safeToFree(report)
-        projects(report)
-        devices(report)
-        runtimes(report)
-        otherTools(report)
+        if let failure = buildMachines.settingsFailure {
+          Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if let error = buildMachines.stats.error {
+          Text("Could not load build history: \(error)")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if let machine {
+          MachineBuildMachines(model: buildMachines, checkout: checkout, selectedMachine: machine)
+        } else {
+          MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
+            EmptyView()
+          }
+          NowBand(status: status, metrics: metrics, gc: gc)
+          if let plan = autopilot.pressure { pressureBanner(plan) }
+          ThisMacPlacements(model: buildMachines)
+          MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
+          headline(report)
+          safeToFree(report)
+          projects(report)
+          devices(report)
+          runtimes(report)
+          otherTools(report)
+        }
       }
       .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+    .task(id: checkout) {
+      while !Task.isCancelled {
+        await buildMachines.refresh(checkout: checkout)
+        try? await Task.sleep(for: .seconds(60))
+      }
+    }
+    .onChange(of: buildMachines.entries) { _, entries in
+      if let selectedMachine, !(entries ?? []).contains(selectedMachine) { self.selectedMachine = nil }
+    }
     .onAppear {
       storage.refresh()
       if gc.report == nil { gc.refresh() }
@@ -84,25 +123,60 @@ struct MachineView: View {
 
   // MARK: Header
 
+  private var machineChoices: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: Space.sm) {
+        Button {
+          selectedMachine = nil
+        } label: {
+          Label("This Mac", systemImage: "laptopcomputer")
+        }
+        .buttonStyle(.stim(machine == nil ? .primary : .secondary, .regular))
+        .accessibilityAddTraits(machine == nil ? .isSelected : [])
+        ForEach(buildMachines.entries ?? [], id: \.self) { entry in
+          Button {
+            selectedMachine = entry
+          } label: {
+            Label(machineName(entry), systemImage: "desktopcomputer")
+          }
+          .buttonStyle(.stim(machine == entry ? .primary : .secondary, .regular))
+          .accessibilityAddTraits(machine == entry ? .isSelected : [])
+          .help(entry)
+        }
+      }
+      .fixedSize(horizontal: true, vertical: false)
+      Picker("Machine", selection: Binding(get: { machine }, set: { selectedMachine = $0 })) {
+        Text("This Mac").tag(String?.none)
+        ForEach(buildMachines.entries ?? [], id: \.self) { entry in
+          Text(verbatim: machineName(entry)).tag(Optional(entry))
+        }
+      }
+      .pickerStyle(.menu)
+      .frame(maxWidth: 360, alignment: .leading)
+    }
+  }
+
   private var header: some View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machines").font(.stim(.title))
-        Text("This Mac, the build machines it offloads builds to, then this Mac's disk and what Stim can free.")
+        Text("Choose a machine to see its resources and build activity.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
-      if let at = storage.measuredAt, !storage.measuring, !gc.running {
+      if machine == nil, let at = storage.measuredAt, !storage.measuring, !gc.running {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           Text("Measured \(Format.age(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
         }
       }
-      Button("Refresh") {
-        storage.refresh(force: true)
-        gc.refresh()
+      if machine == nil {
+        Button("Refresh") {
+          storage.refresh(force: true)
+          gc.refresh()
+        }
+        .buttonStyle(.stim())
+        .disabled(storage.measuring || gc.running)
       }
-      .buttonStyle(.stim())
-      .disabled(storage.measuring || gc.running)
     }
   }
 
