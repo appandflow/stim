@@ -17,8 +17,15 @@ import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
-import { buildSlotPath, machineCapacity, readViewedDevices, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
+import {
+  readStatsReport,
+  buildSlotPath,
+  machineCapacity,
+  readViewedDevices,
+  tryAcquireBuildSlotClaim,
+} from '@stim-cli/core/state';
 import type { HelloResult, MachineUsage, ServerMessage, StatusEvent } from '../src/protocol.ts';
+import { runNodeCommand } from '../src/stim-command.ts';
 import { readAudit } from '../src/actions.ts';
 import {
   capabilitiesFor,
@@ -546,7 +553,7 @@ describe('build access', () => {
     expect(await helloWith(approved, deviceToken!)).toMatchObject({
       result: { capabilities: ['build'], actions: [] },
     });
-    for (const method of ['status.subscribe', 'machine.get', 'notifications.list']) {
+    for (const method of ['status.subscribe', 'machine.get', 'notifications.list', 'stats.get', 'machine.details']) {
       expect(await approved.request(method)).toMatchObject({ error: { code: 'forbidden' } });
     }
 
@@ -1506,7 +1513,7 @@ describe('logs.subscribe', () => {
       await again.request('logs.subscribe', { workspace });
       await records(again, 3);
       const next = childPids().find((other) => other !== pid);
-      again.socket.send(JSON.stringify({ id: 9, method: 'stats.get' }));
+      again.socket.send(JSON.stringify({ id: 9, method: 'settings.get' }));
       await until(() => childPids().length === 2);
       const command = childPids().find((other) => other !== pid && other !== next);
       await server!.close();
@@ -1585,14 +1592,14 @@ describe('machine.history', () => {
 });
 
 describe('machine.details', () => {
-  it('runs only the gc dry run and stats in the home directory, once for every read-only phone within a minute', async () => {
+  it('shares the home stats read and gc dry run between read-only phones within a minute', async () => {
     const port = await start();
     const first = await authed(port);
     const second = await authed(port);
     const home = realpathSync(homedir());
     const expected = {
       gc: { command: 'gc', cwd: home },
-      stats: { command: 'stats', cwd: home },
+      stats: readStatsReport(null, Date.now()).report,
       buildMachines: [],
       buildClients: [],
       measuredAt: expect.any(String),
@@ -1604,7 +1611,7 @@ describe('machine.details', () => {
       stimCalls()
         .map((call) => call.args)
         .toSorted(),
-    ).toEqual(['gc --json', 'stats --json']);
+    ).toEqual(['gc --json']);
   });
 
   it('answers immediately with pending build machines, then reads them from doctor in the background', async () => {
@@ -1655,7 +1662,7 @@ describe('machine.details', () => {
       result: {
         gc: null,
         gcError: 'stim gc exited (code 1): gc failed on purpose',
-        stats: { command: 'stats' },
+        stats: { version: 1, machine: { ios: null, android: null } },
       },
     });
   });
@@ -1674,19 +1681,201 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
 });
 
 describe('stats.get and settings.get', () => {
-  it('return the CLI payload, run in the workspace or in the home directory', async () => {
+  it('read stats directly and run settings in the home directory', async () => {
     const port = await start();
     const client = await authed(port);
     expect(await client.request('stats.get', { workspace })).toEqual({
       id: 2,
-      result: { command: 'stats', cwd: workspace },
+      result: readStatsReport(null, Date.now()).report,
     });
     expect(await client.request('settings.get')).toEqual({
       id: 3,
       result: { command: 'settings', cwd: realpathSync(homedir()) },
     });
-    expect(stimCalls().map((call) => call.args)).toEqual(['stats --json', 'settings --json']);
+    expect(stimCalls().map((call) => call.args)).toEqual(['settings --json']);
   });
+
+  it('preserves seeded stats, rejects unregistered paths, and never repairs unreadable versions', async () => {
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const file = join(process.env.STIM_HOME!, 'stats.json');
+    const content = JSON.stringify({
+      version: 1,
+      machine: { ios: { runs: '3', hits: 2 } },
+      projects: {
+        [workspace]: { android: { runs: 1, lastColdBuildMs: 1234 } },
+      },
+    });
+    writeFileSync(file, content);
+    const port = await start();
+    const client = await authed(port);
+    expect(await client.request('stats.get', { workspace })).toMatchObject({
+      result: {
+        version: 1,
+        project: { key: workspace, ios: null, android: { runs: 1, lastColdBuildMs: 1234 } },
+        machine: { ios: { runs: 3, hits: 2 }, android: null },
+      },
+    });
+    expect(readFileSync(file, 'utf8')).toBe(content);
+    for (const invalid of [null, [], 'workspace']) {
+      expect(await client.request('stats.get', invalid)).toMatchObject({ error: { code: 'bad-request' } });
+    }
+    expect(await client.request('stats.get', { workspace: root })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    for (const text of ['{broken', '{"version":999}']) {
+      writeFileSync(file, text);
+      expect(await client.request('stats.get', { workspace })).toMatchObject({
+        result: {
+          project: { key: workspace, ios: null, android: null },
+          machine: { ios: null, android: null },
+        },
+      });
+      expect(readFileSync(file, 'utf8')).toBe(text);
+      expect(readdirSync(process.env.STIM_HOME!).filter((name) => name.startsWith('stats'))).toEqual(['stats.json']);
+    }
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('bounds stats output and releases the request slot after refusal', async () => {
+    const file = join(process.env.STIM_HOME!, 'stats.json');
+    writeFileSync(file, JSON.stringify({ version: 1, buildMachines: { ['x'.repeat(2048)]: {} } }));
+    const port = await start({ commandLimits: { maxOutputBytes: 1024 } });
+    const client = await authed(port);
+    expect(await client.request('stats.get')).toMatchObject({
+      error: { code: 'stim-failed', message: 'stim stats printed more than 1024 bytes.' },
+    });
+    rmSync(file);
+    expect(await client.request('stats.get')).toMatchObject({ result: { version: 1 } });
+  });
+
+  it('serves both stats consumers when the CLI entry is unavailable', async () => {
+    const port = await start();
+    rmSync(join(root, 'fake-stim.mjs'));
+    const client = await authed(port);
+    expect(await client.request('stats.get')).toMatchObject({ result: { version: 1 } });
+    expect(await client.request('machine.details')).toMatchObject({
+      result: {
+        gc: null,
+        gcError: expect.any(String),
+        stats: { version: 1 },
+      },
+    });
+  });
+
+  it('force-kills an unresponsive read child and settles cancellation', async () => {
+    const entry = join(root, 'blocked-read.mjs');
+    const ready = join(root, 'blocked-read.pid');
+    writeFileSync(
+      entry,
+      `import { writeFileSync } from 'node:fs';
+writeFileSync(process.env.READ_PID, String(process.pid));
+while (true) {}
+`,
+    );
+    const run = runNodeCommand(
+      entry,
+      { ...process.env, READ_PID: ready },
+      [],
+      root,
+      { timeoutMs: 10_000, maxOutputBytes: 1024 },
+      'stats fixture',
+      true,
+    );
+    try {
+      await until(() => existsSync(ready));
+      const pid = Number(readFileSync(ready, 'utf8'));
+      await run.cancel();
+      expect(alive(pid)).toBe(false);
+    } finally {
+      await run.cancel();
+    }
+  });
+
+  function slowGit(): { env: Record<string, string>; processes: () => number[] } {
+    const bin = join(root, 'bin');
+    const jobs = join(root, 'git-jobs');
+    mkdirSync(bin);
+    mkdirSync(jobs);
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    const script = `#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync(require('node:path').join(process.env.STATS_GIT_JOBS, String(process.pid)), String(process.ppid));
+require('node:net').createServer().listen(0, '127.0.0.1');
+`;
+    writeFileSync(join(bin, 'git'), script);
+    chmodSync(join(bin, 'git'), 0o755);
+    return {
+      env: { PATH: bin + ':' + process.env.PATH, STATS_GIT_JOBS: jobs },
+      processes: () => readdirSync(jobs).flatMap((pid) => [Number(pid), Number(readFileSync(join(jobs, pid), 'utf8'))]),
+    };
+  }
+
+  test.skipIf(process.platform === 'win32')(
+    'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
+    async () => {
+      const slow = slowGit();
+      const port = await start({ env: slow.env });
+      const first = await authed(port);
+      const second = await authed(port);
+      for (let id = 10; id < 14; id++)
+        first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length === 8);
+      expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
+      const owned = slow.processes();
+      first.socket.terminate();
+      await until(() => owned.every((pid) => !alive(pid)));
+      expect(await second.request('stats.get')).toMatchObject({ result: { version: 1 } });
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'cancels a slow stats read and its Git child at timeout and server shutdown',
+    async () => {
+      const slow = slowGit();
+      const port = await start({ env: slow.env, commandLimits: { timeoutMs: 1000 } });
+      const client = await authed(port);
+      const reply = client.request('stats.get', { workspace });
+      await until(() => slow.processes().length === 2);
+      expect(await reply).toMatchObject({
+        error: { code: 'stim-failed', message: 'stim stats did not finish within 1 s.' },
+      });
+      expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
+      client.socket.send(JSON.stringify({ id: 10, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length === 4);
+      await server!.close();
+      server = null;
+      expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'keeps the shared details stats job after a socket closes and cancels it on server close',
+    async () => {
+      const slow = slowGit();
+      const previous = process.env.HOME;
+      process.env.HOME = root;
+      writeFileSync(join(root, 'package.json'), '{}');
+      try {
+        const port = await start({ env: slow.env });
+        const first = await authed(port);
+        const second = await authed(port);
+        first.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
+        await until(() => slow.processes().length === 2);
+        first.socket.close();
+        await first.closed;
+        expect(slow.processes().every(alive)).toBe(true);
+        second.socket.send(JSON.stringify({ id: 2, method: 'machine.details' }));
+        await server!.close();
+        server = null;
+        expect(slow.processes().length).toBe(2);
+        expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
+      } finally {
+        if (previous === undefined) delete process.env.HOME;
+        else process.env.HOME = previous;
+      }
+    },
+  );
 
   it('report a failing command with its stderr', async () => {
     const port = await start({ env: { FAKE_STIM_FAIL: '1' } });
@@ -1699,7 +1888,7 @@ describe('stats.get and settings.get', () => {
   it('kill a running command when the client disconnects', async () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' } });
     const client = await authed(port);
-    client.socket.send(JSON.stringify({ id: 2, method: 'stats.get', params: { workspace } }));
+    client.socket.send(JSON.stringify({ id: 2, method: 'settings.get', params: { workspace } }));
     await until(() => childPids().length === 1);
     const [pid] = childPids();
     expect(alive(pid!)).toBe(true);
@@ -1710,7 +1899,7 @@ describe('stats.get and settings.get', () => {
   it('kill a command that runs past its timeout', async () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' }, commandLimits: { timeoutMs: 300 } });
     const client = await authed(port);
-    expect(await client.request('stats.get')).toMatchObject({
+    expect(await client.request('settings.get')).toMatchObject({
       error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
     });
     expect(childPids()).toEqual([]);
@@ -1721,8 +1910,8 @@ describe('stats.get and settings.get', () => {
     const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 2000 } });
     const client = await authed(port);
     try {
-      expect(await client.request('stats.get')).toMatchObject({
-        error: { code: 'stim-failed', message: 'stim stats did not finish within 2 s.' },
+      expect(await client.request('settings.get')).toMatchObject({
+        error: { code: 'stim-failed', message: 'stim settings did not finish within 2 s.' },
       });
       expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
     } finally {

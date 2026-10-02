@@ -426,9 +426,11 @@ Events are `{ "event", "subscription", ... }`.
   scope. They run `stim logs --json` and `stim logs --json --follow` in the
   workspace. Subscribers with the same workspace and filters share one
   `--follow` child, which stops with the last of them.
-- `stats.get` and `settings.get` return the payload of `stim stats --json` and
+- `stats.get` returns the same payload as `stim stats --json`, using the shared
+  core reader in a bounded, cancellable server child. The stats part of
+  `machine.details` uses the same reader. `settings.get` runs
   `stim settings --json`, which masks sensitive values. Without `workspace`,
-  they run in the home directory and cover the machine only.
+  these reads use the home directory as their project context.
 - `frames.subscribe` takes `workspace`, `platform` (`ios`, `android` or `web`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
   (240 to 2048 pixels, 1280 by default), and sends `frame` events: a JPEG,

@@ -48,19 +48,34 @@ describe('MachineDetailsCache', () => {
 });
 
 describe('loadMachineDetails', () => {
-  it('runs gc and stats only, without a buildMachines part', async () => {
+  it('combines the stats read with gc without a buildMachines part', async () => {
     const calls: string[] = [];
     const run = (args: string[]) => {
       calls.push(args[0]!);
       return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
     };
-    expect(await loadMachineDetails(run, async () => [])).toMatchObject({
+    expect(
+      await loadMachineDetails(
+        run,
+        async () => [],
+        async () => ({ ok: true, stdout: '{"version":1}' }),
+      ),
+    ).toMatchObject({
       gc: { args: ['gc', '--json'] },
-      stats: { args: ['stats', '--json'] },
+      stats: { version: 1 },
       buildClients: [],
     });
-    expect(calls.toSorted()).toEqual(['gc', 'stats']);
+    expect(calls).toEqual(['gc']);
   });
+});
+
+test('a failed stats read leaves the gc result available', async () => {
+  const result = await loadMachineDetails(
+    async () => ({ ok: true, stdout: '{"devices":[]}' }),
+    async () => [],
+    async () => ({ ok: false, message: 'stats timed out' }),
+  );
+  expect(result).toMatchObject({ gc: { devices: [] }, stats: null, statsError: 'stats timed out' });
 });
 
 describe('buildClients', () => {

@@ -86,6 +86,7 @@ import {
   type PeerIdentity,
   validStuckMinutes,
 } from './registry.ts';
+import { runStats } from './stats.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
@@ -448,7 +449,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(run.cancel);
     return run.outcome.finally(() => running.delete(run.cancel));
   };
-  const machineDetails = new MachineDetailsCache(() => loadMachineDetails(runDetailsCommand, loadAudit));
+  const readDetailsStats = () => {
+    const run = runStats(options.env, homedir(), {
+      ...commandLimits,
+      timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+    });
+    running.add(run.cancel);
+    return run.outcome.finally(() => running.delete(run.cancel));
+  };
+  const machineDetails = new MachineDetailsCache(() =>
+    loadMachineDetails(runDetailsCommand, loadAudit, readDetailsStats),
+  );
   const buildMachines = new BuildMachinesCache();
   let recordingTurn: Promise<void> = Promise.resolve();
   let closing = false;
@@ -1085,6 +1096,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       result: (stdout: string) => Methods[M]['result'],
       limits: CommandLimits = commandLimits,
       turn: Promise<void> | null = null,
+      stats = false,
     ): Promise<void> | null {
       if (commands.size >= MAX_COMMANDS) {
         error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
@@ -1104,7 +1116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const start = async () => {
         if (dropped) return;
-        run = runStim(options.stimCli, options.env, args, cwd, limits);
+        run = stats ? runStats(options.env, cwd, limits) : runStim(options.stimCli, options.env, args, cwd, limits);
         const outcome = await run.outcome;
         commands.delete(cancel);
         running.delete(cancel);
@@ -1148,11 +1160,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (params !== undefined && !isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
       const cwd = workspaceDir(id, params?.workspace, false);
       if (!cwd) return;
-      command<typeof method>(id, [method === 'stats.get' ? 'stats' : 'settings', '--json'], cwd, (stdout) => {
-        const value: unknown = JSON.parse(stdout);
-        if (!isJsonObject(value)) throw new Error('not an object');
-        return value;
-      });
+      command<typeof method>(
+        id,
+        [method === 'stats.get' ? 'stats' : 'settings', '--json'],
+        cwd,
+        (stdout) => {
+          const value: unknown = JSON.parse(stdout);
+          if (!isJsonObject(value)) throw new Error('not an object');
+          return value;
+        },
+        commandLimits,
+        null,
+        method === 'stats.get',
+      );
     }
 
     function runAction(id: RequestId, params: unknown, session: PairedDevice): void {

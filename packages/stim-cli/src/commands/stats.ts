@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { formatLongDuration } from '../command-output.ts';
-import { offloadSummary, readStats, statsProjectKey, STATS_VERSION } from '../engine/stats.ts';
-import type { OffloadSummary, StatsBucket, StatsPlatform, StatsScope } from '../engine/stats.ts';
+import { readStatsReport, statsProjectKey } from '@stim-cli/core/state';
+import type { OffloadSummary, StatsBucket, StatsPlatform } from '../engine/stats.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
@@ -31,42 +31,23 @@ export default function statsCommand(program: Command): void {
             repoRoot: repoRoot(root),
           })
         : null;
-      const { record, note } = readStats();
+      const { report, note } = readStatsReport(key, Date.now());
       if (note) console.error(chalk.dim(note));
-      const machine: StatsScope = record?.machine ?? {};
-      const project: StatsScope = key ? (record?.projects?.[key] ?? {}) : {};
-      const offload = offloadSummary(record, Date.now());
-
+      const { machine, project, offload } = report;
       if (opts.json) {
-        console.log(
-          JSON.stringify({
-            version: STATS_VERSION,
-            project: key
-              ? {
-                  key,
-                  ios: project.ios ?? null,
-                  android: project.android ?? null,
-                }
-              : null,
-            machine: {
-              ios: machine.ios ?? null,
-              android: machine.android ?? null,
-            },
-            offload,
-          }),
-        );
+        console.log(JSON.stringify(report));
         return;
       }
 
       const lines: string[] = [];
-      if (key) lines.push(`project ${key}`, ...sectionLines(project));
+      if (project) lines.push(`project ${project.key}`, ...sectionLines(project));
       lines.push('machine', ...sectionLines(machine));
       if (offload.placements.length || Object.keys(offload.machines).length) lines.push(...placementLines(offload));
       for (const line of lines) console.log(line);
     });
 }
 
-function sectionLines(scope: StatsScope): string[] {
+function sectionLines(scope: Partial<Record<StatsPlatform, StatsBucket | null>>): string[] {
   const lines = PLATFORMS.filter((platform) => scope[platform]).map((platform) =>
     bucketLine(platform, scope[platform] as StatsBucket),
   );
