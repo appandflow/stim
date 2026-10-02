@@ -150,6 +150,7 @@ struct GitChipButton: View {
         Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.tertiary)
       }
       .font(.stim(.caption))
+      .lineLimit(1)
       .padding(.horizontal, Space.md)
       .padding(.vertical, 3)
       .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
