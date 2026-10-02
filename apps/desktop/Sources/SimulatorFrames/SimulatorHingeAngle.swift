@@ -40,7 +40,7 @@ public enum SimulatorHingeAngle {
   // is lost when this beta hangs after the session timeout or is interrupted.
   // Human output is not a stable contract, so unfamiliar or invalid lines are ignored.
   static func parse(_ line: String) -> Double? {
-    let fields = line.strippingANSI.split(whereSeparator: \.isWhitespace)
+    let fields = line.strippingANSI.replacingOccurrences(of: "Angle:", with: "Angle: ").split(whereSeparator: \.isWhitespace)
     guard fields.contains("AngleValid:Y"), let marker = fields.firstIndex(of: "Angle:"),
       fields.indices.contains(marker + 1)
     else { return nil }

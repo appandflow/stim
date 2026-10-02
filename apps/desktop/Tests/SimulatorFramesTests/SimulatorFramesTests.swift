@@ -91,6 +91,19 @@ import Testing
     #expect(SimulatorHingeAngle.parse("\u{1B}[38;5;46m" + sample + "\u{1B}[0m") == 73.2)
   }
 
+  @Test func readsCompactAndPaddedNativeAngles() {
+    for (field, expected) in [
+      ("Angle:  0.0\u{00B0}", 0.0),
+      ("Angle: 98.1\u{00B0}", 98.1),
+      ("Angle:120.0\u{00B0}", 120.0),
+      ("Angle:180.0\u{00B0}", 180.0),
+    ] {
+      let sample =
+        "\u{2022} +0.000s : \(field)  Mech:119.2\u{00B0}  Velocity:+0.0\u{00B0}/s  AngleValid:Y  VelocityValid:N  Range:0-180\u{00B0}"
+      #expect(SimulatorHingeAngle.parse(sample) == expected)
+    }
+  }
+
   @Test func ignoresUnavailableInvalidAndUnrecognizedSamples() {
     for sample in [
       "Hinge angle monitoring started. 55 seconds remaining:",
