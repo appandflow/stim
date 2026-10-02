@@ -1,6 +1,6 @@
 import { plural, t } from '@lingui/core/macro';
 import { Plural, Trans } from '@lingui/react/macro';
-import type { ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -39,6 +39,7 @@ import { platformName } from '@/lib/workspaces';
 import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
 
 const STACK_FONT_SCALE = 1.3;
+const CardColumns = createContext(2);
 const VALUE: TextVariant = 'caption';
 const VALUE_WEIGHT = 'medium';
 
@@ -58,12 +59,13 @@ function SmallCard({
   children: ReactNode;
 }) {
   const { theme } = useUnistyles();
+  const columns = useContext(CardColumns);
   return (
     <Card
       onPress={onPress}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
-      style={[styles.small, alert && styles.alert]}
+      style={[styles.small, { flexBasis: columns === 4 ? '20%' : '40%' }, alert && styles.alert]}
     >
       <View style={styles.smallHeader}>
         <Text variant="caption2" weight="semibold" tone="secondary" style={styles.caps} numberOfLines={1}>
@@ -300,8 +302,20 @@ export function WorkCard({
 }
 
 export function CardGrid({ children }: { children: ReactNode }) {
+  const { theme } = useUnistyles();
   const { fontScale } = useWindowDimensions();
-  return <View style={[styles.grid, fontScale > STACK_FONT_SCALE && styles.stacked]}>{children}</View>;
+  const [width, setWidth] = useState(0);
+  const columns = fontScale <= STACK_FONT_SCALE && width >= 4 * 200 + 3 * theme.space.md ? 4 : 2;
+  return (
+    <CardColumns.Provider value={columns}>
+      <View
+        onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}
+        style={[styles.grid, fontScale > STACK_FONT_SCALE && styles.stacked]}
+      >
+        {children}
+      </View>
+    </CardColumns.Provider>
+  );
 }
 
 export function BuildInProgressCard({
@@ -409,7 +423,7 @@ const styles = StyleSheet.create((theme) => ({
   caps: { textTransform: 'uppercase', letterSpacing: 0.4, flexShrink: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.md },
   stacked: { flexDirection: 'column', flexWrap: 'nowrap' },
-  small: { flexGrow: 1, flexBasis: '40%', padding: theme.space.md + 2, gap: theme.space.xs },
+  small: { flexGrow: 1, padding: theme.space.md + 2, gap: theme.space.xs },
   gitLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.xs + 1, rowGap: 2 },
   alert: {
     borderColor: withAlpha(theme.colors.error, 0.45),

@@ -287,15 +287,20 @@ export function WorkspaceDetail({ path }: { path: string }) {
         {(env.remoteDevices ?? []).map((session) => (
           <RemoteTile key={session.sessionId} session={session} />
         ))}
-        {devices.map((device) => (
-          <DeviceTile
-            key={deviceKey(device)}
-            env={env}
-            device={device}
-            warnings={byDevice.get(device) ?? []}
-            usage={device.running ? deviceUsage(device, env.path, machine, device.diskBytes) : null}
-          />
-        ))}
+        {devices.length ? (
+          <View style={styles.deviceGrid}>
+            {devices.map((device) => (
+              <View key={deviceKey(device)} style={styles.device}>
+                <DeviceTile
+                  env={env}
+                  device={device}
+                  warnings={byDevice.get(device) ?? []}
+                  usage={device.running ? deviceUsage(device, env.path, machine, device.diskBytes) : null}
+                />
+              </View>
+            ))}
+          </View>
+        ) : null}
         {devices.length === 0 && stage.kind === 'warming' ? <WarmingPlaceholder subtitle={stage.subtitle} /> : null}
         {devices.length === 0 && !env.remoteDevices?.length && stage.kind !== 'warming' ? (
           <Text variant="footnote" tone="secondary" style={styles.none}>
@@ -327,6 +332,8 @@ const styles = StyleSheet.create((theme) => ({
   loading: { marginTop: 48 },
   pinned: { position: 'absolute', top: 0, left: 0, right: 0 },
   container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
+  deviceGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.lg },
+  device: { width: '100%', maxWidth: 640 },
   warning: {
     padding: theme.space.md,
     borderRadius: theme.radius.control,
