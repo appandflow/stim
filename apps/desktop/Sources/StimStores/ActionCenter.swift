@@ -173,6 +173,6 @@ public final class ActionCenter: ObservableObject {
   }
 
   public func runApp(_ env: Workspace, platform: String) {
-    run("Run \(env.names.title) on \(platformName(platform))", StimCommand([platform], cwd: env.path))
+    run("Run \(env.names.title) on \(platformName(platform))", steps: [StimCommand([platform], cwd: env.path)], present: false)
   }
 }
