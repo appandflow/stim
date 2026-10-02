@@ -76,6 +76,37 @@ import Testing
     }
   }
 
+  @Test func externalPanelChangesOverrideConflictingRememberedAngles() {
+    let folded = DuoHinge.estimatedAngle(remembered: 180, folded: true)
+    let halfOpen = DuoHinge.estimatedAngle(remembered: 120, folded: true)
+    let unfolded = DuoHinge.estimatedAngle(remembered: 0, folded: false)
+    #expect(folded == 0)
+    #expect(halfOpen == 0)
+    #expect(unfolded == 180)
+    #expect(DuoHinge.sweep(from: folded, to: 180).last == 180)
+    let reopening = DuoHinge.sweep(from: halfOpen, to: 120)
+    #expect(!reopening.isEmpty)
+    #expect(abs(reopening.last! - 120) < 0.001)
+    #expect(DuoHinge.sweep(from: unfolded, to: 0).last == 0)
+  }
+
+  @Test func preservesIntermediateAnglesWithoutInferringDegreesFromThePanel() {
+    #expect(DuoHinge.estimatedAngle(remembered: 73, folded: true) == 73)
+    #expect(DuoHinge.estimatedAngle(remembered: 93, folded: false) == 93)
+    #expect(DuoHinge.estimatedAngle(remembered: 147, folded: nil) == 147)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: nil) == 180)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: false) == 180)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: true) == 0)
+  }
+
+  @Test func arbitraryAnglesSweepToTheSelectedAngleInBothDirections() {
+    for (from, to) in [(0.0, 73.0), (180.0, 93.0), (93.0, 147.0)] {
+      let angles = DuoHinge.sweep(from: from, to: to)
+      #expect(abs(angles.last! - to) < 0.001)
+      #expect(angles.allSatisfy { (min(from, to) - 0.001)...(max(from, to) + 0.001) ~= $0 })
+    }
+  }
+
   @Test func halfOpeningFromFoldedEndsAtTheHalfOpenAngle() {
     let angles = DuoHinge.sweep(from: 0, to: DuoPosture.halfOpen.hingeAngle)
     #expect(abs(angles.last! - 120) < 0.001)
