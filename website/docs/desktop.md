@@ -93,6 +93,13 @@ compiled with iOS SDK 27.1 or newer and an iOS 27.1 or newer runtime. Android
 needs WindowManager fold support. Builds using an older iOS SDK receive no fold
 divisions and keep the default viewer layout.
 
+When the phone is partly folded like a laptop and reports a horizontal fold,
+the viewer places its title and screen above the fold, with read-only messaging,
+Control toolbars, replay controls and agent actions below it. This tabletop
+layout uses `react-native-hinges` posture readings and the reserved fold geometry;
+without both, the default layout remains. The same iOS SDK/runtime and Android
+WindowManager requirements apply.
+
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
