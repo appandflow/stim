@@ -49,7 +49,9 @@ performance traces. Every release is listed under
   next build. Run iOS or Android from a menu.
 - **Machines.** What fills the disk and memory, what Stim can free, and for
   each build machine whether it takes builds, the builds it ran for this Mac and
-  why recent builds stayed here. Build-cache stats and placement totals use the
+  why recent builds stayed here. Select checklist items to enable **Free space**;
+  cleanup previews or confirms the selection before deleting anything.
+  Build-cache stats and placement totals use the
   existing local server connection when it allows reads for the same Stim home;
   otherwise they use the CLI. This does not turn on **Serve to phones**. A
   cancelled stats refresh stops waiting without disconnecting device viewing;

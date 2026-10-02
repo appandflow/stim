@@ -356,7 +356,9 @@ workspaces`. A cache row runs `stim gc --delete --cache <name or directory>`
   and starts unchecked. **Free** previews a selection that is one gc run (`stim
 gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   runs the same scope with `--delete`. A selection of several commands lists
-  them in a confirmation first and then runs them in order. Running activities show progress in the current
+  them in a confirmation first and then runs them in order. When no items are
+  selected, **Free space** is muted and a **Select items to free space** hint
+  appears above the checklist. Running activities show progress in the current
   step row; the header shows only finished or failed outcomes.
 - **Projects**: workspaces and linked worktrees that `stim worktree warm` has
   not set up (**Not warmed**), grouped by repository and ranked by total. A
